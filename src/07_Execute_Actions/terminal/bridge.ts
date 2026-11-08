@@ -105,10 +105,10 @@ export interface OperatorBridge {
   askStatus(): Promise<MindStatus>
   /**
    * Chooses the model, the server's address, the wire format, the provider (09_Cognition/router.ts: claude over the
-   * network, or ollama or llamacpp on this machine), the network provider's key or effort, or turns thinking on or
-   * off; returns the new value. Throws on a bad one.
+   * network, or ollama or llamacpp on this machine), the network provider's key or effort, the GPUs' memory for auto's
+   * Ollama model, or turns thinking on or off; returns the new value. Throws on a bad one.
    */
-  askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort', value: string): string
+  askSet(key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram', value: string): string
   /**
    * `ask connect`: the provider and, when given, its server and (the Claude provider's) key in one line
    * (09_Cognition/router.ts connect); returns what the provider is and what was set. Throws on a bad one, and while locked.
@@ -406,6 +406,12 @@ export interface TerminalBridge {
   hal: { summary(): string; devices(): HalDevice[]; pair(kind: 'hid' | 'serial' | 'bluetooth'): Promise<HalDevice | null>; readonly shellHid?: boolean }
   /** GPU adapter description. */
   adapter(): string
+  /**
+   * The workplaces' stations (01_Initialize_World/interiors.ts), read-only: each room's kind id, the station's index
+   * in that room, where to stand (city metres) and the way to face (radians). `robot cell` places a workstation cell
+   * there. Absent on a host without a city (the TTY shell); empty where the map has no rooms (the surveyed region).
+   */
+  roomStations?(): readonly { kind: string; station: number; x: number; z: number; yaw: number }[]
   /** The machine the city sized itself for (the `hardware` command). */
   hardware(): HardwareReport
   /** Ghost view (view-only: the physics shapes drawn as code over the frame): on, off, or the status line. */
@@ -485,6 +491,21 @@ export interface RobotConsole {
   disarm(id: string): string
   /** One joint's step response, armed; resolves with the fit and the twin's new lag. */
   calibrate(id: string, joint: string): Promise<string>
+  /**
+   * The same step, fitted both ways (first and second order) with the twin taking the second only when it lowers
+   * the error a tenth (Occam); resolves with both fits and the choice, lines joined with '\n'.
+   */
+  fit(id: string, joint: string): Promise<string>
+  /**
+   * `robot shape <id> [<seed>|off]`: no seed, the robot's domain table (or that it has none); a seed, the body
+   * re-spawned from its manifest randomized by that seed, with the friction and shaping sent; off, the plain body
+   * back. Lines joined with '\n'.
+   */
+  shape(id: string, seed?: number | 'off'): string
+  /** The workstation cell a workplace kind id gets (cells.ts: 'console' for one with no robot or an unknown kind). */
+  cellKind(kind: string): string
+  /** A cell's robot as `sim:<kind>-<station>`, spawned at the station facing its yaw; a console cell refuses in a sentence. */
+  cell(kind: string, station: number, at: { x: number; z: number; yaw: number }): string
   remove(id: string): string
 }
 
@@ -561,6 +582,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     stats: down, laws: down, clock: down, setClock: down, quality: down, audio: down,
     hal: { summary: down, devices: down, pair: down },
     adapter: () => '',
+    roomStations: down,
     hardware: down,
     ghost: down,
     rain: down,
@@ -584,6 +606,6 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     memory: { status: down, ledger: down, forget: down },
     look: { show: down, set: down },
     model: { pick: down, forget: down, load: down, unload: down, gpu: down, log: down },
-    robot: { list: down, relay: down, relayOff: down, relayStatus: down, spawn: down, urdf: down, demo: down, mode: down, set: down, arm: down, disarm: down, calibrate: down, remove: down },
+    robot: { list: down, relay: down, relayOff: down, relayStatus: down, spawn: down, urdf: down, demo: down, mode: down, set: down, arm: down, disarm: down, calibrate: down, fit: down, shape: down, cellKind: down, cell: down, remove: down },
   }
 }

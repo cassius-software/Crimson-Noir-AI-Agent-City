@@ -10,7 +10,11 @@
  * word, the face word and the wardrobe word). The wardrobe is closed by construction: every slot is an index into the
  * four bodies crowd.ts draws, the optional pieces it carries (a tie, a bag, a cup, the hair in its styles, glasses,
  * the face itself, a coat, a scarf), the colour palettes it already paints people with and the steps of each slider, so no stored value, no
- * typed command and no shared code can dress anyone in anything the crowd does not wear today. The same module
+ * typed command and no shared code can dress anyone in anything the crowd does not wear today. Those four words are
+ * the first of a look genome of sixteen (LOOK_WORDS): the words after them hold what the catalogue has grown since
+ * (word 4, the skin word: the ten tones of the Monk Skin Tone Scale beside the eight older ones, vitiligo, freckles),
+ * and every field of them is 0 for "as before", so a look of the older layouts is the same look with those words
+ * zero, its code is the same code, and the crowd draws it the same. The same module
  * reproduces the choice the shader's hash makes for an agent (lookFromSeed), so a returning visitor's look and an
  * agent's hashed look are the same kind of record; a short code with a checksum lets a look be written down and
  * shared; describeLook is the console's view of it. A look kept before the layers existed (twenty-nine slots, a
@@ -36,9 +40,13 @@ export const LOOK_PIECE_BIT = Object.freeze({ tie: 1, bag: 2, cup: 3, longHair: 
 /**
  * The crowd's colour palettes, verbatim (crowd.ts `PALETTE`, pinned by look.test.ts against the source). Every
  * cloth is a business-casual one: suits, blazers, chinos, shirts, blouses, skirts, office shoes, a bag's leather.
+ * `skin` is the eight tones the crowd wore first; `monk` the ten of the Monk Skin Tone Scale (Dr. Ellis Monk, published
+ * by Google under CC BY 4.0: NOTICE.md), lightest to deepest, which the hashed crowd is drawn from and which carry
+ * the skin slot past the older tones (options 8 to 17).
  */
 export const LOOK_PALETTE = Object.freeze({
   skin: Object.freeze([0xf3d2b8, 0xe8b894, 0xd29f79, 0xb97f5a, 0x9a6444, 0x7a4a31, 0x5c3522, 0xe5c0a0]),
+  monk: Object.freeze([0xf6ede4, 0xf3e7db, 0xf7ead0, 0xeadaba, 0xd7bd96, 0xa07e56, 0x825c43, 0x604134, 0x3a312a, 0x292420]),
   hair: Object.freeze([0x1b1512, 0x2a1d14, 0x3b2618, 0x5e3c24, 0x7a3a1f, 0xb8935a, 0x8a6a48, 0x9c9a96]),
   iris: Object.freeze([0x3b2314, 0x5a3a22, 0x2a1a12, 0x4a6a4a, 0x5a7a9a, 0x7a5a3a]),
   suits: Object.freeze([0x1f2a44, 0x33363b, 0x5b6068, 0x1a1a1c, 0x4a3b2e, 0x2d4a73, 0x3d4550]),
@@ -79,10 +87,20 @@ export type LookFaceSlider = (typeof LOOK_FACE_SLIDERS)[number]
  */
 export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
-  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
+
+/**
+ * The slots of the genome's later words (LOOK_FIELD's words 4 and up), each one's option 0 the look as it was before
+ * the slot existed (no vitiligo, no freckles). A record may leave any of them out: it reads as 0, so a look kept
+ * before they existed is accepted as it is, and every later slot added here must keep 0 meaning "as before".
+ */
+export const LOOK_GENOME_SLOTS = ['vitiligo', 'freckles'] as const satisfies readonly LookSlot[]
+
+/** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
+export const LOOK_V4_SLOTS = LOOK_SLOTS.filter((s) => !(LOOK_GENOME_SLOTS as readonly string[]).includes(s))
 
 /** The slots a look had before the wardrobe's layers (one layer, the jacket; no trim; no scarf). */
 export const LOOK_V3_SLOTS = [
@@ -117,6 +135,9 @@ export interface Outfit {
   readonly shoes: PaletteName
 }
 
+/** Vitiligo's patterns (WARDROBE.vitiligo), as crowd.ts draws them: 0 is none, as before the skin word. */
+export const VITILIGO = Object.freeze({ none: 0, hands: 1, face: 2, handsAndFace: 3, scattered: 4, widespread: 5, oneSide: 6 })
+
 /** The hair styles' indices (WARDROBE.hairStyle): the two the look had before the face keep their numbers. */
 export const HAIR = Object.freeze({ short: 0, long: 1, bob: 2, bun: 3, bald: 4 })
 
@@ -131,7 +152,9 @@ export const LAYER = Object.freeze({ jacket: 0, shirt: 1, coat: 2 })
 /**
  * The catalogue: what each slot may hold. `stature` is the height slider (32 steps, 1.50 m to 2.05 m: five bits);
  * `sliderSteps` the other body sliders' and the face sliders' (four bits each) but the head's (`headSteps`, three
- * bits); `ageSteps` the age's (three bits); `undertone` the skin's cast; `outfits` is per body, mirroring crowd.ts's
+ * bits); `ageSteps` the age's (three bits); `undertone` the skin's cast; `vitiligo` where the skin's paler patches
+ * are (crowd.ts draws them from the rest position: the hands and wrists, round the eyes and the mouth, both, a few
+ * patches anywhere, most of the skin, or one side of the body); `freckles` how many; `outfits` is per body, mirroring crowd.ts's
  * four fragment branches: the suit's trousers match the jacket (the hashed crowd) or take another suit cloth; the
  * pantsuit's match the blazer or are dark trousers; the skirt suit's skirt and the smart-casual chinos have palettes
  * of their own.
@@ -143,6 +166,8 @@ export const WARDROBE = Object.freeze({
   headSteps: 8,
   ageSteps: 8,
   undertone: Object.freeze(['neutral', 'warm', 'cool', 'olive']),
+  vitiligo: Object.freeze(['none', 'hands', 'face', 'hands and face', 'scattered', 'widespread', 'one side']),
+  freckles: Object.freeze(['none', 'light', 'medium', 'dense']),
   hairStyle: Object.freeze(['short', 'long', 'bob', 'bun', 'bald']),
   layer: Object.freeze(['jacket', 'shirt sleeves', 'coat']),
   tie: Object.freeze(['none', 'tie']),
@@ -174,9 +199,12 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * where the legacy height and build lived; bit 31 is spare. Word 1 is the figure word: the eight body sliders,
  * 5 + 6 × 4 + 3 = 32 bits. Word 2 is the face word: the seven face sliders at four bits each and the hair style at
  * three; bit 31 is spare. Word 3 is the wardrobe word: the layer at two bits, the trim and the scarf at three each
- * (0 is matching, or none); bits 8 to 31 are spare. Every width is pinned to hold its slot's largest option count.
+ * (0 is matching, or none); bits 8 to 31 are spare. Word 4 is the skin word: the skin's high bits (LOOK_FIELD_HIGH:
+ * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two; bits
+ * 7 to 31 are spare, and so are words 5 to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
+ * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
  */
-export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1 | 2 | 3, shift: number, width: number]>> = Object.freeze({
+export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
   body: [0, 1, 2],
   tie: [0, 2 + LOOK_PIECE_BIT.tie, 1],
   bag: [0, 2 + LOOK_PIECE_BIT.bag, 1],
@@ -209,7 +237,20 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: 0 | 1 | 2 | 3
   layer: [3, 0, 2],
   trim: [3, 2, 3],
   scarf: [3, 5, 3],
+  vitiligo: [4, 2, 3],
+  freckles: [4, 5, 2],
 })
+
+/**
+ * The slots that outgrew their first field: the value's bits past that field's width go here, [word, shift, width].
+ * An older look's value fits its first field, so these bits are zero for it and its four words are what they were.
+ */
+export const LOOK_FIELD_HIGH: Readonly<Partial<Record<LookSlot, readonly [word: number, shift: number, width: number]>>> = Object.freeze({
+  skin: [4, 0, 2],
+})
+
+/** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, and eleven spare. */
+export const LOOK_WORDS = 16
 
 /** The legacy look word's height and build fields (three bits each), read by the upgrade alone. */
 export const LEGACY_LOOK_FIELD = Object.freeze({ height: [26, 3] as const, build: [29, 3] as const, steps: 8 })
@@ -251,9 +292,11 @@ export const LOOK_HASHED_LAYER = 23
 export const LOOK_HASHED_SCARF = 24
 /**
  * The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from; the
- * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth.
+ * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth; whether
+ * the skin has vitiligo (above LOOK_ODDS.vitiligo) and its pattern, freckles (above LOOK_ODDS.freckles) and how many;
+ * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot).
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -276,6 +319,10 @@ export function statureStep(metres: number): number {
   if (!Number.isFinite(metres)) return LOOK_SLIDER_MIDDLE.slider
   return Math.min(s.steps - 1, Math.max(0, Math.round(((metres - s.min) / (s.max - s.min)) * (s.steps - 1))))
 }
+/** A Monk tone's name, as the scale numbers them: "mst-01" (lightest) to "mst-10" (deepest). */
+const monkName = (i: number): string => `mst-${String(i + 1).padStart(2, '0')}`
+/** The skin option of Monk tone `i` (0 is MST-01): the tones follow the eight older ones. */
+export const monkSkin = (i: number): number => LOOK_PALETTE.skin.length + i
 const stature = (): LookOption[] => Array.from({ length: WARDROBE.stature.steps }, (_, i) => ({ name: `${statureOf(i).toFixed(2)} m`, hex: null }))
 
 /** The options a slot may hold for a body, in index order. */
@@ -287,9 +334,11 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'mass': case 'muscle': case 'shoulders': case 'hips': case 'legs': case 'posture': return steps(WARDROBE.sliderSteps)
     case 'head': return steps(WARDROBE.headSteps)
     case 'brow': case 'jaw': case 'chin': case 'cheek': case 'nose': case 'eyes': case 'lips': return steps(WARDROBE.sliderSteps)
-    case 'skin': return swatches(LOOK_PALETTE.skin)
+    case 'skin': return [...swatches(LOOK_PALETTE.skin), ...LOOK_PALETTE.monk.map((hex, i) => ({ name: monkName(i), hex }))]
     case 'age': return steps(WARDROBE.ageSteps)
     case 'undertone': return named(WARDROBE.undertone)
+    case 'vitiligo': return named(WARDROBE.vitiligo)
+    case 'freckles': return named(WARDROBE.freckles)
     case 'hairStyle': return named(WARDROBE.hairStyle)
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
     case 'layer': return named(WARDROBE.layer)
@@ -453,25 +502,35 @@ export function upgradeLegacyLook(raw: unknown): Look | null {
   return upgradeFigureLook(out)
 }
 
+const SLOT_NAMES: ReadonlySet<string> = new Set(LOOK_SLOTS)
+const GENOME_SLOT_NAMES: ReadonlySet<string> = new Set(LOOK_GENOME_SLOTS)
+
 /**
- * The look a value is, or null: an object with exactly the slots, every one an integer within its options for
- * the body named; or a twenty-slot look from before the face (upgradeFigureLook); or a legacy fourteen-slot look
- * (upgradeLegacyLook). Nothing else is accepted (not a string, an array, a float, a negative, an extra key), so a
- * stored or typed record can only ever name what the crowd wears.
+ * The look a value is, or null: an object with every slot of the four words (LOOK_V4_SLOTS) and any of the genome's
+ * later slots (LOOK_GENOME_SLOTS: one left out is 0, as before it existed), every one an integer within its options
+ * for the body named, and no other key; or a twenty-nine-slot look from before the layers (upgradeFaceLook), a
+ * twenty-slot look from before the face (upgradeFigureLook), or a legacy fourteen-slot look (upgradeLegacyLook).
+ * Nothing else is accepted (not a string, an array, a float, a negative, an unknown key), so a stored or typed
+ * record can only ever name what the crowd wears.
  */
 export function validateLook(raw: unknown): Look | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
-  const keys = Object.keys(r).length
+  const names = Object.keys(r)
+  const keys = names.length
   if (keys === LEGACY_LOOK_SLOTS.length && hasOwn(r, 'build')) return upgradeLegacyLook(r)
   if (keys === LOOK_V2_SLOTS.length && !hasOwn(r, 'brow')) return upgradeFigureLook(r)
   if (keys === LOOK_V3_SLOTS.length && !hasOwn(r, 'layer')) return upgradeFaceLook(r)
-  if (keys !== LOOK_SLOTS.length) return null
+  if (keys < LOOK_V4_SLOTS.length || keys > LOOK_SLOTS.length || !names.every((k) => SLOT_NAMES.has(k))) return null
   if (!isBody(r.body)) return null
   const body = r.body
   const out: Record<string, number> = {}
   for (const slot of LOOK_SLOTS) {
-    if (!hasOwn(r, slot)) return null
+    if (!hasOwn(r, slot)) {
+      if (!GENOME_SLOT_NAMES.has(slot)) return null
+      out[slot] = 0
+      continue
+    }
     const v = r[slot]
     if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= lookSize(body, slot)) return null
     out[slot] = v + 0
@@ -494,11 +553,13 @@ export function withLookSlot(look: Look, slot: LookSlot, value: number): Look | 
   return validateLook({ ...look, [slot]: value })
 }
 
-const packWord = (look: Look, word: 0 | 1 | 2 | 3): number => {
+const packWord = (look: Look, word: number): number => {
   let out = word === 0 ? 1 : 0
   for (const slot of LOOK_SLOTS) {
-    const [w, shift] = LOOK_FIELD[slot]
-    if (w === word) out |= look[slot] << shift
+    const [w, shift, width] = LOOK_FIELD[slot]
+    if (w === word) out |= (look[slot] & ((1 << width) - 1)) << shift
+    const high = LOOK_FIELD_HIGH[slot]
+    if (high && high[0] === word) out |= (look[slot] >>> width) << high[1]
   }
   // The long-hair piece's bit, from the style (the shader and lookMask build the hair bits from the style itself).
   if (word === 0 && look.hairStyle === HAIR.long) out |= 1 << LONG_HAIR_BIT
@@ -529,25 +590,62 @@ export function packWardrobe(look: Look): number {
   return valid === null ? 0 : packWord(valid, 3)
 }
 
+/**
+ * The whole genome, LOOK_WORDS words: the look, figure, face and wardrobe words, then the skin word and the spare
+ * words (zero). An older look's words 4 and up are all zero. LOOK_NONE and zeros for a look outside the wardrobe.
+ */
+export function packGenome(look: Look): number[] {
+  const valid = validateLook(look)
+  return Array.from({ length: LOOK_WORDS }, (_, w) => (valid === null ? 0 : packWord(valid, w)))
+}
+
 const isWord = (word: number): boolean => Number.isInteger(word) && word >= 0 && word <= 0xffffffff
 
+/** Each genome word's bits that some field holds (words 4 and up: a bit outside them must be zero). */
+const GENOME_BITS: readonly number[] = (() => {
+  const bits = new Array<number>(LOOK_WORDS).fill(0)
+  bits[0] = 1 | (1 << LONG_HAIR_BIT)
+  for (const slot of LOOK_SLOTS) {
+    const [w, shift, width] = LOOK_FIELD[slot]
+    bits[w] |= ((1 << width) - 1) << shift
+    const high = LOOK_FIELD_HIGH[slot]
+    if (high) bits[high[0]] |= ((1 << high[2]) - 1) << high[1]
+  }
+  return bits.map((b) => b >>> 0)
+})()
+
 /**
- * The look four words carry, or null for LOOK_NONE, for any set whose fields are outside the catalogue, and for a
- * look word whose long-hair bit disagrees with the face word's style (a forged pair: the shader would draw one and
- * the console report the other).
+ * The look a genome carries (four to LOOK_WORDS words; the words not given are zero), or null for LOOK_NONE, for any
+ * set whose fields are outside the catalogue, for a bit set in words 4 and up that no field holds (a later layout's,
+ * or a forgery), and for a look word whose long-hair bit disagrees with the face word's style (a forged pair: the
+ * shader would draw one and the console report the other).
  */
-export function unpackLook(word: number, figure: number, face: number, wardrobe: number): Look | null {
-  if (!isWord(word) || !isWord(figure) || !isWord(face) || !isWord(wardrobe) || (word & 1) === 0) return null
-  const words = [word, figure, face, wardrobe] as const
+export function unpackGenome(genome: ArrayLike<number>): Look | null {
+  if (genome.length < 4 || genome.length > LOOK_WORDS) return null
+  const words: number[] = []
+  for (let w = 0; w < LOOK_WORDS; w++) {
+    const v = w < genome.length ? genome[w] : 0
+    if (!isWord(v)) return null
+    if (w >= 4 && (v & ~GENOME_BITS[w]) !== 0) return null
+    words.push(v)
+  }
+  const word = words[0]
+  if ((word & 1) === 0) return null
   const out: Record<string, number> = {}
   for (const slot of LOOK_SLOTS) {
     const [w, shift, width] = LOOK_FIELD[slot]
-    out[slot] = (words[w] >>> shift) & ((1 << width) - 1)
+    const high = LOOK_FIELD_HIGH[slot]
+    out[slot] = ((words[w] >>> shift) & ((1 << width) - 1)) | (high ? ((words[high[0]] >>> high[1]) & ((1 << high[2]) - 1)) << width : 0)
   }
   const look = validateLook(out)
   if (look === null) return null
   if (((word >>> LONG_HAIR_BIT) & 1) !== (look.hairStyle === HAIR.long ? 1 : 0)) return null
   return look
+}
+
+/** The look the four words carry with the genome's later words zero (unpackGenome): what crowd.look and the figure's first three words name alone. */
+export function unpackLook(word: number, figure: number, face: number, wardrobe: number): Look | null {
+  return unpackGenome([word, figure, face, wardrobe])
 }
 
 /** The look a three-word record from before the layers carried (a twenty-one-symbol code), upgraded; null for anything else. */
@@ -627,9 +725,10 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
 /**
  * The thresholds a piece is drawn above (crowd.ts `step(edge, h(k))`); a woman's bag is commoner than a man's. The
  * hair: below `longHair` on link 4 is short; otherwise a woman's split link (LOOK_HASHED_HAIR_SPLIT) under `bob` is
- * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long.
+ * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
+ * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -638,8 +737,8 @@ const stepOf = (h: number, n: number): number => Math.min(n, Math.round(h * n))
 
 /**
  * The look the crowd's hash gives an agent of this index (any non-negative integer; a profile seed does as well):
- * body = index mod 4, pieces, the figure and the face from the vertex chain, colours, the age and the undertone from
- * the fragment chain, exactly as crowd.ts chooses them, each slider rounded to its step. What the words cannot carry
+ * body = index mod 4, pieces, the figure and the face from the vertex chain, colours, the age, the undertone, the
+ * Monk tone, vitiligo and freckles from the fragment chain, exactly as crowd.ts chooses them, each slider rounded to its step. What the words cannot carry
  * (the tie's cloth, the bag's leather, the skirt suit's hose, the iris) stays hashed in the shader, so it is not here.
  */
 export function lookFromSeed(seed: number): Look {
@@ -683,9 +782,12 @@ export function lookFromSeed(seed: number): Look {
     nose: face('nose'),
     eyes: face('eyes'),
     lips: face('lips'),
-    skin: pickIndex(hc(1), LOOK_PALETTE.skin.length),
+    // The hashed crowd wears the Monk scale's ten tones, evenly (the eight older tones are a chosen look's alone).
+    skin: monkSkin(pickIndex(hc(1), LOOK_PALETTE.monk.length)),
     age: stepOf(hc(LOOK_HASHED_COLOUR.age), WARDROBE.ageSteps - 1),
     undertone: pickIndex(hc(LOOK_HASHED_COLOUR.undertone), WARDROBE.undertone.length),
+    vitiligo: above(hc(LOOK_HASHED_COLOUR.vitiligo), LOOK_ODDS.vitiligo) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.vitiligoPattern), WARDROBE.vitiligo.length - 1) : 0,
+    freckles: above(hc(LOOK_HASHED_COLOUR.freckles), LOOK_ODDS.freckles) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.frecklesDensity), WARDROBE.freckles.length - 1) : 0,
     hairStyle,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
@@ -710,7 +812,11 @@ export interface LookPreset {
   readonly look: Look
 }
 
-const preset = (name: string, look: Record<LookSlot, number>): LookPreset => {
+/** A look as written by hand: every slot of the four words, the genome's later slots optional (0 when left out). */
+export type LookInput = Omit<Record<LookSlot, number>, LookGenomeSlot> & Partial<Record<LookGenomeSlot, number>>
+export type LookGenomeSlot = (typeof LOOK_GENOME_SLOTS)[number]
+
+const preset = (name: string, look: LookInput): LookPreset => {
   const valid = validateLook(look)
   if (valid === null) throw new Error(`look preset "${name}" is outside the wardrobe`)
   return Object.freeze({ name, look: valid })
@@ -732,6 +838,52 @@ export const LOOK_PRESETS: readonly LookPreset[] = Object.freeze([
 export function lookPreset(name: string): LookPreset | null {
   const key = name.trim().toLowerCase()
   return LOOK_PRESETS.find((p) => p.name === key) ?? null
+}
+
+// --- Builds -----------------------------------------------------------------------------------------------------
+
+/** The body sliders a build sets: the frame's mass, muscle, shoulders and hips (the height, legs, posture and head stay the look's). */
+export const LOOK_BUILD_SLIDERS = ['mass', 'muscle', 'shoulders', 'hips'] as const satisfies readonly LookSlider[]
+export type LookBuildSlider = (typeof LOOK_BUILD_SLIDERS)[number]
+
+export interface LookBuild {
+  readonly name: string
+  readonly steps: Readonly<Record<LookBuildSlider, number>>
+}
+
+/**
+ * Eight builds over the body sliders, the somatotypes' span in plain words: from the slight and the lean (the
+ * ectomorph's end), through the athletic, the muscular and the broad (the mesomorph's), to the stocky, the soft and the
+ * full (the endomorph's). A build is a starting point, not a slot: it sets the four sliders it names to its steps, and
+ * any of them moved after is the person's own; the height is never a build's (1.50 m to 2.05 m in every build).
+ */
+export const LOOK_BUILDS: readonly LookBuild[] = Object.freeze(([
+  ['slight', [2, 4, 5, 6]],
+  ['lean', [5, 7, 7, 7]],
+  ['athletic', [7, 11, 10, 7]],
+  ['muscular', [10, 15, 13, 8]],
+  ['broad', [11, 10, 15, 9]],
+  ['stocky', [12, 9, 11, 11]],
+  ['soft', [12, 4, 8, 12]],
+  ['full', [15, 6, 10, 15]],
+] as const).map(([name, [mass, muscle, shoulders, hips]]) => Object.freeze({ name, steps: Object.freeze({ mass, muscle, shoulders, hips }) })))
+
+/** The build of that name (case and surrounding space ignored), or null. */
+export function lookBuild(name: string): LookBuild | null {
+  const key = name.trim().toLowerCase()
+  return LOOK_BUILDS.find((b) => b.name === key) ?? null
+}
+
+/** The look with a build's sliders set (everything else as it was), or null for no such build or a look outside the wardrobe. */
+export function withBuild(look: Look, name: string): Look | null {
+  const build = lookBuild(name)
+  if (build === null || validateLook(look) === null) return null
+  return validateLook({ ...look, ...build.steps })
+}
+
+/** The build a look's four sliders are exactly at, or null when they have been moved off every build. */
+export function buildOf(look: Look): LookBuild | null {
+  return LOOK_BUILDS.find((b) => LOOK_BUILD_SLIDERS.every((s) => look[s] === b.steps[s])) ?? null
 }
 
 // --- The look code ----------------------------------------------------------------------------------------------
@@ -768,34 +920,78 @@ const symbols = (bits: bigint, count: number): string => {
   return out
 }
 
-/** The look as a short code, "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX", that parseLookCode reads back exactly; '' for a look outside the wardrobe. */
+/**
+ * The symbols of a code's tail carrying `k` of the genome's later words (words 4 to 3 + k, the last of them not zero)
+ * and an 8-bit check over those words: 32k + 8 bits, rounded up to whole symbols with zero bits in front. Every k
+ * from 1 to 12 gives a different length, none of them a length a code without a tail has. With a tail, the head's own
+ * check is taken over every word of the code instead of its four, so the head cut off alone is refused (but for one
+ * chance in 256) rather than read as the look with an older tone.
+ */
+const tailChars = (k: number): number => Math.ceil((32 * k + 8) / 5)
+const TAIL_WORDS = LOOK_WORDS - 4
+
+/** Symbols in groups of `size`, the last group what is left. */
+const grouped = (text: string, size = 7): string => text.match(new RegExp(`.{1,${size}}`, 'g'))!.join('-')
+
+/**
+ * The look as a short code that parseLookCode reads back exactly; '' for a look outside the wardrobe. The four words'
+ * twenty-eight symbols, "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX", are the whole code of a look whose genome's later words are
+ * zero (every look of the older layouts: its code is the code it always had); otherwise a tail follows with those
+ * words up to the last that is not zero and a check over all of them, in groups of eight (one word's tail is one
+ * group: "-XXXXXXXX").
+ */
 export function formatLookCode(look: Look): string {
-  const word = packLook(look)
+  const genome = packGenome(look)
+  const [word, figure, face, wardrobe] = genome
   if (word === LOOK_NONE) return ''
-  const figure = packFigure(look)
-  const face = packFace(look)
-  const wardrobe = packWardrobe(look)
-  const bits = (BigInt(word) << 104n) | (BigInt(figure) << 72n) | (BigInt(face) << 40n) | (BigInt(wardrobe) << 8n) | BigInt(crc8([word, figure, face, wardrobe]))
-  const out = symbols(bits, CODE_CHARS)
-  return `${out.slice(0, 7)}-${out.slice(7, 14)}-${out.slice(14, 21)}-${out.slice(21)}`
+  let k = TAIL_WORDS
+  while (k > 0 && genome[3 + k] === 0) k--
+  const bits = (BigInt(word) << 104n) | (BigInt(figure) << 72n) | (BigInt(face) << 40n) | (BigInt(wardrobe) << 8n) | BigInt(crc8(genome.slice(0, 4 + k)))
+  const head = symbols(bits, CODE_CHARS)
+  if (k === 0) return grouped(head)
+  let tail = 0n
+  for (let i = 0; i < k; i++) tail = (tail << 32n) | BigInt(genome[4 + i])
+  tail = (tail << 8n) | BigInt(crc8(genome.slice(4, 4 + k)))
+  return `${grouped(head)}-${grouped(symbols(tail, tailChars(k)), 8)}`
+}
+
+/** A run of the alphabet's symbols as bits, or null for a symbol outside it. */
+const bitsOf = (text: string): bigint | null => {
+  let bits = 0n
+  for (const ch of text) {
+    const v = CODE_ALPHABET.indexOf(ch)
+    if (v < 0) return null
+    bits = (bits << 5n) | BigInt(v)
+  }
+  return bits
 }
 
 /**
  * The look a code names, or null: twenty-eight symbols of the alphabet (case and dashes or spaces between them
  * ignored), four leading zero bits, a check that matches, and four words that unpack to a look within the wardrobe;
- * or a twenty-one-symbol code from before the layers, a fifteen-symbol one from before the face, or a legacy
- * eight-symbol one, each checked the same way and upgraded. Anything else is refused.
+ * or those twenty-eight followed by a tail (formatLookCode) of the genome's later words, its leading bits zero, its
+ * last word not zero, its own check over its words and the head's over every word matching; or a twenty-one-symbol code from before the
+ * layers, a fifteen-symbol one from before the face, or a legacy eight-symbol one, each checked the same way and
+ * upgraded. Anything else is refused.
  */
 export function parseLookCode(text: string): Look | null {
   if (typeof text !== 'string') return null
   const clean = text.toUpperCase().replace(/[\s-]/g, '')
-  if (clean.length !== CODE_CHARS && clean.length !== V3_CODE_CHARS && clean.length !== V2_CODE_CHARS && clean.length !== LEGACY_CODE_CHARS) return null
-  let bits = 0n
-  for (const ch of clean) {
-    const v = CODE_ALPHABET.indexOf(ch)
-    if (v < 0) return null
-    bits = (bits << 5n) | BigInt(v)
+  if (clean.length > CODE_CHARS) {
+    const k = Array.from({ length: TAIL_WORDS }, (_, i) => i + 1).find((n) => tailChars(n) === clean.length - CODE_CHARS)
+    if (k === undefined) return null
+    const head = bitsOf(clean.slice(0, CODE_CHARS))
+    const tail = bitsOf(clean.slice(CODE_CHARS))
+    if (head === null || tail === null || head >> 136n !== 0n || tail >> BigInt(32 * k + 8) !== 0n) return null
+    const words = [Number((head >> 104n) & 0xffffffffn), Number((head >> 72n) & 0xffffffffn), Number((head >> 40n) & 0xffffffffn), Number((head >> 8n) & 0xffffffffn)]
+    for (let i = k - 1; i >= 0; i--) words.push(Number((tail >> BigInt(8 + 32 * i)) & 0xffffffffn))
+    if (words[3 + k] === 0 || crc8(words.slice(4)) !== Number(tail & 0xffn) || crc8(words) !== Number(head & 0xffn)) return null
+    return unpackGenome(words)
   }
+  if (clean.length !== CODE_CHARS && clean.length !== V3_CODE_CHARS && clean.length !== V2_CODE_CHARS && clean.length !== LEGACY_CODE_CHARS) return null
+  const read = bitsOf(clean)
+  if (read === null) return null
+  const bits = read
   const check = Number(bits & 0xffn)
   if (clean.length === LEGACY_CODE_CHARS) {
     const word = Number(bits >> 8n)
@@ -848,12 +1044,13 @@ export function describeLook(look: Look): string[] {
 
 /**
  * One change to a look, as the console's `look` command asks it (terminal/bridge.ts LookBridge): a slot set to an
- * option (its 1-based number as describeLook prints it, or its name), a preset by name, a look code, a look drawn
- * from a seed, or the seed's own look again.
+ * option (its 1-based number as describeLook prints it, or its name), a preset by name, a build by name (LOOK_BUILDS:
+ * its four body sliders), a look code, a look drawn from a seed, or the seed's own look again.
  */
 export type LookChange =
   | { readonly kind: 'slot'; readonly slot: string; readonly value: string }
   | { readonly kind: 'preset'; readonly name: string }
+  | { readonly kind: 'build'; readonly name: string }
   | { readonly kind: 'code'; readonly code: string }
   | { readonly kind: 'random'; readonly seed: number }
   | { readonly kind: 'reset' }
@@ -875,7 +1072,11 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
   switch (change.kind) {
     case 'reset': return changed(lookFromSeed(seed), 'no look for that seed')
     case 'random': return Number.isFinite(change.seed) ? changed(lookFromSeed(change.seed), 'no look for that seed') : refused('the seed must be a number')
-    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (twenty-eight symbols, XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX)`)
+    case 'code': return changed(parseLookCode(change.code), `not a look code: '${change.code}' (twenty-eight symbols, XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX, and a tail when the look has one)`)
+    case 'build': {
+      const next = withBuild(look, change.name)
+      return next ? { look: next, error: null } : refused(`no build named '${change.name}': ${LOOK_BUILDS.map((b) => b.name).join(', ')}`)
+    }
     case 'preset': {
       const p = lookPreset(change.name)
       return p ? { look: p.look, error: null } : refused(`no preset named '${change.name}': ${LOOK_PRESETS.map((x) => x.name).join(', ')}`)

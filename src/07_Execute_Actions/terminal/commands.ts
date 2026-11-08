@@ -105,13 +105,13 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, height, mass, muscle, shoulders, hips, legs, posture, head, skin, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, skin, vitiligo, freckles, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
-  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
+  { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file or a workstation cell; their bodies in the physics realm as twins or leaders, every setpoint through the gate; fit takes the better of two actuator models, shape randomizes the body\'s domain by a seed (relay, spawn, cell, urdf, arm, calibrate, fit and shape are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
   { name: 'memory', usage: 'memory [<agent>|forget <agent>|forget all]', summary: 'what the people you recruit remember in this city; forget erases it (operator)' },
   { name: 'clear', usage: 'clear', summary: 'clear the screen (Ctrl+L)' },
@@ -132,7 +132,7 @@ const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
   { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
-  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
+  { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
   { name: 'act', usage: 'act [ok|no|log [verify]|list|gate]', summary: 'a city action an agent proposed: allow it, refuse it, read the hash-chained trail, list the catalogue, or read the gate it passes' },
   { name: 'say', usage: 'say [<skill>[,<skill>...]: <text...>|voice <name>|model <name>|server <url>|provider local|elevenlabs|key <key>|none|auto on|off|stop]', summary: 'said aloud by someone tethered with the skill, from where they stand (a speech server on this machine; or ElevenLabs through a gateway on it)' },
@@ -198,11 +198,12 @@ const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there
 /** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
 export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
-  'skin', 'age', 'undertone', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
+export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
 export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
-const LOOK_ACTIONS = ['code', 'preset', 'random', 'reset', 'show'] as const
+const LOOK_ACTIONS = ['build', 'code', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
 const ARGS: Record<string, readonly string[]> = {
@@ -224,6 +225,10 @@ const ARGS: Record<string, readonly string[]> = {
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
+  'look skin': ['mst-01', 'mst-02', 'mst-03', 'mst-04', 'mst-05', 'mst-06', 'mst-07', 'mst-08', 'mst-09', 'mst-10'],
+  'look vitiligo': ['face', 'hands', 'hands and face', 'none', 'one side', 'scattered', 'widespread'],
+  'look freckles': ['dense', 'light', 'medium', 'none'],
+  'look build': LOOK_BUILD_ARGS,
   'look layer': ['coat', 'jacket', 'shirt sleeves'],
   'look trim': ['matching'],
   'look scarf': ['none'],
@@ -244,17 +249,18 @@ const ARGS: Record<string, readonly string[]> = {
   noir: ['asm', 'reset', 'words'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
-  robot: ['arm', 'calibrate', 'demo', 'disarm', 'mode', 'relay', 'remove', 'set', 'spawn', 'urdf'],
+  robot: ['arm', 'calibrate', 'cell', 'demo', 'disarm', 'fit', 'mode', 'relay', 'remove', 'set', 'shape', 'spawn', 'urdf'],
   'robot relay': ['off'],
   recruit: [...RECRUIT_ACTIONS, ...SKILL_ARGS].sort(),
   uname: ['-a'],
   operator: ['lock', 'status', 'unlock'],
   run: SKILL_ARGS.map((s) => `${s}:`),
-  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think'].sort(),
+  ask: [...SKILL_ARGS.map((s) => `${s}:`), 'api', 'connect', 'effort', 'file', 'gpu', 'key', 'model', 'provider', 'server', 'stop', 'think', 'vram'].sort(),
   'ask think': ['off', 'on'],
   'ask file': MODEL_FILE_ACTIONS,
   'ask gpu': GPU_MODES,
   'ask api': ['chat', 'generate'],
+  'ask vram': ['auto'],
   'ask provider': PROVIDER_ARGS,
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
@@ -670,6 +676,7 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
     return { kind: 'random', seed: rest.length ? Number(rest[0]) : Number.NaN }
   }
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
+  if (action === 'build') return rest.length === 1 ? { kind: 'build', name: rest[0] } : `usage: look build <${LOOK_BUILD_ARGS.join('|')}>`
   if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
@@ -778,6 +785,8 @@ function mindLines(m: MindStatus): Line[] {
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
   else if (inPage) lines.push(out(row('server', 'none: the model runs in this page')), out(row('model', model)))
   else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
+  // Under auto with the GPUs' memory given: the size of model it gives Ollama and why (09_Cognition/modelFit.ts fitLine).
+  if (m.fit !== undefined) lines.push(out(row('fit', m.fit)))
   if (network) {
     lines.push(out(row('key', m.key ? `${m.key}  (kept in this browser's local storage: ask key none clears it)` : 'none in this page: the gateway on this machine adds it (recommended)')))
     lines.push(out(row('effort', m.effort ?? "the model's default (ask effort low|medium|high|xhigh|max)")))
@@ -1523,11 +1532,11 @@ const HANDLERS: Record<Name, Handler> = {
       if (!connect[1]) return fail(`usage: ask connect <${PROVIDER_ARGS.join('|')}> [<url>] [<key>]`)
       return { lines: [out(row('provider', op.askConnect(connect[1], connect[2], connect[3])))] }
     }
-    const set = /^(model|server|think|api|provider|key|effort)(?:\s+([\s\S]*))?$/.exec(rest)
+    const set = /^(model|server|think|api|provider|key|effort|vram)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
-      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort'
+      const key = set[1] as 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram'
       const value = (set[2] ?? '').trim()
-      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none' }[key]
+      const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none', vram: 'GB|auto' }[key]
       if (!value) return fail(`usage: ask ${key} <${takes}>`)
       return { lines: [out(row(key, op.askSet(key, value)))] }
     }
@@ -1783,9 +1792,11 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [sys(`net: joining ${url}...`)], pending }
   },
 
-  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove and the
-  // relay's status or its off run at any time (the last three only ever stop something); the relay, a body into the
-  // realm, a URDF read, arming and calibrating are the operator's. The async ones report later, as `xr` does.
+  // The robots (04_Connect_Hardware/robotLink.ts). The list, the demo, a mode, a setpoint, a disarm, a remove, the
+  // relay's status or its off, the stations' list and a domain's table run at any time (the stops only ever stop
+  // something; the rest only read); the relay, a body into the realm (spawn, cell, shape), a URDF read, arming,
+  // calibrating and fitting are the operator's. The async ones report later, as `xr` does; a report of several lines
+  // (fit, shape) is printed line by line.
   robot(args, b) {
     const r = robotOf(b)
     const a = args[0]
@@ -1797,9 +1808,37 @@ const HANDLERS: Record<Name, Handler> = {
     const n = args.length
     const later = (first: string, p: Promise<string>): CommandResult => ({
       lines: [sys(first)],
-      pending: p.then((t): Line[] => [out(`robot: ${t}`)], (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
+      pending: p.then((t): Line[] => t.split('\n').map((l, i) => out(i === 0 ? `robot: ${l}` : `  ${l}`)), (e: unknown): Line[] => [err(`robot: ${message(e)}`)]),
     })
     switch (a) {
+      case 'cell': {
+        if (n !== 1 && n !== 3) return fail(usage('robot'))
+        const stations = b.roomStations?.()
+        if (!stations) return fail('robot: this host keeps no rooms')
+        if (n === 1) {
+          if (!stations.length) return { lines: [sys('robot: no rooms on this map (the surveyed region has none)')] }
+          const head = out(`  ${'KIND'.padEnd(18)}${'STATION'.padEnd(9)}${'X'.padEnd(9)}${'Z'.padEnd(9)}${'YAW'.padEnd(7)}CELL`)
+          return { lines: [head, ...stations.map((s) => out(`  ${s.kind.padEnd(18)}${String(s.station).padEnd(9)}${s.x.toFixed(1).padEnd(9)}${s.z.toFixed(1).padEnd(9)}${s.yaw.toFixed(2).padEnd(7)}${r.cellKind(s.kind)}`))] }
+        }
+        if (!/^\d{1,4}$/.test(args[2])) return fail(`robot: not a station: '${args[2]}' (a whole number; robot cell lists them)`, usage('robot'))
+        const station = Number(args[2])
+        const st = stations.find((s) => s.kind === args[1] && s.station === station)
+        if (!st) return fail(`robot: no station ${station} in a '${args[1]}' room (robot cell lists them)`)
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: [out(r.cell(args[1], station, { x: st.x, z: st.z, yaw: st.yaw }))] }
+      }
+      case 'shape': {
+        if (n !== 2 && n !== 3) return fail(usage('robot'))
+        if (n === 2) return { lines: r.shape(args[1]).split('\n').map(out) }
+        if (args[2] !== 'off' && !/^\d{1,10}$/.test(args[2])) return fail(`robot: not a seed: '${args[2]}' (a whole number, or off)`, usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return { lines: r.shape(args[1], args[2] === 'off' ? 'off' : Number(args[2])).split('\n').map(out) }
+      }
+      case 'fit': {
+        if (n !== 3) return fail(usage('robot'))
+        if (!operatorOf(b).unlocked()) return locked('robot')
+        return later(`robot: fitting ${args[2]} of ${args[1]} (a hold, one small step, two models)...`, r.fit(args[1], args[2]))
+      }
       case 'relay': {
         if (n === 1) return { lines: [out(r.relayStatus())] }
         if (args[1] === 'off') return n === 2 ? { lines: [out(r.relayOff())] } : fail(usage('robot'))

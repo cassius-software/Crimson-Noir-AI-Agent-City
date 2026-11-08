@@ -13,12 +13,14 @@ import type { Box, Furniture } from '../01_Initialize_World/city.ts'
 import type { RegionGround } from './physics.ts'
 import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import type { WorkplaceLot } from '../01_Initialize_World/interiors.ts'
+import type { ShopLot } from '../01_Initialize_World/storefronts.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
 import type { TrackKind } from '../06_Make_Decisions/tracks.ts'
 import type { BalanceState } from '../03_Spawn_Agents/ragdoll.ts'
 import type { Manifest } from '../04_Connect_Hardware/jointState.ts'
+import type { ActuatorShaping, JointFriction } from '../04_Connect_Hardware/actuatorFit.ts'
 
 /**
  * One vehicle's slice of the pose buffer (Float32Array, `POSE.stride` floats per vehicle, fleet order). The
@@ -146,6 +148,13 @@ export interface SimInit {
    */
   workplaces?: WorkplaceLot[] | null
   /**
+   * A generated region's storefronts (01_Initialize_World/region/shops.ts regionShopLots): at most five lots of the
+   * street window, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
+   * same glass from (storefronts.ts shopsAt) so a car left in a shop puts its driver down clear of it. Their boxes come
+   * in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose shops are its seed's.
+   */
+  shops?: ShopLot[] | null
+  /**
    * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
    * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
    * random street-hopping drivers.
@@ -266,9 +275,13 @@ export type SimCommand =
   /**
    * How the body answers its setpoints: `follow` tracks the newest (a twin following a robot's frames), `filter` holds
    * each back `delaySteps` steps and eases toward it at `tauMs` (a leader's body, a simulated robot: the calibrated
-   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given.
+   * lag), `hold` stands still. `tauMs` and `delaySteps` are kept when not given. `shaping`, per movable joint, puts a
+   * second-order reference actuator (actuatorFit.ts ActuatorShaping, with its own delay) in place of the first-order
+   * filter on that joint (null: the filter); `friction`, per movable joint, is the physical Coulomb, viscous and
+   * stiction friction the realm applies about the joint (null: none). Each is kept when not given and cleared by an
+   * empty array; every number is judged in the worker (lengths, finiteness, bounds) and a bad one is a counted rejection.
    */
-  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number }
+  | { c: 'robotMode'; id: number; mode: RobotMode; tauMs?: number; delaySteps?: number; shaping?: (ActuatorShaping | null)[]; friction?: (JointFriction | null)[] }
   // Fault injection for the ?debug harness only: refused by a worker built without debug.
   | { c: 'dbgVelocity'; i: number; x: number; y: number; z: number }
   | { c: 'dbgMode'; i: number; mode: DriveMode }

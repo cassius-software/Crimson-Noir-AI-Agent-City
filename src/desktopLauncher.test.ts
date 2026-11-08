@@ -22,6 +22,7 @@ import type { Server } from 'node:http'
 import { hostname, tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
+import { VRAM_MAX_GB } from './09_Cognition/modelFit.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const LAUNCH: string = '../tools/web/launch.mjs'
@@ -40,6 +41,10 @@ const launcher = (await import(LAUNCH)) as {
   tokenFile(dir: string, port: number): string
   ours(port: number, file: string): Promise<boolean>
   profileOwner(profile: string): number | null
+  GPU_FLOOR_BYTES: number
+  VRAM_MAX_GB: number
+  gpuMemory(o?: { smi?: () => string | null; drm?: string; list?: (d: string) => string[]; read?: (f: string) => string }): { gb: number; from: 'nvidia-smi' | 'amdgpu' } | null
+  withVram(q: URLSearchParams, probe?: () => { gb: number; from: string } | null): { gb: number; from: string } | null
 }
 const CDP: string = '../tools/browser/cdp.mjs'
 const cdp = (await import(CDP)) as { findChrome(explicit?: string): string | null }
@@ -296,4 +301,88 @@ test('Nix leaves nothing the repository\'s walkers, the page build or git would 
   assert.ok(!headers.nixLeftover('results.md') && !headers.nixLeftover('src'))
   assert.equal(headers.licenseOf('flake.nix'), 'mit')
   assert.equal(headers.licenseOf('tools/nix/module.nix'), 'mit')
+})
+
+/** No amdgpu folder: the nvidia-smi cases never fall through to this machine's own /sys. */
+const NO_DRM = { list: (): string[] => { throw new Error('no driver folder') } }
+
+test('gpuMemory reads nvidia-smi\'s MiB per GPU, skips [N/A] and GPUs under 4 GiB, and rounds the sum down to 0.1 GB', () => {
+  assert.equal(launcher.GPU_FLOOR_BYTES, 4 * 2 ** 30)
+  assert.deepEqual(launcher.gpuMemory({ smi: () => '24564\n24564\n', ...NO_DRM }), { gb: 47.9, from: 'nvidia-smi' })
+  assert.deepEqual(launcher.gpuMemory({ smi: () => '24564\n', ...NO_DRM }), { gb: 23.9, from: 'nvidia-smi' }, 'a 24 GB card: 23.99 GiB, rounded down')
+  assert.deepEqual(launcher.gpuMemory({ smi: () => '81559\n81559\n81559\n81559\n', ...NO_DRM }), { gb: 318.5, from: 'nvidia-smi' }, 'four 80 GB cards')
+  assert.deepEqual(launcher.gpuMemory({ smi: () => ' 24564 \r\n[N/A]\n2048\n', ...NO_DRM }), { gb: 23.9, from: 'nvidia-smi' }, 'spaces and a CRLF trimmed; [N/A] and a 2 GiB GPU not counted')
+  // Nothing nvidia-smi said counts: the amdgpu driver is asked next, and with none of it, no figure.
+  const amd = { list: () => ['card0'], read: () => '25753026560\n' }
+  assert.deepEqual(launcher.gpuMemory({ smi: () => '[N/A]\n2048\n', ...amd }), { gb: 23.9, from: 'amdgpu' }, '[N/A] and a carve-out fall through')
+  assert.equal(launcher.gpuMemory({ smi: () => '[N/A]\n2048\n', ...NO_DRM }), null)
+  assert.deepEqual(launcher.gpuMemory({ smi: () => null, ...amd }), { gb: 23.9, from: 'amdgpu' }, 'no nvidia-smi, or one that failed')
+  assert.equal(launcher.gpuMemory({ smi: () => '', ...NO_DRM }), null)
+  assert.equal(launcher.gpuMemory({ smi: () => '24564.5\n-24564\n0x6000\n1e5\n', ...NO_DRM }), null, 'only whole MiB')
+  assert.equal(launcher.gpuMemory({ smi: () => '9'.repeat(30), ...NO_DRM }), null, 'a count past any GPU is not believed')
+  assert.equal(launcher.gpuMemory({ smi: () => `${'81559\n'.repeat(64)}`, ...NO_DRM }), null, 'above the page\'s 4096 GB ceiling: no figure')
+})
+
+test('gpuMemory falls back to the amdgpu driver\'s VRAM per card in a temporary sysfs tree; connector folders and carve-outs are skipped', () => {
+  const drm = mkdtempSync(join(tmpdir(), 'launcher-drm-'))
+  const card = (name: string, text: string | null) => {
+    mkdirSync(join(drm, name, 'device'), { recursive: true })
+    if (text !== null) writeFileSync(join(drm, name, 'device', 'mem_info_vram_total'), text)
+  }
+  try {
+    assert.equal(launcher.gpuMemory({ smi: () => null, drm }), null, 'an empty folder: no figure')
+    card('card0', '25753026560\n')
+    assert.deepEqual(launcher.gpuMemory({ smi: () => null, drm }), { gb: 23.9, from: 'amdgpu' })
+    // The same bytes again under names that are not cards: a connector and a render node.
+    card('card0-DP-1', '25753026560\n')
+    card('renderD128', '25753026560\n')
+    card('card1', '536870912\n')
+    card('card2', null)
+    card('card3', 'not a number\n')
+    assert.deepEqual(launcher.gpuMemory({ smi: () => null, drm }), { gb: 23.9, from: 'amdgpu' }, 'the connector, the render node, a 512 MiB carve-out, a card with no file and one with no number are skipped')
+    card('card4', '17163091968\n')
+    assert.deepEqual(launcher.gpuMemory({ smi: () => null, drm }), { gb: 39.9, from: 'amdgpu' }, 'two cards add up')
+    assert.deepEqual(launcher.gpuMemory({ smi: () => '24564\n', drm }), { gb: 23.9, from: 'nvidia-smi' }, 'nvidia-smi\'s figure comes first')
+    assert.equal(launcher.gpuMemory({ smi: () => null, drm: join(drm, 'missing') }), null, 'no driver folder: no figure, nothing thrown')
+  } finally {
+    rmSync(drm, { recursive: true, force: true })
+  }
+})
+
+test('withVram: vram= on the command line wins, vram=0 included; else the probe\'s figure is added; no figure, nothing added', () => {
+  let asked = 0
+  const probe = () => { asked++; return { gb: 23.9, from: 'nvidia-smi' } }
+  for (const words of [['vram=0'], ['quality=4', 'vram=12'], ['vram']]) {
+    const o = launcher.options(words, { AGENT_CITY_DIST: '/srv/page' })
+    const before = o.query.toString()
+    assert.equal(launcher.withVram(o.query, probe), null, words.join(' '))
+    assert.equal(o.query.toString(), before, words.join(' '))
+  }
+  assert.equal(asked, 0, 'a figure on the command line is not even probed')
+
+  const o = launcher.options(['quality=4'], { AGENT_CITY_DIST: '/srv/page' })
+  assert.deepEqual(launcher.withVram(o.query, probe), { gb: 23.9, from: 'nvidia-smi' })
+  assert.equal(o.query.toString(), 'quality=4&vram=23.9')
+  assert.equal(asked, 1)
+  const whole = new URLSearchParams()
+  launcher.withVram(whole, () => ({ gb: 24, from: 'amdgpu' }))
+  assert.equal(whole.toString(), 'vram=24.0', 'always one decimal, as the page reads it')
+
+  const none = new URLSearchParams('players=2')
+  assert.equal(launcher.withVram(none, () => null), null)
+  assert.equal(none.toString(), 'players=2', 'no figure: the address is main\'s')
+})
+
+test('--check never probes the GPU, the help names vram=, the ceiling is the page\'s, and nothing runs through a shell', () => {
+  const src = read('tools/web/launch.mjs')
+  const check = src.indexOf('if (o.check) return')
+  const probe = src.indexOf('withVram(o.query)')
+  assert.ok(check > 0 && probe > check, '--check returns before the probe')
+  assert.equal(src.split('withVram(o.query)').length, 2, 'one probe, in main')
+  const help = /const HELP = `([^`]*)`/.exec(src)
+  assert.ok(help, 'the launcher has its HELP text')
+  assert.match(help[1], /vram=<GB>/)
+  assert.equal(launcher.VRAM_MAX_GB, VRAM_MAX_GB, 'the launcher never hands the page a figure it would ignore')
+  assert.doesNotMatch(src, /\bexecSync?\s*\(|shell:\s*true/)
+  assert.match(src, /spawnSync\('nvidia-smi', \[/, 'nvidia-smi by name with an argument list')
 })

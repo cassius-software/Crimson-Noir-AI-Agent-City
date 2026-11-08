@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -27,7 +27,7 @@ import {
   type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
-import { LOOK_BODIES, LOOK_PRESETS, LOOK_SLOTS } from '../../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_BUILDS, LOOK_PRESETS, LOOK_SLOTS, lookOptions } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
@@ -120,7 +120,7 @@ interface FakeOp extends OperatorBridge {
   /** The answered text (the ACTION line already stripped, as the tier hands it over). */
   text: string
   acts: FakeActs
-  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string }
+  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string; fit?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
@@ -305,6 +305,10 @@ function fakeOperator(): FakeOp {
         if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
         f.mind.think = value === 'on'
         return f.mind.think ? 'on: the model reasons before it answers (slower; its thinking shows live)' : 'off: the model answers without reasoning first'
+      }
+      if (key === 'vram') {
+        if (!/^(auto|\d{1,4}(\.\d+)?)$/i.test(value)) throw new TypeError("ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto")
+        return `${value} GB at the console`
       }
       f.mind[key] = value
       return value
@@ -557,6 +561,21 @@ function fakeRobot(calls: string[]): FakeRobot {
     arm: (id) => { calls.push(`robot arm ${id}`); return typeof r.armResult === 'function' ? r.armResult() : r.armResult },
     disarm: (id) => { calls.push(`robot disarm ${id}`); return `${id}: disarmed` },
     calibrate: (id, joint) => { calls.push(`robot calibrate ${id} ${joint}`); return Promise.resolve(`${id}: ${joint}: delay 17 ms (return trip 0 ms), τ 120 ms, gain 1, rmse 0.0001 · twin: 1 step(s) back, τ 120 ms`) },
+    fit: (id, joint) => {
+      calls.push(`robot fit ${id} ${joint}`)
+      return Promise.resolve(`${id}: ${joint}: first order: delay 17 ms, τ 120 ms, gain 1, rmse 0.0012 (return trip 0 ms)\nsecond order: delay 12 ms, ω 14.2 rad/s, ζ 0.93, gain 1, rmse 0.0004\ntwin takes second order: rmse 67 % lower (Occam asks 10 %) · shaping: 1 step(s) back, ω 14.2 rad/s, ζ 0.93, gain 1, speed cap 4`)
+    },
+    shape: (id, seed) => {
+      calls.push(`robot shape ${id} ${seed ?? '-'}`)
+      if (seed === undefined) return `${id}: plain body, no domain (robot shape ${id} <seed>)`
+      if (seed === 'off') return `${id}: body 2 at 10, 22 (3 joints, mode sim) · plain body`
+      return `${id}: body 2 at 10, 22 (3 joints, mode sim, domain seed ${seed})\ndomain seed ${seed}: mass ±20 %, inertia ±30 %, friction up to 5 % of the effort cap`
+    },
+    cellKind: (kind) => { calls.push(`robot cellKind ${kind}`); return kind === 'roboticsLab' ? 'arm' : 'console' },
+    cell: (kind, station, at) => {
+      calls.push(`robot cell ${kind} ${station} ${at.x} ${at.z} ${at.yaw}`)
+      return kind === 'roboticsLab' ? `sim:${kind}-${station}: body 1 at ${at.x}, ${at.z} (6 joints, mode sim) · arm cell` : `${kind}: a console cell has no robot; a desk, a screen and a chair.`
+    },
     remove: (id) => { calls.push(`robot remove ${id}`); return `${id}: removed` },
   }
   return r
@@ -611,6 +630,8 @@ interface Fake extends TerminalBridge {
   net: FakeNet
   robot: FakeRobot
   model: FakeModel
+  /** The rooms' stations the fake host keeps (`robot cell` reads them through roomStations). */
+  stations: { kind: string; station: number; x: number; z: number; yaw: number }[]
   hours: number
   q: QualityState
   devs: HalDevice[]
@@ -659,6 +680,8 @@ function fake(): Fake {
       },
     },
     adapter: () => 'Test GPU (fake)',
+    stations: [{ kind: 'roboticsLab', station: 0, x: 12.25, z: -40.5, yaw: 1.5708 }, { kind: 'boardroom', station: 3, x: -8, z: 2, yaw: 0 }],
+    roomStations: () => f.stations,
     hardware: () => { f.calls.push('hardware'); return sampleHardware() },
     operator: fakeOperator(),
     record: fakeRecord(),
@@ -738,7 +761,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|vram <GB>\|auto\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /act \[ok\|no\|log \[verify\]\|list\|gate\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
@@ -747,7 +770,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /captions \[on\|off\]/)
   assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
-  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|code <code>\|random \[<seed>\]\|reset\]/)
+  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
   assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
@@ -1169,9 +1192,10 @@ test('air gap: while locked, across every command and completion, the only knobs
   // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
   assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
-  // (a leave); no body enters the realm, nothing is armed, no socket opens, no URDF is read.
+  // (a leave), and the cells' kinds (`robot cell` alone lists the stations: a read of a table); no body enters the
+  // realm, nothing is armed, no socket opens, no URDF is read, no domain is drawn.
   const robotVerbs = new Set(b.calls.filter((c) => c.startsWith('robot ')).map((c) => c.split(' ')[1]))
-  assert.deepEqual([...robotVerbs].sort(), ['demo', 'list', 'relayOff', 'relayStatus'])
+  assert.deepEqual([...robotVerbs].sort(), ['cellKind', 'demo', 'list', 'relayOff', 'relayStatus'])
   // The namespace is only ever read while locked (it has no write), and only through its four readers.
   const topicVerbs = new Set(b.calls.filter((c) => c.startsWith('topics ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...topicVerbs].sort(), ['children', 'get', 'list', 'status'])
@@ -1427,7 +1451,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1755,8 +1779,12 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
-  assert.deepEqual(complete('look '), [...['code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow'])
+  assert.deepEqual(complete('look '), [...['build', 'code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
+  assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
+  assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
+  assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
+  assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
   assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
@@ -1785,7 +1813,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 11)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 12)
   assert.deepEqual(complete('ask m'), ['ask model'])
   assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
   assert.deepEqual(complete('ask f'), ['ask file'])
@@ -2149,6 +2177,9 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_SLOT_ARGS], [...LOOK_SLOTS])
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
+  assert.deepEqual([...LOOK_BUILD_ARGS], LOOK_BUILDS.map((x) => x.name).sort())
+  for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
+  assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {
@@ -2474,6 +2505,33 @@ test('ask file and ask gpu work while locked (they keep a file or a setting, and
     assert.deepEqual(run(c, bare, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }], c)
   }
   for (const c of ['ask file', 'ask file load', 'ask gpu auto']) assert.deepEqual(run(c, offlineBridge(BRAND), []).lines, [{ kind: 'err', text: 'ask: engine not running' }], c)
+})
+
+test('ask vram: its usage, its row, the console\'s refusal and its completion; the fit row sits under the model row', async () => {
+  const b = unlocked()
+  // Bare: the usage, and the bridge is not asked.
+  assert.deepEqual(texts(run('ask vram', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(texts(run('ask vram   ', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(run('ask vram 24', b, []).lines, [{ kind: 'out', text: 'vram      24 GB at the console' }])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24'])
+  run('ask vram AUTO', b, [])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24', 'askSet vram AUTO'], 'the mind reads the word, whatever its case')
+  // The mind's refusal, in its words.
+  assert.deepEqual(run('ask vram lots', b, []).lines, [{ kind: 'err', text: "ask: ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto" }])
+  // The fit row, right under the model row.
+  b.operator.mind.fit = "24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger"
+  assert.deepEqual(await run('ask', b, []).pending, [
+    { kind: 'out', text: 'server    http://localhost:11434  (this machine only)' },
+    { kind: 'out', text: 'model     test-model' },
+    { kind: 'out', text: "fit       24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger" },
+    { kind: 'out', text: 'installed a-model' },
+    { kind: 'out', text: '          test-model  (chosen)' },
+  ])
+  // Tab completes the word and its one keyword.
+  assert.deepEqual(complete('ask v'), ['ask vram'])
+  assert.deepEqual(complete('ask vram '), ['ask vram auto'])
+  assert.deepEqual(complete('ask vram a'), ['ask vram auto'])
 })
 
 test('ask alone over a model running in this page: no server, the runtime and storage rows, and where to keep a file when none is', async () => {
@@ -3004,9 +3062,17 @@ test('robot: the list, demo, mode, set, disarm, remove and the relay status at a
   assert.deepEqual(texts(run('robot remove sim:demo', b, [])), ['sim:demo: removed'])
   assert.deepEqual(texts(run('robot relay', b, [])), ['relay: off (robot relay <ws url> <token>)'])
   assert.deepEqual(texts(run('robot relay off', b, [])), ['relay: left ws://127.0.0.1:8790/'])
-  // Locked: the five that reach the realm, a socket, a file or a device are refused before the bridge is touched.
+  // The domain table and the stations' list read at any time; the list carries each station's cell kind.
+  assert.deepEqual(texts(run('robot shape sim:demo', b, [])), ['sim:demo: plain body, no domain (robot shape sim:demo <seed>)'])
+  const cells = texts(run('robot cell', b, []))
+  assert.equal(cells.length, 3)
+  assert.match(cells[0], /^\s+KIND\s+STATION\s+X\s+Z\s+YAW\s+CELL$/)
+  assert.match(cells[1], /^\s+roboticsLab\s+0\s+12\.3\s+-40\.5\s+1\.57\s+arm$/)
+  assert.match(cells[2], /^\s+boardroom\s+3\s+-8\.0\s+2\.0\s+0\.00\s+console$/)
+  // Locked: the ones that reach the realm, a socket, a file or a device are refused before the bridge is touched.
   const before = b.calls.length
-  for (const l of ['robot spawn sim:demo', 'robot spawn sim:demo 1 2', 'robot urdf http://127.0.0.1:8790/arm.urdf', 'robot arm sim:demo', 'robot calibrate sim:demo elbow', 'robot relay ws://127.0.0.1:8790/ tok']) {
+  for (const l of ['robot spawn sim:demo', 'robot spawn sim:demo 1 2', 'robot urdf http://127.0.0.1:8790/arm.urdf', 'robot arm sim:demo', 'robot calibrate sim:demo elbow', 'robot relay ws://127.0.0.1:8790/ tok',
+    'robot fit sim:demo elbow', 'robot shape sim:demo 42', 'robot shape sim:demo off', 'robot cell roboticsLab 0']) {
     const r = run(l, b, [])
     assert.ok(isErr(r), l)
     assert.match(texts(r)[0], /^robot: locked/)
@@ -3017,6 +3083,29 @@ test('robot: the list, demo, mode, set, disarm, remove and the relay status at a
   assert.deepEqual(texts(run('robot spawn sim:demo', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
   assert.deepEqual(texts(run('robot spawn sim:demo 1 -2.5', b, [])), ['sim:demo: body 1 at 10, 22 (3 joints, mode sim)'])
   assert.deepEqual(b.calls.slice(before), ['robot spawn sim:demo - -', 'robot spawn sim:demo 1 -2.5'])
+  // A cell at a station the host lists, with the station's own place and yaw; a console cell is a sentence; a
+  // station the host does not have is refused before the bridge is asked.
+  assert.deepEqual(texts(run('robot cell roboticsLab 0', b, [])), ['sim:roboticsLab-0: body 1 at 12.25, -40.5 (6 joints, mode sim) · arm cell'])
+  assert.equal(b.calls.at(-1), 'robot cell roboticsLab 0 12.25 -40.5 1.5708')
+  assert.match(texts(run('robot cell boardroom 3', b, []))[0], /a console cell has no robot/)
+  const missing = run('robot cell roboticsLab 7', b, [])
+  assert.ok(isErr(missing))
+  assert.match(texts(missing)[0], /no station 7 in a 'roboticsLab' room/)
+  // A seed's table comes line by line; off is one line.
+  const shaped = texts(run('robot shape sim:demo 42', b, []))
+  assert.equal(shaped.length, 2)
+  assert.match(shaped[0], /^sim:demo: body 2 at 10, 22 \(3 joints, mode sim, domain seed 42\)$/)
+  assert.match(shaped[1], /^domain seed 42:/)
+  assert.deepEqual(texts(run('robot shape sim:demo off', b, [])), ['sim:demo: body 2 at 10, 22 (3 joints, mode sim) · plain body'])
+  // The fit reports later, its three lines printed one under the other.
+  const fit = run('robot fit sim:demo elbow', b, [])
+  assert.deepEqual(fit.lines, [{ kind: 'sys', text: 'robot: fitting elbow of sim:demo (a hold, one small step, two models)...' }])
+  const fitLines = (await fit.pending)!
+  assert.equal(fitLines.length, 3)
+  assert.match(fitLines[0].text, /^robot: sim:demo: elbow: first order: delay 17 ms/)
+  assert.match(fitLines[1].text, /^  second order: delay 12 ms, ω 14\.2 rad\/s, ζ 0\.93/)
+  assert.match(fitLines[2].text, /^  twin takes second order/)
+  assert.ok(fitLines.every((l) => l.kind === 'out'))
   const arm = run('robot arm sim:demo', b, [])
   assert.deepEqual(arm.lines, [{ kind: 'sys', text: 'robot: arming sim:demo...' }])
   assert.deepEqual(await arm.pending, [{ kind: 'out', text: 'robot: sim:demo: armed (sim)' }])
@@ -3036,15 +3125,21 @@ test('robot: the list, demo, mode, set, disarm, remove and the relay status at a
   const n = b.calls.length
   for (const l of ['robot nothing', 'robot spawn', 'robot spawn sim:demo 1', 'robot spawn sim:demo x y', 'robot set sim:demo elbow', 'robot set sim:demo elbow many', 'robot mode sim:demo',
     'robot arm', 'robot arm a b', 'robot disarm', 'robot calibrate sim:demo', 'robot remove', 'robot urdf', 'robot urdf file:///arm.urdf', 'robot relay ws://127.0.0.1:8790/', 'robot relay http://127.0.0.1:8790/ tok',
-    'robot relay off now', 'robot demo a b']) {
+    'robot relay off now', 'robot demo a b', 'robot fit', 'robot fit sim:demo', 'robot shape', 'robot shape sim:demo 1.5', 'robot shape sim:demo -1', 'robot shape sim:demo 1 2', 'robot cell roboticsLab', 'robot cell roboticsLab x']) {
     const bad = run(l, b, [])
     assert.ok(isErr(bad), l)
     assert.match(texts(bad).join('\n'), /usage: robot \[relay/, l)
   }
   assert.equal(b.calls.length, n, 'a refused line touches nothing')
-  // A bridge without robots (the console shell) says so.
+  // A bridge without robots (the console shell) says so; one without rooms says so for the cells; a map without rooms lists none.
   const bare = { ...fake(), robot: undefined }
   assert.match(texts(run('robot', bare, []))[0], /robots are not available/)
+  const roomless = { ...fake(), roomStations: undefined }
+  assert.match(texts(run('robot cell', roomless, []))[0], /this host keeps no rooms/)
+  const region = fake()
+  region.stations = []
+  assert.deepEqual(kinds(run('robot cell', region, [])), ['sys'])
+  assert.match(texts(run('robot cell', region, []))[0], /no rooms on this map/)
 })
 
 test('xr: the status line at once; vr, ar and off reach the bridge inside the keypress and report later; a bridge throw is an error line; anything else is refused', async () => {

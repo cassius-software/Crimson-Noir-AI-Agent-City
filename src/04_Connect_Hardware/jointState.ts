@@ -42,6 +42,13 @@ export interface LinkSpec {
   readonly shape: Shape
   /** Where the shape sits in the link's frame. */
   readonly shapeOrigin: Pose
+  /**
+   * The link's rotational inertia as a multiple of what its shape gives at its mass (absent: 1). A URDF carries a
+   * full tensor, which the reader does not read, so this is the manifest's one inertia word: the domain randomizer
+   * (actuatorFit.ts randomizeDomain) sets it within 0.7..1.3 and the realm scales the body's inertia by it, mass
+   * unchanged. Judged within 0.1..10.
+   */
+  readonly inertiaScale?: number
 }
 
 export interface Mimic { readonly joint: string; readonly multiplier: number; readonly offset: number }
@@ -96,6 +103,8 @@ export const REALM_BOUNDS = Object.freeze({
   velocity: 100,
   range: 1000,
 })
+/** The bounds of a link's inertiaScale: a tenth to ten times the shape's inertia (beyond that it is not the same link). */
+export const INERTIA_SCALE = Object.freeze({ min: 0.1, max: 10 })
 /** Names (robot, link, joint): printable ASCII without the characters MQTT topics and HAL/1 lines reserve. */
 const NAME = /^[\x21-\x7e]{1,64}$/
 const NAME_RESERVED = /[+#/\s"\\]/
@@ -184,7 +193,7 @@ function checkShape(s: unknown): Checked<Shape> {
 
 function checkLink(l: unknown): Checked<LinkSpec> {
   if (typeof l !== 'object' || l === null) return bad('a link must be an object')
-  const o = l as { name?: unknown; mass?: unknown; shape?: unknown; shapeOrigin?: unknown }
+  const o = l as { name?: unknown; mass?: unknown; shape?: unknown; shapeOrigin?: unknown; inertiaScale?: unknown }
   if (!validName(o.name)) return bad(`a link needs a name (got ${JSON.stringify(o.name ?? null)})`)
   const mass = o.mass === undefined ? 0 : o.mass
   if (!finite(mass) || (mass as number) < 0) return bad(`link '${o.name}': the mass must be a finite number of kg, 0 or more`)
@@ -192,7 +201,11 @@ function checkLink(l: unknown): Checked<LinkSpec> {
   if (!shape.ok) return bad(`link '${o.name}': ${shape.reason}`)
   const origin = o.shapeOrigin === undefined ? ORIGIN : o.shapeOrigin
   if (!isPose(origin)) return bad(`link '${o.name}': the shape origin needs xyz and rpy`)
-  return { ok: true, value: { name: o.name, mass: mass as number, shape: shape.value, shapeOrigin: { xyz: [...origin.xyz] as unknown as Vec3, rpy: [...origin.rpy] as unknown as Vec3 } } }
+  const spec: LinkSpec = { name: o.name, mass: mass as number, shape: shape.value, shapeOrigin: { xyz: [...origin.xyz] as unknown as Vec3, rpy: [...origin.rpy] as unknown as Vec3 } }
+  if (o.inertiaScale === undefined) return { ok: true, value: spec }
+  const k = o.inertiaScale
+  if (!finite(k) || (k as number) < INERTIA_SCALE.min || (k as number) > INERTIA_SCALE.max) return bad(`link '${o.name}': inertiaScale must be a finite number from ${INERTIA_SCALE.min} to ${INERTIA_SCALE.max}`)
+  return { ok: true, value: { ...spec, inertiaScale: k as number } }
 }
 
 function checkJoint(j: unknown): Checked<JointSpec> {

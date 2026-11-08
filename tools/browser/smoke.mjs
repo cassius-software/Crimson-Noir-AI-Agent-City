@@ -1683,10 +1683,15 @@ const SCENARIOS = {
     try {
       // The slowest day (one sim minute a real minute at 60 fps, slower on a software GPU, whose frames are clamped to
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
-      await p.goto(`${origin}/?${LIGHT}&day=1440`)
+      await p.goto(`${origin}/?${LIGHT}&day=1440&vram=24`)
       await p.booted()
       check(await p.openConsole(), 'actions: the tilde key opens the console')
       await p.command('operator unlock', /unlocked/)
+      // The GPUs' memory from the address (router.ts fit): the fit row names it; nothing on this machine answers, so nothing is measured.
+      check(!!(await p.command('ask', /fit\s+24\.0 GB given by the page's address \(vram=\)/)), 'actions: vram=24 in the address shows on the fit row')
+      check(!!(await p.command('ask vram 16', /vram\s+16\.0 GB at the console/)), 'actions: ask vram 16 is kept')
+      check(!!(await p.command('ask vram 5000', /ask vram takes the GPUs' memory in GB, from 0 to 4096/)), 'actions: ask vram refuses 5000')
+      check(!!(await p.command('ask vram auto', /vram\s+auto: 24\.0 GB from the page's address/)), 'actions: ask vram auto hands back to the address')
       // `ask provider scripted` answers `provider  scripted: no backend; …` (router.ts PROVIDER_TEXT).
       await p.command('ask provider scripted', /provider\s+scripted/)
       const t = await tether(p, 'Design')
