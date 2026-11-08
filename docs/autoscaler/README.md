@@ -102,8 +102,9 @@ climbs the same way.
 ## C. Above the maximum: Peak
 
 Peak is tier 5, above Ultra and outside the tier table, like Lite below it. It draws Ultra at 1.25 times the
-resolution on each side (about 1.56 times the pixels), the sun's shadows out to 160 m at the same sharpness (an
-8192² map, about 512 MB of graphics memory) and full-detail people out to 90 m.
+resolution on each side (about 1.56 times the pixels), Ultra's sun shadows (two 4096 cascades in an 8192 × 4096 atlas
+out to 240 m, about 256 MB of graphics memory, the same as Ultra's) with a wider sixteen-tap penumbra, and full-detail
+people out to 90 m. (Until the cascaded sun, Peak drew the shadows out to 160 m on an 8192² map of about 512 MB.)
 
 **The candidate.** The same machine as B, or an RTX 5090 (`nvidia / blackwell / NVIDIA GeForce RTX 5090`, 16 threads).
 The rule (`peakCandidate`): a discrete card of any make or an Apple computer's chip, 8 cores or more, and no report
