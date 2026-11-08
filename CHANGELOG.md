@@ -44,7 +44,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   The Linux targets make an .rpm with `tauri bundle` from the binary the build made: Version 1.0.0, Release
   0.stable.beta (the final 1.0.0-1 sorts after it). Nothing is compiled with the shorter version, so the app inside
   every installer says 1.0.0-stable-beta (`installerVersion`, `rpmRelease` in tools/build/matrix.mjs, pinned by
-  tests). Not installed on a machine yet.
+  tests). The pull request's runners built all four: the x64 .msi in windows-app.yml, the arm64 .msi (WiX target
+  arm64, 8.3 MiB), and `Crimson Noir Agent City-1.0.0-0.stable.beta.x86_64.rpm` and `.aarch64.rpm` (8.2 MiB). Not
+  installed on a machine yet.
 - **Crimson Noir OS boots on aarch64 (`uefi-arm64`).** The boot crate's machine layer is split by architecture
   (`crimson_noir_os/boot/src/arch.rs`): `arch/x86_64.rs` is the old one, and `arch/aarch64.rs` drives an Arm machine
   after ExitBootServices: the serial line is the UART the firmware's ACPI SPCR table names (a PL011 or an SBSA generic
@@ -57,10 +59,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unchanged), `boot_test.py --arch aarch64` boots QEMU's Arm `virt` machine with edk2 (AAVMF), a ramfb screen and the
   serial line on a socket it types into, and build-matrix.yml's two UEFI jobs bake their media twice, compare the
   bytes, and boot the disk image through the tutorial and the terminal to power-off and the ISO to the self-test. On
-  a tag the x86-64 media stay build-release.yml's (the build matrix no longer uploads its copies over them). Checked here
-  in QEMU: the aarch64 disk image through the whole boot test, the ISO to the self-test, a forced data abort and a
-  BRK on the fault screen, two clean bakes byte for byte, and the x86-64 image through the same boot test after the
-  split. Not booted on Arm hardware.
+  a tag the x86-64 media stay build-release.yml's (the build matrix no longer uploads its copies over them). Checked in
+  QEMU here and on the pull request's runners: the aarch64 disk image through the whole boot test (`SELFTEST PASS`
+  after 8 s, the tutorial passed after 74 s, `golden` matched, powered off), the ISO from a SCSI CD to the self-test,
+  a second clean bake byte for byte, and the x86-64 image through the same tests after the split; here also a forced
+  data abort and a BRK on the fault screen. Not booted on Arm hardware.
 - **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
   three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
   or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer
