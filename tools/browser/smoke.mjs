@@ -1797,6 +1797,13 @@ const SCENARIOS = {
       check(r.people > 0, 'lakefront: the window has people', `${r.people} pedestrians`)
       check(r.drawn === 6 && r.crowd === 6, 'lakefront: six indoor workplaces drawn, and six reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
       check(Number.isInteger(r.working) && r.working >= 0, 'lakefront: the HUD counts who is at work indoors', `working ${r.working}`)
+      // The window's transit (region/transit.ts): the realm schedules craft on the window's own network (its elevated loop,
+      // drone corridors and racetrack at least) and the page draws them and the painted crossings.
+      const c = await p.eval(`(() => { const e = window.__SIM__.engine, kinds = {}
+        for (const t of (e.craftView?.tracks ?? [])) kinds[t.kind] = (kinds[t.kind] ?? 0) + 1
+        return { craft: e.sim.meta.craft, view: e.craftView !== null, kinds, markings: e.world.scene.children.some((m) => m.name === 'RegionMarkings') } })()`)
+      check(c.craft > 0 && c.view && c.kinds.train === 1 && c.kinds.drone > 0 && c.kinds.plane === 1, 'lakefront: the window has scheduled craft on its own loop, corridors and racetrack, and the page draws them', `${c.craft} craft, view ${c.view}, kinds ${JSON.stringify(c.kinds)}`)
+      check(c.markings, 'lakefront: the zebra crossings are drawn')
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)

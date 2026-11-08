@@ -29,6 +29,7 @@ import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type B
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
 import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
+import type { RegionTransit } from './region/transit.ts'
 import type { RegionPack } from './region/pack.ts'
 import { windowFurniture, type StreetGrid } from './region/streets.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
@@ -431,11 +432,12 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
  * The world under its sky. With a region (a pack and where it sits), the region's surveyed buildings, streets and water
  * stand in for the procedural city: no city ground or lake, and no city boxes but the region's own `plan` (a generated
  * region's workplaces, regionWorld.ts hollowLots: each room's glass shell, furniture and ceiling slab, and what the slab
- * carries), drawn, walled and rasterised as the city's are, and `rooms`, the workplaces among them, whose ceilings get
- * fixtures (the city's are its seed's, interiors.ts workplaces). `detail`: FULL_WORLD, or LITE_WORLD for a lite device
- * profile.
+ * carries, and a region's pier), drawn, walled and rasterised as the city's are, and `rooms`, the workplaces among
+ * them, whose ceilings get fixtures (the city's are its seed's, interiors.ts workplaces); `transit` (region/transit.ts)
+ * adds the window's painted crossings and its strip to the region's meshes. `detail`: FULL_WORLD, or LITE_WORLD for a
+ * lite device profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[]; transit?: RegionTransit | null } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
@@ -531,7 +533,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   buildings.receiveShadow = true
   buildings.name = 'Buildings'
   if (!region || plan.length > 0) scene.add(buildings)
-  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState) : null
+  const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState, region.transit ?? null) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
 
   // The ground stops at the seawall; the lake takes over from there (never water over ground: at a distance the

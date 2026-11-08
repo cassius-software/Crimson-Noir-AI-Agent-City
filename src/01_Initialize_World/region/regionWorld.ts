@@ -31,17 +31,18 @@ import { ROOM, toWorld, workplacesAt, type Side, type Workplace, type WorkplaceL
 import { shopsAt, type Shop, type ShopLot } from '../storefronts.ts'
 import { buildingMaterial, waterMaterial } from '../materials.ts'
 import { applyMatrixMode } from '../matrixMode.ts'
-import { clipRing, type Pt, type Rect } from './clip.ts'
+import { clipRing, isRect, type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
+import { LANE_WIDTH, SIDEWALK, roadWidth } from './streets.ts'
+import type { Crossing, RegionTransit } from './transit.ts'
 import { buildingLot, slabPodium, type LotBuilding } from './workplaces.ts'
 
 type F = Node<'float'>
 
 /** Where the region's south-west corner sits in the engine's frame: clear of the procedural grid (0..640 m). */
 export const REGION_CORNER = Object.freeze({ x: 2000, z: 2000 })
-/** Lane width, m, and the sidewalk each side of a street that has one. */
-export const LANE_WIDTH = 3.3
-export const SIDEWALK = 2.2
+/** Lane width, m, and the sidewalk each side of a street that has one, and a road's width by class: streets.ts holds them (pure, the worker reads them). */
+export { LANE_WIDTH, SIDEWALK, roadWidth }
 /**
  * The height over the ground, m, of each paved or wet surface the region draws, lowest first; each lies strictly over
  * the one below. The renderer's reversed depth32float buffer (world.ts createRenderer, docs/stutter-and-depth.md)
@@ -62,6 +63,8 @@ export const SURFACE = Object.freeze({
   road: 0.045,
   /** A junction's asphalt, over the two carriageways that cross there. */
   roadJunction: 0.05,
+  /** Painted markings (region/transit.ts: the zebra crossings, the strip's bars and centreline), over the asphalt and the junctions they lie on. */
+  marking: 0.055,
 })
 /**
  * The longest piece, m, any of those surfaces is drawn in: the ground is a grid of cells this wide, a water polygon
@@ -101,13 +104,6 @@ export function layoutOf(pack: RegionPack): RegionLayout {
 
 const shift = (l: RegionLayout, pts: readonly Pt[]): Pt[] => pts.map(([x, z]) => [x + l.offset.x, z + l.offset.z] as Pt)
 
-/** The width of a road's carriageway, m, and whether it has sidewalks. */
-export function roadWidth(cls: number, lanes: number): { carriage: number; sidewalk: boolean } {
-  const carriage = Math.max(cls === ROAD_CLASS.lane ? 3.2 : 3.5, lanes * LANE_WIDTH)
-  const sidewalk = cls === ROAD_CLASS.arterial || cls === ROAD_CLASS.collector || cls === ROAD_CLASS.local
-  return { carriage, sidewalk }
-}
-
 // ---------------------------------------------------------------- physics
 
 /** What the physics worker builds a region from: its bounds, and every wall as (x0, z0, x1, z1, height), m. */
@@ -123,7 +119,11 @@ const area2 = (r: readonly Pt[]): number => {
   return s
 }
 
-export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics {
+/**
+ * `openings`: crossings besides the roads' that open the shore wall, each the width of what crosses (region/transit.ts:
+ * the pier, so the avatar walks from the quay onto the deck); none for a region without transit.
+ */
+export function regionPhysics(pack: RegionPack, l: RegionLayout, openings: readonly Crossing[] = []): RegionPhysics {
   const w: number[] = []
   for (let i = 0; i < polygonCount(pack.buildings); i++) {
     const h = pack.buildings.height[i] / DM
@@ -142,7 +142,7 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
   const b = l.bounds
   const alongBox = (p: Pt, q: Pt) => (Math.abs(p[0] - b.x0) < 0.2 && Math.abs(q[0] - b.x0) < 0.2) || (Math.abs(p[0] - b.x1) < 0.2 && Math.abs(q[0] - b.x1) < 0.2) ||
     (Math.abs(p[1] - b.z0) < 0.2 && Math.abs(q[1] - b.z0) < 0.2) || (Math.abs(p[1] - b.z1) < 0.2 && Math.abs(q[1] - b.z1) < 0.2)
-  const bridges = roadCrossings(pack, l)
+  const bridges = roadCrossings(pack, l, openings)
   for (let i = 0; i < polygonCount(pack.water); i++) {
     if (pack.water.kind[i] !== WATER_KIND.lake) continue
     for (const ring of polygonAt(pack.water, i)) {
@@ -165,8 +165,8 @@ export function regionPhysics(pack: RegionPack, l: RegionLayout): RegionPhysics 
  * of its own width (regionWorld roadWidth: the carriageway and, where it has them, the sidewalks). A bridge over the
  * lake is a road across the shoreline; without the gap, a car driving it would hit the shore wall.
  */
-function roadCrossings(pack: RegionPack, l: RegionLayout): { cut(p: Pt, q: Pt): [Pt, Pt][] } {
-  const roads: { a: Pt; b: Pt; half: number }[] = []
+function roadCrossings(pack: RegionPack, l: RegionLayout, openings: readonly Crossing[] = []): { cut(p: Pt, q: Pt): [Pt, Pt][] } {
+  const roads: { a: Pt; b: Pt; half: number }[] = openings.map(({ a, b, half }) => ({ a, b, half }))
   for (let i = 0; i < pack.roads.cls.length; i++) {
     const cls = pack.roads.cls[i]
     if (cls === ROAD_CLASS.ferry) continue
@@ -733,8 +733,28 @@ export interface RegionScene {
   stats: { buildings: number; roads: number; junctions: number; water: number; tiles: number; vertices: number }
 }
 
-/** Everything the page draws for a region. */
-export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null): RegionScene {
+/** Painted road markings: near-white, rough, the paint of a zebra crossing or a runway's bars. */
+function markingMaterial(): MeshStandardNodeMaterial {
+  const m = new MeshStandardNodeMaterial()
+  m.colorNode = vec3(0.8, 0.8, 0.77)
+  m.roughnessNode = float(0.85)
+  return m
+}
+
+/** A flat axis-aligned rectangle at height y, wound up-facing as ribbon's quads are. */
+function quad(b: Buffers, r: Rect, y: number): void {
+  const i = b.pos.length / 3
+  for (const [x, z] of [[r.x0, r.z0], [r.x0, r.z1], [r.x1, r.z0], [r.x1, r.z1]]) { b.pos.push(x, y, z); b.nor.push(0, 1, 0) }
+  b.idx.push(i, i + 1, i + 2, i + 1, i + 3, i + 2)
+}
+
+/**
+ * Everything the page draws for a region. `transit` (region/transit.ts regionTransit, a generated region with a street
+ * window): the STOL strip's paving, as a road ribbon of one lane (no centre line, no dashes), and every painted
+ * marking (the crossings' stripes, the strip's bars and centreline) as quads at SURFACE.marking in one mesh of one
+ * material; the pier's boxes come as the plan (world.ts), not here.
+ */
+export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null, transit: Pick<RegionTransit, 'markings' | 'strip'> | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
   // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
@@ -775,6 +795,22 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
     const z = (f.z0 + f.z1) / 2
     ribbon(walks, [[f.x0, z], [f.x1, z]], (f.z1 - f.z0) / 2, SURFACE.sidewalk, (_s, dist) => ({ dist }))
   }
+  // The plazas (pack.plazas, a generated map's plaza lots: one rectangle each, inside the lot's square, so it never
+  // overlaps a sidewalk ribbon): paved at the sidewalks' height, the lawn under them.
+  if (pack.plazas) {
+    for (let i = 0; i < polygonCount(pack.plazas); i++) {
+      const r = shift(l, polygonAt(pack.plazas, i)[0] ?? [])
+      if (r.length < 3) continue
+      const xs = r.map((p) => p[0]), zs = r.map((p) => p[1])
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs), z = (z0 + z1) / 2
+      ribbon(walks, [[x0, z], [x1, z]], (z1 - z0) / 2, SURFACE.sidewalk, (_s, dist) => ({ dist }))
+    }
+  }
+  // The STOL strip's paving: a road ribbon of one lane (the asphalt's lane paint needs two), no sidewalk.
+  if (transit?.strip) {
+    const { a, b: bb, half } = transit.strip.paving
+    ribbon(roads, [a, bb], half, SURFACE.road, (across, dist) => ({ across, dist, lanes: 1, twoWay: 0, halfWidth: half }))
+  }
   // The junctions: plain pavement over the sidewalks' crossings, plain asphalt over the carriageways'.
   const walkJunctions = buffers('dist'), roadJunctions = buffers('across', 'dist', 'lanes', 'twoWay', 'halfWidth')
   junctions(ribbons, walkJunctions, SURFACE.sidewalkJunction, (r) => r.walkHalf, { dist: 0 })
@@ -784,6 +820,12 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   if (walkJunctions.idx.length > 0) add(geometryOf(walkJunctions), pavement, 'RegionSidewalkJunctions', false, 3)
   add(geometryOf(roads), asphalt, 'RegionRoads', false, 4)
   if (roadJunctions.idx.length > 0) add(geometryOf(roadJunctions), asphalt, 'RegionRoadJunctions', false, 4)
+  // The painted markings, every one a quad at SURFACE.marking over the asphalt it lies on, in one mesh of one material.
+  if (transit && transit.markings.length > 0) {
+    const marks = buffers()
+    for (const r of transit.markings) quad(marks, r, SURFACE.marking)
+    add(geometryOf(marks), moded(markingMaterial()), 'RegionMarkings', false, 5)
+  }
   // Buildings, by tile, every tile in the one facade.
   const facade = moded(buildingMaterial(fbm, night, attribute('along', 'float') as unknown as F))
   const tiles = buildingGeometries(pack, l, 400)
@@ -811,17 +853,6 @@ export interface HollowRegion {
   rooms: Workplace[]
   /** The shops (storefronts.ts shopsAt) on the shop lots, their slabs in their podiums' height and finish. */
   shops: Shop[]
-}
-
-/**
- * Whether a ring is one rectangle along the axes (as fromMacro.ts writes every generated footprint): four corners,
- * every edge along an axis, and the area of its box.
- */
-const isRect = (r: readonly Pt[]): boolean => {
-  if (r.length !== 4 || !r.every((p, k) => (p[0] === r[(k + 1) % 4][0]) !== (p[1] === r[(k + 1) % 4][1]))) return false
-  const xs = r.map((p) => p[0]), zs = r.map((p) => p[1])
-  const box = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs))
-  return box > 0 && Math.abs(Math.abs(area2(r)) / 2 - box) <= 1e-6 * box
 }
 
 /**
