@@ -636,6 +636,7 @@ export class Engine {
    * right stick's click (R3) or the touch Menu's item. Null: the press goes nowhere. The engine never opens a microphone.
    */
   onMute: (() => void) | null = null
+  /**
    * The host's progression hand-off (App.tsx: the page's keeper earns the skill): called with the skill a deed of the
    * player's own earns, from a key frame() takes or a car door the player opened (received()). Null: the city earns
    * nothing. The engine keeps no record of its own, and never calls this per frame or from a setter the console,
@@ -1859,12 +1860,6 @@ export class Engine {
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
 
-    if (input.take('interact')) this.interact()
-    if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
-    if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
-    if (input.take('ghost')) this.toast('Ghost view', this.setGhost(!this.ghost.on))
-    if (input.take('matrix')) this.toast('Matrix mode', this.setMatrix(!this.matrixOn))
-    if (input.take('mute')) this.onMute?.()
     // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
     // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
     // scripts and agents' acts share them and the console earns for its own commands.
@@ -1879,6 +1874,7 @@ export class Engine {
       if (line.startsWith('on:') || (line === 'off' && this.views.length === 1 && !this.rig.headset && this.options.post)) this.deed('optics')
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
+    if (input.take('mute')) this.onMute?.()
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.

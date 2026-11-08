@@ -848,13 +848,13 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The operator's progression chip: the keeper's own cache builds its strings only when what it shows changed
+          // (a check, a purchase, the round's refill, the cue going stale), so this costs a few comparisons a tick.
+          s.supplier.progress = hudProgress(pageProgress(), cue, now)
           // The screen reader's line (announcer.ts): the district, a vehicle beside you, a seat taken or left, a toast.
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
-          // The operator's progression chip: the keeper's own cache builds its strings only when what it shows changed
-          // (a check, a purchase, the round's refill, the cue going stale), so this costs a few comparisons a tick.
-          s.supplier.progress = hudProgress(pageProgress(), cue, now)
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -1046,9 +1046,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link, access, prefe
           if (haltClass(reason) === 'gpu-reset') inPage.noteGpuReset()
           void inPage.dispose()
           unfollow?.()
-          unlisten?.()
           uncheck?.()
           unearn?.()
+          unlisten?.()
           tasks.dispose()
           r.dispose()
           mic.close()
