@@ -10,7 +10,7 @@
  * What breaks if it is removed? There is no renderer, no device for the compute passes, and no city.
  */
 import {
-  ACESFilmicToneMapping, BoxGeometry, BufferAttribute, BufferGeometry, Color, CylinderGeometry, DirectionalLight,
+  ACESFilmicToneMapping, BoxGeometry, BufferAttribute, BufferGeometry, Color, CylinderGeometry,
   Float32BufferAttribute, HemisphereLight, IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4,
   Mesh, MeshStandardNodeMaterial, Object3D, PCFShadowMap, PMREMGenerator, PerspectiveCamera, PlaneGeometry,
   PointLight, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, WebGPURenderer, type Node, type NodeBuilder, type UniformNode,
@@ -22,6 +22,8 @@ import {
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js'
 import { buildingMaterial, groundMaterial, waterMaterial, type RealLight } from './materials.ts'
 import { clusterCityLights, LAMP, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
+import { clampTaps, createSun } from './sunShadow.ts'
+import type { SunLight } from 'three/addons/lights/SunLight.js'
 import { workplaces, type Workplace } from './interiors.ts'
 import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
 import { FbmSet } from './fbmTexture.ts'
@@ -204,8 +206,11 @@ export interface World {
    * frame and tells the physics realm the mode. The sky never takes it: it is drawn as ever, in every mode.
    */
   matrixMode: MatrixMode
-  /** Sun by day, moon by night: the one shadow-casting light (quality.ts tunes its shadow map). */
-  sun: DirectionalLight
+  /** Sun by day, moon by night: the one shadow-casting light, three's cascaded sun light (sunShadow.ts; quality.ts
+   *  tunes its shadow map, its distance and its filter). Its position is its direction: update() writes it. */
+  sun: SunLight
+  /** The sun shadow filter's tap count (governor shadowTaps): an int uniform, so the change never recompiles. */
+  setShadowTaps(count: number): void
   /** Procedural texture resolution, texels per edge: the largest resident size not above `size` (FBM_SIZES).
    *  A swap between textures uploaded at startup: no upload, no shader or pipeline rebuild, no hitch. */
   setTextureSize(size: number): void
@@ -226,7 +231,8 @@ export interface World {
   resorted: readonly InstancedMesh[]
   /**
    * Re-centres the sky on another camera before it draws (local split screen: each viewport's head). update() centres it
-   * on `camera`; the sun, its shadow focus, the lamp lights and the building sort stay where update() put them.
+   * on `camera`; the lamp lights and the building sort stay where update() put them, and the sun's shadow cascades are
+   * fitted to whichever camera three renders (sunShadow.ts), so each viewport gets shadows of its own.
    */
   follow(camera: PerspectiveCamera): void
   /** The region drawn instead of the procedural city (?region), with its counts; null for the city. */
@@ -475,15 +481,11 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
 
   const hemi = new HemisphereLight(0xbfd4ea, 0x3a3530, 0.6)
   scene.add(hemi)
-  const sun = new DirectionalLight(0xffffff, 3)
-  sun.castShadow = true
-  sun.shadow.mapSize.set(2048, 2048)
-  sun.shadow.radius = 1.5
-  sun.shadow.bias = -0.0003
-  sun.shadow.normalBias = 0.03
-  const sc = sun.shadow.camera
-  sc.left = -80; sc.right = 80; sc.top = 80; sc.bottom = -80; sc.near = 1; sc.far = 700
-  scene.add(sun, sun.target)
+  // The sun: three's cascaded sun light, two shadow cascades fitted to the view each shadow pass (sunShadow.ts).
+  const sunRig = createSun(renderer)
+  const sun = sunRig.light
+  scene.add(sun)
+  const setShadowTaps = (count: number) => { sunRig.taps.value = clampTaps(count) }
 
   // One bake, every resolution the quality tiers use, all uploaded (with mips) before the first frame.
   const fbm = new FbmSet(seed)
@@ -648,17 +650,14 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     placeLampLights(focusX, focusZ, 1 - day)
 
     if (!region) sortBuildings(focusX, focusZ)
-    // Snap to whole shadow texels so shadows do not crawl; the map size changes with the quality tier.
-    const texel = (sc.right - sc.left) / sun.shadow.mapSize.x
-    const sx = Math.round(focusX / texel) * texel
-    const sz = Math.round(focusZ / texel) * texel
-    sun.target.position.set(sx, 0, sz)
-    sun.position.set(sx + lightDir.x * 320, lightDir.y * 320, sz + lightDir.z * 320)
+    // The sun light's position is its direction (it shines toward the origin); its two shadow cascades are fitted
+    // to the camera and snapped to whole shadow texels by three each shadow pass (sunShadow.ts).
+    sun.position.copy(lightDir)
     return s
   }
 
   const setTextureSize = (size: number) => { fbm.setSize(size) }
   const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
 }
