@@ -182,6 +182,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?dwell=1`, `?scan=1` | The dwell click, or single-switch scanning, for this visit (`0` turns a kept one off; see Accessibility) |
 | `?pad=left`, `?pad=right` | A one-handed pad layout for this visit (`both` restores the two-handed one; see Accessibility) |
 | `?announce=0` | No screen-reader lines of the district, vehicles, seats and toasts for this visit (see Accessibility) |
+| `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
@@ -221,6 +222,22 @@ lights are clustered: a compute pass sorts them into a grid of view cells once a
 lights of its cell, so the tier moves the count without recompiling a shader, and dusk costs no hitch. A lite profile
 builds none of this (every lamp is an emissive head over its pool, the rooms are lit by the sky), and under a headset
 the lamps go back to emissive heads while the headset presents.
+
+### Sun shadows
+
+The sun (and the moon after dark) casts shadows from two cascades (`01_Initialize_World/sunShadow.ts`, three's
+cascaded sun light): a near cascade fitted to the first stretch of what you see (about 32 m on Medium, 42 m on High,
+62 m on Ultra and Peak) with fine texels, and a far one fitted to the rest out to the tier's distance (Autoscaling:
+120 m on Medium, 160 m on High, 240 m on Ultra and Peak), with coarser texels nobody can tell apart that far off; the
+far cascade fades out over its last tenth instead of ending in a line, as the one fixed box around you used to eighty
+metres out. Whichever way you face, buildings up to 320 m toward the sun still cast into what you see, so a tower's
+long evening shadow does not come and go as you turn. The two are drawn side by side in one
+atlas (1024 texels a cascade on Medium, 2048 on High, 4096 on Ultra and Peak: 16, 64 and 256 MB of graphics memory),
+fitted and snapped to whole texels every shadow pass so they do not crawl when you turn your head. The penumbra is a
+disk of taps rotated per pixel (5 on Medium, 8 on High, 12 on Ultra, 16 on Peak, each a hardware depth comparison),
+whose count and radius are numbers the tier writes: a tier change moves them without recompiling a shader, like
+everything else the tiers touch. Below Medium (Low, Minimal and Lite) the sun draws no shadows. How the shadows look on a real graphics card
+is unverified: the pictures behind this were drawn by the software adapter.
 
 The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid from the same seed: 64 right-turn
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
@@ -369,7 +386,10 @@ shoved, no pole stops you, and the people keep their line.
 
 - **The street furniture is in the physics world as sensors** (`physics.ts`). Ghost view still shows every pole, and
   a query can still find one, but a pole exchanges no contact. The avatar's controller, a car's wheels, the AI
-  drivers' obstacle ray and the ground guard all ignore sensors. A car drives through a lamp as over open road.
+  drivers' obstacle ray and the ground guard all ignore sensors. A car drives through a lamp as over open road. The
+  poles are packed into one compound sensor per 80 m tile (a hundred for the city instead of 4,599 colliders), since
+  Rapier's JavaScript side visits every collider after every step: each pole is the same cylinder where it always
+  stood.
 - **The crowd never sees you as a neighbour.** The avatar is not put in the grid the pedestrians steer by
   (`crowd.wgsl` `binAgents`), so none of them steps aside, falls in beside you, or drifts toward you. Someone you ask
   over still keeps their talking distance: that comes from the summons, not from collision.
@@ -526,8 +546,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   `· N players`.
 - **What stays player 1's.** The post chain (the cinema shutter, bloom, ND, film response, ghost view) is player
   1's alone and is off while the screen is split: every viewport takes the direct ACES path, and
-  `ghost on` says so. The sun's shadow focus, the lamp lights and the building sort follow player 1, so the other
-  viewports get shadows and lit lamps only near player 1 (each viewport bins the lit lamps into its own grid). The HUD, the captions, the pings, the code dissolve's scans, the
+  `ghost on` says so. The lamp lights and the building sort follow player 1, so the other viewports get lit lamps only
+  near player 1 (each viewport bins the lit lamps into its own grid); the sun's shadow cascades are fitted to each
+  viewport's own head as it is drawn (Sun shadows). The HUD, the captions, the pings, the code dissolve's scans, the
   passage count, the haptics, recruitment and the operator tier stay player 1's. Players 2–4 are not drawn as crowd
   figures, so a pedestrian may walk through them; they are protected exactly on the CPU, and safety does not rest
   on the figure.
@@ -989,13 +1010,14 @@ while you type.
   `captions [on|off]`, `mic [on|off]`,
   `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`,
   `ping [go|look|gather|wait|clear]`,
+  `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `exit`.
+  `goal <words...>`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -1050,6 +1072,9 @@ while you type.
   frame, the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad
   layout and the screen reader's lines, kept between visits; `access reset` restores the defaults (see Accessibility
   under Onboarding and the spatial HUD).
+- `haptics [on|off]` turns the controller's rumble and the phone's vibration on or off: the guardrails' feel at the
+  wheel (the limiter's hum, the thump) and a check's tap (see The operator's progression). The triggers' resistance is
+  force, not vibration, and stays. `haptics` alone says which; `?haptics=0` starts them off.
 - `ping [go|look|gather|wait]` marks where you look, as `Q` does; `ping` alone lists the marks standing, and
   `ping clear` takes them off the board. A `go` or `gather` ping is offered to the recruiter as a rally the physics
   worker re-checks (see Pings and the rally).
@@ -1078,6 +1103,13 @@ while you type.
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
   clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
   with why, and words nothing in the city maps to yet are named.
+- `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
+  points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
+  `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
+  `progress train <skill>` spends a skill increase; `progress reroll` spends a hero point on the last check;
+  `progress reset --yes` starts a new operator. A command that does something in the city (not a status line or a
+  list) and ran without an error earns a check, printed under its own lines; the city earns some checks itself (see
+  The operator's progression).
 - `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
   are kept as dots.
 
@@ -1339,7 +1371,7 @@ protects.
 
 The console is air-gapped from the swarm. It can reach the engine only through a frozen
 `TerminalBridge` (`terminal/bridge.ts`): read-only statistics, the laws, the operator controls (clock, quality,
-audio, ghost view, drawing, captions, peripheral pairing), the view-only pings and the player's look, recruitment,
+audio, ghost view, drawing, captions, haptics, peripheral pairing), the view-only pings and the player's look, recruitment,
 the swarm's memory to read (erasing it needs the operator tier), and the opt-in network session (joining needs the
 operator tier). `boot` asks the host to reload the page on a track, and `r0` touches no bridge at all. Recruitment
 is the one knob that reaches a pedestrian, and it can only ask: to come over, or, an Active recruit, to stand at a
@@ -1353,6 +1385,55 @@ enforces that `terminal/*` imports only types from the rest of the engine
 the console the other way round too, read-only: the operator tier is handed the task gateway, which only
 reads the worker's list, and every script must pass it. The console never holds the gateway, the
 recruiter or the engine.
+
+## The operator's progression
+
+The operator has a level (1 to 20, 1,000 XP to each), civic credits, hero points (at most three), resolve, six
+attribute modifiers (STR, DEX, CON, INT, WIS, CHA) and eight skills, each at a proficiency rank from untrained to
+legendary: computers (INT), piloting (DEX), robotics (STR), cyber security (WIS), swarm command (CHA), acoustics and
+voice (CHA), optics and cinema (WIS), and architecture and commerce (INT). A new operator is level 1 with every
+attribute at +1, every skill trained, 150 credits and one hero point. The rules are in
+`src/02_Define_The_Rules/progression.ts`; the page's keeper is `src/07_Execute_Actions/progress.ts`; the record is
+kept in this browser's local storage (`civic-simulation:progress:v1`, `src/05_Observe_Environment/progressStore.ts`)
+and nowhere else. The design and its numbers are in `docs/progression.md`.
+
+- **Checks.** Doing something earns a check in the skill it belongs to: a d20 plus the skill's modifier (its rank's
+  proficiency at the operator's level plus its attribute) against the level's DC, eased by 2. The degree pays from a
+  fixed table: a critical failure nothing, a failure 10 XP, a success 40 XP and the level's payout in credits (150 at
+  level 1, 400,000 at level 20), a critical success 80 XP, two and a half times the payout and a hero point.
+- **Breadth.** A cycle is 24 checks; the more different skills it has used, the more each check pays, XP and credits
+  alike: 1x for one skill, 1.5x for three, 2x for five, 3.5x for all eight (lighting the eighth also gives a resolve).
+- **Pace.** Three actions and a reaction every six seconds; a skill earns again a minute after its check, so varied
+  work pays and the same command over and over does not.
+- **Bad luck.** After three misses in a row, the next check rolls twice and keeps the higher die.
+- **Levels.** Each level from 2 brings a skill increase (`progress train <skill>`: expert any time, master from level
+  7, legendary from 15) and a resolve; levels 5, 10, 15 and 20 bring four attribute boosts, to the attributes behind
+  the skills used most (a boost at +4 or more counts half).
+- **Hero points.** One at the start of every session at least; `progress reroll` spends one on the last check that
+  was not a critical success. The better of the two results pays; nothing is taken back.
+- **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
+  unlock set in the same record and the same save, so a purchase never takes the credits without the item.
+- **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
+  `harness run` and the verifications for security, `recruit rally`, asking, `swarm run`, `act ok` and pings for swarm
+  command, `say` and `sloane say` for voice, `rain`, `ghost`, `time`, `xr` and `record start` for optics, `look` for
+  commerce. In the city: boarding a car with the door key (piloting); someone you recruited arriving, however you
+  asked (swarm command, from the round's reaction, so `recruit <skill>` and `recruit listen` earn nothing themselves);
+  a spoken request the recruiter understood (voice); the clock keys, the rain key, the ghost key when the view shows
+  or goes, and the touch menu's Headset (optics); and the wardrobe card's first real change of a visit (commerce). A
+  script's, a harness's or an agent's act earns nothing, and neither does a key held down.
+- **Cues.** Every success and critical success, at the console or in the city, plays a short chime in your ears
+  (an arpeggio, or a chord for a critical success, captioned as `[chime: Piloting, success]`), taps a controller once
+  or twice on its rumble while no guardrail holds it, the screen is not split and the page is shown, vibrates a phone
+  once or twice, and shows on the HUD's progress chip. The chime never covers a cue or a ping: at the ear it is
+  quieter than the recruitment cue from anyone near enough to be asked over, it waits for a cue or a ping still
+  sounding, and one that starts over it fades it out. A hero point's reroll that stayed a success is not cued again. The chip, under the
+  status chips at the top left, reads `Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺` (◆ an action left,
+  ◇ one spent, ↺ the reaction ready), and for four seconds after a check which degree, in which skill and what it
+  paid, with one soft ring around it (none when the system asks for reduced motion). On a phone it shows only for
+  those four seconds, and not at all held in landscape. A check the city earns makes no toast: the chip and the
+  chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,
+  `?audio=0`) the chip alone shows it; `audio 0` silences the city and keeps every caption. `haptics off` or
+  `?haptics=0` stills the tap and the vibration. How they feel on real controllers and phones is unverified.
 
 ## Recruitment
 
@@ -1798,8 +1879,8 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 - **The city while it works.** While the model loads or answers, the city's automatic quality tier is held down
   (`governor.ts hold`, the last column above): at most Low on a computer whose GPU is integrated, Minimal on a phone
   and Lite on a lite profile, where the city and the model share one chip; a computer with a discrete GPU keeps its
-  tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model the half
-  gigabyte Peak's shadows take. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
+  tier. The one exception is Peak with the model on the GPU: Peak comes down to Ultra, which gives the model Peak's
+  larger picture and its share of the GPU. An Apple chip at Peak comes down to Low like any integrated GPU, wherever the model
   runs. Either way Peak does not come straight back when the model stops (that would take the memory again before the
   next answer): the release returns Ultra, and the governor earns Peak again after a quiet spell of 40 seconds, longer
   if the model keeps working, up to 5 minutes. On a discrete card, a model on the processor (a card without
@@ -2180,7 +2261,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   capped at Minimal.
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
-  by hand). They scale render resolution, shadows and shadow-map size, post-processing, the lit street lamps (the
+  by hand). They scale render resolution, shadows (their map, their reach and their softness: Sun shadows), post-processing, the lit street lamps (the
   nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
   distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
   visible.
@@ -2221,9 +2302,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   its architecture) and the first probe takes it to Ultra about 6 s after boot.
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
   - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
-    edges), the sun's shadows reaching 160 m around you instead of 80 m at the same sharpness, and full-detail people
-    out to 90 m instead of 45. The shadow map takes about 512 MB of graphics memory instead of 128 MB, and the larger
-    picture about 45 MB more at 1080p (about 190 MB at 4K). Both are given back when the tier comes down. The picture
+    edges), Ultra's sun shadows (the same two 4096-texel cascades out to the same 240 m: a farther reach would stretch
+    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, and
+    full-detail people out to 90 m instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
+    way); the larger picture takes about 45 MB more at 1080p (about 190 MB at 4K),
+    given back when the tier comes down. The picture
     is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide
     window at any tier.
   - **Which computers try it by themselves.** Desktops and laptops with a separate graphics card of any make, or an
@@ -2246,7 +2329,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
     picked by itself: give it `?peak=1`. In a browser, add `?peak=1` to the address.
   - **Agents and Sloane.** Agents cannot ask for it, and no goal sets it. When a goal names Peak ("peak quality",
     "beyond ultra", "can you turn on peak graphics?", "peak graphics and no traffic"), Sloane asks first: "Peak takes
-    a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?" The rest of
+    a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?" The rest of
     the goal reads as it would without Peak, so "peak graphics and no traffic" still clears the roads. The console's
     `goal`, which asks nothing, leaves the quality as it is; `quality peak` pins Peak there. "Best" and "max" still
     mean Ultra. A no, a turn-down, another tier or a complaint about its cost in the goal ("i don't want peak
@@ -2357,7 +2440,8 @@ HRTF-panned sources:
   Each line carries the sound's bearing in the listener's head frame (one of eight arrows, a side word, the
   distance rounded to 1 m under 10 m and 5 m beyond), recomputed as the head turns: `↗ [car approaching] · ahead
   right, 25 m`. Cars approaching, passing and shifting, tyres, the crowd murmur (by level, with hysteresis), the
-  walk signal per axis, the recruitment cue, the ping cue, the cabin, speech with its words (`Pedestrian N
+  walk signal per axis, the recruitment cue, the ping cue, the cabin, a check's chime (text alone, since it plays in
+  the head: `[chime: Optics and cinema, critical success]`), speech with its words (`Pedestrian N
   (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
   transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
   bottom-centre and outlives the `H` key, like the microphone pill. `captions off` or `?captions=0` turns it off.

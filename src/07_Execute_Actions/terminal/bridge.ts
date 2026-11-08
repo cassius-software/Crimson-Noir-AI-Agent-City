@@ -5,7 +5,7 @@
  * Why does this file exist? It is the air gap between the Ring-0 terminal and the running city: the
  * only surface the console can reach. It carries read-only telemetry (the stats, and the unified namespace of topics
  * the engine publishes every snapshot into, read by filter) plus a few operator knobs (clock,
- * quality tier, audio, ghost view, drawing, captions, hardware pairing), the view-only pings and the player's look,
+ * quality tier, audio, ghost view, drawing, captions, haptics, hardware pairing), the view-only pings and the player's look,
  * recruitment (asking someone nearby over by skill, or an Active recruit to a pinged point: the one knob that
  * reaches a pedestrian, and only through the physics worker's own checks), the swarm's memory (read, or erased on
  * command), the opt-in network session, the model file kept in this page and, behind an explicit `operator unlock`,
@@ -339,6 +339,28 @@ export interface LookBridge {
 }
 
 /**
+ * The operator's progression as the console reads it (07_Execute_Actions/progress.ts over
+ * 02_Define_The_Rules/progression.ts): level, XP, credits, skills, the table a check pays by, and the two things the
+ * operator spends by hand (a skill increase, a hero point). `command` is asked after every console command that ran
+ * without an error; it alone decides whether that command earns a check (and in which skill), and returns the lines
+ * the check printed, or none. A method may throw with the reason; the terminal prints it.
+ */
+export interface ProgressBridge {
+  /** `progress`: the operator as they stand. */
+  status(): string[]
+  /** `progress table`: the DC, a success's pay and each level's treasure, the degrees and the breadth bonus. */
+  table(): string[]
+  /** `progress train <skill>`: a skill increase spent; the line saying the new rank. */
+  train(skill: string): string
+  /** `progress reroll`: a hero point spent on the last check; the new result's lines. */
+  reroll(): string[]
+  /** `progress reset --yes`: a new operator. */
+  reset(): string
+  /** After a command ran without an error: its check's lines when it earned one, else none. */
+  command(name: string, args: readonly string[]): string[]
+}
+
+/**
  * Implemented by the host (App/engine). Arguments mirror the command line: `quality` takes 'auto' or a
  * tier from -1 (Lite) to 5 (Peak), `audio` takes 'on' / 'off' or a volume in percent (0–100). Called with no argument, both
  * only report. A method may throw; the terminal prints the message and carries on.
@@ -379,6 +401,11 @@ export interface TerminalBridge {
   render(arg?: 'on' | 'off'): string
   /** Closed captions for every sound (view-only; the soundscape keeps sounding): on, off, or the status line ('captions: on' | 'captions: off'). */
   captions(arg?: 'on' | 'off'): string
+  /**
+   * Haptics (the pad's rumble and the throttle's snap for the guardrails and a check's cue, and a phone's vibration for
+   * that cue): on, off, or the status line ('haptics: on' | 'haptics: off'). Off, the triggers' resistance stays.
+   */
+  haptics(arg?: 'on' | 'off'): string
   /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
   topics?: TopicBridge
   /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
@@ -408,6 +435,8 @@ export interface TerminalBridge {
   access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
+  /** The operator's progression; absent in the console shell (it is kept by the city) and on an older host. */
+  progress?: ProgressBridge
 }
 
 /**
@@ -536,6 +565,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     xr: down,
     render: down,
     captions: down,
+    haptics: down,
     topics: { list: down, get: down, children: down, status: down },
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {

@@ -26,16 +26,16 @@
  *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
  *   the runtime row says why;
  * - ultra: the top tier of the table pinned, so the shadowed, post and volumetric pipelines are compiled once and must
- *   validate; then Peak pinned above it for a few frames (the 8192 shadow map really allocated, the sun's box at ±160 m,
- *   1.25 times the pixel ratio, detailed bodies to 90 m, the HUD reading Peak) and Ultra back after, with its map, box
- *   and pixels; the Nix job runs this one too;
+ *   validate; then Peak pinned above it for a few frames (Ultra's sun shadows, 240 m on the 8192-wide atlas of two 4096
+ *   cascades, with Peak's wider sixteen-tap penumbra, 1.25 times the pixel ratio, detailed bodies to 90 m, the HUD
+ *   reading Peak) and Ultra back after, with its penumbra and pixels; the Nix job runs this one too;
  * - peak: a big desktop faked in full (16 threads, 8 GB, a WebGPU adapter reading 'nvidia / blackwell / NVIDIA GeForce
  *   RTX 5090'), at ?fps=1 without the camera so only Peak's GPU rule can move the tier, with three's timing resolve
  *   replaced, before the page's first frame, by one that counts and gives nothing. It starts on Ultra, never above,
  *   with no GPU reading. Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
  *   resolves timings for the governor on Ultra, auto keeps a pinned Peak, the in-page model's hold on the GPU brings it
  *   down to Ultra and the release keeps Ultra, and GPU readings fed over the limit bring it down by itself (gpu busy)
- *   with its map, box and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
+ *   with its shadow distance and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
  *   pinned Peak lands on Ultra. SwiftShader still draws it: this proves the path from the profile to the GPU rule and
  *   back, not a big card's speed;
  * - lite: the weakest phone the city serves, faked in full (an entry-level Android handset in Chrome: its user agent and
@@ -250,11 +250,12 @@ const STUB_RESOLVE = `(() => { let sim; window.__smokeResolves = 0; window.__smo
       window.__smokeStubbed = true
     } catch { /* __smokeStubbed stays false */ } } }) })()`
 
-/** The tier as the governor, the snapshot, the sun's shadow, the canvas and the crowd cull show it (ultra, peak). */
+/** The tier as the governor, the snapshot, the sun's shadow (its map per cascade, the atlas two of them wide, the distance
+ *  its camera's far plane: sunShadow.ts), the canvas and the crowd cull show it (ultra, peak). */
 const PEAK_STATE = `(() => { const S = window.__SIM__, s = S.snapshot(), e = S.engine, g = e.quality.governor, sh = e.world.sun.shadow, c = sh.camera
   return { tier: g.tier, label: s.quality.label, auto: s.quality.auto, held: s.quality.held ?? null, reason: g.reason, peak: s.quality.peak ?? null,
     min: g.min, max: g.max, timestamps: e.gpu.timestamps, mapSize: sh.mapSize.x, mapWidth: sh.map ? sh.map.width : 0,
-    box: [c.left, c.right, c.top, c.bottom].join(','), ratio: e.gpu.renderer.getPixelRatio(), lod: e.quality.live.cull.lodDistance,
+    far: c.far, radius: sh.radius, cascades: sh.getViewportCount(), ratio: e.gpu.renderer.getPixelRatio(), lod: e.quality.live.cull.lodDistance,
     errors: S.errors().slice(0, 5) } })()`
 
 /** The in-page model's runtime, asked for the GPU, saying its worker found no adapter (ggml's WebGPU backend; echoed under ?debug). */
@@ -310,13 +311,15 @@ class Page {
     await this.b.send('Page.navigate', { url })
   }
   /**
-   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil lifting: it takes every touch and
+   * Waits for the engine (window.__SIM__), a few rendered frames, and the boot veil gone: it takes every touch and
    * click while it covers the page (BootVeil.tsx holds it half a second after the first frame), and a person waits for
-   * the city to show before touching it too.
+   * the city to show before touching it too. Gone, not just fading: Sloane's card opens when the fade ends (App.tsx
+   * veilDone), and on a slow software adapter that came after the first key checks, so its name field took G, M,
+   * the tilde and E as typing.
    */
   async booted() {
     await this.waitFor('!!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0', BOOT_MS)
-    await this.waitFor(`!document.querySelector('.boot-veil[data-phase="cover"]')`, 30_000)
+    await this.waitFor(`!document.querySelector('.boot-veil')`, 30_000)
   }
   snap() {
     // On foot the avatar's capsule; at the wheel the driven car's pose (POSE: x at 0, z at 2, 28 floats a body).
@@ -371,8 +374,13 @@ class Page {
   saveTranscript(name) {
     try { writeFileSync(join(OUT, `${name}-console.txt`), this.transcript.join('\n\n')) } catch { /* the report still has the check rows */ }
   }
-  /** Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. */
+  /**
+   * Opens the Ring-0 console with the tilde key (a desktop), its prompt focused. A first visit's concierge greets once
+   * the veil is gone, its name field holding the keyboard: skipped first, as a visitor who wants the console would, so
+   * the tilde reaches the page (after a reload too).
+   */
   async openConsole() {
+    await this.eval(`[...document.querySelectorAll('aside[data-concierge] button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
     await this.tap('Backquote', '`', 192)
     return this.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).then(() => true, () => false)
   }
@@ -712,6 +720,15 @@ const SCENARIOS = {
       // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
+
+      // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
+      // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
+      // enough that the field came up after the click below, every key from G on was typed into it (G, M, the tilde and
+      // E all failing together, the nix smoke of PRs #71 and #89). So wait for the question, then skip it with Esc as a
+      // person who wants to walk would.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
 
       // Walk: W held (layout-independent code), the avatar moves.
       await p.mouse('mousePressed', 480, 270, 1)
@@ -1182,17 +1199,18 @@ const SCENARIOS = {
       const s = await p.snap()
       check(s.errors.length === 0, 'ultra: shadows, post and volumetrics compile and validate', s.errors.join(' | ').slice(0, 300))
       await p.shot('ultra')
-      // Peak pinned by hand for a few frames (any device may pin it): the 8192 shadow map really allocated, the sun's box at
-      // ±160 m, 1.25 times the pixel ratio and detailed bodies to 90 m, every pipeline still validating; Ultra back after.
+      // Peak pinned by hand for a few frames (any device may pin it): Ultra's sun shadows (240 m on the atlas of two 4096
+      // cascades, 8192 wide, really allocated) with Peak's three-texel penumbra, 1.25 times the pixel ratio and detailed
+      // bodies to 90 m, every pipeline still validating; Ultra back after.
       // By now the concierge has greeted, its name field holding the keyboard: skipped, so the tilde reaches the page.
       await p.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await p.openConsole(), 'ultra: the console opens')
       await p.command('quality 5', /tier 5 Peak \(fixed\)/)
-      const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192', 60_000).then(() => true, () => false)
+      const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192 && window.__SIM__.engine.world.sun.shadow.radius === 3', 60_000).then(() => true, () => false)
       await p.frames(3)
       const pk = await p.eval(PEAK_STATE)
-      check(map && pk.mapSize === 8192 && pk.box === '-160,160,160,-160' && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
-        'ultra: Peak pinned allocates the 8192 shadow map, widens the sun\'s box to 160 m, draws at 1.25 times the pixel ratio and validates', JSON.stringify(pk))
+      check(map && pk.mapSize === 4096 && pk.mapWidth === 8192 && pk.cascades === 2 && pk.far === 240 && pk.radius === 3 && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
+        'ultra: Peak pinned draws the sun\'s shadows to 240 m on the 8192-wide atlas of two 4096 cascades with a three-texel penumbra, at 1.25 times the pixel ratio, and validates', JSON.stringify(pk))
       // The console cleared first (as command() waits for it), so the only Peak left on the page is the HUD's.
       await p.enter('clear')
       await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
@@ -1201,8 +1219,8 @@ const SCENARIOS = {
       await p.command('quality 4', /tier 4 Ultra \(fixed\)/)
       await p.frames(3)
       const back = await p.eval(PEAK_STATE)
-      check(back.mapSize === 4096 && back.box === '-80,80,80,-80' && Math.abs(back.ratio - 0.5) < 1e-9 && back.lod === 45,
-        'ultra: Ultra again gives the map, the box and the pixel ratio back', JSON.stringify(back))
+      check(back.mapSize === 4096 && back.far === 240 && back.radius === 2.5 && Math.abs(back.ratio - 0.5) < 1e-9 && back.lod === 45,
+        'ultra: Ultra again gives the penumbra and the pixel ratio back', JSON.stringify(back))
       p.saveTranscript('ultra')
       p.health('ultra')
     } finally { await p.b.close() }
@@ -1238,12 +1256,12 @@ const SCENARIOS = {
         await p.command('quality 5', /tier 5 Peak \(fixed\)/)
         const auto = await p.command('quality auto', /tier 5 Peak \(auto\)/)
         check(!!auto, 'peak: auto keeps a pinned Peak on a range that reaches it', lastLine(auto))
-        const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192', 60_000).then(() => true, () => false)
+        const map = await p.waitFor('window.__SIM__.engine.world.sun.shadow.map?.width === 8192 && window.__SIM__.engine.world.sun.shadow.radius === 3', 60_000).then(() => true, () => false)
         const at = await p.eval(PEAK_STATE)
-        check(map && at.mapSize === 8192 && at.box === '-160,160,160,-160' && Math.abs(at.ratio - 0.625) < 1e-9 && at.lod === 90, 'peak: Peak allocates the 8192 shadow map, the ±160 m box, 1.25 times the pixel ratio and bodies to 90 m', JSON.stringify(at))
+        check(map && at.mapSize === 4096 && at.far === 240 && at.radius === 3 && Math.abs(at.ratio - 0.625) < 1e-9 && at.lod === 90, 'peak: Peak draws the sun\'s shadows to 240 m on the 8192-wide atlas with a three-texel penumbra, 1.25 times the pixel ratio and bodies to 90 m', JSON.stringify(at))
         const held = await p.eval(`(() => { window.__SIM__.engine.holdQuality(4); return ${PEAK_STATE} })()`)
-        check(held.tier === 4 && held.reason === 'held' && held.held === 4 && held.mapSize === 4096 && held.box === '-80,80,80,-80' && Math.abs(held.ratio - 0.5) < 1e-9,
-          'peak: the in-page model\'s hold on the GPU brings Peak down to Ultra and gives the map, the box and the pixels back', JSON.stringify(held))
+        check(held.tier === 4 && held.reason === 'held' && held.held === 4 && held.mapSize === 4096 && held.far === 240 && held.radius === 2.5 && Math.abs(held.ratio - 0.5) < 1e-9,
+          'peak: the in-page model\'s hold on the GPU brings Peak down to Ultra and gives the penumbra and the pixels back', JSON.stringify(held))
         await p.eval('window.__SIM__.engine.holdQuality(null)')
         await p.frames(10)
         const released = await p.eval(PEAK_STATE)
@@ -1253,8 +1271,8 @@ const SCENARIOS = {
         await p.eval('window.__smokeFeed = setInterval(() => window.__SIM__.engine.quality.governor.gpuSample(15, performance.now()), 50)')
         const down = await p.waitFor('window.__SIM__.engine.quality.governor.tier === 4', 60_000).then(() => true, () => false)
         const after = await p.eval(PEAK_STATE)
-        check(down && after.reason === 'gpu busy' && after.mapSize === 4096 && after.box === '-80,80,80,-80' && Math.abs(after.ratio - 0.5) < 1e-9,
-          'peak: GPU readings over the limit bring Peak down to Ultra through the engine (gpu busy), with its map, box and pixels', JSON.stringify(after))
+        check(down && after.reason === 'gpu busy' && after.mapSize === 4096 && after.far === 240 && after.radius === 2.5 && Math.abs(after.ratio - 0.5) < 1e-9,
+          'peak: GPU readings over the limit bring Peak down to Ultra through the engine (gpu busy), with its penumbra and pixels', JSON.stringify(after))
         // The entry reading needs 24 readings since the calm stretch began, and on SwiftShader every new run of frames over
         // 250 ms moves that start (governor.ts sample, GOV.outlierMs), so the line may print the fed 15.0 or not yet a
         // reading. Either way the suffix is there with the untightened entry limit (a pinned-then-auto Peak is no failed
@@ -1275,7 +1293,7 @@ const SCENARIOS = {
         check(!!auto, 'peak: auto from a pinned Peak lands on Ultra where no GPU timings judge it', lastLine(auto))
         await p.frames(3)
         const back = await p.eval(PEAK_STATE)
-        check(back.mapSize === 4096 && back.box === '-80,80,80,-80' && Math.abs(back.ratio - 0.5) < 1e-9, 'peak: Ultra again gives the map, the box and the pixels back', JSON.stringify(back))
+        check(back.mapSize === 4096 && back.far === 240 && back.radius === 2.5 && Math.abs(back.ratio - 0.5) < 1e-9, 'peak: Ultra again gives the penumbra and the pixels back', JSON.stringify(back))
       }
       await p.shot('peak')
       p.saveTranscript('peak')
@@ -1649,12 +1667,12 @@ const SCENARIOS = {
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
-      // Medium's 1024 map, not the parked one a tier without shadows keeps: the sun's shadow pass has drawn the region, so
-      // every shadowed shader was built (health() below fails on any one three could not build).
+      // Medium's 1024 cascades (the atlas two of them wide), not the parked map a tier without shadows keeps: the sun's shadow
+      // pass has drawn the region, so every shadowed shader was built (health() below fails on any one three could not build).
       const shadow = await p.waitFor(`(() => { const sh = window.__SIM__.engine.world.sun.shadow
-        return window.__SIM__.engine.world.sun.castShadow && sh.mapSize.x === 1024 && sh.map?.width === 1024 })()`, 60_000).then(() => true, () => false)
+        return window.__SIM__.engine.world.sun.castShadow && sh.mapSize.x === 1024 && sh.map?.width === 2048 && sh.map?.height === 1024 && sh.camera.far === 120 })()`, 60_000).then(() => true, () => false)
       await p.frames(3)
-      check(shadow, 'lakefront: at Medium the sun\'s shadow pass draws the region (its 1024 map allocated)')
+      check(shadow, 'lakefront: at Medium the sun\'s two shadow cascades draw the region to 120 m (the 2048 × 1024 atlas allocated)')
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')
