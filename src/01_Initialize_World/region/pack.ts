@@ -42,6 +42,11 @@ export interface RegionPack {
   roads: { cls: number[]; lanes: number[]; flow: number[]; name: number[]; start: number[]; xz: number[] }
   water: Polygons & { kind: number[]; name: number[] }
   buildings: Polygons & { height: number[]; kind: number[] }
+  /**
+   * Pedestrian plazas, paved at the sidewalks' height (regionWorld.ts): a generated map's plaza lots (fromMacro.ts: one
+   * rectangle per LOT.plaza lot, its built square). Absent in a surveyed pack, which has none.
+   */
+  plazas?: Polygons
 }
 
 /** An empty polygon table. */
@@ -120,6 +125,13 @@ export function validatePack(u: unknown): RegionPack {
     for (const e of extra) if (ints((t as unknown as Record<string, unknown>)[e], `${key}.${e}`).length !== t.polyStart.length - 1) fail(`${key}.${e} has the wrong length`)
   }
   if (p.water.name.some((i) => i < 0 || i >= p.names.length)) fail('a water body names a missing name')
+  if (p.plazas !== undefined) {
+    const t = p.plazas
+    if (typeof t !== 'object' || t === null) fail('plazas is not a polygon table')
+    ints(t.xz, 'plazas.xz')
+    offsets(ints(t.ringStart, 'plazas.ringStart'), t.xz.length / 2, 'plazas.ringStart')
+    offsets(ints(t.polyStart, 'plazas.polyStart'), t.ringStart.length - 1, 'plazas.polyStart')
+  }
   return p
 }
 

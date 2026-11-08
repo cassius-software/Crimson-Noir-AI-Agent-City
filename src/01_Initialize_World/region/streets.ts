@@ -27,6 +27,17 @@ import { ROAD_CLASS, roadAt, type RegionPack } from './pack.ts'
 /** Blocks per axis of the window: the crowd shader's grid (crowd.wgsl is compiled for CITY.blocks). */
 export const WINDOW_BLOCKS = CITY.blocks
 
+/** Lane width, m, and the sidewalk each side of a street that has one, as regionWorld.ts draws them (and re-exports them). */
+export const LANE_WIDTH = 3.3
+export const SIDEWALK = 2.2
+
+/** The width of a road's carriageway, m, and whether it has sidewalks (regionWorld.ts lays the ribbons by it; transit.ts keeps clear of it). */
+export function roadWidth(cls: number, lanes: number): { carriage: number; sidewalk: boolean } {
+  const carriage = Math.max(cls === ROAD_CLASS.lane ? 3.2 : 3.5, lanes * LANE_WIDTH)
+  const sidewalk = cls === ROAD_CLASS.arterial || cls === ROAD_CLASS.collector || cls === ROAD_CLASS.local
+  return { carriage, sidewalk }
+}
+
 /** Segment bits: a sidewalk runs along it (any street); cars use it (crossing it waits for the signal). */
 export const SEG = Object.freeze({ walk: 1, drive: 2 })
 

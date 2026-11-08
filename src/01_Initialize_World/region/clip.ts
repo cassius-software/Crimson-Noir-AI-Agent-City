@@ -91,6 +91,18 @@ export function signedArea2(ring: readonly Pt[]): number {
 }
 
 /**
+ * Whether a ring is one rectangle along the axes (as fromMacro.ts writes every generated footprint): four corners,
+ * every edge along an axis, and the area of its box. Such a footprint is a box the city's renderer, colliders and
+ * VTOL pads take (regionWorld.ts hollowLots, transit.ts windowBoxes).
+ */
+export function isRect(r: readonly Pt[]): boolean {
+  if (r.length !== 4 || !r.every((p, k) => (p[0] === r[(k + 1) % 4][0]) !== (p[1] === r[(k + 1) % 4][1]))) return false
+  const xs = r.map((p) => p[0]), zs = r.map((p) => p[1])
+  const box = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs))
+  return box > 0 && Math.abs(Math.abs(signedArea2(r)) / 2 - box) <= 1e-6 * box
+}
+
+/**
  * A ring without the vertices it does not need: repeats, and points within `tolerance` of the line through their
  * neighbours (Douglas–Peucker over the closed ring, which keeps the two points farthest apart).
  */
