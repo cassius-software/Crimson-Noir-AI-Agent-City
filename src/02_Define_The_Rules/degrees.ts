@@ -49,6 +49,17 @@ export function proficiency(rank: Rank, level: number): number {
   return rank === 'untrained' ? 0 : RANK_BONUS[rank] + level
 }
 
+/** The ranks in order, so a rank's index (0 untrained … 4 legendary) is what a flat record stores. */
+export const RANKS: readonly Rank[] = Object.freeze(['untrained', 'trained', 'expert', 'master', 'legendary'])
+
+/**
+ * proficiency() over a rank's index, as the operator's progression record keeps it (02_Define_The_Rules/progression.ts):
+ * 0 adds nothing, and every rank from 1 adds twice its index plus the level. An index outside 0..4 counts as untrained.
+ */
+export function proficiencyBonus(rank: number, level: number): number {
+  return Number.isInteger(rank) && rank > 0 && rank < RANKS.length ? 2 * rank + level : 0
+}
+
 /** Fortune rolls twice and keeps the higher die; misfortune keeps the lower. */
 export type Fortune = 'none' | 'fortune' | 'misfortune'
 
