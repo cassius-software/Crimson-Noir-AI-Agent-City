@@ -90,7 +90,7 @@ test("the real bus over a snapshot shaped as the engine builds one: topics land 
     supplier: { device: 'Keyboard', pointerLocked: false, engaged: true, touch: false, triggerResistance: 0, hal: '', glyphs: 'keyboard', recording: { active: false, source: null, seconds: 0, frames: 0, bytes: 0, dropped: 0, codec: '' }, xr: { state: 'unsupported', detail: '' } },
     input: { mode: 'foot', nearVehicle: false },
     process: { pedestrians: 100, vehicles: 4, drawnNear: 10, drawnFar: 20, waiting: 3, crossing: 2, yielding: 1, safetyNudges: 0, gpu: 'test' },
-    output: { fps: 60, frameMs: 16.6, p50Ms: 16, p95Ms: 18, cpuMs: 4, gpuRenderMs: 3, gpuComputeMs: 0, physicsMs: 1, rapierMs: 0.4 },
+    output: { fps: 60, frameMs: 16.6, p50Ms: 16, p95Ms: 18, p99Ms: 20, cpuMs: 4, gpuRenderMs: 3, gpuComputeMs: 0, physicsMs: 1, rapierMs: 0.4 },
     kernel: { law1: 1, law2: 0, law3: 0, sensorFlips: 0, shielded: false, last: '', audit: { ticks: 10, perimeterBreaches: 0, velocityCaps: 0, closest: Infinity, panic: null } },
     quality: { tier: 3, label: 'High', auto: true, renderScale: 1, targetMs: 16.7 },
     customer: { name: '', clock: '10:00', daylight: 1, viewYaw: 0, district: 'Heritage Quarter · 2nd Ave & 3rd St', speedKmh: 0, gear: 'N', x: 1, z: 2, heading: 0, signalEW: 'green', signalNS: 'red', signalRemaining: 5 },

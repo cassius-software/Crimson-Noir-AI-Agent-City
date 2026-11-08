@@ -985,12 +985,12 @@ React overlay at `z-index: 9999`. The simulation keeps running underneath, and g
 while you type.
 
 - `stats` is live: Rapier step latency, physics phase, substeps, bodies, colliders and CCD bodies;
-  drawn agents (near, far, total); fps, frame time, p95, CPU and GPU time; quality tier; kernel
+  drawn agents (near, far, total); fps, frame time, p95, p99, CPU and GPU time; quality tier; kernel
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
-  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
+  `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]`,
@@ -2317,10 +2317,40 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   - **Tried so far.** Only in headless Chromium on the software adapter: with a faked RTX 5090 (the browser smoke's
     `peak` scenario), and pinned for a few frames in the `ultra` scenario, also in the Nix package's Chromium. Not
     measured on a real big GPU.
-- **How many pedestrians.** Unless `?crowd` says, the profile decides at boot: 14,000 wherever it starts on
-  Medium or above, 8,000 on a phone, 5,000 on the weakest GPUs and software rasterizers, and 2,500 on a lite profile.
-  The simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many
-  are drawn.
+- **Hardware classes.** Beside the tiers, which move, the engine decides once at boot which of three machines it is
+  on (`classifyHardware`), from the same device profile and the WebGPU adapter's limits (what one storage buffer
+  binding and one buffer may hold, read from the adapter itself, since the page's device is made with the defaults):
+  - a **phone**: any phone or tablet, and any lite profile (so `?lite=1` on a desktop sizes it as a phone);
+  - a **workstation**: a computer that would try Peak by itself (a separate graphics card or an Apple chip, 8 cores,
+    8 GB where the browser says), whose adapter binds at least 512 MiB in one storage buffer and makes a 1 GiB buffer.
+    Every desktop card and Apple chip reports far more; a software rasterizer, or a driver that reports WebGPU's bare
+    defaults (128 and 256 MiB), is a desktop whatever the machine claims. `?peak=1` is the operator's word and skips
+    that check; `?peak=0` makes a desktop of it;
+  - a **desktop**: everything else, including a browser that says nothing of the machine.
+
+  The class changes no tier rule (a workstation's automatic range reaches Peak exactly as before, on the GPU's own
+  timings) and moves nothing after boot. A browser cannot tell a 16 GB machine from a 32 GB one (`deviceMemory` stops
+  at 8) or a 10 TFLOPS card from a 60 TFLOPS one by its adapter line, so what separates a workstation that merely
+  starts on Ultra from one that holds Peak is Peak itself, earned on measured GPU time. The class rides on the
+  governor's state (`quality.hardware` in the snapshot, `~/…/Quality/Cell/Governor/hardware` in the namespace), and
+  the console's `hardware` names it.
+- **How many pedestrians (lanes).** Unless `?crowd` says, the class decides at boot: 32,768 on a workstation, 14,000
+  on a desktop, 8,000 on a phone; 5,000 wherever the profile starts on Minimal (the weakest GPUs and software
+  rasterizers, whatever the class), and 2,500 on a lite profile. Each pedestrian is one lane of the crowd's structure-
+  of-arrays buffers (its largest, the 64-byte brain, is one storage binding), and the count never exceeds what the
+  adapter binds in one buffer or the realm's range of 256 to 60,000 (`?crowd` is clamped the same way). The
+  simulation's size is fixed for the session (the GPU buffers are sized for it). The tiers then scale how many are
+  drawn. The 60,000 top is the realm's own: the 131,072 lanes a console-class PC was asked to carry would need the
+  crowd's spatial grid, its readback and its draw resized, and a real big GPU to measure them on, so it is not raised
+  here; a workstation's 32,768 is under the 60,000 an integrated GPU was measured to carry at Low, below, and is
+  itself unmeasured on a real workstation.
+- **The `hardware` command.** Six rows: the class with the profile that gave it and the automatic range; the adapter
+  line; its limits (binding, buffer, the widest workgroup and its invocations); the lanes simulated, the class's
+  default and the adapter's ceiling; the frame times of the governor's own window, the newest 5 s of recorded frames
+  (p50, p95 and p99, with how many frames they stand on); and what the browser said of the machine (threads, memory
+  as reported, browser tab or native shell). The percentiles come from the same ring the governor judges by: start-up
+  frames are not in it, a run of hitches is held at 250 ms as the ring holds them, and a lone hitch is not in it at
+  all. `stats` and `sim` show the HUD clock's p95 and p99 of the last 256 frames beside the mean.
 - **The lite profile and the Lite tier.** Entry-level phone GPUs get a profile of their own: any phone whose adapter
   is ARM Bifrost or Midgard (a Mali-G52 reads `arm / bifrost` in Chrome, and so does an older flagship's Mali-G76,
   since Chrome names only the architecture), Imagination PowerVR Rogue, Furian or B-Series (Dawn: `img-tec / rogue`; a
@@ -2855,8 +2885,8 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
 The city ships as a one-click Windows program as well as the single page: `src-tauri/` is a Tauri 2 shell (Rust)
 around the very same `dist/index.html`, built by `npm run app:build` (the Vite build runs first as Tauri's
 `beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
-every pull request and push to main (artifacts `windows-installer-<version>` and `windows-portable-<version>`) and,
-when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
+every pull request and push to main (artifacts `windows-installer-<version>`, `windows-msi-<version>` and
+`windows-portable-<version>`) and, when a `v*` tag is pushed, puts all three on the tag's release beside the OS media.
 
 - **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
   the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
@@ -2893,6 +2923,67 @@ when a `v*` tag is pushed, puts both on the tag's release beside the OS media.
   `beforeDevCommand`). Building needs Rust (1.85 or newer) and, on Windows, the Visual Studio C++ build tools; on
   Linux, `libwebkit2gtk-4.1-dev` and friends. The icon set (`src-tauri/icons/`) is generated from
   `brand/marks/crimson-noir-mark.svg` with `npx tauri icon brand/marks/crimson-noir-mark.svg -o src-tauri/icons`.
+
+## The build matrix
+
+One command builds every shipped form of the city from a checkout, on the machine that can build it:
+`npm run build:matrix` (`tools/build/matrix.mjs`, plain Node: it runs programs with argument vectors and never a
+shell, so it is the same command in cmd.exe, PowerShell and sh). It builds the page once (`tsc -b`, `vite build`),
+then each target, and every app is the same Tauri 2 shell (`src-tauri/`) around that page; the UEFI targets carry no
+page, so a run of those alone builds none. Nothing it makes is signed.
+The version, `1.0.0-stable-beta`, carries a pre-release tag, which WiX and rpm refuse in a version. The `.msi` is
+given WiX's own version, the numbers alone (`1.0.0`, `bundle.windows.wix.version`), and the `.rpm` the numbers as its
+Version with the tag in its Release (`1.0.0-0.stable.beta`, as Fedora numbers pre-releases, so the final `1.0.0-1`
+sorts after it). The `.rpm` is packaged by `tauri bundle` from the binary the build just made, so nothing is compiled
+with the shorter version: the app inside every installer says `1.0.0-stable-beta`.
+The Android and Xcode projects are generated through npm's own script (`node npm-cli.js run -- tauri android init`,
+under the same Node), because Gradle and Xcode call the Tauri CLI back with the command `init` ran through, and
+`npm run -- tauri` exists on every machine where a bare `node tauri` does not.
+
+| Target | Makes | Builds on | State |
+| :--- | :--- | :--- | :--- |
+| `windows-x64` | the NSIS installer (`*-setup.exe`), the `.msi` and the bare `.exe` | Windows x64 | the installer and `.exe` run on Julian's laptop; all three built in `windows-app.yml` on every change (the `.msi` by `tauri bundle` from the same binary); the `.msi` not installed yet |
+| `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
+| `linux-x64` | `.deb`, `.rpm` and `.AppImage` | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages | built by the workflow; not installed on a device; WebGPU in WebKitGTK unverified |
+| `linux-arm64` | `.deb`, `.rpm` and `.AppImage` | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own) | built by the workflow on `ubuntu-24.04-arm`; not run on a device |
+| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
+| `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
+| `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
+| `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
+| `uefi-arm64` | `BOOTAA64.EFI`, and `crimson_noir_os-aarch64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's Arm `virt` machine with edk2 (AAVMF): the self-test with the x86-64 image's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on Arm hardware. The keyboard is the serial console (below) |
+
+- **Flags.** `--list` prints the table with what this machine can build; `--targets a,b` names targets (one it cannot
+  build, or that fails, exits 1), `--targets all` builds every target it can and skips the rest with a note,
+  `--targets host` (the default) builds this machine's own desktop app and the UEFI application; `--dry-run` prints the
+  commands and builds nothing; `--out <dir>` (default `out/matrix`) is where each target's files land, in
+  `<dir>/<id>/`, with `<dir>/matrix.json` saying what was built, skipped or failed and why; `--skip-page` keeps the
+  `dist/` already there. On Windows: `npm run build:matrix -- --targets windows-x64,windows-arm64`.
+- **Crimson Noir OS on aarch64.** The bootable image is one system on two machines: `crimson_noir_os/boot/src/arch.rs`
+  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard) or `arch/aarch64.rs`
+  (the UART the firmware's ACPI SPCR table names, a PL011 or an SBSA generic UART; the generic timer; the image's own
+  exception vectors at EL1 or EL2, every exception to the fault screen), and everything else is shared. An Arm machine
+  has no PS/2 controller and the image has no USB stack, so on aarch64 the keyboard is the serial console: type into
+  the serial line (a terminal's arrows and Page Up/Down work). Boot it at home with
+  `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-arm64/crimson_noir_os-aarch64.img --arch aarch64
+  --wait "SELFTEST PASS"` (QEMU's `virt` machine, a Cortex-A72, edk2's AAVMF firmware and a ramfb screen). A machine
+  whose firmware publishes no SPCR table, or whose console UART is a 16550, boots with no log and no keys.
+- **What is not made, and why.** Signing and notarization: there is no Apple Developer or Windows code-signing
+  account, so SmartScreen, Gatekeeper and iOS each ask or refuse as described above. A `linux-arm64` build on an x64
+  machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
+  are the system's own libraries, so the `.AppImage` is the one file that carries them.
+- **The workflow.** `.github/workflows/build-matrix.yml` runs the same command on GitHub's runners, one job per target
+  (`windows-latest`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
+  `ubuntu-24.04` for each UEFI target), on a pull request that touches the shells, Crimson Noir OS or this tooling, on
+  a `v*` tag, and by hand. Each UEFI job then bakes its media a second time from a clean build, compares the bytes, and
+  boots the disk image in QEMU through the tutorial and the terminal to power-off, and the ISO to the self-test. Each
+  job publishes its files as the artifact `matrix-<id>` and its report; a summary job lays the nine targets out in the
+  run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
+  `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
+  `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
+  itself. Only GitHub's own actions run in it.
+- **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
+  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
+  an engine lacks it the app shows the same recovery card as a browser without WebGPU.
 
 ## On an iPhone (the web app)
 

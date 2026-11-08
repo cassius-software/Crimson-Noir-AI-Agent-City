@@ -71,7 +71,10 @@ import { MemorySink, Recorder, fileSink, markdownFor, type RecorderSink, type Re
 import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Observe_Environment/namespace.ts'
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
-import { Governor, defaultAgents, defaultCars, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange, type DeviceProfile, type QualityKnobs } from '../05_Observe_Environment/governor.ts'
+import {
+  Governor, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, peakCandidate, profileDevice, readDeviceHints, tierRange,
+  type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
+} from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
@@ -106,7 +109,7 @@ import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts
 import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
 import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
-import { ring0Stats, type TerminalBridge } from './terminal/bridge.ts'
+import { ring0Stats, type HardwareReport, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
@@ -685,12 +688,17 @@ export class Engine {
   onHalt: ((reason: string) => void) | null = null
   /** The device as Engine.create profiled it (governor.ts profileDevice, with ?lite applied): the model in this page plans by it. */
   readonly profile: DeviceProfile
+  /** The hardware class Engine.create sized the city for (governor.ts classifyHardware): the lanes, and the console's `hardware`. */
+  readonly hardware: HardwareClass
+  /** What the browser said of the machine at boot (governor.ts readDeviceHints), for the `hardware` command. */
+  private readonly hints: DeviceHints
   /** Whether the city's GPU device has shader-f16 (gpuDevice.ts asks for it wherever the adapter offers it): the model in
    *  this page runs on the GPU by default only then (inPagePlan.ts). */
   readonly gpuF16: boolean
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
+    hardware: HardwareClass; hints: DeviceHints
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
@@ -704,6 +712,8 @@ export class Engine {
     this.gpu = p.gpu
     this.profile = p.profile
     this.gpuF16 = p.gpu.device.features.has('shader-f16')
+    this.hardware = p.hardware
+    this.hints = p.hints
     this.world = p.world
     this.crowd = p.crowd
     this.sim = p.sim
@@ -833,6 +843,10 @@ export class Engine {
       // Peak joins the automatic range only where three really writes GPU timestamps: the governor judges Peak on them
       // alone (under the cinema camera the animation frames show no spare power), so without them it stops at Ultra.
       const peak = gpu.timestamps && peakCandidate(hints, profile, requested.peak)
+      // The hardware class (governor.ts classifyHardware): the same hints and the adapter's limits, decided once here. It
+      // sizes the lanes the realm simulates unless the page said (?crowd, never over the adapter's ceiling), rides on
+      // the governor's state for the console and the namespace, and the console's `hardware` names it.
+      const hardware = classifyHardware(hints, profile, gpu.limits, requested.peak)
       const pack = requested.region ?? null
       const layout = pack ? layoutOf(pack) : null
       const places = pack && layout ? new RegionPlaces(pack, layout) : null
@@ -855,7 +869,7 @@ export class Engine {
         ...requested, players, post: requested.post && players === 1 && !lite, lite, carsDefaulted: requested.cars === undefined,
         // A region's cars ride the window's rings alone (the street-hopping drivers of ?tracks=0 know the procedural grid only).
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
-        agents: empty ? AGENTS_RANGE[0] : requested.agents ?? defaultAgents(profile), host: hints.host ?? 'browser',
+        agents: empty ? AGENTS_RANGE[0] : Math.min(requested.agents ?? defaultLanes(profile, hardware, gpu.limits), laneCeiling(gpu.limits)), host: hints.host ?? 'browser',
       }
       // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
@@ -889,8 +903,8 @@ export class Engine {
       const targetMs = options.targetFps > 0 ? 1000 / options.targetFps : undefined
       const pacerMs = options.cinema === false ? undefined : 1000 / CINEMA.fps
       const governor = options.quality === 'auto'
-        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, ...range })
-        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, ...range })
+        ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, hardware, ...range })
+        : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, hardware, ...range })
       // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach.
       const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
       const first = governor.knobs()
@@ -989,7 +1003,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
@@ -2419,7 +2433,7 @@ export class Engine {
   }
 
   snapshot(): SipocSnapshot {
-    const [mean, p50, p95] = this.clock.stats()
+    const [mean, p50, p95, p99] = this.clock.stats()
     const s = this.crowdStats()
     const st = this.sim.state
     const p = st.poses, o = st.driving * POSE.stride
@@ -2463,7 +2477,7 @@ export class Engine {
         ...(this.places && this.rooms.length === 0 ? {} : { working: s.working ?? 0 }),
       },
       output: {
-        fps, frameMs: mean, p50Ms: p50, p95Ms: p95, cpuMs: this.cpuMs,
+        fps, frameMs: mean, p50Ms: p50, p95Ms: p95, p99Ms: p99, cpuMs: this.cpuMs,
         gpuRenderMs: this.gpuRenderMs, gpuComputeMs: this.crowd.gpuMs, physicsMs: st.physics.workerMs, rapierMs: st.physics.stepMs,
         postMs: this.postMs,
         ghost: this.ghost.on,
@@ -2550,6 +2564,13 @@ export class Engine {
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
+      hardware: (): HardwareReport => ({
+        class: this.hardware, profile: this.profile, adapter: this.adapter, limits: this.gpu.limits,
+        tiers: { ...governor.range(), start: this.profile.startTier, startLabel: knobsOf(this.profile.startTier).label },
+        lanes: { simulated: this.options.agents, default: defaultLanes(this.profile, this.hardware, this.gpu.limits), ceiling: laneCeiling(this.gpu.limits) },
+        frames: governor.percentiles(),
+        host: this.options.host, cores: this.hints.cores, memoryGb: this.hints.memoryGb,
+      }),
       ghost: (arg?: 'on' | 'off') => (arg === undefined ? (this.ghost.on ? 'on' : 'off') : this.setGhost(arg === 'on')),
       rain: (arg?: 'on' | 'off') => (arg === undefined ? (this.matrixOn ? 'on' : 'off') : this.setMatrix(arg === 'on')),
       xr: (arg?: 'vr' | 'ar' | 'off') => this.xrCommand(arg),

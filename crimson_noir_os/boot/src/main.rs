@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
-//! Why does this file exist? It is the bootable image's root. Built for `x86_64-unknown-uefi` it is a UEFI application
-//! (`efi_main`, no standard library, no runtime): the firmware loads it from the boot medium and it takes the machine
-//! over (image.rs). Built for any other target it is only a note saying how to build the image, so the workspace still
-//! builds and tests on a desktop.
+//! Why does this file exist? It is the bootable image's root. Built for `x86_64-unknown-uefi` or `aarch64-unknown-uefi`
+//! it is a UEFI application (`efi_main`, no standard library, no runtime): the firmware loads it from the boot medium and
+//! it takes the machine over (image.rs; the machine layer for each architecture is arch.rs). Built for any other target
+//! it is only a note saying how to build the image, so the workspace still builds and tests on a desktop.
 //! What breaks if it is removed? There is no bootable image.
 #![cfg_attr(target_os = "uefi", no_std)]
 #![cfg_attr(target_os = "uefi", no_main)]
@@ -31,5 +31,7 @@ mod locked {
 
 #[cfg(not(target_os = "uefi"))]
 fn main() {
-    eprintln!("crimson_boot is the bootable image: build it with `cargo build -p crimson_boot --target x86_64-unknown-uefi --release` (tools/build-image.sh makes the disk image and the ISO).");
+    eprintln!(
+        "crimson_boot is the bootable image: build it with `cargo build -p crimson_boot --target x86_64-unknown-uefi --release` (or aarch64-unknown-uefi; tools/build-image.sh makes the disk image and the ISO)."
+    );
 }
