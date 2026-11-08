@@ -37,15 +37,23 @@ export const BONE = Object.freeze({
 export const BONES = 15
 
 /** The colour slots the fragment stage paints (crowd.ts: the top, the shirt, the skin, ..., the eye's white, the iris, the lips). */
-export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13 })
-export const SLOTS = 14
+export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13, HEADWEAR: 14 })
+export const SLOTS = 15
 /**
  * The optional pieces, one bit each in a person's piece mask (look.ts LOOK_PIECE_BIT; 0 is "always drawn"). The hair
  * is pieces too: the cap (every style but bald), long hair, a bob, a bun. FACE is the features (eyes, brows, nose,
  * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear. COAT is the outer layer over the jacket
- * (look.ts LAYER.coat), SCARF the wrap and tail round the neck.
+ * (look.ts LAYER.coat), SCARF the wrap and tail round the neck. The later hair pieces: VOLUME a full rounded shell
+ * (an afro, big curls), TOP_BUN a puff or knot on the crown, PONYTAIL a tail from the back of the head. The headwear
+ * (look.ts HEADWEAR, cloth slot HEADWEAR): WRAP a head scarf over the head, the ears and the neck with the face open,
+ * TURBAN a wound crown above the brow (a turban, a head wrap), HAT a snug crown (a beanie, a durag, a flat cap's) and
+ * BRIM a flat cap's peak; the near body alone has them: the far body keeps the hair's cap under them in the
+ * headwear's cloth (crowd.ts). A kippah is painted on the crown (crowd.ts), not a piece.
  */
-export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11 })
+export const PIECE = Object.freeze({
+  NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11,
+  VOLUME: 12, TOP_BUN: 13, PONYTAIL: 14, WRAP: 15, TURBAN: 16, HAT: 17, BRIM: 18,
+})
 
 /**
  * The parts of a garment the fragment stage paints on the cloth (slot TOP) from a vertex's rest position and bone
@@ -897,6 +905,58 @@ function headTubes(): Tube[] {
     { y: 1.705, rx: 0.034, rz: 0.034, z: -0.122, slot: SLOT.HAIR, bone: H, far: true },
     { y: 1.735, rx: 0.018, rz: 0.018, z: -0.112, slot: SLOT.HAIR, bone: H, far: true },
   ]
+  // A full rounded shell (an afro, big curls): wide at the sides past the ears, its front inside the face below the
+  // brow (the front edge crosses the forehead above the brows), round over the crown.
+  const volume: Ring[] = [
+    { y: 1.6, rx: 0.12, rz: 0.05, back: 0.13, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.66, rx: 0.15, rz: 0.06, back: 0.15, z: -0.01, slot: SLOT.HAIR, bone: H },
+    { y: 1.7, rx: 0.158, rz: 0.07, back: 0.158, slot: SLOT.HAIR, bone: H },
+    { y: 1.74, rx: 0.155, rz: 0.15, back: 0.16, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.8, rx: 0.13, rz: 0.13, back: 0.135, slot: SLOT.HAIR, bone: H },
+    { y: 1.845, rx: 0.07, rz: 0.07, back: 0.075, slot: SLOT.HAIR, bone: H, far: true },
+  ]
+  // A puff or a knot on the crown.
+  const topBun: Ring[] = [
+    { y: 1.758, rx: 0.03, rz: 0.03, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.795, rx: 0.05, rz: 0.05, z: -0.02, slot: SLOT.HAIR, bone: H },
+    { y: 1.83, rx: 0.03, rz: 0.03, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+  ]
+  // A tail gathered at the back of the head, hanging behind the neck.
+  const ponytail: Ring[] = [
+    { y: 1.7, rx: 0.026, rz: 0.026, z: -0.108, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.62, rx: 0.032, rz: 0.03, z: -0.13, slot: SLOT.HAIR, bone: H },
+    { y: 1.52, rx: 0.028, rz: 0.026, z: -0.135, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.5 },
+    { y: 1.42, rx: 0.016, rz: 0.016, z: -0.15, slot: SLOT.HAIR, bone: BONE.CHEST, far: true },
+  ]
+  // A head scarf: draped on the shoulders, round the neck and under the chin, over the sides of the face past the
+  // ears with its front inside the face (the face stays open, as the bob's front does), over the forehead and crown.
+  const W = SLOT.HEADWEAR
+  const wrapRings: Ring[] = [
+    { y: 1.43, rx: 0.17, rz: 0.11, back: 0.11, z: -0.01, slot: W, bone: BONE.CHEST, far: true },
+    { y: 1.5, rx: 0.095, rz: 0.08, back: 0.085, slot: W, bone: H, bone1: BONE.CHEST, w: 0.5 },
+    { y: 1.56, rx: 0.088, rz: 0.075, back: 0.098, slot: W, bone: H },
+    { y: 1.6, rx: 0.108, rz: 0.04, back: 0.114, z: -0.005, slot: W, bone: H, far: true },
+    { y: 1.665, rx: 0.12, rz: 0.04, back: 0.12, slot: W, bone: H },
+    { y: 1.725, rx: 0.11, rz: 0.104, back: 0.114, slot: W, bone: H, far: true },
+    { y: 1.758, rx: 0.084, rz: 0.088, back: 0.094, slot: W, bone: H },
+  ]
+  // A wound crown above the brow, taller than the skull (a turban; a head wrap wears it too, in another fabric).
+  const turban: Ring[] = [
+    { y: 1.705, rx: 0.108, rz: 0.112, back: 0.112, slot: W, bone: H, far: true },
+    { y: 1.75, rx: 0.116, rz: 0.12, back: 0.118, slot: W, bone: H },
+    { y: 1.8, rx: 0.11, rz: 0.11, back: 0.11, z: 0.005, slot: W, bone: H },
+    { y: 1.83, rx: 0.084, rz: 0.084, back: 0.084, z: 0.01, slot: W, bone: H, far: true },
+  ]
+  // A snug crown from the brow up (a beanie, a durag, a flat cap's), and the flat cap's peak.
+  const hat: Ring[] = [
+    { y: 1.705, rx: 0.103, rz: 0.108, back: 0.108, slot: W, bone: H, far: true },
+    { y: 1.74, rx: 0.099, rz: 0.1, back: 0.104, slot: W, bone: H },
+    { y: 1.772, rx: 0.074, rz: 0.078, back: 0.08, slot: W, bone: H, far: true },
+  ]
+  const brim: Ring[] = [
+    { y: 1.701, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
+    { y: 1.709, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
+  ]
   const rim = (y0: number, y1: number): Ring[] => [
     { y: y0, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
     { y: y1, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
@@ -930,6 +990,13 @@ function headTubes(): Tube[] {
     { rings: long, segments: 10, farSegments: 6, capBottom: 1.31, piece: PIECE.LONG_HAIR, head: true, depth: 0 },
     { rings: bob, segments: 12, farSegments: 8, capBottom: 1.57, piece: PIECE.BOB, head: true, depth: 3 },
     { rings: bun, segments: 8, farSegments: 6, capTop: 1.75, capBottom: 1.66, piece: PIECE.BUN, head: true, depth: 0 },
+    { rings: volume, segments: 10, farSegments: 6, capTop: 1.858, capBottom: 1.592, piece: PIECE.VOLUME, head: true, depth: 3 },
+    { rings: topBun, segments: 6, farSegments: 4, capTop: 1.84, capBottom: 1.752, piece: PIECE.TOP_BUN, head: true, depth: 3 },
+    { rings: ponytail, segments: 6, farSegments: 4, capTop: 1.705, capBottom: 1.41, piece: PIECE.PONYTAIL, nearOnly: true, head: true, depth: 0 },
+    { rings: wrapRings, segments: 10, farSegments: 6, capTop: 1.772, piece: PIECE.WRAP, nearOnly: true, head: true, depth: 3 },
+    { rings: turban, segments: 10, farSegments: 6, capTop: 1.842, piece: PIECE.TURBAN, nearOnly: true, head: true, depth: 3 },
+    { rings: hat, segments: 10, farSegments: 6, capTop: 1.785, piece: PIECE.HAT, nearOnly: true, head: true, depth: 3 },
+    { rings: brim, segments: 8, farSegments: 6, capTop: 1.709, capBottom: 1.701, piece: PIECE.BRIM, nearOnly: true, head: true, depth: 4 },
     { rings: nose, segments: 6, farSegments: 6, capBottom: 1.622, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },
     ...eye(-1), ...eye(1), brow(-1), brow(1),
     { rings: lips, segments: 8, farSegments: 8, capTop: 1.6125, capBottom: 1.6035, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },

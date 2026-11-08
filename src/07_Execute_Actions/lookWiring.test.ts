@@ -111,9 +111,14 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(posed, /const word = b\.look\.element\(agentIndex\)/)
   assert.match(posed, /const quad = b\.figure\.element\(agentIndex\.mul\(uint\(FIGURE_QUADS\)\)\)\n\s*const figure = quad\.x\n\s*const faceWord = quad\.y\n\s*const wardrobeWord = quad\.z/, 'the person\'s first quad')
   assert.match(posed, /const custom = word\.bitAnd\(uint\(1\)\)\.equal\(uint\(1\)\)/)
-  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(46\)\)\)\.add\(ownGrooms\), hashedMask\.add\(hashedGrooms\)\)\.add\(features\)\.add\(wardrobePieces\)/, 'the pieces where bodyVertex tests them: the look word\'s four, the hair from the style, the face for the eye, the coat and the scarf from the wardrobe word')
+  assert.match(posed, /const mask = select\(custom, float\(word\.shiftRight\(uint\(2\)\)\.bitAnd\(uint\(46\)\)\)\.add\(ownGrooms\), hashedMask\.add\(hashedHead\)\)\.add\(features\)\.add\(wardrobePieces\)/, 'the pieces where bodyVertex tests them: the look word\'s four, the hair from the style, the face for the eye, the coat and the scarf from the wardrobe word')
   assert.match(posed, /const wardrobe = select\(custom, wardrobeWord, hashedWardrobe\)/, 'the wardrobe word worn: the look\'s or the hash\'s')
-  assert.match(posed, /vWardrobe\.assign\(float\(wardrobe\.bitAnd\(uint\(0xff\)\)\)\)/, 'to the fragment stage, its low byte')
+  assert.match(posed, /vWardrobe\.assign\(float\(wardrobe\.bitAnd\(uint\(0xff\)\)\.bitOr\(select\(custom, texture, uint\(0\)\)\.shiftLeft\(uint\(8\)\)\)\.bitOr\(headwear\.shiftLeft\(uint\(8 \+ HAIR_TEXTURE_BITS\)\)\)\)\)/, 'to the fragment stage, its low byte, the hair\'s paint and the headwear')
+  // The style's five bits and the headwear: the skin word (the person's second quad) holds the high bits and the headwear.
+  assert.match(posed, /const skinWord = b\.figure\.element\(agentIndex\.mul\(uint\(FIGURE_QUADS\)\)\.add\(uint\(1\)\)\)\.x/)
+  assert.match(posed, /\.bitOr\(skinWord\.shiftRight\(uint\(LOOK_FIELD_HIGH\.hairStyle!\[1\]\)\)\.bitAnd\(uint\(3\)\)\.shiftLeft\(uint\(3\)\)\)/)
+  assert.match(posed, /const headwear = select\(custom, skinWord\.shiftRight\(uint\(LOOK_FIELD\.headwear\[1\]\)\)\.bitAnd\(uint\(7\)\), hashedHeadwear\)/)
+  assert.match(posed, /const wears = \(piece: keyof typeof HAIR_PIECE_STYLES\) => uint\(HAIR_PIECE_STYLES\[piece\]\)\.shiftRight\(style\)\.bitAnd\(uint\(1\)\)\.equal\(uint\(1\)\)/, 'each piece from its set of styles')
   assert.match(posed, /const features = eye \? 1 << LOOK_PIECE_BIT\.face : 0/, 'the shadow map does without the features')
   assert.match(posed, /const style = faceWord\.shiftRight\(uint\(LOOK_FIELD\.hairStyle\[1\]\)\)\.bitAnd\(uint\(7\)\)/)
   assert.match(posed, /return float\(\(w === 0 \? word : w === 1 \? figure : faceWord\)\.shiftRight\(uint\(shift\)\)\.bitAnd\(uint\(\(1 << width\) - 1\)\)\)/, 'each slot from the word look.ts names')
@@ -135,7 +140,8 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   for (const slot of ['skin', 'hairColour', 'top', 'bottom', 'shirt', 'shoes', 'age', 'undertone']) assert.ok(fragment.includes(`field('${slot}')`), `${slot} is read`)
   for (const line of [
     'const pickedSkin = select(custom, ownSkin, skin)', 'const pickedHair = select(custom, ownHair, hair)',
-    'const toned = pickedSkin.mul(tint)', 'const wornHair = mix(pickedHair, grey, smoothstep(0.5, 1, age))',
+    'const toned = pickedSkin.mul(tint)', 'const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age))',
+    'const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, near)',
     'const skin = pick(PALETTE.monk, h(1))', 'const ownSkin = colour(PALETTE.skin, select(skinAt.lessThan(lastSkin), skinAt, lastSkin))',
     'const skinAt = field(\'skin\').bitOr(gene(LOOK_FIELD_HIGH.skin!).shiftLeft(uint(LOOK_FIELD.skin[2])))',
     'top = select(custom, ownTop, top)', 'bottom = select(custom, ownBottom, bottom)',
@@ -156,7 +162,7 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf\]/)
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, skinShown, hairShown, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf, fabric\]/, 'every slot, the headwear\'s cloth last')
   // The garments: the layer owns the top's dye, the trim is matching or a cloth, the jacket's lines are cut from the rest position.
   assert.match(fragment, /const wardrobe = uint\(vWardrobe\.add\(0\.5\)\)/)
   assert.match(fragment, /const coat = at\(PALETTE\.coats, select\(custom, field\('top'\), uint\(h\(3\)\.mul\(cloth\(outfit\.top\)\.length - 0\.001\)\)\)\)/, 'the coat\'s cloth from the top\'s index, or the top\'s link over the jacket palette\'s length')
@@ -245,11 +251,10 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(card, /data-row="silhouette"/)
   assert.match(card, /data-row="face"/)
   assert.match(card, /role="dialog"/)
-  // The hair's pieces follow the style on the card as in the shader (look.ts hairBits).
-  assert.match(card, /case PIECE\.HAIR_CAP: return look\.hairStyle !== HAIR\.bald/)
-  assert.match(card, /case PIECE\.LONG_HAIR: return look\.hairStyle === HAIR\.long/)
-  assert.match(card, /case PIECE\.BOB: return look\.hairStyle === HAIR\.bob/)
-  assert.match(card, /case PIECE\.BUN: return look\.hairStyle === HAIR\.bun/)
+  // The pieces (the hair's by the style, the headwear's) on the card are the shader's own mask (look.ts lookWears, hairBits).
+  assert.match(card, /const wears = \(look: Look, piece: number\): boolean => lookWears\(look, piece\)/)
+  assert.match(card, /data-row="face-shape"/, 'the face shapes head the face sliders')
+  assert.match(card, /data-row="build"/)
   // What the card prints (its string literals and JSX text) keeps the house's words.
   const printed = (card.match(/'[^'\n]*'|"[^"\n]*"|>[^<{]*</g) ?? []).join('\n')
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)

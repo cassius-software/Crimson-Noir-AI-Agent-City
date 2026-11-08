@@ -721,6 +721,25 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   (slight, lean, athletic, muscular, broad, stocky, soft, full: the somatotypes' span in plain words) that set mass,
   muscle, shoulders and hips together; any slider moved after is your own, and the height is never a build's.
   `look build athletic` does the same at the console.
+- **Hair, headwear and face shapes.** The **Hair** row holds thirty-two styles: the five every look had (short, long,
+  bob, bun, bald, their numbers kept) and buzz cut, fade, side part, afro, tapered afro, afro puff, top knot, ponytail,
+  braided ponytail, cornrows, cornrow ponytail, box braids, braided bun, braided updo, locs, short locs, locs updo,
+  twists, long twists, twist-out, layered, half up, undercut, mohawk, waves, bun with fade and side part bun. Each is
+  the hair's pieces (the cap, the length, a bob, a bun, and three new shapes: a full rounded shell, a puff on the crown
+  and a tail) and a paint over them (cropped close, faded or shaved at the sides, a parting, cornrows' rows, braids'
+  plaits, locs' cords, twists, waves round the crown). A **Curl pattern** row (1A to 4C, or "as styled") lays the
+  hair's own texture over any style: straight streaks, waves, curls, coils, finer down the scale; every pedestrian
+  has one. A **Headwear** row (none, hijab, turban, head wrap, kippah, durag, beanie, flat cap) with a **Headwear
+  colour** row of eight cloths: a hijab covers the head, the ears and the neck with the face open; a turban and a
+  head wrap are a wound crown above the brow (the wrap printed in two shades); a durag, a beanie and a flat cap a snug
+  crown (the cap with its peak), the length below them still showing; a kippah is painted on the crown. They are
+  clothing, worn plain, with no symbol printed on any of them. A few pedestrians wear one (a hijab or a head wrap for
+  about seven women in a hundred; a turban, a kippah or a flat cap for about five men in a hundred). The far body
+  draws no headwear shapes: it paints the hair's cap in the cloth. A **Face shape** row above the face sliders
+  holds twenty-four starting faces named by their shape alone (oval, round, square, heart, long, diamond, triangle,
+  rectangle, their softer, broader, narrower or more defined kin, and four that move one feature); each sets the
+  head and the seven face sliders, and any slider moved after is your own. At the console: `look hairStyle afro`,
+  `look curl 4C`, `look headwear hijab`, `look headwearColour 3`, `look face heart`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and

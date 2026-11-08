@@ -26,8 +26,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  HAIR, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeOf, formatLookCode, lookFromSeed, lookOptions,
-  lookSwatch, matchingSwatch, parseLookCode, withBuild, withLookSlot,
+  LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf, formatLookCode,
+  lookFromSeed, lookOptions, lookSwatch, lookWears, matchingSwatch, parseLookCode, withBuild, withFaceShape, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
@@ -79,7 +79,10 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'vitiligo': return 'Vitiligo'
     case 'freckles': return 'Freckles'
     case 'hairStyle': return 'Hair'
+    case 'curl': return 'Curl pattern'
     case 'hairColour': return 'Hair colour'
+    case 'headwear': return 'Headwear'
+    case 'headwearColour': return 'Headwear colour'
     case 'layer': return 'Layer'
     case 'top': return layer === LAYER.coat ? 'Coat' : body === 1 ? 'Blazer' : body === 3 ? 'Top' : 'Jacket'
     case 'trim': return 'Trim'
@@ -149,6 +152,7 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.IRIS] = '#4a3a2a'
   out[SLOT.LIP] = lipOf(lookSwatch(look, 'skin') ?? 0xd29f79)
   out[SLOT.SCARF] = own('scarf', 0x6a1e2a)
+  out[SLOT.HEADWEAR] = own('headwearColour', 0x1c1c22)
   return out
 }
 
@@ -165,22 +169,8 @@ function shaded(hex: string): string {
   return hex6((c(16) << 16) | (c(8) << 8) | c(0))
 }
 
-/** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0; the hair's follow the style). */
-function wears(look: Look, piece: number): boolean {
-  switch (piece) {
-    case PIECE.TIE: return look.tie === 1
-    case PIECE.BAG: return look.bag === 1
-    case PIECE.CUP: return look.cup === 1
-    case PIECE.GLASSES: return look.eyewear === 1
-    case PIECE.HAIR_CAP: return look.hairStyle !== HAIR.bald
-    case PIECE.LONG_HAIR: return look.hairStyle === HAIR.long
-    case PIECE.BOB: return look.hairStyle === HAIR.bob
-    case PIECE.BUN: return look.hairStyle === HAIR.bun
-    case PIECE.COAT: return look.layer === LAYER.coat
-    case PIECE.SCARF: return look.scarf !== 0
-    default: return true
-  }
-}
+/** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0): the crowd's own mask (look.ts lookWears). */
+const wears = (look: Look, piece: number): boolean => lookWears(look, piece)
 
 const m = (v: number): string => (Math.round(v * 1000) / 1000).toString()
 
@@ -398,11 +388,29 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                 </Fragment>
               )
             }
-            // The face view heads the face sliders.
+            // The face view heads the face sliders, then the face shapes (each sets the head and the seven sliders).
             if (slot === 'brow') {
+              const shape = faceShapeNameOf(worn)
               return (
                 <Fragment key={slot}>
                   <div className={`mb-3 mt-3 border-t pt-3 ${t.rule}`}><Face look={worn} t={t} /></div>
+                  <div className="mb-2 flex items-start gap-3" data-row="face-shape">
+                    <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Face shape</div>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Face shape">
+                      {LOOK_FACE_SHAPES.map((f) => (
+                        <button
+                          key={f.name}
+                          type="button"
+                          role="radio"
+                          aria-checked={shape?.name === f.name}
+                          onClick={() => { const next = withFaceShape(worn, f.name); if (next) onChange(next) }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${shape?.name === f.name ? t.pillOn : t.pill}`}
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   {row}
                 </Fragment>
               )

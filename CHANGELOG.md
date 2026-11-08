@@ -15,6 +15,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Thirty-two hair styles, curl patterns 1A to 4C, eight headwear and twenty-four face shapes.** The look's hair
+  style takes two high bits in the skin word (`LOOK_FIELD_HIGH.hairStyle`) and reaches thirty-two styles
+  (`HAIR_STYLES`: the five older ones keep their numbers), each a set of hair pieces and a paint. Three new hair
+  shapes join the body (`humanoid.ts` PIECE: a full rounded shell, a puff on the crown, a tail) and four headwear
+  shapes (a head scarf over the head and neck, a wound crown, a snug crown, a flat cap's peak), near body only; the
+  far body paints the hair's cap in the headwear's cloth. The skin word also carries the curl pattern (4 bits), the
+  headwear (none, hijab, turban, head wrap, kippah, durag, beanie, flat cap: 3 bits) and its cloth (3 bits); all are
+  0 for "as before", so every older look and code reads back unchanged. The crowd's vertex stage picks each hair
+  piece with one shift of a 32-bit style set per piece (`HAIR_PIECE_STYLES`), and the fragment stage paints the cut
+  and the curl texture from the rest position under branches. The hashed crowd gains a curl pattern each and a few
+  headwear (about seven women and five men in a hundred). Twenty-four face shapes (`LOOK_FACE_SHAPES`, named by shape
+  alone) set the head and the face sliders, as a card row and `look face <shape>`. The near body grows by about 270
+  vertices (budget 1,850, from 1,600) and the far body by about 30 (budget 520, from 500). Pinned by `look.test.ts`,
+  `humanoid.test.ts`, `lookWiring.test.ts`, `commands.test.ts` and `conduct.test.ts` (the new pieces confirmed
+  unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
   customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
   (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new

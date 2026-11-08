@@ -36,7 +36,8 @@ import { bodyVertex } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, LANDMARK, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
-  HAIR, LAYER, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR, LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
+  HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, LAYER, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
+  LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
@@ -143,6 +144,7 @@ const PALETTE = {
   coats: hex([0x2b2b2e, 0x1f2a44, 0x4a3b2e, 0xb59a72, 0x5a5e5c, 0x3a2a24, 0x8a6a48]),
   trims: hex([0x141414, 0xe8e2d6, 0x5e2530, 0x1c2c4c, 0xb59a72, 0x6e7278, 0x3f5e5a]),
   scarves: hex([0x6a1e2a, 0x1c2c4c, 0xd9c7a8, 0x2a2a2d, 0x8a6a48, 0x3a5f9a, 0x9c9a96]),
+  headwear: hex([0x1c1c22, 0xe9e4da, 0x1f2a44, 0x6a1e2a, 0x3f5e5a, 0xb59a72, 0x5a5e66, 0xc77d4a]),
 }
 /**
  * Every palette end to end, as the material's one uniform array holds them, and where each begins in it. WebGPU
@@ -234,6 +236,73 @@ function skinMarks(skinIn: V3, vitiligoIn: U1, frecklesIn: U1, rigIn: V3, offset
     return out
   }) as unknown as (...inputs: Node[]) => V3
   return marks(skinIn, vitiligoIn, frecklesIn, rigIn, offsetIn, slotIn)
+}
+
+/**
+ * The hair painted over its pieces (look.ts HAIR_TEXTURE, WARDROBE.curl): cropped close (the skin through it), faded
+ * to the skin from the crown down, an undercut's or a strip's shaved sides, a side part, cornrows' partings, braids'
+ * plaits, locs' cords, twists, waves round the crown, all from the rest position so they keep their place as the head
+ * turns; then the curl pattern's own texture over whatever is left (straight streaks, waves, curls, coils, finer and
+ * deeper down the scale). The far body keeps the cuts that change the head's colour (close, faded, shaved) and leaves
+ * the fine paints. Only the hair's slot reads the result (not the brows: their piece is the face's).
+ */
+function hairPaint(hairIn: V3, skinIn: V3, textureIn: U1, curlIn: U1, rigIn: V3, near: boolean): V3 {
+  const paint = Fn(([hair, skin, texture, curl, rig]: [V3, V3, U1, U1, V3]) => {
+    const rest = positionGeometry
+    const piece = rig.z
+    const is = (p: number) => piece.greaterThan(p - 0.5).and(piece.lessThan(p + 0.5))
+    const onCap = is(PIECE.HAIR_CAP)
+    const ofHair = is(PIECE.FACE).not()
+    const t = (k: number) => texture.equal(uint(k))
+    const out = vec3(hair).toVar()
+    const x = rest.x, y = rest.y
+    const shaved = skin.mul(0.86).add(hair.mul(0.14))
+    If(onCap, () => {
+      If(t(HAIR_TEXTURE.close), () => { out.assign(mix(hair, skin, 0.5)) })
+      If(t(HAIR_TEXTURE.fade), () => { out.assign(mix(hair, shaved, smoothstep(1.715, 1.645, y))) })
+      If(t(HAIR_TEXTURE.undercut), () => { out.assign(select(x.abs().greaterThan(0.056).and(y.lessThan(1.735)), shaved, hair)) })
+      If(t(HAIR_TEXTURE.strip), () => { out.assign(select(x.abs().greaterThan(0.03), shaved, hair)) })
+    })
+    if (near) {
+      const groove = (v: F1, width: number): F1 => smoothstep(0.5 - width, 0.5, v.fract().sub(0.5).abs())
+      const lengths = is(PIECE.LONG_HAIR).or(is(PIECE.PONYTAIL)).or(is(PIECE.BOB)).or(is(PIECE.BUN)).or(is(PIECE.TOP_BUN))
+      If(onCap.and(t(HAIR_TEXTURE.part)), () => { out.assign(select(x.sub(0.035).abs().lessThan(0.004).and(y.greaterThan(1.7)), mix(hair, skin, 0.6), hair)) })
+      If(onCap.and(t(HAIR_TEXTURE.rows).or(t(HAIR_TEXTURE.braids))), () => {
+        // Partings between the rows, front to back (cornrows), or a grid of them (braids' sections).
+        const rows = groove(x.mul(select(t(HAIR_TEXTURE.rows), float(55), float(30))), 0.09)
+        const sections = select(t(HAIR_TEXTURE.braids), groove(y.mul(30).add(rest.z.mul(30)), 0.08), float(0))
+        out.assign(mix(hair, skin.mul(0.8), rows.max(sections).mul(0.75)))
+      })
+      If(lengths.and(t(HAIR_TEXTURE.braids).or(t(HAIR_TEXTURE.rows))), () => {
+        out.assign(hair.mul(float(0.78).add(groove(y.mul(90).add(x.abs().mul(60)), 0.25).oneMinus().mul(0.3))))
+      })
+      If(ofHair.and(t(HAIR_TEXTURE.locs)), () => {
+        const cords = groove(x.mul(45).add(rest.z.mul(45)), 0.18).oneMinus()
+        out.assign(hair.mul(float(0.74).add(cords.mul(0.3)).add(valueNoise(rest.mul(vec3(40, 12, 40)), 2.3).mul(0.08))))
+      })
+      If(ofHair.and(t(HAIR_TEXTURE.twists)), () => {
+        const a = groove(y.mul(70).add(x.mul(50)), 0.2), c = groove(y.mul(70).sub(x.mul(50)), 0.2)
+        out.assign(hair.mul(float(1.04).sub(a.max(c).mul(0.24))))
+      })
+      If(onCap.and(t(HAIR_TEXTURE.waves)), () => {
+        const r = vec3(x, 0, rest.z.add(0.015)).length()
+        out.assign(mix(hair, skin, 0.35).mul(float(0.84).add(groove(r.mul(85).add(y.mul(20)), 0.3).oneMinus().mul(0.22))))
+      })
+      // The curl pattern's own texture (1A to 4C: four families of three): straight streaks, waves, curls, coils.
+      If(ofHair.and(curl.greaterThan(uint(0))).and(t(HAIR_TEXTURE.close).not()).and(t(HAIR_TEXTURE.waves).not()), () => {
+        const family = curl.sub(uint(1)).div(uint(3))
+        const grade = float(curl.sub(uint(1)).mod(uint(3))).div(2)
+        const streak = x.add(rest.z).mul(300).sin().mul(0.05)
+        const wave = y.mul(float(110).add(grade.mul(40))).add(x.mul(40).sin().mul(2)).sin().mul(0.08)
+        const curls = valueNoise(rest.mul(float(140).add(grade.mul(60))), 4.1).sub(0.5).mul(0.24)
+        const coils = valueNoise(rest.mul(float(260).add(grade.mul(80))), 6.7).sub(0.5).mul(0.28).sub(0.06)
+        const shade = select(family.equal(uint(0)), streak, select(family.equal(uint(1)), wave, select(family.equal(uint(2)), curls, coils)))
+        out.assign(out.mul(shade.add(1)))
+      })
+    }
+    return out
+  }) as unknown as (...inputs: Node[]) => V3
+  return paint(hairIn, skinIn, textureIn, curlIn, rigIn)
 }
 
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
@@ -414,9 +483,13 @@ export class CrowdView {
       const notShort = step(LOOK_ODDS.longHair, h(4))
       const split = h(LOOK_HASHED_HAIR_SPLIT)
       const past = (edge: number) => step(edge, split)
-      const hashedGrooms = woman
-        ? float(64).add(notShort.mul(past(LOOK_ODDS.bob).oneMinus()).mul(16)).add(notShort.mul(past(LOOK_ODDS.bob)).mul(past(LOOK_ODDS.bun).oneMinus()).mul(128)).add(notShort.mul(past(LOOK_ODDS.bun)).mul(256))
-        : past(LOOK_ODDS.bald).oneMinus().mul(float(64).add(notShort.mul(16)))
+      // The crown's pieces (the cap, a bun) and the length below it (long hair, a bob), apart: a crown cover hides the first.
+      const hashedCrown = woman
+        ? float(64).add(notShort.mul(past(LOOK_ODDS.bun)).mul(256))
+        : past(LOOK_ODDS.bald).oneMinus().mul(64)
+      const hashedLength = woman
+        ? notShort.mul(past(LOOK_ODDS.bob).oneMinus()).mul(16).add(notShort.mul(past(LOOK_ODDS.bob)).mul(past(LOOK_ODDS.bun).oneMinus()).mul(128))
+        : past(LOOK_ODDS.bald).oneMinus().mul(notShort.mul(16))
       // The figure the hash gives, in the sliders' own steps (look.ts lookFromSeed rounds the same links the same way):
       // the stature from this body's range of the height slider, every other slider over its whole range.
       const stature = woman ? LOOK_STATURE.woman : LOOK_STATURE.man
@@ -431,12 +504,39 @@ export class CrowdView {
         const [w, shift, width] = LOOK_FIELD[slot]
         return float((w === 0 ? word : w === 1 ? figure : faceWord).shiftRight(uint(shift)).bitAnd(uint((1 << width) - 1)))
       }
+      // The style's five bits (the face word's three, the skin word's two above them: look.ts LOOK_FIELD_HIGH) and the
+      // headwear (the skin word's, or the hash's: LOOK_HASHED_HEADWEAR splits it as lookFromSeed does). Each hair piece
+      // is worn when the style's bit is set in that piece's set (look.ts HAIR_PIECE_STYLES) and the headwear leaves it
+      // showing (look.ts hairBits: all the hair under a hijab, a turban or a head wrap is covered, the crown's under a
+      // durag, a beanie or a flat cap); the headwear adds its own pieces on the near body, and on the far body, which
+      // has none of them, keeps the hair's cap for the fragment stage to paint in the headwear's cloth.
+      const skinWord = b.figure.element(agentIndex.mul(uint(FIGURE_QUADS)).add(uint(1))).x
       const style = faceWord.shiftRight(uint(LOOK_FIELD.hairStyle[1])).bitAnd(uint(7))
-      const styled = (s: number, bit: number) => select(style.equal(uint(s)), float(1 << bit), float(0))
-      const ownGrooms = styled(HAIR.long, LOOK_PIECE_BIT.longHair)
-        .add(select(style.equal(uint(HAIR.bald)), float(0), float(1 << LOOK_PIECE_BIT.hairCap)))
-        .add(styled(HAIR.bob, LOOK_PIECE_BIT.bob))
-        .add(styled(HAIR.bun, LOOK_PIECE_BIT.bun))
+        .bitOr(skinWord.shiftRight(uint(LOOK_FIELD_HIGH.hairStyle![1])).bitAnd(uint(3)).shiftLeft(uint(3)))
+      const wear = h(LOOK_HASHED_HEADWEAR)
+      const odds = (edge: number) => wear.greaterThanEqual(edge)
+      const hashedHeadwear = woman
+        ? select(odds(LOOK_ODDS.hijab), uint(HEADWEAR.hijab), select(odds(LOOK_ODDS.headWrap), uint(HEADWEAR.headWrap), uint(HEADWEAR.none)))
+        : select(odds(LOOK_ODDS.turban), uint(HEADWEAR.turban), select(odds(LOOK_ODDS.kippah), uint(HEADWEAR.kippah), select(odds(LOOK_ODDS.flatCap), uint(HEADWEAR.flatCap), uint(HEADWEAR.none))))
+      const headwear = select(custom, skinWord.shiftRight(uint(LOOK_FIELD.headwear[1])).bitAnd(uint(7)), hashedHeadwear)
+      const coversAll = headwear.equal(uint(HEADWEAR.hijab)).or(headwear.equal(uint(HEADWEAR.turban))).or(headwear.equal(uint(HEADWEAR.headWrap)))
+      const coversCrown = headwear.equal(uint(HEADWEAR.durag)).or(headwear.equal(uint(HEADWEAR.beanie))).or(headwear.equal(uint(HEADWEAR.flatCap)))
+      const covered = coversAll.or(coversCrown)
+      const wears = (piece: keyof typeof HAIR_PIECE_STYLES) => uint(HAIR_PIECE_STYLES[piece]).shiftRight(style).bitAnd(uint(1)).equal(uint(1))
+      const groom = (piece: keyof typeof HAIR_PIECE_STYLES, belowCrown: boolean) =>
+        select(wears(piece).and(coversAll.not()).and(belowCrown ? coversAll.not() : coversCrown.not()), float(1 << LOOK_PIECE_BIT[piece]), float(0))
+      const ownHair = groom('hairCap', false).add(groom('longHair', true)).add(groom('bob', true)).add(groom('bun', false))
+        .add(groom('volume', false)).add(groom('topBun', false)).add(groom('ponytail', true))
+      const headwearBits = near
+        ? select(headwear.equal(uint(HEADWEAR.hijab)), float(1 << LOOK_PIECE_BIT.wrap), float(0))
+          .add(select(headwear.equal(uint(HEADWEAR.turban)).or(headwear.equal(uint(HEADWEAR.headWrap))), float(1 << LOOK_PIECE_BIT.turban), float(0)))
+          .add(select(coversCrown, float(1 << LOOK_PIECE_BIT.hat), float(0)))
+          .add(select(headwear.equal(uint(HEADWEAR.flatCap)), float(1 << LOOK_PIECE_BIT.brim), float(0)))
+        : select(covered, float(1 << LOOK_PIECE_BIT.hairCap), float(0))
+      // The hashed hair is the five older styles' pieces alone, covered as a chosen look's is.
+      const hashedHair = select(coversAll, float(0), select(coversCrown, hashedLength, hashedCrown.add(hashedLength)))
+      const ownGrooms = ownHair.add(headwearBits)
+      const hashedHead = hashedHair.add(headwearBits)
       // The eye pass alone draws the face's features (their piece bit): the shadow map does without them.
       const features = eye ? 1 << LOOK_PIECE_BIT.face : 0
       // The wardrobe the hash gives (look.ts lookFromSeed draws it from the same links the same way), as a wardrobe
@@ -456,7 +556,7 @@ export class CrowdView {
       // The wardrobe's pieces (look.ts wardrobeBits): the coat under a coat layer, the scarf when one is worn.
       const wardrobePieces = select(layer.equal(uint(LAYER.coat)), float(1 << LOOK_PIECE_BIT.coat), float(0))
         .add(select(scarfAt.equal(uint(0)), float(0), float(1 << LOOK_PIECE_BIT.scarf)))
-      const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedGrooms)).add(features).add(wardrobePieces)
+      const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedHead)).add(features).add(wardrobePieces)
       const slider = (slot: Exclude<LookSlider, 'height'>) => {
         const n = (slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps) - 1
         return select(custom, stepOf(slot), hashedStep(LOOK_HASHED_SLIDER[slot], n)).div(n)
@@ -490,7 +590,10 @@ export class CrowdView {
       vSeed.assign(seed)
       vLookLo.assign(float(word.bitAnd(uint(0xffff))))
       vLookHi.assign(float(word.shiftRight(uint(16))))
-      vWardrobe.assign(float(wardrobe.bitAnd(uint(0xff))))
+      // The wardrobe word's eight bits, then the hair's paint (look.ts HAIR_TEXTURE_STYLES: four bits, the hashed
+      // styles' are all plain) and the headwear worn (three bits), so the fragment stage paints what the pieces show.
+      const texture = HAIR_TEXTURE_STYLES.reduce((t: U1, set, bit) => t.bitOr(uint(set).shiftRight(style).bitAnd(uint(1)).shiftLeft(uint(bit))), uint(0))
+      vWardrobe.assign(float(wardrobe.bitAnd(uint(0xff)).bitOr(select(custom, texture, uint(0)).shiftLeft(uint(8))).bitOr(headwear.shiftLeft(uint(8 + HAIR_TEXTURE_BITS)))))
       // The fragment stage reads the code dissolve's amount from this varying (both passes: the shadow map drops the
       // same cells).
       vDissolve.assign(dissolve)
@@ -587,7 +690,7 @@ export class CrowdView {
     const freckles = select(custom, gene(LOOK_FIELD.freckles), select(h(LOOK_HASHED_COLOUR.freckles).greaterThanEqual(LOOK_ODDS.freckles), uint(h(LOOK_HASHED_COLOUR.frecklesDensity).mul(WARDROBE.freckles.length - 1 - 0.001)).add(uint(1)), uint(0)))
     const marked = skinMarks(toned, vitiligo, freckles, rig, vec3(h(LOOK_HASHED_COLOUR.marks), h(LOOK_HASHED_COLOUR.marks + 1), h(LOOK_HASHED_COLOUR.marks + 2)), slot, near)
     const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25))
-    const wornHair = mix(pickedHair, grey, smoothstep(0.5, 1, age))
+    const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age))
     top = select(custom, ownTop, top)
     bottom = select(custom, ownBottom, bottom)
     shirt = select(custom, ownShirt, shirt)
@@ -597,6 +700,27 @@ export class CrowdView {
     // look.ts lookOptions offers them), the trim is matching (the top's cloth) or one of the trim cloths, the scarf one
     // of the scarf cloths (0 is none, and the piece is not drawn).
     const wardrobe = uint(vWardrobe.add(0.5))
+    // The hair's paint and the headwear the vertex stage resolved (the look's, or the hash's), above the wardrobe's bits.
+    const hairTexture = wardrobe.shiftRight(uint(8)).bitAnd(uint((1 << HAIR_TEXTURE_BITS) - 1))
+    const headwear = wardrobe.shiftRight(uint(8 + HAIR_TEXTURE_BITS)).bitAnd(uint(7))
+    const curl = select(custom, gene(LOOK_FIELD.curl), uint(h(LOOK_HASHED_COLOUR.curl).mul(WARDROBE.curl.length - 1 - 0.001)).add(uint(1)))
+    const wornHair = hairPaint(greyed, wornSkin, hairTexture, curl, rig, near)
+    // The headwear's cloth (the look's, or the colours' chain's), a head wrap's print in two shades of it, a beanie's
+    // ribs; a kippah painted on the crown over the hair or the scalp; on the far body, which has no headwear pieces,
+    // the hair's cap under any cover in the cloth.
+    const headCloth = at(PALETTE.headwear, select(custom, gene(LOOK_FIELD.headwearColour), uint(h(LOOK_HASHED_COLOUR.headwearCloth).mul(PALETTE.headwear.length - 0.001))))
+    const hw = (k: number) => headwear.equal(uint(k))
+    const print = step(0.5, positionGeometry.y.mul(48).add(positionGeometry.x.mul(30)).add(positionGeometry.z.mul(30)).fract())
+    const ribs = positionGeometry.x.mul(160).add(positionGeometry.z.mul(160)).sin().mul(0.05).add(1)
+    const fabric = select(hw(HEADWEAR.headWrap), mix(headCloth, headCloth.mul(1.35).min(vec3(1)), print.mul(0.6)), select(hw(HEADWEAR.beanie), headCloth.mul(ribs), headCloth))
+    const pieceIs = (p: number) => rig.z.greaterThan(p - 0.5).and(rig.z.lessThan(p + 0.5))
+    const onHead = rig.x.greaterThan(BONE.HEAD - 0.5).and(rig.x.lessThan(BONE.HEAD + 0.5))
+    const crownDisc = vec3(positionGeometry.x, 0, positionGeometry.z.add(0.015)).length().lessThan(0.058).and(positionGeometry.y.greaterThan(1.735))
+    const kippah = hw(HEADWEAR.kippah).and(onHead).and(crownDisc).and(pieceIs(PIECE.TOP_BUN).not()).and(pieceIs(PIECE.FACE).not())
+    const covered = headwear.notEqual(uint(HEADWEAR.none)).and(hw(HEADWEAR.kippah).not())
+    const farCover = near ? float(0) : select(covered.and(pieceIs(PIECE.HAIR_CAP)), float(1), float(0))
+    const hairShown = mix(select(kippah, headCloth, wornHair), fabric, farCover)
+    const skinShown = select(kippah, headCloth, wornSkin)
     const wfield = (s: 'layer' | 'trim' | 'scarf'): U1 => wardrobe.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
     const layer = wfield('layer')
     const trimAt = wfield('trim')
@@ -633,8 +757,8 @@ export class CrowdView {
     const white = vec3(0.88, 0.86, 0.84)
     const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
-    const slots: V3[] = [worn, shirt, wornSkin, wornHair, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf]
-    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78]
+    const slots: V3[] = [worn, shirt, skinShown, hairShown, bottom, shoes, accent, prop, legwear, frame, white, iris, lip, scarf, fabric]
+    const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
     for (let s = slots.length - 2; s >= 0; s--) {

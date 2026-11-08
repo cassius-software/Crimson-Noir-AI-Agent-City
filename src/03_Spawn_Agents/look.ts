@@ -35,7 +35,10 @@ export type LookBody = 0 | 1 | 2 | 3
  * is pieces (the cap, long hair, a bob, a bun) chosen by the hair style; `face` is the features, which the eye pass
  * draws and the shadow pass leaves out.
  */
-export const LOOK_PIECE_BIT = Object.freeze({ tie: 1, bag: 2, cup: 3, longHair: 4, glasses: 5, hairCap: 6, bob: 7, bun: 8, face: 9, coat: 10, scarf: 11 })
+export const LOOK_PIECE_BIT = Object.freeze({
+  tie: 1, bag: 2, cup: 3, longHair: 4, glasses: 5, hairCap: 6, bob: 7, bun: 8, face: 9, coat: 10, scarf: 11,
+  volume: 12, topBun: 13, ponytail: 14, wrap: 15, turban: 16, hat: 17, brim: 18,
+})
 
 /**
  * The crowd's colour palettes, verbatim (crowd.ts `PALETTE`, pinned by look.test.ts against the source). Every
@@ -67,6 +70,7 @@ export const LOOK_PALETTE = Object.freeze({
   coats: Object.freeze([0x2b2b2e, 0x1f2a44, 0x4a3b2e, 0xb59a72, 0x5a5e5c, 0x3a2a24, 0x8a6a48]),
   trims: Object.freeze([0x141414, 0xe8e2d6, 0x5e2530, 0x1c2c4c, 0xb59a72, 0x6e7278, 0x3f5e5a]),
   scarves: Object.freeze([0x6a1e2a, 0x1c2c4c, 0xd9c7a8, 0x2a2a2d, 0x8a6a48, 0x3a5f9a, 0x9c9a96]),
+  headwear: Object.freeze([0x1c1c22, 0xe9e4da, 0x1f2a44, 0x6a1e2a, 0x3f5e5a, 0xb59a72, 0x5a5e66, 0xc77d4a]),
 })
 export type PaletteName = keyof typeof LOOK_PALETTE
 
@@ -87,7 +91,8 @@ export type LookFaceSlider = (typeof LOOK_FACE_SLIDERS)[number]
  */
 export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
-  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
+  'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -97,7 +102,7 @@ export type Look = Readonly<Record<LookSlot, number>>
  * the slot existed (no vitiligo, no freckles). A record may leave any of them out: it reads as 0, so a look kept
  * before they existed is accepted as it is, and every later slot added here must keep 0 meaning "as before".
  */
-export const LOOK_GENOME_SLOTS = ['vitiligo', 'freckles'] as const satisfies readonly LookSlot[]
+export const LOOK_GENOME_SLOTS = ['vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour'] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
 export const LOOK_V4_SLOTS = LOOK_SLOTS.filter((s) => !(LOOK_GENOME_SLOTS as readonly string[]).includes(s))
@@ -138,8 +143,88 @@ export interface Outfit {
 /** Vitiligo's patterns (WARDROBE.vitiligo), as crowd.ts draws them: 0 is none, as before the skin word. */
 export const VITILIGO = Object.freeze({ none: 0, hands: 1, face: 2, handsAndFace: 3, scattered: 4, widespread: 5, oneSide: 6 })
 
-/** The hair styles' indices (WARDROBE.hairStyle): the two the look had before the face keep their numbers. */
-export const HAIR = Object.freeze({ short: 0, long: 1, bob: 2, bun: 3, bald: 4 })
+/** The hair styles' indices (WARDROBE.hairStyle): the two the look had before the face keep their numbers, the five before the genome theirs. */
+export const HAIR = Object.freeze({ short: 0, long: 1, bob: 2, bun: 3, bald: 4, afro: 8 })
+
+/**
+ * How a style's hair is painted over its pieces (crowd.ts, the hair's slot): as it grows, cropped close to the scalp,
+ * faded to the skin at the sides and back, cornrows, braids, locs, twists, a side part, an undercut (the sides
+ * shaved), a strip down the middle (the sides shaved), or waves round the crown.
+ */
+export const HAIR_TEXTURE = Object.freeze({ plain: 0, close: 1, fade: 2, rows: 3, braids: 4, locs: 5, twists: 6, part: 7, undercut: 8, strip: 9, waves: 10 })
+type HairPiece = 'hairCap' | 'longHair' | 'bob' | 'bun' | 'volume' | 'topBun' | 'ponytail'
+/** The hair pieces a style may wear (humanoid.ts PIECE), each one's bit in the mask. */
+export const HAIR_PIECES: readonly HairPiece[] = Object.freeze(['hairCap', 'longHair', 'bob', 'bun', 'volume', 'topBun', 'ponytail'])
+
+/**
+ * The thirty-two hair styles: each a name, the hair pieces it wears and how its hair is painted. The first five are
+ * the styles every look had before the genome (their numbers kept); the rest reach the hair's later shapes (a full
+ * rounded shell, a puff on the crown, a tail) and its paints. Whatever the style, the curl pattern (WARDROBE.curl)
+ * says how the hair's own texture reads.
+ */
+export const HAIR_STYLES: readonly { readonly name: string; readonly pieces: readonly HairPiece[]; readonly texture: number }[] = Object.freeze(([
+  ['short', ['hairCap'], 'plain'],
+  ['long', ['hairCap', 'longHair'], 'plain'],
+  ['bob', ['hairCap', 'bob'], 'plain'],
+  ['bun', ['hairCap', 'bun'], 'plain'],
+  ['bald', [], 'plain'],
+  ['buzz cut', ['hairCap'], 'close'],
+  ['fade', ['hairCap'], 'fade'],
+  ['side part', ['hairCap'], 'part'],
+  ['afro', ['hairCap', 'volume'], 'plain'],
+  ['tapered afro', ['hairCap', 'volume'], 'fade'],
+  ['afro puff', ['hairCap', 'topBun'], 'plain'],
+  ['top knot', ['hairCap', 'topBun'], 'fade'],
+  ['ponytail', ['hairCap', 'ponytail'], 'plain'],
+  ['braided ponytail', ['hairCap', 'ponytail'], 'braids'],
+  ['cornrows', ['hairCap'], 'rows'],
+  ['cornrow ponytail', ['hairCap', 'ponytail'], 'rows'],
+  ['box braids', ['hairCap', 'longHair'], 'braids'],
+  ['braided bun', ['hairCap', 'bun'], 'braids'],
+  ['braided updo', ['hairCap', 'topBun'], 'braids'],
+  ['locs', ['hairCap', 'longHair'], 'locs'],
+  ['short locs', ['hairCap', 'bob'], 'locs'],
+  ['locs updo', ['hairCap', 'topBun'], 'locs'],
+  ['twists', ['hairCap'], 'twists'],
+  ['long twists', ['hairCap', 'longHair'], 'twists'],
+  ['twist-out', ['hairCap', 'volume'], 'twists'],
+  ['layered', ['hairCap', 'bob', 'longHair'], 'plain'],
+  ['half up', ['hairCap', 'longHair', 'bun'], 'plain'],
+  ['undercut', ['hairCap'], 'undercut'],
+  ['mohawk', ['hairCap'], 'strip'],
+  ['waves', ['hairCap'], 'waves'],
+  ['bun with fade', ['hairCap', 'bun'], 'fade'],
+  ['side part bun', ['hairCap', 'bun'], 'part'],
+] as const).map(([name, pieces, texture]) => Object.freeze({ name, pieces: Object.freeze([...pieces]), texture: HAIR_TEXTURE[texture] })))
+
+/**
+ * For each hair piece, a 32-bit set of the styles that wear it (bit s for style s): the crowd's vertex stage tests
+ * `(set >> style) & 1` for each piece, so one style's pieces cost seven shifts, not a table. The paint likewise, a
+ * set per bit of the texture's number.
+ */
+export const HAIR_PIECE_STYLES: Readonly<Record<HairPiece, number>> = Object.freeze(Object.fromEntries(HAIR_PIECES.map((piece) =>
+  [piece, HAIR_STYLES.reduce((set, style, i) => (style.pieces.includes(piece) ? set | (1 << i) : set), 0) >>> 0])) as Record<HairPiece, number>)
+export const HAIR_TEXTURE_BITS = 4
+export const HAIR_TEXTURE_STYLES: readonly number[] = Object.freeze(Array.from({ length: HAIR_TEXTURE_BITS }, (_, bit) =>
+  HAIR_STYLES.reduce((set, style, i) => (((style.texture >>> bit) & 1) === 1 ? set | (1 << i) : set), 0) >>> 0))
+
+/**
+ * The headwear (WARDROBE.headwear), each worn over the hair in a headwear cloth (LOOK_PALETTE.headwear): a hijab (the
+ * WRAP piece: the head, the ears and the neck covered, the face open), a turban and a head wrap (the TURBAN piece,
+ * in two fabrics), a kippah (painted on the crown), a durag, a beanie and a flat cap (the HAT piece; the cap adds
+ * the BRIM). Worn as clothing, with no symbol printed on any of them.
+ */
+export const HEADWEAR = Object.freeze({ none: 0, hijab: 1, turban: 2, headWrap: 3, kippah: 4, durag: 5, beanie: 6, flatCap: 7 })
+/** What each headwear covers: all the hair (a hijab, a turban, a head wrap), the crown's hair (a durag, a beanie, a flat cap: the length below shows), or none (a kippah). */
+export const headwearCovers = (headwear: number): 'all' | 'crown' | 'none' =>
+  headwear === HEADWEAR.hijab || headwear === HEADWEAR.turban || headwear === HEADWEAR.headWrap ? 'all'
+    : headwear === HEADWEAR.durag || headwear === HEADWEAR.beanie || headwear === HEADWEAR.flatCap ? 'crown' : 'none'
+/** The headwear's own pieces (humanoid.ts PIECE): the wrap, the turban, the hat, the flat cap's peak. */
+export const headwearPieces = (headwear: number): readonly string[] =>
+  headwear === HEADWEAR.hijab ? ['wrap'] : headwear === HEADWEAR.turban || headwear === HEADWEAR.headWrap ? ['turban']
+    : headwear === HEADWEAR.flatCap ? ['hat', 'brim'] : headwear === HEADWEAR.durag || headwear === HEADWEAR.beanie ? ['hat'] : []
+/** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
+const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
 /**
  * The outer layer's indices (WARDROBE.layer): the jacket every body wore before the layers (0, so an old record is
@@ -168,7 +253,9 @@ export const WARDROBE = Object.freeze({
   undertone: Object.freeze(['neutral', 'warm', 'cool', 'olive']),
   vitiligo: Object.freeze(['none', 'hands', 'face', 'hands and face', 'scattered', 'widespread', 'one side']),
   freckles: Object.freeze(['none', 'light', 'medium', 'dense']),
-  hairStyle: Object.freeze(['short', 'long', 'bob', 'bun', 'bald']),
+  hairStyle: Object.freeze(HAIR_STYLES.map((s) => s.name)),
+  curl: Object.freeze(['as styled', '1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C']),
+  headwear: Object.freeze(['none', 'hijab', 'turban', 'head wrap', 'kippah', 'durag', 'beanie', 'flat cap']),
   layer: Object.freeze(['jacket', 'shirt sleeves', 'coat']),
   tie: Object.freeze(['none', 'tie']),
   eyewear: Object.freeze(['none', 'glasses']),
@@ -239,6 +326,9 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   scarf: [3, 5, 3],
   vitiligo: [4, 2, 3],
   freckles: [4, 5, 2],
+  curl: [4, 9, 4],
+  headwear: [4, 13, 3],
+  headwearColour: [4, 16, 3],
 })
 
 /**
@@ -247,6 +337,7 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
  */
 export const LOOK_FIELD_HIGH: Readonly<Partial<Record<LookSlot, readonly [word: number, shift: number, width: number]>>> = Object.freeze({
   skin: [4, 0, 2],
+  hairStyle: [4, 7, 2],
 })
 
 /** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, and eleven spare. */
@@ -290,13 +381,15 @@ export const LOOK_HASHED_HAIR_SPLIT = 22
 /** The link of the vertex chain the outer layer is drawn from (under LOOK_ODDS.shirtSleeves shirt sleeves, from LOOK_ODDS.coat a coat, else the jacket) and the one a scarf is worn above LOOK_ODDS.scarf on. */
 export const LOOK_HASHED_LAYER = 23
 export const LOOK_HASHED_SCARF = 24
+/** The link of the vertex chain the headwear is drawn from (LOOK_ODDS: a hijab or a head wrap for a few women, a turban, a kippah or a flat cap for a few men). */
+export const LOOK_HASHED_HEADWEAR = 25
 /**
  * The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from; the
  * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth; whether
  * the skin has vitiligo (above LOOK_ODDS.vitiligo) and its pattern, freckles (above LOOK_ODDS.freckles) and how many;
  * `marks` and the two links after it, where on a person the patches and freckles fall (crowd.ts, not a slot).
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -340,6 +433,9 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'vitiligo': return named(WARDROBE.vitiligo)
     case 'freckles': return named(WARDROBE.freckles)
     case 'hairStyle': return named(WARDROBE.hairStyle)
+    case 'curl': return named(WARDROBE.curl)
+    case 'headwear': return named(WARDROBE.headwear)
+    case 'headwearColour': return swatches(LOOK_PALETTE.headwear)
     case 'hairColour': return [...swatches(LOOK_PALETTE.hair), { name: 'grey', hex: GREY_HAIR }]
     case 'layer': return named(WARDROBE.layer)
     // The layer owns the top's dye: a coat draws from the coats, as many as the body's own jacket palette holds (the slot's width is the jacket's).
@@ -425,6 +521,10 @@ const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o,
 
 /** A v2 slot's option count: the hair had two styles then; the rest as today. */
 const v2Size = (body: LookBody, slot: V2Slot): number => (slot === 'hairStyle' ? 2 : lookSize(body, slot))
+/** The hair styles a look kept before the genome could hold (the face's five: HAIR_STYLES' first). */
+const OLDER_HAIR_STYLES = 5
+/** A v3 slot's option count: the five hair styles then; the rest as today. */
+const v3Size = (body: LookBody, slot: LookSlot): number => (slot === 'hairStyle' ? OLDER_HAIR_STYLES : lookSize(body, slot))
 
 /**
  * A look kept before the wardrobe's layers (exactly the twenty-nine v3 slots, each within its options), upgraded: the
@@ -440,7 +540,7 @@ export function upgradeFaceLook(raw: unknown): Look | null {
   for (const slot of LOOK_V3_SLOTS) {
     if (!hasOwn(r, slot)) return null
     const v = r[slot]
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= lookSize(body, slot)) return null
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= v3Size(body, slot)) return null
     out[slot] = v + 0
   }
   out.layer = LAYER.jacket
@@ -690,10 +790,26 @@ export function unpackLegacyLook(word: number): Look | null {
   return upgradeLegacyLook(out)
 }
 
-/** The hair pieces a style wears, as mask bits: long hair 16, the cap 64 (every style but bald), a bob 128, a bun 256. */
-export const hairBits = (style: number): number =>
-  (style === HAIR.long ? 1 << LOOK_PIECE_BIT.longHair : 0) | (style === HAIR.bald ? 0 : 1 << LOOK_PIECE_BIT.hairCap) |
-  (style === HAIR.bob ? 1 << LOOK_PIECE_BIT.bob : 0) | (style === HAIR.bun ? 1 << LOOK_PIECE_BIT.bun : 0)
+/**
+ * The hair pieces a style wears under a headwear, as mask bits (HAIR_STYLES: the cap 64 for every style but bald, long
+ * hair 16, a bob 128, a bun 256, the full shell, the crown's puff, a tail), with the headwear's own pieces: a hijab,
+ * a turban or a head wrap covers all the hair; a durag, a beanie or a flat cap the crown's (the length below shows).
+ * `near` false is the far body's mask: it has no headwear pieces, so under any cover it keeps the hair's cap (crowd.ts
+ * paints it in the headwear's cloth) and nothing else the cover hides.
+ */
+export const hairBits = (style: number, headwear: number = HEADWEAR.none, near = true): number => {
+  const covers = headwearCovers(headwear)
+  let out = 0
+  for (const piece of HAIR_STYLES[style]?.pieces ?? []) {
+    if (covers === 'all' || (covers === 'crown' && !BELOW_CROWN.has(piece))) continue
+    out |= 1 << LOOK_PIECE_BIT[piece]
+  }
+  if (covers !== 'none') {
+    if (near) for (const piece of headwearPieces(headwear)) out |= 1 << LOOK_PIECE_BIT[piece as keyof typeof LOOK_PIECE_BIT]
+    else out |= 1 << LOOK_PIECE_BIT.hairCap
+  }
+  return out >>> 0
+}
 
 /** The wardrobe's pieces, as mask bits: the coat 1024 when the layer is a coat, the scarf 2048 when one is worn. */
 export const wardrobeBits = (wardrobe: number): number =>
@@ -704,8 +820,18 @@ export const wardrobeBits = (wardrobe: number): number =>
  * (tie at bit 1 … glasses at bit 5 from the look word; the hair bits from the face word's style; the coat and the
  * scarf from the wardrobe word; the face bit 9 always), 0 for LOOK_NONE. The shadow pass's mask is this without bit 9.
  */
-export const lookMask = (word: number, face: number, wardrobe: number): number =>
-  (word & 1) === 0 ? 0 : (((word >>> 2) & 46) | hairBits((face >>> LOOK_FIELD.hairStyle[1]) & 7) | wardrobeBits(wardrobe) | (1 << LOOK_PIECE_BIT.face)) >>> 0
+export const lookMask = (word: number, face: number, wardrobe: number, skinWord = 0, near = true): number => {
+  if ((word & 1) === 0) return 0
+  const style = ((face >>> LOOK_FIELD.hairStyle[1]) & 7) | (((skinWord >>> LOOK_FIELD_HIGH.hairStyle![1]) & 3) << 3)
+  const headwear = (skinWord >>> LOOK_FIELD.headwear[1]) & 7
+  return (((word >>> 2) & 46) | hairBits(style, headwear, near) | wardrobeBits(wardrobe) | (1 << LOOK_PIECE_BIT.face)) >>> 0
+}
+
+/** Whether a look wears a piece (humanoid.ts PIECE) on the near body: the card's picture and the crowd's mask agree on it. */
+export function lookWears(look: Look, piece: number): boolean {
+  const g = packGenome(look)
+  return piece === 0 || ((lookMask(g[0], g[2], g[3], g[4]) >>> piece) & 1) === 1
+}
 
 // --- The hash path, reproduced ---------------------------------------------------------------------------------
 
@@ -728,7 +854,7 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
  * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -761,6 +887,10 @@ export function lookFromSeed(seed: number): Look {
   let hairStyle: number
   if (woman) hairStyle = !notShort ? HAIR.short : split < f32(LOOK_ODDS.bob) ? HAIR.long : split < f32(LOOK_ODDS.bun) ? HAIR.bob : HAIR.bun
   else hairStyle = above(split, LOOK_ODDS.bald) ? HAIR.bald : notShort ? HAIR.long : HAIR.short
+  const wear = hp(LOOK_HASHED_HEADWEAR)
+  const headwear = woman
+    ? (above(wear, LOOK_ODDS.hijab) ? HEADWEAR.hijab : above(wear, LOOK_ODDS.headWrap) ? HEADWEAR.headWrap : HEADWEAR.none)
+    : (above(wear, LOOK_ODDS.turban) ? HEADWEAR.turban : above(wear, LOOK_ODDS.kippah) ? HEADWEAR.kippah : above(wear, LOOK_ODDS.flatCap) ? HEADWEAR.flatCap : HEADWEAR.none)
   const layerLink = hp(LOOK_HASHED_LAYER)
   const layer = layerLink < f32(LOOK_ODDS.shirtSleeves) ? LAYER.shirt : above(layerLink, LOOK_ODDS.coat) ? LAYER.coat : LAYER.jacket
   // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
@@ -789,6 +919,10 @@ export function lookFromSeed(seed: number): Look {
     vitiligo: above(hc(LOOK_HASHED_COLOUR.vitiligo), LOOK_ODDS.vitiligo) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.vitiligoPattern), WARDROBE.vitiligo.length - 1) : 0,
     freckles: above(hc(LOOK_HASHED_COLOUR.freckles), LOOK_ODDS.freckles) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.frecklesDensity), WARDROBE.freckles.length - 1) : 0,
     hairStyle,
+    // Every hashed head of hair has a curl pattern, 1A to 4C evenly (0, "as styled", is a chosen look's alone).
+    curl: 1 + pickIndex(hc(LOOK_HASHED_COLOUR.curl), WARDROBE.curl.length - 1),
+    headwear,
+    headwearColour: headwear === HEADWEAR.none ? 0 : pickIndex(hc(LOOK_HASHED_COLOUR.headwearCloth), LOOK_PALETTE.headwear.length),
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
@@ -884,6 +1018,67 @@ export function withBuild(look: Look, name: string): Look | null {
 /** The build a look's four sliders are exactly at, or null when they have been moved off every build. */
 export function buildOf(look: Look): LookBuild | null {
   return LOOK_BUILDS.find((b) => LOOK_BUILD_SLIDERS.every((s) => look[s] === b.steps[s])) ?? null
+}
+
+/** The sliders a face shape sets: the head's size and the seven face sliders (every other slot is left as it was). */
+export const LOOK_FACE_SHAPE_SLIDERS = ['head', ...LOOK_FACE_SLIDERS] as const
+export interface LookFaceShape {
+  readonly name: string
+  readonly steps: Readonly<Record<(typeof LOOK_FACE_SHAPE_SLIDERS)[number], number>>
+}
+
+/**
+ * Twenty-four face shapes over the head and face sliders, named by the shape alone (oval, round, square, heart, long,
+ * diamond, triangle, rectangle and their softer, broader or more defined kin, then four that move one feature from
+ * the base face), so a face is a starting point and every slider stays the person's own after it. Steps:
+ * [head 0-7, brow, jaw, chin, cheek, nose, eyes, lips 0-15]; 8 (4 for the head) is the base face.
+ */
+export const LOOK_FACE_SHAPES: readonly LookFaceShape[] = Object.freeze(([
+  ['oval', [4, 8, 8, 8, 8, 8, 8, 8]],
+  ['soft oval', [4, 7, 7, 7, 9, 7, 9, 9]],
+  ['defined oval', [4, 10, 10, 9, 7, 9, 7, 7]],
+  ['round', [5, 7, 6, 6, 12, 7, 9, 9]],
+  ['soft round', [5, 6, 5, 5, 13, 6, 10, 10]],
+  ['full round', [6, 7, 7, 6, 14, 8, 8, 11]],
+  ['square', [4, 10, 13, 10, 8, 8, 8, 7]],
+  ['broad square', [5, 11, 15, 11, 9, 9, 7, 8]],
+  ['soft square', [4, 9, 12, 9, 10, 8, 8, 9]],
+  ['heart', [4, 9, 5, 6, 10, 7, 9, 9]],
+  ['narrow heart', [3, 8, 4, 5, 9, 6, 10, 8]],
+  ['full heart', [4, 9, 6, 7, 12, 7, 9, 11]],
+  ['long', [3, 8, 8, 11, 6, 9, 8, 7]],
+  ['narrow long', [2, 7, 7, 12, 5, 9, 7, 7]],
+  ['defined long', [3, 10, 10, 12, 6, 10, 7, 6]],
+  ['diamond', [4, 7, 7, 9, 13, 8, 8, 8]],
+  ['narrow diamond', [3, 6, 6, 10, 12, 7, 8, 7]],
+  ['triangle', [4, 6, 13, 9, 7, 8, 8, 8]],
+  ['broad triangle', [5, 7, 15, 10, 8, 9, 7, 9]],
+  ['rectangle', [4, 10, 12, 11, 7, 9, 8, 7]],
+  ['broad nose', [4, 8, 8, 8, 9, 14, 8, 10]],
+  ['narrow nose', [4, 8, 8, 8, 8, 2, 8, 7]],
+  ['full lips', [4, 8, 8, 8, 9, 9, 8, 14]],
+  ['wide eyes', [4, 8, 8, 8, 8, 8, 14, 9]],
+] as const).map(([name, steps]) => Object.freeze({
+  name,
+  steps: Object.freeze(Object.fromEntries(LOOK_FACE_SHAPE_SLIDERS.map((s, i) => [s, steps[i]]))) as LookFaceShape['steps'],
+})))
+
+/** The face shape of that name (case and surrounding space ignored), or null. */
+export function lookFaceShape(name: string): LookFaceShape | null {
+  const key = name.trim().toLowerCase()
+  return LOOK_FACE_SHAPES.find((f) => f.name === key) ?? null
+}
+
+/** The look with a face shape's sliders set (everything else as it was), or null for no such shape or a look outside the wardrobe. */
+export function withFaceShape(look: Look, name: string): Look | null {
+  const shape = lookFaceShape(name)
+  if (shape === null || validateLook(look) === null) return null
+  return validateLook({ ...look, ...shape.steps })
+}
+
+/** The face shape a look's head and face sliders are exactly at, or null when they have been moved off every shape. */
+export function faceShapeNameOf(look: Look): LookFaceShape | null {
+  return LOOK_FACE_SHAPES.find((f) => LOOK_FACE_SHAPE_SLIDERS.every((s) => look[s] === f.steps[s])) ?? null
 }
 
 // --- The look code ----------------------------------------------------------------------------------------------
@@ -1051,6 +1246,7 @@ export type LookChange =
   | { readonly kind: 'slot'; readonly slot: string; readonly value: string }
   | { readonly kind: 'preset'; readonly name: string }
   | { readonly kind: 'build'; readonly name: string }
+  | { readonly kind: 'face'; readonly name: string }
   | { readonly kind: 'code'; readonly code: string }
   | { readonly kind: 'random'; readonly seed: number }
   | { readonly kind: 'reset' }
@@ -1076,6 +1272,10 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
     case 'build': {
       const next = withBuild(look, change.name)
       return next ? { look: next, error: null } : refused(`no build named '${change.name}': ${LOOK_BUILDS.map((b) => b.name).join(', ')}`)
+    }
+    case 'face': {
+      const next = withFaceShape(look, change.name)
+      return next ? { look: next, error: null } : refused(`no face shape named '${change.name}': ${LOOK_FACE_SHAPES.map((f) => f.name).join(', ')}`)
     }
     case 'preset': {
       const p = lookPreset(change.name)

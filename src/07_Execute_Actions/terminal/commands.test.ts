@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_FACE_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -27,7 +27,7 @@ import {
   type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
-import { LOOK_BODIES, LOOK_BUILDS, LOOK_PRESETS, LOOK_SLOTS, lookOptions } from '../../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, lookOptions } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
@@ -751,7 +751,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /captions \[on\|off\]/)
   assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
-  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|code <code>\|random \[<seed>\]\|reset\]/)
+  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|face <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
   assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
@@ -1759,17 +1759,22 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
-  assert.deepEqual(complete('look '), [...['build', 'code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
+  assert.deepEqual(complete('look '), [...['build', 'code', 'face', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
   assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
   assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
+  assert.deepEqual(complete('look face '), LOOK_FACE_ARGS.map((a) => `look face ${a}`))
+  assert.deepEqual(complete('look face ov'), ['look face oval'])
   assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
   assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
   assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
-  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
+  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look headwear', 'look headwearColour', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
   assert.deepEqual(complete('look preset n'), ['look preset navy blazer', 'look preset navy skirt suit', 'look preset navy suit'])
-  assert.deepEqual(complete('look hairStyle '), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle bun', 'look hairStyle long', 'look hairStyle short'])
+  assert.deepEqual(complete('look hairStyle b'), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle box braids', 'look hairStyle braided bun', 'look hairStyle braided ponytail', 'look hairStyle braided updo', 'look hairStyle bun', 'look hairStyle bun with fade', 'look hairStyle buzz cut'])
+  assert.deepEqual(complete('look hairStyle '), [...WARDROBE.hairStyle].sort().map((n) => `look hairStyle ${n}`), 'every style, the catalogue\'s names')
+  assert.deepEqual(complete('look curl '), [...WARDROBE.curl].sort().map((n) => `look curl ${n}`))
+  assert.deepEqual(complete('look headwear '), [...WARDROBE.headwear].sort().map((n) => `look headwear ${n}`))
   assert.deepEqual(complete('look undertone '), ['look undertone cool', 'look undertone neutral', 'look undertone olive', 'look undertone warm'])
   assert.deepEqual(complete('look layer '), ['look layer coat', 'look layer jacket', 'look layer shirt sleeves'])
   assert.deepEqual(complete('look trim '), ['look trim matching'])
@@ -2158,6 +2163,7 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
   assert.deepEqual([...LOOK_BUILD_ARGS], LOOK_BUILDS.map((x) => x.name).sort())
+  assert.deepEqual([...LOOK_FACE_ARGS], LOOK_FACE_SHAPES.map((x) => x.name).sort())
   for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
 })

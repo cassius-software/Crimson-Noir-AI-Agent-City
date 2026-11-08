@@ -40,9 +40,9 @@ const VARIANTS = [0, 1, 2, 3]
 
 test('the tables: four bodies named as the wardrobe names them, the pieces where the look\'s bits are, fourteen colour slots, eight face regions, fifteen bones in three groups on two sides', () => {
   assert.deepEqual([...BODY_NAMES], [...LOOK_BODIES])
-  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE, coat: PIECE.COAT, scarf: PIECE.SCARF })
+  assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE, coat: PIECE.COAT, scarf: PIECE.SCARF, volume: PIECE.VOLUME, topBun: PIECE.TOP_BUN, ponytail: PIECE.PONYTAIL, wrap: PIECE.WRAP, turban: PIECE.TURBAN, hat: PIECE.HAT, brim: PIECE.BRIM })
   assert.equal(PIECE.NONE, 0)
-  assert.deepEqual([...Object.values(PIECE)].sort((a, b) => a - b), Array.from({ length: 12 }, (_, i) => i))
+  assert.deepEqual([...Object.values(PIECE)].sort((a, b) => a - b), Array.from({ length: 19 }, (_, i) => i))
   assert.deepEqual([...Object.values(FACE_REGION)].sort((a, b) => a - b), Array.from({ length: 8 }, (_, i) => i))
   assert.equal(FACE_REGION.NONE, 0)
   assert.equal(BONES, 15)
@@ -50,7 +50,7 @@ test('the tables: four bodies named as the wardrobe names them, the pieces where
   assert.deepEqual(Array.from({ length: 15 }, (_, b) => boneGroup(b)), [0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2])
   assert.deepEqual(Array.from({ length: 15 }, (_, b) => boneSide(b)), [0, 0, 0, -1, -1, -1, 1, 1, 1, -1, -1, -1, 1, 1, 1])
   assert.deepEqual([...Object.values(SLOT)].sort((a, b) => a - b), Array.from({ length: SLOTS }, (_, i) => i))
-  assert.equal(SLOTS, 14)
+  assert.equal(SLOTS, 15)
   assert.deepEqual([SLOT.EYE, SLOT.IRIS, SLOT.LIP, SLOT.SCARF], [10, 11, 12, 13])
   for (const table of [BONE, SLOT, PIECE, LANDMARK, MORPH, REGION, LIMB_GIRTH, WALK, SHAPE_NEUTRAL, FACE, FACE_REGION, FACE_NEUTRAL]) assert.ok(Object.isFrozen(table))
   // The landmarks climb the body.
@@ -85,14 +85,14 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
       assert.ok(Number.isInteger(bone) && bone >= 0 && bone < BONES, `${name}: bone ${bone}`)
       assert.ok(Number.isInteger(bone1) && bone1 >= 0 && bone1 < BONES, `${name}: second bone ${bone1}`)
       assert.ok(Number.isInteger(slot) && slot >= 0 && slot < SLOTS, `${name}: slot ${slot}`)
-      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.SCARF, `${name}: piece ${piece}`)
+      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.BRIM, `${name}: piece ${piece}`)
       assert.ok(w >= 0 && w <= 1, `${name}: weight ${w}`)
       assert.ok(Number.isInteger(region) && region >= 0 && region <= FACE_REGION.LIPS, `${name}: face region ${region}`)
       assert.ok(rw >= 0 && rw <= 1, `${name}: face weight ${rw}`)
       if (region !== FACE_REGION.NONE) assert.equal(bone, BONE.HEAD, `${name}: a face region on the head alone (vertex ${i})`)
       if (!detailed) assert.equal(region, FACE_REGION.NONE, `${name}: the far body has no face to shape`)
       near(Math.hypot(m.normal[i * 3], m.normal[i * 3 + 1], m.normal[i * 3 + 2]), 1, 1e-3, `${name}: normal ${i}`)
-      assert.ok(m.position[i * 3 + 1] >= -1e-6 && m.position[i * 3 + 1] <= HEIGHT_BASE + 0.05, `${name}: y ${m.position[i * 3 + 1]}`)
+      assert.ok(m.position[i * 3 + 1] >= -1e-6 && m.position[i * 3 + 1] <= HEIGHT_BASE + 0.12, `${name}: y ${m.position[i * 3 + 1]}`)
       bones.add(bone)
       regions.add(region)
     }
@@ -107,8 +107,10 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
       const area = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2
       assert.ok(area > 1e-9, `${name}: triangle ${t / 3} is flat (${area})`)
     }
-    assert.ok(m.vertexCount <= (detailed ? 1600 : 500), `${name}: ${m.vertexCount} vertices`)
-    assert.ok(m.index.length / 3 <= (detailed ? 2800 : 820), `${name}: ${m.index.length / 3} triangles`)
+    // The near body grew by the hair's later shapes and the headwear (about 270 vertices); the far body by the volume
+    // and the crown's puff alone (the headwear is near-only: the far body paints the hair's cap in its cloth).
+    assert.ok(m.vertexCount <= (detailed ? 1850 : 520), `${name}: ${m.vertexCount} vertices`)
+    assert.ok(m.index.length / 3 <= (detailed ? 3250 : 860), `${name}: ${m.index.length / 3} triangles`)
     counts[name] = [m.vertexCount, m.index.length / 3]
     const again = humanoidMesh(v, detailed)
     assert.deepEqual(again.position, m.position)
@@ -128,10 +130,11 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
 test('the pieces: the suit alone has a tie; the cup, the glasses, the tie and the face are near-only; the bag, the hair, the coat and the scarf reach the far body; the shirt\'s V is paint, not a slot; the arms hang at rest', () => {
   const pieces = (v: number, detailed: boolean) => { const m = humanoidMesh(v, detailed); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 2])) }
   const sorted = (s: Set<number>) => [...s].sort((a, b) => a - b)
-  assert.deepEqual(sorted(pieces(0, true)), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
-  for (const v of [1, 2, 3]) assert.deepEqual(sorted(pieces(v, true)), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], BODY_NAMES[v])
+  const later = [PIECE.VOLUME, PIECE.TOP_BUN, PIECE.PONYTAIL, PIECE.WRAP, PIECE.TURBAN, PIECE.HAT, PIECE.BRIM]
+  assert.deepEqual(sorted(pieces(0, true)), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, ...later])
+  for (const v of [1, 2, 3]) assert.deepEqual(sorted(pieces(v, true)), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, ...later], BODY_NAMES[v])
   for (const v of VARIANTS) {
-    assert.deepEqual(sorted(pieces(v, false)), [PIECE.NONE, PIECE.BAG, PIECE.LONG_HAIR, PIECE.HAIR_CAP, PIECE.BOB, PIECE.BUN, PIECE.COAT, PIECE.SCARF], `${BODY_NAMES[v]} far`)
+    assert.deepEqual(sorted(pieces(v, false)), [PIECE.NONE, PIECE.BAG, PIECE.LONG_HAIR, PIECE.HAIR_CAP, PIECE.BOB, PIECE.BUN, PIECE.COAT, PIECE.SCARF, PIECE.VOLUME, PIECE.TOP_BUN], `${BODY_NAMES[v]} far`)
     for (const p of pieces(v, false)) assert.ok(pieces(v, true).has(p), 'the far body wears nothing the near one lacks')
   }
   const slots = (v: number, detailed = true) => { const m = humanoidMesh(v, detailed); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 1])) }
@@ -144,14 +147,18 @@ test('the pieces: the suit alone has a tie; the cup, the glasses, the tie and th
   }
   // Rest pose: the hands below the elbows, nothing below the feet, the top of the head near the base height.
   const m = humanoidMesh(0)
-  let hand = -1, top = -1
+  let hand = -1, top = -1, crown = -1
+  // What stands above the head's own height: the full shell, the crown's puff, a turban, a hat (each a choice).
+  const above = new Set<number>([PIECE.VOLUME, PIECE.TOP_BUN, PIECE.TURBAN, PIECE.HAT])
   for (let i = 0; i < m.vertexCount; i++) {
     const bone = m.rig[i * 3]
     if (bone === BONE.HAND_L || bone === BONE.HAND_R) hand = Math.max(hand, m.position[i * 3 + 1])
-    top = Math.max(top, m.position[i * 3 + 1])
+    if (above.has(m.rig[i * 3 + 2])) crown = Math.max(crown, m.position[i * 3 + 1])
+    else top = Math.max(top, m.position[i * 3 + 1])
   }
   assert.ok(hand < LANDMARK.elbow, `the hands hang (${hand})`)
   assert.ok(top > HEIGHT_BASE - 0.02 && top < HEIGHT_BASE + 0.05, `${top} m tall at rest`)
+  assert.ok(crown > top && crown < HEIGHT_BASE + 0.12, `the tallest crown ${crown} m`)
   assert.equal(bodyTubes(0).length, bodyTubes(1).length + 1, 'the tie')
   assert.equal(bodyTubes(3).length, bodyTubes(2).length + 1, 'the skirt')
 })
@@ -604,7 +611,7 @@ test('silhouetteRings: one ring per ring of every tube, from the front and from 
       assert.ok(r.left < r.right, `ring ${i} has width`)
       assert.ok(side[i].left < side[i].right, `ring ${i} has depth`)
       assert.equal(side[i].slot, r.slot); assert.equal(side[i].piece, r.piece); assert.equal(side[i].tube, r.tube)
-      assert.ok(r.y > -0.01 && r.y < HEIGHT_BASE + 0.05)
+      assert.ok(r.y > -0.01 && r.y < HEIGHT_BASE + 0.12)
       // At rest, facing +z, a ring on the body's axis is centred.
       if (r.slot !== SLOT.PROP && r.piece === PIECE.NONE && Math.abs(r.left + r.right) < 1e-9) assert.ok(true)
     }
