@@ -744,8 +744,9 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
           setHud(s)
-          // Out of the open shop (a teleport, a headset, the console's own moves): its card goes with it.
-          if (storeOpenRef.current !== null && (s.customer.shop?.index ?? -1) !== storeOpenRef.current) closeStore()
+          // Out of the open shop (a teleport, the console's own moves) or into a headset (the card is not drawn there, and
+          // the game's input must not stay suspended): its card goes.
+          if (storeOpenRef.current !== null && ((s.customer.shop?.index ?? -1) !== storeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeStore()
           shown = true
         }
         throws = 0
@@ -1129,6 +1130,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           keeper={keeper}
           look={worn ?? lookFromSeed(PLAYER_INDEX)}
           trying={trying?.id ?? null}
+          mirror={hud.customer.shop?.showroom === true}
           onTry={onTry}
           onWear={wearLook}
           onClose={closeStore}

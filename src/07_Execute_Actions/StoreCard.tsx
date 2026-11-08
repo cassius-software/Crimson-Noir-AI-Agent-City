@@ -29,6 +29,8 @@ export interface StoreCardProps {
   look: Look
   /** The line being tried on, or null. */
   trying: number | null
+  /** Whether the mirror camera circles the body (not in a network room, nor under a headset). */
+  mirror?: boolean
   /** Try line `id` on (the host wears `look` on the body without keeping it), or null to take it off. */
   onTry: (id: number | null, look: Look | null) => void
   /** Wear and keep `look` (a bought line; the host saves it like the wardrobe's). */
@@ -100,7 +102,7 @@ function Row({ row, look, trying, t, onTry, onBuy, onWear }: {
   )
 }
 
-export function StoreCard({ visible, shop, keeper, look, trying, onTry, onWear, onClose, dark = false }: StoreCardProps) {
+export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, onTry, onWear, onClose, dark = false }: StoreCardProps) {
   const cardRef = useRef<HTMLElement>(null)
   // The shopkeeper's every change (a purchase, a reset from the console) redraws the card.
   const [, setVersion] = useState(0)
@@ -146,7 +148,11 @@ export function StoreCard({ visible, shop, keeper, look, trying, onTry, onWear, 
   }
   const wear = (item: StoreItem) => {
     const next = keeper.wear(item.id, look)
-    if (next) { onWear(next); setSaid({ shop, text: `${item.name}: worn` }) }
+    if (!next) return
+    onWear(next)
+    // A try-on over the look would hide the line just put on: it comes off.
+    if (trying !== null) onTry(null, null)
+    setSaid({ shop, text: `${item.name}: worn` })
   }
 
   return (
@@ -204,7 +210,7 @@ export function StoreCard({ visible, shop, keeper, look, trying, onTry, onWear, 
 
         <p className={`min-h-[1.25rem] px-5 text-[12px] ${t.muted}`} role="status" aria-live="polite" data-said>{said.shop === shop ? said.text : ''}</p>
         <div className={`flex items-center justify-between gap-2 border-t px-5 py-3 ${t.rule}`}>
-          <span className={`text-[11px] ${t.muted}`}>{trying !== null ? 'Trying on: not kept unless bought' : 'The mirror turns around you'}</span>
+          <span className={`text-[11px] ${t.muted}`}>{trying !== null ? 'Trying on: not kept unless bought' : mirror ? 'The mirror turns around you' : 'Your shadow and everyone else see what you wear'}</span>
           <button type="button" onClick={onClose} className={`rounded-full px-3.5 py-1.5 text-[12px] font-semibold ${t.primary}`} data-action="done">Done</button>
         </div>
       </aside>

@@ -224,9 +224,10 @@ two arterial streets, with four mid-block stations and guideway columns at the k
 ### Storefronts
 
 Five ground floors in the city are shops (`01_Initialize_World/storefronts.ts`), placed from the seed on lots no
-workplace has: **Verrin & Vale Tailors** in Midtown, **Bio-Frame Prosthetics Atelier** in the northern downtown rows,
-**Escapement Row Horology** within two blocks of the Financial District's centre, and side by side on the lakefront
-row, facing the lake, **Aethelgard Ink Studio** and **Lintel & Lumen Design House**. Each is a glass-walled room like a
+workplace has: **Verrin & Vale Tailors** in the northern downtown rows, **Bio-Frame Prosthetics Atelier** in the
+southern downtown rows above the lakefront, **Escapement Row Horology** within two blocks of the Financial District's
+centre, and on the lakefront row, facing the lake, **Aethelgard Ink Studio** in its western half and **Lintel & Lumen
+Design House** in its eastern half. Each is a glass-walled room like a
 workplace, with a counter and a mirror at the back and its own fixtures: mannequins and rails at the tailor, chairs at
 the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
 homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
@@ -234,7 +235,9 @@ homes on plinths at the design house. The minimap draws them in teal. Pedestrian
 On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
 chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
 opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
-to circle your body slowly (the mirror), so what you wear shows. Esc, × or Done gives the eye back. Every line lists
+to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. In a network room the
+card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
+back. Every line lists
 its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
 at once. An owned line you are not wearing has **Wear**. What you bought and your balance are kept in this browser
 (key `civic-simulation:shop:v1`), validated on the way in like the look.
@@ -250,7 +253,8 @@ at once. An owned line you are not wearing has **Wear**. What you bought and you
   listed as on order and go on sale when the wardrobe's update adds those slots. The design house's furniture and its
   seven property deeds (level 1 to 20, free to 4,500,000 credits) wait for the properties.
 - **Limits.** The procedural city only: the lakefront metropolis has no shops yet. The wardrobe card is not gated by
-  what you bought; it still offers everything the crowd wears. Under a headset the mirror camera stays off.
+  what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
+  so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
 
 ## The surveyed map
 

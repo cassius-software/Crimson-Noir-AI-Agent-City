@@ -87,7 +87,7 @@ test('every line on sale dresses every preset body in a valid look; a line on or
 test('every name passes the 14A screen and names no real place', () => {
   for (const i of CATALOGUE) {
     assert.ok(screen(i.name).admissible, `${i.name} fails the screen`)
-    assert.doesNotMatch(i.name, /\b(?:Toronto|Harbourfront|Yonge|Domus|Chronos|Sovereign Threads?)\b|matrix/i)
+    assert.doesNotMatch(i.name, /\b(?:Toronto|Harbourfront|Yonge|Domus|Chronos|Sovereign Threads?|Apex Citadel|Citadel Apex)\b|matrix/i)
   }
 })
 
@@ -231,8 +231,10 @@ test('the progression keeper drives the shopkeeper: its level gates, its gate bu
   assert.equal(calls, 1)
   assert.equal(k.buy(14).verdict, GATE.owned)
   p.refuse(true)
-  assert.notEqual(k.buy(15).verdict, GATE.bought, 'the keeper refused')
-  assert.equal(k.owns(15), false, 'no bit without the credits taken')
+  assert.ok(itemById(16) && onSale(itemById(16)!), 'a line on sale, so the refusal is the keeper\'s')
+  assert.equal(k.buy(16).verdict, GATE.credits, 'the keeper refused')
+  assert.equal(k.owns(16), false, 'no bit without the credits taken')
+  assert.equal(p.owns('look', SHOP_LOOK_BASE + 16), false)
   // A low level and an empty purse: the rows say why, and nothing changes.
   const poor = createShopkeeper({ purse: progressionPurse(fakeProgress(1, 150)) })
   const rows = poor.rows('tailor', LOOK_PRESETS[0].look)

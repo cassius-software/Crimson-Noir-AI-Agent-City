@@ -143,12 +143,14 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       <GlyphKey glyph={glyph('interact', family)} kind={glyphKind('interact', family)} /> <span>Enter vehicle</span>
     </div>
   )
-  // Inside a storefront (storefronts.ts), on foot, its catalogue closed: the shop's name and the way in, a button a tap or
-  // a click opens (E or B does it from the keyboard, the interact button from a pad).
+  // Inside a storefront (storefronts.ts), on foot, its catalogue closed, the console shut: the shop's name and the way
+  // in, a button a tap or a click opens. Its key is E (the pad's interact button), or B when a car in reach keeps E for
+  // its door (a pad has no B: the chip itself is the way in then).
   const shop = c.shop
-  const shopChip = shop && !shop.showroom && !driving && (
+  const shopGlyph = touch || family === 'touch' ? null : !s.input.nearVehicle ? glyph('interact', family) : family === 'keyboard' ? 'B' : null
+  const shopChip = shop && !shop.showroom && !driving && !terminalOpen && (
     <button type="button" onClick={() => onBrowse?.(shop.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="shop">
-      {!touch && family !== 'touch' && <><GlyphKey glyph={glyph('interact', family)} kind={glyphKind('interact', family)} />{' '}</>}
+      {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
       <span>Browse <bdi className="font-semibold">{shop.name}</bdi></span>
     </button>
   )

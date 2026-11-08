@@ -37,7 +37,15 @@ test('one shop per kind, each on a lot of its own quarter, never a workplace lot
       if (l.kind === 'inkStudio' || l.kind === 'designHouse') {
         assert.equal(l.m, lake, 'the tattoo studio and the design house stand on the lakefront row')
         assert.equal(l.side, 0, 'facing the lake')
+        // The row's west half for the studio, its east half for the design house.
+        if (l.kind === 'inkStudio') assert.ok(l.k <= CITY.blocks / 2, `the studio at column ${l.k}`)
+        else assert.ok(l.k > CITY.blocks / 2, `the design house at column ${l.k}`)
       } else assert.ok(l.m < lake, `the ${l.kind} stands downtown`)
+      // The tailor in the northern downtown rows, the atelier in the southern ones above the lakefront row, both a
+      // column in from the heritage quarter and the ring road.
+      if (l.kind === 'tailor' || l.kind === 'prosthetics') assert.ok(l.k > HERITAGE_COLUMNS && l.k < CITY.blocks - 1, `the ${l.kind} at column ${l.k}`)
+      if (l.kind === 'tailor') assert.ok(l.m >= 1 && l.m <= 5, `the tailor at row ${l.m}`)
+      if (l.kind === 'prosthetics') assert.ok(l.m >= 8 && l.m < lake - 1, `the atelier at row ${l.m}`)
       if (l.kind === 'horology') {
         const d = Math.hypot((l.k + 0.5) * CITY.pitch - CITY_CENTER, (l.m + 0.5) * CITY.pitch - CITY_CENTER)
         assert.ok(d < CITY.pitch * 2.5, `the watch shop is in the Financial District (${d.toFixed(0)} m from the centre)`)

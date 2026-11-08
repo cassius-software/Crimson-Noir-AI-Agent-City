@@ -33,7 +33,7 @@
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
  * What breaks if it is removed? Nothing runs; every module is inert without this orchestration.
  */
-import { Frustum, Matrix4, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
+import { Frustum, Matrix4, Quaternion, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
@@ -494,6 +494,9 @@ export class Engine {
   private shopHere = -1
   /** The mirror camera while a shop's catalogue is open: the shop and the orbit's angle, rad; null in first person. */
   private showroom: { shop: number; angle: number } | null = null
+  /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
+  private readonly headPos = new Vector3()
+  private readonly headRot = new Quaternion()
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -1469,14 +1472,14 @@ export class Engine {
   }
 
   /**
-   * Opens the catalogue of the shop the avatar stands in, through the host (onBrowse): on foot, with no car in reach
-   * (a car in reach keeps the E for its door). Returns whether it did.
+   * Opens the catalogue of the shop the avatar stands in, through the host (onBrowse), on foot. `interact` is the E
+   * key's (and the pad's south button's) ask: then a car in reach keeps the press for its door. Returns whether it did.
    */
-  browse(): boolean {
+  browse(interact = false): boolean {
     const st = this.sim.state
     if (this.halted || this.disposed || !this.onBrowse || st.driving >= 0) return false
     const i = shopAt(this.shops, st.avatar.x, st.avatar.z)
-    if (i < 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0) return false
+    if (i < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
     this.onBrowse(i)
     return true
   }
@@ -1485,13 +1488,14 @@ export class Engine {
    * The mirror camera for shop `index`'s catalogue, or null to give the eye back to the head. Opening it steps the
    * avatar onto the shop's fitting spot, facing the doorway, where nothing is within the orbit (storefronts.ts SHOP);
    * the camera starts on the doorway's side, looking at the body's front. Returns whether it opened (only inside that
-   * shop, on foot, without a headset).
+   * shop, on foot, without a headset, and never in a network room: the room did not make the step onto the fitting
+   * spot and would put the player back, so there the card opens in first person).
    */
   setShowroom(index: number | null): boolean {
     if (index === null) { this.showroom = null; return true }
     const shop = this.shops[index]
     const st = this.sim.state
-    if (!shop || st.driving >= 0 || this.rig.headset || shopAt(this.shops, st.avatar.x, st.avatar.z) !== index) return false
+    if (!shop || this.netRoom || st.driving >= 0 || this.rig.headset || shopAt(this.shops, st.avatar.x, st.avatar.z) !== index) return false
     const f = shop.fitting
     this.sim.send({ c: 'teleport', x: f.x, z: f.z })
     // The body faces where the head looks turned about (avatarHeading = yaw + π), so the head looks back into the shop.
@@ -1823,8 +1827,9 @@ export class Engine {
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
 
-    // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B always asks.
-    if (input.take('interact') && !this.browse()) this.interact()
+    // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B opens it
+    // whether or not a car is near.
+    if (input.take('interact') && !this.browse(true)) this.interact()
     if (input.take('browse')) this.browse()
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)) }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)) }
@@ -1904,18 +1909,12 @@ export class Engine {
       this.avatarHeading = input.yaw + Math.PI
       this.rig.onFoot(cam, av.x, av.feetY, av.z, input.yaw, input.pitch, dt)
     }
-    // Which shop the avatar stands in, and the mirror camera while its catalogue is open: the eye leaves the head and
-    // circles the body (whose own figure shows once the camera is past crowd.ts OWN_BODY.radius); the head's pose,
-    // which the listener, the gaze and the ping read, stays where it is. Leaving the shop or taking a car ends it.
+    // Which shop the avatar stands in, and the mirror camera's turn while its catalogue is open (drawn in present()).
+    // Leaving the shop, taking a car, a headset or a network room ends it.
     this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)
     const show = this.showroom
-    if (show && (this.shopHere !== show.shop || this.rig.headset)) this.showroom = null
-    else if (show) {
-      show.angle += SHOP.orbit.rate * dt
-      const o = orbitEye(av.x, av.feetY, av.z, show.angle)
-      cam.position.set(o.eye.x, o.eye.y, o.eye.z)
-      cam.lookAt(o.at.x, o.at.y, o.at.z)
-    }
+    if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null
+    else if (show) show.angle += SHOP.orbit.rate * dt
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
@@ -1960,6 +1959,18 @@ export class Engine {
       return
     }
     const cam = this.world.camera
+    // The mirror camera (a shop's catalogue open): for this draw alone the eye leaves the head and circles the body,
+    // whose own figure shows once the camera is past crowd.ts OWN_BODY.radius. Its matrices are refreshed before the
+    // cull, the sun shafts and the cinema camera's motion read them, and the head's pose is put back after the draw,
+    // so the listener, the gaze and the ping keep the head.
+    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle)
+    if (mirror) {
+      this.headPos.copy(cam.position)
+      this.headRot.copy(cam.quaternion)
+      cam.position.set(mirror.eye.x, mirror.eye.y, mirror.eye.z)
+      cam.lookAt(mirror.at.x, mirror.at.y, mirror.at.z)
+      cam.updateMatrixWorld()
+    }
     this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
     // The camera's own conventions: WebGPU's [0, 1] clip depth, reversed since the renderer asked for it (world.ts
     // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
@@ -2001,6 +2012,11 @@ export class Engine {
     }
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
+    if (mirror) {
+      cam.position.copy(this.headPos)
+      cam.quaternion.copy(this.headRot)
+      cam.updateMatrixWorld()
+    }
     // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
     // direct path. The sun's shadow focus, the lamp lights and the building sort stay player 1's (world.update above).
     if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
