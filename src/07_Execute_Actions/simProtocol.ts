@@ -155,6 +155,7 @@ export interface SimInit {
    * own boxes serve, and for a surveyed region.
    */
   craftBoxes?: Box[] | null
+  /**
    * A generated region's storefronts (01_Initialize_World/region/shops.ts regionShopLots): at most five lots of the
    * street window, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
    * same glass from (storefronts.ts shopsAt) so a car left in a shop puts its driver down clear of it. Their boxes come

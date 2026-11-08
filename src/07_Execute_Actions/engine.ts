@@ -906,7 +906,8 @@ export class Engine {
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
       // are hollowed the same way. A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots) : null
+      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
       // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
       // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
       // shore wall. A surveyed region has no window and none of it.
@@ -917,9 +918,6 @@ export class Engine {
       // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
       // VTOL routes and racetrack as the page does.
       const craftBoxes = pack && layout && streets && hollow ? craftBoxesOf(hollow.pack, layout.offset, streets, world.boxes) : null
-      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms } : null, lite ? LITE_WORLD : FULL_WORLD)
       // Players 1..3 (split screen) start beside player 0 along the sidewalk (the city's spawn sidewalk runs along z; a
       // region's along its street heading); the realm moves a spawn out of a building lot itself.
       const along = start ? { x: Math.sin(start.heading), z: Math.cos(start.heading) } : { x: 0, z: 1 }
