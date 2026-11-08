@@ -1608,11 +1608,12 @@ export class Engine {
 
   /**
    * Opens the doorstep card of the home the avatar stands in, through the host (onHome), on foot: browse()'s rule, so
-   * `interact` (the E key's and the pad's south button's ask) leaves the press to a car in reach. Returns whether it did.
+   * `interact` (the E key's and the pad's south button's ask) leaves the press to a car in reach. Never in a headset:
+   * the card is the page's, and nothing in the headset would show it. Returns whether it did.
    */
   openHome(interact = false): boolean {
     const st = this.sim.state
-    if (this.halted || this.disposed || !this.onHome || st.driving >= 0) return false
+    if (this.halted || this.disposed || !this.onHome || st.driving >= 0 || this.rig.headset) return false
     const h = homeAt(this.homes, st.avatar.x, st.avatar.z)
     if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
     this.onHome(h)
@@ -1623,7 +1624,7 @@ export class Engine {
    * The doorstep card of home `home` (its property index) open, or null for none. While one is open the avatar is held
    * still: each frame drops every queued action after the poll and zeroes the walk (a pad's edges queue and its stick
    * walks even while the host suspends the game's input). Returns whether it took: only while the avatar stands in that
-   * home, on foot, in a city that runs; closing always takes.
+   * home, on foot, out of a headset (the card would not show there), in a city that runs; closing always takes.
    */
   setHomeCard(home: number | null): boolean {
     if (home === null) {
@@ -1632,7 +1633,7 @@ export class Engine {
       return true
     }
     const st = this.sim.state
-    if (this.halted || this.disposed || st.driving >= 0 || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
+    if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
     this.homeCard = home
     return true
   }
@@ -2148,7 +2149,7 @@ export class Engine {
     // Which home the avatar stands in on foot; out of the home with its card open (a teleport, the console's moves),
     // the hold ends here and the host puts the card away at its next look.
     this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
-    if (this.homeCard !== null && this.homeHere !== this.homeCard) this.homeCard = null
+    if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's

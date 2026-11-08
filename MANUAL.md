@@ -292,8 +292,9 @@ fits. Anyone can walk into any home, in either map and in a network room. The mi
 and one you own in gold.
 
 Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
-workplaces and shops have taken theirs, hollowed the same way. The grander homes get the better-built lots (a podium
-that carries a tower goes to the Sky-Mansion), so a home's name does not promise a view of the lake there; a window with
+workplaces and shops have taken theirs, hollowed the same way. The seven nearest free lots to your start are chosen
+first, and among them the grander homes get the better-built ones (if a podium that carries a tower is among them, the
+grandest home there takes it), so a home's name does not promise a view of the lake or a tower there; a window with
 too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
 
 On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Your home** and its
@@ -301,8 +302,11 @@ name. E (unless a car is in reach), B, the pad's south button (with no car near)
 home's doorstep card (`07_Execute_Actions/HomeCard.tsx`): the name and the address, a line about the home, its level
 and price, **Buy** (**Claim (free)** for the Micro-Loft) or the reason the purchase gate refuses, and your purse; once it
 is yours the card says **Yours**. While the card is open you stand still: the game's keys rest, the touch controls step
-aside, and the pad's presses and its stick move nothing. Esc, B, × or Done closes it; leaving the home, putting on a
-headset or opening the console closes it too. On a pad, move to Done with the d-pad and press the south button.
+aside, and the pad's presses and its walking stick move nothing (the other stick still looks around). Esc, B, × or Done
+closes it; leaving the home, putting on a headset or opening the console closes it too, and it does not open in a
+headset or under the console. On a pad, move to Done with the d-pad and press the south button. In split screen the
+card is player 1's, and only player 1's pads move through it; while an agent's city action waits for your OK, the pad
+answers that card instead.
 
 - **Buying.** A deed bought on a doorstep or at the design house is the same purchase, through the one shopkeeper, kept
   in the same browser record (homes are property bits 0 to 6). Each deed's row at the design house also says where the

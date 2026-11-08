@@ -21,6 +21,7 @@ import { forbiddenWordIn } from '../01_Initialize_World/assets/cc0.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import { itemById } from './storeCatalog.ts'
+import { PAD, padStep, padsFor } from './padNav.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const flat = (s: string) => s.replace(/\s+/g, ' ')
@@ -126,8 +127,8 @@ test('Esc, B, the close button and Done put the card away through the host; H an
   assert.ok(src.includes('if (!closes(e)) return e.preventDefault() e.stopPropagation() onClose()'), 'only a closing key is stopped')
   assert.equal(src.match(/onClick=\{onClose\}/g)?.length, 2, 'the close button and Done')
   assert.ok(src.includes('aria-label="Close"'))
-  assert.ok(src.includes('usePadNav(cardRef, open && pad)'), 'a pad presses and moves between the buttons, unless the host hands the pad elsewhere')
-  assert.ok(src.includes('dark = false, pad = true, onClose }: HomeCardProps'), 'the pad is the card\'s unless the host says otherwise')
+  assert.ok(src.includes('usePadNav(cardRef, open && pad, padFrom)'), 'a pad presses and moves between the buttons, unless the host hands the pad elsewhere; only the player\'s pads')
+  assert.ok(src.includes('dark = false, pad = true, padFrom, onClose }: HomeCardProps'), 'the pad is the card\'s unless the host says otherwise')
 })
 
 test('the store card\'s deed rows: Visit or Go home, off with the reason, an address line, a purchase that says where, furniture on order', () => {
@@ -144,4 +145,23 @@ test('the store card\'s deed rows: Visit or Go home, off with the reason, an add
   assert.ok(store.includes("setSaid({ shop, text: line ? `${item.name} is yours: ${line}` : `${item.name} is yours` })"), 'the purchase says where')
   assert.ok(store.includes("later.some((r) => r.item.kind === 'furniture') && 'Furniture arrives with furnishing.'"))
   assert.ok(!store.includes('open with the properties'))
+})
+
+test('in split screen the card reads only the player\'s pads: another seat\'s A and d-pad never press or move through it', () => {
+  const pad = (...held: number[]) => ({ buttons: Array.from({ length: 16 }, (_, b) => ({ pressed: held.includes(b) })) })
+  const mine = (i: number) => i === 1
+  // Both pads present at the first poll; then pad 0 (player 2's) presses A and the d-pad: nothing for the card.
+  const first = padStep(new Set(), padsFor([pad(), pad()], mine))
+  assert.equal(padStep(first.held, padsFor([pad(PAD.a), pad()], mine)).action, null, 'player 2\'s A')
+  assert.equal(padStep(first.held, padsFor([pad(PAD.right), pad()], mine)).action, null, 'player 2\'s d-pad')
+  // Pad 1 (player 1's) presses A: the card's.
+  assert.equal(padStep(first.held, padsFor([pad(), pad(PAD.a)], mine)).action, 'press')
+  // With no filter (one player), every pad reaches it, as before.
+  const all = padStep(new Set(), padsFor([pad(), pad()]))
+  assert.equal(padStep(all.held, padsFor([pad(PAD.a), pad()])).action, 'press')
+  // The host's filter: seat 0's pads in split screen, stable across renders.
+  const app = read('../App.tsx').replace(/\s+/g, ' ')
+  assert.ok(app.includes('const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])'))
+  assert.ok(app.includes('padFrom={playerOnePad}'))
+  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\)\)/)
 })

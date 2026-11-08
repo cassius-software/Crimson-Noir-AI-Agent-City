@@ -478,6 +478,11 @@ export class Input {
     return this.seats.players > 1
   }
 
+  /** Whether pad `padIndex` is player 1's: every pad while one player plays, else only the pads dealt to seat 0. */
+  playerOnePad(padIndex: number): boolean {
+    return !this.seated || this.seats.seatOf(padIndex) === KEYBOARD_SEAT
+  }
+
   /** The intent the frame loop reads for a seat: this (keyboard, mouse, touch and seat 0's pad) for seat 0, the seat's PadSeat otherwise. */
   intent(seat: Seat): PlayerIntent {
     return seat === KEYBOARD_SEAT ? this : this.padSeats[seat - 1]

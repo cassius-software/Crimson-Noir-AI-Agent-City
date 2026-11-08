@@ -65,10 +65,10 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   assert.ok(src.includes("if (input.take('interact') && !this.browse(true) && !this.openHome(true)) { this.doorPressedAt = performance.now(); this.interact() }"), 'only a press that went to a door is stamped (progress.ts)')
   assert.ok(src.includes("if (input.take('browse') && !this.browse()) this.openHome()"))
   const open = between(src, ' openHome(interact = false): boolean {', ' setHomeCard(')
-  assert.ok(open.includes('if (this.halted || this.disposed || !this.onHome || st.driving >= 0) return false'), 'on foot, in a city that runs')
+  assert.ok(open.includes('if (this.halted || this.disposed || !this.onHome || st.driving >= 0 || this.rig.headset) return false'), 'on foot, out of a headset (the card is the page\'s), in a city that runs')
   assert.ok(open.includes('const h = homeAt(this.homes, st.avatar.x, st.avatar.z)'))
   assert.ok(open.includes('if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
-  assert.ok(src.includes('if (this.halted || this.disposed || st.driving >= 0 || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }'), 'the card only for the home the avatar stands in, on foot')
+  assert.ok(src.includes('if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }'), 'the card only for the home the avatar stands in, on foot, never in a headset (no hold with nothing drawn)')
   // The hold: right after the poll every queued action goes (a pad's edges queue even under suspend), then the E line;
   // after the controls are read (and a script's walk applied), the walk is zeroed.
   const frame = between(raw, '  frame(nowMs: number): void {', '  /** One drawn frame')
@@ -84,7 +84,7 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   before(frame, 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'const w = footWish(foot.x, foot.z)', 'what the room is told is the held walk')
   // Out of the home (a teleport, the console's moves), the hold ends at once; the host closes the card at its next look.
   before(frame, 'this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)', 'this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)', 'beside the shop\'s')
-  assert.ok(frame.includes('if (this.homeCard !== null && this.homeHere !== this.homeCard) this.homeCard = null'))
+  assert.ok(frame.includes('if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null'), 'out of the home or into a headset, the hold ends at once, whatever the page\'s loop is doing')
   assert.ok(read('../04_Connect_Hardware/input.ts').includes('  drain(): void {\n    this.queued.clear()\n  }'), 'the drain drops the queue and nothing else')
 })
 

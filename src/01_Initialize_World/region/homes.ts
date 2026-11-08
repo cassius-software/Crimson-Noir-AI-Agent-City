@@ -9,9 +9,10 @@
  * as the region's workplaces and shops (workplaces.ts lotCandidates: a doorway on a two-way street with a sidewalk the
  * visitor can walk to, never the landmark's lot or a lot under water), less the workplaces' and the shops' own lots.
  * The homes stand where a visitor finds them: the nearest lots to the start first (the Chebyshev ring of lots), then
- * what stands on them (workplaces.ts lotTier), then the seed's dice. Among the seven, the grander homes take the
- * grander lots: a hub's podium and tower (which hollowLots carries on the home's slab) goes to the sky-mansion, and the
- * plainest lot to the micro-loft. Fewer than seven is legal, and then the cheapest homes are the ones that stand.
+ * what stands on them (workplaces.ts lotTier), then the seed's dice. Only then, among the seven chosen, the grander
+ * homes take the better-built lots: a hub's podium and tower (which hollowLots carries on the home's slab) goes to the
+ * grandest home among them, and the plainest lot to the micro-loft; a tower podium farther out than the nearest seven
+ * free lots gets no home. Fewer than seven is legal, and then the cheapest homes are the ones that stand.
  * The page picks them; the physics worker needs nothing, since no car fits through a home's doorway and the boxes
  * reach it with the rest of the plan. Pure, and no three.js; this file is the page's alone.
  * What breaks if it is removed? Lakefront Metro has no homes, and a deed bought there has nowhere to go home to.

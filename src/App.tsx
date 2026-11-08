@@ -697,6 +697,8 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
     setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home)
   }, [])
   const closeHome = useCallback(() => setHomeOpen(null), [])
+  // The doorstep card is player 1's: in split screen only seat 0's pads press or move through it (input.ts).
+  const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])
   useEffect(() => { engine?.setHomeCard(homeOpen) }, [engine, homeOpen])
   // Which homes the player owns, for the HUD's chip and the minimaps: the shopkeeper's every change (a purchase here or
   // on a doorstep, a reset from the console) is told to the engine.
@@ -1245,6 +1247,7 @@ function GuiShell({ options, plan, mentored, voice, speaker, link }: { options: 
           keeper={keeper}
           homeInfo={homeInfo}
           pad={act === null || !bridge}
+          padFrom={playerOnePad}
           onClose={closeHome}
           dark={hud.customer.daylight < 0.35}
         />

@@ -65,12 +65,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   once owned, which puts the avatar on the sidewalk in front of the doorway, and is refused in a network room. The
   minimaps draw the homes in violet, the owned ones in gold. Furniture stays on order until furnishing opens. Pinned by
   `homeGrid.test.ts`, `properties.test.ts` (seven distinct free lots by the rules for 64 seeds; the shell, the fill
-  block and planters, and the pads and tracks unchanged for 16; either real Rapier car stopped by the planters on seed
-  1337, and a real Rapier avatar walking in on 4 seeds), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
+  block and planters, and the pads and tracks unchanged for 16; either car's collider cast through the real Rapier
+  world at a doorway and stopped by the planters on seed 1337, and a real Rapier avatar walking in on 4 seeds), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
   operator's progression keeper claims the loft and is told the Brownstone's level, a level 3 keeper buys it),
   `homeCard.test.ts`, `input.test.ts` (the drain) and `homeWiring.test.ts` (also: the poll after a card closes is
-  dropped too, so the pad press that closed it cannot reopen it; no card under the console; while a city action waits,
-  only its card reads the pad).
+  dropped too, so the pad press that closed it cannot reopen it; no card under the console or in a headset; while a
+  city action waits, only its card reads the pad; in split screen only player 1's pads reach it).
 
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three

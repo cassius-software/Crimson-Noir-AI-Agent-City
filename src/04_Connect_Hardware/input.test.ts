@@ -703,12 +703,17 @@ test('seated: with one pad and two players the pad is player 2, so player 1 is t
   assert.equal(input.seats.seatOf(0), 1)
   assert.equal(input.take('interact'), false, 'player 1 did not press it')
   assert.equal(input.intent(1).take('interact'), true)
+  assert.equal(input.playerOnePad(0), false, 'player 2\'s pad is not player 1\'s (a doorstep card ignores it)')
   // A second pad then fills seat 0: player 1 has a pad as well as the keyboard.
   pads.push(pad({ index: 1, axes: [0, -1, 0, 0] }))
   input.poll(1 / 60)
   assert.equal(input.seats.seatOf(1), KEYBOARD_SEAT)
   assert.ok(input.analog.moveY > 0.99, 'seat 0\'s pad drives player 1')
   assert.equal(input.familyOf(0), 'numbered')
+  assert.deepEqual([input.playerOnePad(0), input.playerOnePad(1), input.playerOnePad(4)], [false, true, false], 'only seat 0\'s pad is player 1\'s')
+  // One player again: every pad is player 1's.
+  input.setPlayers(1)
+  assert.deepEqual([input.playerOnePad(0), input.playerOnePad(1), input.playerOnePad(4)], [true, true, true])
 })
 
 test('the shield: while a card waits for the operator\'s OK the pad\'s edges and the touch taps queue nothing, keys and sticks stay live, and no edge replays when it lifts', () => {
