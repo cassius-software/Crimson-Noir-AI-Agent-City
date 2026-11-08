@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It owns the Rapier3D world (WASM, SIMD build): static colliders for every
- * building box, lamp, tree and signal pole, the ground, and fixed-timestep stepping. Vehicles and the
+ * building box, every lamp, tree and signal pole (packed into one compound sensor per tile), the ground, and
+ * fixed-timestep stepping. Vehicles and the
  * player's character controller live in this one shared space. It is built and stepped only inside the
  * physics worker (simCore.ts), so the page never loads Rapier or holds a handle into this world. It also
  * measures the world: how long one world.step() takes, how many substeps a step ran, and how many bodies,
@@ -16,7 +17,7 @@
  */
 import RAPIER from '@dimforge/rapier3d-simd-compat'
 import type { Box, Furniture } from '../01_Initialize_World/city.ts'
-import { CITY_CENTER, POLES } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_CENTER, POLES } from '../01_Initialize_World/city.ts'
 
 export { RAPIER }
 
@@ -166,6 +167,51 @@ function regionColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, r: Region
 }
 
 /**
+ * The side of the square tile street furniture is packed by, m: two blocks, so the city's 640 m and its outer streets
+ * make 10 × 10 tiles, about forty-five poles to a tile.
+ */
+export const FURNITURE_TILE = 2 * CITY.pitch
+
+/**
+ * Ghost mode: street furniture is in the world (ghost view draws it, a query can find it) but exchanges no contact.
+ * The avatar and every car pass through lamps, trees and signal poles; the character controller, the wheels, the AI's
+ * obstacle ray and the ground guard all exclude sensors.
+ *
+ * Every pole is the cylinder it always was (city.ts POLES, standing on y = 0), packed into one compound sensor per
+ * FURNITURE_TILE square instead of a collider each. rapier.js walks every collider in the world through a WebAssembly
+ * to JavaScript callback at the end of each world.step() (World.mapNewSoftBodies: ColliderSet.mapNewColliders and
+ * unmapRemovedColliders), so the city's 4,599 poles cost every step about 0.6 ms and 1.4 MB of garbage while nothing
+ * touched them. As a hundred compounds they cost almost nothing (the world's step with 48 cars went from 1.05 to
+ * 0.45 ms), a query that includes sensors finds the same cylinders (physics.test.ts holds the two to the same answers),
+ * and the realm's cars drove the same to the bit over 600 steps. (A chassis pressed against two fixed colliders at once
+ * may resolve them in another order, at the last bit, since the broad phase's tree holds the sensors' leaves; a world
+ * with no furniture already differed from one with poles that way.) A compound sits at its tile's centre and holds its
+ * poles relative to it, so the floats stay small. Tiles are made in the order their first pole comes, poles in their
+ * own order: the page and the room's mirror build the same compounds from the same lists. The garage and a Lite page
+ * build none, and every query in all of them excludes sensors.
+ */
+function furnitureColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, furniture: Furniture): void {
+  const tiles = new Map<number, { cx: number; cz: number; shapes: RAPIER.Shape[]; at: RAPIER.Vector[] }>()
+  const pole = (x: number, z: number, h: number, r: number) => {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return
+    const tx = Math.floor(x / FURNITURE_TILE), tz = Math.floor(z / FURNITURE_TILE)
+    const key = (tx + 32768) * 65536 + (tz + 32768)
+    let tile = tiles.get(key)
+    if (!tile) tiles.set(key, (tile = { cx: (tx + 0.5) * FURNITURE_TILE, cz: (tz + 0.5) * FURNITURE_TILE, shapes: [], at: [] }))
+    tile.shapes.push(new RAPIER.Cylinder(h / 2, r))
+    tile.at.push({ x: x - tile.cx, y: h / 2, z: z - tile.cz })
+  }
+  for (const [x, z] of furniture.lamps) pole(x, z, POLES.lamp.height, POLES.lamp.radius)
+  for (const [x, z] of furniture.trees) pole(x, z, POLES.tree.height, POLES.tree.radius)
+  for (const [x, z] of furniture.signals) pole(x, z, POLES.signal.height, POLES.signal.radius)
+  const upright = { x: 0, y: 0, z: 0, w: 1 }
+  for (const { cx, cz, shapes, at } of tiles.values()) {
+    const desc = RAPIER.ColliderDesc.compound(shapes, at, shapes.map(() => upright)).setTranslation(cx, 0, cz).setSensor(true)
+    world.createCollider(desc, fixed)
+  }
+}
+
+/**
  * Every box as a fixed cuboid: the city's buildings, and in a region the boxes it holds (a generated region's
  * workplaces, regionWorld.ts hollowLots: the glass, the furniture, the ceiling slab and what it carries). A box that is
  * not finite or has no extent is no collider.
@@ -228,14 +274,7 @@ export class Physics {
     }
     groundColliders(world, fixed)
     boxColliders(world, fixed, boxes)
-    // Ghost mode: street furniture is in the world (ghost view draws it, a query can find it) but exchanges no
-    // contact. The avatar and every car pass through lamps, trees and signal poles; the character controller,
-    // the wheels, the AI's obstacle ray and the ground guard all exclude sensors.
-    const pole = (x: number, z: number, h: number, r: number) =>
-      world.createCollider(RAPIER.ColliderDesc.cylinder(h / 2, r).setTranslation(x, h / 2, z).setSensor(true), fixed)
-    for (const [x, z] of furniture.lamps) pole(x, z, POLES.lamp.height, POLES.lamp.radius)
-    for (const [x, z] of furniture.trees) pole(x, z, POLES.tree.height, POLES.tree.radius)
-    for (const [x, z] of furniture.signals) pole(x, z, POLES.signal.height, POLES.signal.radius)
+    furnitureColliders(world, fixed, furniture)
     // One step of the fixed world builds the query tree every query searches (the character controller's ground snap,
     // the wheels' rays, the AI's obstacle rays): an unstepped world has none, so the first substep's moves would miss
     // the ground. The network room's mirror and garage build their worlds here too, so all start alike.

@@ -26,11 +26,13 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import {
-  ACESFilmicToneMapping, CubeUVReflectionMapping, DirectionalLight, PCFShadowMap, PMREMGenerator, SRGBColorSpace, ShadowNode, Texture,
+  ACESFilmicToneMapping, CubeUVReflectionMapping, PCFShadowMap, PMREMGenerator, SRGBColorSpace, Texture,
   WGSLNodeBuilder, WebGPURenderer, setConsoleFunction, type Camera, type InstancedMesh, type Light, type Material, type Mesh, type Node,
   type Object3D, type PointLight, type Scene,
 } from 'three/webgpu'
 import { texture } from 'three/tsl'
+import { SunShadowNode } from 'three/addons/lights/SunShadowNode.js'
+import type { SunLight } from 'three/addons/lights/SunLight.js'
 
 // Vite's `?raw` import, for Node: the world, the crowd, the fleet and the rigs take matrix mode, whose WGSL comes that way.
 registerHooks({
@@ -42,6 +44,7 @@ registerHooks({
 })
 const { buildWorld, FULL_WORLD, LITE_WORLD } = await import('../01_Initialize_World/world.ts')
 const { CityLightsNode, FIXTURE, LAMP } = await import('../01_Initialize_World/cityLights.ts')
+const { SHADOW_TAPS, SUN_SHADOW } = await import('../01_Initialize_World/sunShadow.ts')
 const { workplaces } = await import('../01_Initialize_World/interiors.ts')
 const { buildLakefrontPack } = await import('../01_Initialize_World/lakefrontPack.ts')
 const { RegionPlaces, hollowLots, layoutOf } = await import('../01_Initialize_World/region/regionWorld.ts')
@@ -175,23 +178,25 @@ function build(renderer: WebGPURenderer, scene: Scene, camera: Camera, object: O
 }
 
 /**
- * Builds `mesh` as the sun's shadow pass draws it, with three's own shadow node for the sun (ShadowNode.js
- * updateShadow): its shadow material is the scene's override and its render-object function takes the mesh, which hands
- * it to the renderer's renderObject; that sets the override's nodes from the mesh's material (Renderer.js renderObject
- * and _getShadowNodes) and hands the material on, here to build() in place of drawing. Every material handed on is
- * built and returned.
+ * Builds `mesh` as the sun's shadow pass draws it, with three's own shadow node for the sun (SunShadowNode, a
+ * ShadowNode: ShadowNode.js updateShadow): its shadow material is the scene's override and its render-object function
+ * takes the mesh, which hands it to the renderer's renderObject; that sets the override's nodes from the mesh's material
+ * (Renderer.js renderObject and _getShadowNodes) and hands the material on, here to build() in place of drawing. Every
+ * material handed on is built and returned. The camera is the first cascade's (the pass draws each cascade with its own;
+ * the shadow material is the same for both).
  */
-function buildShadow(renderer: WebGPURenderer, scene: Scene, sun: DirectionalLight, mesh: Mesh): { value: Stages[]; logged: string[] } {
+function buildShadow(renderer: WebGPURenderer, scene: Scene, sun: SunLight, mesh: Mesh): { value: Stages[]; logged: string[] } {
   const r = renderer as unknown as Internals
-  const shadow = new ShadowNode(sun, sun.shadow)
+  const shadow = new SunShadowNode(sun)
+  const camera = sun.shadow.getCamera(0)
   const renderObject = shadow.getShadowRenderObjectFunction(renderer, sun.shadow) as unknown as RenderObjectFunction
   const own = r._handleObjectFunction
   const built: Stages[] = []
   scene.overrideMaterial = shadow.getShadowMaterial()
-  r._handleObjectFunction = (object, material) => { built.push(build(renderer, scene, sun.shadow.camera, object, material)) }
+  r._handleObjectFunction = (object, material) => { built.push(build(renderer, scene, camera, object, material)) }
   try {
     return caught(() => {
-      renderObject(mesh, scene, sun.shadow.camera, mesh.geometry, mesh.material as Material, null, lightsOf(renderer, scene), null, null)
+      renderObject(mesh, scene, camera, mesh.geometry, mesh.material as Material, null, lightsOf(renderer, scene), null, null)
       return built
     })
   } finally {
@@ -231,7 +236,7 @@ interface Report { name: string; pass: 'main' | 'shadow'; vertex: number; fragme
  * (PCF shadows draw only casters). Returns what was built; every check is made on the way.
  */
 function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camera: Camera): Report[] {
-  const sun = scene.children.find((o): o is DirectionalLight => (o as DirectionalLight).isDirectionalLight === true)
+  const sun = scene.children.find((o): o is SunLight => (o as SunLight).isSunLight === true)
   assert.ok(sun?.castShadow, `${label}: the sun casts shadows`)
   const draws = new Map<string, Mesh>()
   scene.traverse((o) => {
@@ -369,6 +374,13 @@ function withoutProbe<T>(fn: () => T): T {
 
 /** The scene's point lights (the lamps' and the rooms' fixtures'): the whole pool, lit or not. */
 const pointLights = (scene: Scene): PointLight[] => scene.children.filter((o): o is PointLight => (o as PointLight).isPointLight === true)
+/** A mesh that casts the sun's shadow (the ground only receives it, and three's shadow pass skips what does not cast). */
+const caster = (scene: Scene): Mesh => {
+  let found: Mesh | undefined
+  scene.traverse((o) => { if (!found && (o as Mesh).isMesh && o.castShadow) found = o as Mesh })
+  assert.ok(found, 'something casts the sun\'s shadow')
+  return found
+}
 const streets = (scene: Scene): Mesh => {
   const m = scene.getObjectByName('Streets') as Mesh | undefined
   assert.ok(m, 'the city ground is drawn')
@@ -417,7 +429,9 @@ test('the lamps are clustered: one lit shader whatever the count of lit lamps, t
   assert.equal((lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true), lightsKey)
   // The shadow pass never pays for the grid.
   const sun = world.sun
-  for (const s of buildShadow(renderer, world.scene, sun, ground).value) assert.doesNotMatch(s.fragment, /lightIndexes/, 'the shadow pass reads no cluster grid')
+  const passes = buildShadow(renderer, world.scene, sun, caster(world.scene)).value
+  assert.ok(passes.length > 0, 'a caster builds a shadow pass')
+  for (const s of passes) assert.doesNotMatch(s.fragment, /lightIndexes/, 'the shadow pass reads no cluster grid')
   // A count of 0 lights nothing, fixtures included.
   world.setLampLights(0)
   withoutProbe(() => world.update(23, 0, 320, 320))
@@ -444,4 +458,55 @@ test('the lakefront metropolis lights its rooms: four fixtures a room under the 
   withoutProbe(() => world.update(23, 0, world.camera.position.x, world.camera.position.z))
   assert.equal(lights.filter((l) => l.visible).length, 64 + fixtures.length)
   assert.ok((renderer as unknown as Internals).lighting.getNode(world.scene) instanceof CityLightsNode)
+})
+
+test('the sun shadows in two cascades with the soft filter: one lit shader whatever the taps, the distance or the map size', () => {
+  const renderer = offlineRenderer()
+  const world = buildWorld(renderer, SEED)
+  const sun = world.sun
+  assert.ok((sun as unknown as { isSunLight?: boolean }).isSunLight, 'the sun is three\'s cascaded sun light')
+  assert.equal(sun.shadow.getViewportCount(), 2, 'two cascades')
+  assert.deepEqual([sun.shadow.getFrameExtents().x, sun.shadow.getFrameExtents().y], [2, 1], 'side by side in one atlas')
+  assert.equal(sun.shadow.camera.far, SUN_SHADOW.distance)
+  assert.equal(sun.shadow.radius, SUN_SHADOW.radius)
+  assert.equal(renderer.library.getLightNodeClass(sun.constructor as new () => Light)?.name, 'SunLightNode', 'the renderer knows the sun light')
+  const ground = streets(world.scene)
+  const environment = environmentOf()
+  build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  const first = build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  // The filter: hardware depth comparisons, SHADOW_TAPS.max of them written out a cascade (no loop: a compiler that
+  // refuses screen-derivative reads in a loop it cannot count would leave the material unbuilt), every one past three's
+  // five behind an `if` on the one taps uniform, and the disk scaled per axis (round on the 2 : 1 atlas).
+  const compares = [...first.fragment.matchAll(/textureSampleCompare\s*\(/g)].map((m) => m.index)
+  assert.equal(compares.length, 2 * SHADOW_TAPS.max, `${SHADOW_TAPS.max} comparisons a cascade, written out (${compares.length})`)
+  const span = first.fragment.slice(compares[0], compares[compares.length - 1])
+  assert.doesNotMatch(span, /\bfor\s*\(|\bloop\s*\{|\bwhile\b/, 'no loop among the taps')
+  const gates = [...span.matchAll(/if \( \( (\w+\.\w+) > (\d+) \) \)/g)]
+  const extra = SHADOW_TAPS.max - SHADOW_TAPS.min
+  assert.equal(gates.length, 2 * extra, `the ${extra} taps past three's five behind an if a cascade (${gates.length})`)
+  assert.equal(new Set(gates.map((g) => g[1])).size, 1, 'one uniform gates them all: the taps')
+  assert.deepEqual([...new Set(gates.map((g) => Number(g[2])))].sort((x, y) => x - y), Array.from({ length: extra }, (_, k) => SHADOW_TAPS.min + k))
+  assert.match(span, /vec2<f32>\( (\w+\.\w+), \1 \) \/ \w+\.\w+/, 'the radius over the atlas size per axis')
+  // The knobs the tiers write are uniforms: the WGSL does not move, nor the lights node's key.
+  const lightsKey = (lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true)
+  world.setShadowTaps(16)
+  sun.shadow.radius = 3
+  sun.shadow.camera.far = 320
+  sun.shadow.mapSize.set(4096, 4096)
+  const peak = build(renderer, world.scene, world.camera, ground, ground.material as Material, environment)
+  assert.equal(peak.fragment, first.fragment, 'the same fragment stage for 8 taps at 160 m and 16 taps at 320 m (any reach: the far plane is a uniform)')
+  assert.equal(peak.vertex, first.vertex)
+  assert.equal((lightsOf(renderer, world.scene) as unknown as Node).getCacheKey(true), lightsKey)
+  world.setShadowTaps(5)
+  sun.shadow.radius = 1.5
+  sun.shadow.camera.far = 120
+  sun.shadow.mapSize.set(1024, 1024)
+  assert.equal(build(renderer, world.scene, world.camera, ground, ground.material as Material, environment).fragment, first.fragment, 'and for Medium\'s five taps at 120 m')
+  // Parked (quality.ts): intensity and the update flag are the shadow's own, read as uniforms too.
+  sun.shadow.intensity = 0
+  assert.equal(build(renderer, world.scene, world.camera, ground, ground.material as Material, environment).fragment, first.fragment)
+  // The shadow pass itself carries no filter and no cascade walk (built for a caster: three draws nothing else in it).
+  const passes = buildShadow(renderer, world.scene, sun, caster(world.scene)).value
+  assert.ok(passes.length > 0, 'a caster builds a shadow pass')
+  for (const st of passes) assert.doesNotMatch(st.fragment, /textureSampleCompare/, 'the shadow pass compares no shadow')
 })

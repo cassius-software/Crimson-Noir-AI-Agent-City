@@ -8,7 +8,9 @@
  * automation values: voices fade before they switch cars, the listener falls back to the legacy API,
  * walk tones start and stop per phase, speech is decoded from a copy, said at the speaker's head, follows them, is
  * muffled by the walls of the city's own geometry between them and the listener (and only by walls in the way), fades
- * out when cut (one utterance at a time), and nothing runs before unlock or after dispose.
+ * out when cut (one utterance at a time), the head-locked check chime joins the master and nothing on the street (one
+ * fresh source per play, overlapping chimes mixed rather than cut, captioned with no place), and nothing runs before
+ * unlock or after dispose.
  * What breaks if it is removed? Clicks, voice hopping, silent walk signals, speech from the wrong place or an
  * AudioParam exception inside the frame loop would only be found by ear in a browser.
  */
@@ -16,15 +18,16 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Euler, Vector3 } from 'three'
 import {
-  APS, BabbleRender, CABIN, CAPTION_REFRESH, CUE, ENGINE, MURMUR, OCCLUSION, PING, REVERB, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
+  APS, BabbleRender, CABIN, CAPTION_REFRESH, CHIME, CUE, ENGINE, MURMUR, OCCLUSION, PING, REVERB, SPEECH, SYNTH_RATE, VOICE, Soundscape, assignVoices, carLoudness, carTimbre, distanceGain,
   dopplerFactor, engineCutoff, engineLevel, engineLoad, engineRpm, engineWave, listenerBasis, muffle, murmurLayout, murmurLevel,
   murmurSwell, pingLength, renderBabble, renderNoise, renderPing, renderSignalTone, selectGear, signalToneLength, tyreCutoff, tyreLevel,
-  volumeToGain, cueLength, renderCue, sharedAudioContext, toHeadSpace, wallsBetween, type AudioFrame, type CarSample,
+  volumeToGain, cueLength, renderCue, chimeLength, renderChime, sharedAudioContext, toHeadSpace, wallsBetween, type AudioFrame, type CarSample,
 } from './audio.ts'
 import { ACOUSTICS, eavesdrop, impulseLength, renderImpulse, roomAt, roomKey, sabineRt60, type Room } from './acoustics.ts'
-import type { CaptionEvent } from './captions.ts'
+import { CaptionTrack, captionText, type CaptionEvent } from './captions.ts'
 import { CITY, LAKE, generateBuildings, inLot, type Box } from '../01_Initialize_World/city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
+import { AUDIBLE_RADIUS } from '../03_Spawn_Agents/skills.ts'
 
 const near = (a: number, b: number, tol: number, msg?: string) => assert.ok(Math.abs(a - b) <= tol, msg ?? `${a} ≉ ${b} (±${tol})`)
 
@@ -980,6 +983,7 @@ test('an audio stack that throws mid-frame is switched off instead of breaking t
   s.unlock()
   const ctx = ctxOf()
   tick(s, frame({ cars: [car(200, 210, 10)] }))
+  assert.ok(s.chime('critical'), 'a chime still sounding when the stack fails')
   const gv = graphOf(s)
   const v = gv.voices.find((x) => x.car === 0)!
   v.freq.param.setTargetAtTime = () => { throw new Error('InvalidStateError: something unforeseen') }
@@ -1072,6 +1076,7 @@ test('dispose stops every source, closes the context and leaves an inert object'
   const s = new Soundscape()
   s.unlock()
   tick(s, frame({ walk: { ew: true, ns: false } }))
+  assert.ok(s.chime('success'), 'a chime still sounding when the soundscape goes')
   const ctx = ctxOf()
   s.dispose()
   assert.equal(ctx.state, 'closed')
@@ -1140,6 +1145,198 @@ test('recruitment cue: sounds only while the soundscape runs, where the recruit 
   s.dispose()
   assert.ok(last.stopped >= 0, 'dispose stops a cue that is still sounding')
   assert.equal(s.cue(203, 208), false)
+}))
+
+test('check chime: a success arpeggio and a critical chord, silent at both ends, bounded, short, and quieter than the cue as heard', () => {
+  const at = (a: number, b: number) => [Math.round(a * SYNTH_RATE), Math.round(b * SYNTH_RATE)] as const
+  // The recruitment cue as the ear gets it from the farthest anyone is asked over from: its peak through the panner's
+  // inverse distance at AUDIBLE_RADIUS and an equal-power pan's 0.71 an ear. The chime reaches both ears whole.
+  const cue = new Float32Array(cueLength(SYNTH_RATE))
+  renderCue(SYNTH_RATE, cue)
+  const heard = cue.reduce((m, v) => Math.max(m, Math.abs(v)), 0) * distanceGain(AUDIBLE_RADIUS, CUE.refDistance, CUE.rolloff) * Math.SQRT1_2
+  assert.ok(heard > 0.07 && heard < 0.09, `the cue at ${AUDIBLE_RADIUS} m: ${heard}`)
+  const render = (kind: 'success' | 'critical') => {
+    const n = chimeLength(kind, SYNTH_RATE)
+    assert.ok(n > 0.3 * SYNTH_RATE && n < 0.6 * SYNTH_RATE, `${kind}: ${n} samples, under 0.6 s`)
+    const out = new Float32Array(n).fill(9)
+    renderChime(kind, SYNTH_RATE, out)
+    assert.ok(Math.abs(out[0]) < 1e-3 && Math.abs(out[n - 1]) < 1e-3, `${kind}: no click at either end`)
+    const peak = out.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+    assert.ok(peak * CHIME.level < heard, `${kind}: ${peak * CHIME.level} at the ear, under the recruitment cue's ${heard}`)
+    assert.ok(peak * CHIME.level > 0.04, `${kind}: still heard (${peak * CHIME.level})`)
+    return { out, peak }
+  }
+  // The success: three notes in a row, each on its own pitch, a breath of silence between them, bounded by one note.
+  const success = render('success')
+  assert.ok(success.peak <= CHIME.success.amplitude + 1e-6)
+  const [c5, e5, g5] = CHIME.success.notes.map((note) => note[2])
+  assert.deepEqual([c5, e5, g5], [523.25, 659.25, 783.99])
+  const windows = [at(0.01, 0.08), at(0.11, 0.18), at(0.22, 0.4)]
+  windows.forEach((w, i) => {
+    const own = power(success.out, SYNTH_RATE, [c5, e5, g5][i], ...w)
+    for (const other of [c5, e5, g5].filter((_, k) => k !== i)) assert.ok(own > 20 * power(success.out, SYNTH_RATE, other, ...w), `note ${i + 1} sits on its own pitch`)
+  })
+  const rms = (a: number, b: number) => Math.sqrt(success.out.slice(...at(a, b)).reduce((t, v) => t + v * v, 0) / ((b - a) * SYNTH_RATE))
+  assert.ok(rms(0.0915, 0.0985) < 1e-3 && rms(0.1915, 0.1985) < 1e-3, 'the notes are separate')
+  // The critical success: C4, C6 and G6 at once, all three in one window, bounded by the sum of the three notes.
+  const critical = render('critical')
+  assert.ok(critical.peak <= 3 * CHIME.critical.amplitude + 1e-6)
+  const chord = CHIME.critical.notes.map((note) => note[2])
+  assert.deepEqual(chord, [261.63, 1046.5, 1567.98])
+  assert.ok(CHIME.critical.notes.every((note) => note[0] === 0), 'one chord: every note starts together')
+  const w = at(0.02, 0.14)
+  const absent = Math.max(power(critical.out, SYNTH_RATE, e5, ...w), power(critical.out, SYNTH_RATE, g5, ...w))
+  for (const f of chord) assert.ok(power(critical.out, SYNTH_RATE, f, ...w) > 20 * absent, `${f} Hz is in the chord`)
+})
+
+interface ChimeView { gain: FakeGain; success: FakeBuffer; critical: FakeBuffer; playing: FakeBufferSource[] }
+const chimeOf = (s: Soundscape) => (graphOf(s) as unknown as { chime: ChimeView }).chime
+
+test('check chime: head-locked into the master, one fresh source per play, only while the soundscape runs, stopped with everything else', withFakes((doc) => {
+  FakeContext.reverb = true
+  const s = new Soundscape()
+  assert.equal(s.chime('success'), false, 'locked: no context before a gesture')
+  assert.equal(FakeContext.instances.length, 0)
+  s.unlock()
+  const ctx = ctxOf()
+  const ch = chimeOf(s)
+  // Both buffers are rendered with the graph at the synthesis rate; nothing plays until a check does.
+  for (const kind of ['success', 'critical'] as const) {
+    const expected = new Float32Array(chimeLength(kind, SYNTH_RATE))
+    renderChime(kind, SYNTH_RATE, expected)
+    assert.equal(ch[kind].sampleRate, SYNTH_RATE)
+    assert.deepEqual(ch[kind].data, expected)
+  }
+  const panners = VOICE.count + MURMUR.sources + 1 + CUE.slots + 1
+  assert.equal(ctx.of(FakePanner).length, panners, 'the chime adds no panner')
+  assert.equal(ctx.of(FakeBufferSource).length, VOICE.count, 'and no source up front')
+  // Its gain joins the master (the gain that feeds the limiter): not the cabin's low-pass, a panner or a reverb send.
+  const limiter = ctx.of(FakeCompressor)[0]
+  const master = ctx.of(FakeGain).find((gn) => gn.outputs.includes(limiter))!
+  assert.equal(master.gain, graphOf(s).master.param, 'the master gain the volume and on/off drive')
+  assert.equal(ch.gain.outputs.length, 1)
+  assert.equal(ch.gain.outputs[0], master)
+  assert.ok(!(ch.gain.outputs[0] instanceof FakeBiquad) && !(ch.gain.outputs[0] instanceof FakePanner))
+  assert.equal(ctx.nodes.filter((n) => n.outputs.includes(ch.gain)).length, 0, 'nothing on the street feeds it')
+  assert.equal(ch.gain.gain.value, CHIME.level)
+  assert.equal(ch.gain.gain.automationRate, 'a-rate')
+  const convolver = ctx.of(FakeConvolver)[0]
+  assert.equal(ctx.of(FakeGain).filter((gn) => gn.outputs.includes(convolver)).length, VOICE.count + 1 + 1 + 1 + 1, 'no reverb send of its own')
+  // A play: one fresh, unlooped source on the chime's gain, starting 10 ms ahead like the cues.
+  ctx.currentTime = 1
+  assert.equal(s.chime('success', 'Piloting'), true)
+  const first = ctx.of(FakeBufferSource).at(-1)!
+  assert.equal(ctx.of(FakeBufferSource).length, VOICE.count + 1)
+  assert.equal(first.buffer, ch.success)
+  assert.ok(!first.loop)
+  near(first.started, 1.01, 1e-9)
+  assert.equal(first.outputs.length, 1)
+  assert.equal(first.outputs[0], ch.gain)
+  assert.equal(s.status().voices, 1)
+  // A second check while the first still sounds: another source, mixed in, and the first is not cut mid-note.
+  assert.equal(s.chime('critical'), true)
+  const second = ctx.of(FakeBufferSource).at(-1)!
+  assert.notEqual(second, first)
+  assert.equal(ctx.of(FakeBufferSource).length, VOICE.count + 2, 'one source per play')
+  assert.equal(second.buffer, ch.critical)
+  assert.equal(first.stopped, -1, 'overlapping chimes mix')
+  assert.deepEqual(ch.playing.map((p) => p === first ? 'first' : p === second ? 'second' : '?'), ['first', 'second'])
+  assert.equal(s.status().voices, 2)
+  assert.equal(ctx.of(FakePanner).length, panners, 'still no panner')
+  // Played out: no longer counted; each source leaves the list, disconnected, once it reports its end.
+  ctx.currentTime += 1
+  assert.equal(s.status().voices, 0)
+  first.onended?.()
+  second.onended?.()
+  assert.equal(ch.playing.length, 0)
+  assert.equal(first.outputs.length, 0, 'disconnected once it ended')
+  // Off, or a hidden page: silent, and nothing new starts; on again, it sounds.
+  s.setEnabled(false)
+  assert.equal(s.chime('success'), false)
+  s.setEnabled(true)
+  doc.hidden = true
+  doc.dispatchEvent(new Event('visibilitychange'))
+  assert.equal(s.chime('success'), false, 'a sleeping context is refused')
+  doc.hidden = false
+  doc.dispatchEvent(new Event('visibilitychange'))
+  const before = ctx.of(FakeBufferSource).length
+  assert.equal(s.chime('success'), true)
+  assert.equal(ctx.of(FakeBufferSource).length, before + 1)
+  const last = ctx.of(FakeBufferSource).at(-1)!
+  s.dispose()
+  assert.ok(last.stopped >= 0, 'dispose stops a chime that is still sounding')
+  assert.equal(ch.playing.length, 0)
+  assert.equal(s.chime('critical'), false)
+}))
+
+test('check chime: it waits for a cue or a ping still sounding, and one that starts over it fades it out, captioned once', withFakes(() => {
+  const s = new Soundscape()
+  const events: CaptionEvent[] = []
+  s.onSound = (e) => events.push(e)
+  s.unlock()
+  const ctx = ctxOf()
+  const ch = chimeOf(s)
+  const chimes = () => events.filter((e) => e.kind === 'chime').map((e) => e.phase)
+  // The console's `ping go`: the mark's cue and the check's chime in one task. The ping goes first, the chime after it.
+  ctx.currentTime = 1
+  assert.ok(s.cuePing(230, 200))
+  const ping = ctx.of(FakeBufferSource).at(-1)!
+  assert.ok(s.chime('success', 'Swarm command'))
+  const waiting = ctx.of(FakeBufferSource).at(-1)!
+  near(ping.started, 1.01, 1e-9)
+  near(waiting.started, 1.01 + pingLength(SYNTH_RATE) / SYNTH_RATE, 1e-9, 'the chime starts as the ping ends')
+  assert.deepEqual(chimes(), ['start'], 'captioned at once')
+  // A spoken request: the chime first, the recruitment cue a worker step later. The cue fades the chime out at once,
+  // stops it once silent and sets the level back for the next one; its caption stops once.
+  ping.onended?.()
+  ctx.currentTime = 1.5
+  const level = ch.gain.gain
+  const mark = level.events.length
+  assert.ok(s.cue(203, 208))
+  const cue = ctx.of(FakeBufferSource).at(-1)!
+  const end = 1.5 + 6 * CHIME.fade
+  assert.deepEqual(level.events.slice(mark), [
+    { kind: 'cancel', v: NaN, t: 1.5 },
+    { kind: 'target', v: 0, t: 1.5, tau: CHIME.fade },
+    { kind: 'set', v: CHIME.level, t: end },
+  ])
+  near(waiting.stopped, end, 1e-9)
+  assert.equal(ch.playing.length, 0)
+  assert.equal(level.value, CHIME.level, 'whole again for the next chime')
+  assert.deepEqual(chimes(), ['start', 'stop'])
+  assert.equal(events.filter((e) => e.kind === 'chime' && e.phase === 'stop')[0].t, 1.5)
+  waiting.onended?.()
+  assert.deepEqual(chimes(), ['start', 'stop'], 'its own end says nothing more')
+  // A chime while that cue sounds waits for it; a cue with no chime about leaves the chime's level alone.
+  assert.ok(s.chime('critical'))
+  near(ctx.of(FakeBufferSource).at(-1)!.started, cue.started + cueLength(SYNTH_RATE) / SYNTH_RATE, 1e-9)
+  ctx.of(FakeBufferSource).at(-1)!.onended?.()
+  cue.onended?.()
+  const quiet = level.events.length
+  ctx.currentTime = 3
+  assert.ok(s.cue(203, 208))
+  assert.equal(level.events.length, quiet, 'nothing to fade')
+  // With nothing placed sounding, a chime starts 10 ms ahead as before.
+  ctx.of(FakeBufferSource).at(-1)!.onended?.()
+  ctx.currentTime = 4
+  assert.ok(s.chime('success'))
+  near(ctx.of(FakeBufferSource).at(-1)!.started, 4.01, 1e-9)
+  s.dispose()
+}))
+
+test('check chime: a stack that throws while starting one is switched off, and the chime still sounding is stopped', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  assert.ok(s.chime('success'))
+  const sounding = ctx.of(FakeBufferSource).at(-1)!
+  ctx.createBufferSource = () => { throw new Error('InvalidStateError: something unforeseen') }
+  assert.doesNotThrow(() => assert.equal(s.chime('critical'), false))
+  assert.equal(s.status().state, 'unsupported')
+  assert.equal(ctx.state, 'closed')
+  assert.ok(sounding.stopped >= 0, 'the failure stops the chime that was still sounding')
+  assert.equal(s.chime('success'), false)
+  assert.equal(FakeContext.instances.length, 1, 'no new context after the failure')
 }))
 
 interface SpeechView { pan: { node: FakePanner }; gain: FakeGain; wall: FakeBiquad; source: FakeBufferSource | null; envelope: FakeGain | null }
@@ -1533,6 +1730,7 @@ test('every sound start, change and stop is reported once with its position; a l
   const of = (kind: CaptionEvent['kind'], phase?: CaptionEvent['phase']) => events.filter((e) => e.kind === kind && (phase === undefined || e.phase === phase))
   s.update(frame({ cars: [car(210, 205, 11)] }))
   s.cue(1, 1)
+  s.chime('success')
   assert.equal(events.length, 0, 'no event before unlock')
   s.unlock()
   const ctx = ctxOf()
@@ -1583,6 +1781,24 @@ test('every sound start, change and stop is reported once with its position; a l
   assert.equal(shots[1].buffer!.length, pingLength(SYNTH_RATE))
   shots[0].onended?.()
   assert.deepEqual(of('cue', 'stop').length, 1, 'a shot that played out stops its caption')
+  // The check chime has no place: every event carries NaN for both, and overlapping chimes stop once, with the last.
+  events.length = 0
+  assert.ok(s.chime('success', 'Piloting'))
+  assert.ok(s.chime('critical'))
+  assert.deepEqual(of('chime'), [
+    { kind: 'chime', phase: 'start', source: 0, x: NaN, z: NaN, t: ctx.currentTime, detail: 'success', label: 'Piloting' },
+    { kind: 'chime', phase: 'start', source: 0, x: NaN, z: NaN, t: ctx.currentTime, detail: 'critical' },
+  ])
+  const chimes = ctx.of(FakeBufferSource).slice(-2)
+  chimes[0].onended?.()
+  assert.equal(of('chime', 'stop').length, 0, 'one still sounds')
+  chimes[1].onended?.()
+  chimes[1].onended?.()
+  assert.deepEqual(of('chime', 'stop').map((e) => [e.source, Number.isNaN(e.x), Number.isNaN(e.z)]), [[0, true, true]], 'stopped once, with the last')
+  // Captioned, it is the text alone: no arrow, no distance.
+  const track = new CaptionTrack()
+  for (const e of of('chime')) track.push(e, { x: 200, z: 205, yaw: 0 })
+  assert.deepEqual(track.lines(ctx.currentTime).map(captionText), ['[chime: critical success]'])
   // Speech carries the words and the speaker; it follows them and says when a wall comes between; a stop ends it.
   const buffer = await s.decodeSpeech(clipBytes(2))
   events.length = 0

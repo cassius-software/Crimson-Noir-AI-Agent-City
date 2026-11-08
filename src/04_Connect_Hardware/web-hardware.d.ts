@@ -240,6 +240,11 @@ export interface HardwareNavigator {
   getGamepads?(): ArrayLike<GamepadLike | null>
   /** WebXR (Chromium on a headset's Android, visionOS Safari); absent nearly everywhere else. */
   readonly xr?: XrSystemLike
+  /**
+   * The Vibration API: one buzz of that many ms, or a list of on and off ms. Chromium on a phone has it; iOS and
+   * most desktops do not. It answers false when the browser refuses, as it does before anyone has tapped the page.
+   */
+  vibrate?(pattern: number | number[]): boolean
 }
 
 // ── WebCodecs capture and the save-file picker (lib.dom has VideoEncoder, VideoFrame, EncodedVideoChunk,

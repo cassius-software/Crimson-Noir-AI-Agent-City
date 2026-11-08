@@ -10,9 +10,11 @@
  * frames judged against it, JA acks and the gate's ARMED / BEAT / DISARM in, the page's control lines and JT
  * setpoints out; the gate itself is the page's, robotLink.ts, this bus keeps no policy state); and Gamepad API pads
  * (rumble) — behind one transport-neutral API. Every browser API it touches is optional: where WebHID, Web Serial or
- * Web Bluetooth are missing (Safari, Firefox, iOS) it reports them unsupported and does nothing, silently.
- * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command, the HUD device line and the serial
- * door of the joint bridge.
+ * Web Bluetooth are missing (Safari, Firefox, iOS) it reports them unsupported and does nothing, silently. A phone's
+ * buzz (navigator.vibrate) goes through here too, and so does the shape of a passed check's tap on the hands (PULSE,
+ * pulseLevel), so the cue is pure and testable where the engine that plays it is not.
+ * What breaks if it is removed? Input.hal, the Ring-0 terminal's `hal` command, the HUD device line, the serial
+ * door of the joint bridge and the check cue's tap on a pad or a phone.
  */
 import { BRAND } from '../brand.ts'
 import { describeResolution, padClues, resolveDevice, xrClues } from './devices.ts'
@@ -145,6 +147,28 @@ interface PadSlot {
 
 /** Gamepad rumble is a timed effect: re-issued while held so it never lapses between frames. */
 const PAD_RUMBLE = { durationMs: 250, refreshMs: 150, minGapMs: 50, steps: 16 } as const
+
+/**
+ * A passed check's tap on the hands: one tap for a success, two for a critical success. The level sits between the
+ * limiter's hum (0.2) and the guardrail thump (1.0), and two taps last 170 ms, less than the thump's 180 ms, so the
+ * tap is felt but never read as a guardrail. A phone has no level, only time: one 12 ms buzz, or two with a 70 ms
+ * gap. The engine plays the taps only while no guardrail is rumbling.
+ */
+export const PULSE = { level: 0.35, onMs: 50, gapMs: 70, phone: 12, phoneCritical: [12, 70, 12] } as const
+
+/**
+ * The rumble a check's taps ask for `t` ms after the cue: PULSE.level inside each tap's window, 0 in the gap and
+ * once the taps are over. A negative `t` counts as 0, because the frame's clock can read a few ms before the moment
+ * the cue was stamped, and the first tap must not be skipped or cut short for that.
+ */
+export function pulseLevel(t: number, taps: number): number {
+  if (Number.isNaN(t) || !(taps > 0)) return 0
+  const at = t > 0 ? t : 0
+  const period = PULSE.onMs + PULSE.gapMs
+  const i = Math.floor(at / period)
+  return i < taps && at - i * period < PULSE.onMs ? PULSE.level : 0
+}
+
 const TELEMETRY_MS = 100
 const LABEL: Readonly<Record<'hid' | 'serial' | 'bluetooth', string>> = { hid: 'WebHID', serial: 'Web Serial', bluetooth: 'Web Bluetooth' }
 
@@ -578,6 +602,32 @@ export class HalBus {
         g.addEventListener!('pagehide', onPageHide)
         this.unlisten.push(() => g.removeEventListener?.('pagehide', onPageHide))
       })
+    }
+  }
+
+  /**
+   * Whether the bus sends nothing now: the page is hidden or the bus is disposed. output() still keeps what it is
+   * asked for while asleep, so the page's return replays the frame's live state; a caller's one-off output that no
+   * frame would clear meanwhile (the engine's first tap of a check) asks this first, so it is not replayed later as a
+   * stray tap.
+   */
+  get asleep(): boolean {
+    return this.hidden || this.disposed
+  }
+
+  /**
+   * One phone buzz (PULSE.phone, or the list PULSE.phoneCritical). It goes to the bus's own navigator, never to
+   * globalThis.navigator, because Node has a navigator without vibrate and tests hand the bus a fake one. False when
+   * the page is hidden (the same rule that quiets the pads), the bus is disposed, the browser has no vibration, or
+   * it refused or threw; otherwise the browser's answer. Called on the navigator itself, so `this` stays the navigator.
+   */
+  vibrate(pattern: number | readonly number[]): boolean {
+    const n = this.nav
+    if (this.hidden || this.disposed || !n || typeof n.vibrate !== 'function') return false
+    try {
+      return n.vibrate(typeof pattern === 'number' ? pattern : Array.from(pattern)) === true
+    } catch {
+      return false
     }
   }
 

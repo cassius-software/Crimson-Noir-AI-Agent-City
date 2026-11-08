@@ -15,6 +15,75 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The sun's shadows reach farther, in two cascades, with a softer, tier-set penumbra.** The one directional light
+  with a fixed shadow box of ±80 m around the player (±160 m on Peak, on an 8192² map of half a gigabyte) is replaced
+  by three r186's cascaded sun light (`src/01_Initialize_World/sunShadow.ts`, three/addons `SunLight`): a near cascade
+  fitted to the first stretch of the view with fine texels (about 32 m on Medium, 42 m on High, 62 m on Ultra and
+  Peak), a far one to the rest out to the tier's distance (the governor's new `shadowDistance`: 120 m on Medium, 160 m
+  on High, 240 m on Ultra and Peak), fading out over its last tenth instead of ending in a line, the two drawn side by
+  side in one atlas (1024 texels a cascade on Medium, 2048 on High, 4096 on Ultra and Peak, so Peak's shadows take a
+  quarter gigabyte instead of a half) and fitted and snapped to whole texels by three every shadow pass; in split
+  screen each viewport's shadows are fitted to its own head. Two things three leaves to the page are done in
+  `CitySunShadow`: casters are drawn from at least 320 m toward the sun whichever way the player faces (three alone
+  drew them from as little as one shadow distance sunward, so a tower's long low-sun shadow came and went as the head
+  turned), and every cascade spans at least 700 m of depth, so the depth bias means the 21 cm it did over the old box.
+  The filter is three's own PCF (a Vogel disk of hardware depth comparisons rotated per pixel) with the tap count read
+  from a uniform (`shadowTaps`: 5 on Medium, 8, 12, 16 on Peak; the taps are written out with every one past five behind
+  an `if` on it, no loop) and the disk's radius a tier knob too (`shadowRadius`, round on the atlas), so the shadows
+  soften up the tiers without a recompile. Peak keeps Ultra's cascades and reach (a farther reach would stretch the
+  near cascade and coarsen the shadows nearest the eye) and adds taps and a wider penumbra. Parking (shadows off below
+  Medium) works as before, on the same shadow object. Sloane's Peak question no longer says Peak takes half a gigabyte
+  more. Pinned by `sunShadow.test.ts` (the light, its node class registered with the renderer once, the filter
+  installed before the first build, two cascades in one atlas, casters from 320 m sunward at every heading, tier and
+  sun height over at least 700 m without moving three's fit across the light, the taps' bounds), `shadowShaders.test.ts`
+  (every material still builds in both passes within the binding budget; the lit fragment's shadow is sixteen written-out
+  hardware comparisons a cascade, eleven behind an `if` on one uniform, no loop, and its WGSL is byte-identical for
+  Medium's and Peak's taps, distance and map; the shadow pass, built for a real caster, compares nothing) and the
+  governor, Peak and browser-smoke pins (Peak's atlas is 8192 wide with a three-texel penumbra, Ultra's 2.5, both 240 m;
+  the lakefront's Medium atlas 2048 × 1024 and 120 m). three's own `CSMShadowNode` was not used: it clones the light's
+  shadow once at the first compile, so nothing written to the sun's shadow afterwards (the tier's map size, the
+  parking) reaches its cascades. Unverified: how it looks on a real GPU (software-WebGPU pictures only, which at the
+  photographed spots look like the old ones), and the cost of the second shadow pass on an integrated GPU at Medium (the
+  governor measures and steps down as ever).
+- **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
+  attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
+  actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
+  sealed and range-checked, kept in this browser by `src/05_Observe_Environment/progressStore.ts`). A console
+  command that does something in the city earns a check in its skill: a d20 plus the skill's modifier against the
+  level-based DC, eased by 2, paying a fixed table by degree and level, raised by how many different skills the
+  current cycle of 24 checks has used (1x to 3.5x). A skill rests a minute between checks; after three misses in a row
+  the next check rolls twice; a hero point rerolls the last check. The console's `progress` prints the status, the
+  table, spends skill increases and hero points, and starts over with `reset --yes`. Credits buy through one purchase
+  gate (`buy`, `canBuy`, `owns`, `spend` on `pageProgress()`), which debits the credits and sets the unlock in the
+  same record and save, for the wardrobe, the properties and their furniture to use. The mechanics are offered under
+  the ORC License: `NOTICE.md` now attributes Pathfinder GM Core as well (its level-based DCs and treasure table are
+  used) and lists what was taken and added, and `docs/ip-audit.md` §7 records the checks. The plan's surprise-scaled
+  payouts, hidden pity counter and drop tokens were not built (`docs/progression.md` says why). The cues on a success
+  and the checks the city itself earns are not in this change.
+- **The city earns checks, and a success is cued.** The second slice of the operator's progression. The city's own
+  deeds now earn: boarding a car with the door key (piloting; a network room's correction or a script's `interact()`
+  does not), someone recruited arriving however they were asked (swarm command, from the round's reaction), a spoken
+  request the recruiter understood (acoustics and voice, from a new `understood` event), the clock keys, the rain key,
+  the ghost key when the view really shows or goes, and the touch menu's Headset (optics and cinema), and the wardrobe
+  card's first real change of a visit (architecture and commerce). The setters behind the keys and the agents' city
+  knobs earn nothing, so the console's own checks are not lost to a skill's rest, and `recruit <skill>` and `recruit
+  listen` at the console no longer earn (the arrival and the understood request do, once). One keeper listener in App
+  cues every success, the console's or the city's: a short head-locked chime in player 1's ears (a C5 E5 G5 arpeggio,
+  or a C4 C6 G6 chord for a critical success, rendered once at build, straight to the master gain with no panner or
+  reverb, captioned as text alone: `[chime: Piloting, success]`; at the ear quieter than the recruitment cue from
+  anyone near enough to be asked over, waiting for a cue or a ping still sounding and fading out under one that
+  starts, so it never covers either); one or two 50 ms taps on a controller's rumble while no guardrail signal holds
+  the motors, the screen is not split and the page is shown, the hold, the snap and the lightbar untouched; one or
+  two short vibrations on a phone; and a HUD progress chip (the level, '420 of 1,000 XP', the credits, the hero
+  points, the round's pips, and for four seconds what a check was and paid) with one soft ring at most once a second
+  and none under the system's reduced-motion setting. A hero point's reroll that stayed a success is not cued again. `haptics [on|off]` at the console
+  and `?haptics=0` switch the rumble and the vibration off. What CI shows: the chime's buffers, levels and graph
+  (`audio.test.ts`), its caption (`captions.test.ts`), the tap's envelope and the guarded `vibrate` on fake
+  navigators (`hal.test.ts`), the earns, the chip's words and its cache (`progress.test.ts`, `recruitment.test.ts`), the
+  knob (`commands.test.ts`), and the wiring by source scan (`progressWiring.test.ts`: the tap merged after the
+  guardrails, the deeds only at the keys and the boarding, one listener taken back on a halt and with the city). How the
+  chime sounds, how the pad's tap and the phone's vibration feel on real devices, the chip's glow in a real browser, and
+  the plan's under-16 ms budget are unverified. An action card's cost in pips is not in this change.
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
@@ -322,8 +391,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Peak, a tier above Ultra for big GPUs.** Tier 5, outside the tier table like Lite, so every existing tier number
   and automatic range stays as it was. It draws Ultra at 1.25 times the resolution on each side (about 1.56 times the
   pixels), held within the device's largest texture, which also fixes `?scale=2` on a very wide window at any tier;
-  the sun's shadows out to 160 m at the same sharpness, on an 8192² map of about 512 MB of graphics memory, given back
-  on the way down; and full-detail people out to 90 m. Who is measured: a desktop with a discrete GPU or an Apple
+  Ultra's sun shadows with a wider sixteen-tap penumbra (it first drew them out to 160 m on an 8192² map of about
+  512 MB; the cascades above replaced that, and Peak's shadows now take Ultra's 256 MB); and full-detail people out to
+  90 m. Who is measured: a desktop with a discrete GPU or an Apple
   chip, 8 or more cores and 8 GB or more (`?peak=1` or `?peak=0` decides on any desktop). On such a desktop three
   writes GPU timestamps, and the range reaches Peak only where it really does. The governor climbs from Ultra only
   when nine frames in ten took at most 30 % of the frame budget on the GPU, because under the cinema camera the frame
@@ -617,6 +687,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
+  not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at
+  the end of each `world.step()`, so the city's lamps, trees and signal poles (sensors nothing in the realm touches or
+  queries) cost every step about 0.6 ms and 1.4 MB of garbage. `physics.ts` now packs them into one compound sensor
+  per 80 m tile, each pole the same cylinder where it stood. Measured in Node on a four-core container, best of three:
+  the realm's whole step (`SimCore`, the city, 600 steps) 1.78 → 1.32 ms with 36 cars and 2.27 → 1.49 ms with 48 cars
+  and a stand-in crowd; the world's step alone 0.73 → 0.30 ms and 2.26 → 0.86 MB of garbage a step. A bonnet ray costs
+  the same as before (it excludes sensors inside Rapier). The cars' poses over those 600 steps hash the same as before,
+  to the bit. A new `physics.test.ts`
+  keeps the one-sensor-per-pole world as the reference and holds the packed one to it: the same poles along 4,000
+  seeded rays (to Rapier's ray-cast tolerance: under a millimetre, a few millimetres at a graze), every pole found inside
+  its rim on all four sides and under its top and not just outside them, every pole in one compound sensor on the fixed
+  body, and every one of 2,000 seeded solid rays answered exactly as before.
 - **The flow field's CPU solve is 3.3× faster, and allocation-free once warm.** The bucket queue and the direction
   pass (`src/06_Make_Decisions/flowField.ts` `solveDial`, `directions`), which the physics worker runs for every
   new goal whenever the field is not solved on the GPU, now work over the grid padded by a ring of blocked cells, with
