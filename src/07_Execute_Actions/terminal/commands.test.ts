@@ -51,8 +51,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -1163,8 +1162,7 @@ test('air gap: while locked, across every command and completion, the only knobs
     'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'hardware', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'hardware', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
@@ -1723,8 +1721,7 @@ test('content rules: no combat vocabulary in anything the console prints', () =>
 })
 
 test('completion: command names, then arguments, as whole lines', () => {
-  assert.deepEqual(complete('h'), ['hal', 'hardware', 'harness', 'help', 'history'])
-  assert.deepEqual(complete('h'), ['hal', 'haptics', 'harness', 'help', 'history'])
+  assert.deepEqual(complete('h'), ['hal', 'haptics', 'hardware', 'harness', 'help', 'history'])
   assert.deepEqual(complete('he'), ['help'])
   assert.deepEqual(complete('st'), ['stats'])
   assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats', 'swarm'])

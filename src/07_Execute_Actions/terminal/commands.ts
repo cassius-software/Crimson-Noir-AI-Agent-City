@@ -35,8 +35,6 @@
  */
 import type {
   ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
-  NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
