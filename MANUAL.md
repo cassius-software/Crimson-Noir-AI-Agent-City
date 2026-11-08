@@ -597,7 +597,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   of each line (its first 1.5 s, counted from when her voice is played or spoken, not while a provider voice is still
   being made, and afresh for a line that cuts the one before), holds her loudest word through her pauses, and wants
   your voice about 1.6 times that for a quarter of a second before it cuts her. A click or a knock there is not taken
-  for her if it is over within about 30 ms; one that rings on in the room is. Nobody cuts in during her line's first
+  for her if it is over within about 30 ms; one that rings on in the room is (where the microphone runs at 16 or
+  32 kHz, as some headsets do, these times are three quarters as long). Nobody cuts in during her line's first
   1.5 s: a voice there is taken for hers, and then it takes a few seconds of quiet before that voice can cut in. With headphones, talking over her works after
   that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
   to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
@@ -627,8 +628,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over
   the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
   **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
-  time every 1.2 s, in page order, the one offered focused and ringed, and the Space bar presses it (a field offered
-  takes the caret); Space is taken before the city sees it. A field taken by the switch, clicked into, focused by a
+  time every 1.2 s, in page order, the one offered focused and ringed (one that takes no focus as it is gets a
+  tabindex for its turn), and the Space bar presses it (a field offered takes the caret); Space is taken before the
+  city sees it. A field taken by the switch, clicked into, focused by a
   card or the dwell, or typed into holds the round until 6 s pass without a key, and a space typed there stays a
   space. A **one-handed pad layout**
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its

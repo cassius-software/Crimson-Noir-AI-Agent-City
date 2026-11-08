@@ -18,7 +18,9 @@
 
 /** The detector's tuning (VadCore takes a copy; the worklet gets it as processorOptions). */
 export const VAD = Object.freeze({
-  /** Samples per analysis frame: 512 is 10.7 ms at 48 kHz, 11.6 ms at 44.1 kHz (a power of two for the FFT). */
+  /** Samples per analysis frame: 512 is 10.7 ms at 48 kHz, 11.6 ms at 44.1 kHz (a power of two for the FFT). The page
+   *  picks it from its audio context's rate (vadFrame), so a frame lasts as long at 88.2 or 96 kHz and every count of
+   *  frames below is the time it says. */
   frame: 512,
   /** An absolute RMS floor (about −56 dBFS): below it nothing is speech, whatever the noise floor says. */
   floor: 0.0015,
@@ -334,6 +336,18 @@ export class VadCore {
       }
     }
   }
+}
+
+/**
+ * The frame for a sample rate: the power of two nearest to 10.7 ms of it (512 at 44.1 and 48 kHz, 1024 at 88.2 and
+ * 96 kHz, 2048 at 176.4 and 192 kHz, 256 at 22.05 and 24 kHz), so a frame lasts 10.7 to 11.6 ms and every count of
+ * frames in VAD is the time it says. At 16 and 32 kHz the nearest is 8 ms (128 and 256), so there every time is three
+ * quarters as long. A rate the browser does not give (0, NaN) keeps 512.
+ */
+export function vadFrame(rate: number): number {
+  const r = Number(rate)
+  if (!Number.isFinite(r) || r <= 0) return VAD.frame
+  return Math.min(4096, Math.max(128, 2 ** Math.round(Math.log2((r * VAD.frame) / 48_000))))
 }
 
 /** The processor's registered name. */

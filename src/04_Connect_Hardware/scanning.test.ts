@@ -22,19 +22,24 @@ class El implements ScanTarget {
   readonly name: string
   readonly typed: boolean
   readonly tagName: string
-  /** False for a control the browser will not focus (a role="button" with no tabindex, a button in a disabled fieldset). */
+  /** False for a control the browser will not focus as it is (a role="button" with no tabindex) ... */
   readonly focusable: boolean
-  constructor(name: string, typed = false, focusable = true) {
+  /** ... and false too for one it will not focus even with a tabindex (a button in a disabled fieldset). */
+  readonly lendable: boolean
+  readonly attrs = new Map<string, string>()
+  constructor(name: string, typed = false, focusable = true, lendable = true) {
     this.name = name
     this.typed = typed
     this.tagName = typed ? 'INPUT' : 'BUTTON'
     this.focusable = focusable
+    this.lendable = lendable
   }
   click(): void { this.clicks++ }
-  focus(): void { this.focuses++; if (this.focusable) page0.focused = this }
+  focus(): void { this.focuses++; if (this.focusable || (this.lendable && this.attrs.has('tabindex'))) page0.focused = this }
   matches(): boolean { return this.typed }
-  setAttribute(name: string): void { if (name === 'data-scan') this.marked = true }
-  removeAttribute(name: string): void { if (name === 'data-scan') this.marked = false }
+  hasAttribute(name: string): boolean { return this.attrs.has(name) }
+  setAttribute(name: string, value: string): void { this.attrs.set(name, value); if (name === 'data-scan') this.marked = true }
+  removeAttribute(name: string): void { this.attrs.delete(name); if (name === 'data-scan') this.marked = false }
 }
 
 function page(shown: El[]) {
@@ -195,37 +200,36 @@ test('a control that cannot take the focus never hands the round back to the fie
   t.stop()
 })
 
-test('the switch presses a control that cannot take the focus, though the browser sends the key to the field the focus stayed on', () => {
-  // The fifth review's case: the round offers the stuck control, the focus stays on the field before it, and the switch
-  // (Space) goes to that field. It used to take the field (a space typed in it, the round held there for SCAN.hold
-  // offers) and the stuck control could never be pressed.
+test('a control the browser will not focus as it is takes the focus for its offer (lent tabindex -1, given back after), so the switch presses it and a field is never guessed at', () => {
+  // The fifth review's case: the round offered such a control, the focus stayed on the field before it, and the switch
+  // (Space) went to that field, typing a space and holding the round there, so the control could never be pressed. The
+  // sixth review's case: guessing that a space in the field the focus stayed on was the switch swallowed the first
+  // space a visitor typed after clicking back into it. Lent a tabindex, the control has the focus and the key.
   const a = new El('a'), field = new El('field', true), stuck = new El('stuck', false, false), b = new El('b')
   const p = page([a, field, stuck, b])
   const s = new Scanner(p.env, 1000)
   s.start()
   p.tick()
   p.tick()
-  assert.deepEqual([s.current, page0.focused], [stuck, field], 'stuck offered, the focus still on the field')
-  const press = p.key(SCAN.key, field as unknown as EventTarget)
-  assert.deepEqual([stuck.clicks, press.prevented, press.stopped, s.current], [1, true, true, stuck], 'pressed, and no space typed in the field')
-  const again = p.key(SCAN.key, field as unknown as EventTarget)
-  assert.deepEqual([stuck.clicks, again.prevented], [2, true], 'every press presses it')
-  // Any other key there is typed in the field, which then holds the round as before.
-  const letter = p.key('KeyA', field as unknown as EventTarget)
-  assert.deepEqual([letter.prevented, s.current], [false, field], 'a letter is the field\'s, and the field is the one offered')
+  assert.deepEqual([s.current, page0.focused, stuck.attrs.get('tabindex')], [stuck, stuck, '-1'], 'offered, lent a tabindex, and focused')
+  const press = p.key(SCAN.key, stuck as unknown as EventTarget)
+  assert.deepEqual([stuck.clicks, press.prevented, press.stopped], [1, true, true], 'the switch presses it')
+  // The visitor clicks back into the field (or the dwell focuses it) and types a space first: it is the field's.
+  field.focus()
   const space = p.key(SCAN.key, field as unknown as EventTarget)
-  assert.deepEqual([space.prevented, stuck.clicks], [false, 2], 'once typed in, its spaces are spaces')
+  assert.deepEqual([space.prevented, stuck.clicks, s.current], [false, 1, field], 'a space in the field the visitor went back to is a space')
+  assert.equal(stuck.attrs.has('tabindex'), false, 'the tabindex is given back once the round moves on')
   s.stop()
-  // A field the visitor focused since the round looked (a tap, the dwell) is not the stayed-on one: its space is a space.
-  const c = new El('c'), stuck2 = new El('stuck', false, false), other = new El('other', true)
-  const q = page([c, stuck2])
+  // A control that takes the focus as it is is never lent one; one that takes none even when lent (a button in a
+  // disabled fieldset, which no press would press either) is passed, and a key in the field before it is the field's.
+  const c = new El('c'), field2 = new El('field', true), dead = new El('dead', false, false, false), d = new El('d')
+  const q = page([c, field2, dead, d])
   const t = new Scanner(q.env, 1000)
   t.start()
-  q.tick()
-  assert.equal(t.current, stuck2)
-  other.focus()
-  const typed = q.key(SCAN.key, other as unknown as EventTarget)
-  assert.deepEqual([typed.prevented, stuck2.clicks, t.current], [false, 0, other], 'a field focused by another hand takes its own space')
+  const seen: string[] = [(t.current as El).name]
+  for (let i = 0; i < 4; i++) { q.tick(); seen.push((t.current as El).name) }
+  assert.deepEqual(seen, ['c', 'field', 'dead', 'd', 'c'], 'the round goes on past it')
+  assert.deepEqual([c.attrs.has('tabindex'), d.attrs.has('tabindex'), dead.attrs.has('tabindex')], [false, false, false], 'nothing left lent')
   t.stop()
 })
 

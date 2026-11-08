@@ -6,7 +6,8 @@
  * one switch, the page's controls (buttons, links, fields, anything focusable) are offered one at a time, in the
  * page's order, every SCAN.ms; the one offered is focused and marked (`data-scan`, which index.css rings), and the
  * switch, the Space bar (a switch interface sends one key, and Space is the usual one), presses it, or puts the caret
- * in a field. The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
+ * in a field (a control the browser will not focus as it is, a role="button" with no tabindex, is lent tabindex -1
+ * for its offer, so the switch's key goes to it and not to the field the focus was on). The press is taken on the way down, before the rest of the page sees the key, so the city's handbrake
  * never fires with it. A field being typed in (taken by the switch, focused by any other hand, or typed into) becomes
  * the one offered (the ring moves to it) and holds the round on it until SCAN.hold offers pass without a key, so the
  * caret is never taken mid-word and the round goes on from the field; while it holds, Space typed there stays a space. Every round reads the controls again, so a card that opens or closes joins or leaves the round. Pure: the page is an environment handed in (`browserScanEnv` is the one
@@ -31,6 +32,7 @@ export interface ScanTarget {
   click(): void
   focus(options?: { preventScroll?: boolean }): void
   matches(selector: string): boolean
+  hasAttribute(name: string): boolean
   setAttribute(name: string, value: string): void
   removeAttribute(name: string): void
 }
@@ -64,10 +66,11 @@ export class Scanner {
   private held: unknown = null
   private idle = 0
   /** What had the focus when the round last looked (after its own focus move too): only a field the focus moved to
-   *  since is taken as typed in, so a control that cannot take the focus never hands the round back to the field
-   *  before it, neither on the next offer nor when the switch is pressed (the browser sends that key to the field the
-   *  focus stayed on, and it presses the control offered). */
+   *  since is taken as typed in, so a control that takes no focus even when lent a tabindex (a button in a disabled
+   *  fieldset) never hands the round back to the field before it. */
   private seen: unknown = null
+  /** The control offered now that was lent tabindex -1 to take the focus (given back when the round moves on). */
+  private lent: ScanTarget | null = null
 
   constructor(env: ScanEnv, ms: number = SCAN.ms, key: string = SCAN.key) {
     this.env = env
@@ -132,11 +135,8 @@ export class Scanner {
 
   private onKey(e: ScanKey): void {
     // A key typed in a field is the field's: one the round did not offer, one already taken, or any key but the switch
-    // in the one offered. It holds the round there. The switch on a field merely offered takes it (select). The switch
-    // in a field the focus only stayed on (the control offered now could not take it, and nothing moved it since) is
-    // the switch: it presses the control offered, and types nothing.
-    const stayed = e.code === this.key && this.now !== null && e.target === this.seen && e.target !== this.held
-    if (!stayed && isEditableTarget(e.target) && (e.target !== this.now || e.target === this.held || e.code !== this.key)) { this.typing(e.target); return }
+    // in the one offered. It holds the round there. The switch on a field merely offered takes it (select).
+    if (isEditableTarget(e.target) && (e.target !== this.now || e.target === this.held || e.code !== this.key)) { this.typing(e.target); return }
     if (e.code !== this.key) return
     e.preventDefault()
     e.stopImmediatePropagation()
@@ -147,10 +147,20 @@ export class Scanner {
     if (this.now === el) return
     this.now?.removeAttribute('data-scan')
     this.now = el
+    const lent = this.lent
+    this.lent = null
     if (el) {
       el.setAttribute('data-scan', '')
       el.focus({ preventScroll: false })
+      // Not focused as it is: lent tabindex -1 for its offer (a field never needs it: fields take the focus).
+      if (this.env.active() !== el && !el.hasAttribute('tabindex')) {
+        el.setAttribute('tabindex', '-1')
+        this.lent = el
+        el.focus({ preventScroll: false })
+      }
     }
+    // Given back once the focus has moved on, so taking it away never drops the focus to the page.
+    if (lent && lent !== el) lent.removeAttribute('tabindex')
     this.seen = this.env.active()
   }
 }

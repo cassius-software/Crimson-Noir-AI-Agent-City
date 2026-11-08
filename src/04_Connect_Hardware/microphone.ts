@@ -19,7 +19,7 @@
  * What breaks if it is removed? No microphone pill, no voice to Sloane, no barge-in: the on-device recogniser still
  * answers `recruit listen` in the console, with its own small MIC chip.
  */
-import { VAD, VAD_PROCESSOR, VadCore, vadWorkletSource, type VadMessage } from './vad.ts'
+import { VAD, VAD_PROCESSOR, VadCore, vadFrame, vadWorkletSource, type VadMessage } from './vad.ts'
 
 /**
  * Whether a first visit opens the microphone as the city starts, without a tap. False: the pill reads "Mic off" until
@@ -120,6 +120,8 @@ export interface WorkletNodeLike extends NodeLike { port: { onmessage: ((e: { da
 export interface ContextLike {
   readonly state: string
   readonly sampleRate: number
+  /** The context's clock (seconds of audio rendered): the polled path reads it to feed every sample, none twice. */
+  readonly currentTime?: number
   readonly audioWorklet?: { addModule(url: string): Promise<void> }
   createMediaStreamSource(s: StreamLike): NodeLike
   createAnalyser(): AnalyserLike
@@ -204,9 +206,9 @@ export class Microphone extends EventTarget {
   #worklet: WorkletNodeLike | null = null
   #analyser: AnalyserLike | null = null
   #poll: unknown = null
-  /** The detector on the page's side (the AnalyserNode path runs it; the worklet path keeps it for `speech`). */
-  readonly #core = new VadCore(VAD)
-  readonly #frame = new Float32Array(VAD.frame)
+  /** The detector on the page's side (the AnalyserNode path runs it; the worklet path keeps it for `speech`), remade
+   *  with the frame the context's rate asks for (vadFrame). */
+  #core = new VadCore(VAD)
   /** The page is speaking (Sloane): told to the detector, and speech starting then is a barge-in. */
   #speaking = false
   #speech = false
@@ -360,7 +362,13 @@ export class Microphone extends EventTarget {
     let source: NodeLike
     try { source = ctx.createMediaStreamSource(stream) } catch { return }
     this.#source = source
+    // The frame follows the context's rate, which is the output device's (often 96 kHz on an audio interface), so every
+    // count of frames in VAD is the time it says (vad.ts vadFrame).
+    const frame = vadFrame(ctx.sampleRate)
+    const opts = frame === VAD.frame ? VAD : Object.freeze({ ...VAD, frame })
+    if (this.#core.frame !== frame) this.#core = new VadCore(opts)
     this.#core.reset()
+    this.#core.speaking = this.#speaking
     this.#speech = false
     const W = this.#env.WorkletNode
     const mod = this.#env.moduleUrl
@@ -369,7 +377,7 @@ export class Microphone extends EventTarget {
       try {
         await ctx.audioWorklet.addModule(m.url)
         if (this.#ctx !== ctx) return
-        const node = new W(ctx, VAD_PROCESSOR, { processorOptions: VAD })
+        const node = new W(ctx, VAD_PROCESSOR, { processorOptions: opts })
         node.port.onmessage = (e) => this.#message(e.data)
         node.port.postMessage({ speaking: this.#speaking })
         source.connect(node)
@@ -385,13 +393,24 @@ export class Microphone extends EventTarget {
     if (this.#ctx !== ctx) return
     try {
       const analyser = ctx.createAnalyser()
-      analyser.fftSize = VAD.frame
+      // Room for eight frames: each poll feeds the detector the samples that came since the last one, by the context's
+      // clock, so it sees the stream itself (its frames last what VAD says), not one frame a poll with gaps between;
+      // polls further apart than eight frames (a throttled tab) lose the rest.
+      const size = Math.min(32_768, frame * 8)
+      analyser.fftSize = size
       source.connect(analyser)
       this.#analyser = analyser
+      const buf = new Float32Array(size)
+      let last = ctx.currentTime
       this.#poll = this.#env.setInterval(() => {
         if (this.#analyser !== analyser) return
-        analyser.getFloatTimeDomainData(this.#frame)
-        this.feed(this.#frame)
+        analyser.getFloatTimeDomainData(buf)
+        const now = ctx.currentTime
+        // A context with no clock to read: the latest frame, once a poll.
+        if (typeof now !== 'number' || typeof last !== 'number') { this.feed(buf.subarray(size - frame)); return }
+        const fresh = Math.min(size, Math.max(0, Math.round((now - last) * ctx.sampleRate)))
+        last = now
+        if (fresh > 0) this.feed(buf.subarray(size - fresh))
       }, POLL_MS)
       this.path = 'page'
     } catch {

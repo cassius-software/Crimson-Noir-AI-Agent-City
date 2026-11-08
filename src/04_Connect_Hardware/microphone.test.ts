@@ -19,7 +19,7 @@ import {
   pillLabel, pillWord, refusal, saveVoiceSettings, tapMeans, voiceStatus, type AnalyserLike, type ContextLike, type KeyStore, type MicEnv, type MicState,
   type NodeLike, type StreamLike, type TrackLike, type WorkletNodeLike,
 } from './microphone.ts'
-import { VAD, VAD_PROCESSOR, type VadMessage } from './vad.ts'
+import { VAD, VAD_PROCESSOR, VadCore, type VadMessage } from './vad.ts'
 
 function memoryStore(): KeyStore & { map: Map<string, string> } {
   const map = new Map<string, string>()
@@ -65,6 +65,8 @@ class FakeContext implements ContextLike {
   static made: FakeContext[] = []
   state = 'running'
   sampleRate = 48_000
+  /** The context's clock; undefined for one that has none to read. */
+  currentTime: number | undefined = 0
   closed = 0
   resumed = 0
   modules: string[] = []
@@ -85,7 +87,7 @@ class FakeContext implements ContextLike {
 
 interface Fake { env: MicEnv; streams: FakeStream[]; asked: unknown[]; urls: string[]; revoked: number; timers: Map<unknown, () => void>; tick(): void }
 
-function fake(o: { media?: 'ok' | 'refuse' | 'missing' | 'nodevice'; worklet?: 'ok' | 'refuse' | 'none'; workletNode?: boolean; context?: boolean } = {}): Fake {
+function fake(o: { media?: 'ok' | 'refuse' | 'missing' | 'nodevice'; worklet?: 'ok' | 'refuse' | 'none'; workletNode?: boolean; context?: boolean; rate?: number; clock?: boolean } = {}): Fake {
   const streams: FakeStream[] = []
   const asked: unknown[] = []
   const urls: string[] = []
@@ -105,7 +107,7 @@ function fake(o: { media?: 'ok' | 'refuse' | 'missing' | 'nodevice'; worklet?: '
           return s
         },
       },
-      Context: o.context === false ? null : class extends FakeContext { constructor() { super(o.worklet ?? 'ok') } },
+      Context: o.context === false ? null : class extends FakeContext { constructor() { super(o.worklet ?? 'ok'); if (o.rate) this.sampleRate = o.rate; if (o.clock === false) this.currentTime = undefined } },
       WorkletNode: o.workletNode === false ? null : FakeWorklet,
       moduleUrl: (source) => { const url = `blob:fake/${urls.length}`; urls.push(source); return { url, revoke: () => { f.revoked++ } } },
       setInterval: (fn) => { const h = ++id; timers.set(h, fn); return h },
@@ -312,22 +314,71 @@ test('a refusal reads in the browser\'s own words and the pill offers another pr
   assert.deepEqual(refusal('odd')[0], 'error')
 })
 
+test('the detector\'s frame follows the context\'s rate (96 kHz: 1024 samples, as long as 512 at 48 kHz) in the worklet and the poll; the poll feeds the samples since the last one by the clock, or the latest frame with no clock', async () => {
+  // The sixth review's case: at 96 kHz a 512-sample frame is 5.3 ms, so every time in VAD (the 1.5 s learning, the
+  // 32 ms knock) was half as long.
+  const w = fake({ rate: 96_000 })
+  const wm = new Microphone(w.env, memoryStore())
+  await wm.listen()
+  assert.equal(wm.path, 'worklet')
+  assert.equal((FakeWorklet.made.at(-1)!.options as { frame: number }).frame, 1024, 'the worklet gets the frame for 96 kHz')
+  assert.equal((FakeWorklet.made.at(-1)!.options as { onsetFrames: number }).onsetFrames, VAD.onsetFrames, 'and the rest of the tuning')
+  wm.mute()
+  const p = fake({ worklet: 'refuse', rate: 96_000 })
+  const pm = new Microphone(p.env, memoryStore())
+  await pm.listen()
+  const pc = FakeContext.made.at(-1)!
+  assert.deepEqual([pm.path, pc.analyser.fftSize], ['page', 1024 * 8])
+  // A voice at 96 kHz, polled with the clock 2.5 frames on each time: an onset of four frames takes two polls.
+  const n = 1024 * 8, voice = new Float32Array(n)
+  for (let i = 0; i < n; i++) { let v = 0; for (let h = 1; h <= 8; h++) v += Math.sin((2 * Math.PI * 140 * h * i) / 96_000 + h) / h; voice[i] = v * 0.05 }
+  pc.analyser.samples = voice
+  const fed: number[] = []
+  const feed = pm.feed.bind(pm)
+  pm.feed = (x: Float32Array) => { fed.push(x.length); feed(x) }
+  for (let i = 0; i < 2; i++) { pc.currentTime = (pc.currentTime ?? 0) + (2.5 * 1024) / 96_000; p.tick() }
+  assert.deepEqual(fed, [2560, 2560], 'the samples since the last poll')
+  assert.equal(pm.phase, 'speech', 'five frames of 1024: past the onset')
+  pc.currentTime = (pc.currentTime ?? 0) + 60
+  p.tick()
+  assert.equal(fed.at(-1), n, 'a poll a minute late feeds what the analyser holds')
+  pm.mute()
+  // A context with no clock to read: the latest frame, once a poll.
+  const q = fake({ worklet: 'refuse', clock: false })
+  const qm = new Microphone(q.env, memoryStore())
+  await qm.listen()
+  const sizes: number[] = []
+  const qfeed = qm.feed.bind(qm)
+  qm.feed = (x: Float32Array) => { sizes.push(x.length); qfeed(x) }
+  q.tick()
+  q.tick()
+  assert.deepEqual(sizes, [VAD.frame, VAD.frame])
+  qm.mute()
+  assert.equal(new VadCore({ ...VAD, frame: 1024 }).frame, 1024)
+})
+
 test('without a worklet the page polls an analyser through the same detector; without Web Audio the device is open with no meter', async () => {
   const f = fake({ worklet: 'refuse' })
   const m = new Microphone(f.env, memoryStore())
   await m.listen()
   assert.deepEqual([m.phase, m.path], ['listening', 'page'])
   const ctx = FakeContext.made.at(-1)!
-  assert.equal(ctx.analyser.fftSize, VAD.frame)
+  assert.equal(ctx.analyser.fftSize, VAD.frame * 8, 'room for eight frames')
   assert.equal(ctx.source.connected.at(-1), ctx.analyser)
   assert.equal(f.timers.size, 1, 'one poll')
-  // A voice through the poll: a 140 Hz harmonic signal over the frame, loud enough.
-  const frame = new Float32Array(VAD.frame)
+  // A voice through the poll: a 140 Hz harmonic signal, loud enough; each poll the clock has moved one frame on.
+  const voice = (n: number, rate: number): Float32Array => {
+    const out = new Float32Array(n)
+    for (let i = 0; i < n; i++) { let v = 0; for (let h = 1; h <= 8; h++) v += Math.sin((2 * Math.PI * 140 * h * i) / rate + h) / h; out[i] = v * 0.05 }
+    return out
+  }
+  const frame = voice(VAD.frame, 48_000)
   const log = events(m)
-  for (let i = 0; i < VAD.frame; i++) { let v = 0; for (let h = 1; h <= 8; h++) v += Math.sin((2 * Math.PI * 140 * h * i) / 48_000 + h) / h; frame[i] = v * 0.05 }
-  ctx.analyser.samples = frame
-  for (let i = 0; i < VAD.onsetFrames + 1; i++) f.tick()
-  assert.equal(m.phase, 'speech')
+  ctx.analyser.samples = voice(VAD.frame * 8, 48_000)
+  f.tick()
+  assert.equal(m.phase, 'listening', 'the clock has not moved: nothing new to feed')
+  for (let i = 0; i < VAD.onsetFrames; i++) { ctx.currentTime = (ctx.currentTime ?? 0) + VAD.frame / 48_000; f.tick() }
+  assert.equal(m.phase, 'speech', 'one frame a poll: speech after the onset frames')
   assert.ok(m.level > 0.01)
   assert.deepEqual(log, ['speech:true', 'change:speech'])
   m.mute()

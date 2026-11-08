@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { VAD, VAD_PROCESSOR, VadCore, vadWorkletSource } from './vad.ts'
+import { VAD, VAD_PROCESSOR, VadCore, vadFrame, vadWorkletSource } from './vad.ts'
 
 const SR = 48_000
 
@@ -313,6 +313,30 @@ test('a knock or a click of up to three frames (32 ms), wherever it falls across
     if (first === undefined || first.at - Math.round(0.1 * SR) >= SR) late.push(`${ms} ms at +${shift}`)
   }
   assert.deepEqual(late, [], 'the visitor did not cut in within a second')
+})
+
+test('the frame follows the sample rate (vadFrame), so a frame lasts 10.7 to 11.6 ms and every count of frames is the time it says: at 88.2 and 96 kHz a knock of up to 32 ms is not learned and her learning still lasts about 1.5 s', () => {
+  const frames = [16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000].map(vadFrame)
+  assert.deepEqual(frames, [128, 256, 256, 256, 512, 512, 1024, 1024, 2048, 2048])
+  assert.deepEqual([vadFrame(0), vadFrame(Number.NaN), vadFrame(-1), vadFrame(8_000), vadFrame(1e7)], [512, 512, 512, 128, 4096])
+  for (const rate of [22_050, 24_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000]) {
+    const ms = (vadFrame(rate) / rate) * 1000
+    assert.ok(ms >= 10.6 && ms <= 11.7, `${rate} Hz: a frame is ${ms.toFixed(1)} ms`)
+    const wait = (VAD.echoWait * vadFrame(rate)) / rate
+    assert.ok(wait > 1.4 && wait < 1.7, `${rate} Hz: her learning lasts ${wait.toFixed(2)} s`)
+  }
+  // The sixth review's case: at 96 kHz with 512-sample frames, a 22 ms tap touched five 5.3 ms frames and was learned.
+  for (const rate of [88_200, 96_000]) for (const ms of [20, 24, 31]) for (const shift of [0, 256, 512, 768]) {
+    const at = (seconds: number): number => Math.round(seconds * rate)
+    const len = (seconds: number): number => (seconds * rate) / SR
+    const n = Math.round((ms / 1000) * rate), r = noise(ms + shift), knock = new Float32Array(n)
+    for (let i = 0; i < n; i++) knock[i] = r() * 0.1 * Math.sqrt(3)
+    const c = new VadCore({ ...VAD, frame: vadFrame(rate) })
+    run(c, room(len(1), 0.003, 51))
+    c.speaking = true
+    run(c, over(room(len(1.4), 0.003, 52), knock, at(0.6) + shift))
+    assert.ok(c.echo < c.floor * c.energyRatio, `${rate} Hz, a ${ms} ms knock at +${shift}: not her echo (${c.echo})`)
+  }
 })
 
 test('a line that cuts the one still playing (no edge of speaking) learns her echo afresh: a voice that changed is not cut, and nobody cuts in during its first 1.5 s', () => {
