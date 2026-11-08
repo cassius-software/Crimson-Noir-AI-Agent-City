@@ -15,6 +15,72 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
+  with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
+  target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
+  and Windows arm64 (`windows-arm64`, cross-compiled on Windows x64), Linux x64 and arm64 (`linux-x64`, `linux-arm64`:
+  .deb, .rpm and .AppImage), macOS (`macos-universal`: one universal .app, zipped, and .dmg, unsigned), Android
+  (`android-apk`: arm64-v8a, signed with the debug key unless `CRIMSON_ANDROID_KEYSTORE` names one) and iOS
+  (`ios-ipa`: built with code signing off, so unsigned), and Crimson Noir OS's UEFI application for x86-64
+  (`uefi-x64`, with the .img and .iso media where the media tools are installed) and aarch64 (`uefi-arm64`, the entry
+  after next). `--list`, `--targets
+  <ids>|all|host`, `--dry-run`, `--out`, `--skip-page`; a target named by hand that the machine cannot build fails
+  the run, under `all` it is skipped with a note. `.github/workflows/build-matrix.yml` runs the same command on
+  GitHub's runners, one job per target (Windows, Linux x64, Linux arm64, macOS twice, Linux with the Android SDK), lays
+  the nine targets out in the run's summary, and on a v* tag uploads the files to the tag's release after
+  build-release.yml has created it; build-release.yml dispatches it for a tag it makes itself, as it does
+  windows-app.yml. Not made: anything signed or notarized (no Apple or Windows signing account). Tried in Node (the
+  dry run and the table's tests); the workflow's first runs are the pull request's own, and no file it makes has been
+  opened on a Mac, a phone or a Windows on Arm machine.
+  The workflow's first run on this change's own pull request built all seven: Windows arm64, Linux x64, Linux arm64,
+  macOS universal, the Android .apk, the iOS .ipa and the UEFI application with its media (the Android and iOS jobs
+  needed the Tauri CLI driven as Tauri expects: the mobile projects generated through npm, so Gradle and Xcode can
+  call it back, and the .ipa from `tauri ios build --no-sign`). None of the files has been opened on a device yet
+  except the Windows app.
+- **The .msi and the .rpm, with the version's numbers as the installers' own.** WiX takes no pre-release tag and rpm
+  no hyphen in a version, and the version is `1.0.0-stable-beta`. The Windows targets now also make an .msi, with
+  WiX's own version set to the numbers (`bundle.windows.wix.version`: 1.0.0), and windows-app.yml packages one from
+  the same binary with `tauri bundle` on every change (artifact `windows-msi-<version>`, and onto a tag's release).
+  The Linux targets make an .rpm with `tauri bundle` from the binary the build made: Version 1.0.0, Release
+  0.stable.beta (the final 1.0.0-1 sorts after it). Nothing is compiled with the shorter version, so the app inside
+  every installer says 1.0.0-stable-beta (`installerVersion`, `rpmRelease` in tools/build/matrix.mjs, pinned by
+  tests). The pull request's runners built all four: the x64 .msi in windows-app.yml, the arm64 .msi (WiX target
+  arm64, 8.3 MiB), and `Crimson Noir Agent City-1.0.0-0.stable.beta.x86_64.rpm` (8.2 MiB) and `.aarch64.rpm`. Not
+  installed on a machine yet.
+- **Crimson Noir OS boots on aarch64 (`uefi-arm64`).** The boot crate's machine layer is split by architecture
+  (`crimson_noir_os/boot/src/arch.rs`): `arch/x86_64.rs` is the old one, and `arch/aarch64.rs` drives an Arm machine
+  after ExitBootServices: the serial line is the UART the firmware's ACPI SPCR table names (a PL011 or an SBSA generic
+  UART; no table, no log), the clock the generic timer's virtual count, and the image installs its own exception
+  vectors (VBAR_EL1, or VBAR_EL2 where the firmware runs at EL2), so every exception lands on the fault screen with its
+  class, syndrome, fault address and return address. An Arm machine has no PS/2 controller and the image has no USB
+  stack, so the keyboard is the serial console (a terminal's bytes, arrows and Page Up/Down). Everything above that
+  layer is shared, and the compute self-test reaches the x86-64 image's fingerprint (0x83765bab). `build-image.sh`
+  takes the target (`BOOTAA64.EFI` on the ESP; the media's identity names the architecture, the x86-64 media's is
+  unchanged), `boot_test.py --arch aarch64` boots QEMU's Arm `virt` machine with edk2 (AAVMF), a ramfb screen and the
+  serial line on a socket it types into, and build-matrix.yml's two UEFI jobs bake their media twice, compare the
+  bytes, and boot the disk image through the tutorial and the terminal to power-off and the ISO to the self-test. On
+  a tag the x86-64 media stay build-release.yml's (the build matrix no longer uploads its copies over them). Checked in
+  QEMU here and on the pull request's runners: the aarch64 disk image through the whole boot test (`SELFTEST PASS`
+  after 8 s, the tutorial passed after 74 s, `golden` matched, powered off), the ISO from a SCSI CD to the self-test,
+  a second clean bake byte for byte, and the x86-64 image through the same tests after the split; here also a forced
+  data abort and a BRK on the fault screen. Not booted on Arm hardware.
+- **Hardware classes, lanes per class and the `hardware` command.** The engine now decides once at boot which of
+  three machines it is on (`src/05_Observe_Environment/governor.ts` `classifyHardware`): a phone (any phone, tablet
+  or lite profile), a workstation (a Peak candidate whose WebGPU adapter binds at least 512 MiB in one storage buffer
+  and makes a 1 GiB buffer: `readAdapterLimits`, read from the adapter in `world.ts`, since the page's device is made
+  with the defaults), or a desktop (everything else; the adapter's limits are a veto, never a promotion, `?peak=1`
+  skips it). The class sets how many pedestrians the realm simulates unless `?crowd` says (`defaultLanes`: 32,768 on
+  a workstation, the 14,000, 8,000, 5,000 and 2,500 of before elsewhere, never over what the adapter binds or the
+  realm's 60,000), rides on the governor's state (`quality.hardware`, the namespace's `Quality/Governor/hardware`)
+  and changes no tier rule. The governor's rings are walked by a mask (every ring a power of two, pinned by a test),
+  and it reports the percentiles of its own window (`Governor.percentiles`: p50, p95, p99, allocation-free). The HUD
+  clock keeps 256 frames and adds p99 (`output.p99Ms`, the namespace's `Frame/Page/p99Ms`, the `stats` and `sim`
+  frame rows). The console's `hardware` prints the class, the profile and range, the adapter and its limits, the
+  lanes, the window's percentiles and the machine as the browser reports it; MANUAL.md, Autoscaling, has the rules.
+  Tried in Node (the governor, console and namespace suites) and in headless Chromium on the software adapter (the
+  browser smoke's `desktop` and `lite` scenarios see a desktop and a phone); no workstation was seen on real
+  hardware, and the plan's 131,072 lanes are not raised here (the crowd's grid, readback and draw would need
+  resizing and measuring on a real big GPU).
 - **The sun's shadows reach farther, in two cascades, with a softer, tier-set penumbra.** The one directional light
   with a fixed shadow box of ±80 m around the player (±160 m on Peak, on an 8192² map of half a gigabyte) is replaced
   by three r186's cascaded sun light (`src/01_Initialize_World/sunShadow.ts`, three/addons `SunLight`): a near cascade

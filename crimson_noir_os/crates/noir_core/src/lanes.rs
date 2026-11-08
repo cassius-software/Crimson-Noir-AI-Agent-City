@@ -5,12 +5,13 @@
 //! with the handful of operations the branchless kernel needs (and, or, xor, add, the low word of a product, shifts,
 //! equal, unsigned less-than, signed greater-than, the 1/0-mask select, and the float add and multiply of the step).
 //! On x86_64 with SSE2 (every x86_64 host, and the CI runners) each operation is one packed instruction over a
-//! `__m128i`; everywhere else (the UEFI target builds with SSE off, under soft float) the same operations are plain
-//! loops over a `[u32; 4]`, so the kernel reads the same and computes the same bits on both. The float minimum and
-//! maximum, the float-to-integer conversion, the integer division and remainder, and the gathers and scatters into
-//! the Global Matrix are done lane by lane with the scalar operation itself (`f32::max`, `as u32`, `/`), because
-//! those are where a packed instruction's corner cases (a NaN, a saturating conversion) differ from Rust's, and the
-//! kernel is held to the scalar reference bit for bit (tests.rs, kernels_fuzz.rs; the fingerprint the build pins).
+//! `__m128i`; everywhere else (the x86-64 UEFI target builds with SSE off, under soft float, and aarch64 has no SSE)
+//! the same operations are plain loops over a `[u32; 4]`, so the kernel reads the same and computes the same bits on
+//! both. The float minimum and maximum, the float-to-integer conversion, the integer division and remainder, and the
+//! gathers and scatters into the Global Matrix are done lane by lane with the scalar operation itself (`f32::max`,
+//! `as u32`, `/`), because those are where a packed instruction's corner cases (a NaN, a saturating conversion) differ
+//! from Rust's, and the kernel is held to the scalar reference bit for bit (tests.rs, kernels_fuzz.rs; the fingerprint
+//! the build pins).
 //! Like kernels.rs, this file has no `if`, `else`, `match`, `while`, `loop` or `return` (the same test reads it).
 //! What breaks if it is removed? The tick runs one agent at a time.
 
