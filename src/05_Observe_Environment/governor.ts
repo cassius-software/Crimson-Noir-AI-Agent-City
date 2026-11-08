@@ -21,7 +21,11 @@
  * camera the animation frames show no spare power. A quick failure tightens the next entry, the third loss in a visit
  * turns Peak off until the page reloads, and a hold that lowers it does not hand it back at the release. While the
  * in-page model works the city can be held under a lower tier (hold()): the device is busy with the model, so nothing
- * that happens under the hold counts against a tier, and the release returns the tier the city had.
+ * that happens under the hold counts against a tier, and the release returns the tier the city had. Beside the tiers
+ * sits the hardware class (classifyHardware): phone, desktop or workstation, decided once at boot from the same hints
+ * and the WebGPU adapter's limits; it sizes what the governor cannot move after boot (the lanes the realm simulates,
+ * defaultLanes) and the console's `hardware` names it. The governor also keeps the frame-time percentiles of its window
+ * (percentiles: p50, p95, p99) for that command, from the same ring it judges by.
  * What breaks if it is removed? Quality is frozen at one tier: phones stutter at desktop settings,
  * desktops look like phones at phone settings, and the terminal's `quality` command drives nothing.
  */
@@ -32,11 +36,17 @@ export interface QualityKnobs {
   /** Multiplier on the base pixel ratio. */
   renderScale: number
   shadows: boolean
-  /** Sun shadow map edge, texels (used while shadows are on). */
+  /** Sun shadow map edge per cascade, texels (used while shadows are on). The atlas is two cascades wide (sunShadow.ts),
+   *  so twice this must fit the device's largest 2D texture: WebGPU's default 8192, which 4096 meets. */
   shadowMapSize: number
-  /** Half-width of the sun's shadow box, m (quality.ts applyShadowExtent). Absent: SHADOW_EXTENT (80), the box world.ts
-   *  builds. Only Peak sets it, with the map edge doubled alongside, so the texel and every bias tuned for it stay. */
-  shadowExtent?: number
+  /** How far from the eye the sun casts shadows, m: the far plane of the sun's shadow camera, out to which three fits
+   *  the two cascades (sunShadow.ts); the far cascade fades out over its last tenth instead of ending in a line. */
+  shadowDistance: number
+  /** The sun shadow filter's disk radius, texels (three's shadow.radius: a uniform; round on the 2 : 1 atlas). */
+  shadowRadius: number
+  /** The sun shadow filter's taps per fragment (sunShadow.ts softShadowFilter: a uniform the taps past three's five
+   *  are taken behind, so the count moves without a recompile; 5 is three's own). */
+  shadowTaps: number
   /** Bloom, vignette, explicit tone mapping and FXAA. */
   post: boolean
   /** Golden-hour sun shafts in the post chain (volumetrics.ts); needs `post`. Ultra and Peak. */
@@ -66,11 +76,11 @@ const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
  *  pre-governor look apart from a slightly thinner far crowd; below it every step also lowers the
  *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts. */
 export const TIERS: readonly QualityKnobs[] = Object.freeze([
-  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
-  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
-  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, post: true, volumetrics: false, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
-  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, post: true, volumetrics: false, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
-  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
+  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
+  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
+  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
+  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 160, shadowRadius: 2, shadowTaps: 8, post: true, volumetrics: false, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
+  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 2.5, shadowTaps: 12, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
 ])
 
 /**
@@ -78,20 +88,22 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
  * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
  * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 
 /**
  * Peak, tier 5: above Ultra for big GPUs. It is not in TIERS (as Lite is not), so TOP, every one-argument tierRange and
  * every index the tests pin keep their meaning; knobsOf reads it. Ultra drawn at 1.25 times the resolution on each side,
- * about 1.56 times the pixels (quality.ts keeps the drawing buffer within the device's largest 2D texture), the sun's shadow box doubled to ±160 m at twice the map
- * edge (the same 3.9 cm texel, so the PCF radius and the biases mean what they mean on Ultra), and detailed bodies out
- * to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
+ * about 1.56 times the pixels (quality.ts keeps the drawing buffer within the device's largest 2D texture), Ultra's
+ * sun shadows (the same two 4096 cascades out to the same 240 m, so the atlas takes no more memory than Ultra's quarter
+ * gigabyte: 4096 is the most a cascade can be, the atlas being two of them wide within WebGPU's default 8192, and a
+ * farther reach would stretch the near cascade and coarsen the shadows nearest the eye) with a wider sixteen-tap
+ * penumbra, and detailed bodies out to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
  * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
  * (Governor.gpuSample).
  */
-export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 8192, shadowExtent: 160, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
+export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
 /** Peak's tier index: the highest a manual choice may pin, and the automatic ceiling of a Peak range (tierRange). */
 export const PEAK_TIER = TIERS.length
 
@@ -252,11 +264,9 @@ export function peakCandidate(h: DeviceHints, p: DeviceProfile, peak?: boolean):
  * buffers are sized for it); the governor then scales how many of them are drawn.
  */
 export const CROWD_DEFAULT = Object.freeze({ full: 14000, phone: 8000, minimal: 5000, lite: 2500 })
+/** The crowd from the profile alone (the hints' class without the adapter's limits: a phone's or a desktop's lanes, defaultLanes); the engine sizes by defaultLanes with the class and the limits. */
 export function defaultAgents(p: DeviceProfile): number {
-  if (p.lite) return CROWD_DEFAULT.lite
-  if (p.startTier <= 0) return CROWD_DEFAULT.minimal
-  if (p.mobile) return CROWD_DEFAULT.phone
-  return CROWD_DEFAULT.full
+  return defaultLanes(p, p.mobile || p.lite ? 'phone' : 'desktop')
 }
 
 /**
@@ -288,6 +298,102 @@ export function liteJoinHint(lite: boolean, carsDefaulted: boolean, cars: number
 export function tierRange(p: DeviceProfile, peak = false): { min: number; max: number } {
   if (p.lite) return { min: LITE_TIER, max: 0 }
   return { min: 0, max: p.mobile ? 2 : peak ? PEAK_TIER : TOP }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Hardware class and lanes
+
+/**
+ * The WebGPU adapter's limits the hardware class and the lane ceiling read: world.ts reads them off the adapter (the
+ * device's own copy is the defaults the page asked for, not what the card can do). Bytes, or counts.
+ */
+export interface AdapterLimits {
+  /** The most one storage buffer binding may address, bytes (WebGPU's default 128 MiB; desktop adapters report 2 GiB or more). */
+  maxStorageBufferBindingSize: number
+  /** The largest buffer the adapter makes, bytes (default 256 MiB). */
+  maxBufferSize: number
+  /** The widest compute workgroup along x (default 256; crowd.wgsl dispatches 64). */
+  maxComputeWorkgroupSizeX: number
+  /** Invocations one workgroup may hold (default 256). */
+  maxComputeInvocationsPerWorkgroup: number
+}
+
+/** WebGPU's default limits: what a page gets when it asks for none, and what this reads where a browser says nothing. */
+export const DEFAULT_LIMITS: AdapterLimits = Object.freeze({
+  maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256,
+})
+
+/** The four limits as a browser reports them (GPUSupportedLimits: getters on its prototype), each falling back to WebGPU's default where it is missing or not a number. */
+export function readAdapterLimits(l: Partial<Record<keyof AdapterLimits, unknown>> | null | undefined): AdapterLimits {
+  const num = (k: keyof AdapterLimits): number => {
+    const v = l?.[k]
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : DEFAULT_LIMITS[k]
+  }
+  return {
+    maxStorageBufferBindingSize: num('maxStorageBufferBindingSize'), maxBufferSize: num('maxBufferSize'),
+    maxComputeWorkgroupSizeX: num('maxComputeWorkgroupSizeX'), maxComputeInvocationsPerWorkgroup: num('maxComputeInvocationsPerWorkgroup'),
+  }
+}
+
+/**
+ * The three classes of machine the city sizes itself for (the eight-pillar plan's three hardware tiers): a phone (or a
+ * tablet, or the lite profile), a desktop (a laptop, a desktop, a browser nobody can place), and a workstation (the
+ * plan's console-class Linux PC: a Peak candidate, peakCandidate, whose adapter binds at least BIG_ADAPTER). The class
+ * is decided once, at boot, from what the browser says, and the tiers move within it: it sets what the governor cannot
+ * move after boot (how many pedestrians the realm simulates, defaultLanes), the console's `hardware` names it, and it
+ * changes no tier rule (a workstation's range reaches Peak on the same GPU timings as before). A browser cannot tell 16
+ * from 32 gigabytes (deviceMemory stops at 8) or a 10 from a 60 TFLOPS card from its adapter line, so what separates
+ * the plan's two upper tiers at run time is Peak itself, earned on measured GPU time.
+ */
+export type HardwareClass = 'phone' | 'desktop' | 'workstation'
+
+/**
+ * What a workstation's adapter must bind: half a gibibyte in one storage binding and a gibibyte in one buffer. A veto
+ * only, never a promotion: every desktop card and Apple chip reports far more, and a software rasterizer or an odd
+ * driver that reports WebGPU's defaults (128 and 256 MiB) is not a workstation whatever the user agent says.
+ */
+export const BIG_ADAPTER = Object.freeze({ storageBinding: 512 * 2 ** 20, buffer: 2 ** 30 })
+
+/**
+ * Pure. The class of this machine: a phone wherever the profile is a phone or lite; a workstation where the profile
+ * is a Peak candidate (peakCandidate, with `peak` the page's ?peak) and the adapter is big (BIG_ADAPTER; an explicit
+ * ?peak=1 is the operator's word and skips the veto; no limits given, no veto); a desktop otherwise.
+ */
+export function classifyHardware(h: DeviceHints, p: DeviceProfile, limits?: AdapterLimits | null, peak?: boolean): HardwareClass {
+  if (p.mobile || p.lite) return 'phone'
+  if (!peakCandidate(h, p, peak)) return 'desktop'
+  if (peak !== true && limits && (limits.maxStorageBufferBindingSize < BIG_ADAPTER.storageBinding || limits.maxBufferSize < BIG_ADAPTER.buffer)) return 'desktop'
+  return 'workstation'
+}
+
+/**
+ * The lanes the realm simulates (one pedestrian each, the worker's SoA buffers): the range the realm takes (equal to
+ * crowdSensor.ts AGENTS_RANGE, pinned equal in governor.test.ts; the ceiling is the realm's own, not measured higher),
+ * the bytes of its largest per-lane storage buffer (crowdSim.ts crowd.brain: 64 a pedestrian, what one binding must
+ * hold for every lane), and the lanes each class simulates when the page does not say (?crowd): the phone's and the
+ * desktop's are the crowd defaults of before; a workstation takes 32,768, the plan's count for a desktop with a big card,
+ * below the 60,000 an integrated GPU was measured to carry at Low (MANUAL.md, Autoscaling), and unmeasured on a real
+ * workstation.
+ */
+export const LANE_RANGE: readonly [number, number] = [256, 60000]
+export const LANE_BYTES = 64
+export const LANES: Readonly<Record<HardwareClass, number>> = Object.freeze({ phone: CROWD_DEFAULT.phone, desktop: CROWD_DEFAULT.full, workstation: 32768 })
+
+/** The most lanes the adapter binds in one storage buffer (maxStorageBufferBindingSize / LANE_BYTES), within LANE_RANGE; no limits, the range's top. */
+export function laneCeiling(limits?: AdapterLimits | null): number {
+  const byBinding = limits ? Math.floor(limits.maxStorageBufferBindingSize / LANE_BYTES) : LANE_RANGE[1]
+  return Math.max(LANE_RANGE[0], Math.min(LANE_RANGE[1], byBinding))
+}
+
+/**
+ * Lanes to simulate when the page does not say: fewest on a lite profile, fewer where the profile starts at Minimal
+ * (the weakest GPUs and software rasterizers, which would spend the frame simulating), else the class's count (LANES),
+ * never over the adapter's ceiling. The simulation size is fixed at boot (the GPU buffers are sized for it); the
+ * governor then scales how many of them are drawn.
+ */
+export function defaultLanes(p: DeviceProfile, cls: HardwareClass, limits?: AdapterLimits | null): number {
+  const want = p.lite ? CROWD_DEFAULT.lite : p.startTier <= 0 ? CROWD_DEFAULT.minimal : LANES[cls]
+  return Math.min(want, laneCeiling(limits))
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -324,9 +430,12 @@ export function estimateRefreshHz(intervals: ArrayLike<number>, percentile = 0.5
 // Governor
 
 const FLOOR_MS = 1000 / 60
+/** Frames remembered; a power of two, so the ring is walked by a mask (RING_MASK), never a modulo or a branch. */
 const RING = 4096
-/** Presented frames remembered (over 5 s at 24 fps). */
+const RING_MASK = RING - 1
+/** Presented frames remembered (over 5 s at 24 fps); a power of two, like RING. */
 const PRESENT_RING = 256
+const PRESENT_MASK = PRESENT_RING - 1
 /**
  * The camera's frames are counted in slices this long over the step-down window plus one slice (as the animation
  * frames' window has one at each end: a slowdown must span more than the 2 s), and short in every slice is "behind".
@@ -395,7 +504,8 @@ const GOV = {
 /**
  * The Peak rule (Governor.gpuSample, peakReady, peakBusy). Shares are of the frame budget, min(the frame the governor
  * holds, the 60 FPS floor), so ?fps and a fast display can tighten them and nothing loosens them. Peak is estimated at
- * 1.7–2.3 times Ultra's GPU time (1.56 times the pixels, four times the shadow raster, detailed bodies to 90 m): a p90
+ * 1.7–2.3 times Ultra's GPU time (1.56 times the pixels, a third more filter taps than Ultra's, detailed bodies to
+ * 90 m; the estimate was made when Peak drew four times Ultra's shadow raster and is kept as the safe side): a p90
  * at Ultra of entryShare lands Peak under stayShare with a margin for the scene.
  */
 export const PEAK_GOV = Object.freeze({
@@ -415,9 +525,13 @@ export const PEAK_GOV = Object.freeze({
   floorMs: 0.5,
   maxMs: 1000,
   /** Readings kept: the whole 5 s entry window at one reading per drawn frame on a 360 Hz display without the camera
-   *  (1800), since three hands a resolve back as soon as its map completes. */
+   *  (1800), since three hands a resolve back as soon as its map completes. A power of two: the ring is walked by a mask. */
   ring: 2048,
 })
+const GPU_MASK = PEAK_GOV.ring - 1
+
+/** The rings' sizes, for the test that pins each a power of two (the masks above are only right then). */
+export const GOVERNOR_RINGS = Object.freeze({ frames: RING, presents: PRESENT_RING, gpu: PEAK_GOV.ring })
 
 /** A tier's index in the governor's per-tier arrays: Lite (-1) is slot 0. */
 const slot = (t: number) => t - LITE_TIER
@@ -501,6 +615,8 @@ export class Governor {
   private peakHeldAt = -Infinity
   /** The device profile's lite flag, shown with the tier (state()). */
   private readonly lite: boolean
+  /** The hardware class the engine sized the city for (classifyHardware), shown with the tier (state()); undefined when the caller gave none. */
+  private readonly hardware: HardwareClass | undefined
   /** The cinema camera's frame period, ms (0: no camera, every animation frame is drawn). */
   private readonly pacerMs: number
   private readonly presents = new Float64Array(PRESENT_RING)
@@ -513,8 +629,9 @@ export class Governor {
    * 60 FPS floor whatever the display's refresh (input and physics; the pictures come 24 a second), and the camera's
    * presented frames (present()) must keep up too.
    */
-  constructor(opts: { tier: number; auto: boolean; targetMs?: number; min?: number; max?: number; pacerMs?: number; lite?: boolean }) {
+  constructor(opts: { tier: number; auto: boolean; targetMs?: number; min?: number; max?: number; pacerMs?: number; lite?: boolean; hardware?: HardwareClass }) {
     this.pacerMs = Number.isFinite(opts.pacerMs) && (opts.pacerMs as number) > 0 ? opts.pacerMs as number : 0
+    this.hardware = opts.hardware
     // The automatic range reaches Lite only when the caller asks (tierRange of a lite profile); by default it stops at
     // Minimal, so no other device ever walks down into it.
     this.min = clampTier(Number.isFinite(opts.min) ? opts.min as number : 0, LITE_TIER)
@@ -532,6 +649,8 @@ export class Governor {
 
   get tier(): number { return this.current }
   get auto(): boolean { return this.adaptive }
+  /** The automatic range: the lowest and highest tier the governor may take (tierRange), for the `hardware` command. */
+  range(): { min: number; max: number } { return { min: this.min, max: this.max } }
   /** Whether the cinema camera's presented frames are held too. */
   get pacer(): boolean { return this.pacerMs > 0 }
   /** Why the tier last changed: 'frames below 60 FPS' ('frames below target' under ?fps), 'camera behind', 'gpu busy'
@@ -552,7 +671,7 @@ export class Governor {
     if (!this.wantsGpu || !Number.isFinite(ms) || !Number.isFinite(nowMs) || ms < PEAK_GOV.floorMs || ms >= PEAK_GOV.maxMs) return
     this.gpuMs[this.gpuHead] = ms
     this.gpuAt[this.gpuHead] = nowMs
-    this.gpuHead = (this.gpuHead + 1) % PEAK_GOV.ring
+    this.gpuHead = (this.gpuHead + 1) & GPU_MASK
     if (this.gpuCount < PEAK_GOV.ring) this.gpuCount++
   }
 
@@ -560,7 +679,7 @@ export class Governor {
   present(nowMs: number): void {
     if (!(this.pacerMs > 0) || !Number.isFinite(nowMs)) return
     this.presents[this.presentHead] = nowMs
-    this.presentHead = (this.presentHead + 1) % PRESENT_RING
+    this.presentHead = (this.presentHead + 1) & PRESENT_MASK
     if (this.presentCount < PRESENT_RING) this.presentCount++
   }
 
@@ -570,7 +689,7 @@ export class Governor {
     const slices = this.presentSlices
     slices.fill(0)
     for (let i = 0, j = this.presentHead; i < this.presentCount; i++) {
-      j = (j - 1 + PRESENT_RING) % PRESENT_RING
+      j = (j - 1) & PRESENT_MASK
       const age = now - this.presents[j]
       if (age >= PRESENT_WINDOW_MS) break
       if (age >= 0) slices[Math.floor(age / PRESENT_SLICE_MS)]++
@@ -586,7 +705,7 @@ export class Governor {
   private presentsSince(from: number): number {
     let n = 0
     for (let i = 0, j = this.presentHead; i < this.presentCount; i++) {
-      j = (j - 1 + PRESENT_RING) % PRESENT_RING
+      j = (j - 1) & PRESENT_MASK
       if (this.presents[j] < from) break
       n++
     }
@@ -601,9 +720,33 @@ export class Governor {
     const k = knobsOf(this.current)
     return {
       tier: this.current, label: k.label, auto: this.adaptive, renderScale: k.renderScale, targetMs: this.holdMs,
-      ...(this.lite && { lite: true }), ...(this.cap !== null && { held: this.cap }),
+      ...(this.lite && { lite: true }), ...(this.hardware !== undefined && { hardware: this.hardware }), ...(this.cap !== null && { held: this.cap }),
       ...(this.max >= PEAK_TIER && { peak: this.peakState() }),
     }
+  }
+
+  /**
+   * The frame-time percentiles of the frames the governor judges by: the newest frames within the upgrade window
+   * (upgradeHoldMs, 5 s; at least minFrames of them however old, as evaluate() counts them), p50, p95 and p99 in ms with
+   * the floor-index convention of FrameClock, how many there are and how far back the oldest counted frame ended. A
+   * hitch in a run is counted at outlierMs, as it is in the ring; a lone one is not in the ring at all. Zeros with no
+   * frame yet. Sorts the scratch copy in place: allocation-free.
+   */
+  percentiles(nowMs = this.lastNow): { p50: number; p95: number; p99: number; n: number; windowMs: number } {
+    const now = Number.isFinite(nowMs) ? nowMs : this.lastNow
+    let n = 0
+    let oldest = now
+    for (let i = 0, j = this.head; i < this.count; i++) {
+      j = (j - 1) & RING_MASK
+      const age = now - this.times[j]
+      if (age > GOV.upgradeHoldMs && n >= GOV.minFrames) break
+      this.scratch[n++] = this.frames[j]
+      oldest = this.times[j]
+    }
+    if (n === 0) return { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 }
+    const s = this.scratch.subarray(0, n).sort()
+    const at = (p: number): number => s[Math.min(n - 1, Math.floor(n * p))]
+    return { p50: at(0.5), p95: at(0.95), p99: at(0.99), n, windowMs: Math.max(0, now - oldest) }
   }
 
   /** Feed one frame: `frameMs` is the rAF interval, `nowMs` a monotonic clock. Returns the tier when it
@@ -658,7 +801,7 @@ export class Governor {
 
     this.times[this.head] = nowMs
     this.frames[this.head] = ms
-    this.head = (this.head + 1) % RING
+    this.head = (this.head + 1) & RING_MASK
     if (this.count < RING) this.count++
 
     if (this.phase === 'refresh') {
@@ -745,7 +888,7 @@ export class Governor {
     return this.cap === null ? top : Math.min(this.cap, top)
   }
 
-  /** Under a hold below Peak the release returns Ultra, not Peak: freeing the half gigabyte for the model and
+  /** Under a hold below Peak the release returns Ultra, not Peak: freeing Peak's larger picture for the model and
    *  allocating it again at every answer would hitch twice an answer. */
   private holdBelowPeak(): void {
     if (this.cap !== null && this.cap < PEAK_TIER && this.restore === PEAK_TIER) {
@@ -769,7 +912,7 @@ export class Governor {
   private gpuSince(from: number): Float32Array {
     let n = 0
     for (let i = 0, j = this.gpuHead; i < this.gpuCount; i++) {
-      j = (j - 1 + PEAK_GOV.ring) % PEAK_GOV.ring
+      j = (j - 1) & GPU_MASK
       if (this.gpuAt[j] < from) break
       this.gpuScratch[n++] = this.gpuMs[j]
     }
@@ -837,7 +980,7 @@ export class Governor {
 
   /** Copies the newest n samples into scratch (oldest first) and returns that view. */
   private window(n: number): Float32Array {
-    for (let i = 0, j = (this.head - n + RING) % RING; i < n; i++, j = (j + 1) % RING) this.scratch[i] = this.frames[j]
+    for (let i = 0, j = (this.head - n) & RING_MASK; i < n; i++, j = (j + 1) & RING_MASK) this.scratch[i] = this.frames[j]
     return this.scratch.subarray(0, n)
   }
 
@@ -849,7 +992,7 @@ export class Governor {
     this.sliceFrames.fill(0)
     this.sliceMs.fill(0)
     for (let i = 0, j = this.head; i < this.count; i++) {
-      j = (j - 1 + RING) % RING
+      j = (j - 1) & RING_MASK
       const age = now - this.times[j]
       // The newest minFrames frames always count, however old: below ~1 FPS, 5 s holds fewer than that.
       if (age > GOV.upgradeHoldMs && n5 >= GOV.minFrames) break

@@ -4,7 +4,7 @@
 //! Why does this file exist? It is the bootable image's life, from the firmware's call to the system's loop: the
 //! screen (the Graphics Output Protocol's linear framebuffer), the declared arena taken from the firmware, the clock
 //! calibrated against the firmware's stall, the hand-over (ExitBootServices: from then on the machine is the image's
-//! alone, interrupts off, its own GDT and IDT), the system's memory allocated as declared and sealed, the boot-time
+//! alone, interrupts off, its own exception handling: a GDT and IDT on x86-64, exception vectors on aarch64), the system's memory allocated as declared and sealed, the boot-time
 //! checks, and the loop that runs the 5-Whys tutorial (the self-test, live) and then the Crimson Terminal, reading
 //! the keyboard and drawing frames. It is the tutorial's platform too: the live memory march over the arena's free
 //! part, the seal probe and the screen's read-back. It also owns the ways the system stops: the fault screen (a CPU
@@ -250,21 +250,12 @@ pub fn fault_screen(title: &str, lines: &[&str]) -> ! {
     arch::halt()
 }
 
-/// A CPU exception (arch.rs fault_entry).
-pub fn cpu_fault(f: &arch::FaultFrame, cr2: u64) -> ! {
-    const NAMES: [&str; 32] = [
-        "divide error", "debug", "non-maskable interrupt", "breakpoint", "overflow", "bound range", "invalid opcode",
-        "device not available", "double fault", "coprocessor overrun", "invalid TSS", "segment not present",
-        "stack fault", "general protection fault", "page fault", "reserved", "x87 floating point", "alignment check",
-        "machine check", "SIMD floating point", "virtualization", "control protection", "reserved", "reserved",
-        "reserved", "reserved", "reserved", "reserved", "hypervisor injection", "VMM communication", "security",
-        "reserved",
-    ];
-    let name = NAMES.get(f.vector as usize).copied().unwrap_or("an interrupt the system never enabled");
-    let (mut a, mut b) = (Line::new(), Line::new());
-    let _ = write!(a, "vector {} ({name}), error code {:#x}", f.vector, f.error);
-    let _ = write!(b, "at rip {:#018x}, rsp {:#018x}, cr2 {:#018x}", f.rip, f.rsp, cr2);
-    fault_screen("A CPU exception", &[a.as_str(), b.as_str()])
+/// A CPU exception (the architecture's fault_entry, arch.rs): the lines it describes itself with.
+pub fn cpu_fault(f: &arch::Fault) -> ! {
+    let (mut a, mut b, mut c) = (Line::new(), Line::new(), Line::new());
+    f.describe(&mut a, &mut b, &mut c);
+    let n = if c.len > 0 { 3 } else { 2 };
+    fault_screen("A CPU exception", &[a.as_str(), b.as_str(), c.as_str()][..n])
 }
 
 #[panic_handler]
@@ -300,8 +291,10 @@ fn exit_boot_services(bs: &BootServices, image: Handle) -> Result<u64, &'static 
         if (bs.exit_boot_services)(image, key) == uefi::SUCCESS {
             let mut ram = 0u64;
             for k in 0..size / dsize {
-                // SAFETY: k × dsize is inside the map the firmware wrote.
-                let d = unsafe { &*((map as *const u8).add(k * dsize) as *const uefi::MemoryDescriptor) };
+                // SAFETY: k × dsize is inside the map the firmware wrote. The buffer is bytes, so a descriptor in it
+                // may sit off its 8-byte alignment: it is copied out unaligned, never referenced in place.
+                let at = unsafe { (map as *const u8).add(k * dsize) } as *const uefi::MemoryDescriptor;
+                let d = unsafe { at.read_unaligned() };
                 if d.ty == uefi::CONVENTIONAL_MEMORY {
                     ram += d.number_of_pages * 4096;
                 }
@@ -315,7 +308,7 @@ fn exit_boot_services(bs: &BootServices, image: Handle) -> Result<u64, &'static 
 /// The firmware's entry into the image.
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
-    arch::serial_init();
+    arch::serial_init(st);
     if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
     }
@@ -344,10 +337,10 @@ pub extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     // so the pointer stays good.
     // SAFETY: as above, the system table is the firmware's.
     let rt = unsafe { (*st).runtime_services };
-    // The clock: 50 ms of the firmware's stall against the time-stamp counter.
-    let t0 = arch::rdtsc();
+    // The clock: 50 ms of the firmware's stall against the architecture's counter (the TSC, the generic timer).
+    let t0 = arch::ticks();
     (bs.stall)(50_000);
-    let tsc_per_us = ((arch::rdtsc() - t0) / 50_000).max(1);
+    let tsc_per_us = ((arch::ticks() - t0) / 50_000).max(1);
     let ram = match exit_boot_services(bs, image) {
         Ok(ram) => ram,
         Err(why) => {
@@ -357,14 +350,11 @@ pub extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     };
     // The machine is the image's alone from here.
     arch::cli();
-    // SAFETY: interrupts are off; the GDT is loaded before the IDT that names its code segment.
-    unsafe {
-        arch::load_gdt();
-        arch::load_idt();
-    }
+    // SAFETY: interrupts are off.
+    unsafe { arch::take_over() };
     // SAFETY: as Shared; nothing reads it yet.
     unsafe { *SCREEN.0.get() = Some(s) };
-    info!("boot services exited: {} MiB of free RAM, the image's own GDT and IDT, TSC at {} MHz", ram >> 20, tsc_per_us);
+    info!("boot services exited: {} MiB of free RAM, {}, {} at {} MHz", ram >> 20, arch::TAKEN, arch::CLOCK, tsc_per_us);
     run(s, arena as usize, d, tsc_per_us, rt)
 }
 
@@ -389,7 +379,7 @@ fn march(start: usize, end: usize) -> usize {
     wrong
 }
 
-/// Milliseconds since the system started, from the time-stamp counter.
+/// Milliseconds since the system started, from the architecture's counter (arch::ticks).
 #[derive(Clone, Copy)]
 struct Clock {
     t0: u64,
@@ -398,7 +388,7 @@ struct Clock {
 
 impl Clock {
     fn ms(&self) -> u64 {
-        (arch::rdtsc() - self.t0) / self.per_us / 1000
+        (arch::ticks() - self.t0) / self.per_us / 1000
     }
 }
 
@@ -452,11 +442,11 @@ fn term_line(sys: &System, line: usize) -> &str {
 }
 
 fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServices) -> ! {
-    let clock = Clock { t0: arch::rdtsc(), per_us: tsc_per_us };
+    let clock = Clock { t0: arch::ticks(), per_us: tsc_per_us };
     // Memory, before anything lives in it.
-    let t = arch::rdtsc();
+    let t = arch::ticks();
     let boot_wrong = march(arena, arena + d.arena_bytes);
-    let march_ms = ((arch::rdtsc() - t) / tsc_per_us / 1000) as u32;
+    let march_ms = ((arch::ticks() - t) / tsc_per_us / 1000) as u32;
     info!("memory: {} bytes written and read back twice, {} wrong, in {} ms", d.arena_bytes, boot_wrong, march_ms);
     if boot_wrong > 0 {
         fault_screen("Memory does not hold what was written to it", &["the arena failed its write-and-read-back test"]);
@@ -470,13 +460,13 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServic
         fault_screen("Memory was not allocated as declared", &["the layout and the allocations differ"]);
     }
     // Compute: the self-test's scripted run, against the fingerprint the build computed.
-    let t = arch::rdtsc();
+    let t = arch::ticks();
     let p = noir_core::matrix::golden(&d, &locked::ROLE_COUNTS, &locked::ROLE_CAPS, &mut sys.m);
     info!(
         "compute: {} ticks of {} agents in {} ms, fingerprint {:#010x} (built {:#010x})",
         p.tick,
         d.capacity,
-        (arch::rdtsc() - t) / tsc_per_us / 1000,
+        (arch::ticks() - t) / tsc_per_us / 1000,
         p.fingerprint,
         locked::GOLDEN
     );
@@ -502,8 +492,8 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServic
     };
     let (from, to) = heap::untouched();
     let mut machine = Machine { screen: s, from, to, at: from, wrong: 0 };
-    let mut kb = arch::Keyboard { shift: false, caps: false, extended: false };
-    let mut tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::rdtsc() as u32, clock.ms());
+    let mut kb = arch::Keyboard::new();
+    let mut tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::ticks() as u32, clock.ms());
     let mut console: Option<Term> = None;
     let mut in_tutorial = true;
     let mut shot = usize::MAX;
@@ -511,17 +501,9 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServic
     let mut keys = [0u32; 16];
     let frame_tsc = tsc_per_us * 16_000;
     loop {
-        let start = arch::rdtsc();
+        let start = arch::ticks();
         let now = clock.ms();
-        let mut n = 0;
-        while let Some(sc) = arch::ps2_byte() {
-            if let Some(k) = arch::key(&mut kb, sc)
-                && n < keys.len()
-            {
-                keys[n] = k;
-                n += 1;
-            }
-        }
+        let n = arch::poll_keys(&mut kb, &mut keys);
         if in_tutorial {
             let key = keys[..n].iter().copied().find(|&k| k == KEY_ESC).or(keys[..n].first().copied());
             match tutorial::update(&mut tut, &mut sys, &d, &LOCKED, &boot, &mut machine, now, key) {
@@ -558,7 +540,7 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServic
                     t.request = Request::None;
                     machine.at = machine.from;
                     machine.wrong = 0;
-                    tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::rdtsc() as u32, now);
+                    tut = tutorial::begin(&mut sys, &d, &LOCKED, arch::ticks() as u32, now);
                     in_tutorial = true;
                     shot = usize::MAX;
                 }
@@ -573,7 +555,7 @@ fn run(s: Screen, arena: usize, d: Dims, tsc_per_us: u64, rt: *mut RuntimeServic
         }
         present(&s, &sys.b.color, w, h);
         // At most about sixty frames a second.
-        while arch::rdtsc() - start < frame_tsc {
+        while arch::ticks() - start < frame_tsc {
             core::hint::spin_loop();
         }
     }

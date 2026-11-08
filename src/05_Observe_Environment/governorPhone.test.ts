@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  CROWD_DEFAULT, Governor, TIERS, defaultAgents, degradeBudgetMs, profileDevice, tierRange, type DeviceHints,
+  CROWD_DEFAULT, DEFAULT_LIMITS, Governor, TIERS, classifyHardware, defaultAgents, defaultLanes, degradeBudgetMs, profileDevice, tierRange, type DeviceHints,
 } from './governor.ts'
 
 // ---------------------------------------------------------------------------------------------------
@@ -269,6 +269,18 @@ const autoRuns = () => [S.cap(), S.sixty(), S.overload(), S.thermal(), S.backoff
 
 // ---------------------------------------------------------------------------------------------------
 // 1. Recognised as a phone
+
+test('phone 0: the hardware class is phone (the plan\'s mobile tier), 8,000 lanes, whatever the adapter\'s limits or ?peak say', () => {
+  const big = { maxStorageBufferBindingSize: 2 ** 31, maxBufferSize: 2 ** 31, maxComputeWorkgroupSizeX: 1024, maxComputeInvocationsPerWorkgroup: 1024 }
+  for (const limits of [DEFAULT_LIMITS, big, undefined]) {
+    assert.equal(classifyHardware(PHONE, PROFILE, limits), 'phone')
+    assert.equal(classifyHardware(PHONE, PROFILE, limits, true), 'phone', '?peak=1 makes no workstation of a phone')
+    assert.equal(defaultLanes(PROFILE, 'phone', limits), 8000)
+  }
+  assert.equal(defaultLanes(PROFILE, 'phone'), CROWD_DEFAULT.phone)
+  const g = new Governor({ tier: PROFILE.startTier, auto: true, hardware: 'phone', ...RANGE })
+  assert.equal(g.state().hardware, 'phone')
+})
 
 test('phone 1: Safari 26 on the phone profiles as a phone: Low start, Medium cap, the phone crowd', () => {
   assert.deepEqual(PROFILE, { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false })
