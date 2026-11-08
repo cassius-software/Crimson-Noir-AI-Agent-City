@@ -337,7 +337,7 @@ const RULES: readonly Rule[] = [
   one(/\b(?:lag(?:gy|ging|s)?|slow(?:er|ly)?|sluggish|stutter(?:s|ing|y)?|jank(?:y)?|chopp(?:y|ing)|jerky|frame ?rate|fps|frames?|freez(?:es|ing|e)|hitch(?:es|ing)?|dropp?ing frames|not smooth|smooth(?:er|ly)?|snappier|unresponsive|responsive|performance|faster|quicker)\b/, 'quality', undefined, 0.9, 'performance'),
   one(/\b(?:battery|batteries|hot|heat(?:ing)?|warm|too warm|overheat(?:s|ing)?|fan|fans|thermals?|cool(?:er)? down|cooler)\b/, 'quality', 1, 0.9, 'battery'),
   // Peak, above Ultra (governor.ts PEAK_TIER), only when named: "best", "max" and "ultra" keep meaning Ultra, so a casual
-  // ask never takes the half gigabyte Peak's shadows need. Before the Ultra rule, which would read "beyond ultra". As
+  // ask never takes the memory and GPU time Peak takes. Before the Ultra rule, which would read "beyond ultra". As
   // sure as the heat and battery rule, so "hot on peak graphics" keeps that rule's Low (the first of equals). Never kept
   // as it stands: analyze turns it into Sloane's Peak question or Ultra at most.
   PEAK_RULE,
@@ -702,7 +702,7 @@ const PROBES: readonly Probe[] = [
     key: 'quality.peak',
     // Any goal that names Peak without turning it down (analyze): set nothing until the visitor says.
     when: (f) => f.tags.has('peak-ask') && find(f, 'quality')?.value === undefined,
-    ask: () => ({ question: 'Peak takes a big graphics card and about half a gigabyte more of its memory. Set Peak, or keep to Ultra at most?', options: ['Set Peak', 'Ultra at most'] }),
+    ask: () => ({ question: 'Peak takes a big graphics card: it draws every frame at a higher resolution than Ultra. Set Peak, or keep to Ultra at most?', options: ['Set Peak', 'Ultra at most'] }),
     resolve: (a, f) => {
       const raw = a.slice(0, 1024).normalize('NFKC').toLowerCase()
       // Ultra passed over for Peak, or the tier above it, is Peak's name here ("peak, not ultra", "higher than ultra").
