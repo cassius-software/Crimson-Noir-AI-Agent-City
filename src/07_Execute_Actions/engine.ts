@@ -41,7 +41,7 @@ import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, 
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { doorFront, drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -483,6 +483,8 @@ export class Engine {
    * work in them.
    */
   private readonly rooms: readonly Workplace[]
+  /** The rooms as the team runner reads them (08_Swarm/team.ts TeamRoom), built on the first read and kept: the rooms never change while the engine lives. */
+  private roomDoors: readonly { kind: string; name: string; door: { x: number; z: number } }[] | null = null
   /** The swarm's short-term memory (08_Swarm/shortTerm.ts): the last few moments between each recruit and the player, this visit only. */
   private readonly moments = new ShortTermMemory()
   /** Ghost-mode collision's passages (contact.ts): the city's poles, the passage pulse, and the nearest pedestrian's
@@ -2308,6 +2310,17 @@ export class Engine {
     const k = this.sim.state.kernel
     return { ...k, audit: { ...k.audit, panic: k.audit.panic ?? this.lockReason } }
   }
+
+  /**
+   * The indoor workplaces of this map for the team runner (08_Swarm/team.ts): each kind as the map names it, its name,
+   * and its door front on this map's sidewalk lane (the city's CITY.lane, a region window's); none in a surveyed region.
+   */
+  get workplaces(): readonly { kind: string; name: string; door: { x: number; z: number } }[] {
+    return (this.roomDoors ??= Object.freeze(this.rooms.map((r) => Object.freeze({ kind: r.kind, name: r.name, door: doorFront(r, this.streets?.lane ?? CITY.lane) }))))
+  }
+
+  /** Why the realm no longer stands (the Ring-0 audit's panic, else a halt's reason), or null while it does: the team runner's `panic`. */
+  get panicReason(): string | null { return this.sim.state.kernel.audit.panic ?? this.lockReason }
 
   snapshot(): SipocSnapshot {
     const [mean, p50, p95] = this.clock.stats()

@@ -35,6 +35,12 @@ export interface LaneSpec {
   readonly caps: number
   /** The NoirScript line run each tick; its last printed line is the tag's reading. */
   readonly program: string
+  /**
+   * Declarations run once, before the first tick's program, in the lane's session (a cursor the program walks, a fn it
+   * calls): what a program would otherwise redeclare every tick, filling the arena. Its steps count against that
+   * tick's budget and a bound it reaches isolates the lane as the program's would.
+   */
+  readonly prelude?: string
   /** What the reading is ('people at the warehouse'). */
   readonly tag: string
 }
@@ -157,14 +163,23 @@ export class LaneRunner {
       let steps = 0
       let fault: { kind: LaneBound; text: string } | null = null
       try {
-        const r = l.session.run(l.spec.program, host)
-        steps = r.steps
+        if (l.ticks === 0 && l.spec.prelude !== undefined) {
+          const p = l.session.run(l.spec.prelude, host)
+          steps += p.steps
+          if (p.out.length > 0) l.value = p.out[p.out.length - 1]!
+          if (p.fault !== undefined) fault = { kind: p.fault satisfies NoirFault, text: p.error ?? p.fault }
+        }
+        // A prelude that reached a bound is the tick's fault; the program waits for a verdict it will not get.
+        const r = fault === null ? l.session.run(l.spec.program, host) : null
         l.ticks++
-        l.steps = r.steps
-        l.total += r.steps
-        if (r.out.length > 0) l.value = r.out[r.out.length - 1]!
-        l.error = r.error ?? null
-        if (r.fault !== undefined) fault = { kind: r.fault satisfies NoirFault, text: r.error ?? r.fault }
+        if (r !== null) {
+          steps += r.steps
+          if (r.out.length > 0) l.value = r.out[r.out.length - 1]!
+          l.error = r.error ?? null
+          if (r.fault !== undefined) fault = { kind: r.fault satisfies NoirFault, text: r.error ?? r.fault }
+        }
+        l.steps = steps
+        l.total += steps
       } catch (e) {
         // The session never throws; a host that does is an error on the view and the lane runs again next tick.
         l.error = `lane: ${text(e)}`

@@ -15,6 +15,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
+  something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
+  work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either
+  name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
+  goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
+  intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
+  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
+  over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
+  rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
+  brief, the HUD's activity line carries the team's one-line count, and the console gains `lanes [ledger
+  [verify]|stop]` (`goal` lists a dispatched team's lanes). Sloane may say a brief's sentence in their own words
+  through the page's mind (`sloaneVoice`: the router's order, a local server first, then the model kept in this page;
+  never with the provider set to scripted), screened as the onboarding's rewording is and with every number kept; the
+  planner's sentence stands until it answers and whenever it does not. The model rewords; it never decides, and
+  nothing a goal says about work reaches any knob. Tests pin the planner (every desk's words, no knob word among
+  them, every probe under six tenths of the gas on a ten-thousand-row city, the window walk, determinism), the runner
+  over a fake host (placement, the bodies and the rally range, isolation through the gate at the first tick with a
+  verified ledger, replacement and late answers, a host that throws), the console's `lanes`, the App wiring and
+  Sloane's voice.
 - **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
   the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
   by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane

@@ -555,11 +555,22 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
 - **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
-  crowded", "it feels laggy"). Sloane asks up to five short "why" questions with quick replies, then shows a
-  brief: the steps it can apply now (clock, quality, sound) are done at once, the rest are laid out as a
-  plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
-  (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
-  console syntax is ever shown.
+  crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
+  Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
+  now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
+  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
+  control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
+  goal is how many, up to 32), and a goal nothing maps to sends two scouts (the twin studio and the control
+  tower) that read the city and report, so no goal is a dead end; the rest is laid out as a plan, the lanes'
+  readings show under the brief as they run, and "Copy brief" gives an engineer a note naming the modules each
+  step would touch. For each desk one person within earshot with its skill is asked over (as `recruit` asks),
+  and sent in only once you stand within 9 m of that desk's door: the tether is never loosened. The planner
+  (`06_Make_Decisions/intent.ts`, `06_Make_Decisions/dispatch.ts`) is deterministic and offline: no language
+  model decides anything, no network, and no console syntax is ever shown. A local model may say the one
+  sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
+  model kept in this page; never with the provider set to scripted), screened like the onboarding's rewording
+  and with every number kept; the planner's sentence stands until it answers and whenever it does not.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -941,7 +952,7 @@ while you type.
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `exit`.
+  `goal <words...>`, `lanes [ledger [verify]|stop]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -1013,8 +1024,15 @@ while you type.
   card stays); `sloane voice <name>` prefers a browser voice by name or a word of it; `sloane voices` lists the
   browser's offline voices; `sloane say <text...>` has Sloane say a line now (see Onboarding and the spatial HUD).
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
-  clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
-  with why, and words nothing in the city maps to yet are named.
+  clock, the quality tier, the sound, a team dispatched) are applied and printed `done`, the rest `later`, a step
+  that failed `failed` with why, words nothing in the city maps to yet are named, and a dispatched team's lanes
+  are listed (tag, desk, what each reads).
+- `lanes` prints the team Sloane dispatched for the last goal (from the card or `goal`): one row a lane with its
+  tag, its state (`ready` or `isolated`), the capability word it holds, the steps its last tick took and its latest
+  reading (or the gate's sentence that isolated it); then the people asked over for each desk and what came of
+  them. `lanes ledger` prints the fault ledger (every isolated lane, hashed over the one before it) and `lanes
+  ledger verify` recomputes the chain; `lanes stop` closes every lane (the people asked over stay; `recruit
+  dismiss` lets them go). The console never opens a team by itself: `goal` and the card do.
 - `history` and the Up arrow never show a key typed to `ask key` or `say key` or a token typed to `net join`: all
   are kept as dots.
 

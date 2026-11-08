@@ -34,7 +34,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -107,6 +107,7 @@ const CORE = [
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
+  { name: 'lanes', usage: 'lanes [ledger [verify]|stop]', summary: 'the team Sloane dispatched for a goal: each sub-agent\'s lane, its word, its reading or why it was isolated; ledger prints the fault chain; stop closes the lanes' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file; their bodies in the physics realm as twins or leaders, every setpoint through the gate (relay, spawn, urdf, arm and calibrate are the operator\'s)' },
   { name: 'recruit', usage: 'recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]', summary: 'ask someone nearby with a skill over, or an Active recruit to the pinged point; listen by voice (on-device)' },
@@ -252,6 +253,8 @@ const ARGS: Record<string, readonly string[]> = {
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
   'swarm audit': ['verify'],
+  lanes: ['ledger', 'stop'],
+  'lanes ledger': ['verify'],
   act: ['gate', 'list', 'log', 'no', 'ok'],
   'act log': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
@@ -361,6 +364,12 @@ function conciergeOf(b: TerminalBridge): ConciergeBridge {
   const c = b.concierge
   if (!c) throw new Error('the concierge is not available on this bridge')
   return c
+}
+
+function lanesOf(b: TerminalBridge): LanesBridge {
+  const l = b.lanes
+  if (!l) throw new Error('the lanes are not available on this bridge')
+  return l
 }
 
 const AGENT_FIELDS = ['pronouns', 'role', 'voice', 'look', 'name'] as const
@@ -1079,9 +1088,30 @@ const HANDLERS: Record<Name, Handler> = {
     }
     const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}`)))
     for (const n of plan.notes) lines.push(sys(`  ${n}`))
+    for (const t of plan.team ?? []) lines.push(sys(`  ${t}`))
     if (!lines.length) lines.push(sys('  nothing in the city maps to that yet'))
     const done = plan.steps.some((st) => st.state === 'done')
     return { lines: [out(plan.root), ...lines, ...(!done && plan.steps.length ? [sys('  nothing could be done now: the rest needs the operator, or a restart')] : [])] }
+  },
+
+  /** The team Sloane dispatched (08_Swarm/team.ts): its lanes, the fault ledger (verified on request), or stop. */
+  lanes(args, b) {
+    if (args.length > 2) return fail(usage('lanes'))
+    const [sub, more] = args
+    let l: LanesBridge
+    try {
+      l = lanesOf(b)
+    } catch (e) {
+      return fail(`lanes: ${message(e)}`)
+    }
+    try {
+      if (sub === undefined) return { lines: l.status().map(out) }
+      if (sub === 'ledger' && (more === undefined || more === 'verify')) return { lines: l.ledger(more === 'verify').map(out) }
+      if (sub === 'stop' && more === undefined) return { lines: [out(l.stop())] }
+    } catch (e) {
+      return fail(`lanes: ${message(e)}`)
+    }
+    return fail(usage('lanes'))
   },
 
   hal(args, b) {
