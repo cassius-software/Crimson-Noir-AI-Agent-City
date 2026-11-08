@@ -157,6 +157,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 |---|---|
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
+| `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
@@ -1095,8 +1096,10 @@ Ring-0 elite tier above it, below). While unlocked:
   model, the masked key and the effort, and what the server has; `ask provider
   auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
   server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
-  effort <level>`, `ask model <name>` and `ask server <url>` set it up; `ask stop` stops an answer. `ask file [forget
-  <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a model file in this page (A model in this page);
+  effort <level>`, `ask model <name>` (`ask model auto` hands Ollama's model back to auto), `ask vram <GB>|0|auto`
+  (the GPUs' memory, so auto may give Ollama a bigger model it already has) and `ask server <url>` set it up;
+  `ask stop` stops an answer. `ask file [forget <name>|load|unload|log]` and `ask gpu auto|on|off` keep and run a
+  model file in this page (A model in this page);
   they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model. The
   answer may end with one `ACTION:` line; what it proposes is shown as `act N: … proposes: …` and waits for your OK;
   `ask stop` withdraws it.
@@ -1438,7 +1441,10 @@ them that answers (`auto`):
   answering before any of an answer has arrived (so the next ask finds whatever answers now) and at `ask` alone (so a
   server started since, earlier in that order, takes over). An Ollama whose model you never chose (the default, or
   one auto chose earlier) but which lacks it is given the default if it has it now, else the first text model it
-  has; one you chose with `ask model` is left alone. Models Ollama runs on its own cloud (marked so in its list, or, in the chat format, by a name ending in `cloud`) are never chosen this way, since a
+  has; one you chose with `ask model` is left alone (`ask model auto` hands it back). Given the GPUs' memory (`ask
+  vram`, or `vram=` in the address), auto may also give Ollama a bigger or smaller model it already has (How big a
+  model auto gives Ollama, below). Models Ollama runs on its own cloud (marked so in its list, or, in the chat
+  format, by a name ending in `cloud`) are never chosen this way, since a
   prompt to one leaves the machine. A model server installed with its own defaults therefore answers with nothing
   typed at the console, on a page that server allows (see Which pages a model server answers, below). With nothing
   answering, the script stands in (below), labelled as such; the reason names every address looked at, and each
@@ -1503,11 +1509,12 @@ any of them.
   swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server
   <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
   `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
-  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before. Each provider keeps
-  its own server and model between visits, in one store in this browser's local storage
-  (`civic-simulation:cognition:v2`; the store's own version is 3 since the `openai` provider joined it, read back from
-  the earlier shape without loss; the in-page provider's file chosen, `think` and `gpu` are one more slice of it, and
-  its model files are kept elsewhere, below).
+  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
+  `ask vram <GB>|0|auto` gives the GPUs' memory for auto's Ollama model (below). Each provider keeps its own server
+  and model between visits, in one store in this browser's local storage (`civic-simulation:cognition:v2`; the GPU
+  figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
+  provider joined it, read back from the earlier shape without loss; the in-page provider's file chosen, `think` and
+  `gpu` are one more slice of it, and its model files are kept elsewhere, below).
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -1562,7 +1569,9 @@ any of them.
   from a slow disk and read the prompt on a modest machine; a server that sends its headers at once still has the
   whole 5 minutes) and, once the answer has begun, 2 minutes between lines. Past either, the request is closed and
   one sentence says which wait ran out; when nothing came at all, it adds that the model may still be loading (ask
-  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before.
+  again) or be too big for this machine (choose a smaller one). `ask stop` ends one sooner, as before. A model Ollama
+  lists at more than 60 GB gets longer to send its first line: a second per 200 MB of its weights (a starting value),
+  so a 142 GB model has about 12 minutes.
 - **A page opened from a file.** The browser sends that page's origin as `null`, and a local server
   usually refuses it: Ollama does by default. `ask` detects this (a server that is up but refusing is
   told apart from one that is down) and says so. Open the page from `http://localhost` instead
@@ -1574,14 +1583,21 @@ any of them.
   to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
   and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
   with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
-  `lms server start --cors`). On a
+  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default,
+  where auto does not look: start it with `--port 8080`, or `ask connect llamacpp http://localhost:9931`. vLLM 0.32
+  and later answers no other page unless started with `--allowed-origins` naming the page's origin (on Linux:
+  `--allowed-origins '["http://127.0.0.1:4180"]'`), and since it listens on every network interface unless told
+  otherwise, also start it with `--host 127.0.0.1`; SGLang answers any page and listens on 127.0.0.1 by default. Both
+  speak the chat format: `ask connect openai http://localhost:8000` (vLLM) or `http://localhost:30000` (SGLang). On a
   cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
   server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
   a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
-- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. Under `auto`, an
+- **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
+  memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
+  (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer. Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, all on this machine, then read the list of model
   files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
@@ -1593,6 +1609,55 @@ any of them.
   fixed catalogue (City actions, under The operator tier), shown to you and run only after your OK, under the
   proposer's tether; files, shell and network are not actions. `10_Network/airgap.test.ts` pins that no source in the
   product names an address off this machine.
+
+#### How big a model auto gives Ollama (`ask vram`)
+
+Ollama lists how big each model's weights are, but no model server says how much memory the GPUs have, so it is given:
+`ask vram 24` at the console (kept in this browser), or `vram=24` in the page's address, which the NixOS launcher adds
+by itself (On NixOS). The console's figure beats the address; `ask vram 0` sizes nothing whatever the address says;
+`ask vram auto` hands back to the address. GB here are 2^30 bytes, as everywhere in the page; Ollama's own list
+prints decimal GB, so its 142GB is 132.2 GB here.
+
+- **Without a figure nothing changes**: the same requests, the same model, no `fit` row. That is a phone, the Windows
+  app and a browser on Windows until `ask vram` is typed. On a laptop's integrated GPU, leave it unset: its share of
+  memory is not a figure this rule can use.
+- **With one, under auto, with Ollama in the generate format:**
+  - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
+  - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
+    one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
+    much of it is on the GPU.
+  - Once a measurement shows the model on the GPU, auto gives Ollama the largest text model it lists whose need fits
+    the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
+    loaded-to-weights ratio measured on this server.
+  - That model's first answer is measured too. A bigger model slower than 5 tokens a second, or split between the GPU
+    and the processor when its first wait runs out, is dropped for the visit, the model below answers, and no bigger
+    one is tried again that visit. Too big in two visits, and it is avoided until `ask vram` or until it is pulled
+    again.
+  - A model Ollama will not load (its failure before anything arrives) is set aside for the visit, and the same ask
+    is answered once more by the next one.
+- **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
+  tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
+  back); another provider.
+- **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
+  why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
+  measures afresh`).
+- **Starting values, not measured on a big GPU:** the 2 GB kept free (1 GB is llama.cpp's own margin per GPU, 1 GB for
+  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor.
+- **A datacenter box.** Run the city on the box: the launcher reads its GPUs, which then draw the city as well as run
+  the model. Or keep the page on your computer and forward Ollama's port over SSH (OpenSSH, in PowerShell or any
+  shell): `ssh -N -o ExitOnForwardFailure=yes -L 11434:127.0.0.1:11434 <user>@<box>`, then `ask vram <the box's GB>`
+  once, since your own launcher, if any, reports your computer's GPU. The page still addresses only `localhost`; the
+  prompt leaves this computer inside the SSH connection, to the box you named, and the box's Ollama must allow this
+  page's origin (`OLLAMA_ORIGINS`) as on this machine. The page cannot open, check or close the tunnel.
+- **What is verified:** in Node on every CI run, the rules and every sentence (`modelFit.test.ts`), the router over a
+  fake Ollama (`router.fit.test.ts`: no change without a figure, growth, the misfit, the ratio, the processor-only
+  case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
+  late, `ask model auto`, the operator's own model, the paths asked, what is kept), the readers
+  (`localCompute.test.ts`) and the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
+  (`desktopLauncher.test.ts`); in a browser, the `actions` scenario of the smoke on a software adapter: the `fit` row
+  from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
+  real split model, real ratios and paces, whether 2 GB is enough, `nvidia-smi` on a NixOS `PATH`, the amdgpu files
+  on an integrated GPU, and a tunnel's delay.
 
 #### The prompt-prefix page table
 
@@ -2892,6 +2957,13 @@ system's nixpkgs); on a channel-based one,
   (`CHROME=google-chrome-stable`); `AGENT_CITY_CHROME_FLAGS` adds switches, each starting with `--` and with no space
   inside its value (an `--enable-features` list joins the launcher's own: Chromium keeps only the last list it is
   given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
+- **The GPUs' memory.** Before it opens the window the launcher reads the GPUs' memory:
+  `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` (MiB per GPU), else
+  `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped. It adds
+  `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
+  `-- vram=0` none; `--check` reads nothing. Ollama itself, on NixOS 26.05:
+  `services.ollama = { enable = true; package = pkgs.ollama-cuda; };` (or `pkgs.ollama-rocm`, `pkgs.ollama-vulkan`);
+  the old `acceleration` option is removed there.
 
 `nix develop` opens a shell with Node 24, Chromium (as `CHROME`, for the browser smoke), rustup, Python with z3 (for
 `npm run verify -- smt`) and git.
@@ -2913,6 +2985,8 @@ the page and the city boots headless in the package's Chromium on the software a
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
 Peak for a few frames).
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
+files in a temporary folder (a connector folder skipped), and `--check` reading nothing; no real GPU was probed.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
 adapter's switches (`--use-vulkan=swiftshader --use-angle=swiftshader --use-gl=angle --enable-unsafe-swiftshader`)
 added through `AGENT_CITY_CHROME_FLAGS`: the packaged command opened the city in an app window on a virtual display, a
@@ -3152,6 +3226,14 @@ the production page finds no physics object in the page and has every crafted me
   `act ok` does not; a lost tether ends the proposal in the gateway's words, and the trail has every proposal, decision
   and end, and verifies.
 - **Mutations:** 20 bugs planted in this change's code, each caught by the named test.
+
+**Auto's Ollama model by the GPU (unreleased).**
+- **In Node, on every CI run:** `modelFit.test.ts`, `router.fit.test.ts`, the new `localCompute`, `commands`,
+  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama).
+- **In a browser, on every CI run:** the `actions` scenario, with `vram=24` in the address: the `fit` row,
+  `ask vram 16`, the refusal of 5000, and `ask vram auto`.
+- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and Windows (which needs `ask vram` typed
+  for now).
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.

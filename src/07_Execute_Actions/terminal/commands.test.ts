@@ -107,7 +107,7 @@ interface FakeOp extends OperatorBridge {
   /** The answered text (the ACTION line already stripped, as the tier hands it over). */
   text: string
   acts: FakeActs
-  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string }
+  mind: { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; found?: string; runtime?: string; storage?: string; fit?: string }
   /** How a `say` ends: said, rejected, cut off by the tether, the server failing, the operator's stop. */
   speech: 'ok' | 'reject' | 'abort' | 'fail' | 'stopped'
   /** The ask's answer is said aloud as well (say auto on): how that ends. */
@@ -292,6 +292,10 @@ function fakeOperator(): FakeOp {
         if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
         f.mind.think = value === 'on'
         return f.mind.think ? 'on: the model reasons before it answers (slower; its thinking shows live)' : 'off: the model answers without reasoning first'
+      }
+      if (key === 'vram') {
+        if (!/^(auto|\d{1,4}(\.\d+)?)$/i.test(value)) throw new TypeError("ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto")
+        return `${value} GB at the console`
       }
       f.mind[key] = value
       return value
@@ -723,7 +727,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /hal \[pair hid\|serial\|ble\]/)
   assert.match(all, /operator \[unlock\|lock\|status\]/)
   assert.match(all, /run <skill>\[,<skill>\.\.\.\]: <js\.\.\.>/)
-  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
+  assert.match(all, /ask \[<skill>\[,<skill>\.\.\.\]: <prompt\.\.\.>\|provider <name>\|connect <provider> \[<url>\] \[<key>\]\|model <name>\|server <url>\|key <key>\|effort <level>\|think on\|off\|api <format>\|vram <GB>\|auto\|file \[forget <name>\|load\|unload\|log\]\|gpu auto\|on\|off\|stop\]/)
   assert.match(all, /harness \[list\|run <name>\]/)
   assert.match(all, /act \[ok\|no\|log \[verify\]\|list\|gate\]/)
   assert.match(all, /record \[start \[canvas\|camera\]\|stop\|status\]/)
@@ -1409,7 +1413,7 @@ test('ask: alone it reports the server, the model and what the server has; model
   assert.deepEqual(texts(run('ask think', b, [])), ['usage: ask think <on|off>'])
   for (const line of ['ask how does grip work?', 'ask 42: hi', 'ask "a: b"']) {
     const no = run(line, b, [])
-    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
+    assert.deepEqual(texts(no), ['ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', 'usage: ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]'], line)
     assert.equal(no.pending, undefined, line)
   }
   assert.ok(isErr(run('ask rust:', b, [])))
@@ -1766,7 +1770,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('run rust: s'), [])
   assert.deepEqual(complete('api si'), ['api signal'])
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
-  assert.equal(complete('ask ').length, SKILL_ARGS.length + 11)
+  assert.equal(complete('ask ').length, SKILL_ARGS.length + 12)
   assert.deepEqual(complete('ask m'), ['ask model'])
   assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
   assert.deepEqual(complete('ask f'), ['ask file'])
@@ -2382,6 +2386,33 @@ test('ask file and ask gpu work while locked (they keep a file or a setting, and
     assert.deepEqual(run(c, bare, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }], c)
   }
   for (const c of ['ask file', 'ask file load', 'ask gpu auto']) assert.deepEqual(run(c, offlineBridge(BRAND), []).lines, [{ kind: 'err', text: 'ask: engine not running' }], c)
+})
+
+test('ask vram: its usage, its row, the console\'s refusal and its completion; the fit row sits under the model row', async () => {
+  const b = unlocked()
+  // Bare: the usage, and the bridge is not asked.
+  assert.deepEqual(texts(run('ask vram', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(texts(run('ask vram   ', b, [])), ['usage: ask vram <GB|auto>'])
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.deepEqual(run('ask vram 24', b, []).lines, [{ kind: 'out', text: 'vram      24 GB at the console' }])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24'])
+  run('ask vram AUTO', b, [])
+  assert.deepEqual(b.operator.opCalls, ['askSet vram 24', 'askSet vram AUTO'], 'the mind reads the word, whatever its case')
+  // The mind's refusal, in its words.
+  assert.deepEqual(run('ask vram lots', b, []).lines, [{ kind: 'err', text: "ask: ask vram takes the GPUs' memory in GB, from 0 to 4096 (such as ask vram 24; 0 sizes nothing), or auto" }])
+  // The fit row, right under the model row.
+  b.operator.mind.fit = "24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger"
+  assert.deepEqual(await run('ask', b, []).pending, [
+    { kind: 'out', text: 'server    http://localhost:11434  (this machine only)' },
+    { kind: 'out', text: 'model     test-model' },
+    { kind: 'out', text: "fit       24.0 GB given by the page's address (vram=); the next answer is measured before auto picks bigger" },
+    { kind: 'out', text: 'installed a-model' },
+    { kind: 'out', text: '          test-model  (chosen)' },
+  ])
+  // Tab completes the word and its one keyword.
+  assert.deepEqual(complete('ask v'), ['ask vram'])
+  assert.deepEqual(complete('ask vram '), ['ask vram auto'])
+  assert.deepEqual(complete('ask vram a'), ['ask vram auto'])
 })
 
 test('ask alone over a model running in this page: no server, the runtime and storage rows, and where to keep a file when none is', async () => {
