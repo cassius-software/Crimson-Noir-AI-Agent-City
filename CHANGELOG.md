@@ -53,6 +53,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   stage as more ways to finish it. `tutorial status` counts seven stages; the browser smoke's `walk` scenario opens
   and closes the wardrobe on the way. Pinned by node tests (the order, the wardrobe event, the stage passed over, the
   lines' plainness, conduct screen and brand scrub, App's wiring); a real phone, pad or screen reader is unverified.
+- **The first walk's look stage takes the shops too.** On a map with shops (the city's five, Lakefront Metro's) the
+  "Your look" stage can now be finished in a shop as well as in the wardrobe card: walking in, opening the shop's card
+  (B, or E with no car near; the pad's south face button; the Browse chip on touch) and putting it away again (Done, ×,
+  Escape, the console taking over, or walking out) passes it, whether or not anything was tried on or bought. Sloane's
+  line, hint and eight-year-old's line name the shops only on a map that has them, in the device's own words, and say
+  that trying on is free; the five whys now name the ten Monk tones, freckles and vitiligo of the look genome, the
+  card's tabs for your own agents, and, where there are shops, the camera that circles you in one (not in a headset
+  or a shared room). The walk's card steps aside while a shop's card is open. A surveyed region, which has no shops,
+  keeps the stage as it was; owned homes are not built yet. The browser smoke gains a `walkshop` scenario (the look
+  stage passed in the first shop, a try-on that costs nothing). Pinned by node tests (the shop event, the stage kept
+  when done early, the lines with and without shops on each device, App's wiring); a real phone, pad or screen reader
+  is unverified.
 - **The ten Monk skin tones, vitiligo, freckles and body builds, on a look genome of sixteen words.** The character
   customizer's look (`src/03_Spawn_Agents/look.ts`) grows from four packed words to a genome of sixteen
   (`LOOK_WORDS`): words 0 to 3 are the look, figure, face and wardrobe words exactly as they were, word 4 is a new

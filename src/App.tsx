@@ -821,13 +821,18 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); walkRef.current.note('console') }
     engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
   }, [])
+  // The walk's look stage hears of the wardrobe card or a shop's card put away after it was open (Done, ×, Escape, the
+  // console taking over, or walking out of the shop): what changed, if anything, is the visitor's choice.
   const lookWas = useRef(false)
+  const storeWas = useRef(false)
   useEffect(() => {
     lookOpenRef.current = lookOpen
     storeOpenRef.current = storeOpen
     engineRef.current?.input.suspend(lookOpen || storeOpen !== null || termOpenRef.current)
     if (lookWas.current && !lookOpen) walkRef.current.note('wardrobe')
     lookWas.current = lookOpen
+    if (storeWas.current && storeOpen === null) walkRef.current.note('store')
+    storeWas.current = storeOpen !== null
   }, [lookOpen, storeOpen])
 
   useEffect(() => {
@@ -1299,11 +1304,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onSay={onSay}
         />
       )}
-      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe is open
-          or the city is halted. It has no close: the console's exit program ends it. */}
+      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe or a
+          shop's card is open or the city is halted. It has no close: the console's exit program ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
-          visible={veilDone && !lookOpen && locked === null}
+          visible={veilDone && !lookOpen && storeOpen === null && locked === null}
           card={fw.card}
           beat={fw.beat}
           exam={fw.exam}

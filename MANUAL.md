@@ -670,8 +670,12 @@ shows it (there is no city to walk).
   4. **Inside a workplace**: stand inside one of the six workplaces (passed over on a surveyed map, which has none).
   5. **Your look**: open the wardrobe card from **Look** on Sloane's chip (or **Change my look** in her list) and put
      it away again (**Done**, its close button or Escape); changing something is up to you. The card is the wardrobe
-     described under The character customizer; the city's stores and owned places are not built yet, and when they
-     are they join this stage as more ways to finish it.
+     described under The character customizer. On a map with shops (the city's five, Lakefront Metro's; see
+     Storefronts) a shop does it too: walk in, open its card (B or E on a keyboard, the south face button on a pad, the
+     **Browse** chip on touch), try a line on if you like (trying on is free; buying costs credits), and put the card
+     away (**Done**, ×, Escape, the console, or walking out). Sloane names the shops only where there are some; the
+     walk's card steps aside while a shop's card is open, as it does for the wardrobe. Owned homes are not built yet;
+     when they are they join this stage the same way.
   6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
   7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
      learning to walk); Sloane says nothing of it until its turn would have come.
