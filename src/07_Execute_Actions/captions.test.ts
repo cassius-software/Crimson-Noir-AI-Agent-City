@@ -7,8 +7,9 @@
  * continuing sound is captioned once and refreshed rather than repeated, a change retexts its line in place, a stop
  * holds the line for the hold and then expires it, a live line nobody refreshes expires, speech ranks first and a
  * speaker's words are kept verbatim, the feed never exceeds its bound (and evicts the lowest-ranked record first), the
- * ambient beds toggle with hysteresis, records are pooled, and no caption string carries a scrubbed brand, a combat
- * word or a phrase the 14A screen refuses.
+ * ambient beds toggle with hysteresis, records are pooled (and a recycled record forgets its last place, so the cabin
+ * and the head-locked check chime read as text alone), and no caption string carries a scrubbed brand, a combat word
+ * or a phrase the 14A screen refuses.
  * What breaks if it is removed? A car could be captioned on every control pass, speech could scroll off before it is
  * read, a left-hand sound could read as right-hand, or a word the product scrubbed could reach the HUD unnoticed.
  */
@@ -16,6 +17,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
+import { SKILL_TITLE } from '../02_Define_The_Rules/progression.ts'
 import { ARROWS, CAPTIONS, CaptionTrack, bearing, captionText, roundMetres, soundText, type CaptionEvent, type ListenerPose, type SoundKind } from './captions.ts'
 
 const AT_ORIGIN: ListenerPose = { x: 0, z: 0, yaw: 0 }
@@ -137,6 +139,11 @@ test('soundText and captionText: every kind reads as the house style, with the a
   assert.equal(soundText(ev('peer', 'change', 0, { label: 'Ada', text: 'on my way' })), 'Ada: on my way')
   assert.equal(soundText(ev('ping', 'start', 0, { label: 'the lamp' })), '[ping: the lamp]')
   assert.equal(soundText(ev('ping', 'start', 0)), '[ping]')
+  assert.equal(soundText(ev('chime', 'start', 0, { label: 'Piloting', detail: 'success' })), '[chime: Piloting, success]')
+  assert.equal(soundText(ev('chime', 'start', 0, { label: 'Piloting', detail: 'critical' })), '[chime: Piloting, critical success]')
+  assert.equal(soundText(ev('chime', 'start', 0, { detail: 'critical' })), '[chime: critical success]')
+  assert.equal(soundText(ev('chime', 'start', 0)), '[chime: success]')
+  assert.equal(soundText(ev('chime', 'stop', 0, { label: 'Piloting', detail: 'success' })), '', 'a stop keeps the text')
 
   const track = new CaptionTrack()
   track.push(ev('engine', 'start', 1, { x: 20, z: -20, detail: 'approaching' }), AT_ORIGIN)
@@ -146,6 +153,10 @@ test('soundText and captionText: every kind reads as the house style, with the a
   const cabin = track.lines(1).find((l) => l.kind === 'cabin')
   assert.ok(cabin)
   assert.equal(captionText(cabin), '[in the car: outside muffled]', 'a sound with no place is the text alone')
+  track.push(ev('chime', 'start', 1, { x: NaN, z: NaN, label: 'Optics and cinema', detail: 'critical' }), AT_ORIGIN)
+  const chime = track.lines(1).find((l) => l.kind === 'chime')
+  assert.ok(chime)
+  assert.equal(captionText(chime), '[chime: Optics and cinema, critical success]', 'the head-locked chime is the text alone too')
 })
 
 test('speech text is kept verbatim: punctuation, quotes, unicode and spacing untouched', () => {
@@ -229,9 +240,9 @@ test('expiry: a live line nobody refreshes lasts `ttl`; a refresh extends it', (
   assert.equal(track.size, 0)
 })
 
-test('ordering: speech, peer, ping, cue, walk signal, cabin, engine, tyres, murmur; newest first within a kind', () => {
+test('ordering: speech, peer, ping, cue, walk signal, cabin, chime, engine, tyres, murmur; newest first within a kind', () => {
   const track = new CaptionTrack({ maxLines: 16, ttl: 100 })
-  const kinds: SoundKind[] = ['murmur', 'tyres', 'engine', 'cabin', 'walk-signal', 'cue', 'ping', 'peer', 'speech']
+  const kinds: SoundKind[] = ['murmur', 'tyres', 'engine', 'chime', 'cabin', 'walk-signal', 'cue', 'ping', 'peer', 'speech']
   kinds.forEach((k, i) => track.push(ev(k, 'start', i, { source: 1, agent: 1, text: 'hi', label: 'x', x: NaN, z: NaN }), AT_ORIGIN))
   assert.deepEqual(track.lines(10).map((l) => l.kind), [...kinds].reverse())
   track.push(ev('engine', 'start', 20, { source: 2, detail: 'approaching' }), AT_ORIGIN)
@@ -271,6 +282,37 @@ test('bound: lines() never exceeds maxLines and the track never exceeds capacity
   assert.equal(t3.capacity, 5)
   assert.equal(t3.hold, CAPTIONS.hold)
   assert.equal(t3.ttl, CAPTIONS.ttl)
+})
+
+test('a recycled record forgets the last sound\'s place: a sound with no place on a pooled or evicted record reads as text alone', () => {
+  // Pooled: a placed cue expires into the pool, and the chime that takes its record has no arrow and no distance.
+  const pooled = new CaptionTrack({ capacity: 2 })
+  pooled.push(ev('cue', 'start', 0, { source: 1, x: 20, z: -20 }), AT_ORIGIN)
+  const cue = pooled.lines(0)[0]
+  assert.equal(captionText(cue), '↗ [someone coming over] · ahead right, 30 m')
+  pooled.push(ev('cue', 'stop', 0, { source: 1 }), AT_ORIGIN)
+  pooled.lines(CAPTIONS.hold + 1)
+  assert.equal(pooled.push(ev('chime', 'start', 10, { x: NaN, z: NaN, label: 'Piloting', detail: 'success' }), AT_ORIGIN), true)
+  const [line] = pooled.lines(10)
+  assert.equal(line, cue, 'the same record, reused')
+  assert.equal(line.arrow, '')
+  assert.ok(Number.isNaN(line.metres) && Number.isNaN(line.x) && Number.isNaN(line.z))
+  assert.equal(captionText(line), '[chime: Piloting, success]')
+  assert.equal(captionText(pooled.lines(10, { x: 5, z: 5, yaw: 1 })[0]), '[chime: Piloting, success]', 'and stays so as the head turns')
+  // Its stop holds the text, still with no place.
+  pooled.push(ev('chime', 'stop', 10.5, { x: NaN, z: NaN }), AT_ORIGIN)
+  assert.equal(captionText(pooled.lines(10.5)[0]), '[chime: Piloting, success]')
+  // Evicted: a full track hands the lowest-ranked record (a placed murmur) to the chime, which keeps none of its place.
+  const full = new CaptionTrack({ maxLines: 1, capacity: 1 })
+  full.push(ev('murmur', 'start', 0, { x: -10, z: 0 }), AT_ORIGIN)
+  assert.equal(captionText(full.lines(0)[0]), '← [crowd murmur] · left, 10 m')
+  full.push(ev('chime', 'start', 1, { x: NaN, z: NaN, detail: 'critical' }), AT_ORIGIN)
+  const [evicted] = full.lines(1)
+  assert.equal(evicted.kind, 'chime')
+  assert.equal(captionText(evicted), '[chime: critical success]')
+  // A placed sound on a recycled record takes its own point, as before.
+  full.push(ev('speech', 'start', 2, { source: 3, agent: 3, text: 'hi', x: 0, z: -4 }), AT_ORIGIN)
+  assert.equal(captionText(full.lines(2)[0]), '↑ Pedestrian 3: hi · ahead, 4 m')
 })
 
 test('records are pooled: ids keep counting, objects are reused, lines() returns the same array, clear() empties it', () => {
@@ -360,13 +402,15 @@ const SCRUBBED: readonly RegExp[] = [
 ]
 
 test('no caption string carries a scrubbed brand, a combat word or a phrase the 14A screen refuses', () => {
-  const kinds: SoundKind[] = ['engine', 'tyres', 'murmur', 'walk-signal', 'cue', 'speech', 'cabin', 'peer', 'ping']
-  const details = [undefined, 'approaching', 'passing', 'up', 'down', 'idle', 'quiet', 'busy', 'ns', 'ew', 'muffled', 'clear']
+  const kinds: SoundKind[] = ['engine', 'tyres', 'murmur', 'walk-signal', 'cue', 'speech', 'cabin', 'peer', 'ping', 'chime']
+  const details = [undefined, 'approaching', 'passing', 'up', 'down', 'idle', 'quiet', 'busy', 'ns', 'ew', 'muffled', 'clear', 'success', 'critical']
   const texts = new Set<string>()
   for (const kind of kinds) for (const phase of ['start', 'change', 'stop'] as const) for (const detail of details) {
     texts.add(soundText(ev(kind, phase, 0, { detail })))
     texts.add(soundText(ev(kind, phase, 0, { detail, agent: 12, label: 'Pedestrian 12 (Rust)' })))
   }
+  // The chime names the skill it confirms: every title, at both degrees.
+  for (const title of SKILL_TITLE) for (const detail of ['success', 'critical']) texts.add(soundText(ev('chime', 'start', 0, { detail, label: title })))
   const track = new CaptionTrack({ maxLines: 64, capacity: 64 })
   kinds.forEach((k, i) => track.push(ev(k, 'start', 0, { source: i, agent: i, x: 10, z: -10 }), AT_ORIGIN))
   for (const line of track.lines(0)) texts.add(captionText(line))
@@ -395,10 +439,12 @@ test('wiring: the soundscape reports every sound to one listener, the engine fee
   assert.match(audio, /private emit\(kind: SoundKind, phase: SoundPhase, source: number, x: number, z: number, t: number/)
   assert.match(between(audio, '  private emit(', '  get clock()'), /try \{ fn\(e\) \} catch \{/, 'a listener that throws is caught')
   // Every kind captions.ts knows is emitted somewhere.
-  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'cue', 'speech', 'cabin', 'peer', 'ping']) {
+  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'cue', 'speech', 'cabin', 'peer', 'ping', 'chime']) {
     assert.ok(audio.includes(`this.emit('${kind}', `) || audio.includes(`this.emit(kind, `) || audio.includes(`this.emit(slot.kind, `), `${kind} is never emitted`)
   }
-  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'speech', 'cabin', 'peer']) assert.ok(audio.includes(`this.emit('${kind}', `), kind)
+  for (const kind of ['engine', 'tyres', 'murmur', 'walk-signal', 'speech', 'cabin', 'peer', 'chime']) assert.ok(audio.includes(`this.emit('${kind}', `), kind)
+  // The chime is head-locked: its every event carries no place, so its caption is the text alone.
+  for (const m of audio.matchAll(/this\.emit\('chime', [^\n]*/g)) assert.match(m[0], /'chime', '(start|stop)', 0, Number\.NaN, Number\.NaN, /, m[0])
   assert.match(audio, /speak\(buffer: AudioBuffer, x: number, z: number, walls = 0, text\?: string, who\?: \{ agent\?: number; label\?: string \}\)/)
   const engine = read('./engine.ts')
   assert.match(engine, /private readonly captions = new CaptionTrack\(\)/)

@@ -51,7 +51,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'ping', 'look', 'agent', 'sloane', 'goal', 'lanes', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'lanes', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -632,6 +632,7 @@ function fake(): Fake {
     xr: (arg) => { f.calls.push(`xr ${arg ?? '-'}`); return f.xrResult },
     render: (arg) => { f.calls.push(`render ${arg}`); return arg ?? 'on' },
     captions: (arg) => { f.calls.push(`captions ${arg}`); return `captions: ${arg ?? 'on'}` },
+    haptics: (arg) => { f.calls.push(`haptics ${arg}`); return `haptics: ${arg ?? 'on'}` },
     soa: { tables: () => { f.calls.push('soa tables'); return fakeTables() } },
     ping: undefined as unknown as FakePing,
     topics: undefined as unknown as FakeTopics,
@@ -730,6 +731,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /recruit \[<skill>\|rally <agent> \[<x> <z>\]\|listen\|stop\|install\|dismiss\]/)
   assert.match(all, /render \[on\|off\]/)
   assert.match(all, /captions \[on\|off\]/)
+  assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
   assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
@@ -1084,7 +1086,7 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'operator', 'operator unlock', 'operator lock', 'run 1 + 1', 'run rust: 1 + 1', 'ask', 'ask rust: hi', 'ask model m', 'ask connect ollama', 'ask stop', 'say', 'say rust: hi',
     'swarm', 'swarm status', 'swarm roles', 'swarm guardrails', 'swarm audit', 'swarm plan x', 'swarm run x', 'swarm stop',
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
-    'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'ping', 'ping go', 'ping clear',
+    'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'haptics', 'haptics off', 'ping', 'ping go', 'ping clear',
     'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch',
     'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo',
     'lanes', 'lanes ledger', 'lanes ledger verify', 'lanes stop']) {
@@ -1137,7 +1139,7 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
   }
 })
 
-test('air gap: while locked, across every command and completion, the only knobs touched are the view knobs, clock, quality, audio, pairing, pings, the look, recruitment and the model file kept in this page', () => {
+test('air gap: while locked, across every command and completion, the only knobs touched are the view knobs, haptics, clock, quality, audio, pairing, pings, the look, recruitment and the model file kept in this page', () => {
   const b = fake()
   const lines = complete('').flatMap((c) => [c, ...complete(`${c} `), ...complete(`${c} `).flatMap((a) => complete(`${a} `))])
   // `operator unlock` is the one line that changes the lock state; every other line runs against the locked tier.
@@ -1147,7 +1149,7 @@ test('air gap: while locked, across every command and completion, the only knobs
     'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
-  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
+  assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
@@ -1704,7 +1706,7 @@ test('content rules: no combat vocabulary in anything the console prints', () =>
 })
 
 test('completion: command names, then arguments, as whole lines', () => {
-  assert.deepEqual(complete('h'), ['hal', 'harness', 'help', 'history'])
+  assert.deepEqual(complete('h'), ['hal', 'haptics', 'harness', 'help', 'history'])
   assert.deepEqual(complete('he'), ['help'])
   assert.deepEqual(complete('st'), ['stats'])
   assert.deepEqual(complete('s'), ['say', 'set', 'sim', 'sloane', 'stats', 'swarm'])
@@ -1735,6 +1737,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.equal(complete('recruit ').length, SKILL_ARGS.length + 5)
   assert.deepEqual(complete('render '), ['render off', 'render on'])
   assert.deepEqual(complete('captions o'), ['captions off', 'captions on'])
+  assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
   assert.deepEqual(complete('look '), [...['code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
@@ -1944,6 +1947,27 @@ test('render and captions: status, on and off through their one view-only knob e
   b.render = (arg) => (arg === 'off' ? 'off: physics, audio and the console run; nothing is drawn (render on)' : 'on')
   assert.equal(only(run('render off', b, [])).text, 'render off: physics, audio and the console run; nothing is drawn (render on)')
   assert.deepEqual(b.operator.opCalls, [])
+})
+
+test('haptics: status, on and off through its one knob, as captions does; anything else is refused before the bridge', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('haptics', b, [])), ['haptics: on'])
+  assert.deepEqual(texts(run('haptics off', b, [])), ['haptics: off'])
+  assert.deepEqual(texts(run('haptics on', b, [])), ['haptics: on'])
+  assert.deepEqual(b.calls, ['haptics undefined', 'haptics off', 'haptics on'])
+  b.calls.length = 0
+  for (const l of ['haptics maybe', 'haptics 0', 'haptics on off', 'haptics off now']) {
+    const r = run(l, b, [])
+    assert.ok(isErr(r), l)
+    assert.match(texts(r).join('\n'), /usage: haptics \[on\|off\]/)
+  }
+  assert.deepEqual(b.calls, [], 'a refused line touches nothing')
+  // The engine's own status line comes through as it is, and the knob needs no unlock.
+  b.haptics = (arg) => (arg === 'off' ? 'haptics: off' : 'haptics: on')
+  assert.equal(only(run('haptics off', b, [])).text, 'haptics: off')
+  assert.deepEqual(b.operator.opCalls, [])
+  assert.match(texts(run('help haptics', b, [])).join('\n'), /^usage: haptics \[on\|off\]\n {2}controller rumble and phone vibration/)
+  assert.doesNotMatch(texts(run('help haptics', b, [])).join('\n'), /\//, 'no slash as a separator in the summary')
 })
 
 test('ping: the marks standing, a mark of each kind where the head looks, clear; unknown kinds never reach the board', () => {

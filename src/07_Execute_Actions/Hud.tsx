@@ -10,6 +10,8 @@
  * while the .agv recorder runs, the operator's pings (a ring on the minimap per ping and, for the newest, a
  * chip over the world with its distance), and glyph-aware control hints (the enter-vehicle prompt and, until
  * the player is under way, a small capture-and-controls chip) that switch silently to a controller's glyphs.
+ * The operator's progression chip shows the level, XP, credits, hero points and the round's pips, what a fresh success
+ * was and paid, and one soft ring for it (none under reduced motion); its words come finished in the snapshot.
  * Onboarding is zero-click: there is no title card; the Concierge (Concierge.tsx) greets the player.
  * On phones and touch devices (or any small window) it switches to a compact layout that keeps the
  * bottom corners free for the touch controls: stick bottom-left, buttons bottom-right. A phone held in
@@ -20,7 +22,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
-import type { HudPing, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
+import type { HudPing, HudProgress, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
@@ -98,6 +100,8 @@ function mediaStore(query: string) {
  *  same two queries. */
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
+/** The system asks for reduced motion: the progress chip's ring after a success stays still (its words still show). */
+const CALM = mediaStore('(prefers-reduced-motion: reduce)')
 /** Room for the capture chip's key row: one line between the minimap and the speed panel, and height left
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
@@ -225,6 +229,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
+  // The operator's progression (progress.ts hudProgress; App puts the finished words on the snapshot): the standing,
+  // and for a few seconds after a success what it was and what it paid. Game feedback, so it goes with the H key. On
+  // a phone it shows only while a check is fresh and never on a short screen, so Sloane's chip under the column moves
+  // only for those seconds.
+  const pr = s.supplier.progress
+  const progressChip = pr && (!compact || (pr.cue !== null && !short)) && <ProgressChip p={pr} panel={panel} muted={muted} />
+
   // Render off (the console's render knob): the black canvas says why, and how to draw again. It outlives the
   // H key like the recorder's chip: a blank screen is never left unexplained.
   const renderChip = s.output.rendering === false && (
@@ -277,6 +288,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {micChip}
             {ghostChip}
             {renderChip}
+            {progressChip}
           </div>
 
           <div className={`absolute top-0 right-0 w-72 px-5 py-4 ${panel}`}>
@@ -415,6 +427,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               {micChip}
               {ghostChip}
               {renderChip}
+              {progressChip}
               {stacked && <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
             </div>
             {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
@@ -502,6 +515,51 @@ function Signal({ label, light }: { label: string; light: Light }) {
 function Badge({ dark, children }: { dark: boolean; children: string }) {
   const tone = dark ? 'border-white/20 text-slate-200' : 'border-slate-900/15 text-slate-600'
   return <span className={`rounded border px-1 py-px text-[9px] leading-none font-semibold tracking-wide uppercase ${tone}`}>{children}</span>
+}
+
+/** The progress chip's ring: how long it shows, the least time between two, and how young a check must be to show it
+ *  at all, so a chip mounted again (the H key, a layout swap) never replays an older check. */
+const GLOW_MS = 600
+const GLOW_GAP_MS = 1000
+const GLOW_FRESH_MS = 300
+/** When the ring last showed (performance.now() ms), shared by both layouts' chips. */
+let glowedAt = -Infinity
+
+/**
+ * The operator's progression: the standing on one line and, while a success is fresh, what it was and paid on a second.
+ * A screen reader reads it in full words (the label) as plain text beside the symbols it hides, as GlyphKey does,
+ * because a name on a container whose content is all hidden is skipped by some readers' browse modes. Never a live
+ * region, so the round refilling is not read aloud; the chime's caption already says a check happened. A success
+ * brings one soft ring (a warmer one for a critical success, which the words also say): opacity alone, once, at most
+ * once a second, and none under reduced motion.
+ */
+function ProgressChip({ p, panel, muted }: { p: HudProgress; panel: string; muted: string }) {
+  const ring = useRef<HTMLSpanElement>(null)
+  const cueAt = p.cueAt
+  const young = p.cueAge <= GLOW_FRESH_MS
+  useEffect(() => {
+    const el = ring.current
+    if (!el || cueAt < 0 || !young || CALM.matches()) return
+    const now = performance.now()
+    if (now - glowedAt < GLOW_GAP_MS) return
+    glowedAt = now
+    // Never cancelled: a ring still fading when the next check comes finishes its fade (it is short and holds no fill),
+    // and the gap above decides whether a new one starts, so a soft ring never ends in a cut.
+    el.animate([{ opacity: 0 }, { opacity: 1, offset: 0.3 }, { opacity: 0 }], { duration: GLOW_MS, easing: 'ease-out' })
+    // Keyed on the check alone: the age only gates the first render that sees it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cueAt])
+  return (
+    <div className={`relative flex max-w-full flex-col items-start px-3 py-1.5 text-[11px] font-semibold tabular-nums ${panel}`} data-hint="progress">
+      <span ref={ring} aria-hidden className={`pointer-events-none absolute -inset-px rounded-2xl opacity-0 ring-2 ${p.cue === 'critical' ? 'ring-amber-300/80' : 'ring-sky-300/70'}`} />
+      <span aria-hidden className="flex max-w-full items-center gap-2">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+        <span className="truncate">{p.text}</span>
+      </span>
+      {p.cue && <span aria-hidden className={`max-w-full truncate pl-4 font-medium ${muted}`}>{p.delta ? `${p.cueText} · ${p.delta}` : p.cueText}</span>}
+      <span className="sr-only">{p.label}</span>
+    </div>
+  )
 }
 
 /** Posted-limit sign (white regulatory plate). */
