@@ -74,19 +74,21 @@
         system: pkgs: {
           inherit (self.packages.${system}) page crimson-noir-agent-city;
           # The module evaluated on a minimal system: the launcher installed, the graphics driver on, the DualSense
-          # rules in place, the package's derivation evaluated once the page is allowed and refused while it is not.
-          # Only the configuration is evaluated; no system is built.
+          # rules in place, the package's derivation evaluated once the page is allowed and refused while it is not;
+          # and its Ollama option alone: on loopback at 11434, the Vulkan build unless another is chosen, the graphics
+          # driver for Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the
+          # integrated GPU only when asked for, the system's own settings winning.
+          # Only the configuration is evaluated; no system is built and nothing runs.
           module =
             let
-              system' =
+              eval =
                 extra:
-                (lib.nixosSystem {
+                lib.nixosSystem {
                   modules = [
                     self.nixosModules.default
                     extra
                     {
                       nixpkgs.hostPlatform = system;
-                      programs.crimson-noir-agent-city.enable = true;
                       boot.loader.grub.enable = false;
                       fileSystems."/" = {
                         device = "none";
@@ -95,17 +97,96 @@
                       system.stateVersion = "26.05";
                     }
                   ];
+                };
+              city =
+                extra:
+                (eval {
+                  imports = [ extra ];
+                  programs.crimson-noir-agent-city.enable = true;
                 }).config;
-              config = system' { nixpkgs.config.allowUnfreePredicate = allowPage; };
-              refused = system' { };
+              config = city { nixpkgs.config.allowUnfreePredicate = allowPage; };
+              refused = city { };
               names = map (p: p.pname or p.name) config.environment.systemPackages;
               rules = map (p: p.name) config.services.udev.packages;
+              llm =
+                extra:
+                eval {
+                  imports = [ extra ];
+                  programs.crimson-noir-agent-city.ollama.enable = true;
+                };
+              plain = llm { };
+              full = llm {
+                programs.crimson-noir-agent-city.ollama = {
+                  models = [ "qwen3-vl:4b" ];
+                  extraOrigins = [ "https://cassius-software.github.io" ];
+                };
+              };
+              # A system default below the option's, so a module that ignored "cpu" would leave the Vulkan build.
+              cpu = llm (
+                { pkgs, ... }:
+                {
+                  programs.crimson-noir-agent-city.ollama.acceleration = "cpu";
+                  services.ollama.package = lib.mkOverride 1500 pkgs.ollama-vulkan;
+                }
+              );
+              rocm = llm { programs.crimson-noir-agent-city.ollama.acceleration = "rocm"; };
+              none = llm { programs.crimson-noir-agent-city.ollama.acceleration = null; };
+              igpu = llm { programs.crimson-noir-agent-city.ollama.integratedGpu = true; };
+              off = llm { services.ollama.enable = false; };
+              ownPackage = llm ({ pkgs, ... }: { services.ollama.package = pkgs.ollama-cpu; });
+              ownDefault = llm { services.ollama.host = lib.mkDefault "0.0.0.0"; };
+              cuda = llm { programs.crimson-noir-agent-city.ollama.acceleration = "cuda"; };
+              cudaAllowed = llm {
+                programs.crimson-noir-agent-city.ollama.acceleration = "cuda";
+                nixpkgs.config.allowUnfree = true;
+              };
+              theirs = llm {
+                programs.crimson-noir-agent-city.ollama = {
+                  extraOrigins = [ "https://a.example" ];
+                  models = [ "a" ];
+                };
+                services.ollama = {
+                  host = "0.0.0.0";
+                  port = 11500;
+                  environmentVariables.OLLAMA_ORIGINS = "https://b.example";
+                  loadModels = [ "b" ];
+                };
+              };
+              env = e: e.config.systemd.services.ollama.environment;
+              ours = e: lib.filter (w: lib.hasInfix "ollama" w) e.config.warnings;
+              failed = e: lib.filter (a: !a.assertion) e.config.assertions;
             in
             assert config.hardware.graphics.enable;
             assert lib.elem "crimson-noir-agent-city" names;
             assert lib.elem "crimson-noir-dualsense-udev-rules" rules;
             assert lib.isString config.programs.crimson-noir-agent-city.package.drvPath;
             assert !(builtins.tryEval refused.programs.crimson-noir-agent-city.package.drvPath).success;
+            assert !config.services.ollama.enable;
+            assert plain.config.services.ollama.enable;
+            assert (env plain).OLLAMA_HOST == "127.0.0.1:11434";
+            assert plain.config.services.ollama.package.drvPath == plain.pkgs.ollama-vulkan.drvPath;
+            assert plain.config.hardware.graphics.enable;
+            assert !((env plain) ? OLLAMA_ORIGINS) && !((env plain) ? OLLAMA_IGPU_ENABLE);
+            assert !(plain.config.systemd.services ? ollama-model-loader);
+            assert ours plain == [ ] && failed plain == [ ];
+            assert !(lib.elem "crimson-noir-agent-city" (map (p: p.pname or p.name) plain.config.environment.systemPackages));
+            assert (env full).OLLAMA_ORIGINS == "https://cassius-software.github.io";
+            assert full.config.services.ollama.loadModels == [ "qwen3-vl:4b" ];
+            assert full.config.systemd.services ? ollama-model-loader;
+            assert cpu.config.services.ollama.package.drvPath == cpu.pkgs.ollama-cpu.drvPath;
+            assert none.config.services.ollama.package.drvPath == none.pkgs.ollama.drvPath;
+            assert !cpu.config.hardware.graphics.enable && !rocm.config.hardware.graphics.enable;
+            assert !none.config.hardware.graphics.enable && cuda.config.hardware.graphics.enable;
+            assert (env igpu).OLLAMA_IGPU_ENABLE == "1";
+            assert !(builtins.tryEval cuda.config.services.ollama.package.drvPath).success;
+            assert lib.isString cudaAllowed.config.services.ollama.package.drvPath;
+            assert (env theirs).OLLAMA_HOST == "0.0.0.0:11500";
+            assert (env theirs).OLLAMA_ORIGINS == "https://b.example";
+            assert lib.length (ours theirs) == 3;
+            assert lib.sort lib.lessThan theirs.config.services.ollama.loadModels == [ "a" "b" ];
+            assert ownPackage.config.services.ollama.package.drvPath == ownPackage.pkgs.ollama-cpu.drvPath;
+            assert (env ownDefault).OLLAMA_HOST == "0.0.0.0:11434";
+            assert !off.config.services.ollama.enable;
             pkgs.runCommand "crimson-noir-module-check" { } "touch $out";
         }
       );

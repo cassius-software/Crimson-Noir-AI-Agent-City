@@ -1306,6 +1306,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   rooms reached the crowd; it does not wait for anyone to reach work, since the software renderer runs that map's
   realm at about a tenth of real time: a longer run on it saw the first worker at a station after 81 s of realm time,
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
+- **NixOS: Ollama in one line.** `programs.crimson-noir-agent-city.ollama.enable = true;` in the flake's NixOS module
+  runs Ollama as a service on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider finds it once
+  it has a model. The build is chosen by `acceleration` (`pkgs.ollama-vulkan` by default; `rocm`, `cuda`, `cpu`, or
+  null for the service's own), since NixOS 26.05 removed `services.ollama.acceleration`; Vulkan and CUDA turn on
+  `hardware.graphics.enable`. Ollama skips integrated GPUs by default, so `integratedGpu = true` sets
+  `OLLAMA_IGPU_ENABLE=1` for a machine whose only GPU is integrated. `models` are pulled once it starts, `extraOrigins`
+  become `OLLAMA_ORIGINS` (the launcher's own page needs none), host and port stay nixpkgs' own and the rest it sets
+  are defaults the configuration can override, and it warns about a host off loopback, a port other than 11434, and
+  an `OLLAMA_ORIGINS` set elsewhere. It works without the city's own `enable`. CI evaluates it in `nix flake check` on
+  the pinned NixOS 26.05: loopback, the Vulkan, CPU and default builds, the graphics driver for
+  Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
+  when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
+  real GPU is untried.
 
 ### Changed
 
