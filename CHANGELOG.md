@@ -1431,6 +1431,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×
+  844), and held sideways it was squeezed into a strip 30 to 50 px tall above the thumbs, over her chip. Now
+  (`onboarding/FirstWalk.tsx`): anywhere but the wide side-by-side place it steps aside while her card is open; upright
+  it stays under her chip (`--chip-bottom`) and above the buttons; sideways it stands between the stick and the buttons
+  (`--touch-left`), above the HUD's chips at the foot (`--hud-foot`, published by the compact HUD and by the hidden
+  HUD's captions). Where that band is short of 8 rem (a large text size, captions or a shop's chip at the foot),
+  Sloane's chip moves up to the top row and the card rises under it over the HUD's header and readout, both reading
+  one CSS step (`Concierge.tsx` `CHIP_TOP.walk`) on the foot latched at its highest until the window changes size
+  (`footPeak.ts`), so captions coming and going never move them. At the wheel sideways the card steps aside (the
+  car's buttons fill the band) while Sloane still says its lines, and the touch Menu's sheet now opens over the card
+  (`TouchControls.tsx`, z 1060). The browser smoke's new `walkphone` scenario checks all of it on an iPhone: the card
+  away during her question, clear of her chip, the minimap, the foot chips and every touch control upright, at
+  874 × 402, 844 × 390 and 667 × 375 sideways and at 125 % and 175 % text, under the Menu's sheet, the latch held and
+  let go, and the wheel both ways; it fails three ways on the old layout. A real phone is unverified.
 - **Craft show red to port and green to starboard, and planes bank into their turns.** A craft's body has its right
   side on +z under the view's yaw (`craftView.ts`), but the drone's and the plane's red light sat on +z, and a plane
   rolled its outer wing down through a turn. The side lights move to their own sides (the new ferry's too), the bank
