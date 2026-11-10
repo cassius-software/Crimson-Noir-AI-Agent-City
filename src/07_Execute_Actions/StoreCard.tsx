@@ -8,8 +8,10 @@
  * player's body, which the mirror camera circles, and taken off again when the card closes unless it was bought),
  * Buy (the shopkeeper's gate takes the credits and sets the owned bit; a bought line is worn at once) and, once owned,
  * Wear. A home's deed sells the same way, and its row also says where the home stands and has Visit (Go home once
- * owned), which the host answers by taking the avatar to the home's doorstep or by saying why it cannot. Lines the
- * wardrobe or furnishing do not have yet are listed as on order, with no button. The purse line shows the operator's
+ * owned), which the host answers by taking the avatar to the home's doorstep or by saying why it cannot; a deed that
+ * would leave less than the cheapest piece of furniture says so before it is bought. A piece of furniture sells the
+ * same way and, once owned, says it is placed at home (B in a home one owns opens the home card's furnishing view).
+ * Lines the wardrobe does not have yet are listed as on order, with no button. The purse line shows the operator's
  * level and civic credits from the progression keeper. Esc, the close button or Done puts it
  * away; the host gives the eye back to the head.
  * What breaks if it is removed? A shop is a room with nothing to buy in it, and nothing shows what the shops sell.
@@ -17,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { SHOP_INFO, type Shop } from '../01_Initialize_World/storefronts.ts'
 import type { Look } from '../03_Spawn_Agents/look.ts'
-import { GATE, credits, wearItem, type StoreItem } from './storeCatalog.ts'
+import { GATE, cheapestOnSale, credits, wearItem, type StoreItem } from './storeCatalog.ts'
 import type { ShopRow, Shopkeeper } from './shopkeeper.ts'
 
 export interface StoreCardProps {
@@ -62,6 +64,7 @@ function themeOf(dark: boolean) {
     buy: dark ? 'bg-teal-300 text-slate-950 hover:bg-teal-200' : 'bg-teal-700 text-white hover:bg-teal-800',
     off: dark ? 'border-white/10 text-slate-400' : 'border-slate-900/10 text-slate-400',
     primary: dark ? 'bg-white text-slate-900' : 'bg-slate-900 text-white',
+    warn: dark ? 'text-amber-200' : 'text-amber-800',
   }
 }
 type Theme = ReturnType<typeof themeOf>
@@ -77,8 +80,19 @@ function sections(rows: readonly ShopRow[]): [string, ShopRow[]][] {
   return [...out]
 }
 
-function Row({ row, look, trying, t, where, onTry, onBuy, onWear, onGo }: {
-  row: ShopRow; look: Look; trying: boolean; t: Theme; where: Where | null
+/**
+ * What a deed that may be bought now would leave, when that is less than the cheapest piece of furniture on sale (so
+ * the new home could not be furnished at once), in words; else null. A free deed spends nothing and never warns.
+ */
+function leavesTooLittle(item: StoreItem, verdict: number, balance: number): string | null {
+  const cheapest = cheapestOnSale('furniture')
+  if (item.kind !== 'deed' || verdict !== GATE.bought || item.price === 0 || cheapest === null) return null
+  const left = balance - item.price
+  return left < cheapest ? `Leaves ${credits(left)}, less than any furniture` : null
+}
+
+function Row({ row, look, trying, t, where, balance, onTry, onBuy, onWear, onGo }: {
+  row: ShopRow; look: Look; trying: boolean; t: Theme; where: Where | null; balance: number
   onTry: (item: StoreItem) => void; onBuy: (item: StoreItem) => void; onWear: (item: StoreItem) => void; onGo?: (item: StoreItem) => void
 }) {
   const { item, verdict, why, owned, worn } = row
@@ -87,6 +101,7 @@ function Row({ row, look, trying, t, where, onTry, onBuy, onWear, onGo }: {
   // A deed's row says where its home stands, and why Visit cannot go there now, in words a touch screen shows too.
   const place = where ? [where.line, where.why].filter(Boolean).join(' · ') : ''
   const goOff = where === null || where.why !== null
+  const warn = leavesTooLittle(item, verdict, balance)
   return (
     <li className={`flex flex-wrap items-center gap-x-2 gap-y-1 border-b py-2 last:border-b-0 ${t.rule}`} data-item={item.id} data-verdict={verdict} data-owned={owned || undefined} data-worn={worn || undefined}>
       <div className="min-w-0 flex-1">
@@ -95,6 +110,8 @@ function Row({ row, look, trying, t, where, onTry, onBuy, onWear, onGo }: {
           Level {item.level} · {credits(item.price)}{status !== credits(item.price) && <> · <span data-why>{status}</span></>}
         </div>
         {place && <div className={`text-[11px] leading-snug ${t.muted}`} data-place>{place}</div>}
+        {warn && <div className={`text-[11px] leading-snug ${t.warn}`} data-warn>{warn}</div>}
+        {owned && item.kind === 'furniture' && <div className={`text-[11px] leading-snug ${t.muted}`} data-at-home>Place it at home (B)</div>}
       </div>
       {!owned && fits && (
         <button type="button" onClick={() => onTry(item)} aria-pressed={trying} className={`rounded-full border px-2.5 py-0.5 text-[12px] ${trying ? t.pillOn : t.pill}`} data-action="try">
@@ -175,7 +192,8 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
       setSaid({ shop, text: line ? `${item.name} is yours: ${line}` : `${item.name} is yours` })
       return
     }
-    setSaid({ shop, text: r.message })
+    // A piece of furniture bought is placed at home: B in a home one owns opens the furnishing view.
+    setSaid({ shop, text: r.verdict === GATE.bought && item.kind === 'furniture' ? `${r.message}: place it at home (B)` : r.message })
     if (r.verdict !== GATE.bought) return
     // Bought is worn at once (the plan's instant buy and equip); the try-on, if it was this line, is now the look.
     const next = keeper.wear(item.id, look)
@@ -222,7 +240,7 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
               <h3 className={`text-[11px] font-semibold uppercase tracking-wide ${t.muted}`}>{group}</h3>
               <ul>
                 {list.map((r) => (
-                  <Row key={r.item.id} row={r} look={look} trying={trying === r.item.id} t={t} where={whereOf(r.item)} onTry={tryOn} onBuy={buy} onWear={wear} onGo={onGo} />
+                  <Row key={r.item.id} row={r} look={look} trying={trying === r.item.id} t={t} where={whereOf(r.item)} balance={w.credits()} onTry={tryOn} onBuy={buy} onWear={wear} onGo={onGo} />
                 ))}
               </ul>
             </section>
@@ -238,10 +256,7 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
                   </li>
                 ))}
               </ul>
-              <p className={`mt-1 text-[11px] leading-snug ${t.muted}`}>
-                {later.some((r) => r.item.kind === 'wear') && 'Worn lines arrive with the wardrobe update. '}
-                {later.some((r) => r.item.kind === 'furniture') && 'Furniture arrives with furnishing.'}
-              </p>
+              {later.some((r) => r.item.kind === 'wear') && <p className={`mt-1 text-[11px] leading-snug ${t.muted}`}>Worn lines arrive with the wardrobe update.</p>}
             </details>
           )}
         </div>

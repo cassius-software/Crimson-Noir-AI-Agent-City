@@ -7,8 +7,8 @@
  * at eye height (the crowd and the car-exit rule treat lots as solid) but the workplaces', the shops' and the homes'
  * rooms, and the parks open; the heritage quarter's two- to four-storey rows, its one church and one mill; the
  * lakefront's mid-rise; the seawall along the whole world, open only for the pier, whose deck is walkable; furniture
- * clear of the pier and of the pavilions; the crowd's grid ending short of the water; and all of it the same for the
- * same seed.
+ * clear of the pier and of the pavilions; the crowd's grid ending short of the water; every box in a finish of the
+ * city's own, never one of the two the homes' furniture alone is drawn in; and all of it the same for the same seed.
  * What breaks if it is removed? A generator change could put a wall on a sidewalk, a car into the lake, a pedestrian's
  * route through a park, or a spire where the kernel's physics expects open street, unnoticed.
  */
@@ -70,6 +70,18 @@ test('the same seed gives the same city (and furniture); another seed another', 
   assert.deepEqual(streetFurniture(1337), streetFurniture(1337))
   assert.notDeepEqual(generateCity(1337), generateCity(7))
   assert.deepEqual(generateCity(1337), generateBuildings(1337).map((b) => b.box), 'the physics worker\'s boxes are the drawn ones')
+})
+
+test('the styles: every finish a number of its own; the homes\' furnishing styles (planted, lit) dress no box of the city', () => {
+  assert.equal(new Set(Object.values(STYLE)).size, Object.keys(STYLE).length)
+  assert.deepEqual([STYLE.planted, STYLE.lit], [11, 12], 'the two the furnishing adds, after glass')
+  for (const seed of SEEDS) {
+    for (const o of [{}, { homes: false }]) {
+      const used = new Set(generateBuildings(seed, o).map(({ style }) => style))
+      assert.ok(!used.has(STYLE.planted) && !used.has(STYLE.lit), `${seed}: ${[...used].sort((a, b) => a - b).join(', ')}`)
+      for (const s of used) assert.ok(Number.isInteger(s) && s >= STYLE.mixed && s <= STYLE.glass, `${seed}: style ${s}`)
+    }
+  }
 })
 
 test('streets and sidewalks stay clear: below head height every box is inside its lot, but the shoreline\'s', () => {

@@ -17,11 +17,14 @@
  * the rig stream leaves with the poses. Recruitment is decided here too: a request is
  * checked against this realm's own readings of the crowd (earshot, the sidewalk, the skill), the person is asked
  * over through the crowd's summon slots, becomes Active (tethered: following the operator) on arrival, and is released
- * when the operator walks off, drives off or dismisses them. Nothing it returns is a reference into it. It
+ * when the operator walks off, drives off or dismisses them. A home's furniture is solid here too: the page sends each
+ * home's boxes ('home'), checked against that home's room frame (properties.ts checkHomeBoxes); a new piece stays off
+ * while anyone on foot stands by it, a piece sent again where it was stays as it was, and every piece is gone from the
+ * world for as long as a network room lasts. Nothing it returns is a reference into it. It
  * imports no DOM, no worker API and no GPU code, so the node tests drive it directly with a stand-in sensor.
  * What breaks if it is removed? The worker has nothing to run, and the page has no simulation.
  */
-import { CITY, CITY_SIZE, inLot } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_SIZE, inLot, type Box } from '../01_Initialize_World/city.ts'
 import { cityGrid, regionGrid, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
 import { workplaces, workplacesAt, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
@@ -34,6 +37,7 @@ import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { exitPoint, HELD_CARS, type GlassRoom } from './carRig.ts'
 import { shops, shopsAt } from '../01_Initialize_World/storefronts.ts'
+import { checkHomeBoxes, cityHomes, homeFrames, type HomeFrame } from '../01_Initialize_World/properties.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { JointRealm } from './jointRealm.ts'
@@ -88,6 +92,11 @@ const ZERO_NUDGE: Nudge = Object.freeze({ dx: 0, dz: 0 })
 const TUNING_KEYS = Object.keys(CAR_TUNE_RANGE) as (keyof CarTuning)[]
 /** How far past a building lot's edge a spawn inside one is moved, m (onto the sidewalk; #interact exits with 0.4). */
 const LOT_PAD = 0.4
+/**
+ * How far beyond a person's radius a home's new furniture keeps clear of them before it turns solid, m (#tendHomes): a
+ * set waits while anyone on foot stands within their radius and this of one of its boxes.
+ */
+const HOME_CLEAR = 0.05
 const IDLE_FOOT: FootControls = Object.freeze({ x: 0, z: 0, heading: NaN })
 const IDLE_DRIVE: DriveControls = Object.freeze({ steer: 0, fwd: 0, back: 0, handbrake: false })
 
@@ -235,6 +244,12 @@ export class SimCore {
   readonly #held: Vehicle[] = []
   /** Player 1 took a door this step (a network room hears one a step). */
   #doored = false
+  /** The homes' room frames by property index (properties.ts homeFrames): the city's seven, a generated region's, or none. */
+  readonly #homeFrames: readonly (HomeFrame | null)[]
+  /** Per home: the solid boxes the page last set (the 'home' command), city boxes, or null for none. */
+  readonly #homeSets: (readonly Box[] | null)[]
+  /** Per home: the boxes of its set built but still off, waiting for nobody on foot to stand by them (#tendHomes). */
+  readonly #homeOff: (readonly Box[])[]
 
   private constructor(physics: Physics, o: SimCoreOptions, crowd: CrowdSensor | null, rooms: readonly Workplace[]) {
     this.#physics = physics
@@ -242,6 +257,11 @@ export class SimCore {
     // The city's shops are its seed's like its rooms, a generated region's are the lots it was handed (none in a
     // surveyed region); a car driven into one leaves its driver clear of the glass and the fixtures as a workplace does.
     this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]
+    // The homes' frames the furniture is checked against: the city's from its seed, a generated region's from the lots it
+    // was handed (none in a surveyed region). No home is glass: no car fits between a home's planters.
+    this.#homeFrames = Object.freeze(o.region ? homeFrames(o.streets && o.homes?.length ? o.homes : []) : homeFrames(cityHomes(o.seed)))
+    this.#homeSets = this.#homeFrames.map(() => null)
+    this.#homeOff = this.#homeFrames.map(() => [])
     this.#debug = o.debug === true
     const r = o.region?.bounds
     this.#auditor = r
@@ -418,6 +438,8 @@ export class SimCore {
           this.noteRejected(message(e))
         }
       }
+      // A home's furniture turns solid once nobody on foot stands in it, before this step's substeps; never in a room.
+      if (!this.#room) this.#tendHomes()
       // The robot bodies take this step's setpoints (or go on holding) before the substeps drive them.
       this.#robots.tend(this.#simTime)
       const fleet = this.#fleet, avatars = this.#avatars, driving = this.#driving
@@ -682,6 +704,36 @@ export class SimCore {
     return this.#room
   }
 
+  /**
+   * Turns on every home's boxes that are still off once nobody on foot stands by them: no capsule within its radius and
+   * HOME_CLEAR of one of them across, with the heights overlapping. A piece put down where a player stands turns solid
+   * only once they have stepped off it, so nobody is ever caught inside one; the pieces already on are not waited on
+   * (nobody stands inside a solid piece) and stay on throughout. A collider switched on meets the avatars' moves from the
+   * world's next step on (the step builds the tree the moves search), one substep later.
+   */
+  #tendHomes(): void {
+    for (let i = 0; i < this.#homeOff.length; i++) {
+      const off = this.#homeOff[i]
+      if (off.length === 0 || this.#standsIn(off)) continue
+      this.#physics.enableHome(i, true)
+      this.#homeOff[i] = []
+    }
+  }
+
+  /** Whether any avatar on foot stands in one of `boxes` or within its radius and HOME_CLEAR of it, the heights overlapping. */
+  #standsIn(boxes: readonly Box[]): boolean {
+    for (let k = 0; k < this.#avatars.length; k++) {
+      if (this.#driving[k] !== null) continue
+      const a = this.#avatars[k], p = a.person
+      const t = a.body.translation(this.#pos)
+      const grow = p.radius + HOME_CLEAR, lo = t.y - p.halfHeight - p.radius, hi = t.y + p.halfHeight + p.radius
+      for (const [x0, y0, z0, x1, y1, z1] of boxes) {
+        if (t.x > x0 - grow && t.x < x1 + grow && t.z > z0 - grow && t.z < z1 + grow && lo < y1 && hi > y0) return true
+      }
+    }
+    return false
+  }
+
   /** One page command. Anything malformed throws; step() counts it as refused and goes on. */
   #command(raw: unknown): void {
     if (typeof raw !== 'object' || raw === null || typeof (raw as { c?: unknown }).c !== 'string') throw new Error('malformed command')
@@ -720,6 +772,27 @@ export class SimCore {
           }
           this.#held.length = 0
         }
+        // The room's authority knows only the city's own boxes, so every home's furniture leaves the world while the
+        // room lasts: its body is removed, which the very next substep's moves already see (a collider switched off
+        // would still stop player 1 until the world's next step, where the room's mirror never had it). Each set is
+        // kept, built again off on leaving, and comes back on (#tendHomes) once nobody stands by it. Leaving when not
+        // in a room keeps every piece as it is.
+        for (let i = 0; i < this.#homeSets.length; i++) {
+          const set = this.#homeSets[i]
+          if (set !== null) this.#homeOff[i] = this.#physics.setHome(i, on ? [] : set)
+        }
+        return
+      }
+      case 'home': {
+        this.#notInRoom(cmd.c)
+        const index = cmd.index
+        const frame = typeof index === 'number' && Number.isInteger(index) ? this.#homeFrames[index] : undefined
+        if (!frame) throw new Error(`home: no home ${String(index)} in this world`)
+        const boxes = checkHomeBoxes(frame, cmd.boxes)
+        // The new set replaces the old one: a piece sent again where it was stays as it was (on stays on), and each new
+        // piece is built off and waits for nobody to stand by it (#tendHomes, after the commands).
+        this.#homeOff[index] = this.#physics.setHome(index, boxes)
+        this.#homeSets[index] = boxes.length > 0 ? boxes : null
         return
       }
       case 'netCar': {
