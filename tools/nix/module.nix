@@ -5,13 +5,15 @@
 # Why does this file exist? It is the NixOS side of the flake: `programs.crimson-noir-agent-city.enable = true;`
 # installs the launcher and its app-menu entry, turns on the Vulkan driver Chromium's WebGPU needs
 # (hardware.graphics.enable, Mesa's radv on an AMD GPU), and lets the signed-in user's browser open a DualSense over
-# WebHID (its trigger resistance, rumble and light bar need the raw HID node; the plain gamepad works without it). The
+# WebHID (its trigger resistance, rumble and light bar need the raw HID node; the plain gamepad works without it).
+# `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service on this machine's loopback, where the
+# city's auto provider finds it, with a GPU build of Ollama (Vulkan unless told otherwise). The
 # package is built from the system's own nixpkgs, so the browser and the Vulkan driver come from one set of libraries
 # (Chromium from an older nixpkgs can fail to load a newer system's driver). The page is marked unfree (LICENSE, section
 # 1), so the configuration allows it by name: nixpkgs.config.allowUnfreePredicate (MANUAL.md, On NixOS). A
 # configuration without flakes can import this file directly.
 # What breaks if it is removed? A NixOS machine still runs the city with `nix run`, but has to turn on the graphics
-# driver and the controller's access itself.
+# driver, the controller's access and Ollama itself.
 {
   config,
   lib,
@@ -21,6 +23,11 @@
 
 let
   cfg = config.programs.crimson-noir-agent-city;
+  llm = cfg.ollama;
+  # nixpkgs 26.05 names one Ollama package per backend (ollama-cpu, -vulkan, -cuda, -rocm) and has removed
+  # services.ollama.acceleration, so the choice is made by package; null leaves services.ollama.package alone.
+  llmPackage = if llm.acceleration == null then null else "ollama-${llm.acceleration}";
+  origins = lib.concatStringsSep "," llm.extraOrigins;
   # uaccess has to be tagged before systemd's 73-seat-late.rules applies it, so the rules go in a 70- file of their own
   # (services.udev.extraRules would land in 99-local.rules, too late).
   dualsense = pkgs.writeTextFile {
@@ -53,11 +60,79 @@ in
       default = true;
       description = "Give the signed-in user the DualSense's raw HID node, for WebHID's triggers, rumble and light bar.";
     };
+    ollama = {
+      enable = lib.mkEnableOption ''
+        Ollama for the city's agents: services.ollama on this machine's loopback (127.0.0.1:11434), where the city's
+        auto provider finds it. It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve
+        models without the city'';
+      acceleration = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.enum [
+            "cpu"
+            "vulkan"
+            "cuda"
+            "rocm"
+          ]
+        );
+        default = "vulkan";
+        description = ''
+          Which nixpkgs build of Ollama runs it: pkgs.ollama-<this>. "vulkan" runs on AMD, Intel and NVIDIA GPUs
+          through the graphics driver (hardware.graphics.enable is turned on for it); "rocm" is AMD's compute stack;
+          "cuda" is NVIDIA's, unfree, so it has to be allowed in nixpkgs.config and is not in the NixOS binary
+          cache; "cpu" uses no GPU. null leaves services.ollama.package as it is.
+        '';
+      };
+      models = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "qwen3-vl:4b" ];
+        description = "Models Ollama pulls once it has started (services.ollama.loadModels).";
+      };
+      extraOrigins = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "https://cassius-software.github.io" ];
+        description = ''
+          Page addresses besides this machine's own that Ollama answers (OLLAMA_ORIGINS). Ollama allows
+          http://127.0.0.1 and http://localhost on any port by itself, so the launcher's page needs nothing here;
+          the web copy, or the city opened from another address, does.
+        '';
+      };
+    };
   };
 
-  config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ cfg.package ];
-    hardware.graphics.enable = lib.mkDefault true;
-    services.udev.packages = lib.mkIf cfg.dualsense [ dualsense ];
-  };
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
+      environment.systemPackages = [ cfg.package ];
+      hardware.graphics.enable = lib.mkDefault true;
+      services.udev.packages = lib.mkIf cfg.dualsense [ dualsense ];
+    })
+
+    (lib.mkIf llm.enable {
+      assertions = [
+        {
+          assertion = llmPackage == null || pkgs ? ${llmPackage};
+          message = "programs.crimson-noir-agent-city.ollama.acceleration: this nixpkgs has no pkgs.${toString llmPackage}";
+        }
+      ];
+      warnings =
+        lib.optional (!lib.elem config.services.ollama.host [ "127.0.0.1" "localhost" "::1" "[::1]" ])
+          "services.ollama.host is ${config.services.ollama.host}: Ollama then answers other machines too, and the city needs only this one"
+        ++ lib.optional (config.services.ollama.port != 11434)
+          "services.ollama.port is ${toString config.services.ollama.port}: the city's auto provider looks at 11434, so type ask server http://localhost:${toString config.services.ollama.port} at its console"
+        ++ lib.optional (
+          llm.extraOrigins != [ ] && (config.services.ollama.environmentVariables.OLLAMA_ORIGINS or origins) != origins
+        ) "services.ollama.environmentVariables.OLLAMA_ORIGINS is set elsewhere, so programs.crimson-noir-agent-city.ollama.extraOrigins is not used";
+      # Vulkan finds its drivers through the graphics stack (/run/opengl-driver).
+      hardware.graphics.enable = lib.mkIf (llm.acceleration == "vulkan") (lib.mkDefault true);
+      services.ollama = {
+        enable = lib.mkDefault true;
+        host = lib.mkDefault "127.0.0.1";
+        port = lib.mkDefault 11434;
+        package = lib.mkIf (llmPackage != null && pkgs ? ${llmPackage}) (lib.mkDefault pkgs.${llmPackage});
+        loadModels = llm.models;
+        environmentVariables = lib.mkIf (llm.extraOrigins != [ ]) { OLLAMA_ORIGINS = lib.mkDefault origins; };
+      };
+    })
+  ];
 }
