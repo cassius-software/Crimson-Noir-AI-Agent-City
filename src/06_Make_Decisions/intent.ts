@@ -7,16 +7,20 @@
  * city's operator controls, refined by up to five "why" questions with quick replies, and turned into a
  * brief: the root intent, a plan of steps (those the host can apply now, and those that need the
  * operator's console or a restart) and a copyable architecture brief naming the modules an engineer would
- * touch. It is deterministic and offline — no language model, no I/O, no clock, no randomness — so the
- * same goal and answers always give the same brief. It never writes code and never shows terminal syntax;
- * module paths appear only in the copyable brief.
+ * touch. A goal about work ("a 24-agent warehouse robotics drill", "the metro schedule") and a goal nothing maps
+ * to both become a dispatch: a team of sub-agents planned by dispatch.ts and sent to the indoor workplaces, so no
+ * goal is a dead end. It is deterministic and offline — no language model decides anything here (a model may reword
+ * Sloane's line about the plan, 07_Execute_Actions/onboarding/voice.ts; it never changes the plan), no I/O, no
+ * clock, no randomness — so the same goal and answers always give the same brief. It never writes code and never
+ * shows terminal syntax; module paths appear only in the copyable brief.
  * What breaks if it is removed? Sloane can only greet and list controls: a goal typed into the Concierge
  * has nowhere to go.
  */
 import { formatClock } from '../01_Initialize_World/solar.ts'
 import { LITE_TIER, PEAK_TIER, TIERS, knobsOf } from '../05_Observe_Environment/governor.ts'
+import { scanWork, teamLabel, teamLines, teamNames, teamOf, type Span, type Team, type WorkScan } from './dispatch.ts'
 
-export type Control = 'time' | 'quality' | 'audio' | 'crowd' | 'cars' | 'district' | 'walk' | 'drive' | 'console' | 'controls'
+export type Control = 'time' | 'quality' | 'audio' | 'crowd' | 'cars' | 'district' | 'walk' | 'drive' | 'console' | 'controls' | 'dispatch'
 
 export interface PlanStep {
   control: Control
@@ -32,6 +36,8 @@ export interface PlanStep {
   ceiling?: true
   /** The modules an engineer would touch to go further (the "architecture" part), e.g. ['01_Initialize_World/solar.ts']. */
   modules: string[]
+  /** dispatch only: the team the host sends (dispatch.ts Team); `value` is how many sub-agents. */
+  team?: Team
 }
 /** One why-question; the options are quick replies, free text is always allowed. */
 export interface WhyStep { depth: number; question: string; options: string[] }
@@ -59,9 +65,12 @@ interface Hyp {
   /** Added by a why-answer as a means to the goal, not by the goal itself: no why-question of its own. */
   derived: boolean
 }
-interface Unmapped { label: string; modules: readonly string[] }
+/** A wish the controls do not carry. `exists`: the row points at something the city already has (the shops, the
+ *  workplaces, the wardrobe), so it is an answer, not a gap. `chore`: "jobs" and "tasks", which say nothing
+ *  against a goal that names work. */
+interface Unmapped { label: string; modules: readonly string[]; exists?: true; chore?: true }
 /** Why a goal has no hypotheses: it asked for harm, it was "I don't know", or nothing in the taxonomy fits. */
-type Flag = 'none' | 'harm' | 'unsure' | 'unmapped'
+type Flag = 'none' | 'harm' | 'unsure' | 'unmapped' | 'pointed'
 interface Frame {
   readonly goal: string
   readonly hyps: Hyp[]
@@ -69,6 +78,8 @@ interface Frame {
   readonly unmapped: Unmapped[]
   readonly asked: Set<string>
   readonly flag: Flag
+  /** The team a dispatch hypothesis sends: the goal's, or the first an answer named. */
+  team: Team | null
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -268,7 +279,7 @@ const PEAK_UNDO = /\b(?:chang\w* my mind|(?<!\bno )second thoughts?|mis ?click\w
 const PEAK_MACHINE = /\b(?:my|the|this|our) (?:graphics card|card|gpu|laptop|pc|computer|machine|phone|device|mac|tablet)\b|\b\d+ ?(?:gb|mb)\b|\bvram\b/
 
 /** Wishes the city cannot grant yet: named in the brief with the modules a change would touch. Matched
- *  first, so "speed up the day" never reads as "day". */
+ *  before the controls (after the work words only), so "speed up the day" never reads as "day". */
 const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:speed(?:ing)? up|slow(?:ing)? down|faster|slower|shorter|longer|freeze|stop|pause|hold) (?:the |a )?(?:time|clock|day|days|night|nights|sun)\b|\b(?:day|night) length\b|\btime (?:go|goes|pass|passes|passing|flies|fly|run|runs) (?:faster|slower|quicker|by)\b|\bdays? (?:are|is) too (?:short|long|fast|slow)\b|\b(?:freeze|pause|stop) time\b/,
     label: 'How fast the day passes: set when the city starts, not while it runs', modules: ['07_Execute_Actions/engine.ts', 'App.tsx'] },
@@ -281,19 +292,22 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: everyone here stays on the ground', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
   { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
-    label: 'Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
-    modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
+    label: 'Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops and seven homes in each (walk into a shop and press B to browse; a home\'s deed is sold at Lintel & Lumen or on its doorstep); every other building is a solid shell for now',
+    modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/properties.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'], exists: true },
   { re: /\b(?:buy(?:ing)?|purchase|shop(?:s|ping)?|stores?|money|cash|coins?|credits?)\b/,
-    label: 'Shopping: five shops in the city and five in the lakefront metropolis sell clothes and accessories for civic credits; walk into one and press B to browse (Sloane cannot buy for you)',
-    modules: ['01_Initialize_World/storefronts.ts', '07_Execute_Actions/storeCatalog.ts', '07_Execute_Actions/StoreCard.tsx'] },
-  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?|jobs?|tasks?)\b/,
+    label: 'Shopping: five shops in the city and five in the lakefront metropolis sell clothes, accessories and the seven homes\' deeds for civic credits; walk into one and press B to browse (Sloane cannot buy for you)',
+    modules: ['01_Initialize_World/storefronts.ts', '07_Execute_Actions/storeCatalog.ts', '07_Execute_Actions/StoreCard.tsx'], exists: true },
+  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?)\b/,
     label: 'Missions and scores: there are none; the city is a place, not a game to beat', modules: ['07_Execute_Actions/engine.ts', '06_Make_Decisions/intent.ts'] },
+  // The same note for "jobs" and "tasks" alone, which a goal that names work uses for the work ("assign tasks at the warehouse").
+  { re: /\b(?:jobs?|tasks?)\b/,
+    label: 'Missions and scores: there are none; the city is a place, not a game to beat', modules: ['07_Execute_Actions/engine.ts', '06_Make_Decisions/intent.ts'], chore: true },
   { re: /\b(?:more (?:buildings|streets|blocks)|bigger city|larger city|expand the city|new (?:buildings|district)|build (?:a |something|houses)|construct)\b/,
     label: 'A bigger city: the street grid is fixed when the city starts', modules: ['01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
   { re: /\b(?:vr|virtual reality|headset|webxr|xr)\b/,
     label: 'A headset: the head rig is ready for one, but there is no XR session yet', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/engine.ts'] },
   { re: /\b(?:change|different|new|customi[sz]e|edit|pick|choose) (?:my |the )?(?:avatar|character|outfit|clothes|body|face|skin|hair)\b|\b(?:avatar|outfit|clothes|clothing|hair|skin colou?r)\b/,
-    label: 'Your look: the wardrobe is a tap away (Look on Sloane\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'] },
+    label: 'Your look: the wardrobe is a tap away (Look on Sloane\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'], exists: true },
   { re: /\b(?:save (?:the |my )?(?:game|city|progress|state)|load (?:the |my )?(?:game|save)|checkpoint|photo mode|record(?:ing)? (?:a |the )?(?:video|clip)|screenshots?|share (?:this|it|the city))\b/,
     label: 'Saving, sharing and photo mode: not in the city yet (your name is the only thing remembered)', modules: ['05_Observe_Environment/profile.ts', 'App.tsx'] },
 ]
@@ -391,10 +405,10 @@ const RULES: readonly Rule[] = [
   one(/\b(?:how (?:do|can|could|would|should) (?:i|you|we)|how to|how does|what (?:do|should|can) i (?:press|do|use)|which (?:key|button)|what (?:key|button)|controls?|keys|buttons|help(?: me)?|tutorial|guide|instructions|teach me|show me how|learn|lost|confused|stuck|what is this|what'?s this|where am i|beginner|new here|first time|get(?:ting)? started)\b/, 'controls', undefined, 0.9),
 ]
 
-interface Analysis { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; flag: Flag }
+interface Analysis { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; flag: Flag; team: Team | null }
 /** The taxonomy's reading. `kept` is the goal with only the Peak name and the other controls' settled asks (with the words
  *  that only turn them) blanked out, where a goal's turn-down of Peak is looked for; `unsure` is the "I don't know" said. */
-interface Reading { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; harm: boolean; unsure: string | null; kept: string }
+interface Reading { hyps: Hyp[]; tags: Set<Tag>; unmapped: Unmapped[]; harm: boolean; unsure: string | null; kept: string; work: WorkScan }
 
 /** Keeps the stronger reading of a control; among equals the first. A value is never lost to a reading
  *  without one ("noisy roads" stays fewer cars). */
@@ -426,9 +440,23 @@ function read(input: string, peak: boolean): Reading {
   const blank = (s: string, m: RegExpExecArray) => `${s.slice(0, m.index)}${' '.repeat(m[0].length)}${s.slice(m.index + m[0].length)}`
   const consume = (m: RegExpExecArray) => { text = blank(text, m) }
   const harm = HARM.test(text)
+  // The work words and the count go to the team planner (dispatch.ts); taken first so "the lakefront metro" is work,
+  // not a trip to the Lakefront, and "the wind farms" a desk, not the weather. They leave `kept` too: "a battery swap
+  // drill" says nothing about Peak.
+  const work = scanWork(text)
+  for (const sp of work.spans) { text = blankSpan(text, sp); kept = blankSpan(kept, sp) }
   for (const u of UNSUPPORTED) {
     const m = u.re.exec(text)
-    if (m) { unmapped.push({ label: u.label, modules: u.modules }); consume(m) }
+    if (!m) continue
+    consume(m)
+    // One note a label: it points at something the city has, or is a chore word, only if every row that said it does.
+    const had = unmapped.find((x) => x.label === u.label)
+    if (had) {
+      if (!u.exists) delete had.exists
+      if (!u.chore) delete had.chore
+      continue
+    }
+    unmapped.push({ label: u.label, modules: u.modules, ...(u.exists ? { exists: true as const } : {}), ...(u.chore ? { chore: true as const } : {}) })
   }
   const unsureMatch = UNSURE.exec(text)
   const unsure = unsureMatch ? unsureMatch[0] : null
@@ -461,8 +489,10 @@ function read(input: string, peak: boolean): Reading {
       }
     }
   }
-  return { hyps, tags, unmapped, harm, unsure, kept }
+  return { hyps, tags, unmapped, harm, unsure, kept, work }
 }
+/** `text` with the span blanked to spaces (the indexes of everything else stand). */
+const blankSpan = (s: string, sp: Span): string => `${s.slice(0, sp.index)}${' '.repeat(sp.length)}${s.slice(sp.index + sp.length)}`
 
 /**
  * A goal never sets Peak: Sloane asks first (quality.peak), and the console's goal, which asks nothing, leaves the tier
@@ -471,7 +501,7 @@ function read(input: string, peak: boolean): Reading {
  * or auto the goal names stands, and so does the heat and battery rule's Low. The rest of the goal reads as it did before
  * Peak.
  */
-function analyze(input: string): Analysis {
+function analyze(input: string, scouts = false): Analysis {
   let r = read(input, peakNamed(input))
   const q = r.hyps.find((h) => h.control === 'quality')
   if (q?.value === PEAK_TIER) {
@@ -492,10 +522,21 @@ function analyze(input: string): Analysis {
       else { b.value = undefined; r.tags.add('peak-ask') }
     }
   }
-  const { hyps, tags, unmapped, harm, unsure } = r
+  const { hyps, tags, unmapped, harm, unsure, work } = r
+  // Work the goal names is a team (dispatch.ts); with `scouts`, so is a goal nothing else maps to (never harm, never
+  // "I don't know", never a goal without a word in it): the two scouts go, and the goal is no dead end.
+  const named = work.kinds.length > 0 || work.count !== null
+  const worded = /[a-z0-9]/.test(normalize(input))
+  // A goal whose every note points at something the city has ("where are the shops", "go indoors") is answered by the
+  // notes: nobody is sent to scout for it.
+  const pointed = unmapped.length > 0 && unmapped.every((u) => u.exists === true)
+  const team = harm ? null : named || (scouts && worded && hyps.length === 0 && unsure === null && !pointed) ? teamOf(work, input) : null
+  if (team) mergeHyp(hyps, { control: 'dispatch', value: team.lanes.length, confidence: team.scouting ? 0.5 : work.count !== null ? 1 : 0.9, at: work.at, derived: false })
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
-  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : 'unmapped'
-  return { hyps, tags, unmapped, flag }
+  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : pointed ? 'pointed' : 'unmapped'
+  // Work the goal names is the work: its "tasks" and "jobs" are not a wish for missions.
+  const notes = team && !team.scouting ? unmapped.filter((u) => u.chore !== true) : unmapped
+  return { hyps, tags, unmapped: notes, flag, team }
 }
 
 /** The controls a goal names, strongest first: the keyword/phrase taxonomy on its own. */
@@ -540,6 +581,18 @@ function absorb(f: Frame, answer: string, derived: boolean): Control[] {
   for (const h of a.hyps) if (!(named && h.control === 'quality')) put(f, h.control, h.value, h.confidence, derived)
   for (const t of a.tags) if (!(named && (t === 'no-peak' || t === 'peak-ask'))) f.tags.add(t)
   for (const u of a.unmapped) if (!f.unmapped.some((x) => x.label === u.label)) f.unmapped.push(u)
+  // The scouts stood in for a goal nothing mapped; an answer that maps to a control sends them back, and a team the
+  // answer names stands in their place. A team the goal named stays; the dispatch's count is always the team's.
+  if (f.team?.scouting && (a.team !== null || a.hyps.some((h) => h.control !== 'dispatch'))) {
+    f.team = null
+    if (a.team === null) drop(f, 'dispatch')
+  }
+  if (a.team) {
+    if (f.team === null) f.team = a.team
+    const d = find(f, 'dispatch')
+    if (d) d.value = f.team.lanes.length
+    else put(f, 'dispatch', f.team.lanes.length, f.team.scouting ? 0.5 : 0.9, derived)
+  }
   return a.hyps.map((h) => h.control)
 }
 
@@ -610,16 +663,15 @@ const BOTH = ['both', 'both', 'all', 'either', 'each'] as const
 const PROBES: readonly Probe[] = [
   {
     key: 'redirect',
-    when: (f) => f.hyps.length === 0,
-    // A goal with nothing to map, or (flag 'none') an answer that emptied the frame.
+    // A goal the notes already answer (`pointed`) is not asked again.
+    when: (f) => f.hyps.length === 0 && f.flag !== 'pointed',
+    // An answer that emptied the frame (a goal with nothing to map is a dispatch, never a redirect), or harm, or "I don't know".
     ask: (f) => ({
       question: f.flag === 'harm'
         ? 'Nothing here can hurt anyone — every car stops for people, always. Would you rather look around, change how the city looks, or how it runs?'
         : f.flag === 'unsure'
           ? 'No pressure. Would you rather look around, change how the city looks, or how it runs?'
-          : f.flag === 'unmapped'
-            ? 'That’s not something I can do yet. Would you rather look around, change how the city looks, or how it runs?'
-            : 'I didn’t catch that. Would you rather look around, change how the city looks, or how it runs?',
+          : 'I didn’t catch that. Would you rather look around, change how the city looks, or how it runs?',
       options: REDIRECT,
     }),
     resolve: (a, f) => {
@@ -880,6 +932,7 @@ const MODULES: Record<Control, readonly string[]> = {
   drive: ['07_Execute_Actions/vehicles.ts', '07_Execute_Actions/player.ts'],
   console: ['07_Execute_Actions/terminal/commands.ts', '07_Execute_Actions/operator.ts'],
   controls: ['07_Execute_Actions/glyphs.ts', '07_Execute_Actions/Concierge.tsx'],
+  dispatch: ['06_Make_Decisions/dispatch.ts', '08_Swarm/team.ts', '08_Swarm/lanes.ts'],
 }
 
 const CROWD_LABEL: Record<string, string> = { more: 'Bring more people onto the streets', fewer: 'Thin the crowd', none: 'Clear the streets of people' }
@@ -924,6 +977,7 @@ function stepFor(h: Hyp, f: Frame): PlanStep | null {
     case 'drive': return step('Find a car and get in', false)
     case 'console': return step('Open the Ring-0 console', false)
     case 'controls': return step('Show the full control list', false)
+    case 'dispatch': return f.team ? { ...step(teamLabel(f.team), true), value: f.team.lanes.length, team: f.team } : null
   }
 }
 
@@ -933,6 +987,7 @@ function rootOf(f: Frame): string {
   if (!p) {
     if (f.flag === 'harm') return 'Nothing here can hurt anyone, so let’s find what the city can do for you.'
     if (f.flag === 'unsure') return 'You’re happy just looking around for now.'
+    if (f.flag === 'pointed') return 'That is already in the city; here is where to find it.'
     return 'I couldn’t map this one yet.'
   }
   const district = find(f, 'district')?.value
@@ -992,12 +1047,20 @@ function rootOf(f: Frame): string {
       return t('fast') ? 'You want to drive, and not slowly.' : 'You want to drive.'
     case 'console': return 'You want the operator’s console.'
     case 'controls': return 'You want to learn the controls.'
+    case 'dispatch': {
+      const team = f.team
+      if (!team) return 'You want the city to put a team on it.'
+      const n = team.lanes.length
+      if (!team.scouting) return `You want the city to work on it: ${n === 1 ? 'one sub-agent' : `${n} sub-agents`} across ${teamNames(team)}.`
+      const scouts = n === 1 ? 'a scout is' : `${n} scouts are`
+      return f.unmapped.length ? `Nothing in the city does that yet, so ${scouts} on what it can do instead.` : `Nothing maps to that directly, so ${scouts} on it: they read the city and report.`
+    }
   }
 }
 
 const code = (paths: readonly string[]) => paths.map((p) => `\`${p}\``).join(', ')
 
-function markdownOf(goal: string, whys: readonly { question: string; answer: string }[], root: string, plan: readonly PlanStep[], unmapped: readonly Unmapped[], applied: ReadonlySet<Control>): string {
+function markdownOf(goal: string, whys: readonly { question: string; answer: string }[], root: string, plan: readonly PlanStep[], unmapped: readonly Unmapped[], applied: ReadonlySet<Control>, team: Team | null): string {
   const now = plan.filter((s) => s.immediate)
   const later = plan.filter((s) => !s.immediate)
   const item = (s: PlanStep) => `- [${applied.has(s.control) ? 'x' : ' '}] ${s.label} — ${code(s.modules)}`
@@ -1009,7 +1072,11 @@ function markdownOf(goal: string, whys: readonly { question: string; answer: str
   if (!plan.length) lines.push('_Nothing to change._')
   if (now.length) lines.push('### Now — the Concierge applies these', ...now.map(item))
   if (later.length) lines.push('### Later — the operator’s console or a restart', ...later.map(item))
-  if (unmapped.length) lines.push('', '## Not mapped', ...unmapped.map((u) => `- ${u.label}${u.modules.length ? ` — would touch ${code(u.modules)}` : ''}`))
+  if (team) lines.push('', '## Team', `${team.lanes.length} ${team.scouting ? 'scouts' : 'sub-agents'}, one isolated lane each (\`08_Swarm/lanes.ts\`), a NoirScript probe a tick under the lane limits:`, ...teamLines(team))
+  const there = unmapped.filter((u) => u.exists === true)
+  const gaps = unmapped.filter((u) => u.exists !== true)
+  if (there.length) lines.push('', '## Already in the city', ...there.map((u) => `- ${u.label}${u.modules.length ? ` — ${code(u.modules)}` : ''}`))
+  if (gaps.length) lines.push('', '## Not mapped', ...gaps.map((u) => `- ${u.label}${u.modules.length ? ` — would touch ${code(u.modules)}` : ''}`))
   lines.push('', '---', '_Written by the concierge’s 5-Whys engine (deterministic, offline). Module paths are under `src/`._', '')
   return lines.join('\n')
 }
@@ -1027,8 +1094,8 @@ export class FiveWhys {
 
   constructor(goal: string) {
     const text = clean(goal)
-    const a = analyze(text)
-    this.frame = { goal: text, hyps: a.hyps, tags: a.tags, unmapped: a.unmapped, asked: new Set(), flag: a.flag }
+    const a = analyze(text, true)
+    this.frame = { goal: text, hyps: a.hyps, tags: a.tags, unmapped: a.unmapped, asked: new Set(), flag: a.flag, team: a.team }
   }
 
   /** Whys asked so far (0..5). */
@@ -1072,7 +1139,6 @@ export class FiveWhys {
     }
     const unmapped: Unmapped[] = []
     if (f.flag === 'harm') unmapped.push({ label: 'Harm to anyone: not something this city can do. Every car stops for people, and nothing here can hurt anyone', modules: [] })
-    else if (f.flag === 'unmapped' && !f.unmapped.length) unmapped.push({ label: `“${f.goal}”: nothing in the city maps to that yet`, modules: [] })
     unmapped.push(...f.unmapped)
     const root = rootOf(f)
     return {
@@ -1081,7 +1147,7 @@ export class FiveWhys {
       root,
       plan,
       unmapped: unmapped.map((u) => u.label),
-      markdown: markdownOf(f.goal, this.whys, root, plan, unmapped, done),
+      markdown: markdownOf(f.goal, this.whys, root, plan, unmapped, done, plan.some((s) => s.control === 'dispatch') ? f.team : null),
     }
   }
 }

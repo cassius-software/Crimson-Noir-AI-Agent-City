@@ -11,7 +11,8 @@
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
  *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
  *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule; nor is it a
- *   multisampling candidate: one sample a pixel everywhere (FXAA alone);
+ *   multisampling candidate: one sample a pixel everywhere (FXAA alone); its ambient occlusion built and drawn once at
+ *   boot (its two pipelines), then skipped below Ultra;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
@@ -22,7 +23,8 @@
  *   touch-first screen leaves the touch overlay where it is;
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
  *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own; then
- *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off);
+ *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off, and
+ *   with it the ambient occlusion: never built);
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path); the model in this page cannot run there (Chromium refuses the
  *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
@@ -30,14 +32,16 @@
  * - ultra: the top tier of the table pinned, so the shadowed, post and volumetric pipelines are compiled once and must
  *   validate; then Peak pinned above it for a few frames (Ultra's sun shadows, 240 m on the 8192-wide atlas of two 4096
  *   cascades, with Peak's wider sixteen-tap penumbra, 1.25 times the pixel ratio, detailed bodies to 90 m, the HUD
- *   reading Peak) and Ultra back after, with its penumbra and pixels; then Ultra again with ?msaa=1 under the cinema
- *   camera: the scene pass's colour and velocity at 4 samples (the sun shafts reading its multisampled depth), nothing
- *   of it compiled at one sample through Low, Peak and Ultra, and ghost view and rain mode validating over it; the Nix
- *   job runs this one too;
+ *   reading Peak) and Ultra back after, with its penumbra and pixels, the ambient occlusion drawn every frame at twelve
+ *   taps (sixteen at Peak); then Ultra again with ?msaa=1 under the cinema camera: the scene pass's colour and velocity
+ *   at 4 samples (the sun shafts and the ambient occlusion reading its multisampled depth), nothing of it compiled at
+ *   one sample through Low, Peak and Ultra, the occlusion skipped at Low and in rain mode and never compiled again, and
+ *   ghost view and rain mode validating over it; the Nix job runs this one too;
  * - peak: a big desktop faked in full (16 threads, 8 GB, a WebGPU adapter reading 'nvidia / blackwell / NVIDIA GeForce
  *   RTX 5090'), at ?fps=1 without the camera so only Peak's GPU rule can move the tier, with three's timing resolve
  *   replaced, before the page's first frame, by one that counts and gives nothing. It starts on Ultra, never above,
- *   with no GPU reading, and its scene pass multisampled without being asked (msaaCandidate). Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
+ *   with no GPU reading, its scene pass multisampled without being asked (msaaCandidate) and its ambient occlusion
+ *   running at Ultra's twelve taps. Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
  *   resolves timings for the governor on Ultra, auto keeps a pinned Peak, the in-page model's hold on the GPU brings it
  *   down to Ultra and the release keeps Ultra, and GPU readings fed over the limit bring it down by itself (gpu busy)
  *   with its shadow distance and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
@@ -47,7 +51,8 @@
  *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
  *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
  *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, the post chain never compiled and nothing multisampled
- *   (with ?lite=0, the post chain compiled, and ?msaa=1 still refused to a phone). SwiftShader still draws
+ *   and no ambient occlusion built (with ?lite=0, the post chain compiled, and ?msaa=1 still refused to a phone, which
+ *   never builds the occlusion either). SwiftShader still draws
  *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
  *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
  *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
@@ -83,6 +88,9 @@
  *   sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
+ * - walkhome: the same stage through a home: Sloane names the homes in the keyboard's words, the home's chip is clear of
+ *   the walk's card, B opens the doorstep card and the walk's card steps aside, nothing is bought, and Esc puts the
+ *   card away and passes the stage;
  * - walkphone: the first walk on an iPhone: the walk's card steps aside while Sloane asks the name, then stands clear of
  *   her chip, the minimap and every touch control held upright, between the thumbs held sideways at three phone
  *   sizes (above a shop's Browse chip), under her chip moved up to the top row where that band is short (125 % in the
@@ -91,6 +99,12 @@
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
+ * - homes: the seven homes of seed 1337 and their deeds, on the progression keeper (nothing here costs a credit): B in
+ *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
+ *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
+ *   planters, the HUD's chip says the home is yours, B opens the doorstep card saying Yours, the avatar stands still
+ *   under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and still knows
+ *   the loft is owned;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -106,7 +120,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkphone,lakefront,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -270,11 +284,19 @@ const RUNTIME_NO_ADAPTER = /^\[\w+\] ggml_webgpu: Failed to get an adapter\b/
  * The page's render pipelines, counted on every page before its scripts: how many write two colour targets (only the
  * post chain's scene pass under the cinema camera does, colour and velocity, so none means it was never compiled), how
  * many draw 4 samples a pixel (the scene's multisampling, governor.ts msaaCandidate), and how many write two targets at
- * one sample (none on a page whose scene pass is multisampled: the chain was built once, at 4).
+ * one sample (none on a page whose scene pass is multisampled: the chain was built once, at 4). And the ambient
+ * occlusion's (postfx.ts GatedSSAO): the pipelines writing a single r8unorm target (only its occlusion pass and its blur
+ * do; nothing else in the page renders to one channel), and how many times a render pass set one of them (three a
+ * drawn frame: the occlusion, then the blur across and down), so a check sees its passes run or skipped.
  */
 const PIPELINE_COUNTER = `(() => {
   if (typeof GPUDevice === 'undefined') return
-  window.__smokePipelines = { render: 0, twoTargets: 0, msaa4: 0, twoTargets1x: 0 }
+  window.__smokePipelines = { render: 0, twoTargets: 0, msaa4: 0, twoTargets1x: 0, ao: 0, aoDraws: 0 }
+  const ao = new WeakSet()
+  const oneChannel = (desc) => {
+    const t = (desc && desc.fragment && desc.fragment.targets) || []
+    return t.length === 1 && !!t[0] && t[0].format === 'r8unorm'
+  }
   const count = (desc) => {
     const n = window.__smokePipelines
     const two = (desc && desc.fragment && desc.fragment.targets || []).length >= 2
@@ -283,18 +305,37 @@ const PIPELINE_COUNTER = `(() => {
     if (two) n.twoTargets++
     if (four) n.msaa4++
     if (two && !four) n.twoTargets1x++
+    if (oneChannel(desc)) n.ao++
   }
-  for (const key of ['createRenderPipeline', 'createRenderPipelineAsync']) {
-    const own = GPUDevice.prototype[key]
-    if (typeof own === 'function') GPUDevice.prototype[key] = function (desc) { count(desc); return own.call(this, desc) }
+  const own = GPUDevice.prototype.createRenderPipeline
+  if (typeof own === 'function') GPUDevice.prototype.createRenderPipeline = function (desc) {
+    count(desc)
+    const p = own.call(this, desc)
+    if (oneChannel(desc)) ao.add(p)
+    return p
+  }
+  const ownAsync = GPUDevice.prototype.createRenderPipelineAsync
+  if (typeof ownAsync === 'function') GPUDevice.prototype.createRenderPipelineAsync = function (desc) {
+    count(desc)
+    return ownAsync.call(this, desc).then((p) => { if (oneChannel(desc)) ao.add(p); return p })
+  }
+  if (typeof GPURenderPassEncoder !== 'undefined') {
+    const set = GPURenderPassEncoder.prototype.setPipeline
+    GPURenderPassEncoder.prototype.setPipeline = function (p) {
+      if (ao.has(p)) window.__smokePipelines.aoDraws++
+      return set.call(this, p)
+    }
   }
 })()`
 
 /** A page expression: the samples the boot chose (the scene pass's, the renderer's own) and the pipelines counted. */
 const AA_STATE = `(() => { const S = window.__SIM__, e = S.engine
-  return { scene: e.sceneSamples, renderer: e.gpu.renderer.samples, post: e.options.post, pipelines: window.__smokePipelines, errors: S.errors().slice(0, 5) } })()`
+  return { scene: e.sceneSamples, renderer: e.gpu.renderer.samples, post: e.options.post,
+    ao: e.ao ? { on: e.ao.node.on, taps: e.ao.node.samples.value, strength: e.ao.strength.value } : null,
+    pipelines: window.__smokePipelines ? { ...window.__smokePipelines } : null, errors: S.errors().slice(0, 5) } })()`
 /** An AA_STATE as a log line. */
-const aaLine = (a) => `scene ${a.scene}x, renderer ${a.renderer}, ${a.pipelines ? `${a.pipelines.render} pipelines, ${a.pipelines.msaa4} at 4x, ${a.pipelines.twoTargets} with two targets (${a.pipelines.twoTargets1x} at 1x)` : 'not counted'}`
+const aaLine = (a) => `scene ${a.scene}x, renderer ${a.renderer}, ${a.pipelines ? `${a.pipelines.render} pipelines, ${a.pipelines.msaa4} at 4x, ${a.pipelines.twoTargets} with two targets (${a.pipelines.twoTargets1x} at 1x)` : 'not counted'}; ` +
+  `ao ${a.ao ? (a.ao.on ? `${a.ao.taps} taps at ${a.ao.strength}` : 'built, off') : 'not built'}${a.pipelines ? ` (${a.pipelines.ao} pipelines, ${a.pipelines.aoDraws} draws)` : ''}`
 
 const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { window.__smokeFrames++; requestAnimationFrame(tick) }; requestAnimationFrame(tick) })()`
 
@@ -810,6 +851,12 @@ const SCENARIOS = {
       // Nor a multisampling candidate: one sample everywhere, as before (FXAA alone).
       const aa = await p.eval(AA_STATE)
       check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.render > 0 && aa.pipelines.msaa4 === 0, 'desktop: a device that is not a multisampling candidate draws one sample a pixel everywhere', aaLine(aa))
+      // A desktop builds the ambient occlusion (governor.ts aoCandidate): its two pipelines compiled by the boot's one
+      // validated draw, then its passes skipped on every tier below Ultra (this one starts on Minimal).
+      await p.frames(3)
+      const skipped = await p.eval(AA_STATE)
+      check(aa.ao !== null && aa.ao.on === false && aa.ao.strength === 0 && aa.pipelines.ao === 2 && aa.pipelines.aoDraws >= 3 && skipped.pipelines.aoDraws === aa.pipelines.aoDraws && skipped.pipelines.ao === 2,
+        'desktop: the ambient occlusion is built and compiled at boot (two pipelines, drawn once), then skipped below Ultra', `${aaLine(aa)} → ${skipped.pipelines.aoDraws} draws after 3 frames`)
       // The hardware class: a software adapter in a desktop browser is a desktop (never a workstation: no Peak
       // candidate), and the snapshot's quality carries the class the console names.
       const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
@@ -1208,6 +1255,7 @@ const SCENARIOS = {
       check(views === 2, 'split: ?players=2 cuts the screen in two', `${views} views`)
       const aa = await p.eval(AA_STATE)
       check(aa.renderer === 0 && aa.scene === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'split: a device that is not a multisampling candidate splits at one sample', aaLine(aa))
+      check(aa.ao === null && aa.pipelines.ao === 0, 'split: no post chain, so no ambient occlusion is built or compiled', aaLine(aa))
       // Seats go to the pads in turn: the first pad to appear takes player 2's seat, the next player 1's. A pad without
       // the standard mapping appears only once a face button wakes it (hal.ts), and that press does nothing more.
       await p.eval('window.__smokePad.connect(0)')
@@ -1327,6 +1375,13 @@ const SCENARIOS = {
       await p.frames(3)
       const s = await p.snap()
       check(s.errors.length === 0, 'ultra: shadows, post and volumetrics compile and validate', s.errors.join(' | ').slice(0, 300))
+      // The ambient occlusion at Ultra: twelve taps at full strength, its three passes drawn every frame on the two
+      // pipelines the boot compiled.
+      const ao0 = await p.eval(AA_STATE)
+      await p.frames(3)
+      const ao1 = await p.eval(AA_STATE)
+      check(ao1.ao !== null && ao1.ao.on && ao1.ao.taps === 12 && ao1.ao.strength === 1 && ao1.pipelines.ao === 2 && ao1.pipelines.aoDraws > ao0.pipelines.aoDraws && ao1.errors.length === 0,
+        'ultra: the ambient occlusion runs at twelve taps every frame, on the two pipelines compiled at boot', `${aaLine(ao1)}; ${ao1.pipelines.aoDraws - ao0.pipelines.aoDraws} draws in 3 frames`)
       await p.shot('ultra')
       // Peak pinned by hand for a few frames (any device may pin it): Ultra's sun shadows (240 m on the atlas of two 4096
       // cascades, 8192 wide, really allocated) with Peak's three-texel penumbra, 1.25 times the pixel ratio and detailed
@@ -1340,6 +1395,8 @@ const SCENARIOS = {
       const pk = await p.eval(PEAK_STATE)
       check(map && pk.mapSize === 4096 && pk.mapWidth === 8192 && pk.cascades === 2 && pk.far === 240 && pk.radius === 3 && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
         'ultra: Peak pinned draws the sun\'s shadows to 240 m on the 8192-wide atlas of two 4096 cascades with a three-texel penumbra, at 1.25 times the pixel ratio, and validates', JSON.stringify(pk))
+      const aoPeak = await p.eval(AA_STATE)
+      check(aoPeak.ao !== null && aoPeak.ao.on && aoPeak.ao.taps === 16 && aoPeak.pipelines.ao === 2, 'ultra: Peak takes sixteen occlusion taps, with nothing compiled', aaLine(aoPeak))
       // The console cleared first (as command() waits for it), so the only Peak left on the page is the HUD's.
       await p.enter('clear')
       await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
@@ -1364,26 +1421,43 @@ const SCENARIOS = {
       const aa = await m.eval(AA_STATE)
       check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.pipelines.twoTargets > 0 && aa.pipelines.twoTargets1x === 0 && aa.errors.length === 0,
         'ultra: ?msaa=1 multisamples the scene pass (colour and velocity at 4x, nothing of it at 1x), and the chain validates', aaLine(aa))
+      // The ambient occlusion reads the multisampled depth (its first sample, loaded without a sampler): a shader the
+      // browser refused would have rebuilt the chain at one sample (scene 0x above).
+      check(aa.ao !== null && aa.ao.on && aa.ao.taps === 12 && aa.pipelines.ao === 2, 'ultra: ?msaa=1: the ambient occlusion runs on the multisampled depth', aaLine(aa))
       await m.shot('ultra-msaa')
       await m.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await m.openConsole(), 'ultra: the console opens (?msaa=1)')
       const before = aa.pipelines.render
+      // Over a few frames on each tier: whether the occlusion's passes ran (draws counted) and what it was set to.
+      const drawsOver = async (frames) => {
+        const a = await m.eval(AA_STATE)
+        await m.frames(frames)
+        const b = await m.eval(AA_STATE)
+        return { state: b, draws: b.pipelines.aoDraws - a.pipelines.aoDraws }
+      }
       await m.command('quality 1', /tier 1 Low \(fixed\)/)
       await m.frames(3)
+      const low = await drawsOver(2)
+      check(low.draws === 0 && low.state.ao.on === false && low.state.ao.strength === 0, 'ultra: Low skips the ambient occlusion\'s passes and applies none', `${aaLine(low.state)}; ${low.draws} draws in 2 frames`)
       await m.command('quality 5', /tier 5 Peak \(fixed\)/)
       await m.frames(3)
+      const peak = await drawsOver(2)
+      check(peak.draws > 0 && peak.state.ao.on && peak.state.ao.taps === 16, 'ultra: Peak runs it again at sixteen taps', `${aaLine(peak.state)}; ${peak.draws} draws in 2 frames`)
       await m.command('quality 4', /tier 4 Ultra \(fixed\)/)
       await m.frames(3)
       const tiers = await m.eval(AA_STATE)
       check(tiers.errors.length === 0 && tiers.pipelines.twoTargets1x === 0, 'ultra: Low, Peak and Ultra again keep the multisampled chain: no error, nothing compiled at one sample', aaLine(tiers))
+      check(tiers.ao.on && tiers.ao.taps === 12 && tiers.pipelines.ao === 2, 'ultra: and the ambient occlusion was never compiled again (its two pipelines)', aaLine(tiers))
       info('ultra: render pipelines compiled by the tier changes (?msaa=1)', `${tiers.pipelines.render - before}`)
       await m.eval('window.__SIM__.engine.setGhost(true)')
       await m.frames(3)
       await m.eval('window.__SIM__.engine.setGhost(false)')
       await m.eval('window.__SIM__.engine.setMatrix(true)')
       await m.frames(3)
-      const looks = await m.eval(AA_STATE)
+      const rain = await drawsOver(2)
+      const looks = rain.state
       check(looks.errors.length === 0 && looks.pipelines.twoTargets1x === 0, 'ultra: ghost view and rain mode validate over the multisampled scene', aaLine(looks))
+      check(rain.draws === 0 && looks.ao.on === false && looks.ao.strength === 0, 'ultra: rain mode turns the ambient occlusion off', `${aaLine(looks)}; ${rain.draws} draws in 2 frames`)
       await m.shot('ultra-msaa-rain')
       m.saveTranscript('ultra-msaa')
       m.health('ultra (?msaa=1)')
@@ -1411,6 +1485,7 @@ const SCENARIOS = {
       // The same hardware, on a screen under 2560 × 1440: the boot multisamples the scene pass by itself (msaaCandidate).
       const aa = await p.eval(AA_STATE)
       check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.errors.length === 0, 'peak: a high-end desktop starting on Ultra multisamples the scene pass without being asked', aaLine(aa))
+      check(aa.ao !== null && aa.ao.on && aa.ao.taps === 12 && aa.pipelines.ao === 2, 'peak: and runs the ambient occlusion at Ultra\'s twelve taps', aaLine(aa))
       check(st.timestamps === s.feature, 'peak: three writes GPU timestamps exactly where the device has timestamp-query', `timestamps ${st.timestamps}, feature ${s.feature}`)
       info(`peak: SwiftShader's device ${s.feature ? 'has' : 'lacks'} timestamp-query`, s.feature ? 'the GPU rule is driven end to end' : 'the range stops at Ultra; the no-evidence path is checked')
       // As in ultra: a first visit's concierge may hold the keyboard in its name field; skipped, the tilde reaches the page.
@@ -1489,6 +1564,8 @@ const SCENARIOS = {
       check(Math.abs(s.ratio - 0.5) < 1e-9, 'lite: the canvas draws at half the CSS pixel edge whatever the device pixel ratio', `pixel ratio ${s.ratio}`)
       check(s.post === false && s.pipelines && s.pipelines.render > 0 && s.pipelines.twoTargets === 0 && s.pipelines.msaa4 === 0, 'lite: the post chain is off and was never compiled (no colour-and-velocity pipeline), and nothing is multisampled',
         s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets, ${s.pipelines.msaa4} at 4x` : 'not counted')
+      const liteAo = await p.eval(AA_STATE)
+      check(liteAo.ao === null && liteAo.pipelines.ao === 0, 'lite: no ambient occlusion built or compiled', aaLine(liteAo))
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${s.crowdFrames + 2} && window.__SIM__.snapshot().output.fps > 0`, 60_000).then(() => true, () => false)
       check(ran, 'lite: frames are drawn and the crowd runs')
       const hud = await p.eval(`document.body.innerText.includes('Lite')`)
@@ -1524,6 +1601,7 @@ const SCENARIOS = {
         return { quality: s.quality, agents: e.sim.meta.agents, cars: e.sim.meta.count, max: e.quality.governor.max, pipelines: window.__smokePipelines } })()`)
       const aa = await q.eval(AA_STATE)
       check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'lite: a phone with ?lite=0 and ?msaa=1 still draws one sample a pixel', aaLine(aa))
+      check(aa.ao === null && aa.pipelines.ao === 0, 'lite: and builds no ambient occlusion: a phone never does (governor.ts aoCandidate)', aaLine(aa))
       check(s.quality.tier === 0 && s.quality.label === 'Minimal' && s.quality.lite === undefined && s.max === 2, 'lite: ?lite=0 gives the phone its old profile (Minimal, capped at Medium)', JSON.stringify(s.quality))
       check(s.agents === 5000 && s.cars === 36, 'lite: ?lite=0 simulates 5,000 pedestrians and 36 cars', `${s.agents}, ${s.cars}`)
       check(s.pipelines && s.pipelines.twoTargets > 0, 'lite: ?lite=0 compiles the post chain at boot (colour-and-velocity pipelines counted)',
@@ -1936,7 +2014,7 @@ const SCENARIOS = {
         p.transcript.push(`[line ${i}, typed ${typed}]\n${t ?? `(nothing matching ${done} after 30 s)\n${await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
         return { typed, t }
       }
-      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 12 checks, contained, realm standing/)
+      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 15 checks, contained, realm standing/)
       check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
       const l2 = await line(2, /spawn_subagents: \d+ of 24 asked over for sim2real_workplaces/)
       check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 asks people over through the recruiter (at least one)', lastLine(l2.t))
@@ -2008,6 +2086,60 @@ const SCENARIOS = {
       check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
         'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
       p.health('walkshop')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * The first walk's look stage through a home (src/01_Initialize_World/properties.ts, HomeCard.tsx): the stage names the
+   * homes, the home's chip shows clear of the walk's card, B opens the doorstep card (nothing is bought, and the walk's
+   * card steps aside), and the card put away with Esc passes the stage.
+   */
+  async walkhome(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      // Sloane's name question skipped with Esc, as walkshop does: her open card stands over the bottom-centre chips here.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
+      await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('move')
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('voice')
+      for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
+      const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
+      const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
+      check(at && /a home for sale/.test(said) && /press B to read its deed/.test(said), 'walkhome: the look stage names the homes, in the keyboard\'s words', `stage ${await stage()}; ${said.replace(/\s+/g, ' ').slice(0, 260)}`)
+      // Into the first home (the Micro-Loft; every city seed has the seven), on foot, three metres past its doorway: the
+      // line from the sidewalk's arrival spot through the doorway points into the room.
+      const homes = await p.eval('window.__SIM__.homes()')
+      const h = homes[0]
+      const dx = h.door.x - h.arrival.x, dz = h.door.z - h.arrival.z, len = Math.hypot(dx, dz) || 1
+      await p.eval(`window.__SIM__.teleport(${h.door.x + (dx / len) * 3}, ${h.door.z + (dz / len) * 3}, 0)`)
+      const inHome = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 0 && !!document.querySelector('[data-hint="home"]')`, 20_000).then(() => true, () => false)
+      const chip = await p.eval(`document.querySelector('[data-hint="home"]')?.textContent ?? ''`)
+      const over = await p.eval(`(() => { const c = document.querySelector('[data-hint="home"]'); if (!c) return 'no chip'; const r = c.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); if (top && c.contains(top)) return ''; const at = (e) => e ? e.tagName.toLowerCase() + [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'aria-label').map((a) => '[' + a.name + '=' + a.value.slice(0, 24) + ']').join('') : 'nothing'; return 'under ' + at(top) + ' in ' + at(top?.closest('aside,section,div[data-walk]') ?? null) + ' at ' + Math.round(r.left) + ',' + Math.round(r.top) })()`)
+      await p.shot('walk-home-chip')
+      check(inHome && over === '' && chip.includes(`For sale: ${h.name}`), 'walkhome: in the home, its For sale chip shows and the walk\'s card does not cover it', `${h.name}: in ${inHome}, chip "${chip}" ${over || 'clear'}`)
+      // B, as the stage says, from the city rather than a field: the canvas is clicked first, as a person would.
+      const credits = () => p.eval('window.__SIM__.shopkeeper.purse.credits()')
+      const c0 = await credits()
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.tap('KeyB', 'b', 66)
+      const open1 = await p.waitFor(`!!document.querySelector('aside[data-home="0"]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(open1 && (await stage()) === 'style', 'walkhome: B opens the home\'s doorstep card and the walk\'s card steps aside', `card ${open1}, walk card ${await p.eval(`!!document.querySelector('[data-walk-show]')`)}, stage ${await stage()}`)
+      await p.shot('walk-home')
+      await p.tap('Escape', 'Escape', 27)
+      const away = await past('style', 10_000)
+      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('aside[data-home]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkhome: Esc puts the doorstep card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      check((await credits()) === c0 && ((await p.eval('window.__SIM__.snapshot().customer.ownedHomes')) & 1) === 0, 'walkhome: reading the deed bought nothing', `credits ${c0} -> ${await credits()}`)
+      p.health('walkhome')
     } finally { await p.b.close() }
   },
 
@@ -2207,6 +2339,90 @@ const SCENARIOS = {
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, on the progression keeper (a new operator,
+   * level 1): the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
+   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the lakefront metropolis has the
+   * seven too, and the deed bought in the city is still owned there.
+   */
+  async homes(chrome, origin) {
+    const p = await open(chrome)
+    const at = (sel) => `document.querySelector(${JSON.stringify(sel)})`
+    try {
+      await p.goto(`${origin}/?${LIGHT}&seed=1337`)
+      await p.booted()
+      const homes = await p.eval('window.__SIM__.homes()')
+      check(homes.length === 7 && homes.every((h, i) => h.home === i && h.name && h.address), 'homes: seed 1337 has its seven homes, each with its deed\'s name and its address', homes.map((h) => `${h.home} ${h.name} (${h.address})`).join(', '))
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      // Into Lintel & Lumen Design House, and B opens its card.
+      const shop = await p.eval(`window.__SIM__.shops().find((s) => s.kind === 'designHouse')`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z})`)
+      const inShop = await p.waitFor(`window.__SIM__.snapshot().customer.shop?.kind === 'designHouse'`, 30_000).then(() => true, () => false)
+      check(inShop, 'homes: the avatar stands in Lintel & Lumen Design House')
+      await p.tap('KeyB', 'b', 66)
+      const card = await p.waitFor(`!!${at('aside[data-store="designHouse"] [data-item="224"]')}`, 20_000).then(() => true, () => false)
+      check(card, 'homes: B opens the design house\'s card, the deeds on sale in it')
+      const rows = await p.eval(`(() => { const row = (id) => ${at('aside[data-store="designHouse"]')}?.querySelector('[data-item="' + id + '"]')
+        return { loft: row(224)?.getAttribute('data-verdict'), pier: row(226)?.getAttribute('data-verdict'), pierWhy: row(226)?.querySelector('[data-why]')?.textContent ?? '',
+          place: row(224)?.querySelector('[data-place]')?.textContent ?? '', go: row(224)?.querySelector('[data-action="go"]')?.textContent ?? '' } })()`)
+      check(rows.loft === '0' && rows.pier === '2' && /needs level 6/.test(rows.pierWhy), 'homes: the Micro-Loft\'s deed can be had, and the Pierside Timber Loft\'s asks for level 6', JSON.stringify(rows))
+      check(rows.go === 'Visit' && rows.place.startsWith(homes[0].address), 'homes: the loft\'s row says where it stands and offers Visit', `${rows.go}: ${rows.place}`)
+      // Claim the loft: free, so the operator's credits stay as they were.
+      const before = await p.eval('window.__SIM__.shopkeeper.purse.credits()')
+      await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="buy"]')}?.click()`)
+      const owned = await p.waitFor(`!!${at('aside[data-store="designHouse"] [data-item="224"][data-owned]')}`, 10_000).then(() => true, () => false)
+      const bought = await p.eval(`({ said: ${at('aside[data-store="designHouse"] [data-said]')}?.textContent ?? '', credits: window.__SIM__.shopkeeper.purse.credits(), go: ${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.textContent ?? '' })`)
+      check(owned && bought.credits === before && /Metro-Line Micro-Loft is yours/.test(bought.said), 'homes: the loft\'s deed is claimed for nothing, and the card says where it is', `${bought.said}; ${bought.credits} credits`)
+      check(bought.go === 'Go home', 'homes: the owned deed\'s row offers Go home', bought.go)
+      // Go home: the sidewalk in front of the loft's doorway, the store card closed behind.
+      await p.eval(`${at('aside[data-store="designHouse"] [data-item="224"] [data-action="go"]')}?.click()`)
+      const a = homes[0].arrival
+      const arrived = await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${a.x}, v.z - ${a.z}) < 0.6 })()`, 30_000).then(() => true, () => false)
+      check(arrived, 'homes: Go home puts the avatar on the sidewalk in front of the loft\'s doorway', JSON.stringify({ arrival: a, at: await p.snap().then((s) => ({ x: s.x, z: s.z })) }))
+      const closed = await p.waitFor(`!${at('aside[data-store]')}`, 10_000).then(() => true, () => false)
+      check(closed, 'homes: the design house\'s card closed once the avatar left the shop')
+      // W walks in through the planters' centre gap; the chip says the home is the player's. The canvas is clicked
+      // first, as a person would: Sloane's name field takes the focus back when the card goes.
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.key('keyDown', 'KeyW', 'w', 87)
+      const inside = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 0`, 30_000).then(() => true, () => false)
+      await p.frames(6)
+      await p.key('keyUp', 'KeyW', 'w', 87)
+      check(inside, 'homes: W walks the avatar into the loft')
+      const chip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && c.textContent })()`, 10_000).catch(() => '')
+      const snap = await p.eval('window.__SIM__.snapshot().customer')
+      check(/Your home: Metro-Line Micro-Loft/.test(chip ?? '') && snap.home?.owned === true && (snap.ownedHomes & 1) === 1, 'homes: the HUD\'s chip says the loft is yours', `${chip}; ${JSON.stringify(snap.home)} owned ${snap.ownedHomes}`)
+      // B opens the doorstep card, which says Yours; the avatar stands still under it, W held or not.
+      await p.tap('KeyB', 'b', 66)
+      const doorstep = await p.waitFor(`!!${at('aside[data-home="0"]')}`, 10_000).then(() => true, () => false)
+      const yours = await p.eval(`({ yours: ${at('aside[data-home="0"] [data-yours]')}?.textContent ?? '', card: window.__SIM__.snapshot().customer.home?.card === true })`)
+      check(doorstep && yours.yours === 'Yours' && yours.card, 'homes: B opens the loft\'s doorstep card, and it says Yours', JSON.stringify(yours))
+      const h0 = await p.snap()
+      await p.eval(`window.__SIM__.hold('KeyW', true)`)
+      await p.frames(10)
+      await p.eval(`window.__SIM__.hold('KeyW', false)`)
+      const h1 = await p.snap()
+      check(dist(h0, h1) < 0.05, 'homes: under the doorstep card the avatar stands still with W held', `${dist(h0, h1).toFixed(3)} m`)
+      await p.tap('Escape', 'Escape', 27)
+      const gone = await p.waitFor(`!${at('aside[data-home]')} && window.__SIM__.snapshot().customer.home?.card === false`, 10_000).then(() => true, () => false)
+      check(gone, 'homes: Esc closes the doorstep card')
+      await p.shot('homes')
+      const errs = (await p.snap()).errors
+      check(errs.length === 0, 'homes: the engine recorded no error', errs.join(' | ').slice(0, 300))
+      p.health('homes')
+
+      // The lakefront metropolis, in the same browser: its seven homes, and the loft still owned. reload() marks the
+      // city's page first, so the checks below cannot read it while the new one commits.
+      await reload(p, `${origin}/?map=lakefront&${LIGHT}`)
+      const lake = await p.eval(`({ region: window.__SIM__.engine.places !== null, homes: window.__SIM__.homes().length, kept: window.__SIM__.engine.homes.length, owned: window.__SIM__.snapshot().customer.ownedHomes })`)
+      check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
+      check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)
+      p.health('homes lakefront')
     } finally { await p.b.close() }
   },
 

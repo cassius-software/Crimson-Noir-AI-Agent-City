@@ -56,7 +56,7 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
   for (const hand of ['left', 'right'] as const) for (const shoulder of [4, 5]) assert.equal(padStep(there, [pad(shoulder)], hand).action, null, `${hand} hand: a glance with ${shoulder === 4 ? 'L1' : 'R1'} neither presses nor moves`)
   assert.equal(padStep(padStep(there, [pad(PAD.start)], 'left').held, [pad(PAD.start)], 'left').action, null, 'held start: an edge, like A')
   // The hook reads the page's hand on every poll.
-  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), readPads\(\), pageHand\(\)\)/)
+  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\), pageHand\(\)\)/)
   assert.match(read('./padNav.ts'), /document\.documentElement\.dataset\.pad\b[\s\S]{0,80}v === 'left' \|\| v === 'right' \? v : 'both'/, 'the hand is the one access.ts writes on <html data-pad>; anything else is both hands')
   assert.match(read('./access.ts'), /root\.dataset\.pad = s\.pad/, 'and access.ts writes it')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
@@ -197,5 +197,5 @@ test('App: Sloane never greets over a halted city, so the card keeps focus on Re
   // thrown frame right after the veil lifts) shows the card first and Sloane's name field second, which would take the
   // focus from Restart (Concierge.tsx focusField takes it from anything but another text field). The Customizer and the
   // ActCard are gated on the same lock (lookWiring.test.ts, actWiring.test.ts).
-  assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && locked === null\}/)
+  assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null\}/)
 })

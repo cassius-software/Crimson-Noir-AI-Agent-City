@@ -118,10 +118,13 @@ jobs:
   # The page as a person meets it: Chrome on SwiftShader's WebGPU, which renders a few frames a second, so every check
   # waits on the page's own state. A red run here is a browser-visible bug the Node suite cannot see. The whole run took
   # about 22 minutes before the anti-aliasing pages (split screen and Ultra booted again at 4 samples a pixel, and the
-  # faked big desktop drawing every frame at 4) took it past 30; 45 leaves room for the scenarios still to come.
+  # faked big desktop drawing every frame at 4) took it past 30, and 29 on main once the first walk and the shops joined
+  # it. Runners differ: on a slower one every scenario took 1.3 to 1.9 times as long (the phone, which never builds the
+  # ambient occlusion, 328 s against 568 s), and the run was cut off at 45 minutes in its last scenario with every check
+  # passed. 60 holds that runner with room for the scenarios still to come.
   browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

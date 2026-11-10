@@ -420,6 +420,15 @@ export class Input {
   }
 
   /**
+   * Drops every queued action and nothing else: held keys, the sticks, the pads' held bits and the look are untouched.
+   * The engine calls it after each poll while a home's card holds the avatar still, so a pad's edge (which queues even
+   * under suspend) never reaches a car's door or the clock.
+   */
+  drain(): void {
+    this.queued.clear()
+  }
+
+  /**
    * Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK,
    * except the microphone's mute, a privacy switch that is never held back (the Menu's Microphone item).
    */
@@ -477,6 +486,11 @@ export class Input {
   /** True while the pads are dealt to seats (more than one player). */
   get seated(): boolean {
     return this.seats.players > 1
+  }
+
+  /** Whether pad `padIndex` is player 1's: every pad while one player plays, else only the pads dealt to seat 0. */
+  playerOnePad(padIndex: number): boolean {
+    return !this.seated || this.seats.seatOf(padIndex) === KEYBOARD_SEAT
   }
 
   /** The intent the frame loop reads for a seat: this (keyboard, mouse, touch and seat 0's pad) for seat 0, the seat's PadSeat otherwise. */

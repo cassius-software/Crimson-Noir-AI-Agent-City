@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? It is the first walk's exam: the three doors the exit program opens, built over what the
  * page already has and nothing more. `verify_ring0` is a seal: a 32-bit FNV-1a hash of what holds right now (the four
- * laws by rank and title, the gate's twelve checks by name, the host's vouch that the page is contained, the Ring-0
+ * laws by rank and title, the gate's fifteen checks by name, the host's vouch that the page is contained, the Ring-0
  * audit standing) salted with a number drawn once per page load, so the seal is 0 when any of it fails and a number
  * typed from memory never matches. `spawn_subagents` asks up to n people over for a role through the recruiter's own
  * lane (the same page checks and realm answers as `recruit <skill>`: on foot, off the road, within earshot, at most
@@ -70,7 +70,7 @@ export interface SealParts {
 /** The seal over the kernel's live state: 0 when any part fails, else a nonzero 32-bit hash of all of them. */
 export function sealOf(p: SealParts): number {
   if (!p.contained || !p.standing) return 0
-  if (p.laws.length !== 4 || p.checks.length !== 12) return 0
+  if (p.laws.length !== 4 || p.checks.length !== 15) return 0
   const text = [
     `nonce:${p.nonce >>> 0}`,
     ...p.laws.map((l) => `law:${l.id}:${l.title}`),
@@ -86,7 +86,7 @@ export function sealWhy(p: Pick<SealParts, 'contained' | 'standing' | 'laws' | '
   if (!p.contained) return 'the page is not contained (the host has not vouched for the air gap)'
   if (!p.standing) return 'the Ring-0 audit has panicked: the realm is halted'
   if (p.laws.length !== 4) return `${p.laws.length} laws where four are expected`
-  if (p.checks.length !== 12) return `${p.checks.length} checks where twelve are expected`
+  if (p.checks.length !== 15) return `${p.checks.length} checks where fifteen are expected`
   return null
 }
 

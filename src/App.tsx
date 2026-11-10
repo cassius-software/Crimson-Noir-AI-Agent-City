@@ -26,6 +26,7 @@ import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, hig
 import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
 import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
 import { Announcer } from './07_Execute_Actions/announcer.ts'
+import { TEAM_TICK_MS, TeamRunner } from './08_Swarm/team.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
@@ -57,7 +58,10 @@ import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
-import { createShopkeeper, progressionPurse } from './07_Execute_Actions/shopkeeper.ts'
+import { HomeCard } from './07_Execute_Actions/HomeCard.tsx'
+import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
+import type { StoreItem } from './07_Execute_Actions/storeCatalog.ts'
+import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -74,7 +78,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
@@ -90,6 +94,7 @@ import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
+import { teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -171,6 +176,13 @@ const pageStore = (key: string) => ({
     }
   },
 })
+
+/** The homes the shopkeeper says the player owns, one bit per property index (bit i: deed DEED_BASE + i). */
+function ownedHomes(keeper: Shopkeeper): number {
+  let mask = 0
+  for (let i = 0; i < PROPERTY_KINDS.length; i++) if (keeper.owns(DEED_BASE + i)) mask |= 1 << i
+  return mask
+}
 
 /**
  * The console's network knob over the engine's session controls (NetControls), with the session token kept on this
@@ -465,6 +477,9 @@ function readOptions(): Options {
     // The scene's multisampling (governor.ts msaaCandidate): ?msaa=1 draws 4 samples a pixel on any desktop, ?msaa=0
     // never; absent, the device profile decides. A phone or a lite profile never does. Read once, at boot.
     msaa: q.get('msaa') === '1' ? true : q.get('msaa') === '0' ? false : undefined,
+    // The post chain's ambient occlusion (governor.ts aoCandidate): ?ao=0 leaves it out; absent (or ?ao=1), any desktop
+    // builds it and Ultra and Peak run it. A phone or a lite profile never builds it. Read once, at boot.
+    ao: q.get('ao') === '1' ? true : q.get('ao') === '0' ? false : undefined,
     // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
     // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it, and it beats the Windows app's reading;
     // absent (and with no reading), auto keeps its usual model.
@@ -606,24 +621,33 @@ function qualityFor(step: PlanStep, b: Pick<TerminalBridge, 'quality'>): 'auto' 
 
 /**
  * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
- * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
+ * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound) and
+ * its team, when it has one, opened through the same team runner (the bridge's `lanes`).
  */
-function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio'>): GoalPlan {
+function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio' | 'lanes'>): GoalPlan {
   const brief = new FiveWhys(text).brief()
   const steps: { label: string; state: 'done' | 'later' | 'failed'; detail?: string }[] = []
+  let team: string[] | undefined
   for (const step of brief.plan) {
     if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
     try {
       if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
       else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(qualityFor(step, b))
       else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
+      else if (step.control === 'dispatch' && step.team && b.lanes) {
+        const d = b.lanes.dispatch(step.team)
+        team = teamRows(step.team)
+        const away = d.missing?.length ? `; not on this map: ${d.missing.join(', ')} (nobody asked over, those lanes read around where you started)` : ''
+        steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open${away}` })
+        continue
+      }
       else { steps.push({ label: step.label, state: 'later' }); continue }
       steps.push({ label: step.label, state: 'done' })
     } catch (e) {
       steps.push({ label: step.label, state: 'failed', detail: e instanceof Error ? e.message : String(e) })
     }
   }
-  return { root: brief.root, steps, notes: brief.unmapped }
+  return { root: brief.root, steps, notes: brief.unmapped, ...(team ? { team } : {}) }
 }
 
 /**
@@ -723,6 +747,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
   }, [roster])
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
+  /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; it keeps the planner's sentence while the provider is scripted. */
+  const [sloane, setSloane] = useState<Voice | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
@@ -733,6 +759,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   // The frame loop's view of it: the open shop's index, or null.
   const storeOpenRef = useRef<number | null>(null)
   const [trying, setTrying] = useState<{ id: number; look: Look } | null>(null)
+  // The homes (01_Initialize_World/properties.ts): the home whose doorstep card is open (its property index, 0 to 6), or
+  // null, and the frame loop's view of it.
+  const [homeOpen, setHomeOpen] = useState<number | null>(null)
+  const homeOpenRef = useRef<number | null>(null)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
@@ -812,6 +842,33 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const closeStore = useCallback(() => { setStoreOpen(null); setTrying(null) }, [])
   const onTry = useCallback((id: number | null, next: Look | null) => setTrying(id !== null && next ? { id, look: next } : null), [])
   useEffect(() => { engine?.setShowroom(storeOpen) }, [engine, storeOpen])
+  // A home's doorstep card: E, B or the HUD's chip inside a home opens it (the engine's onHome, the chip's tap). The
+  // engine holds the avatar still while it is open, and refuses it unless the avatar stands in that home on foot in a
+  // city that runs: then nothing opens. The effect keeps the engine's hold on the card as it is (a close from anywhere
+  // lets go); a card left open out of its home (a teleport, a new engine) is closed by the HUD's tick below.
+  const openHome = useCallback((home: number) => {
+    // Never under the console: the card would be hidden there while the engine held the avatar still.
+    if (termOpenRef.current || engineRef.current?.setHomeCard(home) !== true) return
+    setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home)
+  }, [])
+  const closeHome = useCallback(() => setHomeOpen(null), [])
+  // The doorstep card is player 1's: in split screen only seat 0's pads press or move through it (input.ts).
+  const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])
+  useEffect(() => { engine?.setHomeCard(homeOpen) }, [engine, homeOpen])
+  // Which homes the player owns, for the HUD's chip and the minimaps: the shopkeeper's every change (a purchase here or
+  // on a doorstep, a reset from the console) is told to the engine.
+  useEffect(() => {
+    if (!engine) return
+    engine.setOwnedHomes(ownedHomes(keeper))
+    return keeper.onChange(() => engine.setOwnedHomes(ownedHomes(keeper)))
+  }, [engine, keeper])
+  // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
+  // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
+  const goHome = useCallback((item: StoreItem) => {
+    const e = engineRef.current
+    if (e && item.kind === 'deed' && !e.goHome(item.index)) e.toast('Home', 'Walk there: a shared room replays your steps')
+  }, [])
+  const whereFor = useCallback((item: StoreItem) => (item.kind === 'deed' ? engine?.homeWhere(item.index) ?? null : null), [engine])
   // The card's changes, worn as the console's are. The card calls this on every swatch and every slider step, so only
   // the first change of a visit that really alters the look earns Architecture and commerce (progress.ts), retried
   // while no action is left. The console's `look` keeps wearLook and earns for itself, so the two never pay twice.
@@ -828,6 +885,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
     if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(qualityFor(step, b)); return true }
     if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
+    // A team goes to the team runner (08_Swarm/team.ts) through the bridge, as the console's `goal` sends one.
+    if (step.control === 'dispatch' && step.team && b.lanes) { b.lanes.dispatch(step.team); return true }
     return false
   }, [bridge])
 
@@ -917,22 +976,27 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); walkRef.current.note('console') }
-    engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
+    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null); walkRef.current.note('console') }
+    engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null)
   }, [])
-  // The walk's look stage hears of the wardrobe card or a shop's card put away after it was open (Done, ×, Escape, the
-  // console taking over, or walking out of the shop): what changed, if anything, is the visitor's choice.
+  // The walk's look stage hears of the wardrobe card, a shop's card or a home's doorstep card put away after it was open
+  // (Done, ×, Escape, the console taking over, or walking out of the shop or the home): what changed or was bought, if
+  // anything, is the visitor's choice.
   const lookWas = useRef(false)
   const storeWas = useRef(false)
+  const homeWas = useRef(false)
   useEffect(() => {
     lookOpenRef.current = lookOpen
     storeOpenRef.current = storeOpen
-    engineRef.current?.input.suspend(lookOpen || storeOpen !== null || termOpenRef.current)
+    homeOpenRef.current = homeOpen
+    engineRef.current?.input.suspend(lookOpen || storeOpen !== null || homeOpen !== null || termOpenRef.current)
     if (lookWas.current && !lookOpen) walkRef.current.note('wardrobe')
     lookWas.current = lookOpen
     if (storeWas.current && storeOpen === null) walkRef.current.note('store')
     storeWas.current = storeOpen !== null
-  }, [lookOpen, storeOpen])
+    if (homeWas.current && homeOpen === null) walkRef.current.note('home')
+    homeWas.current = homeOpen !== null
+  }, [lookOpen, storeOpen, homeOpen])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -967,6 +1031,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
+    /** The team runner (08_Swarm/team.ts): Sloane's dispatched sub-agents, stepped every TEAM_TICK_MS from the frame loop. */
+    let crew: TeamRunner | null = null
+    let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
     /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
@@ -1004,6 +1071,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       if (!engine || engine.halted) return
       try {
         engine.frame(now)
+        // The team's lanes read the city a few times a second, never per frame: their gas is per tick, and the HUD shows
+        // their readings on its own interval.
+        if (crew && now - lastTeam >= TEAM_TICK_MS) { lastTeam = now; crew.tick() }
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
@@ -1014,6 +1084,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
+          // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
+          if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -1021,6 +1093,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           // Out of the open shop (a teleport, the console's own moves) or into a headset (the card is not drawn there, and
           // the game's input must not stay suspended): its card goes.
           if (storeOpenRef.current !== null && ((s.customer.shop?.index ?? -1) !== storeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeStore()
+          // Out of the home whose card is open, or into a headset, the doorstep card goes the same way.
+          if (homeOpenRef.current !== null && ((s.customer.home?.index ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()
           shown = true
         }
         throws = 0
@@ -1318,11 +1392,35 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
           log: () => inPage.log(),
         })
-        if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null) e.input.suspend(true)
-        // E, B or the HUD's chip inside a storefront opens its card (the chip calls openStore itself).
+        if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null) e.input.suspend(true)
+        // E, B or the HUD's chip inside a storefront opens its card (the chip calls openStore itself), and inside a home
+        // its doorstep card (the chip calls openHome itself).
         e.onBrowse = openStore
+        e.onHome = openHome
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
+        // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
+        // vouch, the realm's standing, this map's workplaces, and the recruiter for the bodies (the same asks `recruit`
+        // makes). A lane the gate isolates toasts, console open or closed.
+        const host = e.recruitHost()
+        const team = new TeamRunner({
+          tables: () => engineBridge.soa?.tables() ?? null,
+          contained: () => airgapInstalled(globalThis),
+          panic: () => e.panicReason,
+          rooms: () => e.teamRooms,
+          centre: () => e.teamCentre,
+          operator: () => host.operator(),
+          recruits: () => r.recruits,
+          recruit: (skill) => r.recruit(skill),
+          rally: (agent, x, z) => r.rally(agent, x, z),
+          log: (line) => { console.error(line); e.toast('Lane isolated', line) },
+        })
+        crew = team
+        const lanes = team.console()
+        // Sloane's own words for a brief: the router's order (the local servers, then the model in this page), the
+        // planner's sentence on any failure; never with the provider the player set to scripted, asked at every sentence
+        // (the console's `ask provider` changes it while the city runs).
+        setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted'))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -1337,7 +1435,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
             on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
           }),
           access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
-          goal: (text: string) => goalPlan(text, engineBridge),
+          goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),
+          lanes,
           // The operator's level, credits and skills (progress.ts): the page's one keeper, which the console earns into.
           progress: progressBridge(pageProgress()),
           memory: memoryBridge(memory, r),
@@ -1389,6 +1488,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
               shops: () => e.shops.map((s, index) => ({ index, kind: s.kind, name: s.name, door: s.door, fitting: s.fitting })),
               browse: () => e.browse(),
               shopkeeper: keeper,
+              // The homes: where they stand (the arrival is Go home's spot on the sidewalk), and the E key's own path into a
+              // home's doorstep card.
+              homes: () => e.homes.map((h) => ({ home: h.home, kind: h.kind, name: h.name, address: h.address, side: h.side, door: h.door, arrival: h.arrival })),
+              openHome: () => e.openHome(),
               // The network session (10_Network): join a room, leave it, or read it as plain data.
               net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
@@ -1423,9 +1526,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       link.sound = () => true
       setEngine(null)
       setBridge(null)
+      setSloane(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
+      crew?.dispose()
       router?.dispose()
       recruiter?.dispose()
       unModel()
@@ -1433,7 +1538,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, mic, onMic, onAccess, announcer])
+  }, [boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome, mic, onMic, onAccess, announcer])
+
+  // The open home's name and street address as the engine knows them (the city's grid, or a region's own streets).
+  const opened = homeOpen !== null ? engine?.homes.find((h) => h.home === homeOpen) : undefined
+  const homeInfo = opened ? { name: opened.name, address: opened.address } : undefined
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1445,8 +1554,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} />
-      {engine && hud && !termOpen && (
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} />
+      {/* No touch controls under a home's doorstep card: the avatar is held still there, and the card takes the taps. */}
+      {engine && hud && !termOpen && homeOpen === null && (
         <TouchControls
           input={engine.input}
           driving={hud.input.mode === 'vehicle'}
@@ -1476,7 +1586,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           thrown frame is). The look card and the action card step aside the same way below. */}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && locked === null}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
@@ -1490,17 +1600,19 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           onGoalSent={onGoalSent}
           onSay={onSay}
           heard={heard}
+          reword={sloane}
+          lanes={hud.supplier.lanes ?? null}
           beside={walking && fw.card !== null}
           zoom={access.scale / 100}
           onOpen={setSloaneOpen}
         />
       )}
-      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe or a
-          shop's card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
+      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe, a
+          shop's card or a home's doorstep card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
           (from 60 rem her card stands left of it). It has no close: the console's exit program ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
-          visible={veilDone && !lookOpen && storeOpen === null && locked === null}
+          visible={veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           card={fw.card}
           beat={fw.beat}
           exam={fw.exam}
@@ -1539,7 +1651,21 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           mirror={hud.customer.shop?.showroom === true}
           onTry={onTry}
           onWear={wearLook}
+          onGo={goHome}
+          whereFor={whereFor}
           onClose={closeStore}
+          dark={hud.customer.daylight < 0.35}
+        />
+      )}
+      {hud && (
+        <HomeCard
+          visible={homeOpen !== null && veilDone && !termOpen && locked === null}
+          home={homeOpen}
+          keeper={keeper}
+          homeInfo={homeInfo}
+          pad={act === null || !bridge}
+          padFrom={playerOnePad}
+          onClose={closeHome}
           dark={hud.customer.daylight < 0.35}
         />
       )}
