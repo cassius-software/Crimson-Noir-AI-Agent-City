@@ -21,7 +21,7 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { PROGRAM, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
-import { besideRoom, cramped } from '../Concierge.tsx'
+import { besideRoom } from '../Concierge.tsx'
 import { CONCIERGE_NAME } from './script.ts'
 
 /** Where the card stands (full class strings, so Tailwind sees them). The card is inside the text size's zoom
@@ -31,18 +31,18 @@ import { CONCIERGE_NAME } from './script.ts'
  *  divided by --ui-zoom: the window's height (dvh), the touch buttons' top edge and left edge (--touch-top,
  *  --touch-left, window pixels; TouchControls.tsx), the stick's zone (11.5 rem of the unzoomed touch layer, 12.5 rem
  *  with its gaps), the top of the HUD's chips at the foot (--hud-foot, Hud.tsx) and the console's 45 dvh. Sideways,
- *  the band between the thumbs starts 10.5 rem down, clear of the header, the readout and Sloane's chip; its foot
- *  stands above the HUD's chips unless that would leave less than the card's own padding and border (1.875 rem), when
- *  it comes down over them rather than rise over the chip. Where even the whole band is short of 8 rem (a text size
- *  that zooms a sideways phone's height under 20 rem, Concierge.tsx CRAMPED_PX), the card rises over the HUD's rows,
- *  which take no taps, to the top of the screen, left of the minimap's column (7 rem wide under a 0.75 rem frame), and
- *  Sloane's chip steps aside for it. */
+ *  the band between the thumbs starts 10.5 rem down, clear of the header, the readout and Sloane's chip, and ends
+ *  above the HUD's chips at the foot. Where that band is short of 8 rem (a large text size, a short screen, captions
+ *  or a shop's chip at the foot), Sloane's chip moves up to the top row and the card rises over the HUD's header and
+ *  readout, which take no taps, to stand under it (--chip-bottom): the two read the same band through the same step
+ *  (Concierge.tsx CHIP_TOP.walk). Either way it ends left of the minimap's column (7 rem wide under a 0.75 rem frame),
+ *  and its foot comes down over the HUD's chips rather than let it grow up over the chip once what is left is less
+ *  than its own padding and border (1.875 rem). */
 const AT = {
   wide: 'right-[max(1.25rem,env(safe-area-inset-right))] top-[calc(max(1.25rem,env(safe-area-inset-top))+16rem)] w-[20rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-top))_-_16rem_-_7.5rem)]',
   compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_8.75rem),calc(var(--chip-bottom,0px)_+_0.5rem))_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
   touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_8.75rem),calc(var(--chip-bottom,0px)_+_0.5rem))_-_max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_-_1rem)]',
-  between: 'left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] bottom-[max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_1.875rem)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_1.875rem))))]',
-  risen: 'left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] bottom-[max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_1.875rem)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_1.875rem))))]',
+  between: 'left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] bottom-[max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem))))]',
   console: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-[28rem] max-h-[calc(calc(55dvh_/_var(--ui-zoom,1))_-_4rem)]',
 } as const
 
@@ -114,11 +114,8 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   // Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query, at the same zoom).
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
-  /** Between the thumbs of a phone held sideways (the console's place wins while it is open); risen over the HUD's rows
-   *  where the text size leaves that band too short (Sloane's chip steps aside for it, Concierge.tsx). */
+  /** Between the thumbs of a phone held sideways (the console's place wins while it is open). */
   const between = overlay && sideways && !termOpen
-  const tightRoom = cramped(zoom)
-  const risen = useSyncExternalStore(tightRoom.subscribe, tightRoom.matches, tightRoom.server)
   /** Side by side with Sloane's open card: only in the wide place, with the room for both. Anywhere else her card
    *  takes the band this one stands in (a phone's, a small window's, the centre of a window small only at the zoom). */
   const besideHers = !overlay && !compact && !squeezed && roomy
@@ -143,7 +140,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   if (!shown) return null
 
   const line = beat && beat.stage === card.stage ? beat.text : card.ask
-  const at = termOpen ? AT.console : between ? (risen ? AT.risen : AT.between) : overlay ? AT.touch : compact || squeezed ? AT.compact : AT.wide
+  const at = termOpen ? AT.console : between ? AT.between : overlay ? AT.touch : compact || squeezed ? AT.compact : AT.wide
   const exitStage = card.stage === 'exam'
   return (
     // The text size's zoom (index.css .ui-zoom) on a layer of its own over the whole screen, which lets the city's

@@ -85,7 +85,9 @@
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
  * - walkphone: the first walk on an iPhone: the walk's card steps aside while Sloane asks the name, then stands clear of
  *   her chip, the minimap and every touch control held upright, between the thumbs held sideways at three phone
- *   sizes, below her chip at the wheel upright, and away at the wheel sideways until the visitor is on foot again;
+ *   sizes (above a shop's Browse chip), under her chip moved up to the top row where that band is short (125 % in the
+ *   shop, 175 %), under the touch Menu's sheet, below her chip at the wheel upright, and away at the wheel sideways
+ *   until the visitor is on foot again;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -2013,7 +2015,8 @@ const SCENARIOS = {
    * The first walk's card on a phone (onboarding/FirstWalk.tsx's touch and between places): it steps aside while
    * Sloane's open card takes the band it stands in, keeps under the minimap row and her chip and above the buttons held
    * upright, stands between the stick and the buttons above the HUD's chips held sideways (the 38 px sliver it was
-   * above the thumbs there), and steps aside at the wheel sideways, where the car's buttons fill that band.
+   * above the thumbs there) or, where that band is short, under her chip moved up to the top row, lies under the touch
+   * Menu's sheet, and steps aside at the wheel sideways, where the car's buttons fill that band.
    */
   async walkphone(chrome, origin) {
     const p = await open(chrome, { mobile: true })
@@ -2084,11 +2087,11 @@ const SCENARIOS = {
       await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z}, 0)`)
       await p.waitFor(`!!document.querySelector('[data-hint="shop"]')`, 20_000).catch(() => {})
       const sideways = []
-      const sidewaysAt = async (label, need, least = 120) => {
+      const sidewaysAt = async (label, need) => {
         const m = await boxes()
         const bad = clear(m)
         for (const k of need) if (!m.others.some((o) => o.k === k)) bad.push(`missing ${k}`)
-        if (m.walk && m.walk.b - m.walk.t < least) bad.push(`${m.walk.b - m.walk.t} px tall`)
+        if (m.walk && m.walk.b - m.walk.t < 120) bad.push(`${m.walk.b - m.walk.t} px tall`)
         if (!(await reachable())) bad.push('its button is covered or gone')
         sideways.push(`${label} ${bad.length ? bad.join(', ') : `${m.walk.l}..${m.walk.r} x ${m.walk.t}..${m.walk.b}`}`)
       }
@@ -2106,20 +2109,20 @@ const SCENARIOS = {
         await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
       }
       check(/items on top/.test(sheet), 'walkphone: held sideways, the touch Menu opens over the walk\'s card', sheet)
-      // Larger text, from the Menu's Text size: at 125 % the band still holds the card (in the shop, above its Browse chip,
-      // about 6 rem: it scrolls rather than cover that chip or Sloane's); from 150 % on a phone this short it rises over
-      // the HUD's rows, left of the minimap, and Sloane's chip steps aside for it.
+      // Larger text, from the Menu's Text size. Where the band between the thumbs is short of 8 rem (in the shop at 125 %,
+      // its Browse chip at the foot; anywhere at 175 % on a phone this short), Sloane's chip moves up to the top row and
+      // the card rises over the HUD's header and readout to stand under it: her chip stays on screen and clear.
+      const chipTop = () => p.eval(`(() => { const c = document.querySelector('[data-concierge="chip"]'); return c ? Math.round(c.getBoundingClientRect().top) : null })()`)
       const at125 = await setText(125)
-      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 125 % (${at125})`, ['chip', 'minimap', 'foot'], 90)
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 125 % (${at125}, her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
       const at175 = await setText(175)
-      const chipAway = await p.eval(`!document.querySelector('[data-concierge="chip"]')`)
-      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 175 % (${at175}, her chip ${chipAway ? 'aside' : 'STILL UP'})`, ['minimap', 'foot'])
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 175 % (${at175}, her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
       await view(667, 375)
-      await sidewaysAt(`667x375 at 175 %`, ['minimap', 'foot'])
+      await sidewaysAt(`667x375 at 175 % (her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
       await p.shot('walk-phone-large-text')
       await view(IPHONE.width, IPHONE.height)
       const at100 = await setText(100)
-      check(!sideways.some((x) => /over|off|tall|covered|no card|missing|false|STILL/.test(x)) && at100, 'walkphone: held sideways, the walk\'s card stands between the thumbs above the HUD\'s chips, or rises over its rows at large text with her chip aside, clear of everything, its button reachable and on top', sideways.join('; '))
+      check(!sideways.some((x) => /over|off|tall|covered|no card|missing|false/.test(x)) && at100, 'walkphone: held sideways, the walk\'s card stands between the thumbs above the HUD\'s chips, or, where that band is short, under Sloane\'s chip moved up to the top row, clear of everything, its button reachable and on top', sideways.join('; '))
       // At the wheel: sideways the car's buttons fill the band, so the card steps aside; upright it keeps under her chip.
       await view(IPHONE.width, IPHONE.height)
       const car = await p.eval(nearestCarParked(0))
