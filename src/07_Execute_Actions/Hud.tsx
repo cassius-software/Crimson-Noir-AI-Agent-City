@@ -78,9 +78,10 @@ function publishPanels(el: HTMLDivElement | null) {
 }
 
 /** Where the compact layout's chips at the foot begin (the captions, the shop's chip, the speedometer of a phone held
- *  sideways at the wheel), for the first walk's card (onboarding/FirstWalk.tsx), which stands above them between a
- *  sideways phone's thumbs: --hud-foot is the height from the screen's foot to the top of the stack, in window pixels.
- *  A ref callback on the stack, so it is published while the stack is on screen and taken away when it goes. */
+ *  sideways at the wheel; with the HUD hidden, the captions alone), for the first walk's card (onboarding/FirstWalk.tsx),
+ *  which stands above them between a sideways phone's thumbs: --hud-foot is the height from the screen's foot to the
+ *  top of the stack, in window pixels. A ref callback on the stack, so it is published while the stack is on screen and
+ *  taken away when it goes (React runs the old stack's cleanup before the new one's ref when H swaps them). */
 function publishFoot(el: HTMLDivElement | null) {
   if (!el) return
   const root = document.documentElement.style
@@ -526,7 +527,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {micPill}
             {rc?.listening && micChip}
           </div>
-          {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
+          {captionStrip && <div ref={publishFoot} className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2" data-hud="foot">{captionStrip}</div>}
         </div>
       )}
 

@@ -2031,14 +2031,32 @@ const SCENARIOS = {
         const others = [['sloane', document.querySelector('aside[data-concierge]')], ['chip', document.querySelector('[data-concierge="chip"]')], ['minimap', document.querySelector('[data-hud="minimap"]')], ['foot', document.querySelector('[data-hud="foot"]')],
           ...[...document.querySelectorAll('[data-touch]')].filter((e) => e.getAttribute('data-touch') !== 'look').map((e) => [e.getAttribute('data-touch'), e])]
         return { w: innerWidth, h: innerHeight, walk: box(document.querySelector('[data-walk]')), others: others.map(([k, e]) => ({ k, ...box(e) })).filter((o) => o.l !== undefined) } })()`)
-      // A tap where a thumb would put it (a touch screen's buttons answer the pointer, not a click).
-      const tapOn = async (label, id) => {
-        const c = await p.waitFor(`(() => { const b = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)} && b.getBoundingClientRect().width > 0); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
+      // A tap where a thumb would put it (a touch screen's buttons answer the pointer, not a click): on the shown button
+      // `which` picks (a page function of the button), or the one whose words are `which`, scrolled to first (the Menu's
+      // sheet scrolls on a short screen).
+      const tapOn = async (which, id) => {
+        const pick = typeof which === 'string' ? `(b) => b.textContent.trim() === ${JSON.stringify(which)}` : which.pick
+        const c = await p.waitFor(`(() => { const b = [...document.querySelectorAll('button')].find((b) => (${pick})(b) && b.getBoundingClientRect().width > 0); if (!b) return null; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
         if (!c) return false
         await p.touch('touchStart', [[c[0], c[1], id]])
         await p.touch('touchEnd', [])
         return true
       }
+      const MENU = { pick: `(b) => b.getAttribute('aria-label') === 'Menu'` }
+      const TEXT_SIZE = { pick: `(b) => b.textContent.trim().startsWith('Text size')` }
+      const textSize = () => p.eval(`window.getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim()`)
+      // The touch Menu's Text size item, pressed until the text is at `scale` (it keeps the sheet open), then shut.
+      const setText = async (scale) => {
+        if (!(await tapOn(MENU, 40)) || !(await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false))) return false
+        for (let i = 0; i < 5 && (await textSize()) !== String(scale / 100); i++) { await tapOn(TEXT_SIZE, 41 + i); await p.frames(2) }
+        await tapOn(MENU, 47)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+        await p.frames(3)
+        await new Promise((r) => setTimeout(r, 400))
+        return (await textSize()) === String(scale / 100)
+      }
+      // The card scrolls when its words outrun the band (as on every phone): its button is scrolled to, then hit-tested.
+      const reachable = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return false; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!e && b.contains(e) })()`)
       const meets = (a, o) => a.r > o.l + 1 && a.l < o.r - 1 && a.b > o.t + 1 && a.t < o.b - 1
       const clear = (m) => !m.walk ? ['no card'] : [
         ...(m.walk.l < -1 || m.walk.t < -1 || m.walk.r > m.w + 1 || m.walk.b > m.h + 1 ? [`off screen ${JSON.stringify(m.walk)}`] : []),
@@ -2060,20 +2078,48 @@ const SCENARIOS = {
       const upright = await boxes()
       check(back && clear(upright).length === 0, 'walkphone: once her card settles, the walk\'s card is back upright, clear of her chip, the minimap and every touch control', `${JSON.stringify(upright.walk)} ${clear(upright).join(', ')}`)
       await p.shot('walk-phone-upright')
-      // Sideways at three phone sizes: between the stick and the buttons, tall enough to read and press.
+      // Sideways at three phone sizes, standing in a shop so the HUD's chips at the foot are up (its Browse chip; the
+      // captions are silent under audio=0): between the stick and the buttons, above those chips, tall enough to read.
+      const shop = await p.eval(`window.__SIM__.shops()[0]`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z}, 0)`)
+      await p.waitFor(`!!document.querySelector('[data-hint="shop"]')`, 20_000).catch(() => {})
       const sideways = []
-      for (const [w, h] of [[IPHONE.width, IPHONE.height], [844, 390], [667, 375]]) {
-        await view(w, h)
+      const sidewaysAt = async (label, need, least = 120) => {
         const m = await boxes()
         const bad = clear(m)
-        if (m.walk && m.walk.b - m.walk.t < 120) bad.push(`${m.walk.b - m.walk.t} px tall`)
-        // The card scrolls when its words outrun the band (as on every phone): its button is scrolled to, then pressed-for.
-        const button = await p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return false; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!e && b.contains(e) })()`)
-        if (!button) bad.push('its button is covered or gone')
-        sideways.push(`${w}x${h} ${bad.length ? bad.join(', ') : `${m.walk.l}..${m.walk.r} x ${m.walk.t}..${m.walk.b}`}`)
+        for (const k of need) if (!m.others.some((o) => o.k === k)) bad.push(`missing ${k}`)
+        if (m.walk && m.walk.b - m.walk.t < least) bad.push(`${m.walk.b - m.walk.t} px tall`)
+        if (!(await reachable())) bad.push('its button is covered or gone')
+        sideways.push(`${label} ${bad.length ? bad.join(', ') : `${m.walk.l}..${m.walk.r} x ${m.walk.t}..${m.walk.b}`}`)
+      }
+      for (const [w, h] of [[IPHONE.width, IPHONE.height], [844, 390], [667, 375]]) {
+        await view(w, h)
+        await sidewaysAt(`${w}x${h}`, ['chip', 'minimap', 'foot', 'stick'])
       }
       await p.shot('walk-phone-sideways')
-      check(!sideways.some((x) => /over|off|tall|covered|no card/.test(x)), 'walkphone: held sideways, the walk\'s card stands between the thumbs, clear of everything, its button reachable and on top', sideways.join('; '))
+      // The touch Menu opens over the card (the Ring-0 stage sends the visitor to it): every item, scrolled to, is on top.
+      await view(IPHONE.width, IPHONE.height)
+      let sheet = 'did not open'
+      if (await tapOn(MENU, 39) && await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)) {
+        sheet = await p.eval(`(() => { const items = [...document.querySelectorAll('[role="menu"] button')]; const under = items.filter((b) => { b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + Math.min(24, r.width / 2), r.top + r.height / 2); return !e || !b.contains(e) }); return under.length ? 'under: ' + under.map((b) => b.textContent.trim()).join(', ') : items.length + ' items on top' })()`)
+        await tapOn(MENU, 38)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+      }
+      check(/items on top/.test(sheet), 'walkphone: held sideways, the touch Menu opens over the walk\'s card', sheet)
+      // Larger text, from the Menu's Text size: at 125 % the band still holds the card (in the shop, above its Browse chip,
+      // about 6 rem: it scrolls rather than cover that chip or Sloane's); from 150 % on a phone this short it rises over
+      // the HUD's rows, left of the minimap, and Sloane's chip steps aside for it.
+      const at125 = await setText(125)
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 125 % (${at125})`, ['chip', 'minimap', 'foot'], 90)
+      const at175 = await setText(175)
+      const chipAway = await p.eval(`!document.querySelector('[data-concierge="chip"]')`)
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 175 % (${at175}, her chip ${chipAway ? 'aside' : 'STILL UP'})`, ['minimap', 'foot'])
+      await view(667, 375)
+      await sidewaysAt(`667x375 at 175 %`, ['minimap', 'foot'])
+      await p.shot('walk-phone-large-text')
+      await view(IPHONE.width, IPHONE.height)
+      const at100 = await setText(100)
+      check(!sideways.some((x) => /over|off|tall|covered|no card|missing|false|STILL/.test(x)) && at100, 'walkphone: held sideways, the walk\'s card stands between the thumbs above the HUD\'s chips, or rises over its rows at large text with her chip aside, clear of everything, its button reachable and on top', sideways.join('; '))
       // At the wheel: sideways the car's buttons fill the band, so the card steps aside; upright it keeps under her chip.
       await view(IPHONE.width, IPHONE.height)
       const car = await p.eval(nearestCarParked(0))

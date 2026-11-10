@@ -155,11 +155,27 @@ export function besideRoomQuery(zoom: number): string {
   return `(min-width: ${Math.round(BESIDE_ROOM_PX * Math.max(1, zoom))}px)`
 }
 const ROOM_STORES = new Map<string, ReturnType<typeof mediaStore>>()
-export function besideRoom(zoom: number): ReturnType<typeof mediaStore> {
-  const query = besideRoomQuery(zoom)
+function storeFor(query: string): ReturnType<typeof mediaStore> {
   let store = ROOM_STORES.get(query)
   if (!store) ROOM_STORES.set(query, (store = mediaStore(query)))
   return store
+}
+export function besideRoom(zoom: number): ReturnType<typeof mediaStore> {
+  return storeFor(besideRoomQuery(zoom))
+}
+/**
+ * A screen held sideways too short, at the text size's zoom, for the first walk's card between the thumbs under the
+ * HUD's rows and this chip (FirstWalk.tsx: its band starts 11.25 rem down and needs 8 rem above a 0.75 rem foot, so
+ * 20 rem of zoomed height). There the walk's card rises over the HUD's rows, which take no taps, and stands where the
+ * chip would: on a short touch screen in landscape the chip steps aside until that card goes or the visitor takes the
+ * wheel (where it steps aside). 874 x 402 is cramped from 150 % text; 568 x 320 is not at 100 %.
+ */
+export const CRAMPED_PX = 319
+export function crampedQuery(zoom: number): string {
+  return `(orientation: landscape) and (max-height: ${Math.round(CRAMPED_PX * Math.max(1, zoom))}px)`
+}
+export function cramped(zoom: number): ReturnType<typeof mediaStore> {
+  return storeFor(crampedQuery(zoom))
 }
 
 function isEditable(t: EventTarget | null): boolean {
@@ -233,6 +249,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
+  const crampedRoom = cramped(zoom)
+  const crampedNow = useSyncExternalStore(crampedRoom.subscribe, crampedRoom.matches, crampedRoom.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
   const [mood, setMood] = useState<Mood>(() => (profile ? 'back' : 'new'))
   /** The name given this session: the parent's `profile` may lag it by a render. */
@@ -531,6 +549,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const enter = 'transition-[opacity,translate] duration-300 ease-out starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none'
 
   if (view === 'chip') {
+    // The first walk's card has risen over the HUD's rows where this chip stands (CRAMPED_PX): the chip steps aside.
+    if (beside && crampedNow && overlay && short && landscape && !driving) return null
     const pending = !name && !skipped
     const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`

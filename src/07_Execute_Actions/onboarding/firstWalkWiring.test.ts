@@ -103,7 +103,7 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   // Sloane: her wide column moves left of the walk's card when there is room, and her open state is any view but the chip.
   assert.match(concierge, /className=\{beside && roomy \? WIDE_BESIDE : WIDE_COLUMN\}/)
   assert.match(concierge, /const opened = visible && view !== 'chip'/)
-  assert.match(card, /import \{ besideRoom \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
+  assert.match(card, /import \{ besideRoom, cramped \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
   // Both cards are inside the text size's zoom, so the room is zoomed rem: twice the window at 200 %, one store per zoom.
   assert.match(concierge, /return `\(min-width: \$\{Math\.round\(BESIDE_ROOM_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
   for (const src of [concierge, card]) assert.match(src, /const room = besideRoom\(zoom\)\n\s+const roomy = useSyncExternalStore\(room\.subscribe, room\.matches, room\.server\)/)
@@ -111,12 +111,13 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   // Side by side only in the wide place with room for both: on a phone, a small window or a window small only at the
   // zoom, Sloane's open card takes the band the walk's card stands in (her short and tall layouts), so it steps aside.
   assert.match(card, /const besideHers = !overlay && !compact && !squeezed && roomy/)
-  assert.match(card, /const shown = visible && !\(crowded && !termOpen && !besideHers\) && !\(between && driving\)/)
+  assert.match(card, /const heard = visible && !\(crowded && !termOpen && !besideHers\)\n/)
+  assert.match(card, /const shown = heard && !\(between && driving\)\n/)
   // A window small only at the text size's zoom puts the card at the foot (not a sliver under the zoomed readout); it is
   // the compact query itself at 100 %, and still steps aside for Sloane's card, which stays in the window's centre.
   assert.match(card, /return `\(max-width: \$\{Math\.round\(639 \* z\)\}px\), \(max-height: \$\{Math\.round\(499 \* z\)\}px\)`/)
   assert.match(card, /const SMALL = mediaStore\('\(max-width: 639px\), \(max-height: 499px\)'\)/)
-  assert.match(card, /const at = termOpen \? AT\.console : between \? AT\.between : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
+  assert.match(card, /const at = termOpen \? AT\.console : between \? \(risen \? AT\.risen : AT\.between\) : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
   // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
   // query's width it still has at least the 22 rem her centred column never went under.
   const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
@@ -148,14 +149,42 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   const between = place('between')
   assert.match(between, /^left-\[calc\(env\(safe-area-inset-left,0px\)_\+_calc\(12\.5rem_\/_var\(--ui-zoom,1\)\)\)\]/, 'right of the stick and its gaps (unzoomed)')
   assert.match(between, /right-\[calc\(calc\(var\(--touch-left,12rem\)_\/_var\(--ui-zoom,1\)\)_\+_0\.5rem\)\]/, 'left of the buttons (window pixels, unzoomed)')
-  assert.match(between, /bottom-\[max\(max\(0\.75rem,env\(safe-area-inset-bottom\)\),calc\(calc\(var\(--hud-foot,0px\)_\/_var\(--ui-zoom,1\)\)_\+_0\.5rem\)\)\]/, 'above the HUD\'s chips')
-  assert.match(between, /max-h-\[calc\(calc\(100dvh_\/_var\(--ui-zoom,1\)\)_-_max\(0\.75rem,env\(safe-area-inset-top\)\)_-_10\.5rem_-_/, 'under the header, the readout and her chip')
+  // Its foot above the HUD's chips, unless that leaves less than the card's padding and border: then it comes down over
+  // them rather than rise over her chip. The same foot in the height, so the top stays on the 10.5 rem line.
+  const FOOT = 'max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))'
+  const VH = 'calc(100dvh_/_var(--ui-zoom,1))'
+  const TOP = 'max(0.75rem,env(safe-area-inset-top))'
+  const footB = `max(0px,min(${FOOT},calc(${VH}_-_${TOP}_-_10.5rem_-_1.875rem)))`
+  assert.ok(between.includes(` bottom-[${footB}] `), 'above the HUD\'s chips, never rising over her chip')
+  assert.ok(between.endsWith(` max-h-[calc(${VH}_-_${TOP}_-_10.5rem_-_${footB})]`), 'under the header, the readout and her chip')
+  // At a text size that leaves that band short of 8 rem (Concierge's CRAMPED_PX, one query for both), the card rises
+  // over the HUD's rows to the top, left of the minimap's column, and her chip steps aside for it.
+  assert.match(concierge, /export const CRAMPED_PX = 319$/m)
+  assert.equal((Number(/export const CRAMPED_PX = (\d+)$/m.exec(concierge)?.[1]) + 1) / 16, 0.75 + 10.5 + 8 + 0.75, 'the band\'s top, 8 rem and the foot, in rem')
+  assert.match(concierge, /return `\(orientation: landscape\) and \(max-height: \$\{Math\.round\(CRAMPED_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
+  assert.match(card, /const tightRoom = cramped\(zoom\)\n\s+const risen = useSyncExternalStore\(tightRoom\.subscribe, tightRoom\.matches, tightRoom\.server\)/)
+  const risen = place('risen')
+  const footR = `max(0px,min(${FOOT},calc(${VH}_-_${TOP}_-_1.875rem)))`
+  assert.ok(risen.startsWith('left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] '), 'between the thumbs and left of the minimap (7 rem under a 0.75 rem frame)')
+  assert.ok(risen.includes(` bottom-[${footR}] `) && risen.endsWith(` max-h-[calc(${VH}_-_${TOP}_-_${footR})]`), 'up to the top of the screen')
+  assert.match(concierge, /if \(beside && crampedNow && overlay && short && landscape && !driving\) return null/, 'her chip steps aside for the risen card')
   // The HUD publishes the top of its compact chips at the foot, from the screen's foot, and takes it away with them.
   assert.match(hud, /root\.setProperty\('--hud-foot', `\$\{Math\.round\(window\.innerHeight - el\.getBoundingClientRect\(\)\.top\)\}px`\)/)
   assert.match(hud, /root\.removeProperty\('--hud-foot'\)/)
   assert.match(hud, /<div ref=\{publishFoot\} className="absolute bottom-0 left-1\/2 [^"]*" data-hud="foot">\s*\{captionStrip\}/)
+  // With the HUD hidden its captions stay (an access surface H does not put away), and so does the foot they publish.
+  assert.equal(hud.match(/ref=\{publishFoot\}/g)?.length, 2, 'the HUD\'s stack and the hidden HUD\'s captions')
+  assert.match(hud, /\{captionStrip && <div ref=\{publishFoot\} className="[^"]*" data-hud="foot">\{captionStrip\}<\/div>\}/)
   // At the wheel sideways the car's buttons fill the band: the card steps aside until the visitor is on foot.
-  assert.match(app, /driving=\{hud\.input\.mode === 'vehicle'\}/)
+  assert.match(app, /<FirstWalkCard\b[^>]*\bdriving=\{hud\.input\.mode === 'vehicle'\}/, 'the walk\'s card hears the wheel')
+  // Meanwhile Sloane still says each line: the car ends one stage and the next stage's ask is heard at the wheel.
+  assert.match(card, /if \(!beat \|\| beat\.id === said\.current \|\| !heard\) return/)
+  assert.match(card, /\}, \[beat, heard\]\)/)
+  // The touch Menu's sheet stands over the walk's card (the Ring-0 stage sends the visitor to it), under the onboarding.
+  const touch = read('../../04_Connect_Hardware/TouchControls.tsx')
+  const sheet = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\] select-none" style=\{ROOT_STYLE\}>\n\s+<div\n\s+aria-hidden/.exec(touch)?.[1])
+  const walkZ = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\]">/.exec(card)?.[1])
+  assert.ok(sheet > walkZ && sheet < 1100, `the Menu's sheet (${sheet}) over the walk's card (${walkZ}), under the onboarding (1100)`)
 })
 
 test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {
