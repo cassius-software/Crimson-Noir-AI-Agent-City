@@ -26,7 +26,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   skin or a prosthetic hand, the pin on the left lapel, the frames' finish on the rims): no piece, mesh, varying or
   uniform is added, and the vertex stages (but for one generated buffer name) and the shadow pass are unchanged. The hashed crowd draws them from new links
   of the colours' chain (38 to 43), as `lookFromSeed` does: a little over half the street wears a shoe style (one of
-  its body's eight), about 28% a watch, half of those in glasses frames other than black, about 3% a pin, and the street
+  its body's eight), about 28% a watch, half of those in glasses a frame other than black, about 3% a pin, and the street
   never wears the tourbillon or the rank pin. The card gains the Shoe style, Lapel pin, Frames and Watch rows (Shoes is
   now Shoe colour; the pin's row leaves in shirt sleeves and the frames' without glasses), the console `look footwear
   wingtip`, `look watch smartwatch`, `look frames`, `look lapelPin`, and a look code with the accessory word is
