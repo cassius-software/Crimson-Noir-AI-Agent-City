@@ -4,8 +4,9 @@
 /**
  * Why does this file exist? It is the evidence for the first walk: seven stages in a fixed order, each finished by the
  * reading or event that means it was done (a turn of the head and three metres; a goal, the microphone or the
- * captions; a car entered; a room entered; the wardrobe or a shop's card put away after it was open; a law line run at
- * the console; the city unlocked), the shops named only on a map that has them and in the device's own words, a stage done early kept without a word, a stage the map or the page cannot offer passed over, Sloane's line at every start, one hint per stage
+ * captions; a car entered; a room entered; the wardrobe, a shop's card or a home's doorstep card put away after it was
+ * open; a law line run at the console; the city unlocked), the shops and the homes named only on a map that has them and
+ * in the device's own words, a stage done early kept without a word, a stage the map or the page cannot offer passed over, Sloane's line at every start, one hint per stage
  * after a quiet spell and never before the cooldown, the exit finished by nothing but `unlock`, and every spoken
  * line plain, true to the city, admissible under the conduct screen and never calling the walk a lesson.
  * What breaks if it is removed? A walk that skips a stage, nags, or can be passed without the program would ship unnoticed.
@@ -21,6 +22,9 @@ const PAD: FirstWalkOptions = { family: 'pad', words: { move: 'L', look: 'R', in
 const TOUCH: FirstWalkOptions = { family: 'touch', words: { move: 'Stick', look: 'Drag', interact: 'Enter car', console: 'Menu' }, city: { fleet: true, rooms: true } }
 /** The same devices on a map with shops (the city's five, Lakefront Metro's). */
 const shopping = (o: FirstWalkOptions): FirstWalkOptions => ({ ...o, city: { ...o.city, stores: true } })
+/** The same devices on a map with homes for sale (the city's seven, Lakefront Metro's), and on one with shops and homes both. */
+const homing = (o: FirstWalkOptions): FirstWalkOptions => ({ ...o, city: { ...o.city, homes: true } })
+const everything = (o: FirstWalkOptions): FirstWalkOptions => shopping(homing(o))
 const still = (over: Partial<WalkReading> = {}): WalkReading => ({ x: 0, z: 0, yaw: 0, travelled: 0, driving: false, inside: false, consoleOpen: false, ...over })
 
 /** A walk started at 0 with a first reading taken. */
@@ -135,6 +139,33 @@ test('a shop\'s card put away finishes the look stage as the wardrobe does, at i
   assert.equal(v.tick(1 * S), null)
 })
 
+test('a home\'s doorstep card put away finishes the look stage as a shop\'s card does, at its turn or kept silently before it', () => {
+  const w = new FirstWalk({ ...everything(KEYS), done: ['move', 'voice', 'fleet', 'work'] })
+  w.start(0)
+  w.read(still(), 0)
+  assert.equal(w.stage, 'style')
+  const said = w.tick(0)?.text ?? ''
+  assert.match(said, /shops on the street/)
+  assert.match(said, /a home for sale/)
+  w.note('home', 1 * S)
+  assert.equal(w.stage, 'ring0')
+  assert.equal(w.tick(1 * S)?.stage, 'ring0')
+  // Into a home on the first stage: the look stage is done, and Sloane says nothing of it until its turn would have come.
+  const v = begun(homing(KEYS))
+  v.tick(0)
+  v.note('home', 1 * S)
+  assert.ok(v.done.has('style'))
+  assert.equal(v.stage, 'move')
+  assert.equal(v.tick(1 * S), null)
+  // Nothing else of the walk hears it: the exit stays the exam's.
+  const x = new FirstWalk({ ...homing(KEYS), done: ['move', 'voice', 'fleet', 'work', 'style', 'ring0'] })
+  x.start(0)
+  x.read(still(), 0)
+  x.note('home', 1 * S)
+  assert.equal(x.stage, 'exam')
+  assert.equal(x.passed, false)
+})
+
 test('a stage the map or the page cannot offer is passed over: no cars, no rooms, no wardrobe; the exit never is', () => {
   const w = new FirstWalk({ ...KEYS, city: { fleet: false, rooms: false, wardrobe: false }, done: ['exam'] })
   assert.ok(w.done.has('fleet') && w.done.has('work') && w.done.has('style'))
@@ -150,6 +181,8 @@ test('a stage the map or the page cannot offer is passed over: no cars, no rooms
   assert.equal(available('style', { fleet: true, rooms: true }), true, 'a page that does not say has the wardrobe card')
   assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false, stores: true }), true, 'the shops alone carry the look stage')
   assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false, stores: false }), false)
+  assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false, homes: true }), true, 'the homes alone carry the look stage')
+  assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false, stores: false, homes: false }), false)
   for (const s of STAGES) if (s !== 'fleet' && s !== 'work') assert.equal(available(s, { fleet: false, rooms: false }), true, s)
   // A reload mid-walk picks up where it was.
   const r = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet'] })
@@ -218,7 +251,7 @@ test('every spoken line is plain words, admissible, true to the device, and neve
     assert.doesNotMatch(text, banned, `${label}: ${text}`)
     assert.equal(screen(text).admissible, true, `${label}: ${text}`)
   }
-  for (const o of [KEYS, PAD, TOUCH, { ...KEYS, name: 'Dana' }, { ...TOUCH, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }, shopping(KEYS), shopping(PAD), shopping(TOUCH)]) {
+  for (const o of [KEYS, PAD, TOUCH, { ...KEYS, name: 'Dana' }, { ...TOUCH, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }, shopping(KEYS), shopping(PAD), shopping(TOUCH), homing(KEYS), homing(PAD), homing(TOUCH), everything({ ...KEYS, name: 'Dana' }), everything(PAD), everything({ ...TOUCH, name: 'Dana' })]) {
     for (const s of STAGES) {
       const ask = askFor(s, o), hint = hintFor(s, o)
       check(ask.text, `${o.family} ${s} ask`)
@@ -265,6 +298,26 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(shopWhys, /no shared code and no shop can put anyone/)
   assert.match(shopWhys, /circles you like a mirror \(not in a headset or a shared room\)/)
   assert.match(whysOf('style').join(' '), /all ten skin tones of the Monk scale, with freckles on some and vitiligo on a few/)
+  // The homes, only on a map that has them, in the device's words for opening a home's doorstep card.
+  for (const o of [KEYS, PAD, TOUCH, shopping(KEYS), shopping(PAD), shopping(TOUCH)]) {
+    assert.doesNotMatch(askFor('style', o).text + hintFor('style', o).text + eli8Of('style', o.city) + whysOf('style', o.city).join(' '), /\bhomes?\b|deed/i, `${o.family}: no homes on a map without them`)
+  }
+  for (const o of [KEYS, PAD, TOUCH]) {
+    assert.deepEqual([...askFor('style', homing(o)).keep], ['Look', 'Done'], 'the homes add no word the rewording must keep')
+    assert.deepEqual([...hintFor('style', everything(o)).keep], ['Look', 'Done'])
+    assert.doesNotMatch(askFor('style', homing(o)).text, /shop/i, `${o.family}: homes without shops name no shop`)
+  }
+  assert.match(askFor('style', homing(KEYS)).text, /a home for sale, a glass room on its own lot, and press B to read its deed; the smallest is free to claim/)
+  assert.match(askFor('style', homing(PAD)).text, /press A to read its deed/)
+  assert.match(askFor('style', homing(TOUCH)).text, /tap For sale to read its deed/)
+  assert.match(hintFor('style', homing(TOUCH)).text, /So does a home: step inside, tap For sale, and press Done when you have read its deed/)
+  assert.match(hintFor('style', homing(KEYS)).text, /So does a home: step inside, press B,/)
+  assert.match(askFor('style', everything(KEYS)).text, /trying on is free\. Or step into a home for sale/, 'with both, the shops come first and the homes after')
+  assert.match(eli8Of('style', homing(KEYS).city), /homes on the street are for sale, and the smallest costs nothing to claim/)
+  assert.match(cardFor('style', homing(KEYS)).eli8, /A home can be yours as well/)
+  const homeWhys = whysOf('style', homing(KEYS).city)
+  assert.match(homeWhys[4], /its deed is one line of the shops’ catalogue, kept by the one shopkeeper/)
+  assert.doesNotMatch(homeWhys.join(' '), /no shop can put anyone|circles you like a mirror/, 'the homes bring no shop\'s line with them')
   assert.match(askFor('move', { ...KEYS, name: 'Dana' }).text, /Welcome in, Dana/)
   assert.match(hintFor('work', { ...KEYS, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }).text, /the clinic, about 120 metres to the north/)
   assert.match(hintFor('work', KEYS).text, /wide open doorway/)

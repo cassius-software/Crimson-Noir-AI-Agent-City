@@ -4,10 +4,11 @@
 /**
  * Why does this file exist? It pins the city the districts generate: the district map by lot; every box inside its lot
  * at head height (so streets and sidewalks stay clear for cars and people) but the shoreline's; every built lot solid
- * at eye height (the crowd and the car-exit rule treat lots as solid) and the parks open; the heritage quarter's two-
- * to four-storey rows, its one church and one mill; the lakefront's mid-rise; the seawall along the whole world,
- * open only for the pier, whose deck is walkable; furniture clear of the pier and of the pavilions; the crowd's grid
- * ending short of the water; and all of it the same for the same seed.
+ * at eye height (the crowd and the car-exit rule treat lots as solid) but the workplaces', the shops' and the homes'
+ * rooms, and the parks open; the heritage quarter's two- to four-storey rows, its one church and one mill; the
+ * lakefront's mid-rise; the seawall along the whole world, open only for the pier, whose deck is walkable; furniture
+ * clear of the pier and of the pavilions; the crowd's grid ending short of the water; and all of it the same for the
+ * same seed.
  * What breaks if it is removed? A generator change could put a wall on a sidewalk, a car into the lake, a pedestrian's
  * route through a park, or a spire where the kernel's physics expects open street, unnoticed.
  */
@@ -18,6 +19,7 @@ import {
   streetFurniture, type Box, type Building,
 } from './city.ts'
 import { ROOM, workplaceLots } from './interiors.ts'
+import { cityHomes } from './properties.ts'
 import { shopLots } from './storefronts.ts'
 
 const SEEDS = [1337, 7, 42, 90210]
@@ -30,6 +32,8 @@ const inLotBoxes = (list: Building[], k: number, m: number) =>
     return a === k && b === m
   })
 const isShoreline = ([, , z0]: Box) => z0 >= LAKE.shore - 1e-9
+/** The seed's home lots (properties.ts), picked after the workplaces and the shops. */
+const propertyLotsOf = (seed: number) => cityHomes(seed)
 
 test('the grid: 16 blocks of 40 m, 640 m across; the GPU crowd reads the same numbers', () => {
   assert.equal(CITY.blocks, 16)
@@ -97,9 +101,10 @@ test('every built lot is solid at eye height; the parks are open ground (a pavil
         if (districtOfLot(k, m) === 'park') {
           assert.ok(!covers, `${seed}: park ${k},${m} is built over`)
           assert.ok(mine.length <= 1 && mine.every(({ box, style }) => box[4] <= 4 && style === STYLE.concrete), `${seed}: park ${k},${m}: ${JSON.stringify(mine)}`)
-        } else if (workplaceLots(seed).some((w) => w.k === k && w.m === m) || shopLots(seed).some((w) => w.k === k && w.m === m)) {
-          // A workplace lot (interiors.ts) or a shop's (storefronts.ts): a room behind glass walls under the podium, open
-          // at its doorway alone.
+        } else if (workplaceLots(seed).some((w) => w.k === k && w.m === m) || shopLots(seed).some((w) => w.k === k && w.m === m) ||
+          propertyLotsOf(seed).some((w) => w.k === k && w.m === m)) {
+          // A workplace lot (interiors.ts), a shop's (storefronts.ts) or a home's (properties.ts): a room behind glass
+          // walls under the podium, open at its doorway alone (a home's planters stand in the doorway, under a metre).
           assert.ok(!covers, `${seed}: workplace ${k},${m} is solid`)
           // The walls: glass from the floor to the ceiling (a shop's mirror and its glass models are glass too, but neither).
           const glass = mine.filter(({ style, box }) => style === STYLE.glass && box[1] === 0 && box[4] === ROOM.height)
@@ -149,9 +154,10 @@ test('the heritage quarter: two to four storeys of stone and brick with cornices
 test('the lakefront row: condominiums of about 20 to 50 m over shops; the park row: trees round open ground', () => {
   for (const seed of SEEDS) {
     const list = generateBuildings(seed)
-    // A shop on the row (storefronts.ts: the tattoo studio and the design house) has its glass and its fixtures under
-    // the ceiling slab; everything above the room is the condominium as it was.
-    const shops = shopLots(seed).filter((l) => l.m === CITY.blocks - 2).map((l) => l.k)
+    // A shop on the row (storefronts.ts: the tattoo studio and the design house) or a home (properties.ts: the timber
+    // loft, the villa and the estate) has its glass and its fixtures under the ceiling slab; everything above the room
+    // is the condominium as it was.
+    const shops = [...shopLots(seed), ...propertyLotsOf(seed)].filter((l) => l.m === CITY.blocks - 2).map((l) => l.k)
     for (let k = -1; k <= CITY.blocks; k++) {
       const mine = inLotBoxes(list, k, CITY.blocks - 2)
       const shop = shops.includes(k)
