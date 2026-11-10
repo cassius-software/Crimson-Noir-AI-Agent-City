@@ -9,11 +9,11 @@
  * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and
  * the words for the gate's verdicts.
  *
- * A line whose look slots the wardrobe does not have yet (tattoos, prosthetic limbs, the umbrella and the headphones:
- * the customizer's coming slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot
- * of that name. The property deeds are on sale, because the seven homes stand in both maps
- * (01_Initialize_World/properties.ts); the design house's furniture is on order the same way until furnishing opens,
- * so a piece can never be bought before it can be placed.
+ * A line whose look slots the wardrobe does not have yet (tattoos, the umbrella and the headphones: the customizer's
+ * coming slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of that name.
+ * The property deeds are on sale, because the seven homes stand in both maps (01_Initialize_World/properties.ts), and
+ * so is the design house's furniture, because a home's owner can place it (the home card's furnishing view,
+ * HomeCard.tsx): a furniture line is a licence for every home the player owns, up to its cap in each.
  *
  * The level, the credits and what is owned are not kept here: the progression engine's keeper answers for them
  * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
@@ -99,13 +99,14 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(64, 'inkStudio', 'wear', 'Inks', 'Gold-leaf ink', 12, 6000, { tattooInk: 3 }),
   item(65, 'inkStudio', 'wear', 'Inks', 'Luminescent ink', 16, 24000, { tattooInk: 4 }),
 
-  // Bio-Frame Prosthetics Atelier: smart eyewear and the hearing processor now (the wardrobe's hearing slot); the
-  // limbs with the customizer.
+  // Bio-Frame Prosthetics Atelier: smart eyewear, four fitted limbs and a hearing processor. A limb line sets the
+  // wardrobe's limb and finish (look.ts PROSTHETIC, WARDROBE.prostheticFinish) and says its side in its name; the
+  // wardrobe itself offers every limb, side and finish at no cost, so nobody has to buy their own body.
   item(96, 'prosthetics', 'wear', 'Eyewear', 'Smart eyewear', 2, 450, { eyewear: 1 }),
-  item(97, 'prosthetics', 'wear', 'Limbs', 'Brushed-titanium arm', 3, 1200, { prostheticArm: 1 }),
-  item(98, 'prosthetics', 'wear', 'Limbs', 'Matte carbon-fibre arm', 5, 2200, { prostheticArm: 2 }),
-  item(99, 'prosthetics', 'wear', 'Limbs', 'Carbon-fibre running blade', 6, 3000, { prostheticLeg: 3 }),
-  item(100, 'prosthetics', 'wear', 'Limbs', 'Skin-matched silicone leg', 4, 1800, { prostheticLeg: 4 }),
+  item(97, 'prosthetics', 'wear', 'Limbs', 'Brushed-titanium right arm', 3, 1200, { prosthetic: 2, prostheticFinish: 2 }),
+  item(98, 'prosthetics', 'wear', 'Limbs', 'Matte carbon-fibre left arm', 5, 2200, { prosthetic: 1, prostheticFinish: 1 }),
+  item(99, 'prosthetics', 'wear', 'Limbs', 'Carbon-fibre right lower leg', 6, 3000, { prosthetic: 4, prostheticFinish: 1 }),
+  item(100, 'prosthetics', 'wear', 'Limbs', 'Skin-matched silicone left leg', 4, 1800, { prosthetic: 3, prostheticFinish: 3 }),
   item(101, 'prosthetics', 'wear', 'Hearing', 'Tinted hearing processor', 2, 600, { hearing: 1 }),
 
   // Escapement Row Horology: a briefcase, the watches and the rank pin now (the wardrobe's accessory word); the
@@ -117,7 +118,7 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(132, 'horology', 'wear', 'Weather', 'Folding umbrella', 1, 150, { umbrella: 1 }),
   item(133, 'horology', 'wear', 'Audio', 'Acoustic headphones', 4, 900, { headphones: 1 }),
 
-  // Lintel & Lumen Design House: furniture for owned spaces (on order until furnishing opens), and the brokerage's deeds.
+  // Lintel & Lumen Design House: furniture for the homes one owns (placed through the home card), and the brokerage's deeds.
   item(160, 'designHouse', 'furniture', 'Office', 'Curved walnut executive desk', 3, 2400),
   item(161, 'designHouse', 'furniture', 'Office', 'Six-screen console station', 6, 7500),
   item(162, 'designHouse', 'furniture', 'Office', 'Holographic city table', 10, 22000),
@@ -145,15 +146,15 @@ export const itemById = (id: number): StoreItem | null => BY_ID.get(id) ?? null
 export const itemsOf = (shop: ShopKind): readonly StoreItem[] => CATALOGUE.filter((i) => i.shop === shop)
 
 /**
- * The kinds of line other than worn ones that are on sale now. The deeds opened with the homes; furniture joins when
- * furnishing does, so that nothing is sold before it can be placed. A worn line answers to the wardrobe instead.
+ * The kinds of line other than worn ones that are on sale now. The deeds opened with the homes, and furniture with
+ * furnishing, so that nothing was ever sold before it could be placed. A worn line answers to the wardrobe instead.
  */
-export const OPEN_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>(['deed'])
+export const OPEN_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>(['deed', 'furniture'])
 
 /**
  * Whether a line can be sold today: a 'wear' line whose every slot the wardrobe has, or a line of a kind in `open`
- * (a deed today; a piece of furniture once furnishing opens). `slots` is the wardrobe's (look.ts LOOK_SLOTS) and
- * `open` is OPEN_KINDS; both are parameters so a test can widen them.
+ * (a deed or a piece of furniture). `slots` is the wardrobe's (look.ts LOOK_SLOTS) and `open` is OPEN_KINDS; both
+ * are parameters so a test can narrow or widen them.
  */
 export function onSale(i: StoreItem, slots: readonly string[] = LOOK_SLOTS, open: ReadonlySet<ItemKind> = OPEN_KINDS): boolean {
   if (i.kind === 'wear') return i.wear !== null && Object.keys(i.wear).every((s) => slots.includes(s))
@@ -172,6 +173,16 @@ export function wearItem(look: Look, i: StoreItem): Look | null {
     if (!out) return null
   }
   return out
+}
+
+/**
+ * The lowest price among the lines of `kind` on sale today (onSale), or null when none is: the design house warns a
+ * deed's buyer when what the deed leaves is less than the cheapest piece of furniture (StoreCard.tsx).
+ */
+export function cheapestOnSale(kind: ItemKind, slots: readonly string[] = LOOK_SLOTS, open: ReadonlySet<ItemKind> = OPEN_KINDS): number | null {
+  let low: number | null = null
+  for (const i of CATALOGUE) if (i.kind === kind && onSale(i, slots, open) && (low === null || i.price < low)) low = i.price
+  return low
 }
 
 /** Whether `look` already wears everything line `i` sets. */
@@ -196,7 +207,7 @@ export function whyOf(i: StoreItem, verdict: GateVerdict, credits: number): stri
     case GATE.level: return `needs level ${i.level}`
     case GATE.credits: return `needs ${Math.max(0, i.price - credits).toLocaleString('en-CA')} more credits`
     case GATE.bought: return 'for sale'
-    default: return onSale(i) ? 'not for sale' : i.kind === 'wear' ? 'on order: arrives with the wardrobe update' : i.kind === 'furniture' ? 'on order: opens with furnishing' : 'on order'
+    default: return onSale(i) ? 'not for sale' : i.kind === 'wear' ? 'on order: arrives with the wardrobe update' : 'on order'
   }
 }
 

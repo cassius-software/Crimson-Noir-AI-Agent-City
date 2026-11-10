@@ -2,17 +2,23 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It holds the doorstep's home card (HomeCard.tsx) and the deed rows of Lintel & Lumen's card
- * (StoreCard.tsx) to their promises, which Node cannot render, so it reads their source as the other wiring tests do.
- * Each of the seven homes has one line about it, and every line, every sky-floor note and every deed name passes the
- * 14A screen, carries no armed word, names no real place and avoids the banned word. Only the two tower deeds say that
- * their sky floor opens later. The card buys through the shopkeeper's gate on line 224 + the home, offers Claim (free)
- * for the free loft, shows the gate's reason when it refuses, and marks what the smoke test looks for. Esc, B, the
- * close button and Done put it away through the host, in a capture-phase listener that never takes H or `. The store
- * card's deed rows have Visit or Go home, off with the reason as the title, an address line, and a purchase line that
- * says where the home stands.
+ * Why does this file exist? It holds the doorstep's home card (HomeCard.tsx) and the deed and furniture rows of Lintel
+ * & Lumen's card (StoreCard.tsx) to their promises, which Node cannot render, so it reads their source as the other
+ * wiring tests do. Each of the seven homes has one line about it (homeView.ts CITY_LINES, the one list the card and
+ * the city share), and every line, every sky-floor note, every deed name and every word the furnishing view says
+ * passes the 14A screen, carries no armed word, names no real place and avoids the banned word. Only the two tower
+ * deeds say that their sky floor opens later. The card buys through the shopkeeper's gate on line 224 + the home,
+ * offers Claim (free) for the free loft, shows the gate's reason when it refuses, and marks what the smoke test looks
+ * for. Esc, B, the close button and Done put it away through the host, in a capture-phase listener that never takes H
+ * or `. For the owner it is the furnishing view (section 6 and 7 of the homes plan): its keys only, the pad read by
+ * padEdges in its own frame loop (a held button ignored), the sticks, every button big enough for a finger, every
+ * committed edit handed to the host as a whole record, Undo of 20, and the draft taken away when it closes. The store
+ * card's deed rows have Visit or Go home, off with the reason as the title, an address line, a purchase line that says
+ * where the home stands, and a warning when a deed leaves too little for any furniture; its furniture says where it
+ * goes.
  * What breaks if it is removed? A tagline could fail the screen or name a real place, the card could buy around the
- * gate or swallow the HUD's key, and the deed rows could lose the way to the home without anyone noticing.
+ * gate or swallow the HUD's key, the furnishing view could lose a control or an edit, and the deed rows could lose the
+ * way to the home without anyone noticing.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -21,12 +27,15 @@ import { forbiddenWordIn } from '../01_Initialize_World/assets/cc0.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import { itemById } from './storeCatalog.ts'
-import { PAD, padStep, padsFor } from './padNav.ts'
+import { PAD, padEdges, padStep, padsFor } from './padNav.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const flat = (s: string) => s.replace(/\s+/g, ' ')
 const card = read('./HomeCard.tsx')
+/** The furnishing view's state and edits, its words, the stick and the focus rule (furnishVisit.ts, which Node also runs: furnishVisit.test.ts). */
+const visitSrc = read('./furnishVisit.ts')
 const store = flat(read('./StoreCard.tsx'))
+const view = read('./homeView.ts')
 
 /** The single-quoted strings of the source between `start` and the next `end`, unescaped. */
 function stringsIn(src: string, start: string, end: string): string[] {
@@ -37,8 +46,14 @@ function stringsIn(src: string, start: string, end: string): string[] {
   return [...src.slice(a + start.length, b).matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].replace(/\\(.)/g, '$1'))
 }
 
-const LINES = stringsIn(card, 'const HOME_LINES: readonly string[] = Object.freeze([', '])')
+const LINES = stringsIn(view, 'export const CITY_LINES: readonly string[] = Object.freeze([', '])')
 const NOTES = stringsIn(card, 'const SKY_NOTES: Readonly<Record<number, string>> = Object.freeze({', '})')
+/** The furnishing view's words for canPlace's verdicts, as the card writes them. */
+const VERDICTS = stringsIn(visitSrc, 'const VERDICT_WORDS: Readonly<Record<Verdict, string>> = Object.freeze({', '})')
+/** The furniture lines' short names on the plan and in the strip. */
+const SHORT = stringsIn(visitSrc, 'const SHORT: Readonly<Record<number, string>> = Object.freeze({', '})')
+/** Every button tag of a source, whole: an arrow function's `=>` inside an attribute is not the tag's end. */
+const buttonsIn = (src: string): string[] => src.match(/<button(?:=>|[^>])*>/g) ?? []
 
 /** The words conduct.test.ts calls armed (its ARMED), as whole words with their common forms. */
 const ARMED = /\b(?:guns?|gunfire|firearms?|rifles?|pistols?|handguns?|shotguns?|revolvers?|weapons?|weaponry|holsters?|ammo|ammunition|bullets?|knife|knives|blades?|swords?|katanas?|machetes?|daggers?|grenades?|bombs?|explosives?|muzzles?|snipers?|shoot(?:s|ing|ers?)?|shots?|melee|combat|armed|arsenal|turrets?|missiles?|rockets?|punch(?:es|ing|ed)?|fights?|fighting|attacks?|attacking)\b/i
@@ -58,6 +73,10 @@ function clean(what: string, text: string): void {
 }
 
 test('one line per home, each a sentence; they, the sky-floor notes and the seven deed names all pass the screen', () => {
+  // The card shows the city's own line for the home (homeView.ts), so the doorstep and the city never tell two stories.
+  assert.ok(card.includes("import { CITY_LINES, type Draft } from './homeView.ts'"))
+  assert.ok(card.includes('<p className="mt-2 leading-snug" data-tagline>{CITY_LINES[home]}</p>'))
+  assert.ok(!card.includes('HOME_LINES'), 'no second list of taglines in the card')
   assert.equal(LINES.length, 7, 'one line for each of the seven homes')
   assert.equal(new Set(LINES).size, 7, 'no two homes share a line')
   for (const [i, line] of LINES.entries()) {
@@ -70,10 +89,24 @@ test('one line per home, each a sentence; they, the sky-floor notes and the seve
     assert.ok(deed && deed.kind === 'deed' && deed.index === i, `deed ${224 + i} is home ${i}'s`)
     clean(`deed ${deed.id}`, deed.name)
   }
-  // The card's other fixed words.
-  for (const words of ['Claim (free)', 'Buy', 'Yours', 'Also sold at', 'Esc or B closes', 'Your civic credits']) {
+  // The card's other fixed words, the furnishing view's among them, and what a visit's edits say (furnishVisit.ts).
+  const fixed = [
+    'Claim (free)', 'Buy', 'Yours', 'Also sold at', 'Esc or B closes', 'Your civic credits', 'Saved in this browser · Esc or B to finish',
+    'Not placed here (', 'Order', 'Rotate', 'Place', 'Remove', 'Undo', 'View', 'Done', 'Clear', 'Furnish ', 'Furniture', 'Floor', 'Walls',
+    'Nothing in hand at ', ': Place picks it up, Remove takes it out',
+  ]
+  for (const words of fixed) {
     assert.ok(card.includes(words), `the card says ${words}`)
     clean('the card', words)
+  }
+  const said = [
+    "'Furniture', 'Floor', 'Walls'", 'picked up: Place puts it down, Undo puts it back', 'Nothing here to pick up: choose a piece in the strip',
+    'Nothing here to remove', 'Nothing in hand to turn: choose a piece in the strip', 'Nothing to undo', 'Undone', 'taken out of the home',
+    'The pieces not placed here are cleared', ': move it into place and press Place', ' moved', ' placed', 'Floor: ', 'Walls: ',
+  ]
+  for (const words of said) {
+    assert.ok(visitSrc.includes(words), `a visit says ${words}`)
+    clean('a visit', words)
   }
 })
 
@@ -106,13 +139,23 @@ test('the card buys the deed through the shopkeeper\'s gate, offers Claim for th
   for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
     assert.ok(src.includes(mark), `missing ${mark}`)
   }
-  // Every button is big enough for a finger and marked for touch.
+  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 13.
   assert.ok(src.includes("const BUTTON = 'min-h-12 "))
-  const buttons = src.match(/<button[^>]*>/g) ?? []
-  assert.ok(buttons.length >= 3)
+  const buttons = buttonsIn(src)
+  assert.equal(buttons.length, 16, 'every button tag, read whole')
   for (const b of buttons) assert.ok(b.includes('${BUTTON}') && b.includes('data-touch'), b)
-  // Imports point down: no saved record, no wardrobe, no properties module in the card.
-  assert.ok(!/from '\.\.\/05_Observe_Environment|from '\.\.\/03_Spawn_Agents|properties\.ts'/.test(src))
+  // Imports point down: no wardrobe and no properties module in the card, and of the saved homes only the pure record
+  // helpers: the host loads and saves the record (App.tsx), the card hands it each edit.
+  assert.ok(!/from '\.\.\/03_Spawn_Agents|properties\.ts'/.test(src))
+  assert.deepEqual([...src.matchAll(/from '\.\.\/05_Observe_Environment\/([^']+)'/g)].map((m) => m[1]), ['homeStore.ts'])
+  assert.ok(src.includes("import { finishOf, freshHomes, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'"))
+  assert.ok(!/loadHomes|saveHomes|clearHomes|localStorage/.test(src), 'the card never reads or writes the browser\'s store')
+  // The visit the same: the record helpers alone, and the purchase only through the shopkeeper the card hands it.
+  const visit = flat(visitSrc)
+  assert.ok(!/from '\.\.\/03_Spawn_Agents|properties\.ts'/.test(visit))
+  assert.deepEqual([...visit.matchAll(/from '\.\.\/05_Observe_Environment\/([^']+)'/g)].map((m) => m[1]), ['homeStore.ts'])
+  assert.ok(visit.includes("import { finishOf, layoutOf, withHome, type HomeLayout, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'"))
+  assert.ok(!/loadHomes|saveHomes|clearHomes|localStorage|purchaseGate|purse\.buy|saveShop/.test(visit), 'nor does a visit, which buys only through the shopkeeper')
 })
 
 test('Esc, B, the close button and Done put the card away through the host; H and ` are never the card\'s', () => {
@@ -125,13 +168,18 @@ test('Esc, B, the close button and Done put the card away through the host; H an
   assert.ok(closes.includes('!isEditableTarget(e.target)'))
   assert.ok(!/KeyH|Backquote|'`'/.test(src), 'the HUD\'s H and the console\'s ` are never taken')
   assert.ok(src.includes('if (!closes(e)) return e.preventDefault() e.stopPropagation() onClose()'), 'only a closing key is stopped')
-  assert.equal(src.match(/onClick=\{onClose\}/g)?.length, 2, 'the close button and Done')
+  assert.equal(src.match(/onClick=\{onClose\}/g)?.length, 3, 'the close button, the deed view\'s Done and the furnishing view\'s Done')
   assert.ok(src.includes('aria-label="Close"'))
-  assert.ok(src.includes('usePadNav(cardRef, open && pad, padFrom)'), 'a pad presses and moves between the buttons, unless the host hands the pad elsewhere; only the player\'s pads')
-  assert.ok(src.includes('dark = false, pad = true, padFrom, onClose }: HomeCardProps'), 'the pad is the card\'s unless the host says otherwise')
+  assert.ok(src.includes('aria-label="Done (Esc)"'))
+  assert.ok(src.includes('usePadNav(cardRef, open && pad && !furnishing, padFrom)'), 'in the deed view a pad presses and moves between the buttons, unless the host hands the pad elsewhere; only the player\'s pads; the furnishing view reads its own')
+  assert.ok(src.includes('dark = false, pad = true, padFrom, record = NO_RECORD, onRecord, furnish = null, onClose }: HomeCardProps'), 'the pad is the card\'s unless the host says otherwise')
+  // The deed view's pad close: East (B) and Menu, by edges, so the press that opened the card never closes it.
+  assert.ok(src.includes('const CLOSE_BUTTONS: readonly number[] = Object.freeze([BTN.b, BTN.menu])'))
+  assert.ok(src.includes('const { held, down } = padEdges(prev, padsFor(readPads(), padFrom), CLOSE_BUTTONS)'))
+  assert.ok(src.includes('if (down.has(BTN.b) || down.has(BTN.menu)) { onClose(); return }'))
 })
 
-test('the store card\'s deed rows: Visit or Go home, off with the reason, an address line, a purchase that says where, furniture on order', () => {
+test('the store card\'s deed rows: Visit or Go home, off with the reason, an address line, a purchase that says where; furniture says where it goes', () => {
   assert.ok(store.includes('onGo?: (item: StoreItem) => void'))
   assert.ok(store.includes('whereFor?: (item: StoreItem) => Where | null'))
   assert.ok(store.includes('type Where = { line: string; why: string | null }'))
@@ -143,7 +191,19 @@ test('the store card\'s deed rows: Visit or Go home, off with the reason, an add
   assert.ok(store.includes('data-place>{place}</div>'), 'where the home stands, and why Visit cannot go')
   assert.ok(store.includes("const place = where ? [where.line, where.why].filter(Boolean).join(' · ') : ''"))
   assert.ok(store.includes("setSaid({ shop, text: line ? `${item.name} is yours: ${line}` : `${item.name} is yours` })"), 'the purchase says where')
-  assert.ok(store.includes("later.some((r) => r.item.kind === 'furniture') && 'Furniture arrives with furnishing.'"))
+  // Furniture is on sale now (furnishing opened its kind): only worn lines are still on order, and an owned piece
+  // (and the purchase line) says where it goes.
+  assert.ok(store.includes("{later.some((r) => r.item.kind === 'wear') && <p className={`mt-1 text-[11px] leading-snug ${t.muted}`}>Worn lines arrive with the wardrobe update.</p>}"))
+  assert.ok(!store.includes('Furniture arrives with furnishing'))
+  assert.ok(store.includes("{owned && item.kind === 'furniture' && <div className={`text-[11px] leading-snug ${t.muted}`} data-at-home>Place it at home (B)</div>}"))
+  assert.ok(store.includes("setSaid({ shop, text: r.verdict === GATE.bought && item.kind === 'furniture' ? `${r.message}: place it at home (B)` : r.message })"))
+  // A priced deed the gate would sell, which would leave less than the cheapest furniture on sale, says so on its row.
+  assert.ok(store.includes("const cheapest = cheapestOnSale('furniture')"))
+  assert.ok(store.includes("if (item.kind !== 'deed' || verdict !== GATE.bought || item.price === 0 || cheapest === null) return null"))
+  assert.ok(store.includes('const left = balance - item.price'))
+  assert.ok(store.includes('return left < cheapest ? `Leaves ${credits(left)}, less than any furniture` : null'))
+  assert.ok(store.includes('{warn && <div className={`text-[11px] leading-snug ${t.warn}`} data-warn>{warn}</div>}'))
+  assert.ok(store.includes('balance={w.credits()}'), 'the purse as it is now')
   assert.ok(!store.includes('open with the properties'))
 })
 
@@ -164,4 +224,169 @@ test('in split screen the card reads only the player\'s pads: another seat\'s A 
   assert.ok(app.includes('const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])'))
   assert.ok(app.includes('padFrom={playerOnePad}'))
   assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\)\)/)
+})
+
+test('the furnishing view says the plan\'s words for every verdict, and each furniture line has a short name with its own initial', () => {
+  // Section 6 of the homes plan, in canPlace's order; N is the line's cap in one home.
+  assert.deepEqual(VERDICTS, [
+    'Fits', 'Outside the room', 'Something is already there', 'Keeps the doorway clear', 'Goes against a wall',
+    'N of these is the most for one home', '16 pieces is the most a home holds', 'You are standing there',
+    'Would cut off part of the room', 'Would block a workstation\'s seat', 'Not yours yet: Order it',
+  ])
+  const keys = [...visitSrc.slice(visitSrc.indexOf('const VERDICT_WORDS'), visitSrc.indexOf('})', visitSrc.indexOf('const VERDICT_WORDS'))).matchAll(/\n\s*(\w+):/g)].map((m) => m[1])
+  assert.deepEqual(keys, ['ok', 'outside', 'overlap', 'doorway', 'wall', 'copies', 'full', 'you', 'sealed', 'seat', 'unowned'])
+  assert.ok(visitSrc.includes("VERDICT_WORDS[v].replace(/^N\\b/, String(shapeOf(id)?.cap ?? ''))"), 'N becomes the line\'s cap')
+  for (const words of VERDICTS) clean('a verdict', words.replace(/^N\b/, '2'))
+  // The nine lines, 160 to 168: each a furniture line in the catalogue, named shortly, no two with one initial on the plan.
+  const ids = [...visitSrc.slice(visitSrc.indexOf('const SHORT'), visitSrc.indexOf('})', visitSrc.indexOf('const SHORT'))).matchAll(/\n\s*(\d+):/g)].map((m) => Number(m[1]))
+  assert.deepEqual(ids, [160, 161, 162, 163, 164, 165, 166, 167, 168])
+  assert.equal(SHORT.length, 9)
+  assert.equal(new Set(SHORT.map((n) => n[0])).size, 9, 'each piece\'s initial on the plan is its own')
+  for (const [i, name] of SHORT.entries()) {
+    const item = itemById(ids[i])
+    assert.ok(item && item.kind === 'furniture' && item.index === ids[i] - 160, `line ${ids[i]} is furniture`)
+    clean(`line ${ids[i]}'s short name`, name)
+  }
+})
+
+test('the furnishing view takes only its own keys, in the capture phase: never H, `, Esc or B; Enter on a button reached with Tab stays the button\'s, on one a mouse clicked it places', () => {
+  const src = flat(card)
+  const body = card.slice(card.indexOf('function keyAct('), card.indexOf('\n}\n', card.indexOf('function keyAct(')))
+  assert.ok(body.includes("if (e.code === 'KeyZ' && !e.altKey) return 'undo'"), 'Z, or Ctrl (Cmd) + Z, undoes')
+  assert.ok(body.includes('if (e.ctrlKey || e.metaKey || e.altKey) return null'), 'no other chord is taken')
+  assert.ok(body.includes('const n = e.shiftKey ? 4 : 1'), 'Shift moves four cells')
+  assert.ok(body.includes('default: return null'), 'any other key is the page\'s')
+  // Each key's action, as the switch writes it.
+  const acts = new Map<string, string>()
+  for (const [, codes, act] of body.matchAll(/((?:case '\w+': )+)return ([^\n]+)/g)) {
+    for (const [, code] of codes.matchAll(/case '(\w+)'/g)) acts.set(code, act.trim())
+  }
+  assert.deepEqual(Object.fromEntries(acts), {
+    ArrowUp: '{ move: [0, -n] }', KeyW: '{ move: [0, -n] }', ArrowDown: '{ move: [0, n] }', KeyS: '{ move: [0, n] }',
+    ArrowLeft: "finish ? 'prev' : { move: [-n, 0] }", ArrowRight: "finish ? 'next' : { move: [n, 0] }",
+    KeyA: '{ move: [-n, 0] }', KeyD: '{ move: [n, 0] }',
+    Enter: "'place'", NumpadEnter: "'place'", Space: "'place'", KeyR: "'rotate'",
+    Delete: "'remove'", Backspace: "'remove'", KeyX: "'remove'", KeyQ: "'prev'", KeyE: "'next'",
+    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', KeyC: "'view'",
+  })
+  for (const never of ['KeyH', 'Backquote', 'Escape', 'KeyB']) assert.ok(!acts.has(never), `${never} is never the furnishing view's`)
+  // The listener: captured, skipping a field being typed in, stopping only a key it handles; held, only moves repeat.
+  assert.ok(src.includes('origin.key(e.code) if (isEditableTarget(e.target)) return const a = keyAct(e, visit.tab) if (a === null) return'))
+  assert.ok(src.includes("if (a === 'place' && origin.byKeys(e.target)) return e.preventDefault() e.stopPropagation()"))
+  // How a button got the focus is followed as the focus moves (furnishVisit.ts FocusOrigin, run in furnishVisit.test.ts),
+  // never read from :focus-visible at the key, which a mouse-clicked button already matches by then.
+  assert.ok(!/matches\(':focus-visible'\)|focusedByKeys/.test(src), 'no :focus-visible test at the key')
+  assert.ok(src.includes('const origin = new FocusOrigin()'))
+  assert.ok(src.includes('origin.pointerDown(active && e.target instanceof Node && active.contains(e.target) ? active : null)'), 'a press on the focused control is the pointer\'s')
+  for (const [type, fn] of [['pointerdown', 'onPointer'], ['click', 'onClick'], ['focusin', 'onFocus']]) {
+    assert.ok(src.includes(`document.addEventListener('${type}', ${fn}, true)`), `${type} in the capture phase`)
+    assert.ok(src.includes(`document.removeEventListener('${type}', ${fn}, true)`), `${type} let go`)
+  }
+  assert.ok(src.includes("window.addEventListener('blur', onBlur)") && src.includes("window.removeEventListener('blur', onBlur)"))
+  assert.ok(src.includes("if (e.repeat && typeof a === 'string') return visit.run(a)"))
+  assert.equal(src.match(/window\.addEventListener\('keydown', onKey, true\)/g)?.length, 2, 'the card\'s close listener and the furnishing view\'s')
+})
+
+test('the furnishing view reads the pad in its own frame loop by edges, so a button held as it opens is ignored; the sticks as section 7 says', () => {
+  const src = flat(card)
+  assert.ok(flat(visitSrc).includes('export const STICK = Object.freeze({ dead: 0.5, first: 300, repeat: 120, turn: 0.15 })'))
+  assert.ok(src.includes('const BTN = Object.freeze({ a: 0, b: 1, x: 2, y: 3, lb: 4, rb: 5, lt: 6, rt: 7, view: 8, menu: 9, up: 12, down: 13, left: 14, right: 15 })'))
+  assert.ok(src.includes("[BTN.a]: 'place', [BTN.b]: 'close', [BTN.menu]: 'close', [BTN.x]: 'remove', [BTN.y]: 'rotate', [BTN.lb]: 'prev', [BTN.rb]: 'next', [BTN.lt]: 'tabPrev', [BTN.rt]: 'tabNext', [BTN.view]: 'undo',"))
+  assert.ok(src.includes('[BTN.up]: { move: STEP[0] }, [BTN.right]: { move: STEP[1] }, [BTN.down]: { move: STEP[2] }, [BTN.left]: { move: STEP[3] },'))
+  assert.ok(src.includes('const pads = padsFor(readPads(), padFrom) const { held, down } = padEdges(prev, pads, PAD_BUTTONS) prev = held'), 'only the player\'s pads, by edges')
+  assert.ok(src.includes('raf = requestAnimationFrame(poll)'))
+  assert.ok(src.includes("if (!p || p.mapping !== 'standard') continue"), 'the sticks of standard-mapped pads only')
+  // The left stick's timing is stickStep's (furnishVisit.test.ts runs it: once, after 300 ms, every 120 ms, a held
+  // diagonal never faster, a stick held as the view opens counted once let go).
+  assert.ok(src.includes('const stick: StickState = { armed: false, dir: -1, next: 0 }'), 'unarmed until the stick rests')
+  assert.ok(src.includes('const dir = stickStep(stick, lx, ly, now) if (dir >= 0) visit.run({ move: STEP[dir] })'))
+  assert.ok(src.includes("else if (turn.armed && !turn.held) { turn.held = true; visit.run(rx > 0 ? 'view' : 'unview') }"), 'the right stick turns the view a quarter at a time')
+  // padEdges itself: A held on the first poll (the press that opened the card) is learnt, not pressed; held on, still
+  // nothing; let go and pressed again, it counts once.
+  const pad = (...held: number[]) => ({ buttons: Array.from({ length: 16 }, (_, b) => ({ pressed: held.includes(b) })) })
+  const buttons = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15]
+  const first = padEdges(new Set(), [pad(0)], buttons)
+  assert.equal(first.down.size, 0, 'the held A is ignored')
+  const still = padEdges(first.held, [pad(0)], buttons)
+  assert.equal(still.down.size, 0, 'still held: still nothing')
+  const up = padEdges(still.held, [pad()], buttons)
+  assert.deepEqual([...padEdges(up.held, [pad(0)], buttons).down], [0], 'pressed again: one press')
+})
+
+test('the furnishing view: every committed edit reaches the host as the whole record; Undo keeps 20; closing puts a piece in hand back and takes the draft away', () => {
+  const src = flat(card)
+  // Only an owner, with the engine's leave: otherwise the deed view says why not.
+  assert.ok(src.includes('const refusal = open && owned && furnish !== null && home !== null ? furnish.refusal(home) : null'))
+  assert.ok(src.includes('const furnishing = open && owned && furnish !== null && onRecord !== undefined && refusal === null'))
+  assert.ok(src.includes('{owned && refusal && <p className={`mt-2 text-[12px] leading-snug ${t.muted}`} data-refusal>{refusal}</p>}'))
+  assert.ok(src.includes('aria-label={furnishing ? `Furnish ${name}` : name}'))
+  assert.ok(src.includes('<Furnisher key={home} home={home} keeper={keeper} record={record} onRecord={onRecord} hooks={furnish}'))
+  // The visit (furnishVisit.ts; furnishVisit.test.ts runs it): what stands here is what the engine draws (fitLayout
+  // with the lines owned); a piece goes down only where canPlace says.
+  const visit = flat(visitSrc)
+  assert.ok(src.includes('const [visit] = useState(() => new Visit(home, record, { keeper, onRecord, hooks, onClose, changed }))'), 'one visit per home opened')
+  assert.ok(visit.includes('return fitLayout(this.home, this.record[this.home]?.pieces ?? [], (id) => this.owns(id))'))
+  assert.ok(visit.includes('return h && canPlace(this.home, fit.placed, h, this.blocked, (id) => this.owns(id))'))
+  assert.ok(visit.includes("if (hand && verdict === 'ok') {"))
+  // Each edit: the layout before it kept (20 at most), and the whole record handed up (placed first, then the stored).
+  assert.ok(visit.includes('export const UNDO_STEPS = 20'))
+  assert.ok(visit.includes('this.undoSteps.push({ layout: this.record[this.home] ?? null, lifted: this.lifted, at: this.liftedAt, rot: this.rot }) if (this.undoSteps.length > UNDO_STEPS) this.undoSteps.shift()'))
+  assert.ok(visit.includes('this.send(layoutOf(next.floor ?? f.floor, next.wall ?? f.wall, next.placed, next.stored))'))
+  assert.ok(visit.includes('this.record = withHome(this.record, this.home, layout) this.produced.add(this.record) this.io.onRecord(this.record)'))
+  assert.ok(visit.includes('if ((this.record[this.home] ?? null) !== step.layout) this.send(step.layout)'), 'Undo hands the layout before back')
+  // Order buys through the same gate as the design house.
+  assert.ok(visit.includes('const r = this.io.keeper.buy(id) if (r.verdict !== GATE.bought) { this.say(r.message); return }'))
+  assert.ok(!/purchaseGate|purse\.buy|saveShop/.test(src))
+  // The engine begins furnishing, follows the draft, and the visit settles when it ends.
+  assert.ok(src.includes('useEffect(() => { hooks.begin(home) }, [hooks, home])'))
+  assert.ok(src.includes('useEffect(() => { hooks.setDraft(draft) }, [hooks, draft])'))
+  assert.ok(src.includes('useEffect(() => () => visit.settle(), [visit])'))
+  const settle = visit.slice(visit.indexOf('settle(): void {'), visit.indexOf('export function stickStep('))
+  assert.ok(settle.includes('const back = this.returned(p)') && settle.includes('this.send(layoutOf(f.floor, f.wall, back.placed, back.stored))'), 'a piece in hand goes back where it was, at its place in the saved order')
+  assert.ok(settle.includes('this.io.hooks.setDraft(null)'), 'and the draft is taken away')
+  // What the smoke test reads.
+  for (const mark of ['data-furnishing', 'data-cursor={`${c},${r}`}', 'data-piece={handId ?? \'\'}', 'data-placed={fit.placed.length}', 'data-furnish={furnishing || undefined}', 'data-line={item.id}', 'data-action="order"', 'data-action="pick"', 'data-action="place"', 'data-count>', 'data-stored={fit.stored.length}', 'data-plan', 'data-reason>{reason}</p>', 'data-saved>Saved in this browser · Esc or B to finish</div>']) {
+    assert.ok(src.includes(mark), `missing ${mark}`)
+  }
+})
+
+test('the furnishing view\'s pointers and fingers: the 3D view through pickCell, the plan by its cells, the right button removes, the wheel turns, every button 48 px', () => {
+  const src = flat(card)
+  assert.ok(src.includes('const canvas = hooks.canvas() if (!canvas) return const pick = (e: PointerEvent) => visit.io.hooks.pickCell(e.clientX, e.clientY)'))
+  assert.equal(src.match(/if \(e\.button === 2\) \{ e\.preventDefault\(\); visit\.run\(\{ removeAt: (?:pick|cellOf)\(e\) \}\); return \}/g)?.length, 2, 'the right button removes, on both')
+  assert.equal(src.match(/addEventListener\('contextmenu', onMenu\)/g)?.length, 2, 'no context menu on either')
+  assert.ok(src.includes('const onMenu = (e: Event) => e.preventDefault()'))
+  assert.equal(src.match(/addEventListener\('wheel', onWheel, \{ passive: false \}\)/g)?.length, 2, 'the wheel turns the piece, the page never scrolls')
+  assert.ok(src.includes("if (e.pointerType === 'touch') return"), 'a finger moves the cursor by its tap, not by hovering')
+  // Hover moves the cursor on the plan alone: the draft camera follows the cursor, so a hover on the city would chase itself.
+  assert.equal(src.match(/addEventListener\('pointermove', onMove\)/g)?.length, 1, 'one hover, the plan\'s')
+  assert.ok(src.includes("el.addEventListener('pointermove', onMove)"))
+  const visit = flat(visitSrc)
+  assert.ok(visit.includes('if (cell.c === this.cursor.c && cell.r === this.cursor.r) this.place() else this.moveTo(cell.c, cell.r)'), 'tap the cursor\'s cell again to place')
+  // A right press on no cell does nothing, as a left press there does (furnishVisit.test.ts runs both).
+  assert.ok(visit.includes("else if ('removeAt' in a) this.removeAt(a.removeAt)"))
+  assert.ok(visit.includes('removeAt(cell: { c: number; r: number } | null): void { if (!cell) return this.moveTo(cell.c, cell.r) this.remove() }'))
+  // The touch sizes are the touch layout's (TOUCH.minTarget, TOUCH.gap), on every toolbar button and every row.
+  assert.ok(src.includes('const TARGET = Object.freeze({ minWidth: TOUCH.minTarget, minHeight: TOUCH.minTarget })'))
+  assert.ok(src.includes('const GAP = Object.freeze({ gap: TOUCH.gap })'))
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const tools = buttonsIn(toolbar)
+  assert.deepEqual(tools.map((b) => b.match(/data-action="(\w+)"/)?.[1]), ['prev', 'next', 'rotate', 'place', 'remove', 'undo', 'view', 'done'])
+  for (const b of tools) assert.ok(b.includes('style={TARGET}'), b)
+  assert.ok(src.includes('<canvas ref={planRef} role="img"'), 'the plan is named for a screen reader')
+  assert.ok(src.includes('role="status" aria-live="polite" data-reason'))
+})
+
+test('the host keeps the homes\' record, saves every edit and hands it to the engine with what is owned; an owner\'s card asks to furnish', () => {
+  const app = flat(read('../App.tsx'))
+  assert.ok(app.includes("import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'"))
+  assert.ok(app.includes('const [homes, setHomes] = useState<HomeRecord>(loadHomes)'))
+  assert.ok(app.includes('for (const id of SHAPE_IDS) if (keeper.owns(id)) mask |= 1 << (id - FURNITURE_BASE)'), 'lineMask bit i: line 160 + i owned')
+  assert.ok(app.includes('const onRecord = useCallback((next: HomeRecord) => { homesRef.current = next setHomes(next) saveHomes(next) engineRef.current?.setFurnishings(next, ownedHomes(keeper), ownedLines(keeper)) }, [keeper])'))
+  assert.ok(app.includes('const furnish = () => { const deeds = ownedHomes(keeper) engine.setFurnishings(homesRef.current, deeds, ownedLines(keeper)) setOwnedDeeds(deeds) } furnish() return keeper.onChange(furnish)'), 'at boot and on every change of what is owned')
+  assert.ok(app.includes('useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> homeOpen) & 1) === 1) }, [engine, homeOpen, ownedDeeds])'))
+  for (const hook of ['refusal: (home: number) => engine.furnishRefusal(home)', 'begin: (home: number) => { if (!engine.furnishing) engine.setHomeCard(home, true) }', 'setDraft: (draft) => engine.setHomeDraft(draft)', 'blocked: (home: number) => engine.blockedCells(home)', 'pickCell: (x: number, y: number) => engine.pickCell(x, y)', 'canvas: () => canvasRef.current']) {
+    assert.ok(app.includes(hook), `missing ${hook}`)
+  }
+  assert.ok(app.includes('record={homes} onRecord={onRecord} furnish={furnishHooks}'))
 })

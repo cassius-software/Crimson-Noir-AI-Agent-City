@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It pins the page-side ways out of a city that cannot start or has stopped, which App, the
  * engine, the boot veil and the cards carry and Node cannot run: the pad's edge-triggered A and d-pad (padNav.ts, run
- * here), the veil's 'Still starting' line after BOOT_VEIL.slowMs of visible time that never fails the boot, the cards'
+ * here, with padEdges, the same edge rule for any buttons a card names, and padStep held to what it did before it),
+ * the veil's 'Still starting' line after BOOT_VEIL.slowMs of visible time that never fails the boot, the cards'
  * Restart (a reload, focused) and Open the console (?boot=tty), the card on any boot failure and on every halt but a
  * Ring-0 audit, the frame loop that never dies silently (a throw before the first snapshot is the boot's failure,
  * FRAME_FAULTS throws in a row afterwards halt), the background graphics reset that restarts once the page is back,
@@ -16,8 +17,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { PAD, padStep } from './padNav.ts'
+import { PAD, padEdges, padStep } from './padNav.ts'
 import { waitedFor } from './bootFailure.ts'
+import { createRng } from '../02_Define_The_Rules/degrees.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const APP = read('../App.tsx')
@@ -25,8 +27,8 @@ const VEIL = read('./BootVeil.tsx')
 const CARD = read('./RecoveryCard.tsx')
 const ENGINE = read('./engine.ts')
 
-/** A pad with these standard-mapping buttons held. */
-const pad = (...held: number[]) => ({ buttons: Array.from({ length: 16 }, (_, i) => ({ pressed: held.includes(i) })) })
+/** A pad with these standard-mapping buttons held (all 17: 16 is the guide button). */
+const pad = (...held: number[]) => ({ buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: held.includes(i) })) })
 
 test('padStep: A presses, the d-pad moves focus, and only a button that goes down counts', () => {
   const there = padStep(new Set(), [pad(), pad()]).held // two pads, nothing held: the poll before
@@ -49,6 +51,87 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
   assert.equal(padStep(there, [pad(), pad(), pad(PAD.a)]).action, null, 'a third pad arriving with A down: nothing')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
   assert.match(read('./padNav.ts'), /const first = prev === null[\s\S]*if \(!first && action && el\)/)
+})
+
+test('padEdges: any buttons a card names count on their down edge only, and the first poll only learns what is held', () => {
+  // Every button the home card's furnishing reads (plan section 7): A, B, X, Y, LB and RB, LT and RT, View, Menu and
+  // the d-pad. The stick presses (10, 11) and the guide button (16) are not among them.
+  const B = [PAD.a, 1, 2, 3, 4, 5, 6, 7, 8, 9, PAD.up, PAD.down, PAD.left, PAD.right]
+  const down = (prev: ReadonlySet<string>, pads: Parameters<typeof padEdges>[1]) => [...padEdges(prev, pads, B).down].sort((a, b) => a - b)
+  // The first poll: everything already held is learned, nothing is pressed, whatever is down.
+  const first = padEdges(new Set(), [pad(4, 5, 3), pad(PAD.a)], B)
+  assert.deepEqual([...first.down], [], 'the first poll presses nothing')
+  assert.deepEqual([...first.held].sort(), ['0:', '0:3', '0:4', '0:5', '1:', '1:0'])
+  // Still held: nothing. Each button then counts on the poll it goes down, and only then.
+  assert.deepEqual(down(first.held, [pad(4, 5, 3), pad(PAD.a)]), [], 'held through: nothing')
+  const quiet = padEdges(first.held, [pad(), pad()], B).held
+  assert.deepEqual(down(quiet, [pad(4), pad()]), [4], 'a shoulder goes down')
+  assert.deepEqual(down(quiet, [pad(4, 9), pad(2)]), [2, 4, 9], 'several at once, across pads')
+  assert.deepEqual(down(quiet, [pad(5), pad(5)]), [5], 'the same button on two pads counts once')
+  assert.deepEqual(down(quiet, [pad(6, PAD.up), pad(7, PAD.right)]), [6, 7, PAD.up, PAD.right], 'the triggers and the d-pad too')
+  const holding = padEdges(quiet, [pad(3), pad()], B)
+  assert.deepEqual([...holding.down], [3])
+  assert.deepEqual(down(holding.held, [pad(3), pad()]), [], 'held: nothing until it is let go')
+  assert.deepEqual(down(padEdges(holding.held, [pad(), pad()], B).held, [pad(3), pad()]), [3], 'let go and pressed again')
+  // Only the named buttons are read: the stick presses and the guide button are not among these.
+  assert.deepEqual(down(quiet, [pad(10, 11, 16), pad(16)]), [], 'unnamed buttons are not read')
+  assert.ok(!padEdges(quiet, [pad(10), pad()], B).held.has('0:10'), 'nor kept as held')
+  // A pad that shows up with a button down counts it from its next press; a pad that goes away is forgotten.
+  assert.deepEqual(down(quiet, [pad(), pad(), pad(4)]), [], 'a third pad arriving with a shoulder down: nothing')
+  const gone = padEdges(quiet, [null, pad()], B).held
+  assert.ok(!gone.has('0:'), 'pad 0 left')
+  assert.deepEqual(down(gone, [pad(4), pad()]), [], 'pad 0 back with a shoulder down: learned, not pressed')
+  assert.deepEqual(down(quiet, [undefined, null]), [], 'no pads, nothing')
+  assert.deepEqual(down(quiet, [{ buttons: [{ pressed: false }] }, pad()]), [], 'a pad with fewer buttons than named reads the rest as up')
+  // The usual loop: the first poll only learns, every later poll's edges count.
+  let prev: Set<string> | null = null
+  const presses: number[][] = []
+  for (const pads of [[pad(PAD.a)], [pad(PAD.a)], [pad()], [pad(PAD.a, 1)], [pad(1)], [pad(8)]]) {
+    const r = padEdges(prev ?? new Set(), pads, B)
+    if (prev !== null) presses.push([...r.down].sort((a, b) => a - b))
+    prev = r.held
+  }
+  assert.deepEqual(presses, [[], [], [0, 1], [], [8]])
+})
+
+test('padStep is padEdges over A and the d-pad, and behaves exactly as it did before padEdges', () => {
+  // The previous padStep, kept here word for word, against the one that now rides on padEdges.
+  type Pads = Parameters<typeof padStep>[1]
+  const before = (prev: ReadonlySet<string>, pads: Pads) => {
+    const held = new Set<string>()
+    pads.forEach((p, i) => {
+      if (!p) return
+      held.add(`${i}:`)
+      for (const b of [PAD.a, PAD.up, PAD.down, PAD.left, PAD.right]) if (p.buttons[b]?.pressed) held.add(`${i}:${b}`)
+    })
+    const down = (b: number) => [...held].some((k) => k.endsWith(`:${b}`) && !prev.has(k) && prev.has(k.slice(0, k.indexOf(':') + 1)))
+    const action = down(PAD.a) ? 'press' : down(PAD.down) || down(PAD.right) ? 'next' : down(PAD.up) || down(PAD.left) ? 'previous' : null
+    return { held, action }
+  }
+  const rng = createRng(2026)
+  const pick = (n: number) => Math.floor(rng() * n)
+  const randomPads = (): Pads => Array.from({ length: pick(4) }, () => {
+    const kind = pick(6)
+    if (kind === 0) return null
+    if (kind === 1) return undefined
+    return pad(...Array.from({ length: pick(4) }, () => pick(17)))
+  })
+  const t0 = performance.now()
+  let presses = 0
+  for (let run = 0; run < 600; run++) {
+    let a = new Set<string>(), b = new Set<string>()
+    for (let poll = 0; poll < 12; poll++) {
+      const pads = randomPads()
+      const now = padStep(a, pads), then = before(b, pads)
+      assert.equal(now.action, then.action, `run ${run}, poll ${poll}`)
+      assert.deepEqual([...now.held].sort(), [...then.held].sort(), `run ${run}, poll ${poll}`)
+      if (now.action) presses++
+      a = now.held
+      b = then.held
+    }
+  }
+  assert.ok(presses > 500, `${presses} actions seen: the runs press as well as hold`)
+  assert.ok(performance.now() - t0 < 2000, 'quick')
 })
 
 test('the boot veil: the \'Still starting\' line after 20 s of visible time, a hint that never fails the boot', () => {

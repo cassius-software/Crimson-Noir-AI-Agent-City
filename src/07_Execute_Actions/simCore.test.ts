@@ -15,9 +15,12 @@
  * never larger than what the GPU senses; a region's workplaces reach the crowd, wall its flow field and keep a driver
  * who leaves a car indoors out of the glass; a recruitment request is decided on the realm's own readings of the
  * crowd (earshot, the sidewalk, the skill, the slots), answered by an event, carried to the crowd as a summons,
- * and released on every way an interview can end; and the message door (simHost) accepts one init, refuses everything
- * else it does not know, ignores any pedestrian data the page slips in, transfers the pose and crowd buffers
- * and takes them back, and goes silent after a panic.
+ * and released on every way an interview can end; a home's furniture ('home') is checked, refused in a network room
+ * and counted when refused, solid once nobody stands in it, replaced or cleared (a piece sent again where it was stays
+ * solid throughout, and only a new one waits for nobody to stand by it), gone while a room lasts (where player 1 walks
+ * through it from the first substep exactly as the room's own mirror, which never had it, walks them) and back on after; and
+ * the message door (simHost) accepts one init, refuses everything else it does not know, ignores any pedestrian data
+ * the page slips in, transfers the pose and crowd buffers and takes them back, and goes silent after a panic.
  * What breaks if it is removed? The worker could accept a command it should refuse, trust a reading it
  * should not, or leak a non-plain object, and nothing would say so before a browser session did.
  */
@@ -41,12 +44,16 @@ import { MODES } from './simProtocol.ts'
 import { MAX_CARS, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from '../03_Spawn_Agents/crowdSensor.ts'
 import { ACTIVITY, APPROACH_SECONDS, RALLY_RANGE, RECRUIT_SLOTS, RELEASE_DISTANCE, skillsOf, TETHER_PACE, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { SimEvent } from './simProtocol.ts'
-import { CITY, inLot } from '../01_Initialize_World/city.ts'
+import { CITY, generateCity, inLot, streetFurniture } from '../01_Initialize_World/city.ts'
 import { SEG, cityStreetGrid, hSeg, streetCapacity, vSeg, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { ROOM, WORKPLACE_KINDS, toLocal, toWorld, workplacesAt, type Workplace, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 import { cellAt, type FlowGrid } from '../06_Make_Decisions/flowField.ts'
 import { exitPoint } from './carRig.ts'
+import { cityHomes, type Home } from '../01_Initialize_World/properties.ts'
+import { HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
+import { footWish, type SimCommand } from './simProtocol.ts'
+import { Mirror } from '../10_Network/mirror.node.ts'
 
 const H = 1 / 60
 const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
@@ -1411,4 +1418,254 @@ test('the message door bridges shared memory: only a SharedArrayBuffer of the ex
   await handle(hostStep(2))
   assert.equal(bridge.seq, 2)
   assert.equal(bridge.step, 2)
+})
+
+// ---------------------------------------------------------------- a home's furniture, solid ('home')
+
+/** Seed 11's estate (property 5): the whole floor plan, its doorway on side 0, on open city ground (the test worlds hold no buildings). */
+const ESTATE = cityHomes(11)[5]
+/** A home's room-frame box (u, v and y ranges) as the page sends it: six city numbers. */
+function solid(h: Home, u0: number, v0: number, u1: number, v1: number, y0 = 0, y1 = 0.85): number[] {
+  const a = toWorld(h, u0, v0), b = toWorld(h, u1, v1)
+  return [Math.min(a.x, b.x), y0, Math.min(a.z, b.z), Math.max(a.x, b.x), y1, Math.max(a.z, b.z)]
+}
+/** A walk along a home's room frame at `speed` m/s (u toward the doorway, v across), as the page's foot controls. */
+function along(h: Home, du: number, dv: number, speed = RUN): { x: number; z: number; heading: number } {
+  const o = toWorld(h, 0, 0), p = toWorld(h, du, dv)
+  const n = Math.hypot(p.x - o.x, p.z - o.z)
+  return { x: ((p.x - o.x) / n) * speed, z: ((p.z - o.z) / n) * speed, heading: 0 }
+}
+/** Where avatar `a` stands in home `h`'s room frame. */
+const roomOf = (h: Home, a: { x: number; z: number }) => toLocal(h, a.x, a.z)
+/** The face a capsule pressed against a box rests at: its radius and the controller's 2 cm skin, m. */
+const PRESSED = 0.32
+
+test("'home' is refused in a network room, for a home this world lacks and when malformed: each refusal counted, nothing built", async () => {
+  const { step } = await core(false, 0)
+  let s = step()
+  const before = { colliders: s.physics.colliders, bodies: s.physics.bodies }
+  const good = solid(ESTATE, 2, -1, 4, 1)
+  let rejected = s.rejected
+  const refused = (cmd: unknown, reason: RegExp, why: string) => {
+    s = step({ cmds: [cmd] })
+    assert.equal(s.rejected, rejected + 1, why)
+    rejected = s.rejected
+    const e = s.events.find((x) => x.e === 'rejected')
+    assert.match(e?.e === 'rejected' ? e.reason : '', reason, why)
+  }
+  step({ cmds: [{ c: 'room', on: true }] })
+  refused({ c: 'home', index: 5, boxes: good }, /^home: refused in a network room/, 'in a room, even a sound set')
+  step({ cmds: [{ c: 'room', on: false }] })
+  refused({ c: 'home', boxes: good }, /^home: no home undefined in this world$/, 'no index')
+  refused({ c: 'home', index: 7, boxes: good }, /no home 7 in this world/, 'an eighth home')
+  refused({ c: 'home', index: -1, boxes: good }, /no home -1 in this world/, 'before the first')
+  refused({ c: 'home', index: 2.5, boxes: good }, /no home 2\.5 in this world/, 'between two')
+  refused({ c: 'home', index: '5', boxes: good }, /no home 5 in this world/, 'a string')
+  refused({ c: 'home', index: 5 }, /boxes must be a list of numbers/, 'no boxes')
+  refused({ c: 'home', index: 5, boxes: 'all of them' }, /boxes must be a list of numbers/, 'not an array')
+  refused({ c: 'home', index: 5, boxes: { 0: 1, length: 6 } }, /boxes must be a list of numbers/, 'array-like')
+  refused({ c: 'home', index: 5, boxes: good.slice(1) }, /boxes come in sixes/, 'five numbers')
+  refused({ c: 'home', index: 5, boxes: good.map((n, i) => (i === 4 ? Number.NaN : n)) }, /must be finite/, 'a NaN')
+  refused({ c: 'home', index: 5, boxes: Array.from({ length: HOME_PIECES + 1 }, (_, i) => solid(ESTATE, -12 + i, -1, -11.5 + i, 1)).flat() }, /at most 16 boxes/, 'seventeen boxes')
+  refused({ c: 'home', index: 5, boxes: solid(ESTATE, 12, 4, 13, 5) }, /inside the home's floor plan/, 'out through the doorway wall')
+  refused({ c: 'home', index: 0, boxes: solid(cityHomes(11)[0], 0, -1, 1, 1) }, /inside the home's floor plan/, "in the micro-loft's fill block")
+  refused({ c: 'home', index: 5, boxes: solid(ESTATE, 10, -0.5, 11, 0.5) }, /keep off the apron/, 'on the apron')
+  refused({ c: 'home', index: 5, boxes: solid(ESTATE, 2, -1, 4, 1, 0, 4.2) }, /stay under 4\.15 m/, 'into the ceiling')
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, before, 'nothing was built')
+  // And a sound set is taken: one body, one cuboid.
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: good }] })
+  assert.equal(s.rejected, rejected)
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: before.colliders + 1, bodies: before.bodies + 1 })
+})
+
+test('a sound set stops a walking avatar; a new set replaces the old one whole (the collider count with it), and an empty one clears it', async () => {
+  const { step } = await core(false, 0)
+  const h = ESTATE
+  const start = toWorld(h, 0, 0)
+  let s = step({ cmds: [{ c: 'teleport', x: start.x, z: start.z }] })
+  for (let i = 0; i < 30; i++) s = step()
+  const base = { colliders: s.physics.colliders, bodies: s.physics.bodies }
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: solid(h, 2, -1, 4, 1) }] })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 1, bodies: base.bodies + 1 })
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 1, 0) })
+  let at = roomOf(h, s.avatar)
+  assert.ok(Math.abs(at.u - (2 - PRESSED)) < 0.01 && Math.abs(at.v) < 0.01, `stopped at the box's face: u ${at.u.toFixed(3)}, v ${at.v.toFixed(3)}`)
+  // Three boxes elsewhere: the first set is gone (the way on is open up to the new ones), three cuboids on one body.
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: [...solid(h, 6, -1, 7, 1), ...solid(h, -6, 3, -5, 4, 0, 2.4), ...solid(h, -6, -4, -5, -3, 0, 2.4)] }] })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 3, bodies: base.bodies + 1 })
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 1, 0) })
+  at = roomOf(h, s.avatar)
+  assert.ok(Math.abs(at.u - (6 - PRESSED)) < 0.01, `on through the old set, stopped at the new one: u ${at.u.toFixed(3)}`)
+  // One box again: the count is the first set's.
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: solid(h, 8, -1, 9, 1) }] })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 1, bodies: base.bodies + 1 })
+  // Empty: nothing left, and nothing in the way.
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: [] }] })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, base)
+  for (let i = 0; i < 60; i++) s = step({ foot: along(h, 1, 0) })
+  at = roomOf(h, s.avatar)
+  assert.ok(at.u > 9.5, `through where every set stood: u ${at.u.toFixed(3)}`)
+  assert.equal(s.rejected, 0)
+})
+
+test('a set sent again keeps every piece that stayed put as it was: one leaned on never lets go, and only a piece new to the set waits for nobody to stand by it', async () => {
+  const { step } = await core(false, 0)
+  const h = ESTATE
+  const start = toWorld(h, 0, 0)
+  let s = step({ cmds: [{ c: 'teleport', x: start.x, z: start.z }] })
+  for (let i = 0; i < 30; i++) s = step()
+  const base = { colliders: s.physics.colliders, bodies: s.physics.bodies }
+  const sofa = solid(h, 2, -1, 4, 1), table = solid(h, -6, 3, -5, 4)
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: [...table, ...sofa] }] })
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 1, 0) })
+  const face = 2 - PRESSED
+  assert.ok(Math.abs(roomOf(h, s.avatar).u - face) < 0.01, `leaning on the sofa: u ${roomOf(h, s.avatar).u.toFixed(3)}`)
+  // The page commits an edit and sends the whole set again: the table gone, a side table put down beside the player,
+  // within the clearance of them, the sofa where it was. Leaning on into the sofa, at a walk and at a run, they never
+  // get a step into it: it kept its collider, on, with no substep's gap.
+  const side = solid(h, 1, 0.33, 1.9, 1.2)
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: [...sofa, ...side] }], foot: along(h, 1, 0, WALK) })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 2, bodies: base.bodies + 1 }, 'the sofa and the side table on the one body')
+  let deepest = roomOf(h, s.avatar).u
+  for (let i = 0; i < 60; i++) {
+    s = step({ foot: along(h, 1, 0, i < 30 ? WALK : RUN) })
+    deepest = Math.max(deepest, roomOf(h, s.avatar).u)
+  }
+  assert.ok(deepest < face + 0.002, `the sofa held them all along: deepest u ${deepest.toFixed(4)}`)
+  // The side table waits while they stand within the clearance of it: they step away from it (it turns on), then come
+  // back and it stops them at its face.
+  for (let i = 0; i < 20; i++) s = step({ foot: along(h, 0, -1, WALK) })
+  assert.ok(roomOf(h, s.avatar).v < 0.33 - PRESSED - 0.05 - 0.2, `stepped away from the side table: v ${roomOf(h, s.avatar).v.toFixed(3)}`)
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 0, 1) })
+  assert.ok(Math.abs(roomOf(h, s.avatar).v - (0.33 - PRESSED)) < 0.01, `the side table is on: v ${roomOf(h, s.avatar).v.toFixed(3)}`)
+  // Switching it on left the sofa as it was: still solid.
+  for (let i = 0; i < 30; i++) s = step({ foot: along(h, 1, 0) })
+  assert.ok(Math.abs(roomOf(h, s.avatar).u - face) < 0.01, `the sofa still holds: u ${roomOf(h, s.avatar).u.toFixed(3)}`)
+  // The same set once more (the page sends every set again after a network room): nothing changes, nothing lets go.
+  deepest = 0
+  for (let i = 0; i < 30; i++) {
+    s = step({ cmds: i === 0 ? [{ c: 'home', index: 5, boxes: [...side, ...sofa] }] : [], foot: along(h, 1, 0) })
+    deepest = Math.max(deepest, roomOf(h, s.avatar).u)
+  }
+  assert.ok(deepest < face + 0.002, `the same set again: deepest u ${deepest.toFixed(4)}`)
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 2, bodies: base.bodies + 1 })
+  assert.equal(s.rejected, 0)
+})
+
+test('a set put down over someone stays off until they step off it, for every player on foot, and nobody ever sticks', async () => {
+  const h = ESTATE
+  const one = toWorld(h, 3, 0.6), two = toWorld(h, -3, -0.6)
+  const sim = await SimCore.create({ seed: 11, cars: 0, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: one, spawns: [OPEN], debug: false }, null)
+  const poses = new Float32Array(0)
+  const step = (o: Partial<StepInput> = {}) => sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [], ...o }, poses)
+  // A spawn inside a lot is put on the sidewalk: player 2 comes in by a teleport.
+  let s = step({ cmds: [{ c: 'teleport', x: two.x, z: two.z, player: 1 }] })
+  for (let i = 0; i < 30; i++) s = step()
+  const box = solid(h, 2, -1, 4, 1)
+  // Player 1 stands in it: it is built, off. They stand as they stood, and player 2 walks straight through it.
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: box }] })
+  const settled = s.avatars[0]
+  for (let i = 0; i < 120; i++) s = step({ players: [{ foot: along(h, 1, 0), drive: IDLE }] })
+  assert.ok(Math.abs(s.avatars[0].x - settled.x) < 1e-6 && Math.abs(s.avatars[0].z - settled.z) < 1e-6 && Math.abs(s.avatars[0].y - settled.y) < 0.01, 'player 1 is neither pushed out nor lifted')
+  assert.ok(roomOf(h, s.avatars[1]).u > 4 + PRESSED, `player 2 walked through it: u ${roomOf(h, s.avatars[1]).u.toFixed(2)}`)
+  // Player 1 walks out at a run through its back face, at full speed: nothing holds them.
+  const from = roomOf(h, s.avatars[0])
+  for (let i = 0; i < 30; i++) s = step({ foot: along(h, -1, 0) })
+  const out = roomOf(h, s.avatars[0])
+  assert.ok(Math.abs(from.u - out.u - RUN * 0.5) < 0.02, `walked out at a run: ${(from.u - out.u).toFixed(3)} m in 0.5 s`)
+  // Both clear now: it is on, for both of them.
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 1, 0), players: [{ foot: along(h, -1, 0), drive: IDLE }] })
+  assert.ok(Math.abs(roomOf(h, s.avatars[0]).u - (2 - PRESSED)) < 0.01, `player 1 stopped at its back: u ${roomOf(h, s.avatars[0]).u.toFixed(3)}`)
+  assert.ok(Math.abs(roomOf(h, s.avatars[1]).u - (4 + PRESSED)) < 0.01, `player 2 stopped at its front: u ${roomOf(h, s.avatars[1]).u.toFixed(3)}`)
+  // Sent again while player 1 runs at it from just beyond the clearance (player 2 gone, who stood within it): it turns
+  // on before they reach it and meets them a substep late, a few centimetres into its face at most; they walk away at
+  // a run, never held.
+  const edge = toWorld(h, 2 - 0.351, 0.6)
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: [] }, { c: 'teleport', x: edge.x, z: edge.z }, { c: 'teleport', x: OPEN.x, z: OPEN.z, player: 1 }] })
+  for (let i = 0; i < 30; i++) s = step()
+  s = step({ cmds: [{ c: 'home', index: 5, boxes: box }], foot: along(h, 1, 0) })
+  for (let i = 0; i < 30; i++) s = step({ foot: along(h, 1, 0) })
+  const pressed = roomOf(h, s.avatars[0]).u
+  assert.ok(pressed < 2 - 0.3 + 0.04 && pressed > 2 - PRESSED - 0.01, `held at its face: u ${pressed.toFixed(3)}`)
+  for (let i = 0; i < 60; i++) s = step({ foot: along(h, -1, 0) })
+  assert.ok(Math.abs(pressed - roomOf(h, s.avatars[0]).u - RUN) < 0.03, `walked away at a run: ${(pressed - roomOf(h, s.avatars[0]).u).toFixed(3)} m in 1 s`)
+  assert.equal(s.rejected, 0)
+})
+
+test('a network room takes every home set out of the world (player 1 walks through it from the first substep); leaving builds them again, on once nobody stands in them', async () => {
+  const { step } = await core(false, 0)
+  const h = ESTATE
+  const start = toWorld(h, 0, 0)
+  let s = step({ cmds: [{ c: 'teleport', x: start.x, z: start.z }, { c: 'home', index: 5, boxes: solid(h, 2, -1, 4, 1) }] })
+  for (let i = 0; i < 90; i++) s = step({ foot: along(h, 1, 0) })
+  assert.ok(Math.abs(roomOf(h, s.avatar).u - (2 - PRESSED)) < 0.01, 'on before the room')
+  const colliders = s.physics.colliders, bodies = s.physics.bodies
+  // Pressed against it as the room starts: the very first substep in the room walks on (a collider switched off would
+  // still stop them until the world's next step; the set's body is gone at once).
+  s = step({ cmds: [{ c: 'room', on: true }], foot: along(h, 1, 0) })
+  assert.ok(roomOf(h, s.avatar).u > 2 - PRESSED + RUN * H * 0.9, `the first substep in the room went on: u ${roomOf(h, s.avatar).u.toFixed(4)}`)
+  for (let i = 0; i < 60; i++) s = step({ foot: along(h, 1, 0) })
+  assert.ok(roomOf(h, s.avatar).u > 4 + PRESSED, `player 1 walked through it in the room: u ${roomOf(h, s.avatar).u.toFixed(2)}`)
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: colliders - 1, bodies: bodies - 1 }, 'gone while the room lasts')
+  // A set queued behind the room's switch in the same step (the switch goes first) is refused like any in the room,
+  // and the realm keeps the set it took before the room for after.
+  s = step({ cmds: [{ c: 'room', on: true }, { c: 'home', index: 5, boxes: solid(h, 6, -1, 7, 1) }] })
+  assert.equal(s.rejected, 1, 'the set behind the switch')
+  // Back into it, and the room left while standing there: built again, off, it stays off until they step off.
+  for (let i = 0; i < 120 && roomOf(h, s.avatar).u > 3; i++) s = step({ foot: along(h, -1, 0) })
+  assert.ok(Math.abs(roomOf(h, s.avatar).u - 3) < 0.2, `standing in it: u ${roomOf(h, s.avatar).u.toFixed(2)}`)
+  s = step({ cmds: [{ c: 'room', on: false }] })
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders, bodies }, 'built again on leaving')
+  for (let i = 0; i < 30; i++) s = step({ foot: along(h, -1, 0) })
+  const out = roomOf(h, s.avatar).u
+  assert.ok(out < 2 - PRESSED - 0.3, `walked out through its back: u ${out.toFixed(2)}`)
+  for (let i = 0; i < 60; i++) s = step({ foot: along(h, 1, 0) })
+  assert.ok(Math.abs(roomOf(h, s.avatar).u - (2 - PRESSED)) < 0.01, `on again once clear: u ${roomOf(h, s.avatar).u.toFixed(3)}`)
+  assert.equal(s.rejected, 1, 'only the set behind the switch')
+})
+
+test("parity with the network room: a home's furniture is off in a room, where player 1 walks through it exactly as the room's mirror walks them; the room's world never holds it", async () => {
+  const SEED = 1337
+  const m = await Mirror.create(SEED)
+  const walls = m.bodies
+  const sim = await SimCore.create({ seed: SEED, cars: 0, agents: AGENTS, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: m.spawnOf(1), debug: false }, null)
+  const poses = new Float32Array(0)
+  const h = cityHomes(SEED)[5]
+  // The page's set, sent before the room, standing across the middle of the estate; on: the realm's avatar meets it.
+  const start = toWorld(h, 0, 0)
+  let st = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [{ c: 'teleport', x: start.x, z: start.z }, { c: 'home', index: 5, boxes: solid(h, 2, -3, 4, 3) }] }, poses)
+  for (let i = 0; i < 90; i++) st = sim.step({ dt: H, foot: along(h, 1, 0), drive: IDLE, cmds: [] }, poses)
+  assert.ok(Math.abs(roomOf(h, st.avatar).u - (2 - PRESSED)) < 0.01, `the set stops the avatar out of a room: u ${roomOf(h, st.avatar).u.toFixed(3)}`)
+  // Joined: the room's welcome puts player 1 where the mirror has them (a teleport), here where they stand, pressed
+  // against the set; then every frame's run of substeps is replayed on the mirror, whose world is the city of the seed
+  // and nothing else. The set is gone from the realm's world from the first substep in the room on.
+  m.join(1)
+  const p = m.place(1, st.avatar.x, st.avatar.z)
+  let cmds: SimCommand[] = [{ c: 'room', on: true }, { c: 'teleport', x: p.x, z: p.z, y: p.y }]
+  let worst = 0
+  const dts = [1 / 144, 1 / 60, 2 / 60, 0.05]
+  // Frames of no substep to three: about a second and a quarter, under seven metres toward the doorway, short of the apron.
+  for (let k = 0; k < 48; k++) {
+    const foot = along(h, 1, 0)
+    st = sim.step({ dt: dts[k % dts.length], foot, drive: IDLE, cmds }, poses)
+    cmds = []
+    const w = footWish(foot.x, foot.z)
+    const truth = m.walk(1, [[w.x, w.z, st.physics.steps]])
+    worst = Math.max(worst, Math.abs(truth.x - st.avatar.x), Math.abs(truth.y - st.avatar.y), Math.abs(truth.z - st.avatar.z))
+  }
+  assert.equal(worst, 0, `the realm and the mirror differ by ${worst} m`)
+  const through = roomOf(h, st.avatar).u
+  assert.ok(through > 4 + PRESSED + 1 && through < 9, `both walked through where the set stands: u ${through.toFixed(2)}`)
+  // The room's world is the same whatever the page holds: still the city's one fixed body and the peer's.
+  assert.equal(m.bodies, walls + 1)
+  // In the room a new set is refused, so nothing the room cannot know is built.
+  const colliders = st.physics.colliders
+  st = sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [{ c: 'home', index: 5, boxes: solid(h, 6, -3, 7, 3) }] }, poses)
+  assert.equal(st.rejected, 1)
+  assert.equal(st.physics.colliders, colliders)
+  // Out of the room, clear of it, the set is back: walking back toward the doorway's opposite side meets its front.
+  sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [{ c: 'room', on: false }] }, poses)
+  for (let i = 0; i < 90; i++) st = sim.step({ dt: H, foot: along(h, -1, 0), drive: IDLE, cmds: [] }, poses)
+  assert.ok(Math.abs(roomOf(h, st.avatar).u - (4 + PRESSED)) < 0.01, `on again after the room: u ${roomOf(h, st.avatar).u.toFixed(3)}`)
+  assert.equal(sim.halted, false, sim.panic ?? '')
 })
