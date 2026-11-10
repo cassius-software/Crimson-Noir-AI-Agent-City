@@ -170,7 +170,7 @@ export interface MindRouter extends Mind {
   setKey(key: string): string | null
   /** Sets the Claude provider's effort (empty clears it); returns it. */
   setEffort(level: string): string | null
-  /** The GPUs' memory in GB for auto's Ollama model, 0 for none, or auto (the page's address); forgets what was measured; returns what it now is. */
+  /** The GPUs' memory in GB for auto's Ollama model, 0 for none, or auto (the page's address, else the Windows app's reading); forgets what was measured; returns what it now is. */
   setVram(value: string): string
   /**
    * One line: chooses the provider and, when given, its server (a loopback address) and, for the Claude provider,

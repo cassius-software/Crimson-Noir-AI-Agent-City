@@ -17,7 +17,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { DEFAULT_MODEL, type Weighed } from './localCompute.ts'
 import {
-  budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, FAILS_KEPT, failed, figureFromAdapters, figureOf, fitLine, gbText, GIB, GPU_FLOOR_BYTES, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
+  budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, FAILS_KEPT, failed, DXGI_FLOOR_BYTES, figureFromAdapters, figureOf, fitLine, gbText, GIB, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
   RESERVE_BYTES, SEEN_MAX, todaysPick, VRAM_MAX_GB, VRAM_USAGE, whereOf, type Figure, type FitInput, type Seen, type Where,
 } from './modelFit.ts'
 
@@ -85,16 +85,19 @@ test('figureOf: the console beats the address; 0 at the console sizes nothing wh
   assert.equal(budgetOf(ADDRESS(23.9)), 23.9 * GIB - 2 * GIB)
 })
 
-test('figureFromAdapters: the launcher\'s rule over the Windows app\'s reading: adapters under 4 GiB are not counted, the rest summed, in GB rounded down to 0.1', () => {
-  assert.equal(GPU_FLOOR_BYTES, 4 * GIB)
+test('figureFromAdapters: the Windows app\'s reading: adapters under 3.5 GiB are not counted, the rest summed as the launcher sums, in GB rounded down to 0.1', () => {
+  assert.equal(DXGI_FLOOR_BYTES, 3.5 * GIB)
   // An integrated GPU's carve-out (512 MB) alone: no figure, so auto keeps its usual model, as before.
   assert.equal(figureFromAdapters([512 * 2 ** 20]), null)
   assert.equal(figureFromAdapters([]), null)
-  // A laptop's 4 GB GPU beside its integrated one: the 4 GB alone counts.
-  assert.equal(figureFromAdapters([512 * 2 ** 20, 4 * GIB]), 4)
-  assert.equal(figureFromAdapters([4 * GIB - 1]), null, 'just under the floor')
-  // A 24 GB card reports a little under 24 GiB of dedicated memory: rounded down, never up.
-  assert.equal(figureFromAdapters([25_480_396_800]), 23.7)
+  // A 3 GB card, or a 3 GB carve-out, is not counted; the floor itself is.
+  assert.equal(figureFromAdapters([3 * GIB]), null)
+  assert.equal(figureFromAdapters([3.5 * GIB - 1]), null, 'just under the floor')
+  assert.equal(figureFromAdapters([3.5 * GIB]), 3.5)
+  // A laptop's 4 GB card beside its integrated GPU, as DXGI reads it (3,949 MB, a little under 4 GiB): the card alone
+  // counts, rounded down (3.856 is 3.8, not 3.9).
+  assert.equal(figureFromAdapters([512 * 2 ** 20, 3949 * 2 ** 20]), 3.8)
+  assert.equal(figureFromAdapters([4 * GIB]), 4)
   // Four 80 GB data-centre GPUs are summed.
   assert.equal(figureFromAdapters([80 * GIB, 80 * GIB, 80 * GIB, 80 * GIB]), 320)
   // A sum above the page's ceiling is no figure; nothing is capped.

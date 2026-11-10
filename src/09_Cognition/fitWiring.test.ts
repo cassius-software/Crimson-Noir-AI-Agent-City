@@ -85,7 +85,7 @@ test('App: the Windows app\'s GPU reading is asked once, judged by figureFromAda
   assert.match(APP, /^import \{ shellGpuMemory \} from '\.\/07_Execute_Actions\/desktopShell\.ts'$/m)
   assert.equal(count(APP_CODE, /\bshellGpuMemory\(/g), 1, 'asked in one place')
   const before = between(APP, '        let inPage!: InPageMind\n', '        const local = createMindRouter({')
-  assert.match(before, /^ {8}let appVram: number \| null = null\n {8}void shellGpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}\)\n$/m, 'asked as the city\'s router is built, judged by the launcher\'s rule')
+  assert.match(before, /^ {8}let appVram: number \| null = null\n {8}void shellGpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}\)\n$/m, 'asked as the city\'s router is built, judged by figureFromAdapters')
   const city = between(APP, '        const local = createMindRouter({', '        inPageMind = inPage\n')
   assert.match(city, /^ {10}appVram: \(\) => appVram,$/m, 'a property of the city router\'s own call')
   assert.equal(count(APP_CODE, /\bappVram: \(\) =>/g), 1, 'one router is handed it')

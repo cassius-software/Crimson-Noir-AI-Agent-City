@@ -80,21 +80,26 @@ export function figureOf(asked: number | null, address: string | null | undefine
   if (asked !== null) return asked === 0 ? null : { gb: asked, from: 'ask' }
   const gb = readGb(address)
   if (gb !== null) return gb > 0 ? { gb, from: 'address' } : null
-  return app !== null && Number.isFinite(app) && app > 0 && app <= VRAM_MAX_GB ? { gb: app, from: 'app' } : null
+  return app !== null && app > 0 && app <= VRAM_MAX_GB ? { gb: app, from: 'app' } : null
 }
 
-/** Starting value, the NixOS launcher's too (tools/web/launch.mjs): an adapter with less (an integrated GPU's share) is not counted. */
-export const GPU_FLOOR_BYTES = 4 * GIB
+/**
+ * Starting value: an adapter with less is not counted. DXGI gives the memory the driver leaves to Windows, a little
+ * under the card's size (one 4 GB card is reported at 3,949 MB by dxdiag, which reads the same number), so the floor
+ * sits under the NixOS launcher's 4 GiB (tools/web/launch.mjs GPU_FLOOR_BYTES, nvidia-smi's total): a 4 GB card counts
+ * on both and a 3 GB card on neither; an integrated GPU counts only when its firmware gives it 3.5 GiB or more.
+ */
+export const DXGI_FLOOR_BYTES = 3.5 * GIB
 
 /**
- * The figure from the Windows app's reading (src-tauri/src/gpu.rs: each hardware adapter's dedicated memory, bytes),
- * by the launcher's rule (tools/web/launch.mjs gpuMemory): adapters under GPU_FLOOR_BYTES are not counted, the rest
- * are summed, in GB rounded down to 0.1; null when none counts, the sum is above VRAM_MAX_GB, or the reading is not a
+ * The figure from the Windows app's reading (src-tauri/src/gpu.rs: each hardware adapter's dedicated memory, bytes):
+ * adapters under DXGI_FLOOR_BYTES are not counted, the rest are summed, in GB rounded down to 0.1, as the launcher
+ * sums (tools/web/launch.mjs gpuMemory); null when none counts, the sum is above VRAM_MAX_GB, or the reading is not a
  * list. Anything in it that is not a whole number of bytes up to BYTES_MAX is not counted.
  */
 export function figureFromAdapters(bytes: unknown): number | null {
   if (!Array.isArray(bytes)) return null
-  const kept = bytes.filter((b): b is number => Number.isSafeInteger(b) && b >= GPU_FLOOR_BYTES && b <= BYTES_MAX)
+  const kept = bytes.filter((b): b is number => Number.isSafeInteger(b) && b >= DXGI_FLOOR_BYTES && b <= BYTES_MAX)
   if (kept.length === 0) return null
   const gb = Math.floor(kept.reduce((a, b) => a + b, 0) / GIB * 10) / 10
   return gb > VRAM_MAX_GB ? null : gb

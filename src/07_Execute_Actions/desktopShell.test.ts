@@ -53,18 +53,25 @@ test('shellGpuMemory: an answer that is not a list of numbers, a refusal, a thro
   for (const odd of [null, 8_589_934_592, '8589934592', { bytes: [1] }, [1, '2'], [null]]) assert.equal(await shellGpuMemory(gpuShell(async () => odd).g), null, JSON.stringify(odd))
   assert.equal(await shellGpuMemory(gpuShell(async () => { throw new Error('command gpu_memory not found') }).g), null, 'an older shell without the command')
   assert.equal(await shellGpuMemory(gpuShell(() => { throw new Error('thrown at once') }).g), null, 'a synchronous throw')
-  // A shell that never answers: null after the wait, and the timer does not hold the process (the test would hang).
+  // A shell that never answers: null after the wait.
   const t0 = performance.now()
   assert.equal(await shellGpuMemory(gpuShell(() => new Promise(() => {})).g, 50), null)
   assert.ok(performance.now() - t0 < 1000)
+  // A quick answer, or a quick refusal, leaves no wait timer behind to hold the window's process.
+  const timers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length
+  const before = timers()
+  assert.deepEqual(await shellGpuMemory(gpuShell(async () => [1]).g, 5000), [1])
+  assert.equal(await shellGpuMemory(gpuShell(async () => { throw new Error('no') }).g, 5000), null)
+  assert.equal(timers(), before, 'the wait is cleared once the shell answers')
 })
 
 test('the shell registers gpu_memory, reads hardware adapters only through DXGI, and answers elsewhere with an empty list', async () => {
   const { readFileSync } = await import('node:fs')
   const rs = readFileSync(new URL('../../src-tauri/src/gpu.rs', import.meta.url), 'utf8')
   assert.match(rs, /#\[tauri::command\(async\)\]\npub fn gpu_memory\(\) -> Vec<u64> \{\n {4}adapters\(\)\n\}/, 'one command, off the main thread, a list of byte counts')
-  assert.match(rs, /let skip = \(DXGI_ADAPTER_FLAG_SOFTWARE\.0 \| DXGI_ADAPTER_FLAG_REMOTE\.0\) as u32;/, 'software and remote adapters are left out')
-  assert.match(rs, /if desc\.Flags & skip == 0 \{\n {12}bytes\.push\(desc\.DedicatedVideoMemory as u64\);/, 'dedicated memory, adapter by adapter')
+  assert.match(rs, /let software = DXGI_ADAPTER_FLAG_SOFTWARE\.0 as u32;/, 'software adapters (the Basic Render Driver) are left out')
+  assert.match(rs, /if desc\.Flags & software == 0 \{\n {12}bytes\.push\(desc\.DedicatedVideoMemory as u64\);/, 'dedicated memory, adapter by adapter')
+  assert.doesNotMatch(rs, /^\s*(?:use|let)\b.*DXGI_ADAPTER_FLAG_REMOTE/m, 'the remote flag is reserved (always 0), so it is not masked as if it filtered anything')
   assert.match(rs, /#\[cfg\(not\(windows\)\)\]\nfn adapters\(\) -> Vec<u64> \{\n {4}Vec::new\(\)\n\}/, 'elsewhere than Windows: an empty list')
   assert.doesNotMatch(rs, /std::(fs|net|process)|Command::new|TcpStream|File::/, 'nothing but DXGI: no file, no socket, no process')
   const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
@@ -74,6 +81,6 @@ test('the shell registers gpu_memory, reads hardware adapters only through DXGI,
   assert.match(cargo, /\[target\.'cfg\(windows\)'\.dependencies\](?:(?!\n\[)[\s\S])*\nwindows = \{ version = "0\.62", features = \["Win32_Foundation", "Win32_Graphics_Dxgi"\] \}/, 'Windows only, the version the web view already uses')
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
   const app = /\[\[package\]\]\nname = "crimson-noir-app"[\s\S]*?dependencies = \[([^\]]*)\]/.exec(lock)
-  assert.ok(app?.[1].includes('"windows"'), 'the lockfile carries the edge (the app builds --locked)')
+  assert.ok(app?.[1].includes('"windows"'), 'the committed lockfile carries the edge, so a build does not have to add it')
   assert.equal([...lock.matchAll(/^name = "windows"$/gm)].length, 1, 'one windows crate in the tree, not a second copy')
 })

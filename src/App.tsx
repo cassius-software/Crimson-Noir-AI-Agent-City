@@ -971,7 +971,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
         })
         let inPage!: InPageMind
         // The Windows app's reading of the GPUs' memory (src-tauri/src/gpu.rs), asked once as this router is built and
-        // judged by the launcher's rule (modelFit.ts figureFromAdapters); until it answers, and in a browser, none.
+        // judged by modelFit.ts figureFromAdapters (the launcher's sum, DXGI's own floor); until it answers, and in a
+        // browser, none.
         let appVram: number | null = null
         void shellGpuMemory().then((bytes) => { appVram = figureFromAdapters(bytes) })
         const local = createMindRouter({
