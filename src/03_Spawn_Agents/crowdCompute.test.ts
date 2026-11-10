@@ -1972,3 +1972,15 @@ test('packFrustumPlanes: six planes into the cull layout, in order; anything els
   assert.throws(() => packFrustumPlanes(planes.slice(1), new Float32Array(24)))
   assert.throws(() => packFrustumPlanes(planes, new Float32Array(23)))
 })
+
+test('at work the lean is toward the desk: the nod sets the bend and the push\'s direction becomes the heading, so the body bends about the heading (bodyVertex: fall = pose.z less the heading), forward', async () => {
+  assert.match(SOURCE, /if \(activity == ACT_WORKING\) \{ ps\.y = 0\.1 \+ 0\.04 \* sin\(P\.time \* 2\.5 \+ f32\(i\)\); ps\.z = p\.w; \}/)
+  assert.ok(SOURCE.indexOf('ps.z = p.w;') < SOURCE.indexOf('var heading = p.w;'), 'the heading the worker had at the desk, before this step turns it')
+  // The bend about fall 0 moves the head forward (+z, the way the body faces); it was pose.z (0 unless pushed) less the
+  // heading, so a desk that faced ±x bent the worker to the side and one that faced −z bent them backward.
+  const { BONE, SHAPE_NEUTRAL, boneTransform, pivotsOf, shapeFactors, walkAngles } = await import('./humanoid.ts')
+  const f = shapeFactors(SHAPE_NEUTRAL)
+  const head = (fall: number) => boneTransform(BONE.HEAD, [0, 1.7, 0], 1, walkAngles(0, 0, f), { tilt: 0, bend: 0.1, fall }, pivotsOf(f))
+  assert.ok(head(0)[2] > 0.07 && Math.abs(head(0)[0]) < 1e-9, 'forward')
+  assert.ok(head(Math.PI)[2] < -0.07, 'pose.z 0 at a desk facing −z: backward, as it was')
+})

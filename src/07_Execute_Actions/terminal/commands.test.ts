@@ -52,7 +52,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'lanes', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'rooms', 'r0', 'noir', 'tutorial', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -1156,7 +1156,8 @@ test('air gap: a failing or offline bridge becomes error lines, never an excepti
     'say voice v', 'say stop', 'memory', 'memory 7', 'memory forget 7', 'api', 'api clock', 'get', 'set physics.car.power 1', 'harness', 'harness list', 'harness run sanctuary', 'sim',
     'record', 'record status', 'record start', 'record start camera', 'record stop', 'render', 'render off', 'captions', 'captions on', 'haptics', 'haptics off', 'ping', 'ping go', 'ping clear',
     'look', 'look show 7', 'look reset', 'look top 2', 'recruit', 'recruit rally 7', 'recruit rally 7 1 2', 'topic', 'topic list', 'topic list ~/#', 'topic get ~/x', 'topic tree', 'topic watch',
-    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo']) {
+    'robot', 'robot demo', 'robot relay', 'robot relay off', 'robot mode sim:demo sim', 'robot set sim:demo elbow 1', 'robot disarm sim:demo', 'robot remove sim:demo',
+    'lanes', 'lanes ledger', 'lanes ledger verify', 'lanes stop']) {
     const r = run(c, off, [])
     assert.ok(isErr(r), `${c} should report an error offline`)
     assert.match(texts(r)[0], /engine not running$/)
@@ -1279,7 +1280,7 @@ test('air gap: while locked, across every command and completion, the only knobs
 test('air gap: the terminal files reach nothing at runtime beyond React, the brand and each other', () => {
   const allowedTypes = [
     '../../02_Define_The_Rules/laws.ts', '../../03_Spawn_Agents/look.ts', '../../04_Connect_Hardware/hal.ts', '../../04_Connect_Hardware/robotLink.ts', '../../05_Observe_Environment/telemetry.ts',
-    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts',
+    '../../05_Observe_Environment/recorder.ts', '../operator.ts', '../harness.ts', '../../08_Swarm/orchestrator.ts', '../../06_Make_Decisions/dispatch.ts',
     // The hardware report's shapes (the class, the profile, the adapter limits): types, erased at runtime like the rest.
     '../../05_Observe_Environment/governor.ts',
   ]
@@ -2822,7 +2823,7 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   const calls = b.operator.opCalls.length
   // `act gate` is the Ring-0 action gate's own table (pinned to ring0Gate.ts CHECKS, which the console must not import): every check, its law and its text, locked or not.
   const gate = texts(run('act gate', b, []))
-  assert.match(gate[0], /^Every ask, every proposal and every run passes these before any state changes/)
+  assert.match(gate[0], /^Every ask, every proposal and every run passes the twelve that are not a lane's, and every sub-agent lane's tick and effect passes Contained, GasWithin, MemoryWithin, RealmStanding and LaneCapable, before any state changes/)
   assert.equal(gate.length, CHECKS.length + 2)
   CHECKS.forEach((c, i) => {
     const row = gate[i + 1]
@@ -3081,6 +3082,44 @@ test('agent, sloane and goal: the roster, the concierge\'s voice and a goal in p
   assert.deepEqual(complete('agent hire '), [], 'the name comes first: no skill is offered in its place')
 })
 
+test('lanes: the team runner through the bridge (status, the ledger verified on request, stop); absent, or a line it refuses, is one error line', () => {
+  const b = fake()
+  assert.deepEqual(texts(run('lanes', b, [])), ['lanes: the lanes are not available on this bridge'])
+  const calls: string[] = []
+  const t = {
+    ...b,
+    lanes: {
+      status: () => { calls.push('status'); return ['team: Send 2 scouts (2 running, 0 isolated) · tick 4', '  LANE  TAG'] },
+      ledger: (verify: boolean) => { calls.push(`ledger ${verify}`); return verify ? ['ledger: 0 records', '  chain verified'] : ['ledger: 0 records'] },
+      stop: () => { calls.push('stop'); return 'released: 2 lanes closed' },
+      dispatch: () => { calls.push('dispatch'); return { lanes: 0, dropped: 0 } },
+    },
+  }
+  assert.deepEqual(run('lanes', t, []).lines, [{ kind: 'out', text: 'team: Send 2 scouts (2 running, 0 isolated) · tick 4' }, { kind: 'out', text: '  LANE  TAG' }])
+  assert.deepEqual(texts(run('lanes ledger', t, [])), ['ledger: 0 records'])
+  assert.deepEqual(texts(run('lanes ledger verify', t, [])), ['ledger: 0 records', '  chain verified'])
+  assert.deepEqual(texts(run('lanes stop', t, [])), ['released: 2 lanes closed'])
+  for (const l of ['lanes go', 'lanes ledger now', 'lanes stop all', 'lanes ledger verify twice']) assert.deepEqual(texts(run(l, t, [])), ['usage: lanes [ledger [verify]|stop]'], l)
+  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the console never dispatches by itself: goal does')
+  const broken = { ...t, lanes: { ...t.lanes, status: () => { throw new Error('the realm halted') } } }
+  assert.deepEqual(texts(run('lanes', broken, [])), ['lanes: the realm halted'])
+  assert.deepEqual(complete('lanes '), ['lanes ledger', 'lanes stop'])
+  assert.deepEqual(complete('lanes ledger '), ['lanes ledger verify'])
+  // A goal that dispatched prints the team's rows after its steps.
+  const g = { ...b, goal: () => ({ root: 'You want the city to work on it.', steps: [{ label: 'Send 2 sub-agents', state: 'done' as const }], notes: [], team: ['warehouse:1    at the Automated Logistics Warehouse: reads the crowd'] }) }
+  assert.deepEqual(run('goal hold a warehouse drill', g, []).lines, [
+    { kind: 'out', text: 'You want the city to work on it.' },
+    { kind: 'out', text: '  done     Send 2 sub-agents' },
+    { kind: 'sys', text: '  warehouse:1    at the Automated Logistics Warehouse: reads the crowd' },
+  ])
+  // A done step's detail is said too: how many lanes opened, and the desks this map has no room for.
+  const away = { ...b, goal: () => ({ root: 'You want the city to work on it.', steps: [{ label: 'Send one sub-agent to metro operations', state: 'done' as const, detail: '1 lane open; not on this map: the metro operations room' }], notes: [] }) }
+  assert.deepEqual(run('goal optimise the metro schedule', away, []).lines, [
+    { kind: 'out', text: 'You want the city to work on it.' },
+    { kind: 'out', text: '  done     Send one sub-agent to metro operations: 1 lane open; not on this map: the metro operations room' },
+  ])
+})
+
 test('hal pair hid inside the Windows app: no picker is promised, and an empty list is "none plugged in"', async () => {
   const b = fake()
   ;(b.hal as { shellHid?: boolean }).shellHid = true
@@ -3250,7 +3289,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   const doors: unknown[][] = []
   const e = fake()
   e.exam = {
-    verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing'); return 0xc0ffee },
+    verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing'); return 0xc0ffee },
     spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} asked over for ${role}`); return 2 },
     unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
     report: () => said.splice(0),
@@ -3259,7 +3298,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   }
   assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
   const session = replSession()
-  assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing' }])
+  assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing' }])
   assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 asked over for sim2real_workplaces' }])
   assert.deepEqual(run(`noir ${PROGRAM[2]}`, e, [], session).lines, [{ kind: 'sys', text: 'unlock_city: the city is yours' }])
   assert.deepEqual(run('noir print(seal, swarm);', e, [], session).lines, [{ kind: 'out', text: '12648430 2' }])

@@ -161,6 +161,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
 | `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
+| `?ao=0` | Leaves the ambient occlusion out of the post chain on this computer. Absent (or `?ao=1`), every computer builds it and Ultra and Peak draw it. Decided at start; phones and the lite profile never build it (see Ambient occlusion) |
 | `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it, and it beats the Windows app's own reading. Absent: the Windows app's reading, else auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
@@ -305,6 +306,40 @@ more of memory, on a screen of up to 2560 × 1440 drawn pixels (`?scale` counted
   Under the cinema shutter the motion at a silhouette is averaged too, which can leave a faint halo on something
   moving fast. The headset has no anti-aliasing, and neither do `?post=0` and Minimal with one player. How it looks
   and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the software adapter.
+
+### Ambient occlusion
+
+On Ultra and Peak the post chain darkens the places light does not reach: the foot of every wall, a doorway's
+reveal, the gap under a bench or a parked car, the kerb's step, a person's feet on the pavement. It is three's
+screen-space ambient occlusion: from the scene's own depth, at half the resolution, each pixel looks at the surfaces
+within a metre and a half around it (12 places on Ultra, 16 on Peak), and a blur that stops at edges smooths the result. Below
+Ultra its passes are skipped.
+
+- **Who builds it.** Every computer, unless the address says `?ao=0`; building it costs two small shaders at start
+  and two one-channel pictures at half the resolution (about 1 MB at 1080p). Phones and the lite profile never build
+  it, and neither does split screen, which has no post chain.
+- **What it costs.** On Ultra and Peak, three passes at half the resolution every drawn frame, counted in the frame
+  time the governor watches and in the GPU time it judges Peak by (so a card that only just earned Peak before may now
+  stay on Ultra). It costs the same under open sky as facing a wall: three leaves the sky out of the work only with a
+  conventional depth buffer, and this city's runs the other way (the far plane is 0), so the sky's pixels are worked
+  out too (they come out unoccluded, every place they look at being sky). Below Ultra, nothing but its two small
+  pictures kept in memory.
+- **No tier change recompiles anything.** The tier sets its number of places, its strength and whether its passes
+  run; nothing else about it changes while you play. It adds nothing to the scene's own drawing: the scene pass
+  writes exactly what it wrote before (the shape of each surface comes from the depth), so the city's shaders are the
+  same with it or without it, and it works the same with 4x anti-aliasing (it reads the first of the four depth
+  samples, as the sun shafts do).
+- **Where it holds back.** Bright pixels keep their light (a lit window, a lamp, a signal: they are light sources, not
+  creases), it fades out between 60 and 300 m so the haze stays clean, it fades where the cinema shutter smears the
+  picture, and rain mode turns it off. The console's `set shaders.ao.strength` scales it from 0 to 1; at 0 its
+  passes are skipped, as below Ultra.
+- **What it does not do.** It darkens the finished light of a pixel, the sun's and the lamps' included, not only the
+  light bouncing around the street, so a sunlit crease is darker than it would be in life (masked on bright pixels,
+  and in keeping with the city's look). It knows only what is on screen: something off screen or hidden behind
+  something else occludes nothing. The shapes it sees are flat (no bump detail), the half-resolution result can crawl
+  a little on thin things when you turn slowly, and the network ghosts darken what is behind them like solid things.
+  How it looks and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the
+  software adapter, which cannot measure speed.
 
 ### Storefronts
 
@@ -853,11 +888,25 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
 - **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
-  crowded", "it feels laggy"). Sloane asks up to five short "why" questions with quick replies, then shows a
-  brief: the steps it can apply now (clock, quality, sound) are done at once, the rest are laid out as a
-  plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
-  (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
-  console syntax is ever shown.
+  crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
+  Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
+  now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
+  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
+  control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
+  goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
+  scouts (the twin studio and the control tower) that read the city and report, so no goal is a dead end; a goal
+  about something the city already has (the shops, the workplaces, the homes, the wardrobe) is answered with where to find it,
+  and nobody is sent; a desk this map has no room for asks nobody over and its lanes read the streets around
+  where you started; the rest is laid out as a plan, the lanes'
+  readings show under the brief as they run, and "Copy brief" gives an engineer a note naming the modules each
+  step would touch. For each desk one person within earshot with its skill is asked over (as `recruit` asks),
+  and sent in only once you stand within 9 m of that desk's door: the tether is never loosened. The planner
+  (`06_Make_Decisions/intent.ts`, `06_Make_Decisions/dispatch.ts`) is deterministic and offline: no language
+  model decides anything, no network, and no console syntax is ever shown. A local model may say the one
+  sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
+  model kept in this page; never with the provider set to scripted), screened like the onboarding's rewording
+  and with every number kept; the planner's sentence stands until it answers and whenever it does not.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -890,7 +939,7 @@ shows it (there is no city to walk).
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
   180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed business-casual wardrobe; the four laws, the
-  twelve checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
+  fifteen checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
   it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
 - **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
@@ -937,7 +986,7 @@ shows it (there is no city to walk).
   The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
   console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
   the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
-  by rank and title, the gate's twelve checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
+  by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
   standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
   memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
   lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
@@ -1247,14 +1296,16 @@ anywhere in the product.
   model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
   machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
   answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
-  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its twelve checks
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its fifteen checks
   are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
   outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
   place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
-  catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
+  catalogue; a sub-agent lane's program took at most its gas for the tick and stayed inside its own arena (see
+  Capability lanes below). **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
   facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
   exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
-  it, at the console, on the card or through a host (the gateway never allows). **Third.** The proposer is still
+  it, at the console, on the card or through a host (the gateway never allows); a sub-agent's lane holds the capability
+  its effect needs (see below). **Third.** The proposer is still
   tethered, under the same recruitment; the hash-chained trail verifies; no other proposal waits. Every check is a
   rule over plain values, applied the same way every time, with no clock, no randomness and no I/O; the refusal
   names the highest law that refused in the kernel's words (`Second Law: the operator tier is locked`), and a
@@ -1264,6 +1315,30 @@ anywhere in the product.
   operator tier and every action: the gate fails closed. A model's rewording of Sloane's lines passes the same screen
   before it is spoken as the city's own (the onboarding voice asks the model for it outside the gate's ask check; a
   rewording changes nothing, and the provider's own loopback gate holds its address).
+- **Capability lanes and the lane panic** (`02_Define_The_Rules/capabilities.ts`, `ring0Panic.ts`). A sub-agent of a
+  dispatched plan runs in a lane with a 32-bit capability word, kept one word per lane in a typed array as the kernel
+  keeps its own fuse. Four bits can be granted: move (a rally the physics realm decides), workplace task (a station
+  indoors and the bounded program run there), vehicle teleop (a car's intent through the elite tier's write) and
+  sub-agent spawn (opening a lane under one's own, the root orchestrator's bit). Every other bit is forbidden for
+  good, and the top four name the doors of the host no lane is ever let through: the network (`fetch`,
+  `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
+  (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
+  `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
+  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
+  own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
+  tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
+  own arena each tick, however many rows the city has), 32 frames of stack. The gate
+  reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
+  out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
+  words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the
+  lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is hashed onto a
+  ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0 LANE 3]
+  isolated (gas): Zeroth Law: the lane ran its 4096-step budget out this tick; … audit 9f3a…`), and the frame goes
+  on: the other lanes run their next tick, and unlike the realm's kernel panic, which locks the page, a lane's panic
+  isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
+  the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
+  the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
+  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -1396,7 +1471,7 @@ while you type.
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `rooms`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
+  `goal <words...>`, `lanes [ledger [verify]|stop]`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -1476,8 +1551,15 @@ while you type.
   card stays); `sloane voice <name>` prefers a browser voice by name or a word of it; `sloane voices` lists the
   browser's offline voices; `sloane say <text...>` has Sloane say a line now (see Onboarding and the spatial HUD).
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
-  clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
-  with why, and words nothing in the city maps to yet are named.
+  clock, the quality tier, the sound, a team dispatched) are applied and printed `done`, the rest `later`, a step
+  that failed `failed` with why, words nothing in the city maps to yet are named, and a dispatched team's lanes
+  are listed (tag, desk, what each reads).
+- `lanes` prints the team Sloane dispatched for the last goal (from the card or `goal`): one row a lane with its
+  tag, its state (`ready` or `isolated`), the capability word it holds, the steps its last tick took and its latest
+  reading (or the gate's sentence that isolated it); then the people asked over for each desk and what came of
+  them. `lanes ledger` prints the fault ledger (every isolated lane, hashed over the one before it) and `lanes
+  ledger verify` recomputes the chain; `lanes stop` closes every lane (the people asked over stay; `recruit
+  dismiss` lets them go). The console never opens a team by itself: `goal` and the card do.
 - `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
   points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
   `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
@@ -1670,7 +1752,7 @@ Ring-0 elite tier above it, below). While unlocked:
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
   a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
   'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
-  `act gate` the Ring-0 action gate's twelve checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act gate` the Ring-0 action gate's fifteen checks with their laws (see The ethical kernel), and the reads (`act`,
   `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
   (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
   the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,
@@ -1695,8 +1777,8 @@ Ring-0 elite tier above it, below). While unlocked:
 - `memory forget <agent>` and `memory forget all` erase what the swarm remembers (all: everyone in this city).
 - `get [prefix]`/`set <key> <value>` read and write the tuning keys, namespaced by table:
   `physics.car.power`, `physics.car.drag`, `physics.car.grip`, `physics.car.brake`, `shaders.light.haze`,
-  `shaders.light.exposure`, `shaders.light.sun`, `shaders.light.fill`, `shaders.volumetrics.strength`
-  (`get physics` lists a whole table). Scripts use the same keys without the table prefix:
+  `shaders.light.exposure`, `shaders.light.sun`, `shaders.light.fill`, `shaders.volumetrics.strength`,
+  `shaders.ao.strength` (`get physics` lists a whole table). Scripts use the same keys without the table prefix:
   `sim.physics.set('car.grip', 1.2)`. These are fixed, bounded knobs, not code: they go through the same
   validated facade directly, run no script, and need nobody tethered.
 - `harness list` and `harness run <name>` run the physics harnesses in-page and print a report:
@@ -2782,7 +2864,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   oscillates. Both render paths are compiled during the boot splash, so a later tier change never
   compiles a pipeline mid-game.
 - **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
-  no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics. Sloane's fixes for heat, battery or
+  no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics and the ambient occlusion. Sloane's fixes for heat, battery or
   a slow frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low
   stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most from the console's
   `goal`; in the card Sloane first asks whether the lag is steady: hitches hand the tier back to auto, and a steady lag
@@ -2812,8 +2894,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
   - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
     edges), Ultra's sun shadows (the same two 4096-texel cascades out to the same 240 m: a farther reach would stretch
-    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, and
-    full-detail people out to 90 m instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
+    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, the
+    ambient occlusion looking at 16 places around each pixel instead of 12, and full-detail people out to 90 m
+    instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
     way); the larger picture takes about 45 MB more at 1080p (about 190 MB at 4K),
     given back when the tier comes down. The picture
     is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide
@@ -3728,9 +3811,54 @@ system's nixpkgs); on a channel-based one,
   `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped (an integrated
   Radeon given 4 GB or more by its firmware is counted; not tried on one). It adds
   `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
-  `-- vram=0` none; `--check` reads nothing. Ollama itself, on NixOS 26.05:
-  `services.ollama = { enable = true; package = pkgs.ollama-cuda; };` (or `pkgs.ollama-rocm`, `pkgs.ollama-vulkan`);
-  the old `acceleration` option is removed there.
+  `-- vram=0` none; `--check` reads nothing.
+
+**Ollama with it.** `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service
+(`services.ollama`) on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider looks for it. Given a
+model, the agents then answer from it with nothing typed at the console:
+
+```nix
+programs.crimson-noir-agent-city.ollama = {
+  enable = true;
+  acceleration = "vulkan";        # the default; or "rocm", "cuda", "cpu", or null for services.ollama's own choice
+  integratedGpu = false;          # true lets Ollama use an integrated GPU (see below)
+  models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started; without one it starts empty
+  extraOrigins = [ ];             # other page addresses Ollama should answer, such as the web copy's
+};
+```
+
+- **The build.** NixOS 26.05 has one Ollama package per backend and no longer has `services.ollama.acceleration`, so
+  the option picks the package, `pkgs.ollama-<acceleration>`; a nixpkgs without it stops the build with a message
+  naming it.
+  - `"vulkan"`, the default, runs on discrete AMD, Intel and NVIDIA GPUs through the graphics driver.
+  - `"rocm"` is AMD's compute stack; a card ROCm does not list may need `services.ollama.rocmOverrideGfx`.
+  - `"cuda"` is NVIDIA's. It needs NVIDIA's driver (`services.xserver.videoDrivers = [ "nvidia" ]`, as for the city
+    itself, or `hardware.nvidia.datacenter.enable` for a data-centre card), it is unfree, so the
+    configuration has to allow it (`nixpkgs.config.allowUnfree`, or its libraries by name), and the NixOS binary cache
+    does not carry it, so it builds on the machine.
+  - `"cpu"` uses no GPU.
+  The option turns on `hardware.graphics.enable` for Vulkan and CUDA: both load their driver from it.
+- **An integrated GPU.** Ollama leaves integrated GPUs out by default (under Vulkan, all of them: a Ryzen's Radeon,
+  Intel graphics), so on a machine whose only GPU is integrated it runs on the processor. `integratedGpu = true` sets
+  `OLLAMA_IGPU_ENABLE=1` and lets it use one. On a machine with a discrete GPU too, the integrated one may then share
+  the model with it, so leave it off there. The launcher counts an integrated Radeon given 4 GB or more by its
+  firmware (The GPUs' memory, above): with this off, Ollama does not use it, and the measurement shows the model on
+  the processor.
+- **The address.** Ollama answers pages from `http://127.0.0.1` and `http://localhost` on any port by itself, so the
+  launcher's page needs nothing. The web copy, or the city opened from another address, goes in `extraOrigins`
+  (`OLLAMA_ORIGINS`).
+- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and sets
+  `enable`, `package`, `OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as defaults, so a configuration's own values for any of
+  them win. `models` are added to the configuration's own `services.ollama.loadModels`. It warns when Ollama would
+  answer other machines (a host other than loopback), when the port is not 11434 (type
+  `ask connect ollama http://localhost:<port>` at the console then), and when an `OLLAMA_ORIGINS` set elsewhere means
+  `extraOrigins` is not used.
+- **On its own.** It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve models to itself
+  without the city. It sets no context length (`OLLAMA_CONTEXT_LENGTH`): in Ollama's generate format the city sends
+  its own with each answer (Bounded, under The model providers), and a configuration can still set one for the rest.
+- **Moving from your own `ollama serve`.** The service keeps its models in `/var/lib/ollama`, not in your home folder,
+  so models pulled before are pulled again (`models`, or `ollama pull`, which talks to the service). Stop your own
+  server first: two cannot share port 11434.
 
 `nix develop` opens a shell with Node 24, Chromium (as `CHROME`, for the browser smoke), rustup, Python with z3 (for
 `npm run verify -- smt`) and git.
@@ -3746,7 +3874,12 @@ the page built from source stay the same.
 
 What is verified: the `nix` workflow (`.github/workflows/nix.yml`) runs on every pull request and push to main on an
 x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the package, and the module evaluated on a
-minimal NixOS system, its package evaluating once the page is allowed and refused while it is not), the Nix page
+minimal NixOS system, its package evaluating once the page is allowed and refused while it is not; its Ollama option
+evaluated alone: loopback at 11434, the Vulkan build by default, the CPU one when chosen and services.ollama's own
+with null, the graphics driver on for Vulkan and CUDA and off for CPU, ROCm and null, CUDA refused until unfree
+packages are allowed, origins, the model loader and the integrated GPU only when asked for, the system's own host
+(plain or as a default), port, package, origins and `enable = false` winning, its models added to the option's, with
+the three warnings), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
@@ -3763,7 +3896,8 @@ compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of
 run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
-matching the window to its menu entry and icon, the DualSense rules, and heat over a long session. The
+matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (no build of it starts in
+CI, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU is untried), and heat over a long session. The
 `aarch64-linux` outputs are declared but neither built nor evaluated by CI.
 
 ## When the city cannot start or stops
@@ -3840,7 +3974,7 @@ reset and a real pad.
   `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
   `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
   in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
-  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, and freezes those properties, so an
+  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, holds `window.open` to the same places, and freezes those properties, so an
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
   allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry

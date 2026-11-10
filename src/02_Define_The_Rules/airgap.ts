@@ -9,7 +9,8 @@
  * aliases of it, so there is exactly one definition to read and to test. `installAirgap` is the containment: it
  * replaces every outbound primitive of a global object (fetch, WebSocket, XMLHttpRequest, EventSource, importScripts)
  * with a version that refuses, in one plain sentence, any URL that is not loopback, the page's own origin, or a
- * blob: or data: URL the page itself made; removes RTCPeerConnection, WebTransport and navigator.sendBeacon
+ * blob: or data: URL the page itself made, and holds window.open to the same (a new tab is a way out too);
+ * removes RTCPeerConnection, WebTransport and navigator.sendBeacon
  * outright; and then freezes those properties, so a script injected into the page (an operator `run` script shares
  * the page's global object) cannot put the originals back. It is pure: no import, no I/O of its own, and it can be
  * installed on a fake global in a Node test. main.tsx installs it on the page's global before anything else runs,
@@ -105,6 +106,8 @@ export interface AirgapGlobal {
   webkitRTCPeerConnection?: unknown
   WebTransport?: unknown
   importScripts?: unknown
+  /** window.open: a page has it, a worker has not. */
+  open?: unknown
   Request?: unknown
   navigator?: object | null
   location?: { origin?: string; href?: string } | null
@@ -243,6 +246,18 @@ export function installAirgap(g: AirgapGlobal): AirgapReport {
     }
     fix(g, 'importScripts', importScripts)
     guarded.push('importScripts')
+  }
+
+  if (typeof g.open === 'function') {
+    // A new tab is an address too: window.open is held to the same places. No URL (about:blank) opens nothing of the
+    // page's and passes as it is; the rest goes through admit, so a script cannot carry anything out in a URL.
+    const real = g.open as (this: unknown, ...a: unknown[]) => unknown
+    const open = function (this: unknown, url?: unknown, ...rest: unknown[]): unknown {
+      if (url === undefined || url === '' || url === 'about:blank') return real.call(g, url, ...rest)
+      return real.call(g, admit(url), ...rest)
+    }
+    fix(g, 'open', open)
+    guarded.push('open')
   }
 
   for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport'] as const) {

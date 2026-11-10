@@ -216,12 +216,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   // Recruitment: an open microphone is never without its indicator (it outlives the H key, like REC), and who
-  // is coming over, and the Active swarm's skills.
+  // is coming over, and the Active swarm's skills; then the team Sloane dispatched, in one line (08_Swarm/team.ts).
   const rc = s.supplier.recruiting
-  const micChip = rc && (rc.listening || rc.line) && (
+  const team = s.supplier.team ?? ''
+  const micChip = ((rc && (rc.listening || rc.line)) || team) && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums ${panel}`} data-hint="mic">
-      {rc.listening && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
-      <span className="truncate">{[rc.listening ? 'MIC · on-device' : '', rc.line].filter(Boolean).join(' · ')}</span>
+      {rc?.listening && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
+      <span className="truncate">{[rc?.listening ? 'MIC · on-device' : '', rc?.line ?? '', team].filter(Boolean).join(' · ')}</span>
     </div>
   )
 

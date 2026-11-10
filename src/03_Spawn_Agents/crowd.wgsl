@@ -1392,8 +1392,10 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
   ps.y += b.b.y * dt;
   b.b.x += (-K_TILT * ps.x - C_TILT * b.b.x) * dt;
   ps.x += b.b.x * dt;
-  // At work: a lean to the desk with a slow nod on it (the springs bring the body back up when the shift ends).
-  if (activity == ACT_WORKING) { ps.y = 0.1 + 0.04 * sin(P.time * 2.5 + f32(i)); }
+  // At work: a lean to the desk with a slow nod on it (the springs bring the body back up when the shift ends). The
+  // lean's direction is the push's (the body bends about pose.z less the heading), so at a desk it is the heading: a
+  // worker leans toward the desk, not to the side or back toward the last push.
+  if (activity == ACT_WORKING) { ps.y = 0.1 + 0.04 * sin(P.time * 2.5 + f32(i)); ps.z = p.w; }
 
   let spd = length(nv);
   var heading = p.w;

@@ -15,6 +15,68 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
+  something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
+  work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either
+  name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
+  goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
+  intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
+  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
+  over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
+  rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
+  brief, the HUD's activity line carries the team's one-line count, and the console gains `lanes [ledger
+  [verify]|stop]` (`goal` lists a dispatched team's lanes). Sloane may say a brief's sentence in their own words
+  through the page's mind (`sloaneVoice`: the router's order, a local server first, then the model kept in this page;
+  never with the provider set to scripted), screened as the onboarding's rewording is and with every number kept; the
+  planner's sentence stands until it answers and whenever it does not. The model rewords; it never decides, and
+  nothing a goal says about work reaches any knob. Tests pin the planner (every desk's words, no knob word among
+  them, every probe under six tenths of the gas on a ten-thousand-row city, the window walk, determinism), the runner
+  over a fake host (placement, the bodies and the rally range, isolation through the gate at the first tick with a
+  verified ledger, replacement and late answers, a host that throws), the console's `lanes`, the App wiring and
+  Sloane's voice. After main's first walk, shops and hardware classes landed beside it: a lane's session grows its
+  arena for the city's columns and keeps its own 64 Ki cells of room above them (`NoirSession`'s `tableRoom`), so a
+  team on a workstation-class crowd (32,768 people, up to `?crowd=60000`) reads instead of every lane being isolated
+  for memory at its first tick, and a prelude's fault names its reason on the lane; "twenty-four sub-agents" (the
+  first walk's own swarm) is 24, with the teens and tens-and-units counted; a goal about something the city already
+  has (the shops, the workplaces, the homes, the wardrobe) is answered with where to find it and sends nobody, and "tasks" or
+  "jobs" in a goal that names work no longer bring the missions note; a desk the map has no room for reads around
+  where the player started (`teamCentre`), not the map's corner; Sloane's rewording belongs to the brief it was asked
+  for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
+  each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
+  `commands.test.ts`).
+- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+  the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
+  by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
+  limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
+  arena, 32 frames). `src/08_Swarm/lanes.ts` (new) runs a dispatched plan's sub-agents in isolated lanes: one
+  session each (its own arena), one program a tick against one snapshot of the city's columns, every tick and every
+  effect put to the Ring-0 action gate's `admitLane`, which gains two Zeroth-Law checks, `GasWithin` and
+  `MemoryWithin` (fifteen checks now; `act gate` prints them, and the first walk's `verify_ring0` seal covers all
+  fifteen by name). A refusal is the lane panic: the lane zeroed and
+  sealed, the fault hashed onto the runner's ledger with the gate's sentence as its reason, one console line, and the
+  frame untouched; a write for vehicle teleop from a lane without the bit is a capability fault; the operator's
+  knobs (`tune`, `cull`, `steer`) are nobody's lane's. Tests pin every fault kind end to end, isolation of one lane
+  among others, a plain error keeping its lane, `ask` on an effect outside the VM, a host that vouches nothing or
+  whose realm has halted, that nothing throws, lane-to-lane memory isolation, the `LANE_MAX` cap and determinism to
+  the ledger's head. Nothing dispatches into lanes yet: that is the next slice.
+- **Capability lanes, the lane panic and the forbidden doors.** A sub-agent lane has a 32-bit capability word
+  (`src/02_Define_The_Rules/capabilities.ts`), one `Uint32` per lane: four grantable bits (`CAP_MOVE`,
+  `CAP_WORKPLACE_TASK`, `CAP_VEHICLE_TELEOP`, `CAP_SUBAGENT_SPAWN`), everything else forbidden for good
+  (`CAP_FORBIDDEN_MASK`), the top four bits naming the host's doors no lane is granted (the network, dynamic code, a
+  window, the host process) and `FORBIDDEN_DOORS` the names a script would use for them. `violation(asked, held)` is
+  the kernel's branchless `asked & !caps`; a `CapabilityLanes` table grants grantable bits only and never grants a
+  zeroed lane again; a `FaultLedger` hashes every fault over the one before it with the city's SHA-256
+  (`integrity.ts`) and verifies by recomputation. The Ring-0 action gate has a thirteenth check, `LaneCapable`
+  (Second Law), and a fourth moment, `admitLane`, the moment before a lane's effect; a refusal there is what
+  `lanePanic` (`ring0Panic.ts`) answers: the lane's word zeroed and sealed, the fault on the ledger, one console
+  line with the audit hash, and the frame untouched (the realm's `kernelPanic` still locks the page; the lane's
+  never throws). The air gap now holds `window.open` to this machine like `fetch` (a new tab is a way out too);
+  `act gate` prints the thirteen checks. Tests pin the bits, the branchless check against a plain reference over
+  thousands of words, the sealed lane, the ledger's chain and tamper detection, the panic's log line and that it
+  never throws, that every network and window door in the list is guarded or removed by the air gap, and that no
+  door's name is in the code of the lane modules. The lanes themselves (the runner and what dispatches into them)
+  come in the next slices.
 - **Sixteen indoor workplaces, in a fixed order that is their id** (`src/01_Initialize_World/interiors.ts`). The six
   rooms become sixteen, `WORKPLACE_KINDS` in this order: roboticsLab, warehouse, serverVault, metroOps, controlTower,
   kitchen, microFab, twinStudio, fleetBay, greenhouse, acousticsLab, responseCenter, clearingFloor, gaitLab,
@@ -60,9 +122,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   card's silhouette uses too). Each trouser leg is reshaped about its own axis and the skirt about the trunk's.
   Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
   culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
-  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. A narrow or long
-  skirt's hem spreads with the stride: its front moves with the leading thigh and its back with the trailing one, so
-  the knees stay inside it more of the time (no cloth is simulated). Under a coat no skirt widens.
+  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. Every cut skirt
+  follows the legs as well as the trunk (`humanoid.ts` skirtPose): its front moves with the leg that carries it
+  furthest forward, its back with the one that carries it furthest back, handed over smoothly, and its sides with the
+  leg on their own side, fully from the knee-level ring down, and a midi's hem below the knee hangs from the shin, so
+  the legs stay inside it at a walk (no cloth is simulated; the midi pencil's narrow hem still lets a bent knee show
+  by up to 2 cm at the far end of a stride). A coat's panels below the waist follow the legs too, hung from its waist
+  (`humanoid.ts` coatPose). Under a coat no skirt widens, and every skirt, the straight one too, follows as the coat
+  does, so it stays inside the coat.
   The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
   fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
   seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
@@ -575,6 +642,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the headset, and Minimal and `?post=0` with one player still have no anti-aliasing (a phone off the lite profile
   keeps FXAA at Low and Medium). Unverified: how it looks and what it costs on a real GPU (software-WebGPU pictures
   only).
+- **Ambient occlusion at Ultra and Peak.** The post chain now holds three r186's screen-space ambient occlusion
+  (`SSAONode`, wrapped as `postfx.ts GatedSSAO`): from the scene pass's own depth at half resolution, with each
+  pixel's normal rebuilt from that depth (`getNormalFromDepth`), a rotated disk of taps within 1.5 m (intensity 2: at
+  three's default of 1 the software adapter's pictures barely changed), then a depth-aware blur across and down; the
+  result multiplies the HDR colour after the shutter, bloom is taken from the light before it, and the sun shafts are
+  added after it, never occluded. It fades out on bright pixels (HDR luminance 1.5 to 4: lamps, windows and signals
+  keep their light), from 60 to 300 m into the haze and, under the cinema camera, where the shutter smears the frame
+  more than 2 to 8 px (it is drawn from the unsmeared depth); rain mode and an operator strength of 0 turn it off. The
+  tier knob is `aoTaps` (Ultra 12, Peak 16, 0 below and on Lite), a uniform loop bound: a tier change writes the taps,
+  a strength uniform and a JS switch, and `GatedSSAO.updateBefore` skips the three passes while off (a node's
+  updateBefore runs every frame once built, so a strength of 0 alone would still render them). Its first frame always
+  draws, so the boot's validated draw compiles both of its pipelines. Who builds it: `governor.ts aoCandidate`, every
+  desktop-class profile unless `?ao=0`, never a phone or a lite profile; split screen and `?post=0` have no post
+  chain. The scene pass gets no attachment and no context node, so no scene pipeline changes, at one sample or four:
+  every read of the depth is a load without a sampler (at 4x three declares a multisampled depth texture and loads its
+  first sample, as the sun shafts do; at one, its nearest filtering makes it unfilterable). GTAO (`GTAONode`) was
+  rejected: it gathers depth with `textureGather`, which a multisampled depth texture refuses, so every 4x boot would
+  fall back to one sample, and its tap count is compiled in. Screen-space reflections were not adopted: they need new
+  scene-pass attachments chosen at boot and written on every tier that runs post, for surfaces this city barely has
+  (the lake's water has no metalness, the roads are dry). Material-level occlusion (`builtinAOContext`) would need a
+  second full prepass of the city and the crowd. The operator key `shaders.ao.strength` (0 to 1) scales it;
+  `tools/browser/shot.mjs` logs its state, and the browser smoke counts its two pipelines (tagged by their one R8
+  target) and their draws: built and skipped below Ultra, drawn every frame at Ultra (12 taps) and Peak (16), at 4x
+  too, with nothing compiled after boot, none drawn at Low or in rain mode, and never built on split screen, Lite or a
+  phone off the lite profile. Pinned by `governorAo.test.ts` (who builds it, ?ao), `governor.test.ts` (the knob per
+  tier, never decreasing going up, only with post, the applier writing it and a post cap writing 0),
+  `postfxAo.test.ts` (on the scene pass's own depth with rebuilt normals, the scene pass's targets unchanged at one
+  sample and four, built applying nothing with one tap, the first frame drawn and later frames only while on,
+  release() freeing its two targets) and `aoWiring.test.ts` (the host's ?ao, the build decided after the post cap and
+  kept through the 1x rebuild, the frame's writes and rain mode, no tier touching its resolution, blur or the scene
+  pass's targets, no GTAO, SSR or material occlusion in the chain). Limits: it darkens a pixel's finished light,
+  direct sun and lamps included, not only the indirect light (masked on bright pixels); it sees only what is on
+  screen; its normals carry no bump detail; without temporal accumulation the half-resolution result can crawl on thin
+  geometry; at 4x it follows the first sample's coverage while the colour is the resolved average (up to a pixel at
+  silhouettes); the network ghosts occlude like solid things; its two targets (about 1 MB at 1080p) stay allocated on
+  every tier once built; three's SSAONode leaves out the sky only under a conventional depth buffer (depth 1), and
+  this city's is reversed (the sky is 0), so the sky's pixels run the taps too (they come out unoccluded: every tap
+  lands on the far plane) and the pass costs the same under open sky as facing a wall. Unverified: how it looks and
+  what it costs on a real GPU (software-WebGPU pictures only).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
@@ -1257,6 +1363,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   rooms reached the crowd; it does not wait for anyone to reach work, since the software renderer runs that map's
   realm at about a tenth of real time: a longer run on it saw the first worker at a station after 81 s of realm time,
   about 20 minutes. Unverified from the cloud (no GPU): the rooms on screen and the workday at full speed there.
+- **NixOS: Ollama in one line.** `programs.crimson-noir-agent-city.ollama.enable = true;` in the flake's NixOS module
+  runs Ollama as a service on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider finds it once
+  it has a model. The build is chosen by `acceleration` (`pkgs.ollama-vulkan` by default; `rocm`, `cuda`, `cpu`, or
+  null for the service's own), since NixOS 26.05 removed `services.ollama.acceleration`; Vulkan and CUDA turn on
+  `hardware.graphics.enable`. Ollama skips integrated GPUs by default, so `integratedGpu = true` sets
+  `OLLAMA_IGPU_ENABLE=1` for a machine whose only GPU is integrated. `models` are pulled once it starts, `extraOrigins`
+  become `OLLAMA_ORIGINS` (the launcher's own page needs none), host and port stay nixpkgs' own and the rest it sets
+  are defaults the configuration can override, and it warns about a host off loopback, a port other than 11434, and
+  an `OLLAMA_ORIGINS` set elsewhere. It works without the city's own `enable`. CI evaluates it in `nix flake check` on
+  the pinned NixOS 26.05: loopback, the Vulkan, CPU and default builds, the graphics driver for
+  Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
+  when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
+  real GPU is untried.
 
 ### Changed
 
@@ -1424,6 +1543,47 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `solidBoxes.test.ts` pins the clip, counts the city's clipped boxes (hundreds a seed) and replays the scrape beside
   thirty-five cars to the bit; `authority.node.test.ts` and `parity.fuzz.test.ts` drive bay cars along their lot
   walls and are never put back. Manual: Ghost-mode collision.
+- **A walking skirt let the swung thigh through its front, a leaning one let the shin through its side, and a midi's
+  hem stood out ahead of the knee.** Before this, a skirt hung from the trunk alone except for the part of its hem a
+  thigh carried, and that part tapered to nothing at the sides. On the CPU, at a brisk walk, the leading thigh came
+  about 6 to 18 cm through the front of every cut. A worker leaning sideways at a desk, or a body pushed from the side, let
+  the shin through the hem's side by up to 6.5 cm. A midi's hem, bound to the thigh's lever, rose 18 to 19 cm and
+  tilted 60 to 64 degrees from vertical mid-stride. Now every cut but the straight one (0, the skirt as it always
+  was) follows the legs fully from the knee-level ring down. The front goes with the leg that carries it furthest
+  forward and the back with the one that carries it furthest back, handed over across 10 cm of the difference, so the
+  hem never jumps from one leg to the other as the stride crosses over. The sides follow the leg on their own side. A
+  midi's hem below the knee hangs from the shin, bent by 0.6 of the knee's bend, so the calf never kicks the hem's
+  back inside out. Each cut's follow is about the least that keeps the legs inside. In the same model,
+  measured where each leg vertex stands, on a neutral, a slumped, a long-legged and a short body at a walk, the legs
+  stay within 1 cm of every cut but the midi pencil (within 2 cm), no hem point moves more than 4.5 cm in a 60 Hz
+  frame, and no skirt triangle turns inside out. Bent 0.14 to 0.25 rad to either side, forward or back, the legs stay
+  within half a centimetre. A hem's front never tilts further than the thigh swung under it. `humanoid.test.ts`
+  checks all of it on every cut. The Customizer's side view now poses a skirt's rings as the shader does. It had drawn
+  the hem up to 6 cm from the street body at a slumped or an upright posture.
+- **A walking coat let the legs out through its front.** The coat hung from the trunk alone, so at a brisk walk the
+  stepping thigh came 12 to 18 cm out through it on every body, measured on the CPU. Its panels below the waist now
+  hang from its waist and follow the legs (`humanoid.ts` coatFollow and coatPose, `crowdBody.ts` bodyVertex): 0.9 of
+  the thighs' carry at the knee-level height and below, and above it the carry of the point straight below at that
+  height, growing in step with the depth below 0.98 m, so each panel turns about the waist with the thigh, hangs
+  straight and is lit as one face. The front goes with the leg that carries it furthest forward and the back with the
+  one furthest back. Carried point by point as a skirt is, with the share eased in, the panels stood out in a ledge
+  between the 0.86 and the 0.7 rings, tilted 1.2 rad against the thigh's 0.67; now no band tilts more than 0.06 rad
+  past the thigh and its own flare. A skirt under the coat follows the same way, at the same heights, the straight
+  skirt too: one that stopped following where the coat covered it let the knee through skirt and coat at a walk, one
+  hung from the trunk alone came 6 to 9 cm out through the coat's back at a desk lean, and with the skirt's rule one
+  that followed 6 cm lower than the coat came up to 1.6 cm out of it. On the CPU, on a neutral, a slumped, an upright,
+  a heavy and a short body, measured along the ray from the coat's axis through each point, the trunk and legs under
+  the coat now stay within 1 cm of it at a walk and half a centimetre at a desk lean. Every skirt stays within 1 cm of
+  it at a walk and at a desk lean, sampled over every triangle, and a midi keeps the legs below the coat inside it. On
+  the far body's coarser coat, the trunk and legs stay within 1 cm and every skirt within 2 cm at a walk. The coat
+  moves smoothly through the stride and never turns inside out. As a rigid panel, the coat's hem lifts 17 to 19 cm at
+  the front at the far end of a stride, as a cut skirt's does (no cloth is simulated).
+- **The skirt and the coat left a gap in their own shadows.** three's shadow pass draws a front-sided material's back
+  faces alone, so an open shell's wall nearer the sun stayed out of the shadow map. The crowd's material now draws
+  both faces into it (`shadowSide`).
+- **A worker at a desk leaned toward the last push, not the desk.** The desk lean bends the body about the push's
+  direction less the heading, and nothing set the push's direction at a desk. A worker who was never pushed leaned 0.06 to
+  0.14 rad (the nod) to the side or backward, depending on which way the desk faced. At work the direction is now the heading (`crowd.wgsl`), so every worker leans toward the desk.
 - **The crowd's shadow pass ran the whole paint.** three multiplies a shadow's alpha by the material's colour alpha
   (`Renderer._getShadowNodes` reads `colorNode.a`), so every body's shadow-map fragment stage carried the look's whole
   paint, the weaves, cuts, hair, skin and faces, about 138,000 characters per body, run for every shadow-map texel a

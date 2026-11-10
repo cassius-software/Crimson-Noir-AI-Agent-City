@@ -45,9 +45,12 @@ export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; r
 export interface NoirLimits { readonly steps: number; readonly out: number; readonly cells: number; readonly depth: number }
 export const LIMITS: NoirLimits        // { steps: 1_000_000, out: 16_384, cells: 262_144 (1 MiB of 32-bit cells), depth: 1_024 }
 export const ELITE_LIMITS: NoirLimits  // { steps: 50_000_000, out: 65_536, cells: 4_194_304 (16 MiB), depth: 4_096 }
-export interface NoirResult { readonly out: string[]; readonly error?: string; readonly steps: number; readonly defined: readonly string[] } // defined: fns and globals this line declared
+export const MAX_OPS_PER_TICK = 4096    // a sub-agent lane's gas for one tick (08_Swarm/lanes.ts)
+export const LANE_LIMITS: NoirLimits   // { steps: MAX_OPS_PER_TICK, out: 256, cells: 65_536 (256 KiB), depth: 32 }
+export type NoirFault = 'gas' | 'bounds' | 'memory' | 'depth' | 'output'   // the bound that ended a run, when one did
+export interface NoirResult { readonly out: string[]; readonly error?: string; readonly steps: number; readonly defined: readonly string[]; readonly fault?: NoirFault } // defined: fns and globals this line declared
 export class NoirSession {
-  constructor(limits?: NoirLimits)
+  constructor(limits?: NoirLimits, opts?: { tableRoom?: boolean })
   /** Compiles and runs one line (may hold several statements and newlines). Never throws. */
   run(source: string, host?: NoirHost | null, limits?: NoirLimits): NoirResult   // limits are made sane first (see Session)
   /** Compiles only and returns the bytecode listing (or the compile error as `error`). */
@@ -209,6 +212,11 @@ Overload resolution is by argument types; a mismatch names the signatures: "min:
   u32 ops wrap (`>>> 0`), f32 ops round through `Math.fround` after EVERY operation (never fuse two).
 - Out-of-bounds index -> "index 9 out of bounds (len 8)". Output beyond `limits.out` characters -> "output limit
   exhausted (16384)". Arena exhausted -> "memory exhausted".
+- A bound that ends a run is named in `fault` too: `gas` (the step budget, in the loop or before a move it cannot
+  cover), `bounds` (an index into an array, a vector or a column), `memory` (the arena, at compile time or at a call
+  or a table copy), `depth` (the frames), `output` (the cap). A division by zero, a type error, a host write that
+  refused and a host whose `tables()` threw carry no `fault`: they are errors, not bounds. The lane runner
+  (08_Swarm/lanes.ts) isolates a lane on a fault and keeps it on an error.
 - After an error the session stays usable: globals and fns survive; the operand stack and frames are discarded.
 - The compiler emits straight-line code for `select`/`mask` (no branch); `&& ||` branch (short-circuit by definition).
 - `disasm.ts`: one line per instruction `0012  ADD_F32X4` / `0013  CALL fib 1` / `0007  JMP_IF_NOT 0021`, plus a header
@@ -232,6 +240,11 @@ Overload resolution is by argument types; a mismatch names the signatures: "min:
   and depth at 1,048,576; an arena the machine cannot give is "memory exhausted". A host write that calls `run` on
   the same session while a line runs gets `error: "session busy: a host write re-entered run()"` and installs
   nothing. A host `write` that is not an object (null, say) is no write surface: the locked message.
+- `LANE_LIMITS` are a sub-agent lane's: `MAX_OPS_PER_TICK` (4,096) steps a tick, 256 characters of output, 65,536
+  cells of room for globals and frames, and 32 frames. The city's columns are copied into the lane's own arena each
+  tick, below that room: a lane's session is made with `{ tableRoom: true }`, which grows the arena to hold the tables
+  (60,000 people are 120,000 cells of columns) and never the room, so a lane reads the city and never another lane's
+  arena. One session per lane: a global of one lane is unknown to another.
 - No `console.log` anywhere. Nothing async.
 
 ## What the tests pin (every bullet is at least one test)
@@ -262,6 +275,8 @@ Branchless witness: for 1000 seeded triples, `select(mask(a < b), a, b) == min(a
 Determinism: two sessions fed the same 30 lines print identical output and steps.
 fuzz (seeded, >= 2000 cases): random token soup and random grammar-shaped programs never throw out of
 `run` (every failure is `error` text), never take more than `limits.steps` steps, and leave the session usable.
+faults: every bound names its kind in `fault`, a plain error and a clean run carry none; `LANE_LIMITS` and
+`MAX_OPS_PER_TICK` as pinned; a lane session's spin ends at 4096 steps with `fault: 'gas'`.
 airgap: every file in the folder has no import from outside the folder and none of: eval, Function, WebAssembly,
 globalThis, window, document, fetch, Date, Math.random, setTimeout, setInterval, import(, localStorage, console.
 

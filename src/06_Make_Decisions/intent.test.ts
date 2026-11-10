@@ -151,7 +151,7 @@ test('why-questions are chosen by category', () => {
   assert.equal(question('just looking around'), 'Anywhere in particular?')
   assert.equal(question('tweak the physics'), 'The console is the operator’s desk: commands and scripts over the running city. Is that what you’re after, or the everyday controls?')
   assert.equal(question("I don't know"), 'No pressure. Would you rather look around, change how the city looks, or how it runs?')
-  assert.equal(question('pizza'), 'That’s not something I can do yet. Would you rather look around, change how the city looks, or how it runs?')
+  assert.equal(question('pizza'), null, 'a goal nothing maps to is no dead end: the scouts go, and nothing is asked')
   assert.equal(question('run people over'), 'Nothing here can hurt anyone — every car stops for people, always. Would you rather look around, change how the city looks, or how it runs?')
 })
 
@@ -196,7 +196,7 @@ test('an answer that empties the frame is asked about as a miss, not as an impos
   missed.answer('How it runs')
   assert.equal(missed.next()?.question, 'Is it every few seconds, or all the time?')
   assert.equal(question('change the time of day', 'half past whenever'), 'I didn’t catch that. Would you rather look around, change how the city looks, or how it runs?')
-  assert.equal(question('pizza'), 'That’s not something I can do yet. Would you rather look around, change how the city looks, or how it runs?', 'a goal with nothing to map keeps its own wording')
+  assert.equal(question('pizza'), null, 'a goal with nothing to map is a dispatch, never the miss')
   // An answer to "what time" that names the crowd too has answered the next why as well.
   const both = ask('change the time of day', 'night, and fewer people')
   assert.equal(both.next(), null)
@@ -345,7 +345,8 @@ test('every path ends, in at most five whys, with a well-formed brief', () => {
     assert.ok(p.brief.plan.length + p.brief.unmapped.length > 0, `${p.goal} [${p.answers}]: a plan or a reason`)
     for (const s of p.brief.plan) {
       assert.ok(s.label.length > 0 && s.modules.length > 0, `${p.goal}: ${s.control}`)
-      assert.equal(s.immediate, s.control === 'time' || s.control === 'quality' || s.control === 'audio', `${p.goal}: only host controls are immediate`)
+      assert.equal(s.immediate, s.control === 'time' || s.control === 'quality' || s.control === 'audio' || s.control === 'dispatch', `${p.goal}: only host controls and a dispatch are immediate`)
+      if (s.control === 'dispatch') assert.ok(s.team && s.team.lanes.length === s.value && s.team.lanes.length > 0, `${p.goal}: a dispatch step carries its team`)
       if (s.control === 'time') assert.ok(typeof s.value === 'number' && s.value >= 0 && s.value < 24)
       if (s.control === 'quality') assert.ok(s.value === 'auto' || (typeof s.value === 'number' && s.value >= LITE_TIER && s.value <= PEAK_TIER))
       if (s.control === 'quality' && s.value === PEAK_TIER) {
@@ -459,8 +460,13 @@ test('markdown brief: no questions, nothing mapped, and the unsupported are each
   assert.match(clear, /### Now — the Concierge applies these\n- \[ \] Turn the sound off — `07_Execute_Actions\/audio\.ts`/)
   assert.doesNotMatch(clear, /### Later/)
   const none = ask('pizza', 'The controls').brief()
-  assert.equal(none.root, 'You want to learn the controls.')
-  assert.match(none.markdown, /## Not mapped\n- “pizza”: nothing in the city maps to that yet\n/)
+  assert.equal(none.root, 'You want to learn the controls.', 'an answer that maps to a control sends the scouts back')
+  assert.deepEqual(none.plan.map((s) => s.control), ['controls'])
+  assert.doesNotMatch(none.markdown, /## Not mapped|## Team/)
+  const scouts = new FiveWhys('pizza').brief()
+  assert.equal(scouts.root, 'Nothing maps to that directly, so 2 scouts are on it: they read the city and report.')
+  assert.match(scouts.markdown, /## Plan\n### Now — the Concierge applies these\n- \[ \] Send 2 scouts to the twin studio and the control tower — `06_Make_Decisions\/dispatch\.ts`, `08_Swarm\/team\.ts`, `08_Swarm\/lanes\.ts`\n\n## Team\n2 scouts, one isolated lane each/)
+  assert.match(scouts.markdown, /- \*\*twin:1\*\* at the twin studio: reads the kernel’s law counters and the frame rate; holds move, workplace task\n- \*\*tower:1\*\* at the control tower/)
   const rain = new FiveWhys('make it rain at night').brief()
   assert.deepEqual(rain.unmapped, ['Weather: the city has one clear late-September day so far'])
   assert.match(rain.markdown, /- Weather: the city has one clear late-September day so far — would touch `01_Initialize_World\/solar\.ts`/)
@@ -468,15 +474,64 @@ test('markdown brief: no questions, nothing mapped, and the unsupported are each
   // An owner furnishes a home with B (the home card's furnishing view, on homeLayout.ts's floor plan).
   const home = new FiveWhys('go inside my house').brief()
   assert.deepEqual(home.unmapped, ['Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops and seven homes in each (walk into a shop and press B to browse; a home\'s deed is sold at Lintel & Lumen or on its doorstep, and furnish a home you own with B); every other building is a solid shell for now'])
-  assert.match(home.markdown, /would touch `01_Initialize_World\/interiors\.ts`/)
+  assert.match(home.markdown, /## Already in the city\n- Going indoors: [^\n]* — `01_Initialize_World\/interiors\.ts`/, 'the homes are in the city now: Sloane points the way')
   assert.match(home.markdown, /`01_Initialize_World\/properties\.ts`/, 'the homes are among the indoors modules')
   assert.match(home.markdown, /`02_Define_The_Rules\/homeLayout\.ts`/, 'and the furnishing rules')
   // Shopping: the five shops (01_Initialize_World/storefronts.ts) sell for credits, the design house's furniture and the homes' deeds among it all; Sloane points the way, never buys.
   const coat = new FiveWhys('buy a coat with my credits').brief()
   assert.deepEqual(coat.unmapped, ['Shopping: five shops in the city and five in the lakefront metropolis sell clothes, accessories, furniture and the seven homes\' deeds for civic credits; walk into one and press B to browse (Sloane cannot buy for you)'])
   const empty = ask('pizza', 'nope').brief()
-  assert.deepEqual(empty.plan, [])
-  assert.match(empty.markdown, /## Plan\n_Nothing to change\._/)
+  assert.deepEqual(empty.plan.map((s) => s.control), ['dispatch'], '"nope" maps to nothing, so the scouts stay')
+  const dropped = ask('people', 'dunno')
+  dropped.answer('whatever')
+  assert.deepEqual(dropped.brief().plan, [])
+  assert.match(dropped.brief().markdown, /## Plan\n_Nothing to change\._/)
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Dispatch: work words and a goal nothing maps to send a team
+
+test('a goal about work is a dispatch: the desks it names, the count it asks for, the verb taken with it, and no question asked', () => {
+  const m = new FiveWhys('Optimize the Lakefront Metro schedule and run a 24-agent warehouse robotics drill')
+  assert.equal(m.next(), null, 'the metro is work, not a trip to the Lakefront; "run a" is the drill\'s verb, not a pace')
+  const b = m.brief()
+  assert.equal(b.root, 'You want the city to work on it: 24 sub-agents across metro operations, the warehouse and the robotics lab.')
+  assert.deepEqual(b.plan.map((s) => [s.control, s.value, s.immediate, s.label]), [['dispatch', 24, true, 'Send 24 sub-agents to metro operations, the warehouse and the robotics lab']])
+  const team = b.plan[0]!.team!
+  assert.deepEqual(team.kinds, ['metroOps', 'warehouse', 'roboticsLab'])
+  assert.equal(team.lanes.length, 24)
+  assert.deepEqual(team.lanes.slice(0, 4).map((l) => l.tag), ['metro:1', 'warehouse:1', 'robotics:1', 'metro:2'])
+  assert.equal(team.scouting, false)
+  assert.match(b.markdown, /## Team\n24 sub-agents, one isolated lane each/)
+  assert.deepEqual(summary('Optimize the Lakefront Metro schedule and run a 24-agent warehouse robotics drill'), ['dispatch=24'])
+  assert.deepEqual(summary('run a compliance audit with six agents'), ['dispatch=6'])
+  assert.deepEqual(summary('make it night and hold a triage drill'), ['time=22', 'dispatch=2'], 'the knobs a goal names stand beside the team')
+  assert.deepEqual(summary('send 40 agents to the clinic'), ['dispatch=32'], 'the cap')
+  assert.equal(new FiveWhys('send 40 agents to the clinic').brief().plan[0]!.team!.dropped, 8)
+  // A goal with a knob and work: the knob is applied and the team sent, in one brief.
+  const both = new FiveWhys('make it night and hold a triage drill').brief()
+  assert.deepEqual(both.plan.map((s) => s.control), ['time', 'dispatch'])
+  assert.equal(both.root, 'You want the city at night.')
+})
+
+test('a goal nothing maps to sends the scouts, says so, and keeps the reason for what the city cannot do; harm and "I don\'t know" send nobody', () => {
+  const rain = new FiveWhys('make it rain').brief()
+  assert.equal(rain.root, 'Nothing in the city does that yet, so 2 scouts are on what it can do instead.')
+  assert.deepEqual(rain.unmapped, ['Weather: the city has one clear late-September day so far'])
+  assert.deepEqual(rain.plan.map((s) => s.label), ['Send 2 scouts to the twin studio and the control tower'])
+  assert.deepEqual(new FiveWhys('run people over').brief().plan, [])
+  assert.deepEqual(new FiveWhys("I don't know").brief().plan, [])
+  assert.equal(question("I don't know"), 'No pressure. Would you rather look around, change how the city looks, or how it runs?')
+  // An answer that names work after a goal that named a knob adds the team; the first team named stands.
+  const added = ask('change the time of day', 'night, and a warehouse count with four agents')
+  assert.deepEqual(added.brief().plan.map((s) => [s.control, s.value]), [['time', 22], ['dispatch', 4]])
+  assert.equal(added.brief().plan[1]!.team!.kinds[0], 'warehouse')
+  // Nothing a goal says about work reaches the Peak tier or any knob: the plan's knobs are the taxonomy's alone.
+  assert.deepEqual(summary('a 12-robot drill'), ['dispatch=12'])
+  for (const goal of ['pizza', 'make it rain', 'a 12-robot drill', 'send 40 agents to the clinic']) {
+    const b = new FiveWhys(goal).brief()
+    for (const s of b.plan) if (s.control === 'dispatch') for (const l of s.team!.lanes) assert.equal(l.caps, 3, `${goal}: move and a workplace task, nothing more`)
+  }
 })
 
 test('brief() is always available and grows as answers arrive', () => {

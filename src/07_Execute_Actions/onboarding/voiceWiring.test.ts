@@ -31,7 +31,7 @@ test('App: the console\'s agent, sloane and goal each reach their own bridge; a 
   const src = read('../../App.tsx')
   assert.match(src, /agent: agentBridge\(roster, \{/)
   assert.match(src, /concierge: conciergeBridge\(speaker\)/)
-  assert.match(src, /goal: \(text: string\) => goalPlan\(text, engineBridge\)/)
+  assert.match(src, /goal: \(text: string\) => goalPlan\(text, \{ \.\.\.engineBridge, lanes \}\)/)
   assert.match(src, /e\.terminalBridge\(gate, mind, voice, memory\.diary\(\), voiceOf, pageStore\(ELITE_KEY\)\)/)
   assert.match(src, /engine\?\.setIdentities\(/)
   assert.match(src, /r\.onMirror\(\(list\) => \{ for \(const agent of roster\.keepOnly\(list\.map\(\(v\) => v\.agent\)\)\) e\.setLook\(agent, null\) \}\)/, 'a hire ends when they leave')

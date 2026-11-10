@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the first walk's exam over a fake host: the seal (0 unless the page is contained,
- * the realm standing and the four laws and twelve checks all there; a nonzero hash salted by the page's nonce
+ * the realm standing and the four laws and fifteen checks all there; a nonzero hash salted by the page's nonce
  * otherwise, so no two page loads share one and a guess never matches); `verify_ring0` saying what it sealed and
  * telling the walk; `spawn_subagents` asking the role's skills over one by one through the recruiter's lane until the
  * first refusal, answering with how many were asked (never the number wished for), capped, and naming an unknown
@@ -64,20 +64,20 @@ test('the seal: FNV-1a over the live facts and the nonce, 0 when any fails, neve
   assert.equal(sealOf({ ...parts(), contained: false }), 0)
   assert.equal(sealOf({ ...parts(), standing: false }), 0)
   assert.equal(sealOf({ ...parts(), laws: LAWS.slice(1) }), 0)
-  assert.equal(sealOf({ ...parts(), checks: CHECK_NAMES.slice(0, 11) }), 0)
+  assert.equal(sealOf({ ...parts(), checks: CHECK_NAMES.slice(0, -1) }), 0)
   assert.equal(sealWhy(parts()), null)
   assert.match(sealWhy({ ...parts(), contained: false })!, /not contained/)
   assert.match(sealWhy({ ...parts(), standing: false })!, /panicked/)
   assert.match(sealWhy({ ...parts(), laws: [] })!, /0 laws where four/)
-  assert.match(sealWhy({ ...parts(), checks: [] })!, /0 checks where twelve/)
-  assert.equal(CHECK_NAMES.length, 12, 'the gate has twelve checks (ring0Gate.ts CHECKS)')
+  assert.match(sealWhy({ ...parts(), checks: [] })!, /0 checks where fifteen/)
+  assert.equal(CHECK_NAMES.length, 15, 'the gate has fifteen checks (ring0Gate.ts CHECKS)')
 })
 
 test('verify_ring0: the live seal, what it sealed in one line, and the walk told; 0 with the reason when something does not hold', () => {
   const r = rig()
   const seal = r.exam.verifyRing0()
   assert.equal(seal, sealOf(parts()))
-  assert.deepEqual(r.exam.report(), [`verify_ring0: seal ${seal.toString(16).padStart(8, '0')} over 4 laws, 12 checks, contained, realm standing`])
+  assert.deepEqual(r.exam.report(), [`verify_ring0: seal ${seal.toString(16).padStart(8, '0')} over 4 laws, 15 checks, contained, realm standing`])
   assert.deepEqual(r.exam.report(), [], 'the report is read once')
   assert.deepEqual(r.notes, ['seal'])
   r.flags.standing = false
