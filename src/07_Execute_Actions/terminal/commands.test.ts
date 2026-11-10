@@ -1833,7 +1833,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('look hairStyle '), [...WARDROBE.hairStyle].sort().map((n) => `look hairStyle ${n}`), 'every style, the catalogue\'s names')
   assert.deepEqual(complete('look curl '), [...WARDROBE.curl].sort().map((n) => `look curl ${n}`))
   assert.deepEqual(complete('look headwear '), [...WARDROBE.headwear].sort().map((n) => `look headwear ${n}`))
-  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
+  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish', 'footwear', 'frames', 'watch', 'lapelPin'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
   assert.deepEqual(complete('look undertone '), ['look undertone cool', 'look undertone neutral', 'look undertone olive', 'look undertone warm'])
   assert.deepEqual(complete('look layer '), ['look layer coat', 'look layer jacket', 'look layer shirt sleeves'])
   assert.deepEqual(complete('look trim '), ['look trim matching'])

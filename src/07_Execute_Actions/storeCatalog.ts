@@ -9,11 +9,11 @@
  * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and
  * the words for the gate's verdicts.
  *
- * A line whose look slots the wardrobe does not have yet (tattoos, prosthetic limbs, watches: the customizer's coming
- * slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of that name. The
- * property deeds are on sale, because the seven homes stand in both maps (01_Initialize_World/properties.ts); the
- * design house's furniture is on order the same way until furnishing opens, so a piece can never be bought before it
- * can be placed.
+ * A line whose look slots the wardrobe does not have yet (tattoos, prosthetic limbs, the umbrella and the headphones:
+ * the customizer's coming slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot
+ * of that name. The property deeds are on sale, because the seven homes stand in both maps
+ * (01_Initialize_World/properties.ts); the design house's furniture is on order the same way until furnishing opens,
+ * so a piece can never be bought before it can be placed.
  *
  * The level, the credits and what is owned are not kept here: the progression engine's keeper answers for them
  * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
@@ -81,9 +81,9 @@ const SCARVES = ['burgundy', 'navy', 'sand', 'charcoal', 'tan', 'cornflower', 's
 
 /**
  * The catalogue, ids by shop: the tailor 0..47, the tattoo studio 48..95, the prosthetics atelier 96..127, the
- * horologist 128..159, the design house's furniture 160..223 and the deeds 224..230. The tattoo, limb, hearing and
- * accessory slots named here are the ones the customizer's update is to bring; until the wardrobe has them, their
- * lines are on order.
+ * horologist 128..159, the design house's furniture 160..223 and the deeds 224..230. The tattoo, limb, umbrella and
+ * headphone slots named here are the ones the customizer's update is to bring; until the wardrobe has them, their
+ * lines are on order (the hearing processor, the watches and the pin are on sale: the wardrobe has their slots).
  */
 export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   // Verrin & Vale Tailors: coats (the layer and the coat's cloth), contrast trims, scarves, a tie.
@@ -99,7 +99,8 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(64, 'inkStudio', 'wear', 'Inks', 'Gold-leaf ink', 12, 6000, { tattooInk: 3 }),
   item(65, 'inkStudio', 'wear', 'Inks', 'Luminescent ink', 16, 24000, { tattooInk: 4 }),
 
-  // Bio-Frame Prosthetics Atelier: smart eyewear now; limbs and hearing tech with the customizer.
+  // Bio-Frame Prosthetics Atelier: smart eyewear and the hearing processor now (the wardrobe's hearing slot); the
+  // limbs with the customizer.
   item(96, 'prosthetics', 'wear', 'Eyewear', 'Smart eyewear', 2, 450, { eyewear: 1 }),
   item(97, 'prosthetics', 'wear', 'Limbs', 'Brushed-titanium arm', 3, 1200, { prostheticArm: 1 }),
   item(98, 'prosthetics', 'wear', 'Limbs', 'Matte carbon-fibre arm', 5, 2200, { prostheticArm: 2 }),
@@ -107,7 +108,8 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(100, 'prosthetics', 'wear', 'Limbs', 'Skin-matched silicone leg', 4, 1800, { prostheticLeg: 4 }),
   item(101, 'prosthetics', 'wear', 'Hearing', 'Tinted hearing processor', 2, 600, { hearing: 1 }),
 
-  // Escapement Row Horology: a briefcase now; the rest with the customizer.
+  // Escapement Row Horology: a briefcase, the watches and the rank pin now (the wardrobe's accessory word); the
+  // umbrella and the headphones with the customizer.
   item(128, 'horology', 'wear', 'Leather goods', 'Leather briefcase', 1, 300, { bag: 1 }),
   item(129, 'horology', 'wear', 'Watches', 'Steel three-hand watch', 2, 700, { watch: 1 }),
   item(130, 'horology', 'wear', 'Watches', 'Tourbillon chronograph', 10, 18000, { watch: 2 }),

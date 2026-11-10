@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Shoe styles, frames, a watch and a lapel pin.** The look genome's word 6 becomes the accessory word
+  (`src/03_Spawn_Agents/look.ts` LOOK_FIELD, bits 0 to 14; bits 15 and up are spare and refused): a shoe style
+  (twelve: plain, lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot,
+  knee boot), the glasses' frames (eight finishes, black first), a watch (none, steel three-hand, tourbillon
+  chronograph, leather strap, smartwatch) and a lapel pin (none, rank pin, silver bar, buttonhole flower). Option 0 of
+  each is as before: every preset, every bare look and every hashed look without them packs word 6 to zero and keeps
+  its code, and a stored record without the four keys still validates. All four are fragment paint on meshes the
+  crowd already draws (`crowd.ts` `footwearPaint`, a boot's shaft up the bare leg, the watch on the left wrist over the
+  skin or a prosthetic hand, the pin on the left lapel, the frames' finish on the rims): no piece, mesh, varying or
+  uniform is added, and the vertex stages (but for one generated buffer name) and the shadow pass are unchanged. The hashed crowd draws them from new links
+  of the colours' chain (38 to 43), as `lookFromSeed` does: a little over half the street wears a shoe style (one of
+  its body's eight), about 28% a watch, half of those in glasses frames other than black, about 3% a pin, and the street
+  never wears the tourbillon or the rank pin. The card gains the Shoe style, Lapel pin, Frames and Watch rows (Shoes is
+  now Shoe colour; the pin's row leaves in shirt sleeves and the frames' without glasses), the console `look footwear
+  wingtip`, `look watch smartwatch`, `look frames`, `look lapelPin`, and a look code with the accessory word is
+  forty-nine symbols (`-XXXXXXXX-XXXXXXXX-XXXXX` after the head). The watch shop's steel three-hand watch, tourbillon
+  chronograph and rank lapel pin (lines 129 to 131) go on sale; the umbrella and the headphones stay on order. The
+  shader budget holds (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near fragment stage, the
+  pantsuit's, goes from 200,360 to 221,913 characters and the worst far one from 159,904 to 173,039, against 225,000;
+  the shadow fragment stays at 1,105.
+
 - **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
   something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
   work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either

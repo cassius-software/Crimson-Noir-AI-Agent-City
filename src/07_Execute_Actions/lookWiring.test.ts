@@ -162,9 +162,55 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   // The tie, the bag, the hose and the iris stay hashed (the words have no room for them).
   assert.match(fragment, /const accent = variant === 0 \? pick\(PALETTE\.ties, h\(5\)\) : shirt/)
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
-  assert.match(fragment, /const legwear = variant === 3 \? mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\) : bottom/)
+  assert.match(fragment, /const hose = mix\(wornSkin, vec3\(0\.08, 0\.07, 0\.07\), step\(0\.55, h\(11\)\)\)/, 'the hose, the sock and a flat\'s glimpse of either: one link')
+  assert.match(fragment, /const legwear = variant === 3 \? hose : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
-  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(armHere, limbColour, skinShown\)\), hairShown, bottomShown, shoes, accent, prop, select\(legHere, limbColour, legwear\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave and its cut\'s lines, a prosthetic over the hand or the bare shin, the headwear\'s cloth and the devices last')
+  assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(watchHere, watchColour, select\(armHere, limbColour, skinShown\)\)\), hairShown, bottomShown, shoes, accent, prop, select\(booted, bootColour, select\(legHere, limbColour, legwear\)\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave and its cut\'s lines, a watch over the wrist, a prosthetic over the hand or the bare shin and a boot over both, the headwear\'s cloth and the devices last')
+  // The accessory word (word 6, the genome quad's third lane) reaches the fragment alone: posed() has no use for it, so
+  // the vertex stages are as they were. The fragment decodes it as lookFromSeed draws it, from the colours' chain.
+  assert.doesNotMatch(posed, /genomeQuad\.z/, 'the vertex stage never reads the accessory word')
+  // Each decode whole, thresholds and pick included: a wrong odds name, a pick over the wrong length or a street that
+  // wears the shop's own lines would draw a crowd lookFromSeed does not.
+  for (const decode of [
+    'const footwear = select(custom, gene(LOOK_FIELD.footwear), select(h(LOOK_HASHED_COLOUR.footwear).greaterThanEqual(LOOK_ODDS.footwear), streetFootwear, uint(0))).toVar()',
+    'const frames = near ? select(custom, gene(LOOK_FIELD.frames), select(h(LOOK_HASHED_COLOUR.frames).greaterThanEqual(LOOK_ODDS.frames), uint(h(LOOK_HASHED_COLOUR.framesPick).mul(WARDROBE.frames.length - 1 - 0.001)).add(uint(1)), uint(0))).toVar()',
+    'const watchLink = near ? h(LOOK_HASHED_COLOUR.watch) : float(0)',
+    'const watch = near ? select(custom, gene(LOOK_FIELD.watch), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSmart), uint(WATCH.smartwatch),\n      select(watchLink.greaterThanEqual(LOOK_ODDS.watchLeather), uint(WATCH.leather), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSteel), uint(WATCH.steel), uint(WATCH.none))))).toVar()',
+    'const pinLink = near ? h(LOOK_HASHED_COLOUR.lapelPin) : float(0)',
+    'const lapelPin = near ? select(custom, gene(LOOK_FIELD.lapelPin), select(pinLink.greaterThanEqual(LOOK_ODDS.pinFlower), uint(LAPEL_PIN.flower),\n      select(pinLink.greaterThanEqual(LOOK_ODDS.pinBar), uint(LAPEL_PIN.bar), uint(LAPEL_PIN.none)))).toVar()',
+  ]) assert.ok(fragment.includes(decode), decode)
+  const decodes = between(fragment, 'const watchLink = ', '// A boot\'s shaft')
+  assert.ok(!decodes.includes('WATCH.tourbillon') && !decodes.includes('LAPEL_PIN.rank'), 'the street never draws the tourbillon or the rank pin: the shop sells them')
+  assert.match(fragment, /const streetFootwear = uint\(FOOTWEAR_STREET_PACKED\[variant\]\)\.shiftRight\(uint\(h\(LOOK_HASHED_COLOUR\.footwearPick\)\.mul\(8 - 0\.001\)\)\.mul\(uint\(4\)\)\)\.bitAnd\(uint\(15\)\)/, 'one of the body\'s eight street styles')
+  // The shoe's style is painted over its colour, the shaft of a boot over the bare leg, the pin over the jacket's cloth
+  // (one of the cut's marks, so the weave keeps off it), the watch over the left hand; frame 0 is the old black.
+  assert.match(fragment, /shoes = footwearPaint\(shoeCloth, footwear, hose, footprint, near\)/)
+  assert.match(fragment, /select\(pinHere, pinColour, stitched\)\)\)\)\)\)\)/, 'the pin innermost in the jacket')
+  assert.match(fragment, /const cutMarks = [^\n]*\.or\(pinHere\)/, 'the pin is one of the cut\'s marks')
+  assert.match(fragment, /watchHere = watch\.notEqual\(uint\(WATCH\.none\)\)\.and\(slotIs\(SLOT\.SKIN\)\)\.and\(boneIs\(BONE\.HAND_R\)\)/, 'the watch on the person\'s own left wrist')
+  assert.ok(fragment.includes('watchColour = select(face, select(dial, dialColour, caseColour), strap)'), 'the watch in its own colours, not the skin\'s')
+  assert.ok(fragment.includes('const limbShown = near ? limbHere.and(watchHere.not()) : limbHere'), 'a watch over a prosthetic hand keeps the skin slot\'s sheen')
+  assert.ok(fragment.includes('const chrome = limbShown.and(fin(2))') && fragment.includes('select(limbShown.and(fin(1)), float(0.4), '), 'the finish where the limb shows')
+  assert.ok(fragment.includes('pinHere = front.and(inV.not()).and(rest.x.sub(centre).greaterThan(0)).and(shape)'), 'the pin on the wearer\'s left, off the V, in its shape alone')
+  assert.ok(fragment.includes('const pinAt = select(lapelWidth.greaterThan(0.02), vec2(side.sub(half.max(0).add(half).add(lapelWidth).mul(0.5)), rest.y.sub(1.42)), vec2(rest.x.sub(0.075), rest.y.sub(1.42)))'), 'halfway across the lapel, from the centre line where the V closes above the pin')
+  // Option 0 is as before. The plain shoe sets no feature bit, so only a boot style's shaft paints the leg and a boot
+  // alone takes a prosthetic shin out of its finish; black and the browline's brow fall through to the old black, and
+  // only the browline steels its lower rim; the far body keeps the one black.
+  assert.ok(fragment.includes('const footwearHas = (set: number) => uint(set).shiftRight(footwear).bitAnd(uint(1)).equal(uint(1))'), 'a feature is the style\'s bit in its set')
+  assert.ok(fragment.includes('const booted = footwearHas(FOOTWEAR_FEATURES.shaft).and(onLegBone).and(positionGeometry.y.lessThan(bootTop)).and(slotIs(SLOT.LEGWEAR).or(ankle))'), 'only a boot style paints the leg, and only where it is bare')
+  assert.ok(fragment.includes('limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs)))).and(booted.not())'), 'a boot\'s shaft over a prosthetic shin')
+  assert.ok(fragment.includes('[FRAMES.tortoiseshell, FRAMES.steel, FRAMES.goldTone, FRAMES.navy, FRAMES.burgundy, FRAMES.clear].reduceRight('), 'black and the browline\'s brow fall through')
+  assert.ok(fragment.includes('others), vec3(0.05, 0.05, 0.055) as V3)'), 'frame 0 is the old black')
+  assert.ok(fragment.includes('const frame = near ? select(frames.equal(uint(FRAMES.browline)).and(rest.y.lessThan(1.681)), finishOf(FRAMES.steel), byFinish) : vec3(0.05, 0.05, 0.055)'), 'only the browline steels the lower rim')
+  // The shoe's paint (a module function, outside the stage's slice): the plain shoe skips it, each feature is one test of
+  // the style's bit, the apron's seam goes round the whole toe box, and what it paints is what it returns.
+  const shoePaint = between(crowd, 'function footwearPaint(', 'function agentBuffers(')
+  assert.ok(shoePaint.includes('If(style.notEqual(uint(FOOTWEAR.plain)), () => {'), 'the plain shoe comes back as it went in')
+  assert.ok(shoePaint.includes('const has = (set: number) => uint(set).shiftRight(style).bitAnd(uint(1)).equal(uint(1))'), 'the same bit test as the boot\'s')
+  for (const k of ['twoTone', 'sneaker', 'loafer', 'strap', 'cap', 'wing', 'laces', 'flat']) assert.ok(shoePaint.includes(`has(F.${k})`), `the ${k} feature is drawn`)
+  assert.ok(shoePaint.includes('select(has(F.loafer), thin(apron.sub(1).abs().mul(0.026), 0.003), float(0))'), 'the apron round the toe as well as the instep, on the upper alone')
+  assert.ok(shoePaint.includes('  return paint(clothIn, styleIn, hoseIn, footprintIn)\n}'), 'the painted shoe is what comes back')
+  assert.match(fragment, /select\(booted, bootColour, select\(inside, |select\(inside, woven\.mul\(0\.3\), select\(booted, bootColour, select\(legHere, limbColour, ankleCloth\)\)\)/, 'a boot below the shorter trousers')
   assert.match(fragment, /const faced = select\(lapel\.or\(collar\)\.or\(cuff\), select\(trimAt\.equal\(uint\(0\)\), woven, trimCloth\), woven\)/, 'the jacket or the coat in its weave, a matching trim too')
   assert.match(fragment, /const tailoredJacket = select\(inV\.or\(shirtCollar\), neckline, faced\)/, 'the shirt in the V and above the collar')
   assert.match(fragment, /const jacket = select\(vestArm\.or\(cropped\), shirt, select\(lining, /, 'the cut\'s marks over the jacket')
@@ -259,6 +305,11 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.match(card, /const wears = \(look: Look, piece: number\): boolean => lookWears\(look, piece\)/)
   assert.match(card, /data-row="face-shape"/, 'the face shapes head the face sliders')
   assert.match(card, /data-row="build"/)
+  // The accessory word's rows: the pin goes with the jacket under shirt sleeves, the frames with the glasses; the
+  // silhouette's rims wear the frames' finish, the black as before.
+  assert.match(card, /if \(worn\.layer === LAYER\.shirt && \([^\n]*slot === 'lapelPin'\)\) return null/, 'no pin row under shirt sleeves')
+  assert.match(card, /if \(slot === 'frames' && worn\.eyewear === 0\) return null/, 'no frames row without glasses')
+  assert.ok(card.includes('out[SLOT.FRAME] = hex6(FRAME_FINISH[look.frames].reduce((n, c) => n * 256 + Math.round(255 * c), 0))'), 'the finish rounded to the nearest byte: the black is #0d0d0e (look.test.ts)')
   // What the card prints (its string literals and JSX text) keeps the house's words.
   const printed = (card.match(/'[^'\n]*'|"[^"\n]*"|>[^<{]*</g) ?? []).join('\n')
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)
