@@ -262,9 +262,9 @@ test('deterministic: the same goal gives the same team, lane for lane, and the s
   assert.match(laneSpec(a.lanes[1]!, { x: Number.NaN, z: Number.POSITIVE_INFINITY }).prelude, /let at_x = 0\.000; let at_z = 0\.000;/, 'a place that is nowhere reads at the origin')
 })
 
-test('a goal the city already answers sends nobody: the shops, the workplaces and the wardrobe are pointed at, not scouted for; a home or company is still a gap', () => {
+test('a goal the city already answers sends nobody: the shops, the workplaces, the homes and the wardrobe are pointed at, not scouted for; company is still a gap', () => {
   const ROOT = 'That is already in the city; here is where to find it.'
-  for (const g of ['where are the shops', 'buy a coat', 'go indoors', 'go inside a shop', 'change my outfit']) {
+  for (const g of ['where are the shops', 'buy a coat', 'go indoors', 'go inside a shop', 'go inside my house', 'enter a house', 'change my outfit']) {
     const w = new FiveWhys(g)
     const b = w.brief()
     assert.equal(b.root, ROOT, g)
@@ -274,8 +274,8 @@ test('a goal the city already answers sends nobody: the shops, the workplaces an
     assert.match(b.markdown, /## Already in the city/, g)
     assert.doesNotMatch(b.markdown, /## Not mapped/, g)
   }
-  // A home of one's own is not in the city yet (the same note as a gap), nor is company: the scouts go.
-  for (const g of ['go inside my house', 'enter a house', 'make friends']) {
+  // Company is not in the city yet: the scouts go.
+  for (const g of ['make friends', 'chat with someone']) {
     const b = new FiveWhys(g).brief()
     assert.match(b.root, /^Nothing in the city does that yet, so 2 scouts are on what it can do instead\.$/, g)
     assert.deepEqual(b.plan.map((s) => s.control), ['dispatch'], g)

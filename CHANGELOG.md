@@ -39,7 +39,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   team on a workstation-class crowd (32,768 people, up to `?crowd=60000`) reads instead of every lane being isolated
   for memory at its first tick, and a prelude's fault names its reason on the lane; "twenty-four sub-agents" (the
   first walk's own swarm) is 24, with the teens and tens-and-units counted; a goal about something the city already
-  has (the shops, the workplaces, the wardrobe) is answered with where to find it and sends nobody, and "tasks" or
+  has (the shops, the workplaces, the homes, the wardrobe) is answered with where to find it and sends nobody, and "tasks" or
   "jobs" in a goal that names work no longer bring the missions note; a desk the map has no room for reads around
   where the player started (`teamCentre`), not the map's corner; Sloane's rewording belongs to the brief it was asked
   for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
@@ -269,11 +269,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   there up to its usual 38 rem); below 960 px the walk's card steps aside while her card is open (`onOpen`, `crowded`)
   and comes back when she settles into her chip. The browser smoke's `walk` scenario measures the two apart at
   960×540, 1024×640, 1152×648, 1280×720 and 1366×657 and the walk's card away at 900×600 while her question is open.
-  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). **Opt-in in this version** (`FIRST_WALK_DEFAULT`
-  is false): the exit program's three words are not yet in NoirScript, so the last stage cannot be passed; the
-  default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
-  stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
-  card stands on a real phone, a pad or a screen reader is unverified.
+- **The first walk's look stage takes the homes too.** On a map with homes for sale (the city's seven, Lakefront
+  Metro's up to seven) the "Your look" stage can now be finished in a home as well: stepping inside, opening its
+  doorstep card (B, or E with no car near; the pad's south face button; the For sale chip on touch) and putting it
+  away again (Done, ×, Escape, B, the console taking over, or a headset) passes it, whether or not the deed was
+  bought (`HomeCard.tsx`, a `'home'` walk event, `city.homes`). Sloane's line, hint and eight-year-old's line name
+  the homes only on a map that has them, the line and the hint in the device's own words, and the line and the
+  eight-year-old's line say the smallest costs nothing to claim; the fifth why adds that a deed is one line of the
+  shops' catalogue kept by the one shopkeeper. The walk's card steps aside while a doorstep card is open, as it does
+  for the wardrobe and a shop's card. A hint that comes while the walk's card is away (the visitor busy in the
+  wardrobe, a shop's, a home's or Sloane's own card) is let go instead of being spoken when the card comes back,
+  where it could tell the visitor to do what closing that card had just done; a stage's first line still waits for
+  the card. A surveyed region, which has no homes, keeps the stage as it was. The browser smoke gains a `walkhome` scenario (the stage passed in the Micro-Loft,
+  its chip clear of the walk's card, nothing bought). Also drops a stale tail of the first walk's opt-in wording that a
+  merge had left under the side-by-side entry. Pinned by node tests (the home event, the stage kept when done early,
+  the lines with and without homes on each device, App's wiring).
 - **Lakefront Metro's transit map** (`src/01_Initialize_World/region/transit.ts`, pure: the page and the physics worker
   build it from the same seed, street window, craft boxes and bounds). A generated region's street window now carries
   what the procedural city has had since the fixed track network, and a little more. An **elevated train loop** on the
@@ -396,12 +406,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   from 0, homes 0 to 6). A new operator starts at level 1 with 150 credits, enough for a first-floor line such as the
   tie, and earns more by the city's work. On sale now: the tailor's overcoats, trims, scarves and tie,
   the atelier's smart eyewear and the watch shop's briefcase; tattoos, limbs, watches and the other lines that need
-  wardrobe slots not built yet are listed as on order, and the design house's furniture and seven property deeds wait
-  for the properties. Three of the plan's shop names and two home names were changed after a trademark and place-name
+  wardrobe slots not built yet are listed as on order, the design house's furniture stays on order until furnishing
+  opens, and its seven property deeds are on sale (see the homes entry below). Three of the plan's shop names and two home names were changed after a trademark and place-name
   search (`docs/ip-audit.md` §7). Pinned by `storefronts.test.ts` (one shop per kind on its quarter for 64 seeds,
   never on a workplace lot, the podium gone, every fixture inside the walls, the walk-in and the camera's circle
   clear, the real Rapier avatar walking from the sidewalk to the fitting spot), `storeCatalog.test.ts` (ids, the
-  deeds' levels and prices, every line on sale wearable by every preset body, the spaces, level cap and verdicts equal
+  deeds' levels and prices, every worn line on sale wearable by every preset body, the spaces, level cap and verdicts equal
   to the progression engine's, the shopkeeper over a real keeper bought once and kept across a reload, and over a
   stand-in that refuses) and `storeWiring.test.ts`.
 - **The five shops in Lakefront Metro too.** A generated region's street window gets the same five storefronts
@@ -415,6 +425,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `region/shops.test.ts` (two seeds, every zone: five shops, never a workplace's lot, the nearest lots first, the
   hollowing and the workplaces unchanged by it), `regionPhysics.test.ts` (the worker's refusals) and
   `storeWiring.test.ts`.
+- **Seven homes you can buy and walk into, in the city and in Lakefront Metro.** The design house's seven deeds are
+  on sale, and each stands for a home (`src/01_Initialize_World/properties.ts`): a ground-floor glass room built from
+  the shop's recipe on a lot no workplace or shop has, picked from the seed with dice of its own (the Micro-Loft beside
+  an elevated-loop station, the Brownstone on the heritage seam, the Pierside Timber Loft, the Glass Villa and the
+  Estate on the lakefront row facing the lake, the Penthouse and the Sky-Mansion at the foot of two headquarters
+  towers, sold for now as the residences at the towers' feet). A smaller home is a shallower room, with a solid block
+  behind it on the shared 32 × 32 floor plan (`src/02_Define_The_Rules/homeGrid.ts`), and two concrete planters in the
+  doorway let a person through and no car. A generated region's street window gets up to seven homes too
+  (`region/homes.ts`), after its workplaces and shops, the grander homes on the better-built lots, hollowed by
+  `regionWorld.ts` `hollowLots`. On foot inside a home the HUD's chip reads "For sale" with the deed's level and price,
+  or "Your home"; E (unless a car is in reach), B or the chip opens a doorstep card
+  (`src/07_Execute_Actions/HomeCard.tsx`) that sells the deed through the one shopkeeper (Claim (free) for the loft) or
+  says Yours, and holds the avatar still while it is open (the engine drops every queued action after the poll and
+  zeroes the walk; `Input.drain`). The design house's deed rows say where each home stands and offer Visit, or Go home
+  once owned, which puts the avatar on the sidewalk in front of the doorway, and is refused in a network room. The
+  minimaps draw the homes in violet, the owned ones in gold. Furniture stays on order until furnishing opens. Pinned by
+  `homeGrid.test.ts`, `properties.test.ts` (seven distinct free lots by the rules for 64 seeds; the shell, the fill
+  block and planters, and the pads and tracks unchanged for 16; either car's collider cast through the real Rapier
+  world at a doorway and stopped by the planters on seed 1337, and a real Rapier avatar walking in on 4 seeds), `region/homes.test.ts` (two seeds, every zone), `storeCatalog.test.ts` (deeds on sale, a new
+  operator's progression keeper claims the loft and is told the Brownstone's level, a level 3 keeper buys it),
+  `homeCard.test.ts`, `input.test.ts` (the drain) and `homeWiring.test.ts` (also: the poll after a card closes is
+  dropped too, so the pad press that closed it cannot reopen it; no card under the console or in a headset; while a
+  city action waits, only its card reads the pad; in split screen only player 1's pads reach it).
 - **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
   with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
   target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
@@ -547,6 +580,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the headset, and Minimal and `?post=0` with one player still have no anti-aliasing (a phone off the lite profile
   keeps FXAA at Low and Medium). Unverified: how it looks and what it costs on a real GPU (software-WebGPU pictures
   only).
+- **Ambient occlusion at Ultra and Peak.** The post chain now holds three r186's screen-space ambient occlusion
+  (`SSAONode`, wrapped as `postfx.ts GatedSSAO`): from the scene pass's own depth at half resolution, with each
+  pixel's normal rebuilt from that depth (`getNormalFromDepth`), a rotated disk of taps within 1.5 m (intensity 2: at
+  three's default of 1 the software adapter's pictures barely changed), then a depth-aware blur across and down; the
+  result multiplies the HDR colour after the shutter, bloom is taken from the light before it, and the sun shafts are
+  added after it, never occluded. It fades out on bright pixels (HDR luminance 1.5 to 4: lamps, windows and signals
+  keep their light), from 60 to 300 m into the haze and, under the cinema camera, where the shutter smears the frame
+  more than 2 to 8 px (it is drawn from the unsmeared depth); rain mode and an operator strength of 0 turn it off. The
+  tier knob is `aoTaps` (Ultra 12, Peak 16, 0 below and on Lite), a uniform loop bound: a tier change writes the taps,
+  a strength uniform and a JS switch, and `GatedSSAO.updateBefore` skips the three passes while off (a node's
+  updateBefore runs every frame once built, so a strength of 0 alone would still render them). Its first frame always
+  draws, so the boot's validated draw compiles both of its pipelines. Who builds it: `governor.ts aoCandidate`, every
+  desktop-class profile unless `?ao=0`, never a phone or a lite profile; split screen and `?post=0` have no post
+  chain. The scene pass gets no attachment and no context node, so no scene pipeline changes, at one sample or four:
+  every read of the depth is a load without a sampler (at 4x three declares a multisampled depth texture and loads its
+  first sample, as the sun shafts do; at one, its nearest filtering makes it unfilterable). GTAO (`GTAONode`) was
+  rejected: it gathers depth with `textureGather`, which a multisampled depth texture refuses, so every 4x boot would
+  fall back to one sample, and its tap count is compiled in. Screen-space reflections were not adopted: they need new
+  scene-pass attachments chosen at boot and written on every tier that runs post, for surfaces this city barely has
+  (the lake's water has no metalness, the roads are dry). Material-level occlusion (`builtinAOContext`) would need a
+  second full prepass of the city and the crowd. The operator key `shaders.ao.strength` (0 to 1) scales it;
+  `tools/browser/shot.mjs` logs its state, and the browser smoke counts its two pipelines (tagged by their one R8
+  target) and their draws: built and skipped below Ultra, drawn every frame at Ultra (12 taps) and Peak (16), at 4x
+  too, with nothing compiled after boot, none drawn at Low or in rain mode, and never built on split screen, Lite or a
+  phone off the lite profile. Pinned by `governorAo.test.ts` (who builds it, ?ao), `governor.test.ts` (the knob per
+  tier, never decreasing going up, only with post, the applier writing it and a post cap writing 0),
+  `postfxAo.test.ts` (on the scene pass's own depth with rebuilt normals, the scene pass's targets unchanged at one
+  sample and four, built applying nothing with one tap, the first frame drawn and later frames only while on,
+  release() freeing its two targets) and `aoWiring.test.ts` (the host's ?ao, the build decided after the post cap and
+  kept through the 1x rebuild, the frame's writes and rain mode, no tier touching its resolution, blur or the scene
+  pass's targets, no GTAO, SSR or material occlusion in the chain). Limits: it darkens a pixel's finished light,
+  direct sun and lamps included, not only the indirect light (masked on bright pixels); it sees only what is on
+  screen; its normals carry no bump detail; without temporal accumulation the half-resolution result can crawl on thin
+  geometry; at 4x it follows the first sample's coverage while the colour is the resolved average (up to a pixel at
+  silhouettes); the network ghosts occlude like solid things; its two targets (about 1 MB at 1080p) stay allocated on
+  every tier once built; three's SSAONode leaves out the sky only under a conventional depth buffer (depth 1), and
+  this city's is reversed (the sky is 0), so the sky's pixels run the taps too (they come out unoccluded: every tap
+  lands on the far plane) and the pass costs the same under open sky as facing a wall. Unverified: how it looks and
+  what it costs on a real GPU (software-WebGPU pictures only).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
