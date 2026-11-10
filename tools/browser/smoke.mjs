@@ -1994,7 +1994,7 @@ const SCENARIOS = {
         p.transcript.push(`[line ${i}, typed ${typed}]\n${t ?? `(nothing matching ${done} after 30 s)\n${await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
         return { typed, t }
       }
-      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 12 checks, contained, realm standing/)
+      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 15 checks, contained, realm standing/)
       check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
       const l2 = await line(2, /spawn_subagents: \d+ of 24 asked over for sim2real_workplaces/)
       check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 asks people over through the recruiter (at least one)', lastLine(l2.t))

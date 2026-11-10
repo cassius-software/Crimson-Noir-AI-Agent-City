@@ -221,6 +221,13 @@ export interface SipocSnapshot {
      * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).
      */
     recruiting?: { listening: boolean; line: string }
+    /**
+     * The team Sloane dispatched for a goal (08_Swarm/team.ts), added by the host: one row a lane, with its tag, its
+     * desk, whether it runs or was isolated, and its latest reading.
+     */
+    lanes?: readonly { tag: string; role: string; state: 'ready' | 'isolated'; reading: string | null }[]
+    /** The team in one line for the MIC chip ("Team 24 · metro 8, warehouse 8, robotics 8 · 2 coming over"); '' without one. */
+    team?: string
   }
   input: { mode: 'foot' | 'vehicle'; nearVehicle: boolean }
   process: {

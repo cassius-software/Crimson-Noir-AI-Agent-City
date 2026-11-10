@@ -15,6 +15,68 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
+  something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
+  work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either
+  name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
+  goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
+  intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
+  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
+  over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
+  rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
+  brief, the HUD's activity line carries the team's one-line count, and the console gains `lanes [ledger
+  [verify]|stop]` (`goal` lists a dispatched team's lanes). Sloane may say a brief's sentence in their own words
+  through the page's mind (`sloaneVoice`: the router's order, a local server first, then the model kept in this page;
+  never with the provider set to scripted), screened as the onboarding's rewording is and with every number kept; the
+  planner's sentence stands until it answers and whenever it does not. The model rewords; it never decides, and
+  nothing a goal says about work reaches any knob. Tests pin the planner (every desk's words, no knob word among
+  them, every probe under six tenths of the gas on a ten-thousand-row city, the window walk, determinism), the runner
+  over a fake host (placement, the bodies and the rally range, isolation through the gate at the first tick with a
+  verified ledger, replacement and late answers, a host that throws), the console's `lanes`, the App wiring and
+  Sloane's voice. After main's first walk, shops and hardware classes landed beside it: a lane's session grows its
+  arena for the city's columns and keeps its own 64 Ki cells of room above them (`NoirSession`'s `tableRoom`), so a
+  team on a workstation-class crowd (32,768 people, up to `?crowd=60000`) reads instead of every lane being isolated
+  for memory at its first tick, and a prelude's fault names its reason on the lane; "twenty-four sub-agents" (the
+  first walk's own swarm) is 24, with the teens and tens-and-units counted; a goal about something the city already
+  has (the shops, the workplaces, the homes, the wardrobe) is answered with where to find it and sends nobody, and "tasks" or
+  "jobs" in a goal that names work no longer bring the missions note; a desk the map has no room for reads around
+  where the player started (`teamCentre`), not the map's corner; Sloane's rewording belongs to the brief it was asked
+  for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
+  each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
+  `commands.test.ts`).
+- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+  the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
+  by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
+  limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
+  arena, 32 frames). `src/08_Swarm/lanes.ts` (new) runs a dispatched plan's sub-agents in isolated lanes: one
+  session each (its own arena), one program a tick against one snapshot of the city's columns, every tick and every
+  effect put to the Ring-0 action gate's `admitLane`, which gains two Zeroth-Law checks, `GasWithin` and
+  `MemoryWithin` (fifteen checks now; `act gate` prints them, and the first walk's `verify_ring0` seal covers all
+  fifteen by name). A refusal is the lane panic: the lane zeroed and
+  sealed, the fault hashed onto the runner's ledger with the gate's sentence as its reason, one console line, and the
+  frame untouched; a write for vehicle teleop from a lane without the bit is a capability fault; the operator's
+  knobs (`tune`, `cull`, `steer`) are nobody's lane's. Tests pin every fault kind end to end, isolation of one lane
+  among others, a plain error keeping its lane, `ask` on an effect outside the VM, a host that vouches nothing or
+  whose realm has halted, that nothing throws, lane-to-lane memory isolation, the `LANE_MAX` cap and determinism to
+  the ledger's head. Nothing dispatches into lanes yet: that is the next slice.
+- **Capability lanes, the lane panic and the forbidden doors.** A sub-agent lane has a 32-bit capability word
+  (`src/02_Define_The_Rules/capabilities.ts`), one `Uint32` per lane: four grantable bits (`CAP_MOVE`,
+  `CAP_WORKPLACE_TASK`, `CAP_VEHICLE_TELEOP`, `CAP_SUBAGENT_SPAWN`), everything else forbidden for good
+  (`CAP_FORBIDDEN_MASK`), the top four bits naming the host's doors no lane is granted (the network, dynamic code, a
+  window, the host process) and `FORBIDDEN_DOORS` the names a script would use for them. `violation(asked, held)` is
+  the kernel's branchless `asked & !caps`; a `CapabilityLanes` table grants grantable bits only and never grants a
+  zeroed lane again; a `FaultLedger` hashes every fault over the one before it with the city's SHA-256
+  (`integrity.ts`) and verifies by recomputation. The Ring-0 action gate has a thirteenth check, `LaneCapable`
+  (Second Law), and a fourth moment, `admitLane`, the moment before a lane's effect; a refusal there is what
+  `lanePanic` (`ring0Panic.ts`) answers: the lane's word zeroed and sealed, the fault on the ledger, one console
+  line with the audit hash, and the frame untouched (the realm's `kernelPanic` still locks the page; the lane's
+  never throws). The air gap now holds `window.open` to this machine like `fetch` (a new tab is a way out too);
+  `act gate` prints the thirteen checks. Tests pin the bits, the branchless check against a plain reference over
+  thousands of words, the sealed lane, the ledger's chain and tamper detection, the panic's log line and that it
+  never throws, that every network and window door in the list is guarded or removed by the air gap, and that no
+  door's name is in the code of the lane modules. The lanes themselves (the runner and what dispatches into them)
+  come in the next slices.
 - **Sixteen indoor workplaces, in a fixed order that is their id** (`src/01_Initialize_World/interiors.ts`). The six
   rooms become sixteen, `WORKPLACE_KINDS` in this order: roboticsLab, warehouse, serverVault, metroOps, controlTower,
   kitchen, microFab, twinStudio, fleetBay, greenhouse, acousticsLab, responseCenter, clearingFloor, gaitLab,

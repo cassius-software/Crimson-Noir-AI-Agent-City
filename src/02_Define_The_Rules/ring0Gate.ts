@@ -24,28 +24,32 @@
  *   over a recording facade), the tier is unlocked and a person allowed it (PersonAllowed: at the console, on the
  *   card or through the host; the gateway never allows), the proposer is still tethered under the same recruitment
  *   (LeaseHeld, ProposerBound), and the hash-chained trail verifies (ChainVerified).
+ * - `admitLane`, after a sub-agent lane's tick and before its effect (08_Swarm/lanes.ts): the page is contained, the
+ *   program took at most its gas for the tick (GasWithin: noirscript MAX_OPS_PER_TICK) and stayed inside its arena
+ *   (MemoryWithin: an index, memory, depth or output bound), the realm stands, and the lane's word holds every bit the
+ *   effect needs (LaneCapable: capabilities.ts; a door bit is named as such and never admitted). A refusal trips the
+ *   lane panic (ring0Panic.ts lanePanic): the lane zeroed, the fault hashed onto the ledger, the frame untouched.
  * - `admitWords`, for a model's words shown as the city's own (the onboarding's reworded lines): the screen alone. The
- *   onboarding voice asks a model for that rewording outside `admitAsk` (it changes nothing, and the provider's own
- *   loopback gate holds its address); its words pass here before they are spoken.
+ *   voice asks for the rewording outside `admitAsk` (it changes nothing; the provider's loopback gate holds its address).
  * What this is and is not: every check is a rule over plain values (no clock, no randomness, no I/O), applied the same
  * way every time, and the tests hold each one; the verdict names the highest-ranked law that refused and every check
  * that failed. It is not a proof about a model, and it does not look inside one. The three laws' own rulings on vehicle
- * commands (laws.ts adjudicate) and the audit after every physics tick (ring0.ts) are the kernel's; this gate is what
- * stands between an answer and the kernel. The exports are frozen, so nothing running in the page can monkey-patch
- * the gate away.
+ * commands (laws.ts adjudicate) and the audit after every physics tick (ring0.ts) are the kernel's; this gate stands
+ * between an answer and the kernel. The exports are frozen: nothing running in the page can monkey-patch the gate away.
  * What breaks if it is removed? An answer's line would reach the city on the operator's OK alone, with no check that
  * the page is contained, the realm stands, the proposer is still here or the trail is whole, and no law named when
  * one of them fails.
  */
 import { loopbackServer } from './airgap.ts'
+import { capNames, doors, forbidden, violation } from './capabilities.ts'
 import { screen } from './conduct.ts'
 import type { Invariant } from './guardrails.ts'
 import { LAW_NAMES, type GateLaw } from './laws.ts'
 
 export type CheckName =
-  | 'Contained' | 'LoopbackOnly' | 'Conduct14A' | 'Catalogued'
+  | 'Contained' | 'LoopbackOnly' | 'Conduct14A' | 'Catalogued' | 'GasWithin' | 'MemoryWithin'
   | 'RealmStanding' | 'KineticFree'
-  | 'OperatorUnlocked' | 'PersonAllowed'
+  | 'OperatorUnlocked' | 'PersonAllowed' | 'LaneCapable'
   | 'LeaseHeld' | 'ProposerBound' | 'ChainVerified' | 'OneAtATime'
 
 export interface Check { readonly law: GateLaw; readonly name: CheckName; readonly text: string }
@@ -56,10 +60,13 @@ export const CHECKS: readonly Check[] = Object.freeze([
   Object.freeze({ law: 0, name: 'LoopbackOnly', text: 'the model the words come from is on this machine, or there is none (the script, a model in this page)' }),
   Object.freeze({ law: 0, name: 'Conduct14A', text: 'the words pass the 14A screen (conduct.ts); a prompt that fails it is not engaged with at all' }),
   Object.freeze({ law: 0, name: 'Catalogued', text: 'the effect is one line of the fixed catalogue (actions.ts): nothing else an answer says can change the city' }),
+  Object.freeze({ law: 0, name: 'GasWithin', text: "a sub-agent lane's program took at most its gas for the tick (noirscript MAX_OPS_PER_TICK, 4096 instructions): one that runs the budget out is isolated, not waited for" }),
+  Object.freeze({ law: 0, name: 'MemoryWithin', text: "a sub-agent lane's program stayed inside its own arena: an index past an array or a column, memory, call depth or output beyond its limits is a fault, not a crash" }),
   Object.freeze({ law: 1, name: 'RealmStanding', text: 'the Ring-0 audit (ring0.ts) has not panicked: a halted realm takes no action' }),
   Object.freeze({ law: 1, name: 'KineticFree', text: 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets' }),
   Object.freeze({ law: 2, name: 'OperatorUnlocked', text: 'the operator tier is unlocked' }),
   Object.freeze({ law: 2, name: 'PersonAllowed', text: 'a person allowed it, at the console, on the card or through the host; the gateway never allows' }),
+  Object.freeze({ law: 2, name: 'LaneCapable', text: "a sub-agent's lane holds the capability its effect needs (capabilities.ts): a bit it was never granted, or a door no lane is granted, is refused and the lane is isolated" }),
   Object.freeze({ law: 3, name: 'LeaseHeld', text: "the proposer is still tethered to the operator (the capability gateway's lease holds)" }),
   Object.freeze({ law: 3, name: 'ProposerBound', text: 'the gate binds the proposer, under the same recruitment, and nobody else' }),
   Object.freeze({ law: 3, name: 'ChainVerified', text: 'the hash-chained trail verifies before anything runs' }),
@@ -74,9 +81,9 @@ export const CHECK_LAW: Readonly<Record<CheckName, GateLaw>> = Object.freeze(Obj
  * have no word for it (the catalogue, the realm's standing and the First-Law table are the gate's own).
  */
 export const CHECK_INVARIANT: Readonly<Record<CheckName, Invariant | null>> = Object.freeze({
-  Contained: 'LoopbackOnly', LoopbackOnly: 'LoopbackOnly', Conduct14A: 'ConductScreen14A', Catalogued: null,
+  Contained: 'LoopbackOnly', LoopbackOnly: 'LoopbackOnly', Conduct14A: 'ConductScreen14A', Catalogued: null, GasWithin: 'BudgetWithinQuota', MemoryWithin: null,
   RealmStanding: null, KineticFree: null,
-  OperatorUnlocked: 'HumanOverrideSupreme', PersonAllowed: 'HumanOverrideSupreme',
+  OperatorUnlocked: 'HumanOverrideSupreme', PersonAllowed: 'HumanOverrideSupreme', LaneCapable: 'CapabilityTethered',
   LeaseHeld: 'CapabilityTethered', ProposerBound: 'CapabilityTethered', ChainVerified: 'ProvenanceChained', OneAtATime: 'HumanOverrideSupreme',
 })
 
@@ -256,6 +263,52 @@ export function admitRun(i: RunIntent): GateVerdict {
   ))
 }
 
+/** The bounds a lane's program can run into (noirscript ast.ts NoirFault, spelled here so the gate imports nothing of the VM). */
+export type LaneBound = 'gas' | 'bounds' | 'memory' | 'depth' | 'output'
+
+/**
+ * A sub-agent lane, after its program's tick or the moment before an effect outside the VM (08_Swarm/lanes.ts): what
+ * the lane holds, what it asked for, what its program took and whether a bound ended it.
+ */
+export interface LaneIntent {
+  readonly contained: Vouched
+  /** The Ring-0 audit's panic reason, or null while the realm stands. */
+  readonly panic: string | null
+  /** The lane's capability word (capabilities.ts CapabilityLanes.held). */
+  readonly held: number
+  /** The bits the effect needs, or the bits the program's writes asked for this tick. */
+  readonly asked: number
+  /** The instructions the program took this tick, against its budget (noirscript vm.ts MAX_OPS_PER_TICK). 0 and the budget for an effect outside the VM. */
+  readonly steps: number
+  readonly budget: number
+  /** The bound that ended the program, with the VM's text; null for a run that ended, a plain error, or an effect outside the VM. */
+  readonly fault: { readonly kind: LaneBound; readonly text: string } | null
+}
+
+/**
+ * A lane after its tick, or its effect about to happen: contained, within its gas (GasWithin: the budget ran out, or
+ * more steps than the budget were counted), within its arena (MemoryWithin: an index, memory, depth or output
+ * bound), the realm standing, and every bit asked for held. A door bit (the network, dynamic code, a window, the host
+ * process) is named as such: no lane holds one, so none is ever admitted. Pure.
+ */
+export function admitLane(i: LaneIntent): GateVerdict {
+  const missing = violation(i.asked, i.held)
+  const door = doors(i.asked)
+  const reserved = forbidden(i.asked)
+  const gas = i.fault?.kind === 'gas' || i.steps > i.budget
+  return verdictOf(refusals(
+    contained(i.contained),
+    !gas ? null : fail('GasWithin', `the lane ran its ${i.budget}-step budget out this tick${i.steps > i.budget ? ` (${i.steps} steps counted)` : ''}`),
+    i.fault === null || i.fault.kind === 'gas' ? null : fail('MemoryWithin', `the lane reached past its bounds: ${i.fault.text}`),
+    i.panic === null ? null : fail('RealmStanding', `the realm has halted: ${i.panic}`),
+    missing === 0 ? null : fail('LaneCapable', door !== 0
+      ? `the lane asked for ${capNames(door).join(', ')}: a door no lane is granted`
+      : reserved !== 0
+        ? `the lane asked for ${capNames(reserved).join(', ')}: a bit no lane is granted`
+        : `the lane holds ${capNames(i.held).join(', ') || 'nothing'} and asked for ${capNames(missing).join(', ')}`),
+  ))
+}
+
 /** A model's words about to be shown as the city's own: the screen alone. Pure. */
 export function admitWords(text: string): GateVerdict {
   return verdictOf(refusals(conduct(text)))
@@ -264,6 +317,7 @@ export function admitWords(text: string): GateVerdict {
 Object.freeze(admitAsk)
 Object.freeze(admitProposal)
 Object.freeze(admitRun)
+Object.freeze(admitLane)
 Object.freeze(admitWords)
 Object.freeze(sentence)
 Object.freeze(invariantsOf)

@@ -10,8 +10,22 @@
  * What breaks if it is removed? The lexer, parser, checker, compiler and printer have no common shape to agree on.
  */
 
-/** Every failure of the front end and the VM is one of these; the session turns it into `error` text. */
-export class NoirError extends Error {}
+/** The bounds a program can run into: the step budget (its gas), an index, the arena, the call depth, the output cap. */
+export type NoirFault = 'gas' | 'bounds' | 'memory' | 'depth' | 'output'
+
+/**
+ * Every failure of the front end and the VM is one of these; the session turns it into `error` text. A failure that
+ * is one of the bounds carries which (`fault`), so a host running many programs side by side can tell a program
+ * that ran out of its budget or reached past its memory from one with a plain mistake in it; a type error, a
+ * division by zero or a host write that refused is no fault.
+ */
+export class NoirError extends Error {
+  readonly fault: NoirFault | null
+  constructor(message: string, fault: NoirFault | null = null) {
+    super(message)
+    this.fault = fault
+  }
+}
 
 /** A static type. `str` is only the type of a string literal; `void` is the type of a call that gives nothing. */
 export type Ty =

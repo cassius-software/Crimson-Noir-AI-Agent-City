@@ -9,9 +9,12 @@
  * player is welcomed back by name. Either way Sloane then offers to take a goal: a plain-language wish
  * ("make it night", "it feels laggy") that the deterministic 5-Whys engine in intent.ts refines through a
  * few questions with quick-reply chips and a text field, then shows as a brief — the steps the host
- * applied ticked, the rest as a plan — with a copyable architecture brief for an engineer. The card then
- * settles into a small chip that offers the goal dialogue and reopens the full control list. The ORC
- * Notice is the card's fine print (on a phone held in landscape, only in the full list).
+ * applied ticked, the rest as a plan — with a copyable architecture brief for an engineer. A goal about
+ * work is dispatched: the host opens the brief's team (08_Swarm/team.ts) and its lanes show under the
+ * brief as they read the city. Sloane may say the brief's sentence in their own words (the host's `reword`,
+ * the page's mind): the words change, never the plan, and the planner's sentence stands until they arrive.
+ * The card then settles into a small chip that offers the goal dialogue and reopens the full control list.
+ * The ORC Notice is the card's fine print (on a phone held in landscape, only in the full list).
  * What breaks if it is removed? Nobody is greeted, the avatar never gets a name or seed, first-time
  * players get no controls help, a goal has nowhere to go, and the ORC Notice is no longer shown in the
  * running product.
@@ -27,6 +30,8 @@ import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhySt
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
+import type { LaneLine } from '../08_Swarm/team.ts'
+import type { Voice } from './onboarding/voice.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
 
 /** The Concierge's name (onboarding/script.ts), for any other surface that mentions them. */
@@ -56,6 +61,8 @@ const STARTERS = ['Make it night', 'Golden hour', 'Smoother', 'Fewer people', 'S
 /** The goal dialogue: no goal yet, a question on screen, or (questions over) the brief. `applied` are
  *  the immediate steps the host carried out, ticked in the card and the copyable brief. */
 interface Dialogue { whys: FiveWhys | null; step: WhyStep | null; brief: Brief | null; applied: readonly Control[] }
+/** Lanes shown under a brief before "and N more". */
+const TEAM_ROWS = 6
 const NO_GOAL: Dialogue = { whys: null, step: null, brief: null, applied: [] }
 
 /** A dialogue given up front (a deep link, a server render): its goal and answers already in. */
@@ -194,13 +201,20 @@ export interface ConciergeProps {
   onGoalSent?(text: string): void
   /** Optional: Sloane's spoken voice (onboarding/speaker.ts): called with each line the card shows, as plain words. */
   onSay?(text: string): void
+  /**
+   * Optional: Sloane's own words (onboarding/voice.ts sloaneVoice): a brief's sentence is put to it once and shown when
+   * it arrives; the plan under it, the dispatch and what is spoken stay the planner's. Null: the planner's words.
+   */
+  reword?: Voice | null
+  /** Optional: the lanes of the team the host opened for the brief (08_Swarm/team.ts lines), shown under it as they run. */
+  lanes?: readonly LaneLine[] | null
   /** Optional: the first walk's card is on screen (it stands on the right of a wide screen): the wide column keeps left of it. */
   beside?: boolean
   /** Optional: told whether Sloane's card (not her chip) is on screen, so the first walk's card can step aside for it in a narrow window. */
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, beside = false, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, reword = null, lanes = null, beside = false, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const roomy = useSyncExternalStore(BESIDE_ROOM.subscribe, BESIDE_ROOM.matches, BESIDE_ROOM.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -213,6 +227,18 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   /** The one text field: the name, then a goal, then each answer. */
   const [draft, setDraft] = useState('')
   const [dialogue, setDialogue] = useState<Dialogue>(() => resume(goal))
+  /** The brief's sentence in Sloane's own words, once the mind has answered for this brief (the brief itself names it:
+   *  a later brief with the same sentence starts from the planner's words again, whatever the provider is by then). */
+  const [worded, setWorded] = useState<{ brief: Brief; text: string } | null>(null)
+  // One ask a brief: the planner's sentence shows (and is spoken) meanwhile, and a new brief or a card that goes ends the ask.
+  useEffect(() => {
+    const b = dialogue.brief
+    if (!reword || !b) return
+    const ctl = new AbortController()
+    const root = b.root
+    reword.say(root, ctl.signal).then((text) => { if (!ctl.signal.aborted && text && text !== root) setWorded({ brief: b, text }) }, () => {})
+    return () => ctl.abort()
+  }, [reword, dialogue.brief])
   /** The brief on the clipboard, or shown to copy by hand where the clipboard is out of reach. */
   const [copied, setCopied] = useState<'no' | 'yes' | 'shown'>('no')
   /** Bumped whenever a card opens or a question changes: restarts the settle timer and the focus effect. */
@@ -522,7 +548,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     view === 'ask' ? <>Hi, I’m {SLOANE.name}, your concierge. I’ll get you set up — what should I call you?</>
     : view === 'goal' ? (
       step ? step.question
-      : brief ? brief.root
+      : brief ? (worded?.brief === brief ? worded.text : brief.root)
       : <>What would you like the city to do? The time of day, the crowds, the traffic, how it runs, where to go — say it plainly.</>
     )
     : view === 'help' ? (name ? <>Here’s everything you can do, <bdi>{name}</bdi>.</> : <>Here’s everything you can do.</>)
@@ -648,6 +674,17 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   {brief.unmapped.map((u) => (
                     <li key={u} className={`text-[12px] leading-tight ${muted}`}>{u}</li>
                   ))}
+                </ul>
+              )}
+              {lanes && lanes.length > 0 && brief.plan.some((s) => s.control === 'dispatch') && (
+                <ul className="mt-2 flex flex-col gap-0.5" data-team aria-label="The team at work">
+                  {lanes.slice(0, TEAM_ROWS).map((l) => (
+                    <li key={l.tag} className={`flex items-baseline gap-2 text-[12px] leading-tight ${muted}`} data-lane={l.state}>
+                      <span className="shrink-0 font-mono text-[11px]">{l.tag}</span>
+                      <span className="min-w-0 truncate">{l.state === 'isolated' ? 'isolated by the gate' : l.reading ?? 'reading the city'}</span>
+                    </li>
+                  ))}
+                  {lanes.length > TEAM_ROWS && <li className={`text-[12px] leading-tight ${muted}`}>and {lanes.length - TEAM_ROWS} more</li>}
                 </ul>
               )}
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
