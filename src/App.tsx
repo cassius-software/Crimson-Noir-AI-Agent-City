@@ -1500,6 +1500,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           onRun={runWalk}
           onSay={onSay}
           crowded={sloaneOpen}
+          driving={hud.input.mode === 'vehicle'}
           zoom={access.scale / 100}
         />
       )}

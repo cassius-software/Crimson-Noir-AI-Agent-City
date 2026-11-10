@@ -219,15 +219,19 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
   const dvh = layout.match(/100dvh/g)?.length ?? 0
   assert.ok(dvh > 0)
   assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
-  // The first walk's card: the touch buttons' edge and the stick's zone (the unzoomed touch layer's), the window's height
-  // and the console's share of it.
+  // The first walk's card: the touch buttons' edges and the stick's zone with and without its gaps (the unzoomed touch
+  // layer's), the top of the HUD's chips at the foot (window pixels, Hud.tsx), the window's height and the console's share.
   const walk = FIRST_WALK.slice(FIRST_WALK.indexOf('const AT = {'), FIRST_WALK.indexOf('} as const'))
-  const edges = walk.match(/var\(--touch-top,[^)]*\)/g) ?? []
-  assert.ok(edges.length > 0)
-  assert.equal(walk.match(/calc\(var\(--touch-top,[^)]*\)_\/_var\(--ui-zoom,1\)\)/g)?.length, edges.length, 'every --touch-top is divided by the zoom')
-  assert.equal(walk.match(/11\.5rem/g)?.length, walk.match(/calc\(11\.5rem_\/_var\(--ui-zoom,1\)\)/g)?.length, 'and the stick\'s zone')
+  for (const v of ['touch-top', 'touch-left', 'hud-foot']) {
+    const edges = walk.match(new RegExp(`var\\(--${v},[^)]*\\)`, 'g')) ?? []
+    assert.ok(edges.length > 0, `--${v} is used`)
+    assert.equal(walk.match(new RegExp(`calc\\(var\\(--${v},[^)]*\\)_/_var\\(--ui-zoom,1\\)\\)`, 'g'))?.length, edges.length, `every --${v} is divided by the zoom`)
+  }
+  for (const zone of ['11\\.5rem', '12\\.5rem']) {
+    assert.equal(walk.match(new RegExp(zone, 'g'))?.length, walk.match(new RegExp(`calc\\(${zone}_/_var\\(--ui-zoom,1\\)\\)`, 'g'))?.length, 'and the stick\'s zone')
+  }
   const heights = walk.match(/\d+dvh/g) ?? []
-  assert.equal(heights.length, 4, 'four cards\' heights')
+  assert.equal(heights.length, 5, 'five cards\' heights')
   assert.equal(walk.match(/calc\(\d+dvh_\/_var\(--ui-zoom,1\)\)/g)?.length, heights.length, 'and the window\'s height')
   assert.match(HUD, /mt-\[max\(0px,calc\(var\(--chip-bottom,0px\)_-_var\(--hud-bottom,0px\)_\/_var\(--ui-zoom,1\)\)\)\]/, 'the HUD\'s toasts under the chip: the chip\'s foot is already in the zoom\'s lengths, the HUD\'s is not')
 })

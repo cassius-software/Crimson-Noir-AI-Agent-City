@@ -108,12 +108,15 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   assert.match(concierge, /return `\(min-width: \$\{Math\.round\(BESIDE_ROOM_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
   for (const src of [concierge, card]) assert.match(src, /const room = besideRoom\(zoom\)\n\s+const roomy = useSyncExternalStore\(room\.subscribe, room\.matches, room\.server\)/)
   assert.equal(app.match(/zoom=\{access\.scale \/ 100\}/g)?.length, 2, 'App hands both cards the same zoom')
-  assert.match(card, /const shown = visible && !\(crowded && !termOpen && !overlay && !compact && !roomy\)/)
+  // Side by side only in the wide place with room for both: on a phone, a small window or a window small only at the
+  // zoom, Sloane's open card takes the band the walk's card stands in (her short and tall layouts), so it steps aside.
+  assert.match(card, /const besideHers = !overlay && !compact && !squeezed && roomy/)
+  assert.match(card, /const shown = visible && !\(crowded && !termOpen && !besideHers\) && !\(between && driving\)/)
   // A window small only at the text size's zoom puts the card at the foot (not a sliver under the zoomed readout); it is
   // the compact query itself at 100 %, and still steps aside for Sloane's card, which stays in the window's centre.
   assert.match(card, /return `\(max-width: \$\{Math\.round\(639 \* z\)\}px\), \(max-height: \$\{Math\.round\(499 \* z\)\}px\)`/)
   assert.match(card, /const SMALL = mediaStore\('\(max-width: 639px\), \(max-height: 499px\)'\)/)
-  assert.match(card, /const at = termOpen \? AT\.console : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
+  assert.match(card, /const at = termOpen \? AT\.console : between \? AT\.between : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
   // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
   // query's width it still has at least the 22 rem her centred column never went under.
   const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
@@ -125,6 +128,34 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   assert.ok(past >= walkWidth + 0.5, `${past} rem clears the ${walkWidth} rem card with a gap`)
   const room = Number(/export const BESIDE_ROOM_PX = (\d+)$/m.exec(concierge)?.[1]) / 16
   assert.ok(room - left - inset - past >= 22, `${room - left - inset - past} rem left for Sloane at ${room} rem`)
+})
+
+test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways it stands between the thumbs above the HUD\'s chips', () => {
+  const app = read('../../App.tsx')
+  const hud = read('../Hud.tsx')
+  const concierge = read('../Concierge.tsx')
+  const card = read('./FirstWalk.tsx')
+  const place = (name: string) => new RegExp(`\\b${name}: '([^']+)'`).exec(card)?.[1] ?? ''
+  // Sloane's chip publishes where it ends in her tall layouts (lower at the wheel): the walk's card stops short of it.
+  assert.match(concierge, /--chip-bottom/)
+  for (const name of ['touch', 'compact']) {
+    assert.match(place(name), /max-h-\[[^\]]*max\(calc\(max\(0\.75rem,env\(safe-area-inset-top\)\)_\+_8\.75rem\),calc\(var\(--chip-bottom,0px\)_\+_0\.5rem\)\)/, `${name} keeps under the minimap row and her chip`)
+  }
+  // Sideways (a short landscape screen, Concierge's short layout): no room above the thumbs, so the card stands
+  // between them, left of the buttons' left edge and right of the stick's zone, above the HUD's chips at the foot.
+  assert.match(card, /const SIDEWAYS = mediaStore\('\(orientation: landscape\) and \(max-height: 499px\)'\)/)
+  assert.match(card, /const between = overlay && sideways && !termOpen/)
+  const between = place('between')
+  assert.match(between, /^left-\[calc\(env\(safe-area-inset-left,0px\)_\+_calc\(12\.5rem_\/_var\(--ui-zoom,1\)\)\)\]/, 'right of the stick and its gaps (unzoomed)')
+  assert.match(between, /right-\[calc\(calc\(var\(--touch-left,12rem\)_\/_var\(--ui-zoom,1\)\)_\+_0\.5rem\)\]/, 'left of the buttons (window pixels, unzoomed)')
+  assert.match(between, /bottom-\[max\(max\(0\.75rem,env\(safe-area-inset-bottom\)\),calc\(calc\(var\(--hud-foot,0px\)_\/_var\(--ui-zoom,1\)\)_\+_0\.5rem\)\)\]/, 'above the HUD\'s chips')
+  assert.match(between, /max-h-\[calc\(calc\(100dvh_\/_var\(--ui-zoom,1\)\)_-_max\(0\.75rem,env\(safe-area-inset-top\)\)_-_10\.5rem_-_/, 'under the header, the readout and her chip')
+  // The HUD publishes the top of its compact chips at the foot, from the screen's foot, and takes it away with them.
+  assert.match(hud, /root\.setProperty\('--hud-foot', `\$\{Math\.round\(window\.innerHeight - el\.getBoundingClientRect\(\)\.top\)\}px`\)/)
+  assert.match(hud, /root\.removeProperty\('--hud-foot'\)/)
+  assert.match(hud, /<div ref=\{publishFoot\} className="absolute bottom-0 left-1\/2 [^"]*" data-hud="foot">\s*\{captionStrip\}/)
+  // At the wheel sideways the car's buttons fill the band: the card steps aside until the visitor is on foot.
+  assert.match(app, /driving=\{hud\.input\.mode === 'vehicle'\}/)
 })
 
 test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {

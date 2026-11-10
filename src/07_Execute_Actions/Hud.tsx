@@ -77,6 +77,25 @@ function publishPanels(el: HTMLDivElement | null) {
   }
 }
 
+/** Where the compact layout's chips at the foot begin (the captions, the shop's chip, the speedometer of a phone held
+ *  sideways at the wheel), for the first walk's card (onboarding/FirstWalk.tsx), which stands above them between a
+ *  sideways phone's thumbs: --hud-foot is the height from the screen's foot to the top of the stack, in window pixels.
+ *  A ref callback on the stack, so it is published while the stack is on screen and taken away when it goes. */
+function publishFoot(el: HTMLDivElement | null) {
+  if (!el) return
+  const root = document.documentElement.style
+  const publish = () => root.setProperty('--hud-foot', `${Math.round(window.innerHeight - el.getBoundingClientRect().top)}px`)
+  const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+  publish()
+  watch?.observe(el)
+  window.addEventListener('resize', publish)
+  return () => {
+    watch?.disconnect()
+    window.removeEventListener('resize', publish)
+    root.removeProperty('--hud-foot')
+  }
+}
+
 /** The capture chip steps aside once the player has covered this much ground: by then they know the controls
  *  (and Sloane's chip lists them all). */
 const HINT_UNTIL_METRES = 30
@@ -480,7 +499,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
           {(captureHint || enterPrompt || shopChip || (driving && short) || captionStrip) && (
-            <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
+            <div ref={publishFoot} className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2" data-hud="foot">
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
