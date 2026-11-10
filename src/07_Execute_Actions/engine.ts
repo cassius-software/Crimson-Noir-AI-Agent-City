@@ -77,7 +77,7 @@ import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Ob
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import {
-  Governor, MSAA, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
+  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
   readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
 } from '../05_Observe_Environment/governor.ts'
@@ -101,7 +101,7 @@ import {
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
 import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
-import { buildPost, type CinemaPost } from './postfx.ts'
+import { buildPost, type AmbientOcclusion, type CinemaPost } from './postfx.ts'
 import { createGhost, type GhostView } from './ghost.ts'
 import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
 import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
@@ -211,6 +211,11 @@ export interface EngineOptions {
    * whether the post chain's scene pass draws 4 samples a pixel (split screen: the renderer's own frame), decided at boot.
    */
   msaa?: boolean
+  /**
+   * The post chain's ambient occlusion (?ao=0 leaves it out; absent or ?ao=1: built on any desktop, governor.ts
+   * aoCandidate), decided at boot. Built, it runs on the tiers with aoTaps (Ultra, Peak) and is skipped on the rest.
+   */
+  ao?: boolean
 }
 
 /**
@@ -356,7 +361,7 @@ interface QualityRig {
   applied: QualityKnobs
   /** URL caps (?shadows=0, ?post=0) folded into every tier. */
   mask: (k: QualityKnobs) => QualityKnobs
-  live: { post: boolean; volumetrics: boolean; cull: CullSettings; crowd: CrowdCull | null }
+  live: { post: boolean; volumetrics: boolean; ao: number; cull: CullSettings; crowd: CrowdCull | null }
 }
 
 /** The ?debug harness's view of the physics realm: the mirrored state and the command queue, nothing more. */
@@ -623,6 +628,8 @@ export class Engine {
   private cuts = 0
   /** Operator scale on the sun shafts (0–2; the tier decides whether they run at all). */
   private volumetricsScale = 1
+  /** Operator scale on the ambient occlusion (0–1; the tier decides whether it runs at all). */
+  private aoScale = 1
   private controls: SimControls | null = null
   /** The .agv recorder: local-only capture of the canvas or the camera, one telemetry record per frame. */
   private readonly recorder = new Recorder(() => this.frameTelemetry())
@@ -788,11 +795,14 @@ export class Engine {
   /** The scene's samples per pixel as the boot decided them (governor.ts msaaCandidate; 0 after a refused 4x chain): the
    *  post chain's scene pass, fixed for the engine's life. Split screen's are the renderer's own (renderer.samples). */
   readonly sceneSamples: 0 | 4
+  /** The post chain's ambient occlusion where the boot built it (governor.ts aoCandidate): its switch, taps and strength
+   *  are written every frame from the tier (frame), and rain mode turns it off. */
+  readonly ao: AmbientOcclusion | null
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; sceneSamples: 0 | 4; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     homes: readonly PageHome[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
@@ -809,6 +819,7 @@ export class Engine {
     this.profile = p.profile
     this.gpuF16 = p.gpu.device.features.has('shader-f16')
     this.sceneSamples = p.sceneSamples
+    this.ao = p.ao
     this.hardware = p.hardware
     this.hints = p.hints
     this.world = p.world
@@ -978,6 +989,9 @@ export class Engine {
       // The scene pass's samples (governor.ts msaaCandidate), decided once here: every scene pipeline three builds keys on
       // them, so no tier change may move them. Only where the post chain can run (not split screen, lite or ?post=0).
       let sceneSamples: 0 | 4 = options.post && msaaCandidate(hints, profile, requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
+      // The ambient occlusion (governor.ts aoCandidate), built into the chain once here where the chain can run; the tier
+      // then only writes its taps, strength and switch (frame), so no tier change compiles it.
+      const aoBuilt = options.post && aoCandidate(profile, requested.ao)
       // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
@@ -1037,6 +1051,7 @@ export class Engine {
       const live: QualityRig['live'] = {
         post: true,
         volumetrics: false,
+        ao: 0,
         cull: hidden({ lodDistance: first.lodDistance, nearRadius: first.nearRadius, density: first.crowdDensity, maxDistance: first.maxDistance }),
         crowd: null,
       }
@@ -1048,6 +1063,7 @@ export class Engine {
         setCrowd: (c) => { live.cull = hidden(c); live.crowd?.setCull(live.cull) },
         setPost: (on) => { live.post = on },
         setVolumetrics: (on) => { live.volumetrics = on },
+        setAmbientOcclusion: (taps) => { live.ao = taps },
         setTextureSize: (size) => world.setTextureSize(size),
         setLampLights: (count) => world.setLampLights(count),
         setShadowTaps: (count) => world.setShadowTaps(count),
@@ -1085,8 +1101,8 @@ export class Engine {
       world.scene.add(netView.people, netView.cars)
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
       const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
-        buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples })
-      let { pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples)
+        buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples, ao: aoBuilt })
+      let { pipeline: post, volumetrics, cinema, ao, release } = chainOf(sceneSamples)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -1121,7 +1137,7 @@ export class Engine {
           console.warn(`[aa] the 4x scene pass failed WebGPU validation (${refused.message}); the chain is rebuilt at 1x`)
           release()
           sceneSamples = 0
-          ;({ pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples))
+          ;({ pipeline: post, volumetrics, cinema, ao, release } = chainOf(sceneSamples))
           gpu.device.pushErrorScope('validation')
           post.render()
           const retry = await gpu.device.popErrorScope()
@@ -1150,7 +1166,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, sceneSamples, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
@@ -2334,6 +2350,15 @@ export class Engine {
     // Sun shafts: the camera matrices are final (head rig) and the sun colour is this frame's.
     updateVolumetrics(this.volumetrics, cam, this.sun, this.world.sun.color)
     this.volumetrics.strength.value = this.quality.live.volumetrics ? this.volumetricsScale : 0
+    // Ambient occlusion: the tier's taps (0 = its passes skipped), off in rain mode (the falling code is light, not a
+    // surface in a crease) and at the operator's strength 0 (nothing would be applied, so nothing is drawn).
+    if (this.ao) {
+      const taps = this.quality.live.ao
+      const on = taps > 0 && !this.matrixOn && this.aoScale > 0
+      this.ao.node.on = on
+      if (on) this.ao.node.samples.value = taps
+      this.ao.strength.value = on ? this.aoScale : 0
+    }
 
     // A passage (contact.ts) draws nothing over the frame: the mesh passed through dissolves on its own (flushDissolve
     // below), so the post chain runs on the quality tier alone.
@@ -3169,11 +3194,13 @@ export class Engine {
         uniforms: () => ({
           ...Object.fromEntries(lightKeys.map((k) => [`light.${k}`, this.world.tuning[k]])),
           'volumetrics.strength': this.volumetricsScale,
+          'ao.strength': this.aoScale,
         }),
         set: (key, value) => {
           if (key === 'volumetrics.strength') { this.volumetricsScale = Number.isFinite(value) ? Math.min(2, Math.max(0, value)) : 1; return }
+          if (key === 'ao.strength') { this.aoScale = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1; return }
           const k = key.replace(/^light\./, '') as keyof LightTuning
-          if (!key.startsWith('light.') || !lightKeys.includes(k)) throw new Error(`unknown shader key '${key}' (light.${lightKeys.join(', light.')}, volumetrics.strength)`)
+          if (!key.startsWith('light.') || !lightKeys.includes(k)) throw new Error(`unknown shader key '${key}' (light.${lightKeys.join(', light.')}, volumetrics.strength, ao.strength)`)
           this.world.tuning[k] = clampLight(k, value)
         },
       },

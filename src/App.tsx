@@ -469,6 +469,9 @@ function readOptions(): Options {
     // The scene's multisampling (governor.ts msaaCandidate): ?msaa=1 draws 4 samples a pixel on any desktop, ?msaa=0
     // never; absent, the device profile decides. A phone or a lite profile never does. Read once, at boot.
     msaa: q.get('msaa') === '1' ? true : q.get('msaa') === '0' ? false : undefined,
+    // The post chain's ambient occlusion (governor.ts aoCandidate): ?ao=0 leaves it out; absent (or ?ao=1), any desktop
+    // builds it and Ultra and Peak run it. A phone or a lite profile never builds it. Read once, at boot.
+    ao: q.get('ao') === '1' ? true : q.get('ao') === '0' ? false : undefined,
     // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
     // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it, and it beats the Windows app's reading;
     // absent (and with no reading), auto keeps its usual model.
