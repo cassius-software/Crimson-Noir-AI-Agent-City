@@ -15,6 +15,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
+  checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
+  Kept in progression record word 40 with no layout change; refused in a network room with furnishing; the chip,
+  `progress` and each check line say when it applies.
 - **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
   something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
   work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either

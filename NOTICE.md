@@ -58,14 +58,17 @@ limited to:
   master from level 7 and legendary from level 15; levels 1 to 20 at 1,000 XP each; the level-based DC
   table and the easy adjustment (-2); hero points (at most three, one at the start of a session, spent to
   reroll a check); three actions and a reaction per six-second round; the treasure-by-level table, at ten
-  credits to the gold piece, and fifteen gold pieces of starting wealth.
+  credits to the gold piece, and fifteen gold pieces of starting wealth; item bonuses to skills (+1 from item
+  level 3, +2 from 9, +3 from 17; of several bonuses of one type only the highest applies).
 - **What the progression adds on top** (Adapted Licensed Material, the same files): eight skills of the
   city (computers, piloting, robotics, cyber security, swarm command, acoustics and voice, optics and
   cinema, architecture and commerce) and the attribute each adds; a check for each thing the operator does,
   paid by degree from a fixed table; the payout by level; a breadth bonus by how many different skills a
   cycle of checks has used; resolve, capped by constitution; a bad-luck guard that gives the check after
   three misses in a row fortune; a minute's rest before a skill earns again; civic credits and the unlocks
-  they buy.
+  they buy; a rest at a home the operator owns, whose item bonus follows the deed's level, is capped by the
+  home's comfort (+1 from one kind of furniture standing there, +2 from three, +3 from five) and applies to every
+  check for the next 30 rather than to one skill while an item is in use.
 - **The 5-Whys intent engine** (`intent.ts`): the question-selection tables and the plan mapping are
   this product's own mechanics. The "5 Whys" questioning technique itself is a long-established, public
   root-cause method and is not claimed.
@@ -190,7 +193,10 @@ release; each one is something the release engineering could not confirm.
    DCs (`civic.ts`) are still original numbers. The GM Core credit line above was taken from the Archives of
    Nethys licence page (2e.aonprd.com/Licenses.aspx, read 7 November 2026), not from the book; check it
    against the ORC Notice printed in Pathfinder GM Core (Paizo, 2023), as item 2 asks for Player Core.
-   Confirm no other ORC work was drawn on. If one was, add it to the attribution.
+   Confirm no other ORC work was drawn on. If one was, add it to the attribution. The rest at home (November
+   2026) uses the item-bonus ladder for skills (+1 from item level 3, +2 from 9, +3 from 17, highest of one
+   type applies), which was not checked against either book: confirm which of the two prints it, and at those
+   levels, before release.
 4. **Licensing the code.** The ORC License grants no licence to software code (the ORC AxE, "Digital
    Applications of the ORC License"). `LICENSE` licenses the mechanics under ORC, keeps the core
    (`src/`, `crimson_noir_os/`, `native/`, `world/`, `brand/`) proprietary under

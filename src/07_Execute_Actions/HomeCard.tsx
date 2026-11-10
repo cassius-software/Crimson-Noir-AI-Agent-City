@@ -13,20 +13,20 @@
  *
  * For the owner it is where the home is furnished, unless the engine says why not yet: in a network room, which replays
  * the walk and knows nothing of the furniture, the deed view says so (leaving the home or putting on a headset closes
- * the card: App). The furnishing view has three tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
+ * the card: App). The furnishing view has four tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
  * with how many of its cap stand here, each other one with its price and Order, through the same shopkeeper's gate, or
  * the gate's reason; and the pieces the saved layout keeps that are not placed here, with Clear), the floor and the
- * walls (free finishes). Under them is the home's floor plan, 32 by 32 cells (02_Define_The_Rules/homeGrid.ts): the
- * back at the top and the doorway at the bottom under an arrow, only this home's own rows (a smaller home a shorter
- * plan), the apron in front of the doorway hatched, every piece in its finish's colour with its initial, a
- * workstation's seat dotted, the people standing in the home as dots, and the cursor with the piece in hand, green
- * where it fits and red where it does not, with the reason said under the plan (homeLayout.ts canPlace, in words). The
- * engine shows the same draft in the city: the piece in hand as a ghost and a camera under the ceiling looking at the
- * cursor (setDraft), and a press on the city's canvas picks a cell through that camera (a mouse hovering the plan moves
- * the cursor; hovering the city does not, since that camera follows the cursor). The visit itself, its state and every
- * edit, is furnishVisit.ts's Visit: every committed edit goes to the host as the whole record, which saves it and
- * redraws the homes and their solids; a piece picked up leaves the home until it is placed again, and Undo, another
- * line or closing the card puts it back where it was. Undo takes back 20 edits.
+ * walls (free finishes), and Rest (a rest at home, in the host's words). Under them is the home's floor plan, 32 by 32
+ * cells (02_Define_The_Rules/homeGrid.ts): the back at the top and the doorway at the bottom under an arrow, only this
+ * home's own rows (a smaller home a shorter plan), the apron in front of the doorway hatched, every piece in its
+ * finish's colour with its initial, a workstation's seat dotted, the people standing in the home as dots, and the
+ * cursor with the piece in hand, green where it fits and red where it does not, with the reason said under the plan
+ * (homeLayout.ts canPlace, in words). The engine shows the same draft in the city: the piece in hand as a ghost and a
+ * camera under the ceiling looking at the cursor (setDraft), and a press on the city's canvas picks a cell through that
+ * camera (a mouse hovering the plan moves the cursor; hovering the city does not, since that camera follows the
+ * cursor). The visit, its state and every edit, is furnishVisit.ts's Visit: every committed edit goes to the host as
+ * the whole record, which saves it and redraws the homes and their solids; a piece picked up leaves the home until it
+ * is placed again, and Undo, another line or closing the card puts it back where it was. Undo takes back 20 edits.
  *
  * Esc, B, the close button or Done puts it away through the host. The listeners run in the capture phase, as the
  * store card's does, and take only the keys they handle, never H (the HUD's) nor ` (the console's, whose opening puts
@@ -48,7 +48,7 @@ import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
 import { TOUCH } from '../04_Connect_Hardware/touchLayout.ts'
 import { finishOf, freshHomes, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import {
-  FocusOrigin, STICK, TABS, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
+  FocusOrigin, REST_TAB, STICK, TABS, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
 } from './furnishVisit.ts'
 import { CITY_LINES, type Draft } from './homeView.ts'
 import { padEdges, padsFor, readPads, usePadNav } from './padNav.ts'
@@ -174,16 +174,17 @@ const PAD_ACT: Readonly<Record<number, Act>> = Object.freeze({
 
 /**
  * The furnishing view's action for a key press: the arrows or W A S D move the cursor (Shift: four cells), Enter or
- * Space places (or picks up), R turns, Delete, Backspace or X removes, Q and E change the piece, 1 2 3 the tab, Z or
- * Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish instead. Never H (the HUD's)
- * nor ` (the console's), never Esc or B (the card's close listener has those), and no chord but Ctrl (or Cmd) + Z.
+ * Space places (or picks up; in the Rest tab, rests), R turns, Delete, Backspace or X removes, Q and E change the piece,
+ * 1 2 3 4 the tab, Z or Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish
+ * instead. Never H (the HUD's) nor ` (the console's), never Esc or B (the card's close listener has those), and no
+ * chord but Ctrl (or Cmd) + Z.
  * Null: not this view's key, so the page gets it.
  */
 function keyAct(e: KeyboardEvent, tab: number): Act | null {
   if (e.code === 'KeyZ' && !e.altKey) return 'undo'
   if (e.ctrlKey || e.metaKey || e.altKey) return null
   const n = e.shiftKey ? 4 : 1
-  const finish = tab !== 0
+  const finish = tab === 1 || tab === 2
   switch (e.code) {
     case 'ArrowUp': case 'KeyW': return { move: [0, -n] }
     case 'ArrowDown': case 'KeyS': return { move: [0, n] }
@@ -199,6 +200,7 @@ function keyAct(e: KeyboardEvent, tab: number): Act | null {
     case 'Digit1': return { tab: 0 }
     case 'Digit2': return { tab: 1 }
     case 'Digit3': return { tab: 2 }
+    case 'Digit4': return { tab: 3 }
     case 'KeyC': return 'view'
     default: return null
   }
@@ -531,6 +533,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
     drawPlan(planRef.current, { home, cell, placed: fit.placed, hand, ok, cursor: { c, r }, blocked: visit.blocked, dark })
   })
 
+  const restId = `home-rest-${home}`
   const swatch = (colour: string) => <span aria-hidden="true" className={`inline-block h-5 w-5 shrink-0 rounded-full border ${t.rule}`} style={{ background: colour }} />
   const undoOff = visit.undoSteps.length === 0
   return (
@@ -545,7 +548,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         data-placed={fit.placed.length}
         data-view={view}
       >
-        <div role="tablist" aria-label="What to furnish" className="mt-2 flex" style={GAP}>
+        <div role="tablist" aria-label="Furnish or rest" className="mt-2 flex flex-wrap" style={GAP}>
           {TABS.map((name, i) => (
             <button
               key={name}
@@ -606,7 +609,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
           </ul>
         )}
 
-        {visit.tab !== 0 && (
+        {(visit.tab === 1 || visit.tab === 2) && (
           <div className="mt-3 grid grid-cols-2" style={GAP} role="radiogroup" aria-label={visit.tab === 1 ? 'Floor' : 'Walls'} data-finishes={visit.tab === 1 ? 'floor' : 'walls'}>
             {(visit.tab === 1 ? FLOORS : WALLS).map((line, i) => {
               const on = (visit.tab === 1 ? finish.floor : finish.wall) === i
@@ -627,6 +630,13 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
                 </button>
               )
             })}
+          </div>
+        )}
+
+        {visit.tab === REST_TAB && (
+          <div id={restId} className={`mt-3 rounded-2xl border px-3 py-2 text-[12px] leading-snug ${t.rule}`} data-rest>
+            {(hooks.rest?.offer(home).lines ?? ['Resting is not offered here']).map((line) => <p key={line}>{line}</p>)}
+            <p className={`mt-1 ${t.muted}`}>{"Enter, Space, the pad's south button or Rest below rests here."}</p>
           </div>
         )}
 
@@ -651,10 +661,14 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
       </div>
 
       <div role="toolbar" aria-label="Furnishing" className={`flex flex-wrap items-center border-t px-5 pt-3 ${t.rule}`} style={GAP}>
-        <button type="button" onClick={() => visit.run('prev')} aria-label={visit.tab === 0 ? 'Previous piece (Q)' : 'Previous finish (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
-        <button type="button" onClick={() => visit.run('next')} aria-label={visit.tab === 0 ? 'Next piece (E)' : 'Next finish (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
+        <button type="button" onClick={() => visit.run('prev')} aria-label={visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
+        <button type="button" onClick={() => visit.run('next')} aria-label={visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
         <button type="button" onClick={() => visit.run('rotate')} aria-label="Rotate the piece (R)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="rotate" data-touch>Rotate</button>
-        <button type="button" onClick={() => visit.run('place')} aria-label={hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>Place</button>
+        {visit.tab === REST_TAB ? (
+          <button type="button" onClick={() => visit.run('place')} aria-label="Rest here (Enter)" aria-describedby={restId} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="rest" data-touch>Rest</button>
+        ) : (
+          <button type="button" onClick={() => visit.run('place')} aria-label={hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>Place</button>
+        )}
         <button type="button" onClick={() => visit.run('remove')} aria-label="Remove the piece (Delete)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>Remove</button>
         <button type="button" onClick={() => visit.run('undo')} disabled={undoOff} aria-label="Undo (Z)" className={`${BUTTON} border px-3 ${undoOff ? `${t.off} cursor-not-allowed` : t.pill}`} style={TARGET} data-action="undo" data-touch>Undo</button>
         <button type="button" onClick={() => visit.run('view')} aria-label="Turn the camera (C)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="view" data-touch>View</button>
@@ -797,6 +811,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
                 )}
               </div>
               {owned && refusal && <p className={`mt-2 text-[12px] leading-snug ${t.muted}`} data-refusal>{refusal}</p>}
+              {owned && refusal && furnish?.rest && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-rest-wait>Resting here waits for the same reason.</p>}
 
               <div className={`mt-2 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse>
                 <span className="font-semibold">Level {w.level()} · {credits(w.credits())}</span>

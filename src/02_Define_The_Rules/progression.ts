@@ -11,9 +11,11 @@
  * Int32Array of RECORD_WORDS words (structure of arrays over one buffer; a Uint32Array view of the same buffer reads
  * the masks and the seal), so the page keeps it, the store saves it in one write (05_Observe_Environment/
  * progressStore.ts) and a purchase debits the credits and sets the unlock bit in the same record, never half of it.
+ * A rest at home (homeRest) adds an item bonus, from the deed's level on the ORC-licensed item-level ladder and capped
+ * by the home's comfort, to the next REST_CHECKS checks.
  * The mechanics are offered under the ORC License (NOTICE.md names the works they come from and lists them); the
- * breadth bonus, resolve and the bad-luck guard are this product's own. Pure: no clock, no storage, no DOM; the
- * dice are seeded from the record, so the same record always rolls the same next check.
+ * breadth bonus, resolve, the bad-luck guard and the comfort steps are this product's own. Pure: no clock, no
+ * storage, no DOM; the dice are seeded from the record, so the same record always rolls the same next check.
  * What breaks if it is removed? The operator has no level, no skills and no credits, the console's `progress` has
  * nothing behind it, and the wardrobe and the properties have no purchase gate.
  */
@@ -69,6 +71,8 @@ export const AT = Object.freeze({
   earned: 37,
   spent: 38,
   layout: 39,
+  /** A rest at home: its item bonus (0..ITEM_BONUS_MAX) in bits 0-1, the checks it lasts yet (0..REST_CHECKS) in bits 2-7; 0 for none. */
+  prepared: 40,
   /** FNV-1a over every other word. */
   seal: 63,
   /** The unlock bits, UNLOCK_BITS of them. */
@@ -145,6 +149,16 @@ export const SKILL_REST_MS = 60_000
 export const CYCLE_CHECKS = 24
 /** Failures in a row after which the next check rolls twice and keeps the higher die (fortune). */
 export const GUARD_AFTER = 3
+/**
+ * An item's bonus to a skill by item level, ORC-licensed: +1 from 3, +2 from 9, +3 from 17; of several bonuses of one
+ * type only the highest applies. A rest at home gives it by the deed's level.
+ */
+export const ITEM_BONUS_LEVELS: readonly number[] = Object.freeze([3, 9, 17])
+export const ITEM_BONUS_MAX = 3
+/** Kinds of furniture standing in a home for each step of its comfort (this product's own). */
+export const COMFORT_STEPS: readonly number[] = Object.freeze([1, 3, 5])
+/** Checks a rest at home lasts: its item bonus applies to each, and another rest waits for them unless a home adds more. */
+export const REST_CHECKS = 30
 /** Credits a new operator starts with (fifteen gold pieces of starting wealth, at ten credits to the piece). */
 export const STARTING_CREDITS = 150
 /** Credits saturate here (well inside a signed word). */
@@ -212,6 +226,27 @@ export function dcOf(rec: ProgressRecord): number {
   return DC_BY_LEVEL[clampInt(rec[AT.level], 0, MAX_LEVEL)] + EASY
 }
 
+/** How many of `steps` (ascending) `n` reaches; 0 when `n` is not finite. */
+function stepsOf(n: number, steps: readonly number[]): number {
+  if (!Number.isFinite(n)) return 0
+  let k = 0
+  for (const s of steps) if (n >= s) k++
+  return k
+}
+
+/**
+ * The item bonus a rest at home gives (0..ITEM_BONUS_MAX): the deed's level on the item-level ladder, capped by the
+ * comfort its `kinds` of furniture standing there give (COMFORT_STEPS).
+ */
+export function restBonus(deedLevel: number, kinds: number): number {
+  return Math.min(stepsOf(deedLevel, ITEM_BONUS_LEVELS), stepsOf(kinds, COMFORT_STEPS))
+}
+
+/** Checks the rest at home lasts yet (0 for none). */
+export const preparedLeft = (rec: ProgressRecord): number => rec[AT.prepared] >>> 2
+/** The item bonus on the next check (a rest at home while it lasts), 0 for none. */
+export const itemBonusOf = (rec: ProgressRecord): number => (preparedLeft(rec) > 0 ? rec[AT.prepared] & 3 : 0)
+
 // ---------------------------------------------------------------------------------------------------
 // A new record, the seal and validation
 
@@ -269,6 +304,8 @@ export function whyInvalid(rec: ArrayLike<number>): string | null {
   for (let s = 0; s < SKILL_COUNT; s++) if (rec[AT.ranks + s] < 0 || rec[AT.ranks + s] >= RANKS.length) return 'a rank out of range'
   if (rec[AT.increases] < 0 || rec[AT.increases] > MAX_LEVEL) return 'skill increases out of range'
   if (rec[AT.cycle] < 0 || rec[AT.cycle] > CYCLE_CHECKS) return 'cycle out of range'
+  const prep = rec[AT.prepared]
+  if (prep < 0 || prep > ((REST_CHECKS << 2) | ITEM_BONUS_MAX) || (prep !== 0 && prep >>> 2 === 0)) return 'the rest at home out of range'
   return null
 }
 
@@ -348,6 +385,8 @@ export interface Check {
   readonly natural: number
   readonly rolls: readonly number[]
   readonly modifier: number
+  /** The item bonus included in modifier (a rest at home); 0 for none. */
+  readonly item: number
   readonly dc: number
   readonly total: number
   readonly degree: Degree
@@ -418,7 +457,8 @@ export function attempt(rec: ProgressRecord, s: number): Check {
   const guarded = rec[AT.missStreak] >= GUARD_AFTER
   const { natural, rolls } = roll(rec, guarded)
   const level = rec[AT.level]
-  const modifier = modifierOf(rec, s)
+  const item = itemBonusOf(rec)
+  const modifier = modifierOf(rec, s) + item
   const dc = dcOf(rec)
   const total = natural + modifier
   const degree = degreeOf(natural, total, dc)
@@ -432,10 +472,13 @@ export function attempt(rec: ProgressRecord, s: number): Check {
   rec[AT.uses + s] = (rec[AT.uses + s] + 1) | 0
   rec[AT.missStreak] = degree <= FAILURE ? rec[AT.missStreak] + 1 : 0
   if (overdrive) rec[AT.resolve] = Math.min(resolveCap(rec), rec[AT.resolve] + 1)
+  // One of the rest's checks used (the seal follows in pay).
+  const left = rec[AT.prepared] >>> 2
+  if (left > 0) rec[AT.prepared] = left > 1 ? rec[AT.prepared] - 4 : 0
   const p = payOf(degree, level, breadthQ8)
   const levels = pay(rec, p.xp, p.credits, p.hero)
   return Object.freeze({
-    skill: s, natural, rolls: Object.freeze(rolls), modifier, dc, total, degree, level, breadth, breadthQ8,
+    skill: s, natural, rolls: Object.freeze(rolls), modifier, item, dc, total, degree, level, breadth, breadthQ8,
     xp: p.xp, credits: p.credits, hero: p.hero, guarded, overdrive, levels: Object.freeze(levels), reroll: false,
   })
 }
@@ -498,11 +541,37 @@ export function spendResolve(rec: ProgressRecord, n: number): boolean {
   return true
 }
 
-/** A new session: at least one hero point (the rule's session start), and a new round. */
+/** A new session: at least one hero point (the rule's session start), and a new round. A rest at home carries on. */
 export function startSession(rec: ProgressRecord): void {
   rec[AT.hero] = Math.max(1, rec[AT.hero])
   rec[AT.actions] = ACTIONS_PER_ROUND | 4
   seal(rec)
+}
+
+/**
+ * Why a rest at home with item bonus `bonus` cannot be taken now, or null when it can: when no rest lasts, or when
+ * this home gives more than the one that does (of bonuses of one type only the highest applies).
+ */
+export function whyNoRest(rec: ProgressRecord, bonus: number): string | null {
+  if (!(Number.isInteger(bonus) && bonus >= 0 && bonus <= ITEM_BONUS_MAX)) return `no item bonus ${bonus}`
+  const left = preparedLeft(rec)
+  if (left === 0 || bonus > itemBonusOf(rec)) return null
+  return `a rest at home lasts ${left} more check${left === 1 ? '' : 's'}, unless a home adds more`
+}
+
+/**
+ * A rest at home with item bonus `bonus`: a hero point (never past HERO_MAX), a new round, and the bonus on the next
+ * REST_CHECKS checks, in place of any rest that lasts. Throws why not; the hero points it gave.
+ */
+export function homeRest(rec: ProgressRecord, bonus: number): number {
+  const why = whyNoRest(rec, bonus)
+  if (why) throw new Error(why)
+  const n = rec[AT.hero] < HERO_MAX ? 1 : 0
+  rec[AT.hero] += n
+  rec[AT.actions] = ACTIONS_PER_ROUND | 4
+  rec[AT.prepared] = (REST_CHECKS << 2) | bonus
+  seal(rec)
+  return n
 }
 
 // ---------------------------------------------------------------------------------------------------

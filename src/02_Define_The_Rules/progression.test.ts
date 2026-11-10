@@ -6,21 +6,24 @@
  * plan's indices kept, the unlock spaces apart), the ORC-licensed tables as published (the level-based DCs, the
  * treasure by level at ten credits to the gold piece), a check's numbers and pay, XP rolling over at 1,000 and stopping
  * at level 20, skill increases and their level gates, attribute boosts (partial at +4), hero point rerolls, the breadth
- * bonus and its cycle, the bad-luck guard, the purchase gate's every outcome, and the seal and validation that keep a
- * damaged record out. A property suite plays thousands of seeded checks and holds every field in range.
+ * bonus and its cycle, the bad-luck guard, the purchase gate's every outcome, a rest at home (its bonus from the deed's
+ * level and the home's comfort, its hero point and round, its 30 checks and when another may be taken), and the seal
+ * and validation that keep a damaged record out. A property suite plays thousands of seeded checks and holds every
+ * field in range.
  * What breaks if it is removed? A drifting table, a level past 20, credits below zero or a purchase that took the
  * credits without the item would ship unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CRIT_FAILURE, CRIT_SUCCESS, FAILURE, SUCCESS, outcomeDistribution, proficiencyBonus } from './degrees.ts'
+import { CRIT_FAILURE, CRIT_SUCCESS, FAILURE, SUCCESS, degreeOf, outcomeDistribution, proficiencyBonus } from './degrees.ts'
 import { forAll } from './property.ts'
 import {
-  ACTIONS_PER_ROUND, AT, ATTRIBUTES, BREADTH_Q8, CREDITS_MAX, CYCLE_CHECKS, DC_BY_LEVEL, EASY, GUARD_AFTER, HERO_MAX, LEVEL_TREASURE, MAX_LEVEL,
-  OPERATOR_SKILLS, PURCHASE, RECORD_LAYOUT, RECORD_WORDS, REWARD, SKILL_ATTRIBUTE, SKILL_COUNT, SKILL_TITLE, STARTING_CREDITS, TASK_PAYOUT,
-  UNLOCK_BITS, UNLOCK_SPACE, XP_PER_LEVEL, actionsLeft, attempt, buy, canBuy, dcOf, gainXp, modifierOf, newRecord, newRound, owns, payOf, popcount,
-  reactionLeft, reroll, resolveCap, seal, sealOf, skillIndex, spend, spendAction, spendResolve, startSession, train, whyInvalid, whyNoIncrease,
-  whyNoReroll, wordsOf, type Check, type UnlockSpace,
+  ACTIONS_PER_ROUND, AT, ATTRIBUTES, BREADTH_Q8, COMFORT_STEPS, CREDITS_MAX, CYCLE_CHECKS, DC_BY_LEVEL, EASY, GUARD_AFTER, HERO_MAX,
+  ITEM_BONUS_LEVELS, ITEM_BONUS_MAX, LEVEL_TREASURE, MAX_LEVEL, OPERATOR_SKILLS, PURCHASE, RECORD_LAYOUT, RECORD_WORDS, REST_CHECKS, REWARD,
+  SKILL_ATTRIBUTE, SKILL_COUNT, SKILL_TITLE, STARTING_CREDITS, TASK_PAYOUT, UNLOCK_BITS, UNLOCK_SPACE, XP_PER_LEVEL, actionsLeft, attempt, buy,
+  canBuy, dcOf, gainXp, homeRest, itemBonusOf, modifierOf, newRecord, newRound, owns, payOf, popcount, preparedLeft, reactionLeft, reroll,
+  resolveCap, restBonus, seal, sealOf, skillIndex, spend, spendAction, spendResolve, startSession, train, whyInvalid, whyNoIncrease, whyNoReroll,
+  whyNoRest, wordsOf, type Check, type UnlockSpace,
 } from './progression.ts'
 
 const fresh = (seed = 7) => newRecord(seed)
@@ -38,6 +41,7 @@ test('the record: 128 words, the plan\'s indices kept, the seal last of the firs
   assert.equal(AT.ranks, 6)
   assert.equal(AT.seal, 63)
   assert.equal(AT.unlocks, 64)
+  assert.equal(AT.prepared, 40, 'a rest at home in the first free word after the layout, so no layout change')
   // Every field has its own word (the uses take eight), and none reaches the seal or the unlocks.
   const words = new Map<number, string>()
   const width: Partial<Record<keyof typeof AT, number>> = { attributes: ATTRIBUTES.length, ranks: SKILL_COUNT, uses: SKILL_COUNT, unlocks: RECORD_WORDS - AT.unlocks }
@@ -166,6 +170,141 @@ test('over many seeds the checks land on the exact odds of +4 against DC 13', ()
   const n = 20_000
   for (let seed = 0; seed < n; seed++) counts[attempt(fresh(seed), 0).degree]++
   const exact = outcomeDistribution(4, 13)
+  for (let d = 0; d < 4; d++) assert.ok(Math.abs(counts[d] / n - exact[d]) < 0.012, `degree ${d}: ${counts[d] / n} vs ${exact[d]}`)
+})
+
+test('a rest at home: the deed\'s item bonus (+1 from level 3, +2 from 9, +3 from 17), capped by its comfort (1, 3 and 5 kinds), never past +3', () => {
+  assert.deepEqual(ITEM_BONUS_LEVELS, [3, 9, 17])
+  assert.equal(ITEM_BONUS_MAX, 3)
+  assert.deepEqual(COMFORT_STEPS, [1, 3, 5])
+  assert.equal(REST_CHECKS, 30)
+  assert.ok(Object.isFrozen(ITEM_BONUS_LEVELS) && Object.isFrozen(COMFORT_STEPS))
+  // The seven deeds' levels against 0 to 9 kinds of furniture.
+  const want: Record<number, number[]> = {
+    1: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    3: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    6: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    10: [0, 1, 1, 2, 2, 2, 2, 2, 2, 2],
+    14: [0, 1, 1, 2, 2, 2, 2, 2, 2, 2],
+    17: [0, 1, 1, 2, 2, 3, 3, 3, 3, 3],
+    20: [0, 1, 1, 2, 2, 3, 3, 3, 3, 3],
+  }
+  for (const [level, row] of Object.entries(want)) {
+    assert.deepEqual(Array.from({ length: 10 }, (_, k) => restBonus(Number(level), k)), row, `level ${level}`)
+  }
+  // The ladder's edges, with comfort enough for any of them.
+  assert.deepEqual([2, 8, 9, 16].map((l) => restBonus(l, 9)), [0, 1, 2, 2])
+  for (const odd of [NaN, -1, 2.5, 99, Infinity, -Infinity]) {
+    for (const b of [restBonus(odd, 9), restBonus(20, odd), restBonus(odd, odd)]) assert.ok(Number.isInteger(b) && b >= 0 && b <= ITEM_BONUS_MAX, `${odd}: ${b}`)
+  }
+  assert.equal(restBonus(NaN, 9), 0, 'not a level: nothing')
+  assert.equal(restBonus(20, NaN), 0, 'not a count: nothing')
+})
+
+test('a rest at home: a hero point never past three, a new round, and the bonus on the next 30 checks; refused while one lasts unless this home gives more', () => {
+  const r = fresh()
+  spendAction(r)
+  spendAction(r, true)
+  assert.equal(whyNoRest(r, 1), null)
+  assert.equal(homeRest(r, 1), 1, 'one hero point')
+  assert.equal(r[AT.prepared], 121, '30 checks at +1')
+  assert.equal(r[AT.hero], 2)
+  assert.deepEqual([actionsLeft(r), reactionLeft(r)], [ACTIONS_PER_ROUND, true], 'a new round')
+  assert.deepEqual([preparedLeft(r), itemBonusOf(r)], [30, 1])
+  assert.equal(whyInvalid(r), null)
+  // While it lasts, an equal or lower rest is refused, and nothing changes.
+  for (const b of [0, 1]) {
+    assert.equal(whyNoRest(r, b), 'a rest at home lasts 30 more checks, unless a home adds more')
+    assert.throws(() => homeRest(r, b), /a rest at home lasts 30 more checks, unless a home adds more/)
+  }
+  assert.equal(r[AT.prepared], 121)
+  assert.equal(r[AT.hero], 2)
+  // A home that gives more: the higher bonus, 30 checks again.
+  assert.equal(homeRest(r, 2), 1)
+  assert.equal(r[AT.prepared], 122)
+  assert.equal(r[AT.hero], 3)
+  // At three hero points none is added, and hero stays three.
+  assert.equal(homeRest(r, 3), 0)
+  assert.equal(r[AT.hero], HERO_MAX)
+  assert.equal(r[AT.prepared], 123)
+  assert.equal(whyNoRest(r, 3), 'a rest at home lasts 30 more checks, unless a home adds more')
+  assert.equal(whyInvalid(r), null)
+  // A new session leaves it; a new operator (progress reset) has none.
+  startSession(r)
+  assert.equal(r[AT.prepared], 123)
+  assert.equal(newRecord(7, r)[AT.prepared], 0)
+  // A +0 rest runs its 30 checks too, so a second one waits for them.
+  const z = fresh()
+  assert.equal(homeRest(z, 0), 1)
+  assert.equal(z[AT.prepared], 120)
+  assert.deepEqual([preparedLeft(z), itemBonusOf(z)], [30, 0])
+  assert.equal(whyNoRest(z, 0), 'a rest at home lasts 30 more checks, unless a home adds more')
+  assert.throws(() => homeRest(z, 0), /lasts 30 more checks/)
+  assert.equal(z[AT.hero], 2, 'no second hero point')
+  assert.equal(whyNoRest(z, 1), null, 'a home that adds to checks may')
+  // Not a bonus: refused, nothing changed.
+  for (const bad of [4, -1, 1.5, NaN]) {
+    assert.equal(whyNoRest(fresh(), bad), `no item bonus ${bad}`)
+    const c = fresh()
+    assert.throws(() => homeRest(c, bad), /no item bonus/)
+    assert.deepEqual(Array.from(c), Array.from(fresh()))
+  }
+  assert.equal(whyInvalid(z), null)
+})
+
+test('a check while prepared: the same die, the bonus in the modifier, the total and the check, one of the 30 used per check and none by a reroll; the same record rolls the same check', () => {
+  const plain = fresh(42), prepared = fresh(42)
+  homeRest(prepared, 2)
+  // homeRest touched no dice: the same die at the same position.
+  const a = attempt(plain, 0), b = attempt(prepared, 0)
+  assert.equal(b.natural, a.natural)
+  assert.deepEqual([a.modifier, a.item, b.modifier, b.item], [4, 0, 6, 2])
+  assert.equal(b.total, a.total + 2)
+  assert.equal(b.degree, degreeOf(b.natural, b.total, b.dc))
+  assert.equal(prepared[AT.prepared], (29 << 2) | 2, 'one of the 30 used')
+  assert.equal(whyInvalid(prepared), null)
+  // A reroll keeps the numbers, the bonus among them, and uses none of the 30.
+  let first: Check | null = null, rec = fresh()
+  for (let seed = 0; seed < 500 && !first; seed++) {
+    rec = fresh(seed)
+    homeRest(rec, 1)
+    const c = attempt(rec, 0)
+    if (c.degree <= FAILURE) first = c
+  }
+  assert.ok(first, 'some seed misses while prepared')
+  const word = rec[AT.prepared]
+  const again = reroll(rec, first)
+  assert.deepEqual([again.modifier, again.item], [first.modifier, first.item])
+  assert.equal(again.total, again.natural + first.modifier)
+  assert.equal(rec[AT.prepared], word, 'a reroll uses no check of the rest')
+  // The rest ends on its 30th check, and the 31st has the plain modifier.
+  for (let i = 1; i < REST_CHECKS; i++) {
+    const c = attempt(prepared, i % SKILL_COUNT)
+    assert.equal(c.item, 2, `check ${i + 1}`)
+  }
+  assert.equal(prepared[AT.prepared], 0, 'the 30 used: no rest')
+  assert.deepEqual([preparedLeft(prepared), itemBonusOf(prepared)], [0, 0])
+  const after = attempt(prepared, 0)
+  assert.equal(after.item, 0)
+  assert.equal(after.modifier, modifierOf(prepared, 0))
+  assert.equal(whyInvalid(prepared), null)
+  // The same prepared record rolls the same check.
+  const x = fresh(9), y = fresh(9)
+  homeRest(x, 3)
+  homeRest(y, 3)
+  assert.deepEqual(attempt(x, 5), attempt(y, 5))
+  assert.deepEqual(Array.from(x), Array.from(y))
+})
+
+test('over many seeds a check prepared at +2 lands on the exact odds of +6 against DC 13', () => {
+  const counts = [0, 0, 0, 0]
+  const n = 20_000
+  for (let seed = 0; seed < n; seed++) {
+    const r = fresh(seed)
+    homeRest(r, 2)
+    counts[attempt(r, 0).degree]++
+  }
+  const exact = outcomeDistribution(6, 13)
   for (let d = 0; d < 4; d++) assert.ok(Math.abs(counts[d] / n - exact[d]) < 0.012, `degree ${d}: ${counts[d] / n} vs ${exact[d]}`)
 })
 
@@ -413,12 +552,15 @@ test('the seal finds one flipped bit anywhere; validation refuses a record out o
   assert.equal(bad((c) => { c[AT.ranks + 2] = 5 }), 'a rank out of range')
   assert.equal(bad((c) => { c[AT.attributes] = 11 }), 'an attribute out of range')
   assert.equal(bad((c) => { c[AT.layout] = 2 }), 'layout 2, not 1')
+  // A rest at home: a bonus of 0..3 with 1..30 checks left, or 0 for none.
+  for (const v of [-1, 124, 2, (31 << 2) | 1]) assert.equal(bad((c) => { c[AT.prepared] = v }), 'the rest at home out of range', `prepared ${v}`)
+  for (const v of [0, 4, 123, (1 << 2) | 3]) assert.equal(bad((c) => { c[AT.prepared] = v }), null, `prepared ${v}`)
   assert.equal(whyInvalid(new Int32Array(64)), 'not a record')
   assert.equal(whyInvalid([] as unknown as Int32Array), 'not a record')
 })
 
-test('property: thousands of seeded checks, rerolls, trainings and purchases keep every field in range and the seal whole', () => {
-  forAll('progression', { seed: 0x5eed, runs: 200 }, (g) => ({ seed: g.int(-0x80000000, 0x7fffffff), steps: Array.from({ length: 60 }, () => [g.int(0, 9), g.int(0, 7), g.int(0, 2000)]) }), ({ seed, steps }) => {
+test('property: thousands of seeded checks, rerolls, trainings, purchases and rests at home keep every field in range and the seal whole', () => {
+  forAll('progression', { seed: 0x5eed, runs: 200 }, (g) => ({ seed: g.int(-0x80000000, 0x7fffffff), steps: Array.from({ length: 60 }, () => [g.int(0, 10), g.int(0, 7), g.int(0, 2000)]) }), ({ seed, steps }) => {
     const r = newRecord(seed)
     let last: Check | null = null
     for (const [op, s, n] of steps) {
@@ -426,7 +568,8 @@ test('property: thousands of seeded checks, rerolls, trainings and purchases kee
       else if (op === 6 && last && !whyNoReroll(r, last)) last = reroll(r, last)
       else if (op === 7 && !whyNoIncrease(r, s)) train(r, s)
       else if (op === 8) buy(r, (['look', 'property', 'furniture'] as const)[s % 3], n % 64, 1 + (n % 20), n)
-      else gainXp(r, n)
+      else if (op === 9) gainXp(r, n)
+      else if (!whyNoRest(r, s % 4)) homeRest(r, s % 4)
       assert.equal(whyInvalid(r), null, `after op ${op}`)
     }
   })

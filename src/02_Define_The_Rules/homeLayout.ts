@@ -5,9 +5,10 @@
  * Why does this file exist? It is the furnishing rules for the seven homes (01_Initialize_World/properties.ts): the
  * shape of each of Lintel & Lumen's nine furniture lines on the floor plan (homeGrid.ts), how a piece turns, which
  * cells it fills and which it leaves walkable, the one rule that says whether a piece may go where the player puts it
- * (canPlace), how a saved layout is fitted to a home when it is drawn (fitLayout), the floor and wall finishes, the
- * show homes' layouts, and the boxes all of these are drawn and made solid with, in the room frame. It is pure and
- * page-safe, and it imports only homeGrid.ts.
+ * (canPlace), how a saved layout is fitted to a home when it is drawn (fitLayout), how many kinds of furniture stand
+ * in a home (comfortOf: a rest at home's comfort), the floor and wall finishes, the show homes' layouts, and the boxes
+ * all of these are drawn and made solid with, in the room frame. It is pure and page-safe, and it imports only
+ * homeGrid.ts.
  *
  * The room frame is interiors.ts's: u from the back wall toward the doorway, v across, y up. A piece's own cells run x
  * across its width and y from its back (y = 0) to its front. Turn 0 puts its back to the back wall, turn 1 to the +v
@@ -443,6 +444,16 @@ export function fitLayout(home: number, saved: readonly Piece[], owns: ((id: num
   const placed: Piece[] = [], stored: Piece[] = []
   for (const p of saved) (canPlace(home, placed, p, blocked, owns) === 'ok' ? placed : stored).push(p)
   return { placed, stored }
+}
+
+/**
+ * How many kinds of furniture stand in a home: the different lines among `placed` (what fitLayout places, as the
+ * engine draws it), copies of one line counted once and anything that is not a line not at all. A rest at home's comfort.
+ */
+export function comfortOf(placed: readonly Piece[]): number {
+  const kinds = new Set<number>()
+  for (const p of placed) if (shapeOf(p.id) !== null) kinds.add(p.id)
+  return kinds.size
 }
 
 /** The cell (c, r) the room-frame point (u, v) stands in, or null off the grid. */

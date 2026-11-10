@@ -15,7 +15,8 @@
  * committed edit handed to the host as a whole record, Undo of 20, and the draft taken away when it closes. The store
  * card's deed rows have Visit or Go home, off with the reason as the title, an address line, a purchase line that says
  * where the home stands, and a warning when a deed leaves too little for any furniture; its furniture says where it
- * goes.
+ * goes. The furnishing view's fourth tab, Rest, shows the host's words and rests with its own button, and every
+ * sentence a rest at home can say passes the same screen.
  * What breaks if it is removed? A tagline could fail the screen or name a real place, the card could buy around the
  * gate or swallow the HUD's key, the furnishing view could lose a control or an edit, and the deed rows could lose the
  * way to the home without anyone noticing.
@@ -28,6 +29,8 @@ import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import { itemById } from './storeCatalog.ts'
 import { PAD, padEdges, padStep, padsFor } from './padNav.ts'
+import { createProgress, restOffer, restTake } from './progress.ts'
+import { AT, seal } from '../02_Define_The_Rules/progression.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const flat = (s: string) => s.replace(/\s+/g, ' ')
@@ -139,10 +142,11 @@ test('the card buys the deed through the shopkeeper\'s gate, offers Claim for th
   for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
     assert.ok(src.includes(mark), `missing ${mark}`)
   }
-  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 13.
+  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 14
+  // (Rest among them, in Place's spot in the Rest tab).
   assert.ok(src.includes("const BUTTON = 'min-h-12 "))
   const buttons = buttonsIn(src)
-  assert.equal(buttons.length, 16, 'every button tag, read whole')
+  assert.equal(buttons.length, 17, 'every button tag, read whole')
   for (const b of buttons) assert.ok(b.includes('${BUTTON}') && b.includes('data-touch'), b)
   // Imports point down: no wardrobe and no properties module in the card, and of the saved homes only the pure record
   // helpers: the host loads and saves the record (App.tsx), the card hands it each edit.
@@ -267,7 +271,7 @@ test('the furnishing view takes only its own keys, in the capture phase: never H
     KeyA: '{ move: [-n, 0] }', KeyD: '{ move: [n, 0] }',
     Enter: "'place'", NumpadEnter: "'place'", Space: "'place'", KeyR: "'rotate'",
     Delete: "'remove'", Backspace: "'remove'", KeyX: "'remove'", KeyQ: "'prev'", KeyE: "'next'",
-    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', KeyC: "'view'",
+    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', Digit4: '{ tab: 3 }', KeyC: "'view'",
   })
   for (const never of ['KeyH', 'Backquote', 'Escape', 'KeyB']) assert.ok(!acts.has(never), `${never} is never the furnishing view's`)
   // The listener: captured, skipping a field being typed in, stopping only a key it handles; held, only moves repeat.
@@ -371,7 +375,7 @@ test('the furnishing view\'s pointers and fingers: the 3D view through pickCell,
   assert.ok(src.includes('const GAP = Object.freeze({ gap: TOUCH.gap })'))
   const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
   const tools = buttonsIn(toolbar)
-  assert.deepEqual(tools.map((b) => b.match(/data-action="(\w+)"/)?.[1]), ['prev', 'next', 'rotate', 'place', 'remove', 'undo', 'view', 'done'])
+  assert.deepEqual(tools.map((b) => b.match(/data-action="(\w+)"/)?.[1]), ['prev', 'next', 'rotate', 'rest', 'place', 'remove', 'undo', 'view', 'done'])
   for (const b of tools) assert.ok(b.includes('style={TARGET}'), b)
   assert.ok(src.includes('<canvas ref={planRef} role="img"'), 'the plan is named for a screen reader')
   assert.ok(src.includes('role="status" aria-live="polite" data-reason'))
@@ -389,4 +393,61 @@ test('the host keeps the homes\' record, saves every edit and hands it to the en
     assert.ok(app.includes(hook), `missing ${hook}`)
   }
   assert.ok(app.includes('record={homes} onRecord={onRecord} furnish={furnishHooks}'))
+})
+
+test('the Rest tab: the panel shows the host\'s words (hooks.rest.offer), never computed in the card; there the toolbar\'s primary button is Rest (BUTTON, TARGET, Enter, aria-describedby the panel) while Place keeps its own button; the finishes show only in Floor and Walls; the tabs wrap; the deed view says resting waits with furnishing', () => {
+  const src = flat(card)
+  const visit = flat(visitSrc)
+  assert.ok(visit.includes("export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest'] as const)"))
+  assert.ok(visit.includes('export const REST_TAB = 3'))
+  assert.ok(visit.includes("case 'place': if (this.tab === REST_TAB) this.rest(); else this.place(); return"), 'Enter, Space, A and the button rest in the Rest tab')
+  assert.ok(visit.includes("this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')"))
+  // The panel: the host's lines as they come, then the hint; the card computes nothing of a rest.
+  assert.ok(src.includes('const restId = `home-rest-${home}`'))
+  assert.ok(src.includes("{visit.tab === REST_TAB && ( <div id={restId} className={`mt-3 rounded-2xl border px-3 py-2 text-[12px] leading-snug ${t.rule}`} data-rest> {(hooks.rest?.offer(home).lines ?? ['Resting is not offered here']).map((line) => <p key={line}>{line}</p>)}"))
+  assert.ok(src.includes(`{"Enter, Space, the pad's south button or Rest below rests here."}`))
+  assert.ok(!/progress\.ts'|progression\.ts'|restBonus|homeRest|restAtHome|pageProgress|comfortOf/.test(src), 'nothing of the keeper or the rules in the card')
+  assert.ok(!/progress\.ts'|progression\.ts'|restBonus|homeRest|restAtHome|pageProgress/.test(visit), 'nor in the visit')
+  // The toolbar: Rest in Place's spot, the same size and colour, named for Enter and described by the panel.
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const restButton = buttonsIn(toolbar).find((b) => b.includes('data-action="rest"'))
+  assert.ok(restButton, 'a Rest button')
+  for (const part of ["onClick={() => visit.run('place')}", 'aria-label="Rest here (Enter)"', 'aria-describedby={restId}', 'className={`${BUTTON} px-4 font-semibold ${t.buy}`}', 'style={TARGET}', 'data-touch']) {
+    assert.ok(restButton.includes(part), `the Rest button: ${part}`)
+  }
+  assert.ok(toolbar.includes('{visit.tab === REST_TAB ? ( <button'), 'Rest only in the Rest tab, Place everywhere else')
+  assert.ok(toolbar.includes('data-action="rest" data-touch>Rest</button> ) : ( <button'))
+  assert.ok(toolbar.includes("aria-label={visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'}"))
+  assert.ok(toolbar.includes("aria-label={visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'}"))
+  // The finishes only in Floor and Walls, and the arrows move the cursor in the Rest tab as in Furniture.
+  assert.ok(src.includes('{(visit.tab === 1 || visit.tab === 2) && ( <div className="mt-3 grid grid-cols-2"'))
+  assert.ok(!src.includes('visit.tab !== 0'))
+  assert.ok(src.includes('const finish = tab === 1 || tab === 2'))
+  // Four tabs wrap on a narrow phone.
+  assert.ok(src.includes('<div role="tablist" aria-label="Furnish or rest" className="mt-2 flex flex-wrap" style={GAP}>'))
+  // The deed view in a network room: resting waits with furnishing.
+  assert.ok(src.includes('{owned && refusal && furnish?.rest && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-rest-wait>Resting here waits for the same reason.</p>}'))
+  for (const words of ['Resting is not offered here', "Enter, Space, the pad's south button or Rest below rests here.", 'Resting here waits for the same reason.', 'Rest here (Enter)', 'Furnish or rest']) clean('the Rest tab', words)
+})
+
+test('every sentence a rest at home can say passes the card\'s screen', () => {
+  const levels = Array.from({ length: 7 }, (_, h) => itemById(224 + h)?.level ?? 0)
+  assert.deepEqual(levels, [1, 3, 6, 10, 14, 17, 20])
+  const said = new Set<string>()
+  for (const hero of [1, 3]) {
+    for (const level of levels) {
+      for (const kinds of [0, 1, 3, 5, 9]) {
+        const p = createProgress({ store: null, seed: () => 3, now: () => 0 })
+        p.record[AT.hero] = hero
+        seal(p.record)
+        for (const l of restOffer(p, level, kinds).lines) said.add(l)
+        said.add(restTake(p, level, kinds))
+        for (const other of levels) for (const l of restOffer(p, other, 9).lines) said.add(l)
+        said.add(restTake(p, 20, 9))
+        said.add(restTake(p, 20, 9))
+      }
+    }
+  }
+  assert.ok(said.size >= 20, `${said.size} sentences`)
+  for (const text of said) clean('a rest at home', text)
 })

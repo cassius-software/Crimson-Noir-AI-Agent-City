@@ -14,7 +14,9 @@
  * earned into by the engine's deeds, the recruiter's arrivals and understood requests, and the wardrobe card, and its one
  * listener cues each success (the engine's chime and tap, the HUD's chip). The homes' furnishing is kept here too: the
  * saved record (05_Observe_Environment/homeStore.ts), saved on every edit the home card commits and handed to the engine
- * with what the shopkeeper says is owned, which draws the homes and makes their furniture solid.
+ * with what the shopkeeper says is owned, which draws the homes and makes their furniture solid. A rest at home (the
+ * home card's Rest tab) goes through the same keeper, where the engine allows furnishing, with the deed's level and the
+ * kinds of furniture the engine draws there.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -57,9 +59,10 @@ import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
 import { HomeCard, type FurnishHooks } from './07_Execute_Actions/HomeCard.tsx'
 import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
-import type { StoreItem } from './07_Execute_Actions/storeCatalog.ts'
+import { itemById, type StoreItem } from './07_Execute_Actions/storeCatalog.ts'
 import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
-import { FURNITURE_BASE, SHAPE_IDS } from './02_Define_The_Rules/homeLayout.ts'
+import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
+import { homePlaced } from './07_Execute_Actions/homeView.ts'
 import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
@@ -87,7 +90,7 @@ import { useFirstWalk } from './07_Execute_Actions/onboarding/useFirstWalk.ts'
 import { ROOM, toWorld } from './01_Initialize_World/interiors.ts'
 import { yawFacing } from './07_Execute_Actions/head.ts'
 import { MAX_WALK_MS } from './07_Execute_Actions/scriptedWalk.ts'
-import { cueOf, earnFromRecruiter, hudProgress, pageProgress, progressBridge, worthCue, type ProgressCue } from './07_Execute_Actions/progress.ts'
+import { cueOf, earnFromRecruiter, hudProgress, pageProgress, progressBridge, restOffer, restTake, worthCue, type ProgressCue } from './07_Execute_Actions/progress.ts'
 import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { SKILLS } from './03_Spawn_Agents/skills.ts'
@@ -190,6 +193,14 @@ function ownedLines(keeper: Shopkeeper): number {
   let mask = 0
   for (const id of SHAPE_IDS) if (keeper.owns(id)) mask |= 1 << (id - FURNITURE_BASE)
   return mask
+}
+
+/**
+ * What a rest at home `home` is measured by: its deed's level (the catalogue's) and how many kinds of furniture stand
+ * there now, as the engine draws them (homeView.ts homePlaced: the saved layout fitted with what is owned).
+ */
+function restInputs(home: number, record: HomeRecord, keeper: Shopkeeper): { level: number; kinds: number } {
+  return { level: itemById(DEED_BASE + home)?.level ?? 0, kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper))) }
 }
 
 /**
@@ -821,7 +832,12 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     blocked: (home: number) => engine.blockedCells(home),
     pickCell: (x: number, y: number) => engine.pickCell(x, y),
     canvas: () => canvasRef.current,
-  } : null), [engine])
+    // A rest at home: the words from the page's keeper, and the rest itself only where the engine allows furnishing.
+    rest: {
+      offer: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return restOffer(pageProgress(), r.level, r.kinds) },
+      take: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return engine.furnishRefusal(home) ?? restTake(pageProgress(), r.level, r.kinds) },
+    },
+  } : null), [engine, keeper])
   // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
   // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
   const goHome = useCallback((item: StoreItem) => {

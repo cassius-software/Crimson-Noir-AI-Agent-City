@@ -7,8 +7,10 @@
  * the reroll and the training through the keeper, the purchase gate saved in one write, a reset; which console
  * commands earn a check (doing something does, reading does not) and that a command with an error earns nothing; the
  * round clock run without a check; what the recruiter's events earn (an arrival, an understood spoken request); the
- * HUD chip's finished strings; the `progress` command's every form; and the text's rules (no upstream names, no
- * scrubbed words, nothing about conditioning, no slash in the HUD's words).
+ * HUD chip's finished strings; the `progress` command's every form; a rest at home through the keeper (saved, told,
+ * kept across a reload, said on every check, in `progress` and on the chip) and the home card's words for it; and the
+ * text's rules (no upstream names, no scrubbed words, nothing about conditioning, no slash in the HUD's words, no
+ * urgency in a rest's).
  * What breaks if it is removed? Reading `help` could earn credits, a failed command could pay, one recruit could pay
  * twice, a purchase could go unsaved, the HUD's pips could stay spent, or the progress text could drift into words
  * the product does not use.
@@ -17,12 +19,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { CRIT_SUCCESS, FAILURE, SUCCESS } from '../02_Define_The_Rules/degrees.ts'
-import { AT, MAX_LEVEL, OPERATOR_SKILLS, PURCHASE, ROUND_MS, SKILL_REST_MS, STARTING_CREDITS, attempt, newRecord, reroll, seal } from '../02_Define_The_Rules/progression.ts'
+import {
+  AT, HERO_MAX, MAX_LEVEL, OPERATOR_SKILLS, PURCHASE, REST_CHECKS, ROUND_MS, SKILL_REST_MS, STARTING_CREDITS, attempt, newRecord, reroll, seal,
+} from '../02_Define_The_Rules/progression.ts'
 import { PROGRESS_KEY, saveProgress } from '../05_Observe_Environment/progressStore.ts'
 import type { ProfileStore } from '../05_Observe_Environment/profile.ts'
 import {
-  HUD_CUE_MS, checkLines, commandSkill, createProgress, cueOf, earnFromRecruiter, grouped, hudProgress, pips, progressBridge, statusLines, tableLines,
-  worthCue, type Progress, type ProgressCue,
+  HUD_CUE_MS, checkLines, commandSkill, createProgress, cueOf, earnFromRecruiter, grouped, hudProgress, pips, progressBridge, restOffer, restTake,
+  statusLines, tableLines, worthCue, type Progress, type ProgressCue,
 } from './progress.ts'
 import { run, type CommandResult } from './terminal/commands.ts'
 import { offlineBridge, type TerminalBridge } from './terminal/bridge.ts'
@@ -348,7 +352,7 @@ test('the console: `progress` and its forms', () => {
   for (const name of OPERATOR_SKILLS) assert.ok(status.some((l) => l.trimStart().startsWith(name)), name)
   assert.ok(status.some((l) => /next check DC 13 \(easy\)/.test(l)))
   const table = texts(run('progress table', b, []))
-  assert.equal(table.length, 1 + 20 + 4)
+  assert.equal(table.length, 1 + 20 + 5)
   assert.match(table[1], /^\s+1\s+13\s+150\s+1,750$/)
   assert.match(table[20], /^\s+20\s+38\s+400,000\s+4,900,000$/)
   assert.deepEqual(texts(run('progress train computers', b, [])), ['progress: no skill increase to spend: one comes with every level from 2'])
@@ -384,12 +388,199 @@ test('the text: pips, grouping, every check line, the table; no upstream names, 
     }
   }
   hud.push(...Object.values(hudProgress(p, null, 0)).filter((v): v is string => typeof v === 'string'))
+  // Prepared: the chip's words, a check's line and `progress`'s; and every sentence the home card's Rest tab can say.
+  const { p: q, t } = standing()
+  q.restAtHome(2)
+  const prepared = hudProgress(q, null, 0)
+  hud.push(prepared.text, prepared.label)
+  t.now += SKILL_REST_MS
+  const rest = [...checkLines(q.earn('optics')!, 1), ...statusLines(q).filter((l) => /prepared|rest/.test(l)), ...tableLines().filter((l) => /rest/.test(l)), ...restSentences()]
+  const { p: z } = keeper()
+  z.restAtHome(0)
+  rest.push(...statusLines(z).filter((l) => /rest/.test(l)))
+  assert.ok(rest.some((l) => /\+2 prepared = /.test(l)) && rest.some((l) => /^ {2}prepared: /.test(l)) && rest.some((l) => /^ {2}rested at home: /.test(l)) && rest.some((l) => /^ {2}rest at a home you own/.test(l)))
   assert.doesNotMatch(hud.join('\n'), /\//, 'no slash in the HUD')
-  lines.push(...hud)
+  assert.doesNotMatch([...rest, prepared.text, prepared.label].join('\n'), /!/, 'nothing exclaimed')
+  assert.doesNotMatch([...rest, prepared.text, prepared.label].join('\n'), /\b(hurry|expir\w*|lose|losing|lost|streak|daily|come back|countdown|last chance|don'?t miss|status effect)\b/i, 'no urgency, nothing to come back for')
+  lines.push(...hud, ...rest)
   const text = lines.join('\n')
   assert.doesNotMatch(text, /matrix|pathfinder|pf2e|paizo|golarion|pavlov|dopamine|addict|condition|jackpot|loot|gacha|slot machine|drop token/i)
   for (const file of ['./progress.ts', '../02_Define_The_Rules/progression.ts', '../05_Observe_Environment/progressStore.ts']) {
     const src = readFileSync(new URL(file, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\b(matrix|pathfinder|pf2e|paizo|pavlov\w*|dopamine|addict\w*)\b/i, file)
   }
+})
+
+// ---------------------------------------------------------------------------------------------------
+// A rest at home
+
+/** Every sentence the home card's Rest tab and its reason line can say, from each home and each state. */
+function restSentences(): string[] {
+  const out: string[] = []
+  for (const hero of [1, 2, 3]) {
+    for (const level of [1, 3, 6, 10, 14, 17, 20]) {
+      for (const kinds of [0, 1, 2, 4, 9]) {
+        const { p } = keeper()
+        p.record[AT.hero] = hero
+        seal(p.record)
+        out.push(...restOffer(p, level, kinds).lines, restTake(p, level, kinds))
+        // Running now: what each home says, and refuses with or takes in place of it.
+        for (const [l2, k2] of [[1, 0], [3, 1], [10, 4], [20, 9]] as const) out.push(...restOffer(p, l2, k2).lines)
+        out.push(restTake(p, 20, 9), ...restOffer(p, 20, 9).lines)
+      }
+    }
+  }
+  return [...new Set(out)]
+}
+
+test('a rest at home through the keeper: saved and told once, the round clock started again with the full round, refused while one lasts unless a home gives more; reset ends it', () => {
+  const s = memory()
+  const { p, t } = keeper(s)
+  assert.ok(p.earn('computers'))
+  assert.ok(p.earn('piloting', true))
+  t.now = 2500
+  assert.equal(p.round(), ROUND_MS - 2500)
+  const told: (number | null)[] = []
+  p.subscribe((c) => told.push(c ? c.skill : null))
+  const writes = s.writes
+  const hero = p.record[AT.hero]
+  assert.equal(p.restAtHome(1), 1, 'one hero point')
+  assert.deepEqual(told, [null], 'told once, with no check (so no cue)')
+  assert.equal(s.writes, writes + 1, 'saved once')
+  const saved = JSON.parse(s.map.get(PROGRESS_KEY)!) as { words: number[] }
+  assert.equal(saved.words[40], 121)
+  assert.equal(p.record[AT.hero], hero + 1)
+  assert.equal(pips(p.record), '◆◆◆ ↺', 'the full round')
+  assert.equal(p.round(), ROUND_MS, 'the round clock started again')
+  // While it lasts: an equal or lower rest is refused, neither saved nor told.
+  assert.throws(() => p.restAtHome(1), /a rest at home lasts 30 more checks, unless a home adds more/)
+  assert.throws(() => p.restAtHome(0), /lasts 30 more checks/)
+  assert.deepEqual([told.length, s.writes], [1, writes + 1])
+  // A home that gives more takes its place.
+  assert.equal(p.restAtHome(2), 1)
+  assert.equal(p.record[AT.prepared], 122)
+  assert.deepEqual(told, [null, null])
+  // A new operator has no rest.
+  p.reset()
+  assert.equal(p.record[AT.prepared], 0)
+  assert.equal(p.restAtHome(0), 1)
+})
+
+test('while prepared every check says so, progress says how much and for how many checks, the table states the rule, and the chip shows prepared +N until the last of the 30 checks', () => {
+  const { p, t } = standing()
+  const before = hudProgress(p, null, 0)
+  assert.doesNotMatch(before.text + before.label, /prepared/)
+  assert.equal(p.restAtHome(2), 1)
+  const chip = hudProgress(p, null, 0)
+  assert.notEqual(chip, before, 'rebuilt when the rest starts')
+  assert.equal(chip.text, 'Level 3 · 420 of 1,000 XP · 1,250 credits · hero 3 · ◆◆◆ ↺ · prepared +2')
+  assert.equal(chip.label, 'Level 3, 420 of 1,000 experience points, 1,250 credits, 3 hero points, 3 of 3 actions left this round, reaction ready, prepared: 2 added to every check')
+  assert.equal(hudProgress(p, null, 50), chip, 'the same object while nothing changed')
+  assert.ok(statusLines(p).includes('  prepared: +2 to every check for 30 more checks (a rest at home)'))
+  for (let i = 0; i < REST_CHECKS; i++) {
+    t.now += SKILL_REST_MS
+    const c = p.earn(i % OPERATOR_SKILLS.length)
+    assert.ok(c, `check ${i + 1}`)
+    assert.equal(c.item, 2)
+    assert.equal(c.total, c.natural + c.modifier)
+    const mod = c.modifier - 2
+    assert.ok(checkLines(c, p.record[AT.hero])[0].includes(` ${mod < 0 ? mod : `+${mod}`} +2 prepared = ${c.total} vs DC `), checkLines(c)[0])
+    const left = REST_CHECKS - 1 - i
+    if (left > 0) {
+      assert.match(hudProgress(p, null, t.now).text, / · prepared \+2$/)
+      assert.ok(statusLines(p).includes(`  prepared: +2 to every check for ${left} more check${left === 1 ? '' : 's'} (a rest at home)`), `${left} left`)
+    }
+    if (left === 1) {
+      assert.equal(restOffer(p, 3, 1).lines[0], 'You are prepared: +2 to every check for 1 more check. Rest again after it, or in a home that adds more.')
+      assert.equal(restOffer(p, 3, 1).why, 'a rest at home lasts 1 more check, unless a home adds more')
+    }
+  }
+  const last = hudProgress(p, null, t.now)
+  assert.doesNotMatch(last.text + last.label, /prepared/, 'the word drops off the chip, nothing announced')
+  assert.ok(!statusLines(p).some((l) => /prepared|rested at home/.test(l)))
+  t.now += SKILL_REST_MS
+  const after = p.earn('optics')!
+  assert.equal(after.item, 0)
+  assert.doesNotMatch(checkLines(after)[0], /prepared/)
+  // The table states the rule.
+  assert.ok(tableLines().includes("  rest at a home you own (its card's Rest tab): a hero point, a new round, and on the next 30 checks the lower of the home's bonus (+1 from a level 3 deed, +2 from 9, +3 from 17) and its comfort's (+1 from 1 kind of furniture standing there, +2 from 3, +3 from 5)"))
+  // A +0 rest says so in `progress`, and nothing on the chip.
+  const { p: z } = keeper()
+  const plain = hudProgress(z, null, 0)
+  assert.equal(z.restAtHome(0), 1)
+  assert.ok(statusLines(z).includes('  rested at home: another rest after 30 more checks, or in a home that adds to checks'))
+  const zchip = hudProgress(z, null, 0)
+  assert.notEqual(zchip, plain)
+  assert.doesNotMatch(zchip.text + zchip.label, /prepared/)
+})
+
+test('a rest at home survives a reload: the word is saved, a new session leaves it, the next check still carries it', () => {
+  const s = memory()
+  const t = { now: 0 }
+  const a = createProgress({ store: s, seed: () => 5, now: () => t.now })
+  a.restAtHome(1)
+  t.now += SKILL_REST_MS
+  assert.equal(a.earn('optics')!.item, 1)
+  assert.equal(a.record[AT.prepared], (29 << 2) | 1)
+  const b = createProgress({ store: s, now: () => 0 })
+  assert.equal(b.setAside(), null)
+  assert.equal(b.record[AT.prepared], (29 << 2) | 1, 'a new session leaves it')
+  assert.throws(() => b.restAtHome(1), /lasts 29 more checks/, 'and the gate holds')
+  assert.match(statusLines(b).join('\n'), /prepared: \+1 to every check for 29 more checks/)
+  const c = b.earn('optics')!
+  assert.equal(c.item, 1)
+  assert.equal(b.record[AT.prepared], (28 << 2) | 1)
+  assert.match(hudProgress(b, null, 0).text, / · prepared \+1$/)
+})
+
+test('restOffer and restTake: the words for each home and each state, from the numbers alone', () => {
+  const COMFORT = 'Furniture adds +1 from 1 kind, +2 from 3 and +3 from 5'
+  const fresh = (hero = 1) => {
+    const { p } = keeper()
+    p.record[AT.hero] = hero
+    seal(p.record)
+    return p
+  }
+  // The Micro-Loft (a level 1 deed): a hero point and a round, no bonus, and no comfort line.
+  const p = fresh()
+  for (const kinds of [0, 1, 4, 9]) {
+    assert.deepEqual(restOffer(p, 1, kinds), { bonus: 0, why: null, lines: ['Rest here: a hero point and a new round. A home adds to checks from a level 3 deed.'] })
+  }
+  assert.deepEqual(restOffer(p, 3, 1).lines, ['Rest here: a hero point, a new round, and +1 to every check for the next 30 checks.', `Comfort: 1 kind of furniture stands here. ${COMFORT}; this home allows up to +1.`])
+  assert.deepEqual(restOffer(p, 3, 0).lines, ['Rest here: a hero point and a new round. No bonus on checks yet: furniture standing here adds one.', `Comfort: no furniture stands here yet. ${COMFORT}; this home allows up to +1.`])
+  assert.deepEqual(restOffer(p, 10, 4).lines, ['Rest here: a hero point, a new round, and +2 to every check for the next 30 checks.', `Comfort: 4 kinds of furniture stand here. ${COMFORT}; this home allows up to +2.`])
+  assert.deepEqual(restOffer(p, 10, 1).lines[0], 'Rest here: a hero point, a new round, and +1 to every check for the next 30 checks.')
+  assert.deepEqual(restOffer(p, 20, 9).lines, ['Rest here: a hero point, a new round, and +3 to every check for the next 30 checks.', `Comfort: 9 kinds of furniture stand here. ${COMFORT}; this home allows up to +3.`])
+  assert.deepEqual([restOffer(p, 20, 4).bonus, restOffer(p, 20, 9).bonus, restOffer(p, 10, 9).bonus], [2, 3, 2])
+  // Hero points full: no hero point offered, and the card says why.
+  const full = fresh(HERO_MAX)
+  assert.equal(restOffer(full, 10, 4).lines[0], 'Rest here: a new round, and +2 to every check for the next 30 checks. Your hero points are full (3 of 3).')
+  assert.equal(restOffer(full, 1, 0).lines[0], 'Rest here: a new round. A home adds to checks from a level 3 deed. Your hero points are full (3 of 3).')
+  assert.equal(restOffer(full, 10, 0).lines[0], 'Rest here: a new round. No bonus on checks yet: furniture standing here adds one. Your hero points are full (3 of 3).')
+  assert.equal(restTake(full, 10, 4), 'Rested: a new round, and +2 to every check for the next 30 checks (hero points already 3 of 3).')
+  assert.equal(restTake(fresh(HERO_MAX), 1, 0), 'Rested: a new round (hero points already 3 of 3).')
+  // Rest, then the running states: refused where a home gives no more (nothing changes), taken in place where it gives more.
+  assert.equal(restTake(p, 10, 4), 'Rested: hero 2 of 3, a new round, and +2 to every check for the next 30 checks.')
+  const running = 'You are prepared: +2 to every check for 30 more checks. Rest again after them, or in a home that adds more.'
+  for (const [level, kinds] of [[1, 0], [3, 1], [10, 4], [20, 4]] as const) {
+    const o = restOffer(p, level, kinds)
+    assert.equal(o.lines[0], running, `level ${level}, ${kinds} kinds`)
+    assert.equal(o.why, 'a rest at home lasts 30 more checks, unless a home adds more')
+    assert.equal(restTake(p, level, kinds), running)
+  }
+  assert.deepEqual([p.record[AT.hero], p.record[AT.prepared]], [2, 122], 'a refused rest changes nothing')
+  assert.equal(restOffer(p, 20, 9).lines[0], 'Rest here: a hero point, a new round, and +3 to every check for the next 30 checks, in place of your +2.')
+  assert.equal(restTake(p, 20, 9), 'Rested: hero 3 of 3, a new round, and +3 to every check for the next 30 checks.')
+  assert.equal(restOffer(p, 20, 9).lines[0], 'You are prepared: +3 to every check for 30 more checks. Rest again after them, or in a home that adds more.')
+  // A +0 rest: then a second waits, but a home that adds to checks may.
+  const z = fresh()
+  assert.equal(restTake(z, 1, 4), 'Rested: hero 2 of 3 and a new round.')
+  assert.equal(restOffer(z, 1, 4).lines[0], 'You have rested: rest again after 30 more checks, or in a home that adds to checks.')
+  assert.equal(restOffer(z, 10, 0).lines[0], 'You have rested: rest again after 30 more checks, or in a home that adds to checks.')
+  assert.equal(restTake(z, 1, 4), 'You have rested: rest again after 30 more checks, or in a home that adds to checks.')
+  assert.equal(z.record[AT.hero], 2, 'no hero point on demand')
+  assert.equal(restOffer(z, 3, 1).lines[0], 'Rest here: a hero point, a new round, and +1 to every check for the next 30 checks.')
+  assert.equal(restTake(z, 3, 1), 'Rested: hero 3 of 3, a new round, and +1 to every check for the next 30 checks.')
+  // Every offer is frozen, and not computed in the card (the card shows these lines as they come).
+  assert.ok(Object.isFrozen(restOffer(z, 3, 1)) && Object.isFrozen(restOffer(z, 3, 1).lines))
 })
