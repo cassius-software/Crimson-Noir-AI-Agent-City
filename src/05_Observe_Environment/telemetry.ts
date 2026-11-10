@@ -221,6 +221,13 @@ export interface SipocSnapshot {
      * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).
      */
     recruiting?: { listening: boolean; line: string }
+    /**
+     * The team Sloane dispatched for a goal (08_Swarm/team.ts), added by the host: one row a lane, with its tag, its
+     * desk, whether it runs or was isolated, and its latest reading.
+     */
+    lanes?: readonly { tag: string; role: string; state: 'ready' | 'isolated'; reading: string | null }[]
+    /** The team in one line for the MIC chip ("Team 24 · metro 8, warehouse 8, robotics 8 · 2 coming over"); '' without one. */
+    team?: string
   }
   input: { mode: 'foot' | 'vehicle'; nearVehicle: boolean }
   process: {
@@ -309,6 +316,14 @@ export interface SipocSnapshot {
      * and name, and whether the mirror camera circles the body now (its catalogue open). Absent outside every shop.
      */
     shop?: { index: number; kind: string; name: string; showroom: boolean }
+    /**
+     * The home the avatar stands in on foot (01_Initialize_World/properties.ts): its property index (0 to 6, its deed is
+     * line 224 + index), its kind, its deed's name, whether the player owns it, and whether its doorstep card is open
+     * now. Absent outside every home.
+     */
+    home?: { index: number; kind: string; name: string; owned: boolean; card: boolean }
+    /** The homes the player owns, one bit per property index (bit i: deed 224 + i), as the page's shopkeeper says. */
+    ownedHomes?: number
     /** The name the user gave the Concierge ('' until they do). */
     name: string
     clock: string; daylight: number; viewYaw: number; district: string; speedKmh: number; gear: string

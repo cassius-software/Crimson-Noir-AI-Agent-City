@@ -41,6 +41,14 @@ export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | nul
   return { held, action }
 }
 
+/**
+ * Pure. The pads a screen reads: those `accept` takes by their index (the rest read as absent), or all of them. A pad
+ * that comes into the accepted set this way counts from its next press, as a pad that first shows up does.
+ */
+export function padsFor<T>(pads: readonly (T | null | undefined)[], accept?: (padIndex: number) => boolean): readonly (T | null | undefined)[] {
+  return accept ? pads.map((p, i) => (p && accept(i) ? p : null)) : pads
+}
+
 /** The pads, or none where the browser has no Gamepad API (or refuses it, as a permissions policy can). */
 function readPads(): readonly (Gamepad | null)[] {
   try { return typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [] } catch { return [] }
@@ -48,15 +56,16 @@ function readPads(): readonly (Gamepad | null)[] {
 
 /**
  * While `active`, reads the pads every animation frame for the buttons inside `root`: A presses the focused one (the
- * first when focus is elsewhere), the d-pad moves focus. The first poll only learns what is already held.
+ * first when focus is elsewhere), the d-pad moves focus. The first poll only learns what is already held. `accept`
+ * (stable across renders) limits it to some pads, by index: a card that is one player's, in split screen.
  */
-export function usePadNav(root: RefObject<HTMLElement | null>, active = true): void {
+export function usePadNav(root: RefObject<HTMLElement | null>, active = true, accept?: (padIndex: number) => boolean): void {
   useEffect(() => {
     if (!active) return
     let raf = 0
     let prev: Set<string> | null = null
     const poll = () => {
-      const { held, action } = padStep(prev ?? new Set(), readPads())
+      const { held, action } = padStep(prev ?? new Set(), padsFor(readPads(), accept))
       const first = prev === null
       prev = held
       const el = root.current
@@ -70,5 +79,5 @@ export function usePadNav(root: RefObject<HTMLElement | null>, active = true): v
     }
     raf = requestAnimationFrame(poll)
     return () => cancelAnimationFrame(raf)
-  }, [root, active])
+  }, [root, active, accept])
 }

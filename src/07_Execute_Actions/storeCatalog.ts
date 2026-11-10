@@ -11,7 +11,9 @@
  *
  * A line whose look slots the wardrobe does not have yet (tattoos, prosthetic limbs, watches: the customizer's coming
  * slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of that name. The
- * design house's furniture and the property deeds are on order the same way until the properties open.
+ * property deeds are on sale, because the seven homes stand in both maps (01_Initialize_World/properties.ts); the
+ * design house's furniture is on order the same way until furnishing opens, so a piece can never be bought before it
+ * can be placed.
  *
  * The level, the credits and what is owned are not kept here: the progression engine's keeper answers for them
  * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
@@ -113,7 +115,7 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(132, 'horology', 'wear', 'Weather', 'Folding umbrella', 1, 150, { umbrella: 1 }),
   item(133, 'horology', 'wear', 'Audio', 'Acoustic headphones', 4, 900, { headphones: 1 }),
 
-  // Lintel & Lumen Design House: furniture for owned spaces, and the brokerage's deeds (both open with the properties).
+  // Lintel & Lumen Design House: furniture for owned spaces (on order until furnishing opens), and the brokerage's deeds.
   item(160, 'designHouse', 'furniture', 'Office', 'Curved walnut executive desk', 3, 2400),
   item(161, 'designHouse', 'furniture', 'Office', 'Six-screen console station', 6, 7500),
   item(162, 'designHouse', 'furniture', 'Office', 'Holographic city table', 10, 22000),
@@ -141,16 +143,24 @@ export const itemById = (id: number): StoreItem | null => BY_ID.get(id) ?? null
 export const itemsOf = (shop: ShopKind): readonly StoreItem[] => CATALOGUE.filter((i) => i.shop === shop)
 
 /**
- * Whether a line can be sold today: a 'wear' line whose every slot the wardrobe has. Furniture and deeds wait for
- * the properties (on order). `slots` is the wardrobe's (look.ts LOOK_SLOTS), a parameter so a test can widen it.
+ * The kinds of line other than worn ones that are on sale now. The deeds opened with the homes; furniture joins when
+ * furnishing does, so that nothing is sold before it can be placed. A worn line answers to the wardrobe instead.
  */
-export function onSale(i: StoreItem, slots: readonly string[] = LOOK_SLOTS): boolean {
-  return i.kind === 'wear' && i.wear !== null && Object.keys(i.wear).every((s) => slots.includes(s))
+export const OPEN_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>(['deed'])
+
+/**
+ * Whether a line can be sold today: a 'wear' line whose every slot the wardrobe has, or a line of a kind in `open`
+ * (a deed today; a piece of furniture once furnishing opens). `slots` is the wardrobe's (look.ts LOOK_SLOTS) and
+ * `open` is OPEN_KINDS; both are parameters so a test can widen them.
+ */
+export function onSale(i: StoreItem, slots: readonly string[] = LOOK_SLOTS, open: ReadonlySet<ItemKind> = OPEN_KINDS): boolean {
+  if (i.kind === 'wear') return i.wear !== null && Object.keys(i.wear).every((s) => slots.includes(s))
+  return open.has(i.kind)
 }
 
 /**
- * `look` wearing line `i`: each of its slots set in turn through withLookSlot, or null when the line is not on sale
- * or the look cannot take it (a value that body's slot does not have).
+ * `look` wearing line `i`: each of its slots set in turn through withLookSlot, or null when the line is not on sale,
+ * is not worn at all (a deed, a piece of furniture) or the look cannot take it (a value that body's slot does not have).
  */
 export function wearItem(look: Look, i: StoreItem): Look | null {
   if (!onSale(i) || !i.wear) return null
@@ -184,7 +194,7 @@ export function whyOf(i: StoreItem, verdict: GateVerdict, credits: number): stri
     case GATE.level: return `needs level ${i.level}`
     case GATE.credits: return `needs ${Math.max(0, i.price - credits).toLocaleString('en-CA')} more credits`
     case GATE.bought: return 'for sale'
-    default: return onSale(i) ? 'not for sale' : i.kind === 'wear' ? 'on order: arrives with the wardrobe update' : 'on order: opens with the properties'
+    default: return onSale(i) ? 'not for sale' : i.kind === 'wear' ? 'on order: arrives with the wardrobe update' : i.kind === 'furniture' ? 'on order: opens with furnishing' : 'on order'
   }
 }
 

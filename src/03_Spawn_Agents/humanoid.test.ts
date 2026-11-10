@@ -19,8 +19,8 @@ import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
 import {
   BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GARMENT_STEP, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION,
   RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SKIRT_CUT, SKIRT_SHAPE, SLOT, SLOTS, SOLE, TROUSER_CUT, TROUSER_SHAPE, WALK,
-  bodyTubes, boneGroup, boneSide, boneTransform, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, garmentPoint, gazeAt, heightMap, humanoidMesh, legReach, legSolve, lowerShape, morphNormal, morphPoint,
-  pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skullFront, swingOf, walkAngles,
+  bodyTubes, boneGroup, boneSide, boneTransform, coatFollow, coatPose, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, garmentPoint, gazeAt, heightMap, humanoidMesh, legReach, legSolve, lowerShape, morphNormal, morphPoint,
+  pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skirtFollow, skirtLeft, skirtPose, skullFront, swingOf, walkAngles,
   type BodyPose, type BodyShape, type FaceShape, type LegAngles, type RigPose,
 } from './humanoid.ts'
 import { LOOK_BODIES, LOOK_PIECE_BIT } from './look.ts'
@@ -899,7 +899,8 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
   assert.equal((BODY_WGSL.match(/-> mat3x3f/g) ?? []).length, 9, 'the rotations, the lower garment, the face, the morph, the rig, the bone chain and the vertex each carry a position and a normal')
   // The lower cut: humanoid.ts's two tables in one array, trousers then skirts, two vec4s a cut; read from morphB.w
-  // after the face and before the sliders; the skirt's hem handed to the thigh beside it, in the walking path alone.
+  // after the face and before the sliders; the skirt shared between the legs (the one that carries it furthest forward
+  // in front, furthest back behind, its own at the sides; the shin below a midi's knee), in the walking path alone.
   const table = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.slice(0, 4), row.slice(4, 8)]).map((v) => `vec4f(${v.map(lit).join(', ')})`).join(', ')
   assert.ok(BODY_WGSL.includes(`var shapes = array<vec4f, 64>(${table});`), 'TROUSER_SHAPE and SKIRT_SHAPE in the WGSL')
   assert.ok(BODY_WGSL.includes(`let at = select(0u, ${TROUSER_SHAPE.length * 2}u, skirt) + cut * 2u;`))
@@ -907,10 +908,69 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.ok(BODY_WGSL.includes('fn bodyLowerShape(r: f32, y: f32, p0: vec4f, p1: vec4f, skirt: bool, coat: bool) -> vec2f'))
   assert.match(BODY_WGSL, /let lower = bodyGarment\(v0, n0, rig, skin, morphB\.w\);\n\s*v0 = lower\[0\];\n\s*n0 = lower\[1\];/)
   assert.ok(BODY_WGSL.indexOf('let lower = bodyGarment(') < BODY_WGSL.indexOf('let rest = bodyMorph('), 'the cut before the sliders')
-  assert.ok(BODY_WGSL.indexOf('let follow = lower[2].x;') > BODY_WGSL.indexOf('return bodyRig(rest,'), 'a fallen body\'s skirt hangs as it always did')
-  assert.ok(BODY_WGSL.includes(`bodyRamp(${lit(LOWER.followSide)}, ${lit(LOWER.followFull)}, abs(v.z))`), 'the skirt\'s sides stay with the trunk; its front and back follow')
-  assert.match(BODY_WGSL, /let leftLeads = legL\.x < legR\.x;\n\s*let leading = select\(6u, 3u, leftLeads\);\n\s*let trailing = select\(3u, 6u, leftLeads\);\n\s*let boneB = select\(bone1, select\(trailing, leading, v\.z >= 0\.0\), follow > 0\.0\);/, 'the front from the leading thigh, the back from the trailing one (a smaller hip angle swings the leg forward)')
-  assert.deepEqual([BONE.THIGH_L, BONE.THIGH_R], [3, 6])
+  // coatFollow's twin: from nothing at coatFrom, in step with the depth below it, to coatFollow at followTo.
+  const coatShare = (y: string): string => `${lit(LOWER.coatFollow)} * clamp((${lit(LOWER.coatFrom)} - ${y}) / ${lit(LOWER.coatFrom - LOWER.followTo)}, 0.0, 1.0)`
+  const followAt = BODY_WGSL.indexOf(`let follow = select(lower[2].x, ${coatShare('v.y')}, coatPanel);`)
+  assert.ok(followAt > BODY_WGSL.indexOf('return bodyRig(rest,'), 'a fallen body\'s skirt and coat hang as they always did')
+  // No name declared twice in one block of a function (WGSL refuses the whole module, and every body with it: the
+  // skirt's carrying leg was once named `thigh` beside the thigh's length in bodyVertex, and no body was drawn).
+  for (const m of BODY_WGSL.matchAll(/^fn (\w+)\(/gm)) {
+    const scopes: Set<string>[] = []
+    for (const t of BODY_WGSL.slice(BODY_WGSL.indexOf('{', m.index)).matchAll(/[{}]|\b(?:let|var|const)\s+(\w+)/g)) {
+      if (t[0] === '{') scopes.push(new Set())
+      else if (t[0] === '}') { scopes.pop(); if (scopes.length === 0) break }
+      else {
+        assert.ok(!scopes[scopes.length - 1].has(t[1]), `${m[1]}: ${t[1]} declared twice in one block`)
+        scopes[scopes.length - 1].add(t[1])
+      }
+    }
+  }
+  // skirtFollow's twin: the share from followFrom to followTo; under a coat the coat's by the reshaped height (o.y),
+  // the straight skirt too; the shin below the knee's rest height (p0.w the length); column 2's third, 1 under a coat.
+  assert.ok(BODY_WGSL.includes('let coat = (c & 16u) != 0u;'), 'code + 16 under a coat')
+  assert.ok(BODY_WGSL.indexOf('let coat = (c & 16u) != 0u;') < BODY_WGSL.indexOf('if (cut == 0u || !bottom || !(leg || skirt)) {'), 'known before the unshaped return')
+  assert.ok(BODY_WGSL.includes(`let share = select(p1.w * bodyRamp(${lit(LOWER.followFrom)}, ${lit(LOWER.followTo)}, v.y), ${coatShare('o.y')}, coat);`), 'the skirt follows from just under its top, all of the cut\'s follow from the knee-level ring down; under a coat as the coat does')
+  assert.ok(BODY_WGSL.includes('let follow = select(0.0, share, skirt);'))
+  assert.ok(BODY_WGSL.includes(`let plain = select(0.0, ${coatShare('v.y')}, coat && bottom && skirt);`), 'the straight skirt follows under a coat')
+  assert.ok(BODY_WGSL.includes('return mat3x3f(v, n, vec3f(plain, 0.0, select(0.0, 1.0, coat)));'))
+  assert.ok(LOWER.hem > LANDMARK.knee, 'the straight skirt hems above the knee: by the thigh')
+  // coatFollow's twin: the coat's panels below the waist (piece COAT on the trunk alone), by the thigh.
+  assert.ok(BODY_WGSL.includes(`let coatPanel = opt == ${PIECE.COAT}u && bone0 == ${BONE.TRUNK}u && bone1 == ${BONE.TRUNK}u;`), 'the coat\'s rings the trunk alone turns')
+  assert.ok(BODY_WGSL.includes(`let shin = select(0.0, 1.0, v.y < ${lit(LOWER.waist)} - (${lit(LOWER.waist)} - ${lit(LANDMARK.knee)}) / p0.w);`), 'a lengthened skirt hangs from the shin below the knee')
+  assert.ok(BODY_WGSL.includes('vec3f(follow, shin, select(0.0, 1.0, coat)));'))
+  // skirtLeft's, skirtPose's and coatPose's twin, in this order: both legs' part (the shin's knee bent by followKnee of
+  // the leg's), under a coat above followTo taken at the point straight below at followTo (the sliders on it, and the
+  // trunk's carry of it to subtract), the front to the one that carries it further forward and the back to the one
+  // further back, handed over across followEase; the sides to their own; the share of the legs' carry beyond the
+  // trunk's added to the trunk's pose; a hung panel's normal turned by all of coatFollow.
+  const skirtCarry = [
+    'if (follow > 0.0) {',
+    `let bentL = vec4f(legL.x, legL.y * ${lit(LOWER.followKnee)}, legL.zw);`,
+    `let bentR = vec4f(legR.x, legR.y * ${lit(LOWER.followKnee)}, legR.zw);`,
+    'let byShin = u32(lower[2].y);',
+    `let hung = (coatPanel || lower[2].z > 0.5) && v0.y > ${lit(LOWER.followTo)};`,
+    'var at = rest;',
+    'var still = b0;',
+    'if (hung) {',
+    `at = bodyMorph(vec3f(v0.x, ${lit(LOWER.followTo)}, v0.z), n0, bone0, m, fD, fLegs, fTrunk);`,
+    'still = bodyBone(bone0, at, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);',
+    'let onL = bodyBone(3u + byShin, at, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);',
+    'let onR = bodyBone(6u + byShin, at, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);',
+    'let ahead = onL[0].z - onR[0].z;',
+    'let ownSide = select(1.0, 0.0, v.x >= 0.0);',
+    `let byLeft = select(select(ownSide, bodyRamp(${lit(LOWER.followEase)}, ${lit(-LOWER.followEase)}, ahead), v.z <= ${lit(-LOWER.followSide)}), bodyRamp(${lit(-LOWER.followEase)}, ${lit(LOWER.followEase)}, ahead), v.z >= ${lit(LOWER.followSide)});`,
+    'let carried = onL * byLeft + onR * (1.0 - byLeft) - still;',
+    'b = b0 + carried * follow;',
+    `b[1] = b0[1] + carried[1] * ${lit(LOWER.coatFollow)};`,
+    '} else if (bone1 != bone0 && weight < 1.0) {',
+  ]
+  let from = followAt
+  for (const line of skirtCarry) {
+    const at = BODY_WGSL.indexOf(line, from)
+    assert.ok(at > from, `the skirt's carry, in order: ${line}`)
+    from = at
+  }
+  assert.deepEqual([BONE.THIGH_L, BONE.SHIN_L, BONE.THIGH_R, BONE.SHIN_R], [3, 4, 6, 7])
   assert.ok(BODY_WGSL.includes('return mat3x3f(world, normalize('), 'the world position and a unit normal')
   for (const piece of ['mask', 'holdingCup', 'carryingBag']) assert.ok(BODY_WGSL.includes(piece), piece)
   // The face is shaped before the body sliders, on the head bone, where the vertex names a region; the regions in
@@ -933,7 +993,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /import \{ BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, WALK \} from '\.\/humanoid\.ts'/)
   assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)
@@ -958,6 +1018,7 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform\(new Vector4\(0, 0, 0, 0\)\)/, 'the operator\'s eye, one uniform for both passes')
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)
+  assert.match(crowd, /const m = new MeshStandardNodeMaterial\(\)\n(?:\s*\/\/[^\n]*\n)*\s*m\.shadowSide = DoubleSide\n/, 'both faces in the shadow map: the skirt and the coat are open shells')
   assert.match(crowd, /export const VARIANT_NAMES = BODY_NAMES/)
   assert.doesNotMatch(crowd, /BoxGeometry|CylinderGeometry|SphereGeometry|CapsuleGeometry/, 'no primitives: the body is the loft')
 })
@@ -1035,6 +1096,538 @@ test('the lower cuts: cut 0 and every vertex but the lower garment\'s come back 
   const width = (cut: number) => Math.max(...silhouetteRings(0, SHAPE_NEUTRAL, false, cut).filter((r) => r.slot === SLOT.BOTTOM && r.y < 0.45).map((r) => r.right - r.left))
   assert.ok(width(TROUSER_CUT.wideLeg) > width(0) + 0.03)
   assert.deepEqual(silhouetteRings(2, SHAPE_NEUTRAL, true, 0), silhouetteRings(2, SHAPE_NEUTRAL, true))
+})
+
+test('skirtFollow, skirtLeft and skirtPose, the shader\'s skirt on the CPU: the share rises from just under the top to all of the cut\'s follow at the knee-level ring, under a coat the coat\'s (every cut) by its reshaped height; a midi\'s hem by the shin; the front to the leg that carries it further forward and the back to the one further back, handed over smoothly, the sides to their own; the card\'s side view puts the hem where the shader does; coatFollow and coatPose, the coat\'s panels below the waist hung from it, carried above followTo as the point straight below at followTo is', () => {
+  const out = [0, 0, 0]
+  assert.equal(skirtFollow(LOWER.hem, 0, false, out)[0], 0, 'cut 0 carries nothing')
+  assert.equal(out[2], 0, 'without a coat the legs carry the point itself')
+  near(skirtFollow(LOWER.hem, 0, true, out)[0], LOWER.coatFollow, 1e-12, 'but follows under a coat')
+  assert.equal(out[1], 0, 'by the thigh')
+  assert.equal(out[2], 1, 'as a panel, under a coat')
+  assert.ok(LOWER.followFrom > LOWER.waist && LOWER.followFrom < LOWER.top, 'from just under the top ring')
+  assert.ok(LOWER.followTo < 0.8 && LOWER.followTo > 0.66, 'all of it from the 0.66 ring down: a short skirt\'s mid-thigh, a midi\'s knee')
+  assert.ok(LOWER.coatFollow >= 0.5 && LOWER.coatFollow <= 1, 'a coat carries most of the legs\' swing')
+  assert.ok(!('coatLag' in LOWER), 'a skirt under a coat follows where the coat does: a few centimetres lower let it out through the coat\'s panel')
+  assert.ok(LOWER.followKnee > 0 && LOWER.followKnee < 1 && LOWER.followEase > 0.02 && LOWER.followEase <= 0.15)
+  const ringYs = [1.02, 0.92, 0.8, 0.66, 0.56]
+  for (let cut = 1; cut < 16; cut++) {
+    const follow = SKIRT_SHAPE[cut][7]
+    const long = SKIRT_SHAPE[cut][3] > 1
+    assert.ok(follow >= 0.5 && follow <= 1, `cut ${cut}: every skirt but the straight one follows`)
+    near(skirtFollow(LOWER.followFrom, cut, false, out)[0], 0, 1e-12, 'nothing at followFrom')
+    near(skirtFollow(LOWER.followTo, cut, false, out)[0], follow, 1e-12, 'all of it at followTo')
+    near(skirtFollow(LOWER.hem, cut, false, out)[0], follow, 1e-12, 'and below')
+    assert.equal(skirtFollow(LOWER.hem, cut, false, out)[1], long ? 1 : 0, 'the hem by the shin on a midi, by the thigh above the knee')
+    assert.equal(skirtFollow(0.66, cut, false, out)[1], 0, 'the knee-level ring by the thigh')
+    // Under a coat: the coat's share by the reshaped height; nothing at the top, all the coat's at the hem.
+    for (const y of ringYs) {
+      const Y = lowerShape(1, y, true, cut, true)[1]
+      near(skirtFollow(y, cut, true, out)[0], coatFollow(Y), 1e-12, `cut ${cut} under a coat at ${y}`)
+      assert.equal(out[2], 1)
+    }
+    near(skirtFollow(LOWER.top, cut, true, out)[0], 0, 1e-12, `cut ${cut} under a coat: none at the top`)
+    near(skirtFollow(LOWER.hem, cut, true, out)[0], LOWER.coatFollow, 1e-12, `cut ${cut} under a coat: all the coat's at the hem`)
+  }
+  // The hand-over: the front to the leg that carries it further forward, across followEase of the difference, the back the other way round.
+  const e = LOWER.followEase
+  near(skirtLeft(0.1, 0.17, 0.3, 0.3 - e), 1, 1e-12, 'the front: the left carries it further forward by followEase')
+  near(skirtLeft(0.1, 0.17, 0.3 - e, 0.3), 0, 1e-12, 'the front: the right does')
+  near(skirtLeft(0.1, 0.17, 0.3, 0.3), 0.5, 1e-12, 'the front: level, half each')
+  near(skirtLeft(0.1, -0.17, -0.3 - e, -0.3), 1, 1e-12, 'the back: the left carries it further back')
+  near(skirtLeft(0.1, -0.17, -0.3, -0.3 - e), 0, 1e-12, 'the back: the right does')
+  assert.equal(skirtLeft(0.225, 0, 0.5, -0.5), 0, 'the right side: the right leg')
+  assert.equal(skirtLeft(-0.225, 0, -0.5, 0.5), 1, 'the left side: the left leg')
+  let last = 0
+  for (let d = -e; d <= e + 1e-12; d += e / 50) {
+    const w = skirtLeft(0, 0.17, d, 0)
+    assert.ok(w >= last - 1e-12 && w - last < 0.04, `a smooth hand-over at ${d}`)
+    last = w
+  }
+  // The coat: nothing at its waist ring, in step with the depth below it to all of coatFollow at followTo, all of it
+  // below; coatPose adds that share of how much further the thighs (shared by skirtLeft) carry the point, or above
+  // followTo the point straight below at followTo, than the trunk does, at a walk; skirtPose under a coat the same,
+  // by the reshaped height; and the card's side view puts the coat's hem where the shader does.
+  assert.ok(LOWER.coatFrom > LANDMARK.hip && LOWER.coatFrom < LOWER.followFrom, 'from between the hip and the coat\'s waist ring')
+  near(coatFollow(LOWER.coatFrom), 0, 1e-12, 'nothing at coatFrom')
+  near(coatFollow(LOWER.followFrom), 0, 1e-12, 'the coat\'s waist ring stays with the trunk')
+  near(coatFollow(LOWER.top), 0, 1e-12, 'nor above it')
+  near(coatFollow(LOWER.followTo), LOWER.coatFollow, 1e-12, 'all of it at followTo')
+  near(coatFollow(0.56), LOWER.coatFollow, 1e-12, 'and at its hem')
+  near(coatFollow((LOWER.coatFrom + LOWER.followTo) / 2), LOWER.coatFollow / 2, 1e-12, 'half of it half way down')
+  for (let y = LOWER.followTo + 0.01; y + 0.01 <= LOWER.coatFrom; y += 0.03) near(coatFollow(y) - coatFollow(y + 0.01), LOWER.coatFollow * 0.01 / (LOWER.coatFrom - LOWER.followTo), 1e-9, `in step with the depth at ${y.toFixed(2)}`)
+  {
+    const f = shapeFactors(SHAPE_NEUTRAL), piv = pivotsOf(f), a = walkAngles(1.1, 1.4, f)
+    const bent = { ...a, kneeL: a.kneeL * LOWER.followKnee, kneeR: a.kneeR * LOWER.followKnee }
+    const carried = (x: number, z: number, p: number[], at: number[], share: number, part: number) => {
+      const t = boneTransform(BONE.TRUNK, [...p], 1, a, STILL, piv), still = boneTransform(BONE.TRUNK, [...at], 1, a, STILL, piv)
+      const l = boneTransform(BONE.THIGH_L + part, [...at], 1, bent, STILL, piv), r = boneTransform(BONE.THIGH_R + part, [...at], 1, bent, STILL, piv)
+      const w = skirtLeft(x, z, l[2], r[2])
+      return t.map((c, k) => c + (l[k] * w + r[k] * (1 - w) - still[k]) * share)
+    }
+    for (const [x, y, z] of [[0, 0.7, 0.17], [0, 0.56, -0.175], [0.225, 0.7, 0], [-0.225, 0.56, 0], [0.1, 0.86, 0.12], [-0.05, 0.95, -0.15]]) {
+      const p = morphPoint(x, y, z, BONE.TRUNK, f), at = morphPoint(x, Math.min(y, LOWER.followTo), z, BONE.TRUNK, f)
+      const want = carried(x, z, p, at, coatFollow(y), 0), got = coatPose(x, y, z, a, STILL, f, piv)
+      for (let k = 0; k < 3; k++) near(got[k], want[k], 1e-12, `coatPose at ${[x, y, z]}`)
+    }
+    for (const cut of [0, SKIRT_CUT.pencil, SKIRT_CUT.midi, SKIRT_CUT.highWaisted]) {
+      for (const [x, y, z] of [[0, 0.8, 0.15], [0.1, 0.92, -0.12], [0, 0.56, 0.17], [-0.2, 0.66, 0]]) {
+        const g = garmentPoint(x, y, z, 0, 1, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, cut, true)
+        const p = morphPoint(g[0], g[1], g[2], BONE.TRUNK, f), at = morphPoint(g[0], Math.min(g[1], LOWER.followTo), g[2], BONE.TRUNK, f)
+        const [share, part] = skirtFollow(y, cut, true, [0, 0, 0])
+        const want = carried(x, z, p, at, share, part), got = skirtPose(x, y, z, cut, true, a, STILL, f, piv)
+        for (let k = 0; k < 3; k++) near(got[k], want[k], 1e-12, `cut ${cut} under a coat: skirtPose at ${[x, y, z]}`)
+      }
+    }
+  }
+  for (const posture of [0, 0.5, 1]) {
+    const s = shape({ posture })
+    const f = shapeFactors(s), piv = pivotsOf(f), a = walkAngles(0, 0, f), sc = scaleOf(f)
+    const coat = bodyTubes(3).find((t) => t.piece === PIECE.COAT)
+    assert.ok(coat)
+    const ring = coat.rings.reduce((lo, r) => (r.y < lo.y ? r : lo))
+    const hem = silhouetteRings(3, s, true).filter((r) => r.piece === PIECE.COAT).reduce((lo, r) => (r.y < lo.y ? r : lo))
+    const front = coatPose(0, ring.y, ring.rz ?? ring.rx, a, STILL, f, piv)
+    const back = coatPose(0, ring.y, -(ring.back ?? ring.rz ?? ring.rx), a, STILL, f, piv)
+    near(hem.right, front[2] * sc.xz, 1e-9, `posture ${posture}: the coat's hem's front`)
+    near(hem.left, back[2] * sc.xz, 1e-9, `posture ${posture}: the coat's hem's back`)
+  }
+  // The card's side view: a following skirt's hem, front and back, where the shader puts it standing (the trunk, and
+  // both legs alike standing, blended by the share; the shin's knee bent by followKnee of its own), at a slumped, the
+  // neutral and an upright posture. The card drew the trunk's alone, centimetres off at either end of the posture.
+  for (const cut of [SKIRT_CUT.pencil, SKIRT_CUT.pleated, SKIRT_CUT.midi, SKIRT_CUT.midiPencil, SKIRT_CUT.tulip]) {
+    for (const posture of [0, 0.5, 1]) {
+      const s = shape({ posture })
+      const f = shapeFactors(s), piv = pivotsOf(f), a = walkAngles(0, 0, f), sc = scaleOf(f)
+      const long = SKIRT_SHAPE[cut][3] > 1
+      const bent = { ...a, kneeL: a.kneeL * LOWER.followKnee, kneeR: a.kneeR * LOWER.followKnee }
+      const at = (z: number): [number, number] => {
+        const g = garmentPoint(0, LOWER.hem, z, 0, 1, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, cut, false)
+        const p = morphPoint(g[0], g[1], g[2], BONE.TRUNK, f)
+        const t = boneTransform(BONE.TRUNK, [...p], 1, a, STILL, piv), l = boneTransform(long ? BONE.SHIN_R : BONE.THIGH_R, [...p], 1, bent, STILL, piv)
+        const share = SKIRT_SHAPE[cut][7]
+        assert.deepEqual(skirtPose(0, LOWER.hem, z, cut, false, a, STILL, f, piv).map((c, k) => Math.abs(c - (t[k] + (l[k] - t[k]) * share)) < 1e-12), [true, true, true], 'skirtPose standing')
+        return [(t[1] + (l[1] - t[1]) * share) * sc.y, (t[2] + (l[2] - t[2]) * share) * sc.xz]
+      }
+      const front = at(0.17), back = at(-0.17)
+      const hem = silhouetteRings(3, s, true, cut).filter((r) => r.slot === SLOT.BOTTOM).reduce((lo, r) => (r.y < lo.y ? r : lo))
+      const what = `cut ${cut}, posture ${posture}`
+      near(hem.y, back[0], 1e-9, `${what}: the hem's height`)
+      near(hem.left, back[1], 1e-9, `${what}: the hem's back`)
+      near(hem.right, front[1], 1e-9, `${what}: the hem's front`)
+    }
+  }
+})
+
+// The skirt suit's skirt posed as the shader poses it, and the measures the next tests take of it.
+const SKIRT = (() => {
+  const tube = bodyTubes(3).find((t) => t.rings[0].slot === SLOT.BOTTOM && t.rings[0].bone === BONE.TRUNK && t.rings[0].bone1 === undefined && t.rings.length === 5)
+  assert.ok(tube, 'the skirt suit\'s skirt')
+  const N = tube.segments ?? 16
+  assert.equal(N, 16)
+  const mesh = humanoidMesh(3, true)
+  const legs: number[] = []
+  for (let v = 0; v < mesh.vertexCount; v++) if (mesh.rig[v * 3 + 1] === SLOT.LEGWEAR) legs.push(v)
+  assert.ok(legs.length > 100)
+  type Angles = ReturnType<typeof walkAngles>
+  type Factors = ReturnType<typeof shapeFactors>
+  type Piv = ReturnType<typeof pivotsOf>
+  // A tube's rings and segments on the near body, or the far body's (Loft.tube: from the lowest ring up, the far
+  // body keeping the rings marked far, the lowest and the highest).
+  type Tube = ReturnType<typeof bodyTubes>[number]
+  const lod = (t: Tube, far: boolean): { rings: Tube['rings']; n: number } => {
+    if (!far) return { rings: t.rings, n: t.segments ?? 16 }
+    const listed = t.rings[t.rings.length - 1].y < t.rings[0].y ? [...t.rings].reverse() : t.rings
+    return { rings: listed.filter((r, i) => r.far || i === 0 || i === listed.length - 1), n: t.farSegments }
+  }
+  // Each ring's points, from garmentPoint and the sliders to skirtPose (or the trunk alone, `follow` false).
+  const posed = (cut: number, coat: boolean, a: Angles, pose: BodyPose, f: Factors, piv: Piv, follow = true, far = false): number[][][] => {
+    const { rings, n } = lod(tube, far)
+    return rings.map((r) => Array.from({ length: n }, (_, j) => {
+      const th = (j / n) * Math.PI * 2, x = r.rx * Math.cos(th), z = (r.rz ?? r.rx) * Math.sin(th)
+      if (follow) return skirtPose(x, r.y, z, cut, coat, a, pose, f, piv)
+      const g = garmentPoint(x, r.y, z, 0, 1, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, cut, coat)
+      return boneTransform(BONE.TRUNK, morphPoint(g[0], g[1], g[2], BONE.TRUNK, f), 1, a, pose, piv)
+    }))
+  }
+  const leg = (v: number, a: Angles, pose: BodyPose, f: Factors, piv: Piv): number[] => {
+    const bone = mesh.rig[v * 3], b1 = mesh.skin[v * 2], w = mesh.skin[v * 2 + 1]
+    const p = morphPoint(mesh.position[v * 3], mesh.position[v * 3 + 1], mesh.position[v * 3 + 2], bone, f)
+    const p0 = boneTransform(bone, [...p], 1, a, pose, piv), p1 = boneTransform(b1, [...p], 1, a, pose, piv)
+    return p0.map((c, k) => c * w + p1[k] * (1 - w))
+  }
+  // The skirt's triangles, ring to ring, each with the half it lies in (front or back, right or left).
+  const triangles = (rings: number[][][]) => {
+    const out: { t: number[][]; front: boolean; right: boolean }[] = []
+    for (let r = 1; r < rings.length; r++) for (let j = 0; j < N; j++) {
+      const mid = ((j + 0.5) / N) * Math.PI * 2, j1 = (j + 1) % N
+      for (const t of [[rings[r - 1][j], rings[r - 1][j1], rings[r][j]], [rings[r - 1][j1], rings[r][j1], rings[r][j]]]) out.push({ t, front: Math.sin(mid) > 0, right: Math.cos(mid) > 0 })
+    }
+    return out
+  }
+  // How far a leg comes through: a line through each leg vertex along z (and along x) meets the skirt's front and
+  // back (right and left) halves; a vertex past the half on its side is out by that much. A leg below the hem where
+  // it stands meets no cloth and is not counted.
+  const through = (rings: number[][][], points: number[][]): number => {
+    const tris = triangles(rings)
+    let worst = 0
+    for (const q of points) for (const ax of [2, 0]) {
+      const u = ax === 2 ? 0 : 2
+      let hi = Infinity, lo = -Infinity
+      for (const { t: [A, B, C], front, right } of tris) {
+        const d = (B[1] - C[1]) * (A[u] - C[u]) + (C[u] - B[u]) * (A[1] - C[1])
+        if (Math.abs(d) < 1e-14) continue
+        const l0 = ((B[1] - C[1]) * (q[u] - C[u]) + (C[u] - B[u]) * (q[1] - C[1])) / d
+        const l1 = ((C[1] - A[1]) * (q[u] - C[u]) + (A[u] - C[u]) * (q[1] - C[1])) / d
+        if (l0 < -1e-9 || l1 < -1e-9 || 1 - l0 - l1 < -1e-9) continue
+        const h = l0 * A[ax] + l1 * B[ax] + (1 - l0 - l1) * C[ax]
+        if (ax === 2 ? front : right) hi = Math.min(hi, h); else lo = Math.max(lo, h)
+      }
+      worst = Math.max(worst, q[ax] - hi, lo - q[ax])
+    }
+    return worst
+  }
+  // The coat's rings posed as the shader poses them: the ones the trunk alone turns by coatPose (or the trunk alone,
+  // `follow` false), the rest by their bones.
+  const coatTube = bodyTubes(3).find((t) => t.piece === PIECE.COAT)
+  assert.ok(coatTube, 'the coat')
+  assert.equal(coatTube.segments, N)
+  const coat = (a: Angles, pose: BodyPose, f: Factors, piv: Piv, follow = true, far = false): number[][][] => {
+    const { rings, n } = lod(coatTube, far)
+    return rings.map((r) => Array.from({ length: n }, (_, j) => {
+      const th = (j / n) * Math.PI * 2, sn = Math.sin(th)
+      const x = r.rx * Math.cos(th), z = (sn >= 0 ? r.rz ?? r.rx : r.back ?? r.rz ?? r.rx) * sn
+      if (follow && r.bone === BONE.TRUNK && r.bone1 === undefined) return coatPose(x, r.y, z, a, pose, f, piv)
+      const p = morphPoint(x, r.y, z, r.bone, f)
+      const t = boneTransform(r.bone, [...p], 1, a, pose, piv)
+      if (r.bone1 === undefined) return t
+      const u = boneTransform(r.bone1, [...p], 1, a, pose, piv), w = r.w ?? 1
+      return t.map((c, k) => c * w + u[k] * (1 - w))
+    }))
+  }
+  // The coat's rings the trunk alone turns, from its hem up to its waist (its panels below the waist).
+  const panelRings = coatTube.rings.map((r, i) => [r, i] as const).filter(([r]) => r.bone === BONE.TRUNK && r.bone1 === undefined).sort((p, q) => p[0].y - q[0].y).map(([, i]) => i)
+  assert.deepEqual(panelRings.map((i) => coatTube.rings[i].y), [0.56, 0.7, 0.86, 1], 'the coat\'s hem, followTo, the ring between and its waist ring')
+  // A shell's triangles as the loft draws them, each corner as [ring, column] of `rings` (the indices of the rings to
+  // join, all of them by default): the rings from the lowest up (the skirt's are listed from the top down, the coat's
+  // from the bottom up), each quad split from the lower ring's column j to the upper ring's j + 1 (Loft.tube).
+  const corners = (shell: number[][][], rings = shell.map((_, i) => i)): number[][][] => {
+    const up = shell[rings[0]][0][1] > shell[rings[rings.length - 1]][0][1] ? [...rings].reverse() : rings
+    const out: number[][][] = [], n = shell[0].length
+    for (let k = 1; k < up.length; k++) for (let j = 0; j < n; j++) {
+      const lo = up[k - 1], hi = up[k], j1 = (j + 1) % n
+      out.push([[lo, j], [hi, j], [hi, j1]], [[lo, j], [hi, j1], [lo, j1]])
+    }
+    return out
+  }
+  const drawn = (shell: number[][][]): number[][][] => corners(shell).map((t) => t.map(([r, j]) => shell[r][j]))
+  {
+    // As humanoidMesh draws the coat: its first ring laid is its lowest, and its first quad is [j, j + N, j + N + 1], [j, j + N + 1, j + 1].
+    let c0 = -1
+    for (let v = 0; v < mesh.vertexCount && c0 < 0; v++) if (mesh.rig[v * 3 + 2] === PIECE.COAT) c0 = v
+    let t0 = -1
+    for (let i = 0; i < mesh.index.length && t0 < 0; i += 3) if (mesh.index[i] === c0) t0 = i
+    assert.deepEqual([...mesh.index.slice(t0, t0 + 6)], [c0, c0 + N, c0 + N + 1, c0, c0 + N + 1, c0 + 1], 'the loft\'s split')
+    assert.ok(mesh.position[c0 * 3 + 1] < mesh.position[(c0 + N) * 3 + 1], 'laid from the lowest ring up')
+  }
+  // Points over every triangle of a shell, on a barycentric grid of `k` to an edge: a panel can cut a corner its rings
+  // and its edges stay inside.
+  const dense = (rings: number[][][], k = 4): number[][] => {
+    const out: number[][] = []
+    for (const [A, B, C] of drawn(rings)) {
+      for (let i = 0; i <= k; i++) for (let m = 0; m <= k - i; m++) {
+        const u = i / k, v = m / k, w = 1 - u - v
+        out.push([0, 1, 2].map((c) => A[c] * u + B[c] * v + C[c] * w))
+      }
+    }
+    return out
+  }
+  // How far each point sits outside a shell (rings in order along it): along the horizontal ray from the shell's axis
+  // (its rings' centres, taken at the point's height) out through the point, past the furthest place the ray crosses
+  // the shell; Infinity where the ray crosses nothing (below a hem, or above the shell). Lines through the point in a
+  // few fixed directions overstated a point near the edge of the shell's outline, where a line grazes its far side,
+  // and under a lifted hem, where a line crosses one side of an open section.
+  const outsideEach = (rings: number[][][], points: number[][]): number[] => {
+    const centres = rings.map((R) => [0, 1, 2].map((k) => R.reduce((sum, p) => sum + p[k], 0) / R.length)).sort((p, q) => p[1] - q[1])
+    const tris = drawn(rings).map((t) => ({ t, lo: Math.min(t[0][1], t[1][1], t[2][1]), hi: Math.max(t[0][1], t[1][1], t[2][1]) }))
+    return points.map((q) => {
+      let i = 0
+      while (i < centres.length - 2 && centres[i + 1][1] < q[1]) i++
+      const lo = centres[i], hi = centres[i + 1], s = Math.min(1, Math.max(0, (q[1] - lo[1]) / (hi[1] - lo[1])))
+      const cx = lo[0] + (hi[0] - lo[0]) * s, cz = lo[2] + (hi[2] - lo[2]) * s
+      const reach = Math.hypot(q[0] - cx, q[2] - cz)
+      if (reach < 1e-6) return 0
+      const dx = (q[0] - cx) / reach, dz = (q[2] - cz) / reach
+      let far = -Infinity
+      for (const { t: [A, B, C], lo: y0, hi: y1 } of tris) {
+        if (q[1] < y0 - 1e-9 || q[1] > y1 + 1e-9) continue
+        // The ray (cx, q.y, cz) + d·(dx, 0, dz) against the triangle, in its plane's coordinates.
+        const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]]
+        const px = -dz * e2[1], py = dz * e2[0] - dx * e2[2], pz = dx * e2[1]
+        const det = e1[0] * px + e1[1] * py + e1[2] * pz
+        if (Math.abs(det) < 1e-14) continue
+        const sx = cx - A[0], sy = q[1] - A[1], sz = cz - A[2]
+        const u = (sx * px + sy * py + sz * pz) / det
+        if (u < -1e-9 || u > 1 + 1e-9) continue
+        const qx = sy * e1[2] - sz * e1[1], qy = sz * e1[0] - sx * e1[2], qz = sx * e1[1] - sy * e1[0]
+        const v = (dx * qx + dz * qz) / det
+        if (v < -1e-9 || u + v > 1 + 1e-9) continue
+        const d = (e2[0] * qx + e2[1] * qy + e2[2] * qz) / det
+        if (d > 0) far = Math.max(far, d)
+      }
+      return far === -Infinity ? Infinity : Math.max(0, reach - far)
+    })
+  }
+  const outside = (rings: number[][][], points: number[][]): number => outsideEach(rings, points).reduce((m, d) => (d < Infinity && d > m ? d : m), 0)
+  // Triangles of a shell whose normal turned against the same triangle's in `rest` (the material draws the front face
+  // only, so one would leave a hole), between the rings `rings` lists (all of them by default).
+  const insideOut = (R: number[][][], rest: number[][][], rings = R.map((_, i) => i)): string[] => {
+    const normal = (a: number[], b: number[], c: number[]) => {
+      const u = b.map((v, k) => v - a[k]), w = c.map((v, k) => v - a[k])
+      return [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    }
+    const bad: string[] = []
+    for (const [p0, p1, p2] of corners(rest, rings)) {
+      const m = normal(R[p0[0]][p0[1]], R[p1[0]][p1[1]], R[p2[0]][p2[1]]), t = normal(rest[p0[0]][p0[1]], rest[p1[0]][p1[1]], rest[p2[0]][p2[1]])
+      if (m[0] * t[0] + m[1] * t[1] + m[2] * t[2] <= 0) bad.push(`rings ${p0[0]}-${p1[0]}, column ${p0[1]}`)
+    }
+    return bad
+  }
+  // The most any point of a shell moves in a tenth of a 60 Hz frame and in a frame at a brisk walk, over a stride.
+  const motion = (shell: (a: Angles) => number[][][], f: Factors): { fine: number; perFrame: number } => {
+    const speed = 1.4, step = (Math.PI * 2 * speed) / WALK.cycle / 600
+    const track: number[][][][] = []
+    const steps = Math.ceil((Math.PI * 2) / step) + 10
+    for (let i = 0; i <= steps; i++) track.push(shell(walkAngles(i * step, speed, f)))
+    let fine = 0, perFrame = 0
+    for (let i = 1; i <= steps; i++) for (let r = 0; r < track[i].length; r++) for (let j = 0; j < N; j++) {
+      const p = track[i][r][j], q = track[i - 1][r][j]
+      fine = Math.max(fine, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]))
+      if (i >= 10) { const o = track[i - 10][r][j]; perFrame = Math.max(perFrame, Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2])) }
+    }
+    return { fine, perFrame }
+  }
+  return { tube, N, legs, posed, leg, through, coat, panelRings, dense, outsideEach, outside, insideOut, motion }
+})()
+
+test('a cut skirt keeps the legs inside it on the CPU (skirtPose, the shader\'s skin): at a brisk walk, slumped, neutral, long-legged or short, every cut within 1 cm and the midi pencil\'s narrow hem within 2, measured where each leg vertex stands; at a desk lean, a push to either side, forward and back, within half a centimetre; and its front never tilts further than the thigh swung under it', () => {
+  const { N, legs, posed, leg, through } = SKIRT
+  const walk = (cut: number, s: BodyShape) => {
+    const f = shapeFactors(s), piv = pivotsOf(f)
+    let worst = 0, tilt = 0, thigh = 0
+    for (let i = 0; i < 36; i++) {
+      const a = walkAngles((i / 36) * Math.PI * 2, 1.4, f)
+      thigh = Math.max(thigh, -Math.min(a.hipL, a.hipR))
+      const rings = posed(cut, false, a, STILL, f, piv)
+      worst = Math.max(worst, through(rings, legs.map((v) => leg(v, a, STILL, f, piv))))
+      rings.sort((p, q) => p[N / 4][1] - q[N / 4][1])
+      const hem = rings[0][N / 4], above = rings[1][N / 4]
+      tilt = Math.max(tilt, Math.atan2(Math.abs(hem[2] - above[2]), Math.abs(above[1] - hem[1])))
+    }
+    return { worst, tilt, thigh }
+  }
+  for (let cut = 1; cut < 16; cut++) {
+    const bound = cut === SKIRT_CUT.midiPencil ? 0.02 : 0.01
+    for (const s of [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ legs: 1 }), shape({ legs: 0, height: 1.55 })]) {
+      const r = walk(cut, s)
+      assert.ok(r.worst <= bound, `cut ${cut} at a walk (${JSON.stringify(s)}): a leg ${(r.worst * 100).toFixed(1)} cm through`)
+      assert.ok(r.tilt <= r.thigh + 0.02, `cut ${cut}: the hem's front tilts ${r.tilt.toFixed(3)} rad, the thigh ${r.thigh.toFixed(3)}`)
+    }
+    for (const s of [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ posture: 1 })]) {
+      const f = shapeFactors(s), piv = pivotsOf(f), a = walkAngles(0, 0, f)
+      for (const pose of [{ tilt: 0, bend: 0.14, fall: Math.PI / 2 }, { tilt: 0, bend: 0.25, fall: Math.PI / 2 }, { tilt: 0, bend: 0.25, fall: -Math.PI / 2 }, { tilt: 0, bend: 0.25, fall: 0 }, { tilt: 0, bend: -0.25, fall: 0 }]) {
+        const worst = through(posed(cut, false, a, pose, f, piv), legs.map((v) => leg(v, a, pose, f, piv)))
+        assert.ok(worst <= 0.005, `cut ${cut}, posture ${s.posture}, bent ${JSON.stringify(pose)}: a leg ${(worst * 100).toFixed(1)} cm through`)
+      }
+    }
+  }
+})
+
+test('a cut skirt moves smoothly through the stride and never turns inside out (skirtPose): the hem hands over from one leg to the other without a jump, no point moves further in a 60 Hz frame at a brisk walk than 4.5 cm (a midi\'s hem jumped 12 to 17 cm once a step), and no triangle faces in against the trunk\'s own pose', () => {
+  const { N, posed } = SKIRT
+  const speed = 1.4, frame = (Math.PI * 2 * speed) / WALK.cycle / 60, step = frame / 10
+  for (let cut = 1; cut < 16; cut++) {
+    for (const s of [SHAPE_NEUTRAL, shape({ legs: 0, height: 1.55 })]) {
+      const f = shapeFactors(s), piv = pivotsOf(f)
+      const track: number[][][][] = []
+      const steps = Math.ceil((Math.PI * 2) / step) + 10
+      for (let i = 0; i <= steps; i++) track.push(posed(cut, false, walkAngles(i * step, speed, f), STILL, f, piv))
+      let fine = 0, perFrame = 0
+      for (let i = 1; i <= steps; i++) for (let r = 0; r < track[i].length; r++) for (let j = 0; j < N; j++) {
+        const p = track[i][r][j], q = track[i - 1][r][j]
+        fine = Math.max(fine, Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]))
+        if (i >= 10) { const o = track[i - 10][r][j]; perFrame = Math.max(perFrame, Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2])) }
+      }
+      const what = `cut ${cut} (${JSON.stringify(s)})`
+      assert.ok(fine <= 0.006, `${what}: ${(fine * 100).toFixed(2)} cm in a tenth of a frame`)
+      assert.ok(perFrame <= 0.045, `${what}: ${(perFrame * 100).toFixed(1)} cm in a frame`)
+    }
+    // Inside out: a triangle whose normal turned against the same triangle's on the trunk alone (the material draws
+    // the front face only, so it would leave a hole), at 72 phases of the walk, on four bodies.
+    const normal = (a: number[], b: number[], c: number[]) => {
+      const u = b.map((v, k) => v - a[k]), w = c.map((v, k) => v - a[k])
+      return [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    }
+    for (const s of [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ legs: 1 }), shape({ legs: 0, height: 1.55 })]) {
+      const f = shapeFactors(s), piv = pivotsOf(f)
+      for (let i = 0; i < 72; i++) {
+        const a = walkAngles((i / 72) * Math.PI * 2, speed, f)
+        const R = posed(cut, false, a, STILL, f, piv), T = posed(cut, false, a, STILL, f, piv, false)
+        for (let r = 1; r < R.length; r++) for (let j = 0; j < N; j++) {
+          const j1 = (j + 1) % N
+          for (const [p0, p1, p2] of [[[r - 1, j], [r - 1, j1], [r, j]], [[r - 1, j1], [r, j1], [r, j]]]) {
+            const m = normal(R[p0[0]][p0[1]], R[p1[0]][p1[1]], R[p2[0]][p2[1]]), t = normal(T[p0[0]][p0[1]], T[p1[0]][p1[1]], T[p2[0]][p2[1]])
+            assert.ok(m[0] * t[0] + m[1] * t[1] + m[2] * t[2] > 0, `cut ${cut} (${JSON.stringify(s)}), phase ${i}/72: the triangle at ring ${r}, column ${j} faces in`)
+          }
+        }
+      }
+    }
+  }
+})
+
+test('a coat\'s panels below the waist hang from it and follow the legs (coatFollow, coatPose; crowdBody.ts bodyVertex): every body\'s trunk and legs between the coat\'s hem and its waist stay inside the coat, within 1 cm at a brisk walk and half a centimetre at a desk lean along the ray from the coat\'s axis (hung from the trunk alone, a stepping thigh came 12 to 18 cm out through its front; carried as a skirt is, 1.5 cm); no band of a panel tilts further than the thigh beyond its own flare (the skirt\'s rule stood its 0.86 to 0.7 band out in a ledge, 1.2 rad against the thigh\'s 0.67); and the panels move smoothly and never turn inside out', () => {
+  const { N, coat, panelRings, outside, insideOut, motion } = SKIRT
+  const desk = [{ tilt: 0, bend: 0.06, fall: 0 }, { tilt: 0, bend: 0.17, fall: 0 }, { tilt: 0, bend: 0.14, fall: Math.PI / 2 }, { tilt: 0, bend: 0.14, fall: -Math.PI / 2 }, { tilt: 0, bend: 0.14, fall: Math.PI }]
+  const bodies = [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ posture: 1 }), shape({ mass: 1 }), shape({ legs: 0, height: 1.55 })]
+  for (const variant of [0, 2, 3]) {
+    const mesh = humanoidMesh(variant, true), body: number[] = []
+    for (let v = 0; v < mesh.vertexCount; v++) {
+      const bone = mesh.rig[v * 3], slot = mesh.rig[v * 3 + 1], y = mesh.position[v * 3 + 1]
+      if (mesh.rig[v * 3 + 2] !== PIECE.NONE || bone > BONE.FOOT_R || y < 0.5 || y > 1) continue
+      if (slot === SLOT.BOTTOM && bone === BONE.TRUNK && mesh.skin[v * 2] === BONE.TRUNK) continue // the skirt: the next test
+      body.push(v)
+    }
+    assert.ok(body.length > 100, `body ${variant}: the trunk and legs under the coat`)
+    const posed = (a: ReturnType<typeof walkAngles>, pose: BodyPose, f: ReturnType<typeof shapeFactors>, piv: ReturnType<typeof pivotsOf>) => body.map((v) => {
+      const bone = mesh.rig[v * 3], b1 = mesh.skin[v * 2], w = mesh.skin[v * 2 + 1]
+      const p = morphPoint(mesh.position[v * 3], mesh.position[v * 3 + 1], mesh.position[v * 3 + 2], bone, f)
+      const p0 = boneTransform(bone, [...p], 1, a, pose, piv), p1 = boneTransform(b1, [...p], 1, a, pose, piv)
+      return p0.map((c, k) => c * w + p1[k] * (1 - w))
+    })
+    for (const s of bodies) {
+      const f = shapeFactors(s), piv = pivotsOf(f)
+      let walk = 0, lean = 0
+      for (let i = 0; i < 18; i++) {
+        const a = walkAngles((i / 18) * Math.PI * 2, 1.4, f)
+        walk = Math.max(walk, outside(coat(a, STILL, f, piv), posed(a, STILL, f, piv)))
+      }
+      const a0 = walkAngles(0, 0, f)
+      for (const pose of desk) lean = Math.max(lean, outside(coat(a0, pose, f, piv), posed(a0, pose, f, piv)))
+      const what = `body ${variant} (${JSON.stringify(s)})`
+      assert.ok(walk <= 0.01, `${what} at a walk: ${(walk * 100).toFixed(1)} cm out of the coat`)
+      assert.ok(lean <= 0.005, `${what} at a desk lean: ${(lean * 100).toFixed(1)} cm out of the coat`)
+    }
+  }
+  // The tilt: each band between the panels' rings, at the front and the back centre, against the furthest the thigh
+  // swings over a stride; the band's own slope standing (the coat flares to its hem) and 0.06 rad besides.
+  for (const s of bodies) {
+    const f = shapeFactors(s), piv = pivotsOf(f)
+    const slope = (C: number[][][], b: number, j: number) => {
+      const lo = C[panelRings[b]][j], hi = C[panelRings[b + 1]][j]
+      return Math.atan2(Math.abs(hi[2] - lo[2]), hi[1] - lo[1])
+    }
+    const rest = coat(walkAngles(0, 0, f), STILL, f, piv)
+    let thigh = 0
+    const tilt = [0, 0, 0], flare = [0, 0, 0]
+    for (let i = 0; i < 72; i++) {
+      const a = walkAngles((i / 72) * Math.PI * 2, 1.4, f), C = coat(a, STILL, f, piv)
+      thigh = Math.max(thigh, Math.abs(a.hipL), Math.abs(a.hipR))
+      for (const j of [N / 4, (3 * N) / 4]) for (let b = 0; b < 3; b++) { tilt[b] = Math.max(tilt[b], slope(C, b, j)); flare[b] = Math.max(flare[b], slope(rest, b, j)) }
+    }
+    for (let b = 0; b < 3; b++) {
+      const band = `${[0.56, 0.7, 0.86][b]} to ${[0.7, 0.86, 1][b]}`
+      assert.ok(tilt[b] <= thigh + flare[b] + 0.06, `${JSON.stringify(s)}: the coat's ${band} band tilts ${tilt[b].toFixed(2)} rad, the thigh ${thigh.toFixed(2)}, its flare ${flare[b].toFixed(2)}`)
+    }
+  }
+  // Smooth: no point of the coat jumps as the stride hands its front and back from one leg to the other; and no
+  // triangle of the panels faces in against the coat hung from the trunk alone, at 72 phases of the walk.
+  for (const s of [SHAPE_NEUTRAL, shape({ legs: 0, height: 1.55 })]) {
+    const f = shapeFactors(s), piv = pivotsOf(f)
+    const m = motion((a) => coat(a, STILL, f, piv), f)
+    assert.ok(m.fine <= 0.006, `${JSON.stringify(s)}: the coat ${(m.fine * 100).toFixed(2)} cm in a tenth of a frame`)
+    assert.ok(m.perFrame <= 0.045, `${JSON.stringify(s)}: the coat ${(m.perFrame * 100).toFixed(1)} cm in a frame`)
+  }
+  for (const s of bodies) {
+    const f = shapeFactors(s), piv = pivotsOf(f)
+    for (let i = 0; i < 72; i++) {
+      const a = walkAngles((i / 72) * Math.PI * 2, 1.4, f)
+      assert.deepEqual(insideOut(coat(a, STILL, f, piv), coat(a, STILL, f, piv, false), panelRings), [], `${JSON.stringify(s)}, phase ${i}/72: the coat's panels face in`)
+    }
+  }
+})
+
+test('under a coat every skirt stays inside the coat as both follow the legs (skirtFollow, skirtPose, coatPose): sampled over every triangle of the skirt, within 1 cm at a brisk walk and at a desk lean; the straight skirt follows too (hung from the trunk alone under a following coat, its back came 6 to 9 cm out at a desk lean; following a few centimetres lower than the coat, as a skirt does, up to 1.6 cm out); a midi keeps the legs below the coat inside it; and every skirt under a coat moves smoothly and never turns inside out', () => {
+  const { legs, leg, posed, coat, dense, outsideEach, outside, insideOut, motion } = SKIRT
+  const desk = [{ tilt: 0, bend: 0.06, fall: 0 }, { tilt: 0, bend: 0.17, fall: 0 }, { tilt: 0, bend: 0.14, fall: Math.PI / 2 }, { tilt: 0, bend: 0.14, fall: -Math.PI / 2 }, { tilt: 0, bend: 0.14, fall: Math.PI }]
+  for (let cut = 0; cut < 16; cut++) {
+    const long = SKIRT_SHAPE[cut][3] > 1
+    for (const s of [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ mass: 1 }), shape({ legs: 0, height: 1.55 })]) {
+      const f = shapeFactors(s), piv = pivotsOf(f)
+      let walk = 0, lean = 0, seen = 0
+      for (let i = 0; i < 18; i++) {
+        const a = walkAngles((i / 18) * Math.PI * 2, 1.4, f)
+        const S = posed(cut, true, a, STILL, f, piv), C = coat(a, STILL, f, piv)
+        walk = Math.max(walk, outside(C, dense(S)))
+        // A leg is covered where it sits inside the coat or the skirt; below both hems it is meant to show.
+        if (long) {
+          const L = legs.map((v) => leg(v, a, STILL, f, piv)), byCoat = outsideEach(C, L), bySkirt = outsideEach(S, L)
+          for (let k = 0; k < L.length; k++) { const d = Math.min(byCoat[k], bySkirt[k]); if (d < Infinity) seen = Math.max(seen, d) }
+        }
+      }
+      const a0 = walkAngles(0, 0, f)
+      for (const pose of desk) lean = Math.max(lean, outside(coat(a0, pose, f, piv), dense(posed(cut, true, a0, pose, f, piv))))
+      const what = `cut ${cut} (${JSON.stringify(s)})`
+      assert.ok(walk <= 0.01, `${what} at a walk: the skirt ${(walk * 100).toFixed(1)} cm out of the coat`)
+      assert.ok(lean <= 0.01, `${what} at a desk lean: the skirt ${(lean * 100).toFixed(1)} cm out of the coat`)
+      assert.ok(seen <= 0.01, `${what}: a leg ${(seen * 100).toFixed(1)} cm out of both skirt and coat`)
+    }
+    for (const s of [SHAPE_NEUTRAL, shape({ legs: 0, height: 1.55 })]) {
+      const f = shapeFactors(s), piv = pivotsOf(f)
+      const m = motion((a) => posed(cut, true, a, STILL, f, piv), f)
+      assert.ok(m.fine <= 0.006 && m.perFrame <= 0.045, `cut ${cut} under a coat (${JSON.stringify(s)}): ${(m.fine * 100).toFixed(2)} cm in a tenth of a frame, ${(m.perFrame * 100).toFixed(1)} in a frame`)
+      for (let i = 0; i < 72; i++) {
+        const a = walkAngles((i / 72) * Math.PI * 2, 1.4, f)
+        assert.deepEqual(insideOut(posed(cut, true, a, STILL, f, piv), posed(cut, true, a, STILL, f, piv, false)), [], `cut ${cut} under a coat (${JSON.stringify(s)}), phase ${i}/72: faces in`)
+      }
+    }
+  }
+})
+
+test('the far body\'s coarser coat follows the legs as the near body\'s does (coatPose and skirtPose on its rings and segments): at a brisk walk its trunk and legs stay within 1 cm of it and every skirt under it within 2 cm, sampled over every triangle', () => {
+  const { posed, coat, dense, outside } = SKIRT
+  const bodies = [0, 3].map((variant) => {
+    const mesh = humanoidMesh(variant, false), vs: number[] = []
+    for (let v = 0; v < mesh.vertexCount; v++) {
+      const bone = mesh.rig[v * 3], slot = mesh.rig[v * 3 + 1], y = mesh.position[v * 3 + 1]
+      if (mesh.rig[v * 3 + 2] !== PIECE.NONE || bone > BONE.FOOT_R || y < 0.5 || y > 1) continue
+      if (slot === SLOT.BOTTOM && bone === BONE.TRUNK && mesh.skin[v * 2] === BONE.TRUNK) continue
+      vs.push(v)
+    }
+    assert.ok(vs.length > 30, `far body ${variant}: the trunk and legs under the coat`)
+    return { mesh, vs }
+  })
+  for (const s of [SHAPE_NEUTRAL, shape({ posture: 0 }), shape({ mass: 1 }), shape({ legs: 0, height: 1.55 })]) {
+    const f = shapeFactors(s), piv = pivotsOf(f)
+    let body = 0, skirts = 0, at = ''
+    for (let i = 0; i < 36; i++) {
+      const a = walkAngles((i / 36) * Math.PI * 2, 1.4, f), C = coat(a, STILL, f, piv, true, true)
+      assert.equal(C[0].length, 8, 'the far coat\'s segments')
+      for (const { mesh, vs } of bodies) {
+        body = Math.max(body, outside(C, vs.map((v) => {
+          const bone = mesh.rig[v * 3], b1 = mesh.skin[v * 2], w = mesh.skin[v * 2 + 1]
+          const p = morphPoint(mesh.position[v * 3], mesh.position[v * 3 + 1], mesh.position[v * 3 + 2], bone, f)
+          const p0 = boneTransform(bone, [...p], 1, a, STILL, piv), p1 = boneTransform(b1, [...p], 1, a, STILL, piv)
+          return p0.map((c, k) => c * w + p1[k] * (1 - w))
+        })))
+      }
+      for (let cut = 0; cut < 16; cut++) {
+        const d = outside(C, dense(posed(cut, true, a, STILL, f, piv, true, true), 6))
+        if (d > skirts) { skirts = d; at = `cut ${cut}, phase ${i}/36` }
+      }
+    }
+    assert.ok(body <= 0.01, `${JSON.stringify(s)}: the far body ${(body * 100).toFixed(1)} cm out of its coat`)
+    assert.ok(skirts <= 0.02, `${JSON.stringify(s)}: a far skirt ${(skirts * 100).toFixed(1)} cm out of its coat (${at})`)
+  }
 })
 
 test('GARMENT, the coat and the scarf: the jacket\'s lines sit on the loft (the V closes on the chest and opens at the trunk\'s top ring, the cuff line cuts every sleeve, a band stands above the collar line); the coat is a shell outside the trunk on both bodies; the scarf wraps the neck, with a tail down the chest on the near body alone', () => {
