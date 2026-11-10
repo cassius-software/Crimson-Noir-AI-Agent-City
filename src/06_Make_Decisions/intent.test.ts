@@ -471,13 +471,15 @@ test('markdown brief: no questions, nothing mapped, and the unsupported are each
   assert.deepEqual(rain.unmapped, ['Weather: the city has one clear late-September day so far'])
   assert.match(rain.markdown, /- Weather: the city has one clear late-September day so far — would touch `01_Initialize_World\/solar\.ts`/)
   // Going indoors: the workplaces (01_Initialize_World/interiors.ts), the shops and the homes (properties.ts) are open, in both generated maps; nothing else is.
+  // An owner furnishes a home with B (the home card's furnishing view, on homeLayout.ts's floor plan).
   const home = new FiveWhys('go inside my house').brief()
-  assert.deepEqual(home.unmapped, ['Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops and seven homes in each (walk into a shop and press B to browse; a home\'s deed is sold at Lintel & Lumen or on its doorstep); every other building is a solid shell for now'])
+  assert.deepEqual(home.unmapped, ['Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops and seven homes in each (walk into a shop and press B to browse; a home\'s deed is sold at Lintel & Lumen or on its doorstep, and furnish a home you own with B); every other building is a solid shell for now'])
   assert.match(home.markdown, /## Already in the city\n- Going indoors: [^\n]* — `01_Initialize_World\/interiors\.ts`/, 'the homes are in the city now: Sloane points the way')
   assert.match(home.markdown, /`01_Initialize_World\/properties\.ts`/, 'the homes are among the indoors modules')
-  // Shopping: the five shops (01_Initialize_World/storefronts.ts) sell for credits, the homes' deeds among it all; Sloane points the way, never buys.
+  assert.match(home.markdown, /`02_Define_The_Rules\/homeLayout\.ts`/, 'and the furnishing rules')
+  // Shopping: the five shops (01_Initialize_World/storefronts.ts) sell for credits, the design house's furniture and the homes' deeds among it all; Sloane points the way, never buys.
   const coat = new FiveWhys('buy a coat with my credits').brief()
-  assert.deepEqual(coat.unmapped, ['Shopping: five shops in the city and five in the lakefront metropolis sell clothes, accessories and the seven homes\' deeds for civic credits; walk into one and press B to browse (Sloane cannot buy for you)'])
+  assert.deepEqual(coat.unmapped, ['Shopping: five shops in the city and five in the lakefront metropolis sell clothes, accessories, furniture and the seven homes\' deeds for civic credits; walk into one and press B to browse (Sloane cannot buy for you)'])
   const empty = ask('pizza', 'nope').brief()
   assert.deepEqual(empty.plan.map((s) => s.control), ['dispatch'], '"nope" maps to nothing, so the scouts stay')
   const dropped = ask('people', 'dunno')

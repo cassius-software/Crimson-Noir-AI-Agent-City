@@ -10,11 +10,14 @@
  * - every pole is in exactly one compound, every compound is a sensor on the fixed body, and the solid world (ground
  *   and buildings) answers every solid query exactly as before;
  * - the city's world holds a hundred tiles in place of 4,599 colliders.
+ * It also holds a home's slot of furniture (setHome, enableHome): new boxes are built off, a box sent again keeps its
+ * very collider as it was (a piece that stayed put stays solid through an edit), the others go, and an empty set takes
+ * the slot's body away.
  * What breaks if it is removed? The packing could drop, move or resize a pole, or make one solid, and nothing would say.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { CITY, POLES, generateCity, streetFurniture, type Furniture } from '../01_Initialize_World/city.ts'
+import { CITY, POLES, generateCity, streetFurniture, type Box, type Furniture } from '../01_Initialize_World/city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { FURNITURE_TILE, GROUND_COLLIDERS, Physics, RAPIER } from './physics.ts'
 
@@ -195,4 +198,47 @@ test('the solid world answers every solid query exactly as it did with one senso
     // castRay(…, true): ground, buildings, seawall; no vehicle, person or furniture.
     assert.equal(packed.castRay(ox, oy, oz, dx, dy, dz, 200, undefined, true), reference.castRay(ox, oy, oz, dx, dy, dz, 200, undefined, true), `ray ${i}`)
   }
+})
+
+test("a home's slot: new boxes are built off, a box sent again keeps its very collider (on stays on), the rest go, and an empty set takes the body away", async () => {
+  const p = await Physics.create([], NONE)
+  const colliders = p.world.colliders.len(), bodies = p.world.bodies.len()
+  const before = new Set<number>()
+  p.world.colliders.forEach((c) => before.add(c.handle))
+  /** The slots' colliders: handle, centre x and whether on, by centre x. */
+  const slots = () => {
+    const out: { handle: number; x: number; on: boolean }[] = []
+    p.world.colliders.forEach((c) => { if (!before.has(c.handle)) out.push({ handle: c.handle, x: c.translation().x, on: c.isEnabled() }) })
+    return out.sort((a, b) => a.x - b.x || a.handle - b.handle)
+  }
+  const a: Box = [1, 0, 1, 2, 1, 2], b: Box = [3, 0, 3, 4, 1, 4], c: Box = [5, 0, 5, 6, 1, 6]
+  assert.deepEqual(p.setHome(0, [a, b]), [a, b], 'both new: both off')
+  assert.deepEqual(slots().map((s) => [s.x, s.on]), [[1.5, false], [3.5, false]])
+  assert.equal(p.world.bodies.len(), bodies + 1, 'one fixed body for the slot')
+  p.enableHome(0, true)
+  const kept = slots()[1]
+  assert.ok(kept.on)
+  // b again with c: b's own collider, still on; a's gone; c built off. Only c is reported off.
+  assert.deepEqual(p.setHome(0, [c, b]), [c])
+  assert.deepEqual(slots(), [{ ...kept }, { handle: slots()[1].handle, x: 5.5, on: false }])
+  assert.equal(p.world.bodies.len(), bodies + 1, 'the same body')
+  // b twice: one keeps b's collider, the other is new and off; c goes.
+  assert.deepEqual(p.setHome(0, [b, b]), [b])
+  assert.deepEqual(slots().map((s) => [s.x, s.on]), [[3.5, true], [3.5, false]])
+  assert.ok(slots().some((s) => s.handle === kept.handle && s.on))
+  // All off, then the same set: kept as it is, both reported off.
+  p.enableHome(0, false)
+  assert.deepEqual(p.setHome(0, [b, b]), [b, b])
+  assert.ok(slots().some((s) => s.handle === kept.handle && !s.on))
+  // Another slot is its own; malformed boxes are no collider.
+  assert.deepEqual(p.setHome(1, [a, [9, 0, 9, 9, 1, 10], [Number.NaN, 0, 0, 1, 1, 1]]), [a])
+  assert.equal(p.world.bodies.len(), bodies + 2)
+  assert.equal(p.world.colliders.len(), colliders + 3)
+  // Empty: the slot's body and every collider on it go at once; the other slot stays.
+  assert.deepEqual(p.setHome(0, []), [])
+  assert.deepEqual(slots().map((s) => [s.x, s.on]), [[1.5, false]])
+  assert.equal(p.world.bodies.len(), bodies + 1)
+  p.enableHome(0, true)
+  assert.deepEqual(p.setHome(1, [[9, 0, 9, 9, 1, 10]]), [], 'nothing sound: nothing left')
+  assert.deepEqual({ colliders: p.world.colliders.len(), bodies: p.world.bodies.len() }, { colliders, bodies })
 })

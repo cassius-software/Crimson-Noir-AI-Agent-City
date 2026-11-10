@@ -5,8 +5,9 @@
  * Why does this file exist? It stands up the WebGPU device (refusing the WebGL fallback, because the
  * crowd is raw WGSL compute) and assembles the static world under a moving sun: physically based sky
  * with clouds, sun/moon light and shadows, aerial haze, an environment probe that follows the time of
- * day, the instanced buildings, streets, lamps, trees and traffic signals. It also owns the resident
- * set of procedural texture resolutions the quality autoscaler swaps between.
+ * day, the instanced buildings, streets, lamps, trees and traffic signals, and the one mesh the homes' finishes and
+ * furniture are drawn in. It also owns the resident set of procedural texture resolutions the quality autoscaler swaps
+ * between.
  * What breaks if it is removed? There is no renderer, no device for the compute passes, and no city.
  */
 import {
@@ -28,7 +29,7 @@ import { workplaces, type Workplace } from './interiors.ts'
 import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
-import { regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
+import { SURFACE_PIECE, regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
 import type { RegionTransit } from './region/transit.ts'
 import type { RegionPack } from './region/pack.ts'
 import { windowFurniture, type StreetGrid } from './region/streets.ts'
@@ -249,8 +250,23 @@ export interface World {
    * Buildings never dissolve: walls are solid by law.
    */
   dissolve: PropDissolve
+  /**
+   * Draws the homes' finishes and furniture (07_Execute_Actions/homeView.ts homeInstances): each box, in city metres,
+   * in its finish (city.ts STYLE), in the one HomeFurniture mesh. The list replaces whatever was drawn before; an empty
+   * list draws nothing. Throws when the list holds more than HOME_INSTANCES boxes (homeView keeps far under it).
+   */
+  setHomes(list: readonly Building[]): void
   update(hours: number, signalSeconds: number, focusX: number, focusZ: number): SunState
 }
+
+/**
+ * The most boxes the homes' mesh (HomeFurniture) draws: seven homes of a floor, five wall panels and sixteen pieces of
+ * up to four boxes (490), and the furnishing draft's ghost and cursor (5), with room to spare. The instances' transforms
+ * then fit one uniform buffer under WebGPU's default binding size (64 KiB, 64 bytes each), which is the path three r186
+ * picks from the attribute's capacity, not from how many are drawn (Instance.js): past 1,024 it would read them as
+ * instanced attributes instead, a different vertex shader from the one the shader tests build (shadowShaders.test.ts).
+ */
+export const HOME_INSTANCES = 512
 
 /**
  * How much of the world's fixed cost a boot builds: chosen once (engine.ts, from the device profile) before anything
@@ -533,14 +549,55 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   buildings.receiveShadow = true
   buildings.name = 'Buildings'
   if (!region || plan.length > 0) scene.add(buildings)
+
+  // The seven homes' floors, wall panels and furniture (07_Execute_Actions/homeView.ts): one more instanced draw in the
+  // buildings' own material, so a finish or a piece changes by an instance's style and no shader is ever made for it.
+  // It has a unit box and a style attribute of its own (the buildings' is sized to their boxes). It starts empty (a
+  // count of 0 skips only the draw) yet visible and never culled, and joins the scene with the buildings, so the
+  // engine's compileAsync builds its pipeline at boot. Indoors under the slab, it takes shadows and casts none.
+  const homeUnit = new BoxGeometry(1, 1, 1).translate(0, 0.5, 0)
+  const homeStyles = new InstancedBufferAttribute(new Float32Array(HOME_INSTANCES), 1)
+  homeUnit.setAttribute('style', homeStyles)
+  const homeMesh = new InstancedMesh(homeUnit, buildings.material, HOME_INSTANCES)
+  homeMesh.count = 0
+  homeMesh.visible = true
+  homeMesh.frustumCulled = false
+  homeMesh.castShadow = false
+  homeMesh.receiveShadow = true
+  homeMesh.name = 'HomeFurniture'
+  if (!region || plan.length > 0) scene.add(homeMesh)
+  // Each instance's transform, 16 floats a slot, column by column: the box's size on the diagonal and the centre of its
+  // foot in the last column (the unit box stands on its own foot, as the buildings' does).
+  const homeSlots = homeMesh.instanceMatrix
+  const setHomes = (list: readonly Building[]) => {
+    if (list.length > HOME_INSTANCES) throw new RangeError(`at most ${HOME_INSTANCES} home boxes, not ${list.length}`)
+    const t = homeSlots.array as Float32Array
+    t.fill(0, 0, list.length * 16)
+    list.forEach(({ box: [x0, y0, z0, x1, y1, z1], style }, i) => {
+      const o = i * 16
+      t[o] = x1 - x0
+      t[o + 5] = y1 - y0
+      t[o + 10] = z1 - z0
+      t[o + 12] = (x0 + x1) / 2
+      t[o + 13] = y0
+      t[o + 14] = (z0 + z1) / 2
+      t[o + 15] = 1
+      homeStyles.setX(i, style)
+    })
+    homeMesh.count = list.length
+    homeSlots.needsUpdate = true
+    homeStyles.needsUpdate = true
+  }
   const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState, region.transit ?? null) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
 
   // The ground stops at the seawall; the lake takes over from there (never water over ground: at a distance the
-  // two would fight for the depth buffer).
+  // two would fight for the depth buffer). It is a grid of SURFACE_PIECE cells, as a region's is: as two triangles
+  // 3.2 km by 2 km the depth the software adapter interpolated across them came out centimetres high in many views,
+  // and the street won against a home's floor finish 3 to 15 mm over it (homeLayout.ts OVERLAY) and the draft's cursor.
   const south = CITY_CENTER - 1600, north = CITY_CENTER + 1600
   const landDepth = LAKE.shore + LAKE.wall.thickness - south
-  const ground = new Mesh(new PlaneGeometry(3200, landDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), applyMatrixMode(groundMaterial(fbm, night, realLight), matrixMode.globalState))
+  const ground = new Mesh(new PlaneGeometry(3200, landDepth, Math.ceil(3200 / SURFACE_PIECE), Math.ceil(landDepth / SURFACE_PIECE)).rotateX(-Math.PI / 2).translate(CITY_CENTER, 0, south + landDepth / 2), applyMatrixMode(groundMaterial(fbm, night, realLight), matrixMode.globalState))
   ground.receiveShadow = true
   ground.renderOrder = 1
   ground.name = 'Streets'
@@ -666,5 +723,5 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const setTextureSize = (size: number) => { fbm.setSize(size) }
   const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, setHomes, region: regionScene, dissolve, update }
 }

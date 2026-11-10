@@ -22,6 +22,7 @@ import { MAX_CRAFT_BOXES } from '../01_Initialize_World/region/transit.ts'
 import type { Box } from '../01_Initialize_World/city.ts'
 import { ROOM, WORKPLACE_KINDS, type Side, type WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 import { SHOP_KINDS, type ShopLot } from '../01_Initialize_World/storefronts.ts'
+import { PROPERTY_KINDS, type HomeLot } from '../01_Initialize_World/properties.ts'
 
 export type Post = (msg: FromWorker, transfer?: Transferable[]) => void
 
@@ -158,6 +159,37 @@ function shopsOf(u: unknown, streets: StreetGrid | null, workplaces: readonly Wo
 }
 
 /**
+ * A region's homes, checked against its street window, its workplaces and its shops (null window for none: the city,
+ * whose homes are its seed's, or a surveyed region): an empty list when there are none, else the list as plain data, or
+ * the reason it is refused. They need a street window; they are a list of at most PROPERTY_KINDS.length; each stands on
+ * a lot of the window, its doorway faces one of the lot's four streets, it is one of the seven properties by index (0
+ * to 6), once each, and no lot holds two or a workplace or a shop.
+ */
+function homesOf(u: unknown, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[], shops: readonly ShopLot[]): HomeLot[] | string {
+  if (u === undefined || u === null) return []
+  if (!Array.isArray(u) || u.length > PROPERTY_KINDS.length) return `init: homes are a list of at most ${PROPERTY_KINDS.length}`
+  if (u.length === 0) return []
+  if (!streets) return "init: homes need a region's street window"
+  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
+  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  const out: HomeLot[] = []
+  const taken = new Set([...workplaces, ...shops].map(({ k, m }) => `${k},${m}`))
+  const homes = new Set<number>()
+  for (const w of u) {
+    if (!isRecord(w)) return 'init: a home is a property index (home), a lot (k, m) and a side'
+    const { home, k, m, side } = w
+    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a home stands on a lot of the street window'
+    if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a home's doorway faces one of its lot's four streets (0 to 3)"
+    if (!(typeof home === 'number' && Number.isInteger(home) && home >= 0 && home < PROPERTY_KINDS.length) || homes.has(home)) return 'init: a home is one of the seven properties (0 to 6), once each'
+    if (taken.has(`${k},${m}`)) return 'init: one home, shop or workplace to a lot'
+    taken.add(`${k},${m}`)
+    homes.add(home)
+    out.push({ home, k, m, side: side as Side })
+  }
+  return out
+}
+
+/**
  * The extra players' spawns, checked: an empty list when there are none, undefined when malformed (a list of at most
  * MAX_PLAYERS − 1 records with finite x and z).
  */
@@ -244,9 +276,14 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: shops })
           return
         }
+        const homes = homesOf(init.homes, region ? streets : null, workplaces, shops)
+        if (typeof homes === 'string') {
+          post({ t: 'error', message: homes })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
-          streets: region ? streets : null, workplaces, craftBoxes, shops, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
+          streets: region ? streets : null, workplaces, craftBoxes, shops, homes, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

@@ -5,10 +5,10 @@
  * Why does this file exist? Every surface in the city is procedural, sampled in world space from the
  * FBM texture baked at startup: reflective curtain-wall glass, limestone, brick and metal-panel
  * facades with lit retail frontages; the heritage quarter's limestone and brick rows, cornices, slate and copper
- * roofs; the lakefront's pale condominium panels and balcony glass; the pier's timber deck; asphalt with Canadian
- * road markings; concrete sidewalks, brick pavers in the heritage quarter, park grass and the promenade's paving;
- * lamp pools at night. No image file is ever loaded. All noise is read through FbmSet.sample(), so the
- * autoscaler's resolution swap reaches every material without rebuilding a shader.
+ * roofs; the lakefront's pale condominium panels and balcony glass; the pier's timber deck; the homes' green walls and
+ * lit screens; asphalt with Canadian road markings; concrete sidewalks, brick pavers in the heritage quarter, park
+ * grass and the promenade's paving; lamp pools at night. No image file is ever loaded. All noise is read through
+ * FbmSet.sample(), so the autoscaler's resolution swap reaches every material without rebuilding a shader.
  * What breaks if it is removed? Buildings and streets render as flat untextured grey.
  */
 import { MeshStandardNodeMaterial } from 'three/webgpu'
@@ -84,9 +84,14 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   const stoneStyle = mixed.and(seed.greaterThanEqual(0.42).and(seed.lessThan(0.74))).or(isStyle(style, STYLE.stone))
   const brickStyle = mixed.and(seed.greaterThanEqual(0.74).and(seed.lessThan(0.88))).or(isStyle(style, STYLE.brick))
   const condoStyle = isStyle(style, STYLE.condo)
-  // Finishes without windows or shopfronts: cornices and trim, roofs, plain concrete and masonry, the pier.
+  // The homes' furniture (07_Execute_Actions/homeView.ts): a green wall's leaves, and the screens' lit glass.
+  const plantedStyle = isStyle(style, STYLE.planted)
+  const litStyle = isStyle(style, STYLE.lit)
+  // Finishes without windows or shopfronts: cornices and trim, roofs, plain concrete and masonry, the pier, and the
+  // homes' leaves and screens (a box under 4.6 m with windows would draw as a lit shopfront).
   const blind = isStyle(style, STYLE.trim).or(isStyle(style, STYLE.roof)).or(isStyle(style, STYLE.concrete))
     .or(isStyle(style, STYLE.masonry)).or(isStyle(style, STYLE.deck)).or(isStyle(style, STYLE.rail))
+    .or(plantedStyle).or(litStyle)
 
   const facadeUv = vec2(u, v).add(seed.mul(97))
   const broad = noise(facadeUv.div(19))
@@ -124,13 +129,18 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   const planks = line(u.div(0.18), 0.08)
   const deck = mix(vec3(0.36, 0.27, 0.19), vec3(0.2, 0.15, 0.1), planks).mul(detail.a.mul(0.2).add(0.9))
   const rail = vec3(0.12, 0.13, 0.14)
+  // Leaves: deep and bright greens in clumps, from the facade's own two noise samples (no extra texture read).
+  const planted = mix(vec3(0.07, 0.17, 0.05), vec3(0.2, 0.36, 0.09), min(detail.g.mul(detail.r).mul(1.8), float(1))).mul(broad.b.mul(0.3).add(0.8))
+  // A screen's glass: near black; its light is the emissive grid below.
+  const screen = vec3(0.02, 0.025, 0.03)
   const finished = select(isStyle(style, STYLE.trim), trim, select(isStyle(style, STYLE.roof), roofing, select(isStyle(style, STYLE.concrete), concrete,
-    select(isStyle(style, STYLE.masonry), brick, select(isStyle(style, STYLE.deck), deck, rail)))))
+    select(isStyle(style, STYLE.masonry), brick, select(isStyle(style, STYLE.deck), deck, select(plantedStyle, planted, select(litStyle, screen, rail)))))))
   const opaque = select(blind, finished, select(glassStyle, mix(vec3(0.16, 0.18, 0.2), aluminium, mullion), select(stoneStyle, stone, select(brickStyle, brick, select(condoStyle, condo, panel)))))
   const membrane = vec3(0.42, 0.43, 0.42).mul(noise(p.xz.div(4.0)).a.mul(0.25).add(0.85))
   const signage = band(v, 3.9, 4.6).mul(select(retail, float(0), float(1)))
-  // Tops: a roof membrane, but the roofing, the deck and the trim show their own finish on top too.
-  const ownTop = isStyle(style, STYLE.roof).or(isStyle(style, STYLE.deck)).or(isStyle(style, STYLE.trim))
+  // Tops: a roof membrane, but the roofing, the deck and the trim show their own finish on top too, and so do the
+  // homes' leaves and screens (a hologram's field is lit from above).
+  const ownTop = isStyle(style, STYLE.roof).or(isStyle(style, STYLE.deck)).or(isStyle(style, STYLE.trim)).or(plantedStyle).or(litStyle)
   const wall = select(roof.and(ownTop.not()), membrane, mix(opaque, vec3(0.06, 0.06, 0.065), signage.mul(select(blind, float(0), float(1)))))
 
   // Offices behind glass: a few lights by day, far more at night; retail interiors always lit.
@@ -160,14 +170,20 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   // light here reaches it (four pendants light the floor; nothing bounces back up without global illumination).
   const luminaire = vec3(1.0, 0.98, 0.94).mul(luminairePanel.mul(2.2).add(0.1))
 
+  // The homes' screens, hologram field and furnishing cursor (STYLE.lit): a fine grid of light that always glows, brighter
+  // at night. On a top face the facade's v is one height, so the grid there runs across z instead.
+  const screenRows = select(roof, p.z, v)
+  const screenGrid = max(line(u.div(0.1), 0.12), line(screenRows.div(0.035), 0.3)).mul(0.65).add(0.35)
+  const screenGlow = select(litStyle, vec3(0.55, 0.85, 1.0).mul(screenGrid).mul(mix(0.6, 1.0, night)), vec3(0, 0, 0))
+
   m.colorNode = select(ceilingFace, tile, mix(wall, glassColor, glazing))
   m.metalnessNode = mix(select(glassStyle, mullion.mul(0.8), float(0)), float(0.55), glazing)
-  m.roughnessNode = select(ceilingFace, float(0.9), mix(select(glassStyle, float(0.35), select(isStyle(style, STYLE.rail), float(0.4), select(roof, float(0.9), float(0.82)))), float(0.05), glazing))
-  m.emissiveNode = select(ceilingFace, luminaire, glazing.mul(select(retail, shopGlow, officeGlow)))
+  m.roughnessNode = select(ceilingFace, float(0.9), mix(select(glassStyle, float(0.35), select(litStyle, float(0.12), select(isStyle(style, STYLE.rail), float(0.4), select(roof, float(0.9), float(0.82))))), float(0.05), glazing))
+  m.emissiveNode = select(ceilingFace, luminaire, glazing.mul(select(retail, shopGlow, officeGlow))).add(screenGlow)
   // Glass stays optically flat; only the opaque skin gets texture relief. The ceiling is flat too: its fixtures light
-  // it at a grazing angle, where the facade's mullion relief would draw as dark and bright stripes.
+  // it at a grazing angle, where the facade's mullion relief would draw as dark and bright stripes. So is a screen.
   const height = detail.a.mul(0.15).sub(mullion.mul(0.3)).sub(courses.mul(select(brickStyle, float(0.4), float(0)))).mul(float(1).sub(glazing))
-  m.normalNode = bumpedNormal(select(ceilingFace, float(0), height), 0.2)
+  m.normalNode = bumpedNormal(select(ceilingFace.or(litStyle), float(0), height), 0.2)
   return m
 }
 

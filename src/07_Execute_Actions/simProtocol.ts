@@ -14,6 +14,7 @@ import type { RegionGround } from './physics.ts'
 import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import type { WorkplaceLot } from '../01_Initialize_World/interiors.ts'
 import type { ShopLot } from '../01_Initialize_World/storefronts.ts'
+import type { HomeLot } from '../01_Initialize_World/properties.ts'
 import type { KernelStats } from '../05_Observe_Environment/telemetry.ts'
 import type { CrowdSimStats } from '../03_Spawn_Agents/crowdSensor.ts'
 import type { CarTuning, DriveMode } from './car.ts'
@@ -164,6 +165,14 @@ export interface SimInit {
    */
   shops?: ShopLot[] | null
   /**
+   * A generated region's homes (01_Initialize_World/region/homes.ts regionHomeLots): at most seven lots of the street
+   * window, none a workplace's or a shop's, each with its property index (0 to 6, once each) and its doorway's street
+   * front. The worker takes from them only each home's room frame, to check the furniture's solids the 'home' command
+   * sends; the glass, the fill block and the planters come in `boxes`. Only with a street window; absent (or null) for
+   * none, and for the city, whose homes are its seed's.
+   */
+  homes?: HomeLot[] | null
+  /**
    * Seat the AI fleet on the fixed track network (06_Make_Decisions/tracks.ts, built in the worker from the seed, or
    * the street window's rings in a region with one) and drive it with track followers; anything but true keeps the
    * random street-hopping drivers.
@@ -272,6 +281,15 @@ export type SimCommand =
    * fresh controller, as the room's authority has it (leaving the car they were in, if another, where it is).
    */
   | { c: 'netCar'; i: number; state: CarBodyState }
+  /**
+   * One home's furniture, solid: home `index` (its property index, 01_Initialize_World/properties.ts PROPERTY_KINDS)
+   * gets `boxes` as its whole set of fixed boxes, replacing the set it had; an empty list clears it. Six city numbers
+   * per box (x0, y0, z0, x1, y1, z1), at most homeGrid.ts HOME_PIECES boxes, each checked in the worker (properties.ts
+   * checkHomeBoxes: inside the home's floor plan, on the floor, under the ceiling, off the apron). A new set stays off
+   * until nobody on foot stands in it. Refused in a network room, whose authority knows only the city's own boxes:
+   * there every home's set is off, and it comes back on once the page leaves the room and nobody stands in it.
+   */
+  | { c: 'home'; index: number; boxes: number[] }
   /**
    * The joint bridge (docs/joint-bridge-spec.md §5, 07_Execute_Actions/jointRealm.ts): a robot's body in this realm.
    * `manifest` is judged again in the worker (jointState.ts buildManifest, articulated.ts buildable) and the body is
