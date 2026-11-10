@@ -159,6 +159,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
 | `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
+| `?ao=0` | Leaves the ambient occlusion out of the post chain on this computer. Absent (or `?ao=1`), every computer builds it and Ultra and Peak draw it. Decided at start; phones and the lite profile never build it (see Ambient occlusion) |
 | `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
@@ -274,6 +275,40 @@ more of memory, on a screen of up to 2560 × 1440 drawn pixels (`?scale` counted
   Under the cinema shutter the motion at a silhouette is averaged too, which can leave a faint halo on something
   moving fast. The headset has no anti-aliasing, and neither do `?post=0` and Minimal with one player. How it looks
   and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the software adapter.
+
+### Ambient occlusion
+
+On Ultra and Peak the post chain darkens the places light does not reach: the foot of every wall, a doorway's
+reveal, the gap under a bench or a parked car, the kerb's step, a person's feet on the pavement. It is three's
+screen-space ambient occlusion: from the scene's own depth, at half the resolution, each pixel looks at the surfaces
+within a metre and a half around it (12 places on Ultra, 16 on Peak), and a blur that stops at edges smooths the result. Below
+Ultra its passes are skipped.
+
+- **Who builds it.** Every computer, unless the address says `?ao=0`; building it costs two small shaders at start
+  and two one-channel pictures at half the resolution (about 1 MB at 1080p). Phones and the lite profile never build
+  it, and neither does split screen, which has no post chain.
+- **What it costs.** On Ultra and Peak, three passes at half the resolution every drawn frame, counted in the frame
+  time the governor watches and in the GPU time it judges Peak by (so a card that only just earned Peak before may now
+  stay on Ultra). It costs the same under open sky as facing a wall: three leaves the sky out of the work only with a
+  conventional depth buffer, and this city's runs the other way (the far plane is 0), so the sky's pixels are worked
+  out too (they come out unoccluded, every place they look at being sky). Below Ultra, nothing but its two small
+  pictures kept in memory.
+- **No tier change recompiles anything.** The tier sets its number of places, its strength and whether its passes
+  run; nothing else about it changes while you play. It adds nothing to the scene's own drawing: the scene pass
+  writes exactly what it wrote before (the shape of each surface comes from the depth), so the city's shaders are the
+  same with it or without it, and it works the same with 4x anti-aliasing (it reads the first of the four depth
+  samples, as the sun shafts do).
+- **Where it holds back.** Bright pixels keep their light (a lit window, a lamp, a signal: they are light sources, not
+  creases), it fades out between 60 and 300 m so the haze stays clean, it fades where the cinema shutter smears the
+  picture, and rain mode turns it off. The console's `set shaders.ao.strength` scales it from 0 to 1; at 0 its
+  passes are skipped, as below Ultra.
+- **What it does not do.** It darkens the finished light of a pixel, the sun's and the lamps' included, not only the
+  light bouncing around the street, so a sunlit crease is darker than it would be in life (masked on bright pixels,
+  and in keeping with the city's look). It knows only what is on screen: something off screen or hidden behind
+  something else occludes nothing. The shapes it sees are flat (no bump detail), the half-resolution result can crawl
+  a little on thin things when you turn slowly, and the network ghosts darken what is behind them like solid things.
+  How it looks and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the
+  software adapter, which cannot measure speed.
 
 ### Storefronts
 
@@ -1505,8 +1540,8 @@ Ring-0 elite tier above it, below). While unlocked:
 - `memory forget <agent>` and `memory forget all` erase what the swarm remembers (all: everyone in this city).
 - `get [prefix]`/`set <key> <value>` read and write the tuning keys, namespaced by table:
   `physics.car.power`, `physics.car.drag`, `physics.car.grip`, `physics.car.brake`, `shaders.light.haze`,
-  `shaders.light.exposure`, `shaders.light.sun`, `shaders.light.fill`, `shaders.volumetrics.strength`
-  (`get physics` lists a whole table). Scripts use the same keys without the table prefix:
+  `shaders.light.exposure`, `shaders.light.sun`, `shaders.light.fill`, `shaders.volumetrics.strength`,
+  `shaders.ao.strength` (`get physics` lists a whole table). Scripts use the same keys without the table prefix:
   `sim.physics.set('car.grip', 1.2)`. These are fixed, bounded knobs, not code: they go through the same
   validated facade directly, run no script, and need nobody tethered.
 - `harness list` and `harness run <name>` run the physics harnesses in-page and print a report:
@@ -2567,7 +2602,7 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   oscillates. Both render paths are compiled during the boot splash, so a later tier change never
   compiles a pipeline mid-game.
 - **Floor and ceiling:** in auto mode phones are capped at Medium and a lite profile at Minimal; the browser exposes
-  no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics. Sloane's fixes for heat, battery or
+  no thermal state, so frame time is the proxy. Ultra and Peak add the volumetrics and the ambient occlusion. Sloane's fixes for heat, battery or
   a slow frame ("my phone is hot", "it's laggy") pin Low at most and never raise the tier: a device already below Low
   stays where it is. A slow frame named on Peak ("it lags on peak settings") pins Ultra at most from the console's
   `goal`; in the card Sloane first asks whether the lag is steady: hitches hand the tier back to auto, and a steady lag
@@ -2597,8 +2632,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Peak, above Ultra.** Tier 5, outside the tier table like Lite, so every other tier number stays as it was.
   - **What it adds.** Ultra drawn at 1.25 times the resolution on each side, about 1.56 times the pixels (smoother
     edges), Ultra's sun shadows (the same two 4096-texel cascades out to the same 240 m: a farther reach would stretch
-    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, and
-    full-detail people out to 90 m instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
+    the near cascade and make the shadows nearest you coarser than Ultra's) with a wider sixteen-tap penumbra, the
+    ambient occlusion looking at 16 places around each pixel instead of 12, and full-detail people out to 90 m
+    instead of 45. The shadow atlas is Ultra's (about 256 MB of graphics memory either
     way); the larger picture takes about 45 MB more at 1080p (about 190 MB at 4K),
     given back when the tier comes down. The picture
     is never made larger than the graphics card's largest texture, which also keeps `?scale=2` working on a very wide

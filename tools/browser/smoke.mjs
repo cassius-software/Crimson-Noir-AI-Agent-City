@@ -11,7 +11,8 @@
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
  *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
  *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule; nor is it a
- *   multisampling candidate: one sample a pixel everywhere (FXAA alone);
+ *   multisampling candidate: one sample a pixel everywhere (FXAA alone); its ambient occlusion built and drawn once at
+ *   boot (its two pipelines), then skipped below Ultra;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
@@ -22,7 +23,8 @@
  *   touch-first screen leaves the touch overlay where it is;
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
  *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own; then
- *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off);
+ *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off, and
+ *   with it the ambient occlusion: never built);
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path); the model in this page cannot run there (Chromium refuses the
  *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
@@ -30,14 +32,16 @@
  * - ultra: the top tier of the table pinned, so the shadowed, post and volumetric pipelines are compiled once and must
  *   validate; then Peak pinned above it for a few frames (Ultra's sun shadows, 240 m on the 8192-wide atlas of two 4096
  *   cascades, with Peak's wider sixteen-tap penumbra, 1.25 times the pixel ratio, detailed bodies to 90 m, the HUD
- *   reading Peak) and Ultra back after, with its penumbra and pixels; then Ultra again with ?msaa=1 under the cinema
- *   camera: the scene pass's colour and velocity at 4 samples (the sun shafts reading its multisampled depth), nothing
- *   of it compiled at one sample through Low, Peak and Ultra, and ghost view and rain mode validating over it; the Nix
- *   job runs this one too;
+ *   reading Peak) and Ultra back after, with its penumbra and pixels, the ambient occlusion drawn every frame at twelve
+ *   taps (sixteen at Peak); then Ultra again with ?msaa=1 under the cinema camera: the scene pass's colour and velocity
+ *   at 4 samples (the sun shafts and the ambient occlusion reading its multisampled depth), nothing of it compiled at
+ *   one sample through Low, Peak and Ultra, the occlusion skipped at Low and in rain mode and never compiled again, and
+ *   ghost view and rain mode validating over it; the Nix job runs this one too;
  * - peak: a big desktop faked in full (16 threads, 8 GB, a WebGPU adapter reading 'nvidia / blackwell / NVIDIA GeForce
  *   RTX 5090'), at ?fps=1 without the camera so only Peak's GPU rule can move the tier, with three's timing resolve
  *   replaced, before the page's first frame, by one that counts and gives nothing. It starts on Ultra, never above,
- *   with no GPU reading, and its scene pass multisampled without being asked (msaaCandidate). Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
+ *   with no GPU reading, its scene pass multisampled without being asked (msaaCandidate) and its ambient occlusion
+ *   running at Ultra's twelve taps. Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
  *   resolves timings for the governor on Ultra, auto keeps a pinned Peak, the in-page model's hold on the GPU brings it
  *   down to Ultra and the release keeps Ultra, and GPU readings fed over the limit bring it down by itself (gpu busy)
  *   with its shadow distance and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
@@ -47,7 +51,8 @@
  *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
  *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
  *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, the post chain never compiled and nothing multisampled
- *   (with ?lite=0, the post chain compiled, and ?msaa=1 still refused to a phone). SwiftShader still draws
+ *   and no ambient occlusion built (with ?lite=0, the post chain compiled, and ?msaa=1 still refused to a phone, which
+ *   never builds the occlusion either). SwiftShader still draws
  *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
  *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
  *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
@@ -265,11 +270,19 @@ const RUNTIME_NO_ADAPTER = /^\[\w+\] ggml_webgpu: Failed to get an adapter\b/
  * The page's render pipelines, counted on every page before its scripts: how many write two colour targets (only the
  * post chain's scene pass under the cinema camera does, colour and velocity, so none means it was never compiled), how
  * many draw 4 samples a pixel (the scene's multisampling, governor.ts msaaCandidate), and how many write two targets at
- * one sample (none on a page whose scene pass is multisampled: the chain was built once, at 4).
+ * one sample (none on a page whose scene pass is multisampled: the chain was built once, at 4). And the ambient
+ * occlusion's (postfx.ts GatedSSAO): the pipelines writing a single r8unorm target (only its occlusion pass and its blur
+ * do; nothing else in the page renders to one channel), and how many times a render pass set one of them (three a
+ * drawn frame: the occlusion, then the blur across and down), so a check sees its passes run or skipped.
  */
 const PIPELINE_COUNTER = `(() => {
   if (typeof GPUDevice === 'undefined') return
-  window.__smokePipelines = { render: 0, twoTargets: 0, msaa4: 0, twoTargets1x: 0 }
+  window.__smokePipelines = { render: 0, twoTargets: 0, msaa4: 0, twoTargets1x: 0, ao: 0, aoDraws: 0 }
+  const ao = new WeakSet()
+  const oneChannel = (desc) => {
+    const t = (desc && desc.fragment && desc.fragment.targets) || []
+    return t.length === 1 && !!t[0] && t[0].format === 'r8unorm'
+  }
   const count = (desc) => {
     const n = window.__smokePipelines
     const two = (desc && desc.fragment && desc.fragment.targets || []).length >= 2
@@ -278,18 +291,37 @@ const PIPELINE_COUNTER = `(() => {
     if (two) n.twoTargets++
     if (four) n.msaa4++
     if (two && !four) n.twoTargets1x++
+    if (oneChannel(desc)) n.ao++
   }
-  for (const key of ['createRenderPipeline', 'createRenderPipelineAsync']) {
-    const own = GPUDevice.prototype[key]
-    if (typeof own === 'function') GPUDevice.prototype[key] = function (desc) { count(desc); return own.call(this, desc) }
+  const own = GPUDevice.prototype.createRenderPipeline
+  if (typeof own === 'function') GPUDevice.prototype.createRenderPipeline = function (desc) {
+    count(desc)
+    const p = own.call(this, desc)
+    if (oneChannel(desc)) ao.add(p)
+    return p
+  }
+  const ownAsync = GPUDevice.prototype.createRenderPipelineAsync
+  if (typeof ownAsync === 'function') GPUDevice.prototype.createRenderPipelineAsync = function (desc) {
+    count(desc)
+    return ownAsync.call(this, desc).then((p) => { if (oneChannel(desc)) ao.add(p); return p })
+  }
+  if (typeof GPURenderPassEncoder !== 'undefined') {
+    const set = GPURenderPassEncoder.prototype.setPipeline
+    GPURenderPassEncoder.prototype.setPipeline = function (p) {
+      if (ao.has(p)) window.__smokePipelines.aoDraws++
+      return set.call(this, p)
+    }
   }
 })()`
 
 /** A page expression: the samples the boot chose (the scene pass's, the renderer's own) and the pipelines counted. */
 const AA_STATE = `(() => { const S = window.__SIM__, e = S.engine
-  return { scene: e.sceneSamples, renderer: e.gpu.renderer.samples, post: e.options.post, pipelines: window.__smokePipelines, errors: S.errors().slice(0, 5) } })()`
+  return { scene: e.sceneSamples, renderer: e.gpu.renderer.samples, post: e.options.post,
+    ao: e.ao ? { on: e.ao.node.on, taps: e.ao.node.samples.value, strength: e.ao.strength.value } : null,
+    pipelines: window.__smokePipelines ? { ...window.__smokePipelines } : null, errors: S.errors().slice(0, 5) } })()`
 /** An AA_STATE as a log line. */
-const aaLine = (a) => `scene ${a.scene}x, renderer ${a.renderer}, ${a.pipelines ? `${a.pipelines.render} pipelines, ${a.pipelines.msaa4} at 4x, ${a.pipelines.twoTargets} with two targets (${a.pipelines.twoTargets1x} at 1x)` : 'not counted'}`
+const aaLine = (a) => `scene ${a.scene}x, renderer ${a.renderer}, ${a.pipelines ? `${a.pipelines.render} pipelines, ${a.pipelines.msaa4} at 4x, ${a.pipelines.twoTargets} with two targets (${a.pipelines.twoTargets1x} at 1x)` : 'not counted'}; ` +
+  `ao ${a.ao ? (a.ao.on ? `${a.ao.taps} taps at ${a.ao.strength}` : 'built, off') : 'not built'}${a.pipelines ? ` (${a.pipelines.ao} pipelines, ${a.pipelines.aoDraws} draws)` : ''}`
 
 const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { window.__smokeFrames++; requestAnimationFrame(tick) }; requestAnimationFrame(tick) })()`
 
@@ -805,6 +837,12 @@ const SCENARIOS = {
       // Nor a multisampling candidate: one sample everywhere, as before (FXAA alone).
       const aa = await p.eval(AA_STATE)
       check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.render > 0 && aa.pipelines.msaa4 === 0, 'desktop: a device that is not a multisampling candidate draws one sample a pixel everywhere', aaLine(aa))
+      // A desktop builds the ambient occlusion (governor.ts aoCandidate): its two pipelines compiled by the boot's one
+      // validated draw, then its passes skipped on every tier below Ultra (this one starts on Minimal).
+      await p.frames(3)
+      const skipped = await p.eval(AA_STATE)
+      check(aa.ao !== null && aa.ao.on === false && aa.ao.strength === 0 && aa.pipelines.ao === 2 && aa.pipelines.aoDraws >= 3 && skipped.pipelines.aoDraws === aa.pipelines.aoDraws && skipped.pipelines.ao === 2,
+        'desktop: the ambient occlusion is built and compiled at boot (two pipelines, drawn once), then skipped below Ultra', `${aaLine(aa)} → ${skipped.pipelines.aoDraws} draws after 3 frames`)
       // The hardware class: a software adapter in a desktop browser is a desktop (never a workstation: no Peak
       // candidate), and the snapshot's quality carries the class the console names.
       const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
@@ -1188,6 +1226,7 @@ const SCENARIOS = {
       check(views === 2, 'split: ?players=2 cuts the screen in two', `${views} views`)
       const aa = await p.eval(AA_STATE)
       check(aa.renderer === 0 && aa.scene === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'split: a device that is not a multisampling candidate splits at one sample', aaLine(aa))
+      check(aa.ao === null && aa.pipelines.ao === 0, 'split: no post chain, so no ambient occlusion is built or compiled', aaLine(aa))
       // Seats go to the pads in turn: the first pad to appear takes player 2's seat, the next player 1's. A pad without
       // the standard mapping appears only once a face button wakes it (hal.ts), and that press does nothing more.
       await p.eval('window.__smokePad.connect(0)')
@@ -1307,6 +1346,13 @@ const SCENARIOS = {
       await p.frames(3)
       const s = await p.snap()
       check(s.errors.length === 0, 'ultra: shadows, post and volumetrics compile and validate', s.errors.join(' | ').slice(0, 300))
+      // The ambient occlusion at Ultra: twelve taps at full strength, its three passes drawn every frame on the two
+      // pipelines the boot compiled.
+      const ao0 = await p.eval(AA_STATE)
+      await p.frames(3)
+      const ao1 = await p.eval(AA_STATE)
+      check(ao1.ao !== null && ao1.ao.on && ao1.ao.taps === 12 && ao1.ao.strength === 1 && ao1.pipelines.ao === 2 && ao1.pipelines.aoDraws > ao0.pipelines.aoDraws && ao1.errors.length === 0,
+        'ultra: the ambient occlusion runs at twelve taps every frame, on the two pipelines compiled at boot', `${aaLine(ao1)}; ${ao1.pipelines.aoDraws - ao0.pipelines.aoDraws} draws in 3 frames`)
       await p.shot('ultra')
       // Peak pinned by hand for a few frames (any device may pin it): Ultra's sun shadows (240 m on the atlas of two 4096
       // cascades, 8192 wide, really allocated) with Peak's three-texel penumbra, 1.25 times the pixel ratio and detailed
@@ -1320,6 +1366,8 @@ const SCENARIOS = {
       const pk = await p.eval(PEAK_STATE)
       check(map && pk.mapSize === 4096 && pk.mapWidth === 8192 && pk.cascades === 2 && pk.far === 240 && pk.radius === 3 && Math.abs(pk.ratio - 0.625) < 1e-9 && pk.lod === 90 && pk.errors.length === 0,
         'ultra: Peak pinned draws the sun\'s shadows to 240 m on the 8192-wide atlas of two 4096 cascades with a three-texel penumbra, at 1.25 times the pixel ratio, and validates', JSON.stringify(pk))
+      const aoPeak = await p.eval(AA_STATE)
+      check(aoPeak.ao !== null && aoPeak.ao.on && aoPeak.ao.taps === 16 && aoPeak.pipelines.ao === 2, 'ultra: Peak takes sixteen occlusion taps, with nothing compiled', aaLine(aoPeak))
       // The console cleared first (as command() waits for it), so the only Peak left on the page is the HUD's.
       await p.enter('clear')
       await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').trim() === ''`, 10_000).catch(() => {})
@@ -1344,26 +1392,43 @@ const SCENARIOS = {
       const aa = await m.eval(AA_STATE)
       check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.pipelines.twoTargets > 0 && aa.pipelines.twoTargets1x === 0 && aa.errors.length === 0,
         'ultra: ?msaa=1 multisamples the scene pass (colour and velocity at 4x, nothing of it at 1x), and the chain validates', aaLine(aa))
+      // The ambient occlusion reads the multisampled depth (its first sample, loaded without a sampler): a shader the
+      // browser refused would have rebuilt the chain at one sample (scene 0x above).
+      check(aa.ao !== null && aa.ao.on && aa.ao.taps === 12 && aa.pipelines.ao === 2, 'ultra: ?msaa=1: the ambient occlusion runs on the multisampled depth', aaLine(aa))
       await m.shot('ultra-msaa')
       await m.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
       check(await m.openConsole(), 'ultra: the console opens (?msaa=1)')
       const before = aa.pipelines.render
+      // Over a few frames on each tier: whether the occlusion's passes ran (draws counted) and what it was set to.
+      const drawsOver = async (frames) => {
+        const a = await m.eval(AA_STATE)
+        await m.frames(frames)
+        const b = await m.eval(AA_STATE)
+        return { state: b, draws: b.pipelines.aoDraws - a.pipelines.aoDraws }
+      }
       await m.command('quality 1', /tier 1 Low \(fixed\)/)
       await m.frames(3)
+      const low = await drawsOver(2)
+      check(low.draws === 0 && low.state.ao.on === false && low.state.ao.strength === 0, 'ultra: Low skips the ambient occlusion\'s passes and applies none', `${aaLine(low.state)}; ${low.draws} draws in 2 frames`)
       await m.command('quality 5', /tier 5 Peak \(fixed\)/)
       await m.frames(3)
+      const peak = await drawsOver(2)
+      check(peak.draws > 0 && peak.state.ao.on && peak.state.ao.taps === 16, 'ultra: Peak runs it again at sixteen taps', `${aaLine(peak.state)}; ${peak.draws} draws in 2 frames`)
       await m.command('quality 4', /tier 4 Ultra \(fixed\)/)
       await m.frames(3)
       const tiers = await m.eval(AA_STATE)
       check(tiers.errors.length === 0 && tiers.pipelines.twoTargets1x === 0, 'ultra: Low, Peak and Ultra again keep the multisampled chain: no error, nothing compiled at one sample', aaLine(tiers))
+      check(tiers.ao.on && tiers.ao.taps === 12 && tiers.pipelines.ao === 2, 'ultra: and the ambient occlusion was never compiled again (its two pipelines)', aaLine(tiers))
       info('ultra: render pipelines compiled by the tier changes (?msaa=1)', `${tiers.pipelines.render - before}`)
       await m.eval('window.__SIM__.engine.setGhost(true)')
       await m.frames(3)
       await m.eval('window.__SIM__.engine.setGhost(false)')
       await m.eval('window.__SIM__.engine.setMatrix(true)')
       await m.frames(3)
-      const looks = await m.eval(AA_STATE)
+      const rain = await drawsOver(2)
+      const looks = rain.state
       check(looks.errors.length === 0 && looks.pipelines.twoTargets1x === 0, 'ultra: ghost view and rain mode validate over the multisampled scene', aaLine(looks))
+      check(rain.draws === 0 && looks.ao.on === false && looks.ao.strength === 0, 'ultra: rain mode turns the ambient occlusion off', `${aaLine(looks)}; ${rain.draws} draws in 2 frames`)
       await m.shot('ultra-msaa-rain')
       m.saveTranscript('ultra-msaa')
       m.health('ultra (?msaa=1)')
@@ -1391,6 +1456,7 @@ const SCENARIOS = {
       // The same hardware, on a screen under 2560 × 1440: the boot multisamples the scene pass by itself (msaaCandidate).
       const aa = await p.eval(AA_STATE)
       check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.errors.length === 0, 'peak: a high-end desktop starting on Ultra multisamples the scene pass without being asked', aaLine(aa))
+      check(aa.ao !== null && aa.ao.on && aa.ao.taps === 12 && aa.pipelines.ao === 2, 'peak: and runs the ambient occlusion at Ultra\'s twelve taps', aaLine(aa))
       check(st.timestamps === s.feature, 'peak: three writes GPU timestamps exactly where the device has timestamp-query', `timestamps ${st.timestamps}, feature ${s.feature}`)
       info(`peak: SwiftShader's device ${s.feature ? 'has' : 'lacks'} timestamp-query`, s.feature ? 'the GPU rule is driven end to end' : 'the range stops at Ultra; the no-evidence path is checked')
       // As in ultra: a first visit's concierge may hold the keyboard in its name field; skipped, the tilde reaches the page.
@@ -1469,6 +1535,8 @@ const SCENARIOS = {
       check(Math.abs(s.ratio - 0.5) < 1e-9, 'lite: the canvas draws at half the CSS pixel edge whatever the device pixel ratio', `pixel ratio ${s.ratio}`)
       check(s.post === false && s.pipelines && s.pipelines.render > 0 && s.pipelines.twoTargets === 0 && s.pipelines.msaa4 === 0, 'lite: the post chain is off and was never compiled (no colour-and-velocity pipeline), and nothing is multisampled',
         s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets, ${s.pipelines.msaa4} at 4x` : 'not counted')
+      const liteAo = await p.eval(AA_STATE)
+      check(liteAo.ao === null && liteAo.pipelines.ao === 0, 'lite: no ambient occlusion built or compiled', aaLine(liteAo))
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${s.crowdFrames + 2} && window.__SIM__.snapshot().output.fps > 0`, 60_000).then(() => true, () => false)
       check(ran, 'lite: frames are drawn and the crowd runs')
       const hud = await p.eval(`document.body.innerText.includes('Lite')`)
@@ -1504,6 +1572,7 @@ const SCENARIOS = {
         return { quality: s.quality, agents: e.sim.meta.agents, cars: e.sim.meta.count, max: e.quality.governor.max, pipelines: window.__smokePipelines } })()`)
       const aa = await q.eval(AA_STATE)
       check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'lite: a phone with ?lite=0 and ?msaa=1 still draws one sample a pixel', aaLine(aa))
+      check(aa.ao === null && aa.pipelines.ao === 0, 'lite: and builds no ambient occlusion: a phone never does (governor.ts aoCandidate)', aaLine(aa))
       check(s.quality.tier === 0 && s.quality.label === 'Minimal' && s.quality.lite === undefined && s.max === 2, 'lite: ?lite=0 gives the phone its old profile (Minimal, capped at Medium)', JSON.stringify(s.quality))
       check(s.agents === 5000 && s.cars === 36, 'lite: ?lite=0 simulates 5,000 pedestrians and 36 cars', `${s.agents}, ${s.cars}`)
       check(s.pipelines && s.pipelines.twoTargets > 0, 'lite: ?lite=0 compiles the post chain at boot (colour-and-velocity pipelines counted)',

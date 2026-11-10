@@ -12,19 +12,25 @@
  * the lens effects a neutral-density stage and the film response (cinema.ts FILM) replace ACES. With ?cinema=0 the
  * chain is the video one: no velocity buffer, no shutter, ACES. Where the boot chose it (governor.ts msaaCandidate), the
  * scene pass draws 4 samples a pixel and three resolves them as the pass ends: every reader downstream (the shutter,
- * bloom, the film) sees the resolved frame, and the sun shafts read the first sample of the multisampled depth.
- * What breaks if it is removed? The scene renders without anti-aliasing, highlights, sun shafts, motion blur or a
- * tone curve.
+ * bloom, the film) sees the resolved frame, and the sun shafts read the first sample of the multisampled depth. Where
+ * the boot built it (governor.ts aoCandidate), the chain holds three's screen-space ambient occlusion (GatedSSAO): half-
+ * res, from the scene pass's own depth (normals rebuilt from it, so no attachment is added and no scene pipeline
+ * changes), multiplied into the HDR colour after the shutter and before bloom. Its passes run only on a tier with taps
+ * (Ultra, Peak) and are skipped on the others; the composite reads it behind a uniform, so no tier change recompiles.
+ * What breaks if it is removed? The scene renders without anti-aliasing, ambient occlusion, highlights, sun shafts,
+ * motion blur or a tone curve.
  */
 import {
-  Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type PerspectiveCamera,
-  type Scene, type UniformNode, type WebGPURenderer,
+  Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type NodeFrame, type PassNode,
+  type PerspectiveCamera, type Scene, type UniformNode, type WebGPURenderer,
 } from 'three/webgpu'
 import {
-  Fn, exp2, float, length, max, min, mrt, output, pass, renderOutput, screenUV, smoothstep, uniform, vec3, vec4, velocity,
+  Fn, If, exp2, float, getNormalFromDepth, length, luminance, max, min, mix, mrt, output, pass, renderOutput, sample,
+  screenSize, screenUV, smoothstep, uniform, vec3, vec4, velocity,
 } from 'three/tsl'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
+import SSAONode from 'three/addons/tsl/display/SSAONode.js'
 import { createVolumetrics, sunShafts, type Volumetrics } from './volumetrics.ts'
 import { ShutterNode, cameraMotion, motionTexel } from './shutter.ts'
 import { FILM, HDR_MAX } from './cinema.ts'
@@ -66,15 +72,105 @@ export function pickMotion(material: unknown, resorted: ReadonlySet<unknown>, ca
   return resorted.has(material) ? cameraOnly : (velocity as unknown as Node<'vec2'>)
 }
 
-/** The post chain's anti-aliasing as the boot decided it: the scene pass's samples per pixel (governor.ts MSAA). */
-export interface PostAa { sceneSamples: 0 | 4 }
+/**
+ * The ambient occlusion's fixed tuning. Starting values, judged on the software adapter's pictures only:
+ * - resolutionScale: of the drawing buffer, set once at build (no tier resizes the targets).
+ * - radius m, intensity, bias: three's SSAONode uniforms (the occluders within a metre and a half: kerbs, doorways, a
+ *   bench's feet, the foot of every wall). Intensity 2: at three's 1 the software adapter's pictures barely changed.
+ * - bright: HDR luminance over which a pixel keeps its light (lamps, windows and signals are sources, not creases; bloom's
+ *   threshold is 4).
+ * - haze m: the occlusion fades out over this distance, so it never darkens the far haze.
+ * - smear px: under the cinema camera the occlusion comes from the unsmeared depth; it fades out where the shutter smears
+ *   the frame further than this.
+ */
+export const AO = Object.freeze({
+  resolutionScale: 0.5, radius: 1.5, intensity: 2, bias: 0.03,
+  bright: Object.freeze([1.5, 4] as const), haze: Object.freeze([60, 300] as const), smear: Object.freeze([2, 8] as const),
+})
+
+/**
+ * three's SSAONode (examples/jsm/tsl/display/SSAONode.js) with its three passes (the occlusion, then a depth-aware blur
+ * across and down) skipped while `on` is false: a node's updateBefore is called every frame once it is built, so a
+ * strength uniform alone would still render them. The first call always runs: that is the boot's validated draw
+ * (engine.ts), so both of its pipelines are compiled and judged before play, and none is compiled mid-game. While
+ * skipped its target keeps the last picture, which nothing reads (the composite reads it only at a strength above 0).
+ */
+export class GatedSSAO extends SSAONode {
+  /** Whether the passes run this frame: the engine writes it from the tier (and rain mode) before the chain renders. */
+  on = false
+  private primed = false
+  override updateBefore(frame: NodeFrame): boolean | undefined {
+    if (!this.on && this.primed) return undefined
+    this.primed = true
+    return super.updateBefore(frame)
+  }
+}
+
+/** What the engine drives of the ambient occlusion, once per frame. */
+export interface AmbientOcclusion {
+  /** The passes, their switch (`on`) and their tap count (`samples`, a uniform loop bound: 1 or more). */
+  node: GatedSSAO
+  /** How much of the occlusion the composite applies (0 = none, and the composite reads no texture). */
+  strength: UniformNode<'float', number>
+}
+
+/**
+ * The post chain as the boot decided it: the scene pass's samples per pixel (governor.ts MSAA) and whether it holds the
+ * ambient occlusion (governor.ts aoCandidate; absent: no).
+ */
+export interface PostAa { sceneSamples: 0 | 4; ao?: boolean }
 
 /** What buildPost hands the engine. `release` lets go of every target the chain owns (a refused chain at boot). */
 export interface PostChain {
   pipeline: RenderPipeline
   volumetrics: Volumetrics
   cinema: CinemaPost | null
+  /** The ambient occlusion, where the boot built it. */
+  ao: AmbientOcclusion | null
   release: () => void
+}
+
+/**
+ * The occlusion for a scene pass: three's SSAONode on the pass's own depth, with each pixel's normal rebuilt from that
+ * depth (three's getNormalFromDepth: the nearer of two neighbours per axis, so a silhouette takes its own surface's), so
+ * the pass gets no attachment and its pipelines stay as they are. Every read of the depth is a load without a sampler:
+ * at 4 samples a pixel three declares it a multisampled depth texture and loads its first sample (as the sun shafts do);
+ * at one, its nearest filtering makes it unfilterable, and three loads it the same way. Built with one tap and nothing
+ * applied: the engine writes the tier's taps, strength and switch.
+ */
+function buildAo(scenePass: PassNode, camera: PerspectiveCamera): AmbientOcclusion {
+  const depth = scenePass.getTextureNode('depth')
+  // By reference: three keeps the camera's inverse projection current (and reversed for the reversed depth) in place.
+  const projectionInverse = uniform(camera.projectionMatrixInverse)
+  const raw = depth.value as unknown as Node
+  const normal = sample((at) => getNormalFromDepth(at, raw, projectionInverse))
+  const node = new GatedSSAO(depth, normal, camera)
+  node.resolutionScale = AO.resolutionScale
+  // The occlusion divides by it: never 0.
+  node.samples.value = 1
+  node.radius.value = AO.radius
+  node.intensity.value = AO.intensity
+  node.bias.value = AO.bias
+  return { node, strength: uniform(0) }
+}
+
+/**
+ * The factor the HDR colour is multiplied by: exactly 1, with no texture read, unless the strength is above 0 (a
+ * uniform, so the branch is uniform on the GPU). Inside it the occlusion fades out on bright pixels, with distance into
+ * the haze and, under the cinema camera, where the shutter smears the frame.
+ */
+function occlusion(ao: AmbientOcclusion, hdr: Node<'vec3'>, distance: () => Node<'float'>, smearPx: (() => Node<'float'>) | null): Node<'float'> {
+  return Fn(() => {
+    const k = float(1).toVar()
+    If(ao.strength.greaterThan(0), () => {
+      const occluded = ao.node.getTextureNode().sample(screenUV).level(float(0)).r
+      const lit = smoothstep(AO.bright[0], AO.bright[1], luminance(hdr)).oneMinus()
+      const near = smoothstep(AO.haze[0], AO.haze[1], distance()).oneMinus()
+      const still = smearPx ? smoothstep(AO.smear[0], AO.smear[1], smearPx()).oneMinus() : float(1)
+      k.assign(mix(float(1), occluded, ao.strength.mul(lit).mul(near).mul(still).clamp(0, 1)))
+    })
+    return k
+  })() as unknown as Node<'float'>
 }
 
 export function buildPost(
@@ -91,6 +187,7 @@ export function buildPost(
   // Ghost view's shapes render in a pass of their own, never in the scene pass, so they reach no velocity buffer, and
   // at one sample: they are laid on after FXAA.
   const ghostPass = ghost ? pass(ghost.scene, camera, { samples: 0 }) : null
+  const ao = aa.ao ? buildAo(scenePass, camera) : null
   const pipeline = new RenderPipeline(renderer)
   pipeline.outputColorTransform = false
   const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
@@ -100,7 +197,7 @@ export function buildPost(
     return ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
   }
   // Every node that owns a render target, for release(): RenderPipeline.dispose frees its own quad's material alone.
-  const owners: { dispose(): void }[] = [scenePass, ...(ghostPass ? [ghostPass] : [])]
+  const owners: { dispose(): void }[] = [scenePass, ...(ghostPass ? [ghostPass] : []), ...(ao ? [ao.node] : [])]
   const release = (): void => {
     for (const node of owners) node.dispose()
     pipeline.dispose()
@@ -111,14 +208,17 @@ export function buildPost(
     const rays = sunShafts(scenePass.getTextureNode('depth'), volumetrics, renderer.reversedDepthBuffer)
     // Threshold well above sunlit surfaces (~2 in linear HDR): only lamps, signals and glints bloom.
     const glow = bloom(color, 0.3, 0.3, 4.0)
+    // The occlusion darkens the scene's own light (its distance from the depth, which every reader loads at sample 0);
+    // bloom is taken from the light before it, and the rays, in-scattered light, are never occluded.
+    const shaded = ao ? color.rgb.mul(occlusion(ao, color.rgb, () => scenePass.getViewZNode().negate(), null)) : color.rgb
     // Rays are in-scattered light: added in linear HDR, before tone mapping. The scene colour comes first so
     // the scene pass is sequenced before the bloom and ray targets that read it.
-    const lit = color.rgb.add(glow.rgb).add(rays.rgb).mul(vignette)
+    const lit = shaded.add(glow.rgb).add(rays.rgb).mul(vignette)
     // Tone map first, then anti-alias the display-referred image (FXAA expects it).
     const smooth = fxaa(renderOutput(vec4(lit, 1)))
     owners.push(rays, glow, smooth.textureNode)
     pipeline.outputNode = finish(smooth)
-    return { pipeline, volumetrics, cinema: null, release }
+    return { pipeline, volumetrics, cinema: null, ao, release }
   }
 
   const volumetrics = createVolumetrics()
@@ -137,7 +237,14 @@ export function buildPost(
   // Everything downstream sees the exposed frame: a moving lamp's bloom is smeared like the lamp.
   const exposed = shutter.getTextureNode()
   const glow = bloom(exposed, 0.3, 0.3, 4.0)
-  const lit = exposed.rgb.add(glow.rgb).add(rays.rgb).mul(vignette)
+  // The occlusion after the shutter, and bloom taken from the light before it. It is drawn from the unsmeared depth, so it
+  // fades out where the smear is long: the velocity texel's NDC motion across the target, in px, times the shutter's
+  // share. Its distance is the texel's too (shutter.ts motionTexel: z = metres along the view axis).
+  const texel = scenePass.getTextureNode('velocity')
+  const shaded = ao
+    ? exposed.rgb.mul(occlusion(ao, exposed.rgb, () => texel.z, () => length(texel.xy.mul(screenSize).mul(0.5)).mul(shutter.exposure)))
+    : exposed.rgb
+  const lit = shaded.add(glow.rgb).add(rays.rgb).mul(vignette)
   // The ND filter (neutral: the same transmission for every channel), the exposure behind it, then the film.
   const nd = uniform(0)
   const exposure = uniform(1)
@@ -145,5 +252,5 @@ export function buildPost(
   const smooth = fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace))
   owners.push(rays, shutter, glow, smooth.textureNode)
   pipeline.outputNode = finish(smooth)
-  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, release }
+  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, ao, release }
 }

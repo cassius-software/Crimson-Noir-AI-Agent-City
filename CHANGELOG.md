@@ -452,6 +452,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the headset, and Minimal and `?post=0` with one player still have no anti-aliasing (a phone off the lite profile
   keeps FXAA at Low and Medium). Unverified: how it looks and what it costs on a real GPU (software-WebGPU pictures
   only).
+- **Ambient occlusion at Ultra and Peak.** The post chain now holds three r186's screen-space ambient occlusion
+  (`SSAONode`, wrapped as `postfx.ts GatedSSAO`): from the scene pass's own depth at half resolution, with each
+  pixel's normal rebuilt from that depth (`getNormalFromDepth`), a rotated disk of taps within 1.5 m (intensity 2: at
+  three's default of 1 the software adapter's pictures barely changed), then a depth-aware blur across and down; the
+  result multiplies the HDR colour after the shutter, bloom is taken from the light before it, and the sun shafts are
+  added after it, never occluded. It fades out on bright pixels (HDR luminance 1.5 to 4: lamps, windows and signals
+  keep their light), from 60 to 300 m into the haze and, under the cinema camera, where the shutter smears the frame
+  more than 2 to 8 px (it is drawn from the unsmeared depth); rain mode and an operator strength of 0 turn it off. The
+  tier knob is `aoTaps` (Ultra 12, Peak 16, 0 below and on Lite), a uniform loop bound: a tier change writes the taps,
+  a strength uniform and a JS switch, and `GatedSSAO.updateBefore` skips the three passes while off (a node's
+  updateBefore runs every frame once built, so a strength of 0 alone would still render them). Its first frame always
+  draws, so the boot's validated draw compiles both of its pipelines. Who builds it: `governor.ts aoCandidate`, every
+  desktop-class profile unless `?ao=0`, never a phone or a lite profile; split screen and `?post=0` have no post
+  chain. The scene pass gets no attachment and no context node, so no scene pipeline changes, at one sample or four:
+  every read of the depth is a load without a sampler (at 4x three declares a multisampled depth texture and loads its
+  first sample, as the sun shafts do; at one, its nearest filtering makes it unfilterable). GTAO (`GTAONode`) was
+  rejected: it gathers depth with `textureGather`, which a multisampled depth texture refuses, so every 4x boot would
+  fall back to one sample, and its tap count is compiled in. Screen-space reflections were not adopted: they need new
+  scene-pass attachments chosen at boot and written on every tier that runs post, for surfaces this city barely has
+  (the lake's water has no metalness, the roads are dry). Material-level occlusion (`builtinAOContext`) would need a
+  second full prepass of the city and the crowd. The operator key `shaders.ao.strength` (0 to 1) scales it;
+  `tools/browser/shot.mjs` logs its state, and the browser smoke counts its two pipelines (tagged by their one R8
+  target) and their draws: built and skipped below Ultra, drawn every frame at Ultra (12 taps) and Peak (16), at 4x
+  too, with nothing compiled after boot, none drawn at Low or in rain mode, and never built on split screen, Lite or a
+  phone off the lite profile. Pinned by `governorAo.test.ts` (who builds it, ?ao), `governor.test.ts` (the knob per
+  tier, never decreasing going up, only with post, the applier writing it and a post cap writing 0),
+  `postfxAo.test.ts` (on the scene pass's own depth with rebuilt normals, the scene pass's targets unchanged at one
+  sample and four, built applying nothing with one tap, the first frame drawn and later frames only while on,
+  release() freeing its two targets) and `aoWiring.test.ts` (the host's ?ao, the build decided after the post cap and
+  kept through the 1x rebuild, the frame's writes and rain mode, no tier touching its resolution, blur or the scene
+  pass's targets, no GTAO, SSR or material occlusion in the chain). Limits: it darkens a pixel's finished light,
+  direct sun and lamps included, not only the indirect light (masked on bright pixels); it sees only what is on
+  screen; its normals carry no bump detail; without temporal accumulation the half-resolution result can crawl on thin
+  geometry; at 4x it follows the first sample's coverage while the colour is the resolved average (up to a pixel at
+  silhouettes); the network ghosts occlude like solid things; its two targets (about 1 MB at 1080p) stay allocated on
+  every tier once built; three's SSAONode leaves out the sky only under a conventional depth buffer (depth 1), and
+  this city's is reversed (the sky is 0), so the sky's pixels run the taps too (they come out unoccluded: every tap
+  lands on the far plane) and the pass costs the same under open sky as facing a wall. Unverified: how it looks and
+  what it costs on a real GPU (software-WebGPU pictures only).
 - **The operator's progression.** The operator now has a level (1 to 20, 1,000 XP each, the rest rolling over), six
   attribute modifiers, eight skills of the city with proficiency ranks, civic credits, hero points, resolve and three
   actions and a reaction per six-second round (`src/02_Define_The_Rules/progression.ts`, over one 128-word record,
