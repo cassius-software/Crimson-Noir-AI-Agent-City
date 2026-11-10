@@ -221,8 +221,9 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
   assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
   // The first walk's card: the touch buttons' edges and the stick's zone with and without its gaps (the unzoomed touch
   // layer's), the top of the HUD's chips at the foot (window pixels, Hud.tsx), the window's height and the console's share.
-  const walk = FIRST_WALK.slice(FIRST_WALK.indexOf('const AT = {'), FIRST_WALK.indexOf('} as const'))
-  for (const v of ['touch-top', 'touch-left', 'hud-foot']) {
+  // (the HUD's foot latched at its highest, with the live foot as its fallback, is divided once for both)
+  const walk = FIRST_WALK.slice(FIRST_WALK.indexOf('const AT = {'), FIRST_WALK.indexOf('} as const')).replaceAll('var(--hud-foot-peak,var(--hud-foot,0px))', 'var(--hud-foot-peak,0px)')
+  for (const v of ['touch-top', 'touch-left', 'hud-foot', 'hud-foot-peak']) {
     const edges = walk.match(new RegExp(`var\\(--${v},[^)]*\\)`, 'g')) ?? []
     assert.ok(edges.length > 0, `--${v} is used`)
     assert.equal(walk.match(new RegExp(`calc\\(var\\(--${v},[^)]*\\)_/_var\\(--ui-zoom,1\\)\\)`, 'g'))?.length, edges.length, `every --${v} is divided by the zoom`)

@@ -2100,6 +2100,27 @@ const SCENARIOS = {
         await sidewaysAt(`${w}x${h}`, ['chip', 'minimap', 'foot', 'stick'])
       }
       await p.shot('walk-phone-sideways')
+      // The latch on the HUD's foot (footPeak.ts): the foot grown by a stand-in for two caption lines leaves the band
+      // short, so her chip moves up to the top row and the card under it; the foot shrinking back (the lines expiring)
+      // leaves both where they are, so they never jump from under a thumb; a new window size lets the latch go.
+      await view(IPHONE.width, IPHONE.height)
+      const chipTopNow = () => p.eval(`(() => { const c = document.querySelector('[data-concierge="chip"]'); return c ? Math.round(c.getBoundingClientRect().top) : null })()`)
+      const settle = async () => { await p.frames(3); await new Promise((r) => setTimeout(r, 400)) }
+      const lowChip = await chipTopNow()
+      await p.eval(`(() => { const f = document.querySelector('[data-hud="foot"]'); if (!f) return; const d = document.createElement('div'); d.id = 'smoke-lines'; d.style.cssText = 'height:64px;width:8px'; f.prepend(d) })()`)
+      await settle()
+      const raisedChip = await chipTopNow()
+      const raised = await boxes()
+      await p.eval(`document.getElementById('smoke-lines')?.remove()`)
+      await settle()
+      const heldChip = await chipTopNow()
+      const heldWalk = (await boxes()).walk
+      await view(844, 390)
+      await view(IPHONE.width, IPHONE.height)
+      const lowAgain = await chipTopNow()
+      check(lowChip > 100 && raisedChip !== null && raisedChip < 40 && clear(raised).length === 0 && heldChip === raisedChip && heldWalk?.t === raised.walk?.t && lowAgain === lowChip,
+        'walkphone: a taller foot moves her chip up and the card under it, a shorter one leaves them there, and a new window size lets go',
+        `chip top ${lowChip} -> ${raisedChip} (card ${JSON.stringify(raised.walk)} ${clear(raised).join(', ')}) -> ${heldChip} (card top ${heldWalk?.t}) -> ${lowAgain} after a new size`)
       // The touch Menu opens over the card (the Ring-0 stage sends the visitor to it): every item, scrolled to, is on top.
       await view(IPHONE.width, IPHONE.height)
       let sheet = 'did not open'

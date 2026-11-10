@@ -130,8 +130,9 @@ const CHIP_TOP = {
    *  screen, captions or a shop's chip at the foot). Then the chip moves up to the top row, over the HUD's header and
    *  readout, which take no taps, and the walk's card rises to stand under it. Both read the same band through the
    *  same step (0 while the band holds 8 rem, else the screen's height), so they agree without a word between them;
-   *  the chip publishes its foot as --chip-bottom for the card. */
-  walk: 'max(max(0.75rem, env(safe-area-inset-top)), calc(min(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem)) - clamp(0px, calc((8rem - calc(calc(100dvh / var(--ui-zoom, 1)) - max(0.75rem, env(safe-area-inset-top)) - 10.5rem - max(max(0.75rem, env(safe-area-inset-bottom)), calc(calc(var(--hud-foot, 0px) / var(--ui-zoom, 1)) + 0.5rem)))) * 10000), 100vh)))',
+   *  the step reads the HUD's foot latched at its highest (--hud-foot-peak, footPeak.ts), so captions coming and going
+   *  never flip the chip from under a thumb. The chip publishes its foot as --chip-bottom for the card. */
+  walk: 'max(max(0.75rem, env(safe-area-inset-top)), calc(min(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem)) - clamp(0px, calc((8rem - calc(calc(100dvh / var(--ui-zoom, 1)) - max(0.75rem, env(safe-area-inset-top)) - 10.5rem - max(max(0.75rem, env(safe-area-inset-bottom)), calc(calc(var(--hud-foot-peak, var(--hud-foot, 0px)) / var(--ui-zoom, 1)) + 0.5rem)))) * 10000), 100vh)))',
   foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
   driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
 } as const

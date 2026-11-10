@@ -156,7 +156,9 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   const FOOT = 'max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))'
   const VH = 'calc(100dvh_/_var(--ui-zoom,1))'
   const TOP = 'max(0.75rem,env(safe-area-inset-top))'
-  const STEP = `clamp(0px,calc((8rem_-_calc(${VH}_-_${TOP}_-_10.5rem_-_${FOOT}))_*_10000),100vh)`
+  // The step reads the foot latched at its highest (footPeak.ts), so captions coming and going cannot flip it.
+  const PEAK_FOOT = FOOT.replace('var(--hud-foot,0px)', 'var(--hud-foot-peak,var(--hud-foot,0px))')
+  const STEP = `clamp(0px,calc((8rem_-_calc(${VH}_-_${TOP}_-_10.5rem_-_${PEAK_FOOT}))_*_10000),100vh)`
   const LINE = `max(max(${TOP},calc(var(--chip-bottom,0px)_+_0.5rem)),calc(${TOP}_+_10.5rem_-_${STEP}))`
   const BOTTOM = `max(0px,min(${FOOT},calc(${VH}_-_${LINE}_-_1.875rem)))`
   assert.ok(between.includes(` bottom-[${BOTTOM}] `), 'above the HUD\'s chips, never growing up over her chip')
@@ -175,8 +177,12 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   assert.match(concierge, /: walkTop \? \(\{ '--chip-top': walkTop \} as CSSProperties\) : undefined/)
   assert.match(app, /beside=\{walking && fw\.card !== null\}/, 'her chip hears the walk\'s card is up')
   // The HUD publishes the top of its compact chips at the foot, from the screen's foot, and takes it away with them.
-  assert.match(hud, /root\.setProperty\('--hud-foot', `\$\{Math\.round\(window\.innerHeight - el\.getBoundingClientRect\(\)\.top\)\}px`\)/)
+  assert.match(hud, /const foot = Math\.round\(window\.innerHeight - el\.getBoundingClientRect\(\)\.top\)\n\s+root\.setProperty\('--hud-foot', `\$\{foot\}px`\)/)
   assert.match(hud, /root\.removeProperty\('--hud-foot'\)/)
+  // And the latch the step reads: raised with each foot published, let go only when the window changes size.
+  assert.match(hud, /const next = nextFootPeak\(footPeak, sizeOf\(\), foot\)\n\s+if \(next !== footPeak\) root\.setProperty\('--hud-foot-peak', `\$\{next\.peak\}px`\)/)
+  assert.match(hud, /window\.addEventListener\('resize', \(\) => \{\n\s+if \(footPeak\?\.size === sizeOf\(\)\) return\n\s+footPeak = null\n\s+root\.removeProperty\('--hud-foot-peak'\)/)
+  assert.doesNotMatch(hud.slice(hud.indexOf('return () => {', hud.indexOf('function publishFoot'))), /^\s+root\.removeProperty\('--hud-foot-peak'\)/m, 'a stack going does not let the latch go')
   assert.match(hud, /<div ref=\{publishFoot\} className="absolute bottom-0 left-1\/2 [^"]*" data-hud="foot">\s*\{captionStrip\}/)
   // With the HUD hidden its captions stay (an access surface H does not put away), and so does the foot they publish.
   assert.equal(hud.match(/ref=\{publishFoot\}/g)?.length, 2, 'the HUD\'s stack and the hidden HUD\'s captions')

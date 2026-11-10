@@ -28,6 +28,7 @@ import type { HudPing, HudProgress, Light, SipocSnapshot } from '../05_Observe_E
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
+import { nextFootPeak, type FootPeak } from './footPeak.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
 /** A ping's colour by what it asks, on the minimap and the chip. */
@@ -82,10 +83,30 @@ function publishPanels(el: HTMLDivElement | null) {
  *  which stands above them between a sideways phone's thumbs: --hud-foot is the height from the screen's foot to the
  *  top of the stack, in window pixels. A ref callback on the stack, so it is published while the stack is on screen and
  *  taken away when it goes (React runs the old stack's cleanup before the new one's ref when H swaps them). */
+let footPeak: FootPeak | null = null
+/** Lets the latch go when the window changes size, before any stack republishes (installed once, ahead of theirs). */
+let footSized = false
+function sizeOf(): string { return `${window.innerWidth}x${window.innerHeight}` }
+/** Also --hud-foot-peak (footPeak.ts): the highest foot since the window took its size, which the first walk's band
+ *  reads to choose its place, so captions coming and going cannot flip it. */
 function publishFoot(el: HTMLDivElement | null) {
   if (!el) return
   const root = document.documentElement.style
-  const publish = () => root.setProperty('--hud-foot', `${Math.round(window.innerHeight - el.getBoundingClientRect().top)}px`)
+  if (!footSized) {
+    footSized = true
+    window.addEventListener('resize', () => {
+      if (footPeak?.size === sizeOf()) return
+      footPeak = null
+      root.removeProperty('--hud-foot-peak')
+    })
+  }
+  const publish = () => {
+    const foot = Math.round(window.innerHeight - el.getBoundingClientRect().top)
+    root.setProperty('--hud-foot', `${foot}px`)
+    const next = nextFootPeak(footPeak, sizeOf(), foot)
+    if (next !== footPeak) root.setProperty('--hud-foot-peak', `${next.peak}px`)
+    footPeak = next
+  }
   const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
   publish()
   watch?.observe(el)
