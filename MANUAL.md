@@ -2038,7 +2038,7 @@ any of them.
   (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
   or `ask api` changed since). An answer at a larger context that Ollama refuses before any of it arrives is asked
-  once more at 8,192, within the same ask (below). Under `auto`, an
+  once more at 8,192, within the same ask, unless a setting changed since it was sent (below). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
@@ -2116,19 +2116,27 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     larger context is measured, with one more `GET /api/ps`:
     - all on the GPU and not slower than 5 tokens a second (over at least 32): it stays;
     - split, all on the processor, slower than that, or split when its first wait runs out: back to 8,192 for the rest
-      of the visit; nothing loaded after two first waits ran out there: back too;
+      of the visit; nothing loaded after two first waits ran out there: back too (nothing loaded after answers that
+      came says nothing, however often);
     - refused by Ollama before any of it arrives: back, and the same ask is answered once more at 8,192. That is the
       ask's one retry: the moved model's retry above and a new look do not follow it. A settings change while that
-      answer runs drops its measurement, and one before the refusal means no retry;
-    - failing in Ollama after some of the answer arrived: back, and that failure is the ask's (the text already shown
-      is never written again);
+      answer runs drops its measurement, and one before the refusal means no retry (it still goes back, and the
+      model is not set aside);
+    - failing in Ollama after some of the answer arrived: back, whatever changed since it was sent, and that failure
+      is the ask's (the text already shown is never written again);
+    - the moved model's retry above, when the model it goes to grew, goes at that model's context; refused there or
+      failing partway, that context goes back, and the failure is the ask's. A stop that lands with a refusal learns
+      nothing;
     - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
       uses that one when it is above 8,192 (12,288 gives answers of up to 3,072, measured at its next answer), else
       stays at 8,192, and either way it does not grow again.
 
     None of this sets a model aside or counts toward the two visits, and only measurements at 8,192 are kept, so the
     model auto chooses is the same as without it. A model whose larger context went back does not grow again that
-    visit, and a measurement of an answer sent at an older context says nothing of the one in use. Nothing of the
+    visit, and a measurement of an answer sent at an older context says nothing of the one in use. Nor is what
+    `/api/ps` says once an answer to that model at another context was under way, or ended, since the measured one
+    was sent (Ollama may have loaded the model again for it) a measurement at all, at 8,192 or above; only asks sent
+    at once through the router can do this, since the console sends one at a time. Nothing of the
     context is kept between visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192
     of answer; with one doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
@@ -2160,12 +2168,15 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
   late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
   auto`, the operator's own model, the paths asked, what is kept; and for the context: the growth and its one step,
-  the room exactly at the budget and a byte over, a split, the processor, the pace of 4.99 and 5.00, a refusal and its
-  one retry measured at 8,192, a failure partway with none, the trained context, the first waits, `ask vram`, a
-  settings change before and during the retry, an answer from an older context landing late, the model settled
-  first, the same model and the same kept measurements with and without growth, today's requests byte for byte with
-  no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context back once
-  auto is the provider again), the readers
+  growth on a model already measured at 8,192 that visit, the room exactly at the budget and a byte over, a split,
+  the processor, the pace of 4.99 and 5.00, a refusal and its one retry measured at 8,192, a failure partway with
+  none, the trained context, the first waits, nothing loaded after answers that were not first waits, `ask vram`, a
+  settings change before and during the retry, a settings change before a refusal or a failure partway (back, no
+  retry, the moved model kept), the moved model's retry at a grown context, a stop landing with a refusal, an answer
+  from an older context landing late, a reading taken while or after an answer at another context ran, the model
+  settled first, the same model and the same kept measurements with and without growth, today's requests byte for
+  byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
+  back once auto is the provider again), the readers
   (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
   4 GB card at DXGI's lower reading),

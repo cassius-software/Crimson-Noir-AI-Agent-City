@@ -10,10 +10,12 @@
  * operator's own model is measured and never replaced; and every request stays on Ollama's own paths on this machine.
  * Ollama's context and answer cap double once a visit after a cut answer on a settled model measured all on the GPU,
  * with room; the first answer there is measured and goes back when split, slow, on the processor, refused (that ask
- * answered once more at 8,192, once, and measured there) or failed partway (not answered again); the trained context
- * Ollama reports is taken; a verdict on an older context is ignored; Seen and the model chosen are the same as without
- * growth; and without a figure, in the chat format, for the operator's model and under ask provider ollama every body
- * is today's, byte for byte.
+ * answered once more at 8,192, once, and measured there, unless a setting changed) or failed partway (not answered
+ * again), a refusal or a failure whatever changed since and never by setting the model aside; the moved model's retry
+ * at a grown context goes back when refused there; the trained context Ollama reports is taken; a verdict on an older
+ * context is ignored, and /api/ps read once an answer at another context ran is no measurement; Seen and the model
+ * chosen are the same as without growth; and without a figure, in the chat format, for the operator's model and under
+ * ask provider ollama every body is today's, byte for byte.
  * What breaks if it is removed? A change to the router could grow the model on a machine that gave no figure, keep a
  * model that does not fit, ask Ollama for a context that does not fit, or ask something off this machine, and nothing
  * in CI would say so.
@@ -1296,7 +1298,7 @@ test('the same ask answered once more at 8,192 is measured there, under the mode
   assert.deepEqual(fitOf(kept)?.seen.map((s) => [s.model, s.pace]), [[DEFAULT_MODEL, 40.96]])
 })
 
-test('a settings change while the larger context is refused: no retry, the refusal is the answer', async () => {
+test('a settings change while the larger context is refused or fails partway: no retry, the failure is the answer, and the context goes back all the same', async () => {
   const m = ONE()
   const r = make(m, { vram: '24' })
   await ask(r)
@@ -1310,6 +1312,48 @@ test('a settings change while the larger context is refused: no retry, the refus
   open()
   await assert.rejects(asked, (e: unknown) => e instanceof CognitionError && e.code === 'server')
   assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'])
+  assert.equal(r.settings().fit, `${ROW}; 16,384 tokens of context would not load in Ollama, so qwen3-vl:4b stays at 8,192 for this visit`)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048'], 'not sent at 16,384 again')
+  // Some of the answer arrives, then Ollama's error, after ask provider auto: back too, and the next answer at 8,192.
+  const p = ONE()
+  const x = make(p, { vram: '24' })
+  await ask(x)
+  await measured(p, 1)
+  p.state.writes[DEFAULT_MODEL] = 'broke'
+  const two = latch()
+  p.state.holds = [two.held]
+  const broke = ask(x)
+  await until(() => bodies(p).length === 2)
+  x.setProvider('auto')
+  two.open()
+  await assert.rejects(broke, (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.equal(x.settings().fit, `${ROW}; 16,384 tokens of context failed partway through an answer in Ollama, so qwen3-vl:4b stays at 8,192 for this visit`)
+  p.state.writes[DEFAULT_MODEL] = CUT
+  assert.equal(await ask(x), `${DEFAULT_MODEL} says hi`)
+  assert.deepEqual(bodies(p), ['8192/2048', '16384/4096', '8192/2048'])
+})
+
+test('a moved model whose larger context Ollama refuses after a settings change is not set aside: no answer from the next model down, and its next answer at 8,192', async () => {
+  const models = (): Listed[] => [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)]
+  const moved = machine({ models: models(), ps: { 'qwen3:235b': { size: 150e9, vram: 400e9, kv: 8e9 }, 'qwen3:8b': { size: 6e9, vram: 6e9 } }, writes: { 'qwen3:235b': CUT, 'qwen3:8b': QUICK } })
+  const x = make(moved, { vram: '318.5' })
+  assert.equal(await ask(x), 'qwen3:235b says hi')
+  await measured(moved, 1)
+  assert.match(x.settings().fit ?? '', /so qwen3:235b gets 16,384 tokens of context/)
+  moved.state.writes['qwen3:235b'] = { ...CUT, refuseAbove: 8192 }
+  const { held, open } = latch()
+  moved.state.holds = [held]
+  const asked = ask(x)
+  await until(() => bodies(moved).length === 2)
+  x.setApi?.('generate')
+  open()
+  await assert.rejects(asked, (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.deepEqual(sent(moved), ['qwen3:235b', 'qwen3:235b'], "no answer from qwen3:8b: the context's failure is not the model's")
+  // Still auto's pick (deepseek-r1:671b is too big for the figure, as before), with the context back.
+  assert.equal(x.settings().fit, "318.5 GB given by the page's address (vram=); deepseek-r1:671b has 376.3 GB of weights alone, more than the GPU's 318.5 GB; qwen3:235b measured 139.7 GB loaded, all on the GPU, 41.0 tokens a second; auto answers with qwen3:235b, the largest smaller one Ollama lists (ask model <name> keeps another); 16,384 tokens of context would not load in Ollama, so qwen3:235b stays at 8,192 for this visit; ask vram auto measures afresh")
+  assert.equal(await ask(x), 'qwen3:235b says hi')
+  assert.deepEqual(bodies(moved), ['8192/2048', '16384/4096', '8192/2048'])
 })
 
 test('the answer R8 gives once more: a settings change while it runs drops its measurement', async () => {
@@ -1412,12 +1456,12 @@ test('ask vram gives a larger context one more chance again after a first wait w
   assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '16384/4096', '16384/4096'])
 })
 
-test('a verdict on an answer sent at an older context is ignored: asks at once, one measured, one failed partway', async () => {
+test('a verdict on an answer sent at an older context is ignored, and a placement read while an answer at another context is under way says nothing', async () => {
   const m = ONE(CUT, { trained: 12288 })
   const r = make(m, { vram: '24' })
   await ask(r)
   await measured(m, 1)
-  // Two asks at 16,384 held while a third at 16,384 learns the trained context and a fourth is measured good there.
+  // Two asks at 16,384 held while a third at 16,384 learns the trained context.
   const one = latch(); const two = latch()
   m.state.holds = [one.held, two.held]
   const quick = ask(r)
@@ -1426,24 +1470,223 @@ test('a verdict on an answer sent at an older context is ignored: asks at once, 
   await until(() => bodies(m).length === 3)
   await ask(r)
   await measured(m, 2)
-  await ask(r)
-  await measured(m, 3)
-  const good = `${ROW}; qwen3-vl:4b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072 (measured 5.1 GB loaded at that context, all on the GPU)`
-  assert.equal(r.settings().fit, good)
+  const learned = `${ROW}; qwen3-vl:4b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072`
+  assert.equal(r.settings().fit, learned)
   // The first held answer lands and is measured: at 16,384 it says nothing of 12,288.
   one.open()
   await quick
+  await measured(m, 3)
+  assert.equal(r.settings().fit, learned, 'a measurement of 16,384')
+  // An answer at 12,288 while the second is still under way at 16,384: Ollama may load the model again for that one.
+  await ask(r)
   await measured(m, 4)
-  assert.equal(r.settings().fit, good, 'a measurement of 16,384')
-  // The second fails after its first piece: nor does that.
+  assert.equal(r.settings().fit, learned, 'read while an answer at 16,384 was under way')
+  // The second fails after its first piece: nor does that say anything of 12,288.
   m.state.writes[DEFAULT_MODEL] = 'broke'
   two.open()
   await assert.rejects(broke, (e: unknown) => e instanceof CognitionError && e.code === 'server')
   await settle()
-  assert.equal(r.settings().fit, good, 'a failure at 16,384')
+  assert.equal(r.settings().fit, learned, 'a failure at 16,384')
+  // Nothing at another context since: the next answer at 12,288 is measured, and it holds.
+  m.state.writes[DEFAULT_MODEL] = CUT
+  await ask(r)
+  await measured(m, 5)
+  assert.equal(r.settings().fit, `${learned} (measured 5.1 GB loaded at that context, all on the GPU)`)
+  await ask(r)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096', '16384/4096', '12288/3072', '12288/3072', '12288/3072'])
+  assert.equal(looks(m), 5)
+})
+
+test('a cut answer on a model already measured at 8,192 this visit grows it too, with no measurement of its own', async () => {
+  const m = ONE(WHOLE)
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
   m.state.writes[DEFAULT_MODEL] = CUT
   await ask(r)
   await settle()
-  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096', '16384/4096', '12288/3072', '12288/3072'])
-  assert.equal(looks(m), 4)
+  assert.equal(looks(m), 1, 'quick, and measured at 8,192 this visit: not measured again')
+  assert.equal(r.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096'])
+})
+
+test('nothing loaded after answers at the larger context whose first waits did not run out says nothing, however often', async () => {
+  // As with OLLAMA_KEEP_ALIVE=0, which unloads the model as each answer ends.
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  const placed = m.state.ps[DEFAULT_MODEL]
+  delete m.state.ps[DEFAULT_MODEL]
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  await measured(m, 2)
+  await ask(r)
+  await measured(m, 3)
+  assert.equal(r.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+  m.state.ps[DEFAULT_MODEL] = placed
+  await ask(r)
+  await measured(m, 4)
+  assert.match(r.settings().fit ?? '', /; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 \(measured 5\.6 GB loaded at that context, all on the GPU\)$/)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096', '16384/4096'])
+})
+
+test("a stop that lands with Ollama's refusal of the larger context learns nothing: no retry, and the context stays", async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  m.state.writes[DEFAULT_MODEL] = { ...CUT, refuseAbove: 8192 }
+  const { held, open } = latch()
+  m.state.holds = [held]
+  const stop = new AbortController()
+  const asked = r.answer({ ...req(), signal: stop.signal }, () => {})
+  await until(() => bodies(m).length === 2)
+  stop.abort()
+  open()
+  await assert.rejects(asked)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'], 'no retry')
+  assert.equal(r.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+})
+
+test("the moved model's retry goes to the next model at the context that model grew to; refused there, that context goes back, unless a stop lands with it", async () => {
+  /** The 4b grown and measured at 16,384; then the 14b is pulled and ask alone steps up to it; the 14b will not load. */
+  const stepped = async (): Promise<{ m: Fake; r: MindRouter }> => {
+    const m = ONE()
+    const r = make(m, { vram: '24' })
+    await ask(r)
+    await measured(m, 1)
+    await ask(r)
+    await measured(m, 2)
+    assert.match(r.settings().fit ?? '', /; qwen3-vl:4b runs at 16,384 tokens of context/)
+    m.state.models.push(L('qwen3:14b', 9.3e9))
+    m.state.writes['qwen3:14b'] = 500
+    await r.installed()
+    assert.equal(r.settings().model, 'qwen3:14b')
+    m.state.writes[DEFAULT_MODEL] = { ...WHOLE, refuseAbove: 8192 }
+    return { m, r }
+  }
+  const { m, r } = await stepped()
+  await assert.rejects(ask(r), (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.deepEqual(sent(m).slice(2), ['qwen3:14b', DEFAULT_MODEL])
+  assert.deepEqual(bodies(m).slice(2), ['8192/2048', '16384/4096'], "R8's retry at the 4b's grown context")
+  assert.equal(r.settings().fit, "24.0 GB given by the page's address (vram=); qwen3-vl:4b measured 4.7 GB loaded, all on the GPU, 41.0 tokens a second; auto keeps qwen3-vl:4b for the rest of this visit; 16,384 tokens of context would not load in Ollama, so qwen3-vl:4b stays at 8,192 for this visit; ask vram auto measures afresh")
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  assert.equal(bodies(m).at(-1), '8192/2048', 'not sent at 16,384 again')
+  // A stop that lands with the refusal of that retry: nothing is learned.
+  const s = await stepped()
+  const { held, open } = latch()
+  s.m.state.holds = [null, held]
+  const stop = new AbortController()
+  const asked = s.r.answer({ ...req(), signal: stop.signal }, () => {})
+  await until(() => bodies(s.m).length === 4)
+  stop.abort()
+  open()
+  await assert.rejects(asked)
+  assert.match(s.r.settings().fit ?? '', /; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 \(measured 5\.6 GB loaded at that context, all on the GPU\); ask vram auto measures afresh$/)
+})
+
+test('a placement read once an answer at another context may have made Ollama load the model again measures nothing: at 8,192 nothing is kept or set aside, above it there is no verdict', async () => {
+  // Measured at 8,192. A cut answer grows the model while a second, sent at 8,192 before it grew, is held; that one
+  // ends slow (so it is measured) after an answer at 16,384 that Ollama split: what /api/ps says then is that load.
+  const m = ONE(WHOLE, { vram: 5.5e9 })
+  const store = memory()
+  const r = make(m, { vram: '24', store })
+  await ask(r)
+  await measured(m, 1)
+  const seen = fitOf(store)?.seen
+  m.state.writes[DEFAULT_MODEL] = CUT
+  const one = latch(); const two = latch()
+  m.state.holds = [one.held, two.held]
+  const cut = ask(r)
+  await until(() => bodies(m).length === 2)
+  const late = ask(r)
+  await until(() => bodies(m).length === 3)
+  one.open()
+  await cut
+  assert.match(r.settings().fit ?? '', /gets 16,384 tokens of context/)
+  m.state.writes[DEFAULT_MODEL] = { ...SLOW, delayMs: 100 }
+  two.open()
+  await new Promise((done) => setTimeout(done, 1))
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  await late
+  await measured(m, 3)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048', '16384/4096'])
+  assert.deepEqual(fitOf(store)?.seen, seen, 'the 16,384 load is not kept as a measurement at 8,192')
+  assert.equal(r.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'not set aside')
+  await measured(m, 4)
+  assert.equal(bodies(m).at(-1), '16384/4096')
+  assert.match(r.settings().fit ?? '', /; 16,384 tokens of context did not fit the GPU \(some of it ran on the processor\), so qwen3-vl:4b stays at 8,192 for this visit$/)
+  // An answer at 16,384 whose /api/ps is answered after one at 8,192, sent before the model grew, made Ollama load it
+  // at 8,192 again: that is not the context the model was trained on.
+  const j = ONE(WHOLE)
+  const y = make(j, { vram: '24', lookMs: 5000 })
+  const early = latch()
+  j.state.holds = [early.held]
+  const before = ask(y)
+  await until(() => bodies(j).length === 1)
+  j.state.writes[DEFAULT_MODEL] = CUT
+  await ask(y)
+  await measured(j, 1)
+  let release = (): void => {}
+  j.state.hold = new Promise<void>((done) => { release = done })
+  j.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(y)
+  await until(() => looks(j) === 2)
+  early.open()
+  await before
+  release()
+  j.state.hold = null
+  await measured(j, 2)
+  assert.equal(y.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+  await ask(y)
+  await measured(j, 3)
+  assert.match(y.settings().fit ?? '', /; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 \(measured 5\.6 GB loaded at that context, all on the GPU\)$/)
+  assert.deepEqual(bodies(j), ['8192/2048', '8192/2048', '16384/4096', '16384/4096'])
+})
+
+test("the moved model's retry counts as an answer at its context: a measurement at 8,192 read after it went at 16,384 is not kept", async () => {
+  const m = ONE(WHOLE)
+  const store = memory()
+  const r = make(m, { vram: '24', store, lookMs: 5000 })
+  await ask(r)
+  await measured(m, 1)
+  const seen = fitOf(store)?.seen
+  // An answer at 8,192 held; a cut one grows the model; then the 14b is pulled and ask alone steps up to it.
+  const late = latch()
+  m.state.holds = [late.held]
+  const slow = ask(r)
+  await until(() => bodies(m).length === 2)
+  m.state.writes[DEFAULT_MODEL] = CUT
+  await ask(r)
+  m.state.models.push(L('qwen3:14b', 9.3e9))
+  m.state.writes['qwen3:14b'] = 500
+  await r.installed()
+  assert.equal(r.settings().model, 'qwen3:14b')
+  const q = latch()
+  m.state.holds = [q.held]
+  const asked = ask(r)
+  await until(() => bodies(m).length === 4)
+  // The held answer ends slow, so it is measured; its /api/ps is answered only after the 14b will not load and R8's
+  // retry has gone to the 4b at 16,384.
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((done) => { release = done })
+  m.state.writes[DEFAULT_MODEL] = SLOW
+  late.open()
+  await slow
+  await until(() => looks(m) === 2)
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  q.open()
+  assert.equal(await asked, `${DEFAULT_MODEL} says hi`)
+  release()
+  m.state.hold = null
+  await measured(m, 3)
+  assert.deepEqual(sent(m), [DEFAULT_MODEL, DEFAULT_MODEL, DEFAULT_MODEL, 'qwen3:14b', DEFAULT_MODEL])
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048', '8192/2048', '16384/4096'])
+  assert.deepEqual(fitOf(store)?.seen, seen, 'the 16,384 load is not kept as a measurement at 8,192')
 })
