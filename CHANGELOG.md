@@ -1182,8 +1182,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the same model. The 2 GB reserve, 5 tokens a second over 32 tokens, two visits, 200 MB a second and the launcher's 4 GB
   floor are starting values, not measured. CI proves it in Node against a fake Ollama and a stubbed `nvidia-smi`, and
   in the browser smoke on a software adapter (the row and the commands); no real GPU ran it. Nothing grows on a phone,
-  and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
-  Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
+  and in a browser on Windows the figure has to be typed (`ask vram`; the Windows app reads it, below); on NixOS the
+  launcher also counts an integrated Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes
+  nothing). Nothing is downloaded, and
   the page still addresses only this machine.
 - **auto finds llama-server, vLLM and SGLang on their own default ports.** With the three usual addresses, provider
   `auto` now asks llama-server's new default `http://localhost:9931` (since build b11521), vLLM's
@@ -1197,6 +1198,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Node against fake servers by port, and in the browser smoke (a fake llama-server answering as `localhost:9931`); no
   real llama-server, vLLM or SGLang ran it. The addresses are on the same loopback host, so the air gap is
   unchanged.
+- **The Windows app reads the GPUs' memory itself.** Auto's Ollama model no longer needs `ask vram` typed in the
+  Windows app: as the city starts, the app asks DXGI for each hardware adapter's dedicated memory (one new command,
+  `gpu_memory` in `src-tauri/src/gpu.rs`, read only) and the page sums the adapters of 3.5 GB or more, rounded down to
+  0.1 GB, as the NixOS launcher sums. DXGI reads a card a little under its size (one 4 GB card is reported at
+  3,949 MB), hence the floor under the launcher's 4 GB: a 4 GB card counts on both. The console's figure and `vram=`
+  in the address still beat it, `ask vram 0` turns it off, and with no adapter counted (an integrated GPU's usual
+  share) nothing changes. An integrated Radeon given 3.5 GB or more is counted, and a data-centre card in TCC or MCDM
+  mode is not seen (type `ask vram` there). CI proves the page's side in Node (the rule, the order of figures, a fake
+  shell that answers oddly, refuses or hangs, and the launcher's sum and rounding) and compiles the app on Windows; no
+  Windows machine ran it.
 
 ### Removed
 

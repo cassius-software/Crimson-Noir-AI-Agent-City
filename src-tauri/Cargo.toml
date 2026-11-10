@@ -29,6 +29,8 @@ serde = { version = "1", features = ["derive"] }
 window-vibrancy = "0.8"
 # The DualSense over the shell's own HID handle (src/hid.rs): pure Rust over hid.dll, nothing to compile or ship.
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+# The GPUs' memory for auto's Ollama model (src/gpu.rs): DXGI through the windows crate Tauri's web view already uses.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dxgi"] }
 
 [profile.release]
 codegen-units = 1

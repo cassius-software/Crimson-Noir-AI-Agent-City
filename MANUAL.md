@@ -159,7 +159,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
 | `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
-| `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
+| `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it, and it beats the Windows app's own reading. Absent: the Windows app's reading, else auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
@@ -1807,8 +1807,8 @@ them that answers (`auto`):
   server started since, earlier in that order, takes over). An Ollama whose model you never chose (the default, or
   one auto chose earlier) but which lacks it is given the default if it has it now, else the first text model it
   has; one you chose with `ask model` is left alone (`ask model auto` hands it back). Given the GPUs' memory (`ask
-  vram`, or `vram=` in the address), auto may also give Ollama a bigger or smaller model it already has (How big a
-  model auto gives Ollama, below). Models Ollama runs on its own cloud (marked so in its list, or, in the chat
+  vram`, `vram=` in the address, or the Windows app's own reading), auto may also give Ollama a bigger or smaller
+  model it already has (How big a model auto gives Ollama, below). Models Ollama runs on its own cloud (marked so in its list, or, in the chat
   format, by a name ending in `cloud`) are never chosen this way, since a
   prompt to one leaves the machine. A model server installed with its own defaults therefore answers with nothing
   typed at the console, on a page that server allows (see Which pages a model server answers, below). With nothing
@@ -1983,15 +1983,35 @@ any of them.
 
 Ollama lists how big each model's weights are, but no model server says how much memory the GPUs have, so it is given:
 `ask vram 24` at the console (kept in this browser), or `vram=24` in the page's address, which the NixOS launcher adds
-by itself (On NixOS). The console's figure beats the address; `ask vram 0` sizes nothing whatever the address says;
-`ask vram auto` hands back to the address. GB here are 2^30 bytes, as everywhere in the page; Ollama's own list
+by itself (On NixOS), or, in the Windows app, read by the app itself. The console's figure beats the address, and the
+address beats the app's reading. `ask vram 0` sizes nothing whatever the others say; `vram=0` in the address sizes
+nothing unless the console gives a figure (the app's reading included). `ask vram auto` hands back to the address or
+the app. GB here are 2^30 bytes, as everywhere in the page; Ollama's own list
 prints decimal GB, so its 142GB is 132.2 GB here.
 
 - **Without a figure nothing changes** but the longer first wait of a model over 60 GB (How long it waits, above): the
-  same requests, the same model, no `fit` row. That is a phone, the Windows app and a browser on Windows until `ask
-  vram` is typed. On a laptop's integrated GPU, leave it unset: its share of memory is not a figure this rule can use.
-  On NixOS the launcher counts an integrated Radeon whose firmware gives it 4 GB or more as a GPU (inferred from the
-  driver's files, not tried on such a machine); start it with `-- vram=0` there to size nothing.
+  same requests, the same model, no `fit` row. That is a phone, a browser on Windows until `ask vram` is typed, and
+  the Windows app on a machine with no GPU it counts (below). In a browser on a laptop's integrated GPU, leave it
+  unset: its share of memory is not a figure this rule can use. On NixOS the launcher counts an integrated Radeon whose
+  firmware gives it 4 GB or more as a GPU (inferred from the driver's files, not tried on such a machine); start it
+  with `-- vram=0` there to size nothing.
+- **The Windows app reads it itself.** As the city starts, the app asks Windows (DXGI, the graphics layer under
+  Direct3D) for each graphics adapter's own dedicated memory and hands the list to the page. Software adapters (the
+  Basic Render Driver) are left out, an adapter under 3.5 GB is not counted, and the rest are summed and rounded down
+  to 0.1 GB, as the launcher sums. DXGI gives the memory the driver leaves to Windows, a little under the card's size
+  (one 4 GB card is reported at 3,949 MB by dxdiag, which reads the same number), so the app's floor sits under the
+  launcher's 4 GB: a 4 GB card counts on both and a 3 GB card on neither, and the app's figure runs a few percent
+  under the launcher's for the same card, so auto errs toward a smaller model, not a bigger one. With none counted,
+  auto keeps its usual model. The row says `read from the GPUs by the Windows app`. Three readings are off:
+  - An integrated Radeon whose firmware gives it 3.5 GB or more is counted as a GPU, as on NixOS (DXGI reports that
+    share as its own; not tried on such a machine). `ask vram 0` sizes nothing, kept in that browser profile.
+  - A GPU that Windows still lists but that cannot run a model is counted too; the measurement below catches it (all
+    on the processor, so nothing grows), and `ask vram 0` turns the reading off.
+  - A data-centre card in TCC or MCDM mode (Windows' compute-only modes) is not a graphics adapter, so DXGI never
+    lists it though Ollama runs on it. Beside a display GPU the figure is then too small and auto steps down, so on
+    such a machine type `ask vram` with the real total.
+
+  Read from the DXGI documentation and built by CI, not run on a Windows machine.
 - **With one, under auto, with Ollama in the generate format:**
   - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
   - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
@@ -2029,11 +2049,15 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
   late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
   auto`, the operator's own model, the paths asked, what is kept), the readers
-  (`localCompute.test.ts`) and the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
-  (`desktopLauncher.test.ts`); in a browser, the `actions` scenario of the smoke on a software adapter: the `fit` row
+  (`localCompute.test.ts`), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
+  (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
+  4 GB card at DXGI's lower reading),
+  and the Windows app's reading over a fake shell (`desktopShell.test.ts`: a list taken, anything else, a refusal or
+  a hang ignored); in a browser, the `actions` scenario of the smoke on a software adapter: the `fit` row
   from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
   real split model, real ratios and paces, whether 2 GB is enough, `nvidia-smi` on a NixOS `PATH`, the amdgpu files
-  on an integrated GPU, and a tunnel's delay.
+  on an integrated GPU, DXGI's answer on a real Windows machine (the app is built on Windows by CI, never run there),
+  and a tunnel's delay.
 
 #### The prompt-prefix page table
 
@@ -3747,8 +3771,8 @@ the production page finds no physics object in the page and has every crafted me
   `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama).
 - **In a browser, on every CI run:** the `actions` scenario, with `vram=24` in the address: the `fit` row,
   `ask vram 16`, the refusal of 5000, and `ask vram auto`.
-- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and Windows (which needs `ask vram` typed
-  for now).
+- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and the Windows app's DXGI reading on a
+  real Windows machine (built by CI, not run).
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.
