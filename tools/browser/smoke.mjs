@@ -920,6 +920,10 @@ const SCENARIOS = {
       check(tier <= 2, 'phone: the governor keeps a phone at Medium or below', `tier ${tier}`)
       const buttons = await p.eval(`[...document.querySelectorAll('button')].map((b) => b.textContent.trim()).filter(Boolean)`)
       check(buttons.includes('Run') && buttons.includes('Ping'), 'phone: the Run and Ping buttons are on screen', buttons.join(', '))
+      // The microphone opens as the city starts (MIC_OPEN_BY_DEFAULT); with no device here it reads unavailable. On a
+      // phone its pill is a badge inside the minimap's box, so it takes no row of the panels' column.
+      const badge = await p.waitFor(`(() => { const m = document.querySelector('[data-hint="voice"]'), map = document.querySelector('[data-hud="minimap"]'); if (!m || !map) return null; const a = m.getBoundingClientRect(), b = map.getBoundingClientRect(); return { phase: m.getAttribute('data-mic'), inMap: a.left >= b.left - 1 && a.right <= b.right + 1 && a.top >= b.top - 1 && a.bottom <= b.bottom + 1, size: [Math.round(a.width), Math.round(a.height)], name: m.getAttribute('aria-label') } })()`, 15_000).catch(() => null)
+      check(!!badge && badge.inMap && badge.size[0] >= 24 && badge.size[1] >= 24 && !!badge.name, 'phone: the microphone\'s state is a badge on the minimap\'s corner, at least 24 px, named by its state', JSON.stringify(badge))
 
       const H = IPHONE.height
       // The stick: thumb down in its zone (bottom left), pushed up, held.
@@ -1044,7 +1048,8 @@ const SCENARIOS = {
         const hud = (name) => { const e = document.querySelector(\`[data-hud="\${name}"]\`); return e && shown(e) ? box(e) : null }
         const panels = [...document.querySelectorAll('[data-hud="panel"]')].filter(shown).map((e) => ({ text: e.textContent.trim().slice(0, 24), ...box(e) }))
         const parts = pill ? [...pill.querySelectorAll('button')].filter(shown).map(box) : []
-        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels, verdict: layer ? layer.getAttribute('data-touch-layout') : null }
+        const voice = document.querySelector('[data-hint="voice"]')
+        return { w: innerWidth, h: innerHeight, zone: zone ? box(zone) : null, buttons, chip: pill && shown(pill) ? box(pill) : null, parts, minimap: hud('minimap'), speed: hud('speed'), panels, mic: voice && shown(voice) ? box(voice) : null, verdict: layer ? layer.getAttribute('data-touch-layout') : null }
       })()`
       const meets = (a, b) => a.l < b.r - 1 && b.l < a.r - 1 && a.t < b.b - 1 && b.t < a.b - 1
       const inside = (a, w, h) => a.l >= -1 && a.t >= -1 && a.r <= w + 1 && a.b <= h + 1
@@ -1082,6 +1087,16 @@ const SCENARIOS = {
               if (meets(q, base)) bad.push(`${at}: ${what} over the stick`)
             }
             if (L.chip && L.parts.some((q) => q.l < L.chip.l - 1 || q.r > L.chip.r + 1)) bad.push(`${at}: Sloane's chip narrower than its buttons`)
+            // The microphone's badge (up from the start: the microphone opens as the city starts) on screen and clear of
+            // every control, the stick, Sloane's chip, the speedometer and the panels.
+            if (L.mic) {
+              if (!inside(L.mic, L.w, L.h)) bad.push(`${at}: the microphone's badge off screen`)
+              if (meets(L.mic, L.zone)) bad.push(`${at}: the microphone's badge over the stick`)
+              for (const b of L.buttons) if (meets(L.mic, b)) bad.push(`${at}: the microphone's badge under ${b.name}`)
+              if (L.chip && meets(L.mic, L.chip)) bad.push(`${at}: the microphone's badge under Sloane's chip`)
+              if (L.speed && meets(L.mic, L.speed)) bad.push(`${at}: the microphone's badge over the speedometer`)
+              for (const q of L.panels) if (meets(L.mic, q)) bad.push(`${at}: the microphone's badge over the HUD's "${q.text}"`)
+            }
             for (let i = 0; i < L.buttons.length; i++) for (let j = i + 1; j < L.buttons.length; j++) {
               if (meets(L.buttons[i], L.buttons[j])) bad.push(`${at}: ${L.buttons[i].name} over ${L.buttons[j].name}`)
             }
@@ -1111,7 +1126,7 @@ const SCENARIOS = {
         }
         await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
         await p.frames(3)
-        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, the overlay's own judge says valid, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
+        check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, the microphone's badge clear of them all, the overlay's own judge says valid, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
       }
       await layouts('on foot')
       // The Menu opens with the other thumb on the stick, as Ping and Run do (a browser makes no click of a tap then).

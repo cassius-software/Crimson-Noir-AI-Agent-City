@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence for the microphone (microphone.ts): off until pressed on a first visit
- * (MIC_OPEN_BY_DEFAULT false) and open at boot only on the visitor's kept switch, the device opened with echo
+ * Why does this file exist? It is the evidence for the microphone (microphone.ts): open at boot on a first visit
+ * (MIC_OPEN_BY_DEFAULT true) and after that as the visitor left it (a mute, or a no at the browser's prompt, holds
+ * across visits; a missing device keeps nothing), the device opened with echo
  * cancellation and released by mute (the browser's indicator goes out: tracks stopped, the context closed), the
  * worklet path taken where the browser has one and the page's analyser poll where it has not, a refusal read in the
  * browser's own words, speech from the detector turning the pill and a barge-in raised only while the page speaks, an
@@ -125,23 +126,30 @@ const events = (m: Microphone) => {
   return out
 }
 
-test('the settings: off by default (the one line is false), kept under one key, anything odd reads as the defaults; the boot follows the kept switch or the line', () => {
-  assert.equal(MIC_OPEN_BY_DEFAULT, false, 'a first visit does not open the microphone until the owner says so')
+test('the settings: open at boot by default (the owner\'s line is true), kept under one key, anything odd reads as no choice; the boot follows the kept switch, else the line', () => {
+  assert.equal(MIC_OPEN_BY_DEFAULT, true, 'a first visit opens the microphone as the city starts (the owner\'s word)')
   const store = memoryStore()
   assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS)
-  saveVoiceSettings({ on: true }, store)
+  assert.deepEqual(VOICE_DEFAULTS, { on: false, kept: false }, 'no choice kept')
+  saveVoiceSettings({ on: true, kept: true }, store)
   assert.equal(store.map.get(MIC_KEY), '{"v":1,"on":true}')
-  assert.deepEqual(loadVoiceSettings(store), { on: true })
+  assert.deepEqual(loadVoiceSettings(store), { on: true, kept: true })
+  saveVoiceSettings({ on: false, kept: true }, store)
+  assert.equal(store.map.get(MIC_KEY), '{"v":1,"on":false}', 'a mute is kept as the same record, on false')
+  assert.deepEqual(loadVoiceSettings(store), { on: false, kept: true })
   store.map.set(MIC_KEY, '{"v":2,"on":true}')
   assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS, 'another version')
   store.map.set(MIC_KEY, 'not json')
   assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS)
   store.map.set(MIC_KEY, JSON.stringify({ v: 1, on: 'yes' }))
-  assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS, 'on must be the boolean true')
+  assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS, 'on must be a boolean')
+  store.map.set(MIC_KEY, JSON.stringify({ v: 1 }))
+  assert.deepEqual(loadVoiceSettings(store), VOICE_DEFAULTS, 'and present')
   assert.deepEqual(loadVoiceSettings(null), VOICE_DEFAULTS)
-  assert.equal(opensAtBoot({ on: false }), false)
-  assert.equal(opensAtBoot({ on: true }), true, 'the visitor left it on')
-  assert.equal(opensAtBoot({ on: false }, true), true, 'the owner flipped the line')
+  assert.equal(opensAtBoot(VOICE_DEFAULTS), true, 'no choice kept: the line opens it')
+  assert.equal(opensAtBoot(VOICE_DEFAULTS, false), false, 'and with the line false, a first visit would wait for a press')
+  assert.equal(opensAtBoot({ on: true, kept: true }, false), true, 'the visitor left it on')
+  assert.equal(opensAtBoot({ on: false, kept: true }), false, 'the visitor muted it: the line does not reopen it')
 })
 
 test('the words: a word per phase, Speaking over an open microphone while the page talks, a tap opens or mutes, and the accessible name says state, action and key', () => {
@@ -185,13 +193,14 @@ test('micEnv reads the browser\'s objects, or nulls, and makes blob: URLs only w
   assert.equal(micEnv({ navigator: { mediaDevices: {} } }).media, null, 'mediaDevices without getUserMedia')
 })
 
-test('a first visit: off at boot; listen() opens the device with echo cancellation, takes the worklet, keeps the switch and reads Listening', async () => {
+test('a first visit: opened at boot (the line); listen() opens the device with echo cancellation, takes the worklet, keeps the switch and reads Listening', async () => {
   const f = fake()
   const store = memoryStore()
   const m = new Microphone(f.env, store)
   const log = events(m)
-  assert.equal(m.phase, 'off')
-  assert.equal(m.opensAtBoot(), false)
+  assert.equal(m.phase, 'off', 'nothing is open before the boot asks')
+  assert.equal(m.opensAtBoot(), true, 'no choice kept: the boot opens it')
+  assert.equal(m.opensAtBoot(false), false, 'with the line false it would wait for a press')
   const p = m.listen()
   assert.equal(m.phase, 'opening')
   const s = await p
@@ -207,7 +216,7 @@ test('a first visit: off at boot; listen() opens the device with echo cancellati
   assert.equal(node.connected.length, 0, 'and nothing reaches the speakers')
   assert.deepEqual(node.options, VAD)
   assert.deepEqual(node.port.sent, [{ speaking: false }])
-  assert.deepEqual(loadVoiceSettings(store), { on: true })
+  assert.deepEqual(loadVoiceSettings(store), { on: true, kept: true })
   assert.equal(m.opensAtBoot(), true, 'the next visit opens it')
   assert.deepEqual(log, ['change:opening', 'change:listening'])
   assert.equal(m.word(), 'Listening')
@@ -270,8 +279,9 @@ test('mute releases the device: tracks stopped, the graph torn down, the context
   assert.equal(node.disconnected, 1)
   assert.equal(ctx.source.disconnected, 1)
   assert.equal(node.port.onmessage, null, 'a late message from the old worklet reaches nothing')
-  assert.deepEqual(loadVoiceSettings(store), { on: false })
-  assert.equal(m.opensAtBoot(), false, 'muted: the next visit starts off')
+  assert.deepEqual(loadVoiceSettings(store), { on: false, kept: true })
+  assert.equal(m.opensAtBoot(), false, 'muted: the next visit starts off, though the line opens a first visit')
+  assert.equal(new Microphone(f.env, store).opensAtBoot(), false, 'and a page loaded afterwards reads the mute')
   assert.equal(m.word(), 'Muted')
   await m.listen()
   assert.equal(m.phase, 'listening')
@@ -295,18 +305,23 @@ test('toggle: open when closed, mute when open, blocked asked again; two presses
 })
 
 test('a refusal reads in the browser\'s own words and the pill offers another press; no media at all is unavailable', async () => {
-  const refused = new Microphone(fake({ media: 'refuse' }).env, memoryStore())
+  const kept = memoryStore()
+  const refused = new Microphone(fake({ media: 'refuse' }).env, kept)
+  assert.equal(refused.opensAtBoot(), true, 'a first visit: the line opens it at boot')
   const s = await refused.listen()
   assert.equal(s.phase, 'blocked')
   assert.match(s.detail, /permission was refused/)
   assert.equal(tapMeans(refused.phase), 'open')
   assert.match(refused.label(), /^Microphone: blocked \(microphone permission was refused/)
-  assert.equal(refused.opensAtBoot(), false, 'a refusal keeps no switch')
-  const gone = await new Microphone(fake({ media: 'nodevice' }).env, memoryStore()).listen()
+  assert.deepEqual(loadVoiceSettings(kept), { on: false, kept: true }, 'the visitor\'s no is kept like a mute')
+  assert.equal(new Microphone(fake().env, kept).opensAtBoot(), false, 'so the next visit does not ask again at boot')
+  const dry = memoryStore()
+  const gone = await new Microphone(fake({ media: 'nodevice' }).env, dry).listen()
   assert.deepEqual([gone.phase, gone.detail], ['unavailable', 'no microphone found'])
-  const none = await new Microphone(fake({ media: 'missing' }).env, memoryStore()).listen()
+  const none = await new Microphone(fake({ media: 'missing' }).env, dry).listen()
   assert.equal(none.phase, 'unavailable')
   assert.match(none.detail, /secure page/)
+  assert.equal(dry.map.size, 0, 'no device, or no secure page, is not the visitor\'s choice: nothing kept')
   assert.deepEqual(refusal({ name: 'NotReadableError' }), ['error', 'the microphone is in use by another program'])
   assert.deepEqual(refusal({ name: 'SecurityError' })[0], 'unavailable')
   assert.deepEqual(refusal({ name: 'OverconstrainedError' })[0], 'error')
@@ -424,10 +439,10 @@ test('an open() overtaken by a mute() leaves nothing open; the device unplugged 
   const h = fake()
   const o = new Microphone(h.env, store)
   await o.listen()
-  assert.deepEqual(loadVoiceSettings(store), { on: true })
+  assert.deepEqual(loadVoiceSettings(store), { on: true, kept: true })
   assert.equal(o.close().phase, 'off')
   assert.deepEqual([o.phase, h.streams[0].track.stopped, o.open], ['off', 1, false])
-  assert.deepEqual(loadVoiceSettings(store), { on: true }, 'the city going away is not the visitor muting')
+  assert.deepEqual(loadVoiceSettings(store), { on: true, kept: true }, 'the city going away is not the visitor muting')
   assert.equal(o.opensAtBoot(), true)
   assert.equal(o.close().phase, 'off', 'closed twice: nothing more')
   await o.listen()
@@ -455,9 +470,10 @@ test('resume wakes a context the browser started asleep; the console lines say t
   assert.match(lines[0], /^mic {7}listening/)
   assert.match(lines[1], /^pill {6}Listening/)
   assert.match(lines[2], /^detector {2}audio worklet · the room/)
-  assert.match(lines[3], /^boot {6}opens at boot {2}\(kept switch on; the default off\)/)
+  assert.match(lines[3], /^boot {6}opens at boot {2}\(kept switch on; the default open\)/)
   assert.match(lines[4], /^words {5}on-device recognition: none/)
   m.mute()
   assert.match(voiceStatus(m, true, '')[1], /^pill {6}Muted/)
-  assert.match(voiceStatus(m, true, '')[3], /off until pressed {2}\(kept switch off/)
+  assert.match(voiceStatus(m, true, '')[3], /off until pressed {2}\(kept switch muted; the default open\)/)
+  assert.match(voiceStatus(new Microphone(fake().env, memoryStore()), false, '')[3], /^boot {6}opens at boot {2}\(kept switch none; the default open\)/, 'a first visit')
 })
