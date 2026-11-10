@@ -277,3 +277,9 @@ ending with its token, metered pings, a header deadline, ended refusals) are des
 - Later, auto's second round: `09_Cognition/router.ts KNOWN_SERVERS`, `secondRound` and `adopt` (row above: the same
   list function, gate and guarded fetch, at fixed loopback addresses; one is kept only through the provider's own
   `setServer`). The gate, the guard, the allowlist and the shipped policy are unchanged.
+- Later, the Windows app's GPU reading: `src-tauri/src/gpu.rs gpu_memory`, one more command of the app's own (allowed
+  to its one window by Tauri's default, as the HID commands are), which reads each DXGI adapter's description and
+  returns byte counts; no file, socket or process, and nothing written. The page asks it once through
+  `07_Execute_Actions/desktopShell.ts shellGpuMemory` (bounded at 2 s, never throws) and only sizes a model by it
+  (`modelFit.ts figureFromAdapters`). No request leaves the page for it; the gate, the guard, the allowlist, the
+  capabilities' permissions and the shipped policy are unchanged.

@@ -22,7 +22,7 @@ import type { Server } from 'node:http'
 import { hostname, tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
-import { VRAM_MAX_GB } from './09_Cognition/modelFit.ts'
+import { figureFromAdapters, GPU_FLOOR_BYTES, VRAM_MAX_GB } from './09_Cognition/modelFit.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const LAUNCH: string = '../tools/web/launch.mjs'
@@ -321,6 +321,15 @@ test('gpuMemory reads nvidia-smi\'s MiB per GPU, skips [N/A] and GPUs under 4 Gi
   assert.equal(launcher.gpuMemory({ smi: () => '24564.5\n-24564\n0x6000\n1e5\n', ...NO_DRM }), null, 'only whole MiB')
   assert.equal(launcher.gpuMemory({ smi: () => '9'.repeat(30), ...NO_DRM }), null, 'a count past any GPU is not believed')
   assert.equal(launcher.gpuMemory({ smi: () => `${'81559\n'.repeat(64)}`, ...NO_DRM }), null, 'above the page\'s 4096 GB ceiling: no figure')
+})
+
+test('one rule on both desktops: the launcher\'s figure from nvidia-smi and the Windows app\'s from DXGI agree on the same GPUs', () => {
+  assert.equal(launcher.GPU_FLOOR_BYTES, GPU_FLOOR_BYTES, 'the same floor')
+  const MIB = 2 ** 20
+  for (const mib of [[24564], [24564, 24564], [81559, 81559, 81559, 81559], [2048], [2048, 8192], [4095], [4096], [], Array.from({ length: 64 }, () => 81559), Array.from({ length: 51 }, () => 81920)]) {
+    const smi = launcher.gpuMemory({ smi: () => mib.map((m) => `${m}\n`).join(''), ...NO_DRM })
+    assert.equal(figureFromAdapters(mib.map((m) => m * MIB)), smi?.gb ?? null, mib.join(','))
+  }
 })
 
 test('gpuMemory falls back to the amdgpu driver\'s VRAM per card in a temporary sysfs tree; connector folders and carve-outs are skipped', () => {

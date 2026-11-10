@@ -25,6 +25,8 @@ import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
+import { figureFromAdapters } from './09_Cognition/modelFit.ts'
+import { shellGpuMemory } from './07_Execute_Actions/desktopShell.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
 import { holdTier, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
@@ -458,7 +460,8 @@ function readOptions(): Options {
     // never; absent, the device profile decides. A phone or a lite profile never does. Read once, at boot.
     msaa: q.get('msaa') === '1' ? true : q.get('msaa') === '0' ? false : undefined,
     // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
-    // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it; absent, auto keeps its usual model.
+    // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it, and it beats the Windows app's reading;
+    // absent (and with no reading), auto keeps its usual model.
     vram: q.get('vram'),
   }
 }
@@ -967,6 +970,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
         })
         let inPage!: InPageMind
+        // The Windows app's reading of the GPUs' memory (src-tauri/src/gpu.rs), asked once as this router is built and
+        // judged by the launcher's rule (modelFit.ts figureFromAdapters); until it answers, and in a browser, none.
+        let appVram: number | null = null
+        void shellGpuMemory().then((bytes) => { appVram = figureFromAdapters(bytes) })
         const local = createMindRouter({
           fetch: pageFetch,
           store: pageStore(COGNITION_KEY),
@@ -980,6 +987,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           })),
           // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
           vram: options.vram,
+          // The Windows app's figure, below the address's and the console's.
+          appVram: () => appVram,
         })
         inPageMind = inPage
         const mind: Mind = {

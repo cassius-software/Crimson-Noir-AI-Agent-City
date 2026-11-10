@@ -3,13 +3,13 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the rule auto follows to give Ollama the largest model it already has that fits
- * the GPUs' memory the operator or the launcher gave, by what Ollama itself measured: when to measure, what a
+ * the GPUs' memory the operator, the launcher or the Windows app gave, by what Ollama itself measured: when to measure, what a
  * measurement says, which model steps in, and the one console line that says so. It makes no request.
  * What breaks if it is removed? The router cannot size Ollama's model; auto keeps today's pick on every machine.
  *
  * The figure is the GPUs' memory in GB: `ask vram <GB>` at the console (kept between visits), else `vram=` in the
- * page's address (the NixOS launcher adds it), else nothing, and with nothing the router does exactly what it did
- * before. A model whose listed weights alone exceed the figure is never chosen while a smaller one is listed (today's
+ * page's address (the NixOS launcher adds it), else what the Windows app read from DXGI (figureFromAdapters), else
+ * nothing, and with nothing the router does exactly what it did before. A model whose listed weights alone exceed the figure is never chosen while a smaller one is listed (today's
  * pick included). A bigger model is chosen only after Ollama's own /api/ps has shown how much a loaded model takes and
  * that some of it sits on the GPU; then the largest listed model whose need, its weights times the largest
  * loaded-to-weights ratio measured on this server, fits the figure less RESERVE_BYTES. A measured model that was too
@@ -44,8 +44,8 @@ export const VRAM_USAGE = "ask vram takes the GPUs' memory in GB, from 0 to 4096
 export interface Seen { readonly server: string; readonly model: string; readonly weights: number; readonly loaded: number; readonly gpu: number; readonly pace: number | null; readonly fails: number }
 /** What the router keeps between visits: the console figure (null: none; 0: off), the measurements, and the model auto moved from. */
 export interface FitKept { vram: number | null; seen: Seen[]; usual?: string }
-/** The figure in force, GB, and where it came from. */
-export interface Figure { readonly gb: number; readonly from: 'ask' | 'address' }
+/** The figure in force, GB, and where it came from: the console, the page's address, or the Windows app's reading. */
+export interface Figure { readonly gb: number; readonly from: 'ask' | 'address' | 'app' }
 /** Where a loaded model sits: all on GPUs, split between them and the processor, or all on the processor. */
 export type Where = 'gpu' | 'split' | 'cpu'
 /** What auto did with the usual model: kept it, stepped up, stepped down, or could not step down. */
@@ -72,11 +72,32 @@ export function parseVram(text: unknown): number | 'auto' {
   return n
 }
 
-/** The figure in force: the console's (0 there sizes nothing, whatever the address says), else the address's when above 0. */
-export function figureOf(asked: number | null, address: string | null | undefined): Figure | null {
+/**
+ * The figure in force: the console's (0 there sizes nothing, whatever else says), else the address's (vram=0 there
+ * sizes nothing too), else the Windows app's reading when above 0.
+ */
+export function figureOf(asked: number | null, address: string | null | undefined, app: number | null = null): Figure | null {
   if (asked !== null) return asked === 0 ? null : { gb: asked, from: 'ask' }
   const gb = readGb(address)
-  return gb !== null && gb > 0 ? { gb, from: 'address' } : null
+  if (gb !== null) return gb > 0 ? { gb, from: 'address' } : null
+  return app !== null && Number.isFinite(app) && app > 0 && app <= VRAM_MAX_GB ? { gb: app, from: 'app' } : null
+}
+
+/** Starting value, the NixOS launcher's too (tools/web/launch.mjs): an adapter with less (an integrated GPU's share) is not counted. */
+export const GPU_FLOOR_BYTES = 4 * GIB
+
+/**
+ * The figure from the Windows app's reading (src-tauri/src/gpu.rs: each hardware adapter's dedicated memory, bytes),
+ * by the launcher's rule (tools/web/launch.mjs gpuMemory): adapters under GPU_FLOOR_BYTES are not counted, the rest
+ * are summed, in GB rounded down to 0.1; null when none counts, the sum is above VRAM_MAX_GB, or the reading is not a
+ * list. Anything in it that is not a whole number of bytes up to BYTES_MAX is not counted.
+ */
+export function figureFromAdapters(bytes: unknown): number | null {
+  if (!Array.isArray(bytes)) return null
+  const kept = bytes.filter((b): b is number => Number.isSafeInteger(b) && b >= GPU_FLOOR_BYTES && b <= BYTES_MAX)
+  if (kept.length === 0) return null
+  const gb = Math.floor(kept.reduce((a, b) => a + b, 0) / GIB * 10) / 10
+  return gb > VRAM_MAX_GB ? null : gb
 }
 
 /** The bytes a bigger model may need by measure: the figure less RESERVE_BYTES. */
@@ -190,11 +211,11 @@ function measured(last: Seen, verdict: 'big' | 'slow' | null): string {
  * answers with and why, and the way back. Undefined with no figure (but off at the console, which says so). ASCII.
  */
 export function fitLine(i: FitInput): string | undefined {
-  if (i.off) return "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address)"
+  if (i.off) return "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address or the Windows app)"
   const f = i.figure
   if (f === null) return undefined
   const gb = f.gb.toFixed(1)
-  const fig = f.from === 'ask' ? `${gb} GB given at the console (ask vram)` : `${gb} GB given by the page's address (vram=)`
+  const fig = f.from === 'ask' ? `${gb} GB given at the console (ask vram)` : f.from === 'address' ? `${gb} GB given by the page's address (vram=)` : `${gb} GB read from the GPUs by the Windows app`
   if (i.found !== null && i.found !== 'ollama') return `${fig}; auto sizes only a model Ollama lists (${i.found} answers now)`
   // Nothing found yet (before the first look, or a look that found no server): no model to size, no measurement to come.
   if (i.found === null && i.choice === null) return `${fig}; auto sizes Ollama's model once a look finds Ollama on this machine`
