@@ -192,8 +192,9 @@ const m3 = (x: number): string => `${x.toFixed(3)}m`
  * the lake, so its kind also has a `shore`: the least z any part of its hull may reach, m, the end of the city's pier
  * (01_Initialize_World city.ts LAKE: the furthest anything built reaches into the lake, 80 m beyond the seawall), and
  * its hull's `halfLength` and `halfBeam` (tracks.ts TRACKS.ferry), so the reach is read at the craft's heading: a hull
- * reaching the land side of the shore has left the proof too (NaN: a kind with no shore, and no hull read). Craft run
- * in the city only (simCore.ts), so the shore is the city's.
+ * reaching the land side of the shore has left the proof too (NaN: a kind with no shore, and no hull read). Ferries
+ * sail on the city's lake only (tracks.ts buildTrackNetwork; a region's street window gets a network of its own,
+ * 01_Initialize_World region/transit.ts windowNetwork, with no ferry), so the shore is the city's.
  */
 export const CRAFT = Object.freeze({
   stride: 8,

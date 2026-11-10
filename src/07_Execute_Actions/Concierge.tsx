@@ -96,6 +96,12 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  the capture hint, which has its key row only under the HUD's ROOMY query, repeated here), so the card
  *  stays below the centre unless it is taller than the whole column. */
 const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 flex w-[min(38rem,max(22rem,calc(100%_-_30.5rem)))] -translate-x-1/2 flex-col justify-end'
+/** The same column while the first walk's card stands on the right of a wide screen (onboarding/FirstWalk.tsx AT.wide: 20
+ *  rem wide, 1.25 rem in): it spans from the minimap's clearance to 0.75 rem short of that card, centred there up to 38
+ *  rem, so the two stand side by side instead of the card lying over the right end of Sloane's (her Continue button
+ *  among it) on any window under about 1,300 px across. It applies from 60 rem across (BESIDE_ROOM), where at least
+ *  22.75 rem is left; in a narrower window the walk's card steps aside while this card is open instead. */
+const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
 const CARD_AT = {
   tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+8.75rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
@@ -135,6 +141,9 @@ function mediaStore(query: string) {
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
 const LANDSCAPE = mediaStore('(orientation: landscape)')
+/** Wide enough for Sloane's card beside the first walk's (60 rem; FirstWalk.tsx steps its card aside below it). */
+export const BESIDE_ROOM_QUERY = '(min-width: 960px)'
+const BESIDE_ROOM = mediaStore(BESIDE_ROOM_QUERY)
 
 function isEditable(t: EventTarget | null): boolean {
   if (!t || typeof t !== 'object') return false
@@ -181,12 +190,19 @@ export interface ConciergeProps {
   nudge?: Nudge | null
   /** Optional: the player opened the goal dialogue (the mentor counts it as talking to Sloane). */
   onGoal?(): void
+  /** Optional: the player sent a goal in their own words (the first walk's voice stage counts it as talking to Sloane). */
+  onGoalSent?(text: string): void
   /** Optional: Sloane's spoken voice (onboarding/speaker.ts): called with each line the card shows, as plain words. */
   onSay?(text: string): void
+  /** Optional: the first walk's card is on screen (it stands on the right of a wide screen): the wide column keeps left of it. */
+  beside?: boolean
+  /** Optional: told whether Sloane's card (not her chip) is on screen, so the first walk's card can step aside for it in a narrow window. */
+  onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onSay }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, beside = false, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
+  const roomy = useSyncExternalStore(BESIDE_ROOM.subscribe, BESIDE_ROOM.matches, BESIDE_ROOM.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))
@@ -294,7 +310,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const startGoal = (text: string) => {
     const goalText = text.trim()
-    if (goalText) advance(new FiveWhys(goalText), [])
+    if (!goalText) return
+    advance(new FiveWhys(goalText), [])
+    onGoalSent?.(goalText)
   }
   const reply = (text: string) => {
     if (dialogue.whys && dialogue.step) {
@@ -429,6 +447,13 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   useEffect(() => {
     if (visible && fielded) focusField()
   }, [visible, fielded, epoch])
+  // Whether the card is up (any view but the chip), for the first walk's card; back to closed when this goes.
+  const opened = visible && view !== 'chip'
+  useEffect(() => {
+    if (!onOpen) return
+    onOpen(opened)
+    return () => onOpen(false)
+  }, [opened, onOpen])
 
   const compact = small || overlay
   const layout = !compact ? 'wide' : short ? 'short' : 'tall'
@@ -702,7 +727,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   )
   return (
     <div className="pointer-events-none absolute inset-0 z-30 font-sans text-[13px] antialiased">
-      {wide ? <div className={WIDE_COLUMN}>{card}<div aria-hidden className={WIDE_SPACER} /></div> : card}
+      {wide ? <div className={beside && roomy ? WIDE_BESIDE : WIDE_COLUMN}>{card}<div aria-hidden className={WIDE_SPACER} /></div> : card}
     </div>
   )
 }

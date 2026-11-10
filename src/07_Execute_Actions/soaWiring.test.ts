@@ -52,18 +52,23 @@ test('bridge: the surface is one reader; the offline stand-in has no columns; th
   const bridge = read('./terminal/bridge.ts')
   assert.match(bridge, /^export interface SoaBridge \{\n {2}tables\(\): NoirTables\n\}$/m)
   assert.match(bridge, /^ {2}soa\?: SoaBridge$/m)
+  assert.match(bridge, /^ {2}exam\?: ExamBridge$/m, 'the first walk\'s exam rides the bridge as its own optional surface')
   assert.match(bridge, /^import type \{ NoirTables \} from '\.\/noirscript\/index\.ts'$/m)
   assert.equal(offlineBridge({ name: 'T', version: '0', host: 't' }).soa, undefined)
   const commands = read('./terminal/commands.ts')
   assert.match(commands, /^import \{ ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables \} from '\.\/noirscript\/index\.ts'$/m)
   // The host the console builds for a run carries the tables, the elite tier's writes while that tier is open (and
-  // only then the raised limits), and the tier's own lock message; nothing else of the bridge reaches the VM.
-  const handler = between(commands, '  noir(args, b, _history, _line, session) {', '  // ---- the operator tier ----')
+  // only then the raised limits), the tier's own lock message, and the first walk's exam where the shell has one
+  // (with its own refusal where it has none); nothing else of the bridge reaches the VM.
+  const handler = between(commands, '  noir(args, b, _history, _line, session) {', '  // Read-only: the walk\'s stage and its exit program.')
   assert.match(handler, /tables = b\.soa\.tables\(\)/)
   assert.match(handler, /const writes = eliteWritesOf\(b\)/)
-  assert.match(handler, /const host: NoirHost = writes === null \? \{ tables: \(\) => tables, locked: NOIR_LOCKED \} : \{ tables: \(\) => tables, write: writes, locked: NOIR_LOCKED \}/)
+  assert.match(handler, /const exam = b\.exam\n/)
+  assert.match(handler, /const host: NoirHost = \{\n\s*tables: \(\) => tables, locked: NOIR_LOCKED, noExam: NOIR_NO_EXAM,\n\s*\.\.\.\(writes === null \? \{\} : \{ write: writes \}\),\n\s*\.\.\.\(exam === undefined \? \{\} : \{ exam \}\),\n\s*\}/)
   assert.match(handler, /n\.run\(rest, host, writes === null \? undefined : ELITE_LIMITS\)/)
+  assert.match(handler, /if \(exam !== undefined\) for \(const line of exam\.report\(\)\) lines\.push\(sys\(line\)\)/)
   assert.doesNotMatch(handler, /b\.operator|api\.|sim\./)
+  assert.match(commands, /^const NOIR_NO_EXAM = 'no first walk in this shell: the exit program runs in the city'$/m)
   assert.match(commands, /^function eliteWritesOf\(b: TerminalBridge\): EliteWrites \| null \{\n {2}try \{ return b\.operator\?\.elite\.writes\(\) \?\? null \} catch \{ return null \}\n\}$/m)
   assert.match(commands, /^const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"$/m)
   // The same words the tier itself refuses with (operator.ts's requireElite), so a script and the console agree.
