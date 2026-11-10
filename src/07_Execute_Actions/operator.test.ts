@@ -1390,23 +1390,32 @@ test('14A on the way out keeps up with a long stream: each piece screens a bound
   // times the pieces cost about four times the milliseconds (sixteen if every piece screened, or searched, the whole
   // answer: windowStart did, until it walked back from the reach). The ratio holds on any machine; the absolute bound
   // is loose on purpose (a laptop running the suite in parallel took 2.4 s for 4,000 pieces that take 80 ms here).
+  // The time is this process' CPU time, not the clock's, and each size's best of three taken in turn: the suite runs
+  // its files in parallel, and a neighbour's burst on the clock once took 1,000 pieces at 26 ms to 4,000 at 223 (8.6
+  // times, red on a correct window). On CPU time the window measures about 4.5 times with eight busy processes on four
+  // cores, and a search over the whole answer 9 to 12.
   const stream = async (n: number): Promise<number> => {
     const gate = new FakeGate()
     const mind = new FakeMind()
     const a = gatedAsk(gate, mind, ['Rust'], 'tell me everything')
     let shown = ''
     a.follow((p) => { shown += p.text })
-    const t0 = performance.now()
+    const t0 = process.cpuUsage()
     for (let k = 0; k < n; k++) mind.say('text', `token${k % 97} `)
-    const ms = performance.now() - t0
+    const spent = process.cpuUsage(t0)
+    const ms = (spent.user + spent.system) / 1000
     mind.finish('')
     const r = await within(a.result)
     assert.equal(r.disengaged, undefined)
     assert.equal(shown, r.text, 'every word shown, in order, once')
     return ms
   }
-  const short = await stream(1000)
-  const long = await stream(4000)
+  let short = Infinity
+  let long = Infinity
+  for (let k = 0; k < 3; k++) {
+    short = Math.min(short, await stream(1000))
+    long = Math.min(long, await stream(4000))
+  }
   assert.ok(long < 8 * Math.max(short, 5), `1,000 pieces in ${short.toFixed(0)} ms, 4,000 in ${long.toFixed(0)} ms: the window is not bounded`)
   assert.ok(long < 4000, `4,000 pieces screened in ${long.toFixed(0)} ms`)
 })

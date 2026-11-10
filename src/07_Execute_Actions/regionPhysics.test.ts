@@ -157,7 +157,7 @@ test('the hollowed pack walls nothing on a room\'s lot, and with no lots it wall
   const layout = layoutOf(pack)
   const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
   const lots = regionWorkplaceLots(pack, layout, streetGridOf(pack, layout.offset, start)!, start, 1337)
-  assert.equal(lots.length, 6)
+  assert.equal(lots.length, 16)
   const before = regionPhysics(pack, layout).walls
   const walls = regionPhysics(hollowLots(pack, layout, lots).pack, layout).walls
   assert.ok(walls.length < before.length, `${before.length / 5} walls, ${walls.length / 5} hollowed`)
@@ -236,7 +236,7 @@ test('the worker refuses malformed workplaces, each with its own reason, and han
   const sound = cityStreetGrid()
   sound.originX = 2000
   sound.originZ = 2000
-  const lots = [{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'boardroom', k: 54, m: 52, side: 3 }]
+  const lots = [{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'twinStudio', k: 54, m: 52, side: 3 }]
   const init = (workplaces: unknown, streets: unknown = sound) => ({ t: 'init' as const, seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: regionPhysics(p, L), streets, workplaces })
   const answer = async (msg: unknown, create = async (o: Parameters<typeof SimCore.create>[0]) => SimCore.create(o, null)) => {
     const posts: unknown[] = []
@@ -250,13 +250,13 @@ test('the worker refuses malformed workplaces, each with its own reason, and han
   }
   await refused(init(lots, null), /^init: workplaces need a region's street window$/, 'no street window')
   await refused({ ...init(lots), region: null }, /^init: workplaces need a region's street window$/, 'the city has its own')
-  await refused(init({ 0: lots[0] }), /^init: workplaces are a list of at most 6$/, 'not a list')
-  await refused(init([...lots, ...lots, ...lots, lots[0]]), /^init: workplaces are a list of at most 6$/, 'seven')
+  await refused(init({ 0: lots[0] }), /^init: workplaces are a list of at most 16$/, 'not a list')
+  await refused(init(Array.from({ length: 17 }, (_, n) => ({ ...lots[0], k: 50 + n }))), /^init: workplaces are a list of at most 16$/, 'seventeen')
   await refused(init([{ ...lots[0], k: 49 }]), /^init: a workplace stands on a lot of the street window$/, 'west of the window')
   await refused(init([{ ...lots[0], m: 66 }]), /^init: a workplace stands on a lot of the street window$/, 'south of the window')
   await refused(init([{ ...lots[0], k: 52.5 }]), /^init: a workplace stands on a lot of the street window$/, 'between lots')
   await refused(init([{ ...lots[0], side: 4 }]), /^init: a workplace's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no fifth street')
-  await refused(init([{ ...lots[0], kind: 'casino' }]), /^init: a workplace is one of the six kinds$/, 'an unknown kind')
+  await refused(init([{ ...lots[0], kind: 'casino' }]), /^init: a workplace is one of the sixteen kinds$/, 'an unknown kind')
   await refused(init([lots[0], { ...lots[1], k: 52 }]), /^init: one workplace to a lot$/, 'two on a lot')
   // Sound ones reach the core as they were sent; none is no workplaces.
   const handed: unknown[] = []

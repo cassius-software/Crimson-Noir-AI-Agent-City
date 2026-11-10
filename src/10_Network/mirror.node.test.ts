@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CITY, CITY_SIZE, generateCity, inLot, streetFurniture } from '../01_Initialize_World/city.ts'
 import { RING0, Ring0Auditor } from '../02_Define_The_Rules/ring0.ts'
-import { poseAt, projectOnto } from '../06_Make_Decisions/tracks.ts'
+import { projectOnto } from '../06_Make_Decisions/tracks.ts'
 import { EXIT_SIDE, HELD_CARS } from '../07_Execute_Actions/carRig.ts'
 import { SHIFT_MAX, SimCore } from '../07_Execute_Actions/simCore.ts'
 import { doorOf, ENTER_RANGE, footWish, MODES, POSE, RUN, type CarBodyState, type DriveControls, type FootControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
@@ -247,12 +247,13 @@ test('at the wheel the room replays the car: an honest page\'s doors, drive and 
   const r = rng(11)
   for (let k = 0; k < 120; k++) assert.ok(m.judge(1, page.step().input).ok, `standing, frame ${k}`)
   // The room and the page put the player 2.5 m beside car 5 (a correction does that on both sides).
-  const i = 5
+  // A parked car in its kerbside bay (parking.ts): the only kind a player may take; the player on its road side.
+  const i = m.garage.plan.findIndex((c) => c.bay)
   const c = page.chassis(i)
   const at = { x: c.x + Math.cos(c.heading) * 2.5, z: c.z - Math.sin(c.heading) * 2.5 }
   page.correct(m.place(1, at.x, at.z))
   assert.ok(m.judge(1, page.step().input).ok)
-  // Into the car: the door is checked against the room's pose and the car's ring, then its first run replayed.
+  // Into the car: the door is checked against the room's pose and the car's bay, then its first run replayed.
   const into = page.step({ cmds: [{ c: 'interact' }] })
   assert.deepEqual(into.input.door && 'enter' in into.input.door && into.input.door.enter.car, i)
   const v0 = m.judge(1, into.input)
@@ -311,11 +312,12 @@ test('at the wheel the room replays the car: an honest page\'s doors, drive and 
   assert.equal(m.garage.worlds, 0, 'the drive world goes with the player')
 })
 
-test('every lie about a car is refused: a car out of the door\'s reach or off its ring, an exit point off the room\'s, a mode without its door', async () => {
+test('every lie about a car is refused: a car out of the door\'s reach or out of its bay, an exit point off the room\'s, a mode without its door', async () => {
   const m = await Mirror.create(SEED)
   const page = await roomPage(m, 1)
   for (let k = 0; k < 120; k++) assert.ok(m.judge(1, page.step().input).ok)
-  const i = 9
+  // The second bay car of the plan (parking.ts): parked, the kind a player may take.
+  const i = m.garage.plan.map((p, k) => (p.bay ? k : -1)).filter((k) => k >= 0)[1]
   const c = page.chassis(i)
   const at = { x: c.x + Math.cos(c.heading) * 2.5, z: c.z - Math.sin(c.heading) * 2.5 }
   page.correct(m.place(1, at.x, at.z))
@@ -324,18 +326,18 @@ test('every lie about a car is refused: a car out of the door\'s reach or off it
   const door = into.door as { enter: { car: number; state: CarBodyState } }
   const st = door.enter.state
   const before = m.pose(1)
-  // A car whose ring runs nowhere near this one.
-  const other = m.garage.plan.findIndex((p) => Math.abs(projectOnto(m.garage.network.tracks[p.track], st.x, st.z).lateral) > 5)
+  // Another bay car: its bay is elsewhere.
+  const other = m.garage.plan.findIndex((p, k) => p.bay && k !== i)
   assert.ok(other >= 0)
   const lies: [string, MoveInput, RegExp][] = [
     // A car the player is not beside: the same car's state 4 m further from the player.
     ['out of the door', { ...into, door: { enter: { car: i, state: { ...st, x: st.x - Math.cos(c.heading) * 4, z: st.z + Math.sin(c.heading) * 4 } } } }, /from the room's pose/],
-    // Another car's index for this car's state: its ring runs elsewhere.
-    ['another ring', { ...into, door: { enter: { car: other, state: st } } }, /off its ring's lane/],
-    // The car claimed at 30 m/s along its heading, past its ring's limit; launched upward; sliding sideways.
-    ['too fast', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.sin(c.heading) * 30, vz: Math.cos(c.heading) * 30 } } } }, /past its ring's/],
-    ['launched', { ...into, door: { enter: { car: i, state: { ...st, vy: 12 } } } }, /moving up at 12\.0 m\/s/],
-    ['sideways', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.cos(c.heading) * 8, vz: -Math.sin(c.heading) * 8 } } } }, /sliding sideways/],
+    // Another car's index for this car's state: its bay is elsewhere.
+    ['another bay', { ...into, door: { enter: { car: other, state: st } } }, /from its bay/],
+    // A parked car claimed moving: at 30 m/s along its heading; launched upward; sliding sideways.
+    ['too fast', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.sin(c.heading) * 30, vz: Math.cos(c.heading) * 30 } } } }, /not moving \(30\.00 m\/s/],
+    ['launched', { ...into, door: { enter: { car: i, state: { ...st, vy: 12 } } } }, /not moving \(12\.00 m\/s/],
+    ['sideways', { ...into, door: { enter: { car: i, state: { ...st, vx: Math.cos(c.heading) * 8, vz: -Math.sin(c.heading) * 8 } } } }, /not moving \(8\.00 m\/s/],
     // At a wheel with no door; on foot claiming a door out of a car it never took.
     ['no door', { ...into, door: undefined }, /at a wheel without taking one/],
     ['no car to leave', { mode: 'foot', segs: [[0, 0, 1]], heading: 0, claim: before, door: { exit: { x: before.x, z: before.z } } }, /exit: not at a wheel/],
@@ -375,39 +377,36 @@ test('every lie about a car is refused: a car out of the door\'s reach or off it
 test('a hop from car to car carries a player no further than a door and an exit: the bound on doors as transport', async () => {
   const m = await Mirror.create(SEED)
   m.join(1)
-  // Start on the kerb 2.5 m beside the ring the most cars were seated on (the spawn sidewalk is 15 m from the nearest).
-  const seated = new Map<number, number>()
-  for (const c of m.garage.plan) seated.set(c.track, (seated.get(c.track) ?? 0) + 1)
-  const busiest = [...seated].sort((a, b) => b[1] - a[1])[0]
-  assert.ok(busiest[1] >= 2, 'a ring with two cars or more')
-  const lane = poseAt(m.garage.network.tracks[busiest[0]], 0)
-  m.place(1, lane.x + lane.tangentZ * 2.5, lane.z - lane.tangentX * 2.5)
-  // A cheater claims the nearest car on every ring lane it can reach, then leaves it, again and again, heading one way.
-  // Every enter is within the door (ENTER_RANGE) of the room's pose and every exit is where the room's chassis puts
-  // it (EXIT_SIDE beside it), so a pair moves the truth at most ENTER_RANGE + EXIT_SIDE, whatever the claims say.
+  const f = Math.fround
+  /** The state of bay car `i` as the seed laid it out, in the 32-bit numbers a page reads back from Rapier. */
+  const inBay = (i: number): CarBodyState => {
+    const b = m.garage.plan[i].pose, yaw = b.heading - Math.PI / 2
+    return { x: f(b.x), y: f(0.56), z: f(b.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  }
+  // Start on the road side of the plan's first bay car (parking.ts): the only kind of car a door opens on.
+  const b0 = m.garage.plan.findIndex((c) => c.bay)
+  const bay = m.garage.plan[b0].pose
+  m.place(1, bay.x + Math.cos(bay.heading) * 2.5, bay.z - Math.sin(bay.heading) * 2.5)
+  // A cheater claims the furthest parked car it can reach (in its bay, or held where this player left it), then leaves
+  // it, again and again. Every enter is within the door (ENTER_RANGE) of the room's pose and every exit is where the
+  // room's chassis puts it (EXIT_SIDE beside it), so a pair moves the truth at most ENTER_RANGE + EXIT_SIDE, whatever
+  // the claims say; and with the parked cars ten metres or more apart, the chain never leaves the one car.
   const bound = ENTER_RANGE + GARAGE.enterSlack + EXIT_SIDE
   let pairs = 0, worst = 0
+  const cars = new Set<number>()
   for (let k = 0; k < 40; k++) {
     const p = m.pose(1)
-    let best: { car: number; x: number; z: number; heading: number } | null = null
+    let best: { car: number; state: CarBodyState } | null = null
     for (let i = 0; i < m.garage.cars; i++) {
-      // A car this player left is held where it was left (garage.node.ts): no use for a hop.
-      if (m.garage.parkedAt(1, i)) continue
-      const track = m.garage.network.tracks[m.garage.plan[i].track]
-      // The lane point nearest the player, pushed toward +x (the way the cheater wants to go) along the ring.
-      for (let s = 0; s < track.length; s += 1) {
-        const q = poseAt(track, s)
-        const d = Math.hypot(q.x - p.x, q.z - p.z)
-        if (d <= ENTER_RANGE && (!best || q.x > best.x)) best = { car: i, x: q.x, z: q.z, heading: q.heading }
-      }
+      const state = m.garage.parkedAt(1, i) ?? (m.garage.plan[i].bay ? inBay(i) : null)
+      if (!state) continue
+      const d = Math.hypot(state.x - p.x, state.z - p.z)
+      if (d <= ENTER_RANGE && (!best || state.x > best.state.x)) best = { car: i, state }
     }
     if (!best) break
-    const yaw = best.heading - Math.PI / 2
-    // The numbers a page reads back from Rapier: 32-bit.
-    const f = Math.fround
-    const state = { x: f(best.x), y: f(0.56), z: f(best.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
-    const enter = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: best.car, state } } })
+    const enter = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: best.state, door: { enter: { car: best.car, state: best.state } } })
     assert.ok(enter.ok, `pair ${k}: ${enter.ok ? '' : enter.reason}`)
+    cars.add(best.car)
     const ex = m.garage.exitPoint(1)!
     const exit = m.judge(1, { mode: 'foot', segs: [[0, 0, 0]], heading: 0, claim: { x: f(ex.x), y: f(0.95), z: f(ex.z) }, door: { exit: ex } })
     const after = m.pose(1)
@@ -416,15 +415,24 @@ test('a hop from car to car carries a player no further than a door and an exit:
     pairs++
   }
   assert.ok(pairs >= 2, `${pairs} door pairs taken`)
+  assert.equal(cars.size, 1, 'no second parked car within a door of the first: the chain stays at one car')
   assert.ok(worst <= bound, `a pair moved the truth ${worst.toFixed(2)} m (bound ${bound.toFixed(2)})`)
   // The room's door bucket (replication.ts LIMITS.doorsPerSecond) then caps the rate: at most doorsPerSecond / 2 pairs
   // a second, so a hop chain alone is no faster than a run (replication.test.ts drives every mix through the room).
   assert.ok((worst * LIMITS.doorsPerSecond) / 2 <= RUN, `hopping at most ${((worst * LIMITS.doorsPerSecond) / 2).toFixed(2)} m/s`)
   assert.ok((bound * LIMITS.doorsPerSecond) / 2 <= RUN, `the bound: ${((bound * LIMITS.doorsPerSecond) / 2).toFixed(2)} m/s`)
+  // A car in traffic, however near, is no hop at all: it has a driver.
+  const lane = m.garage.plan.findIndex((c) => !c.bay)
+  const seat = m.garage.plan[lane].pose
+  m.place(1, seat.x + Math.cos(seat.heading) * 2, seat.z - Math.sin(seat.heading) * 2)
+  const yaw = seat.heading - Math.PI / 2
+  const st: CarBodyState = { x: f(seat.x), y: f(0.56), z: f(seat.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  const traffic = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: st, door: { enter: { car: lane, state: st } } })
+  assert.ok(!traffic.ok && /has a driver/.test(traffic.reason), JSON.stringify(traffic))
 })
 
-test('a car the room does not hold goes back to its ring\'s traffic: one parked before the session, one a correction took the player out of, and the oldest past HELD_CARS', async () => {
-  const CARS = HELD_CARS + 3
+test('a car the room does not hold goes back to where the room expects it: a bay car to its bay, any other to its ring\'s traffic, a correction\'s car too; the cars left in the room stay held', async () => {
+  const CARS = 48
   const m = await Mirror.create(SEED, CARS)
   const sim = await SimCore.create({ seed: SEED, cars: CARS, agents: 64, boxes: generateCity(SEED), furniture: streetFurniture(SEED), spawn: { x: C, z: C }, debug: false, tracks: true }, null)
   const poses = new Float32Array(Math.max(1, sim.meta.count) * POSE.stride)
@@ -435,47 +443,64 @@ test('a car the room does not hold goes back to its ring\'s traffic: one parked 
     const c = car(i)
     return Math.abs(projectOnto(m.garage.network.tracks[m.garage.plan[i].track], c.x, c.z).lateral)
   }
+  const offBay = (i: number): number => Math.hypot(car(i).x - m.garage.plan[i].pose.x, car(i).z - m.garage.plan[i].pose.z)
   /** Player 1 put beside car `i` and through its door: the car the realm says it entered (or -1). */
   const enter = (i: number): number => {
     const c = car(i)
     const st = step([{ c: 'teleport', x: c.x + 1.5, z: c.z }, { c: 'interact' }])
     return st.events.find((e) => e.e === 'entered')?.index ?? -1
   }
+  const bays = m.garage.plan.map((c, k) => (c.bay ? k : -1)).filter((k) => k >= 0)
+  assert.ok(bays.length >= 11 && bays.length < HELD_CARS, `${bays.length} bay cars`)
   step()
-  // Out of a room: car 0 taken, set down 8 m off its lane, left there (parked where it stands).
-  assert.equal(enter(0), 0)
-  const at = car(0)
-  step([{ c: 'recover', i: 0, x: at.x + 8, z: at.z + 8 }])
+  // Out of a room: a car in traffic is nobody's; a bay car is taken, set down 8 m off its bay, left there (parked where
+  // it stands); another car in traffic is parked by the console where it drives.
+  assert.equal(enter(0), -1, 'a car in traffic has a driver')
+  const b0 = bays[0]
+  assert.equal(enter(b0), b0)
+  const at = car(b0)
+  step([{ c: 'recover', i: b0, x: at.x + 8, z: at.z + 8 }])
   step([{ c: 'interact' }])
   for (let k = 0; k < 30; k++) step()
+  assert.equal(car(b0).mode, 'parked')
+  assert.ok(offBay(b0) > 4, `left ${offBay(b0).toFixed(2)} m off its bay`)
+  step([{ c: 'setMode', i: 0, mode: 'parked' }])
   assert.equal(car(0).mode, 'parked')
-  assert.ok(offLane(0) > 4, `left ${offLane(0).toFixed(2)} m off its lane`)
-  // A session starts: the room holds no car for the player, so car 0 goes back to its lane as traffic.
+  // A session starts: the room holds no car for the player, so the bay car is back in its bay and car 0 back on its
+  // lane as traffic.
   step([{ c: 'room', on: true }])
   for (let k = 0; k < 30; k++) step()
+  assert.equal(car(b0).mode, 'parked')
+  assert.ok(offBay(b0) < 0.05, `back in its bay (${offBay(b0).toFixed(2)} m)`)
   assert.equal(car(0).mode, 'ai')
   assert.ok(offLane(0) < 0.5, `back on its lane (${offLane(0).toFixed(2)} m)`)
-  // In the room: a correction takes the player out of a car (a teleport while driving): that car goes back too.
-  const taken = enter(1)
-  assert.ok(taken >= 0)
+  // In the room: a correction takes the player out of a car (a teleport while driving): that car goes back to its
+  // bay, where the room expects a bay car it does not hold, and may be taken again.
+  const taken = enter(bays[1])
+  assert.equal(taken, bays[1])
   step([{ c: 'teleport', x: C, z: C }])
   for (let k = 0; k < 30; k++) step()
-  assert.equal(car(taken).mode, 'ai', 'a car the room took the player out of is traffic again')
-  // Cars left in the room are held where they stop, HELD_CARS of them; the oldest is let go past that.
+  assert.equal(car(taken).mode, 'parked', 'a car the room took the player out of is back in its bay')
+  assert.ok(offBay(taken) < 0.05, `${offBay(taken).toFixed(2)} m from its bay`)
+  // Cars left in the room are held where they stop: every bay car the player can reach, fewer than HELD_CARS, none let go.
   const left: number[] = []
-  for (let i = 0; i < CARS && left.length <= HELD_CARS; i++) {
+  for (const i of bays) {
     const got = enter(i)
-    if (got < 0 || left.includes(got)) {
-      if (got >= 0) step([{ c: 'interact' }])
-      continue
-    }
+    if (got < 0) continue
     step([{ c: 'interact' }])
     left.push(got)
   }
-  assert.equal(left.length, HELD_CARS + 1, `${left.length} cars left`)
+  assert.ok(left.length >= 11 && left.length <= HELD_CARS, `${left.length} cars left`)
   step()
-  assert.equal(car(left[0]).mode, 'ai', 'the oldest held car went back to traffic')
-  for (const i of left.slice(1)) assert.equal(car(i).mode, 'parked', `car ${i} still held`)
+  for (const i of left) assert.equal(car(i).mode, 'parked', `car ${i} still held`)
+  // The room opens again: every bay car back in its bay (the correction's too), the held ones let go of.
+  step([{ c: 'room', on: false }])
+  step([{ c: 'room', on: true }])
+  for (let k = 0; k < 30; k++) step()
+  for (const i of bays) {
+    assert.equal(car(i).mode, 'parked', `car ${i} parked in its bay`)
+    assert.ok(offBay(i) < 0.05, `car ${i} is ${offBay(i).toFixed(2)} m from its bay`)
+  }
 })
 
 test('a correction goes ahead of what the player queued: an E pressed while the truth was on its way acts on the truth, and no door out of a car the room never had is reported', async () => {
@@ -485,7 +510,9 @@ test('a correction goes ahead of what the player queued: an E pressed while the 
   const step = (cmds: SimCommand[] = []) => sim.step({ dt: 1 / 60, foot: still, drive: IDLE, cmds }, poses)
   const drivingCar = (): void => {
     step([{ c: 'room', on: true }])
-    const i = 0
+    // The fleet's one bay car (the last quarter of four): parked, so the player may take it; the room puts it back in
+    // its bay as it opens, so it can be taken again after a correction sent it to traffic.
+    const i = [0, 1, 2, 3].find((k) => MODES[poses[k * POSE.stride + POSE.mode]] === 'parked')!
     const c = { x: poses[i * POSE.stride + POSE.x], z: poses[i * POSE.stride + POSE.z] }
     const st = step([{ c: 'teleport', x: c.x + 1.5, z: c.z }, { c: 'interact' }])
     assert.ok(st.events.some((e) => e.e === 'entered'), 'at a wheel')
@@ -558,34 +585,40 @@ test('a page that drifts from the replay within MIRROR.drift is kept as the mirr
 test('a held car claimed where the room does not have it is refused and let go: from then on the room checks it as traffic, as the page has it', async () => {
   const m = await Mirror.create(SEED)
   m.join(1)
-  const seat = m.garage.plan[0].pose
+  // The plan's first bay car: parked in its bay, the kind of car a door opens on.
+  const b = m.garage.plan.findIndex((c) => c.bay)
+  const seat = m.garage.plan[b].pose
   m.place(1, seat.x + 2 * Math.cos(seat.heading), seat.z - 2 * Math.sin(seat.heading))
   const f = Math.fround
   const yaw = seat.heading - Math.PI / 2
   const state = { x: f(seat.x), y: f(0.56), z: f(seat.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
-  assert.ok(m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: 0, state } } }).ok)
+  assert.ok(m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: b, state } } }).ok)
   const ex = m.garage.exitPoint(1)!
   assert.ok(m.judge(1, { mode: 'foot', segs: [[0, 0, 0]], heading: 0, claim: { x: f(ex.x), y: f(0.95), z: f(ex.z) }, door: { exit: ex } }).ok)
-  const held = m.garage.parkedAt(1, 0)!
+  const held = m.garage.parkedAt(1, b)!
   assert.ok(held, 'held where it was left')
   // Claimed a metre toward the player from where the room holds it: refused, and the room lets go of it.
   const d = Math.hypot(ex.x - held.x, ex.z - held.z)
   const elsewhere = { ...held, x: f(held.x + (ex.x - held.x) / d), z: f(held.z + (ex.z - held.z) / d) }
-  const out = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: elsewhere, door: { enter: { car: 0, state: elsewhere } } })
+  const out = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: elsewhere, door: { enter: { car: b, state: elsewhere } } })
   assert.equal(out.ok, false)
-  assert.equal(m.garage.parkedAt(1, 0), null, 'let go: an AI car on its ring to the room from now on')
+  assert.equal(m.garage.parkedAt(1, b), null, 'let go: a car in its bay to the room from now on, as the page puts it (simCore.ts rebay)')
+  // So a claim of it in its bay, as the seed laid it out, is let through again.
+  const again = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: b, state } } })
+  assert.ok(again.ok, again.ok ? '' : again.reason)
 })
 
 test('at the wheel a replay the Ring-0 audit refuses is undone: the car goes back to its last audited state, and a correction carries that', async () => {
   const m = await Mirror.create(1337)
   m.join(1)
-  // Car 0 at rest where the fleet's plan starts it, the player two metres beside it.
-  const seat = m.garage.plan[0].pose
+  // The plan's first bay car at rest in its bay, the player two metres beside it (on its road side).
+  const b = m.garage.plan.findIndex((c) => c.bay)
+  const seat = m.garage.plan[b].pose
   m.place(1, seat.x + 2 * Math.cos(seat.heading), seat.z - 2 * Math.sin(seat.heading))
   const f = Math.fround
   const yaw = seat.heading - Math.PI / 2
   const state = { x: f(seat.x), y: f(0.56), z: f(seat.z), qx: 0, qy: f(Math.sin(yaw / 2)), qz: 0, qw: f(Math.cos(yaw / 2)), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
-  const enter = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: 0, state } } })
+  const enter = m.judge(1, { mode: 'drive', segs: [[0, 0, 0, 0, 0]], heading: 0, claim: state, door: { enter: { car: b, state } } })
   assert.ok(enter.ok, enter.ok ? '' : enter.reason)
   const audited = m.garage.chassis(1)!
   // A replay that ends below the ground floor (the room's own physics never does this: the audit is the net under it).

@@ -15,8 +15,9 @@
  * hack, a wall walked through, a position written into the client's memory) is refused: the trial is undone, and the
  * room snaps the client to the mirror's pose. Cars are the garage's (garage.node.ts, Phase 13): taking a car's wheel
  * and leaving it are doors the mirror checks against its own numbers (the car within the realm's door of where the
- * mirror has the player, and on its own ring's lane or within 0.5 m of where this player left it; the exit point
- * within 0.5 m of the one the mirror computes from its own chassis, which is where the mirror puts the player down),
+ * mirror has the player, and a parked car standing in its kerbside bay or within 0.5 m of where this player left it;
+ * the exit point within 0.5 m of the one the mirror computes from its own chassis, which is where the mirror puts the
+ * player down),
  * and every run at the wheel is replayed on the room's own copy of the car, which then is the truth: a chassis claim
  * more than a micrometre from it is answered with a correction that carries the car's full state. Every pose it keeps
  * passes the Ring-0 person audit first (finite, inside the containment slab, above the ground floor). The city world

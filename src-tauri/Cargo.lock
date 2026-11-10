@@ -415,6 +415,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "window-vibrancy",
+ "windows",
 ]
 
 [[package]]
