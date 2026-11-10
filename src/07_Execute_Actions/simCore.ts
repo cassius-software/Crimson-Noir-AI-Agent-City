@@ -255,7 +255,9 @@ export class SimCore {
     // elevated loop, drone corridors, racetrack (held inside the region) and VTOL routes between the roofs of the craft
     // boxes the page sent; the page builds the same from the same four arguments for the craft view.
     const network = o.tracks === true ? (streets ? windowNetwork(o.seed, streets, o.craftBoxes ?? [], r ?? null) : buildTrackNetwork(o.seed, o.boxes)) : null
-    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
+    // The parked share of the fleet in kerbside bays (parking.ts): on the city's grid, or a street window's own.
+    const bays = network ? { boxes: o.boxes, origin: streets ? { x: streets.originX, z: streets.originZ } : undefined } : null
+    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined, bays })
     // The corridors are laid over the city's grid, or over a region's street window; a surveyed region has no window and
     // so no corridors (its fleet's network is the city's rings, which seat no craft). A lite boot asks for none
     // (SimInit.craft false); the page draws them (craftView.ts).
@@ -706,11 +708,16 @@ export class SimCore {
         // The authored car: the room's authority replays it with the authored tuning.
         if (on) for (const key of TUNING_KEYS) fleet.setTuning(key, 1)
         // A new session's room holds no car for player 1: every car left parked before it (in a session before, or
-        // out of one) goes back to its ring's traffic, where the room expects a car it does not hold. The other local
-        // players get out first (their doors are refused in the room), so their cars go back too.
+        // out of one) goes back to where the room expects a car it does not hold: a bay car to its bay, any other to
+        // its ring's traffic. The other local players get out first (their doors are refused in the room), so their
+        // cars go back too.
         if (on) {
           for (let k = 1; k < this.#driving.length; k++) if (this.#driving[k]) this.#interact(k, true)
-          for (const v of fleet.vehicles) if (v.mode === 'parked' && !this.#driving.includes(v)) fleet.release(v)
+          for (const v of fleet.vehicles) {
+            if (this.#driving.includes(v)) continue
+            if (v.bay) fleet.rebay(v)
+            else if (v.mode === 'parked') fleet.release(v)
+          }
           this.#held.length = 0
         }
         return
@@ -802,7 +809,9 @@ export class SimCore {
       case 'intent': {
         this.#notInRoom(cmd.c)
         const v = this.#notDriven(this.#car(cmd.i))
-        if (v.mode === 'ai') v.mode = 'player'
+        // A scripted intent takes a parked car, as a player does; a car with a driver is not taken from them.
+        if (v.mode === 'ai') throw new Error(`intent: car ${v.index} has a driver (park it first: setMode parked)`)
+        v.mode = 'player'
         // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. It is ruled after
         // this step's sensing (step()), so never on a reading one step staler than the player's own controls.
         this.#intents.set(v.index, { throttle: finite(cmd.throttle), brake: finite(cmd.brake), steer: finite(cmd.steer) })
@@ -995,10 +1004,12 @@ export class SimCore {
       v.mode = 'parked'
       // In a network room a car stops where its driver leaves it: its brakes would otherwise answer the bouncer, whose
       // pedestrians only this page sees, and the room's authority holds the car where it was left. A car the room took
-      // the player out of (a forced exit: a correction) is one the room does not hold: back to its ring's traffic.
+      // the player out of (a forced exit: a correction) is one the room does not hold: a bay car back in its bay, any
+      // other back in its ring's traffic (garage.node.ts whyNotEnter expects exactly that of a car it does not hold).
       if (this.#room && k === 0) {
-        if (forced) fleet.release(v)
-        else this.#hold(v)
+        if (!forced) this.#hold(v)
+        else if (v.bay) fleet.rebay(v)
+        else fleet.release(v)
       }
       this.#driving[k] = null
       avatar.setEnabled(true)
@@ -1009,8 +1020,14 @@ export class SimCore {
       this.#events.push({ e: 'exited', player: k, x: ex, z: ez, heading: h, ...(forced && { forced: true }) })
       return
     }
-    const v = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE)
-    if (!v) return
+    // The nearest parked car within the door: the one kind of car a player may take. A car with a driver (an AI's, a
+    // player's) is nobody's to take, however near: refused and said, never emptied.
+    const v = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE, 'parked')
+    if (!v) {
+      const taken = fleet.nearest(avatar.x, avatar.z, ENTER_RANGE)
+      if (taken) this.noteRejected(taken.mode === 'player' ? 'that car is being driven' : 'that car has a driver')
+      return
+    }
     this.#seat(k, v, false)
   }
 
@@ -1021,7 +1038,8 @@ export class SimCore {
    */
   /**
    * A car player 1 left in a network room, stopped dead and kept where it was left, as the room's authority keeps it
-   * (garage.node.ts park); past HELD_CARS the oldest goes back to traffic, the one the room lets go of too.
+   * (garage.node.ts park); past HELD_CARS the oldest goes back to its bay (or, with no bay, to traffic), the one the
+   * room lets go of too.
    */
   #hold(v: Vehicle): void {
     this.#fleet.stop(v)
@@ -1031,7 +1049,9 @@ export class SimCore {
     held.push(v)
     while (held.length > HELD_CARS) {
       const oldest = held.shift()!
-      if (oldest.mode === 'parked') this.#fleet.release(oldest)
+      if (oldest.mode !== 'parked') continue
+      if (oldest.bay) this.#fleet.rebay(oldest)
+      else this.#fleet.release(oldest)
     }
   }
 

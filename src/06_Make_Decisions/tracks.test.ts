@@ -6,7 +6,7 @@
  * physics engine: the network is the same for the same seed, closed and arc-length true; car rings are lane
  * splines on Driver's own corner curve with a stop line at every intersection; INV-1, no two car rings come
  * within 4 m of each other and the train, drone and plane corridors meet no building and stay 6 m over the
- * cars; INV-2 and INV-3, a ring at capacity keeps every gap over a metre, never speeds, never enters on red
+ * cars, and the ferry's hull stays on the lake a berth clear of the pier and the seawall; INV-2 and INV-3, a ring at capacity keeps every gap over a metre, never speeds, never enters on red
  * and every car laps, even behind a leader that brakes hard at random, and every throttle the follower opens
  * passes the Ring-0 bouncer without a ruling; INV-4, a stalled car changes nothing on any other ring; the
  * timetables are periodic and keep their spacing; slots are distinct and overflow throws; projection
@@ -18,12 +18,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  TRACKS, assignSlots, buildTrackNetwork, capacity, cornerAhead, guideway, lapSeconds, nextStop, pieceAt, poseAt, projectOnto,
+  TRACKS, assignSlots, buildTrackNetwork, capacity, cornerAhead, guideway, hullGap, lapSeconds, nextStop, pieceAt, poseAt, projectOnto,
   ringGaps, roomToClear, scheduledCount, scheduledPose, seatable, seats, slotCount, slotStart, speedLimitAt, tangentAt, turnBezier, vtolPads,
   vtolSchedule, wrap, type Track,
 } from './tracks.ts'
 import { Driver, followSpeed } from './traffic.ts'
-import { CITY, POLES, generateBuildings, streetFurniture, type Box } from '../01_Initialize_World/city.ts'
+import { CITY, LAKE, POLES, generateBuildings, streetFurniture, type Box } from '../01_Initialize_World/city.ts'
 import { KERNEL, SIGNAL, TRAFFIC, signalFor, type Axis } from '../02_Define_The_Rules/civic.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { adjudicate } from '../02_Define_The_Rules/laws.ts'
@@ -242,11 +242,12 @@ test('the network is the same for the same seed, closed, arc-length true, and it
   assert.deepEqual(buildTrackNetwork(1337), net)
   assert.notDeepEqual(buildTrackNetwork(7), net, 'another seed starts the rings elsewhere')
   assert.equal(net.seed, 1337)
-  assert.deepEqual([...new Set(net.tracks.map((t) => t.kind))], ['car', 'train', 'drone', 'plane'])
+  assert.deepEqual([...new Set(net.tracks.map((t) => t.kind))], ['car', 'train', 'drone', 'plane', 'ferry'])
   assert.equal(carTracks.length, (CITY.blocks / TRACKS.car.faceBlocks) ** 2, '64 car rings')
   assert.equal(ofKind('train').length, 1)
   assert.equal(ofKind('drone').length, 2 * (CITY.blocks / TRACKS.drone.faceBlocks) ** 2)
   assert.equal(ofKind('plane').length, 1)
+  assert.equal(ofKind('ferry').length, 1)
   net.tracks.forEach((t, id) => assert.equal(t.id, id))
   assert.ok(Object.isFrozen(net) && Object.isFrozen(net.tracks) && net.tracks.every((t) => Object.isFrozen(t) && Object.isFrozen(t.pieces)))
   for (const t of net.tracks) {
@@ -416,7 +417,8 @@ test('INV-1 separation: car rings never come within 4 m of each other; trains, d
     drone: { half: TRACKS.drone.halfSize, low: -TRACKS.drone.halfSize, high: TRACKS.drone.halfSize },
     plane: { half: TRACKS.plane.halfLength, low: -TRACKS.plane.halfHeight, high: TRACKS.plane.halfHeight },
   } as const
-  const sky = net.tracks.filter((t) => t.kind !== 'car')
+  // Every craft in the air (the ferry sails at the water's level, and its own test below measures its hull).
+  const sky = net.tracks.filter((t) => t.kind !== 'car' && t.kind !== 'ferry')
   for (const t of sky) {
     const env = envelope[t.kind as keyof typeof envelope]
     assert.ok(t.y + env.low - TRACKS.car.height >= 6, `${t.kind} ${t.id} at ${t.y} m is not 6 m over a car`)
@@ -595,7 +597,7 @@ test('scheduledPose: periodic, evenly spaced drones and planes, train sets that 
         assert.equal(a.y, t.y)
       }
     }
-    if (t.kind === 'train') continue
+    if (t.kind === 'train' || t.kind === 'ferry') continue
     assert.ok(Math.abs(T - t.length / t.speedLimit) < 1e-9)
     for (const time of [0, 1.5, 123.4, 7000]) {
       const ss = Array.from({ length: n }, (_, i) => projectOnto(t, scheduledPose(t, i, n, time).x, scheduledPose(t, i, n, time).z).s).sort((a, b) => a - b)
@@ -849,4 +851,65 @@ test('VTOL schedule: periodic, sits the dwell on every pad, climbs and flies no 
       }
     }
   }
+})
+
+test('the ferry route: on the lake for every seed, its hull a berth clear of the pier and the seawall at every half metre, alongside the pier head at its one call, two boats half a lap apart (INV-1 for the ferries)', () => {
+  const F = TRACKS.ferry
+  const f = ofKind('ferry')[0]
+  assert.equal(scheduledCount(f), F.count)
+  assert.equal(f.y, LAKE.water)
+  assert.equal(f.y, F.water)
+  // Fixed by the lake alone: the same track, id for id, for every seed, with the city's boxes or without.
+  for (const seed of SEEDS) {
+    assert.deepEqual(buildTrackNetwork(seed).tracks.find((t) => t.kind === 'ferry'), f)
+    assert.deepEqual(buildTrackNetwork(seed, generateBuildings(seed).map((b) => b.box)).tracks.find((t) => t.kind === 'ferry'), f)
+  }
+  // The one call: alongside the pier head, broadside on a straight, the centre on the pier's axis and the hull's side
+  // a berth off the pier's end.
+  assert.equal(f.stations.length, 1)
+  assert.equal(pieceAt(f, f.stations[0]).kind, 'line')
+  const call = poseAt(f, f.stations[0])
+  assert.ok(Math.abs(call.x - LAKE.pier.x) < 1e-9 && Math.abs(Math.abs(call.tangentX) - 1) < 1e-12, `the call at (${call.x}, ${call.z})`)
+  assert.ok(Math.abs(call.z - F.halfBeam - (LAKE.shore + LAKE.pier.length) - F.berth) < 1e-9, "the hull's side a berth off the pier's end")
+  // Every half metre of the route: no hull corner, at any heading, within a berth of the seawall's lake face, and the
+  // hull a berth clear of every box of every seed that reaches its height (the pier's deck and rails, as it turns out).
+  const corner = Math.hypot(F.halfLength, F.halfBeam)
+  const samples = Array.from({ length: Math.ceil(f.length / 0.5) }, (_, k) => poseAt(f, k * 0.5))
+  const nearest = Math.min(...samples.map((q) => q.z))
+  assert.ok(nearest - corner >= LAKE.shore + LAKE.wall.thickness + F.berth, `the hull comes within ${nearest - corner - LAKE.shore - LAKE.wall.thickness} m of the seawall`)
+  for (const seed of SEEDS) {
+    // A box whose far side is more than a corner and a berth short of the route's nearest centre cannot be within a berth.
+    const boxes = generateBuildings(seed).map((b) => b.box).filter((b) => b[4] > f.y - F.draft && b[1] < f.y + F.height && b[5] >= nearest - corner - F.berth)
+    assert.ok(boxes.length >= 1, 'the pier reaches the route')
+    let least = Infinity
+    samples.forEach((q, k) => {
+      for (const b of boxes) {
+        const gap = hullGap(q.x, q.z, q.heading, F.halfLength, F.halfBeam, b)
+        least = Math.min(least, gap)
+        assert.ok(gap >= F.berth - 1e-9, `seed ${seed}: the ferry at s ${(k * 0.5).toFixed(1)} is ${gap.toFixed(3)} m from box ${b.map((v) => v.toFixed(1))}`)
+      }
+    })
+    assert.ok(Math.abs(least - F.berth) < 1e-9, `the closest the hull comes to anything built is the call's berth: ${least}`)
+  }
+  // The timetable: a lap is the route at speed, a ramp up and down, and the dwell; each boat is alongside for the dwell
+  // once a lap, never faster than its speed, the second where the first will be half a lap later, and the two never
+  // within two hulls of each other.
+  const T = lapSeconds(f)
+  assert.ok(Math.abs(T - (f.length / F.speed + F.speed / F.accel + F.dwell)) < 1e-9, `lap ${T} s`)
+  const n = F.count, step = 0.1
+  let prev = projectOnto(f, scheduledPose(f, 0, n, 0).x, scheduledPose(f, 0, n, 0).z).s
+  let dwelt = 0, maxSpeed = 0, apart = Infinity
+  for (let t = step; t <= T + 1e-9; t += step) {
+    const a = scheduledPose(f, 0, n, t), b = scheduledPose(f, 1, n, t)
+    const later = scheduledPose(f, 0, n, t + T / n)
+    assert.ok(Math.hypot(b.x - later.x, b.z - later.z) < 1e-6, `at ${t.toFixed(1)} s the second ferry is where the first is half a lap later`)
+    apart = Math.min(apart, Math.hypot(a.x - b.x, a.z - b.z))
+    const s = projectOnto(f, a.x, a.z, prev).s
+    maxSpeed = Math.max(maxSpeed, around(prev, s, f.length) / step)
+    if (Math.abs(around(s, f.stations[0], f.length)) < 1e-3) dwelt += step
+    prev = s
+  }
+  assert.ok(Math.abs(dwelt - F.dwell) <= 2 * step, `alongside ${dwelt.toFixed(1)} s a lap`)
+  assert.ok(maxSpeed <= F.speed + 0.05 && maxSpeed > F.speed - 0.1, `top speed ${maxSpeed}`)
+  assert.ok(apart > 2 * corner, `the two ferries came within ${apart.toFixed(1)} m`)
 })

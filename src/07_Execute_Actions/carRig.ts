@@ -16,17 +16,18 @@
  */
 import { RAPIER } from './physics.ts'
 import { CAR, chassisBox, kindFromDraw, kindOf, RIDE_HEIGHT, WHEELS, type CarTuning, type DriveMode } from './car.ts'
-import { CITY, inLot } from '../01_Initialize_World/city.ts'
+import { CITY, inLot, type Box } from '../01_Initialize_World/city.ts'
 import { crossesGlass, insideRoom, penetrates, ROOM, toLocal, type Workplace } from '../01_Initialize_World/interiors.ts'
 
 /** What exitPoint reads of a room: its lot, its doorway's side and its furniture (a workplace and a shop both are one). */
 export type GlassRoom = Pick<Workplace, 'cx' | 'cz' | 'side' | 'furniture'>
 import { KERNEL } from '../02_Define_The_Rules/civic.ts'
-import { VEHICLE_CHASSIS_GROUPS, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
+import { VEHICLE_CHASSIS_GROUPS, WALL_CONTACT, WHEEL_RAY_GROUPS } from '../02_Define_The_Rules/collision.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { Driver, type DriverLike } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
 import { assignSlots, poseAt, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { bayClear, bayNear, inBays } from './parking.ts'
 import { PERSON, type CarBodyState } from './simProtocol.ts'
 
 const AIR_DENSITY = 1.225
@@ -101,9 +102,11 @@ export function buildCarRig(world: RAPIER.World, x: number, z: number, heading: 
   body.enableCcd(true)
   const box = chassisBox(suv)
   // Cars pass through cars: the chassis groups drop every chassis-chassis pair in the broad phase (no contact,
-  // no impulse) and leave the ground, the buildings and the avatar's capsule as solid as before.
+  // no impulse) and leave the ground and the buildings as solid as before (the avatar's capsule filters chassis out
+  // on its side). The one contact a chassis exchanges, with the solid world, is WALL_CONTACT: a rebound and a slide.
   const collider = world.createCollider(
-    RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass).setFriction(0.4).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
+    RAPIER.ColliderDesc.cuboid(box.hx, box.hy, box.hz).setTranslation(0, box.y, 0).setMass(mass)
+      .setFriction(WALL_CONTACT.friction).setRestitution(WALL_CONTACT.restitution).setCollisionGroups(VEHICLE_CHASSIS_GROUPS),
     body,
   )
   const controller = world.createVehicleController(body)
@@ -311,6 +314,17 @@ export interface PlannedCar {
   paint: number
   /** The ring it is seated on (an index into network.tracks), or −1 on random streets. */
   track: number
+  /**
+   * Seated parked in a kerbside bay (parking.ts): the pose is the bay's, beside its ring, and the car is nobody's until
+   * a player takes it. The only kind of car a player may enter.
+   */
+  bay: boolean
+}
+
+/** What planFleet needs to seat the parked share in bays: the world's solid boxes (a bay inside one is skipped) and the street grid's corner. */
+export interface FleetBays {
+  readonly boxes: readonly Box[]
+  readonly origin?: { x: number; z: number }
 }
 
 /**
@@ -320,23 +334,36 @@ export interface PlannedCar {
  * this plan; the room's authority reads which car is an SUV and which ring it was seated on from the same plan, so
  * both agree on every car without a word on the wire. The returned stream goes on to drive the AI.
  */
-export function planFleet(count: number, seed: number, network: TrackNetwork | null): { cars: PlannedCar[]; rng: () => number } {
+export function planFleet(count: number, seed: number, network: TrackNetwork | null, bays: FleetBays | null = null): { cars: PlannedCar[]; rng: () => number } {
   const rng = createRng(seed ^ 0xca75)
   const cars: PlannedCar[] = []
   const used = new Set<string>()
+  const bayKeys = new Set<string>()
   const seatsOf = network ? assignSlots(network, count, rng) : null
   for (let i = 0; i < count; i++) {
     let pose: { x: number; z: number; heading: number }
     let kind: number
     let driver: DriverLike
     let track = -1
+    let bay = false
     if (network && seatsOf) {
       const seat = seatsOf[i]
       const t = network.tracks[seat.track]
-      pose = poseAt(t, seat.s)
+      const seated = poseAt(t, seat.s)
+      pose = seated
       kind = kindFromDraw(rng())
       driver = new TrackDriver(t, seat.s, rng)
       track = seat.track
+      // The parked share: moved from its seat to the free bay beside it (no draw from the stream, so every other
+      // car is seated as before); a seat with no clear bay stays in traffic.
+      if (bays && inBays(i, count)) {
+        const b = bayNear(seated, bayKeys, bays.origin)
+        if (b && bayClear(b, bays.boxes)) {
+          bayKeys.add(b.key)
+          pose = { x: b.x, z: b.z, heading: b.heading }
+          bay = true
+        }
+      }
     } else {
       let from: [number, number] = [0, 0], dir: [number, number] = [1, 0], slot = ''
       for (let tries = 0; tries < 50; tries++) {
@@ -361,7 +388,7 @@ export function planFleet(count: number, seed: number, network: TrackNetwork | n
       driver = new Driver([k, m], dir, rng)
     }
     const paint = PAINT[Math.floor(rng() * PAINT.length)]
-    cars.push({ pose, kind, suv: kindOf(kind).heavy, driver, paint, track })
+    cars.push({ pose, kind, suv: kindOf(kind).heavy, driver, paint, track, bay })
   }
   return { cars, rng }
 }

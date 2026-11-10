@@ -24,6 +24,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CAR } from './car.ts'
+import { BAYS } from './parking.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
 import { bridgeBytes, PhysicsBridge, SLOT } from './sharedBridge.ts'
@@ -551,7 +552,7 @@ test('aging, the walk term: a standing car is held once a pedestrian could have 
   const crowd = new FakeCrowd()
   const { poses, step } = await core(true, 4, crowd)
   const go = { cmds: [{ c: 'dbgVelocity', i: 1, x: 0, y: 0, z: 0 }, { c: 'intent', i: 1, throttle: 1, brake: 0, steer: 0 }] }
-  step({ cmds: [{ c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  step({ cmds: [{ c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
   for (let k = 0; k < 60; k++) step()
   crowd.ahead[1] = KERNEL.standoff + 0.3
   step()
@@ -643,7 +644,7 @@ test('a car moved by recover vouches for nobody until a reading taken where it n
   const crowd = new FakeCrowd()
   const { poses, step } = await core(true, 4, crowd)
   const go = { cmds: [{ c: 'intent', i: 1, throttle: 1, brake: 0, steer: 0 }] }
-  step({ cmds: [{ c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  step({ cmds: [{ c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
   for (let k = 0; k < 60; k++) step()
   step(go)
   assert.equal(poses[1 * POSE.stride + POSE.throttle], 1, 'an empty street: it may go')
@@ -663,7 +664,7 @@ test('a car moved by recover vouches for nobody until a reading taken where it n
 test('a scripted intent is ruled on this step\'s sensing, not the previous step\'s', async () => {
   const crowd = new FakeCrowd()
   const { poses, step } = await core(true, 4, crowd)
-  step({ cmds: [{ c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  step({ cmds: [{ c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
   for (let k = 0; k < 60; k++) step()
   // A person appears 1 m ahead in the reading that lands at the end of this step (the feed of the next).
   crowd.ahead[1] = 1.0
@@ -678,7 +679,7 @@ test('aging credits the distance a car actually drove, not only its speed now: a
   // now (0) says it drove nothing; its odometer says 4 m. The person is then within ~1.3 m, inside the 1.5 m standoff.
   const crowd = new FakeCrowd()
   const { poses, step } = await core(true, 4, crowd)
-  step({ cmds: [{ c: 'dbgMode', i: 1, mode: 'player' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  step({ cmds: [{ c: 'dbgMode', i: 1, mode: 'player' }, { c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
   for (let k = 0; k < 60; k++) step()
   crowd.ahead[1] = 6
   step()
@@ -1072,7 +1073,9 @@ test('an init on tracks builds the fleet on the ring network inside the realm; t
     const x = first[i * POSE.stride + POSE.x], z = first[i * POSE.stride + POSE.z]
     assert.ok(x > -5 && x < 645 && z > -5 && z < 645, `car ${i} at ${x.toFixed(0)}, ${z.toFixed(0)}`)
     const off = Math.abs(x - Math.round(x / 40) * 40), ofz = Math.abs(z - Math.round(z / 40) * 40)
-    assert.ok(Math.abs(Math.min(off, ofz) - 2) < 0.05, `car ${i}: ${Math.min(off, ofz).toFixed(2)} m from a centreline`)
+    // On its lane, 2 m from a centreline, or parked in a kerbside bay (parking.ts) BAYS.lateral from one.
+    const want = first[i * POSE.stride + POSE.mode] === MODES.indexOf('parked') ? BAYS.lateral : 2
+    assert.ok(Math.abs(Math.min(off, ofz) - want) < 0.05, `car ${i}: ${Math.min(off, ofz).toFixed(2)} m from a centreline`)
   }
   assert.ok(poses.some((v, i) => i % POSE.stride === POSE.speed && v > 1), 'cars are moving')
 
@@ -1110,7 +1113,7 @@ test('tracks on: a step returns the pose buffer and the craft buffer, plain data
   assert.equal(auditCraft(craft), null)
   const kinds = new Set<number>()
   for (let i = 0; i < sim.meta.craft; i++) kinds.add(craft[i * TRACK_POSE.stride + TRACK_POSE.kind])
-  assert.deepEqual([...kinds].sort(), [TRACK_KINDS.indexOf('train'), TRACK_KINDS.indexOf('drone'), TRACK_KINDS.indexOf('plane')])
+  assert.deepEqual([...kinds].sort(), [TRACK_KINDS.indexOf('train'), TRACK_KINDS.indexOf('drone'), TRACK_KINDS.indexOf('plane'), TRACK_KINDS.indexOf('ferry')])
   // The craft stand where the realm's clock has them: the timetable evaluated at simTime, bit for bit.
   assert.deepEqual(Array.from(craft), Array.from(reference.writePoses(s.simTime, new Float32Array(reference.length))))
   // The craft move with the clock, and the trains stay on their deck.
@@ -1242,7 +1245,7 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
   }
   assert.ok(kinds.has(TRACK_KINDS.indexOf('train')) && kinds.has(TRACK_KINDS.indexOf('drone')) && kinds.has(TRACK_KINDS.indexOf('plane')), `kinds ${[...kinds]}`)
   const P = CITY.pitch
-  let moved = 0
+  let moved = 0, parked = 0
   for (let i = 0; i < 12; i++) {
     const x = s.poses[i * POSE.stride], z = s.poses[i * POSE.stride + 2]
     const lx = x - streets.originX, lz = z - streets.originZ
@@ -1250,13 +1253,21 @@ test('a region with a street window: the fleet is seated on the window\'s rings 
     // Within the carriageway of a street cars use, or in an intersection box.
     const k = Math.round(lx / P), m = Math.round(lz / P)
     const dx = Math.abs(lx - k * P), dz = Math.abs(lz - m * P)
-    const onV = dx <= streets.roadHalf + 0.5 && (vSeg(streets, k, Math.floor(lz / P)) & SEG.drive)
-    const onH = dz <= streets.roadHalf + 0.5 && (hSeg(streets, Math.floor(lx / P), m) & SEG.drive)
+    // Within the carriageway, or (a parked car) in a kerbside bay beside it (parking.ts BAYS.lateral).
+    const reach = (s.poses[i * POSE.stride + POSE.mode] === MODES.indexOf('parked') ? BAYS.lateral : streets.roadHalf) + 0.5
+    const onV = dx <= reach && (vSeg(streets, k, Math.floor(lz / P)) & SEG.drive)
+    const onH = dz <= reach && (hSeg(streets, Math.floor(lx / P), m) & SEG.drive)
     const box = dx <= 8 && dz <= 8
     assert.ok(onV || onH || box, `car ${i} at ${lx.toFixed(1)}, ${lz.toFixed(1)} is off every car street`)
-    if (Math.hypot(x - start[i][0], z - start[i][1]) > 5) moved++
+    const drove = Math.hypot(x - start[i][0], z - start[i][1]) > 5
+    if (s.poses[i * POSE.stride + POSE.mode] === MODES.indexOf('parked')) {
+      parked++
+      assert.ok(!drove, `car ${i} is parked in a bay and drove`)
+    } else if (drove) moved++
   }
-  assert.ok(moved >= 8, `${moved} of 12 cars drove in 10 s`)
+  // The plan's parked share (a quarter, parking.ts) stands in the window's own bays; two in three of the rest drove.
+  assert.equal(parked, 3, `${parked} cars parked in bays`)
+  assert.ok(moved >= 6, `${moved} of 9 cars in traffic drove in 10 s`)
   // Every car's streets are the window's: none drives the pedestrian line 4 or the dropped line 8 or the lake.
   const crowdCars = crowd.steps.at(-1)!.cars
   assert.equal(crowdCars.length, 12, 'the crowd senses every car')

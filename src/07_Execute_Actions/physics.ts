@@ -166,6 +166,63 @@ function regionColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, r: Region
   return new WallStream(world, fixed, r.walls, ground)
 }
 
+/** The cell of the footprint grid solidBoxes sorts boxes into, m: a lot's plinth covers one or a few. */
+const SOLID_CELL = 32
+
+/**
+ * The boxes as solids that share no face: a box standing inside another's footprint, from below that other's top (a
+ * building raised from the street inside its lot's plinth, city.ts), is clipped to the part above it, and one wholly
+ * inside another is left out. Two fixed cuboids with the same face at the same height hand a chassis sliding along
+ * that face two identical contacts, and how the solver splits the impulse between them depends on which other proxies
+ * share the broad phase's cell (the traffic passing on the lane beside a kerbside bay): the page and the network room's
+ * replay of the same car (garage.node.ts) then differed by a float32 step a frame at such a scrape (15 µm, 13 mm after
+ * ten seconds), a drift the room put back every frame. One face, one contact, one answer, on both sides (solidBoxes.test.ts).
+ * Boxes standing on another (from its top up), beside another, or straddling another's edge are as they were; the order
+ * is kept; an unchanged box is the same array.
+ */
+export function solidBoxes(boxes: readonly Box[]): Box[] {
+  const cells = new Map<number, number[]>()
+  const cellOf = (x: number, z: number): number => Math.floor(x / SOLID_CELL) * 65536 + Math.floor(z / SOLID_CELL)
+  for (let i = 0; i < boxes.length; i++) {
+    const [x0, , z0, x1, , z1] = boxes[i]
+    if (![x0, z0, x1, z1].every(Number.isFinite)) continue
+    for (let cx = Math.floor(x0 / SOLID_CELL); cx <= Math.floor(x1 / SOLID_CELL); cx++) {
+      for (let cz = Math.floor(z0 / SOLID_CELL); cz <= Math.floor(z1 / SOLID_CELL); cz++) {
+        const key = cx * 65536 + cz
+        const list = cells.get(key)
+        if (list) list.push(i)
+        else cells.set(key, [i])
+      }
+    }
+  }
+  const out: Box[] = []
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i]
+    const [x0, y0, z0, x1, y1, z1] = b
+    if (![x0, y0, z0, x1, y1, z1].every(Number.isFinite)) {
+      out.push(b)
+      continue
+    }
+    const around = cells.get(cellOf((x0 + x1) / 2, (z0 + z1) / 2)) ?? []
+    // Raise the bottom past the top of every box this one stands inside, until none is left below it.
+    let bottom = y0
+    for (let raised = true; raised;) {
+      raised = false
+      for (const j of around) {
+        if (j === i) continue
+        const a = boxes[j]
+        if (a[0] <= x0 && x1 <= a[3] && a[2] <= z0 && z1 <= a[5] && a[1] <= bottom && bottom < a[4]) {
+          bottom = a[4]
+          raised = true
+        }
+      }
+    }
+    if (bottom === y0) out.push(b)
+    else if (bottom < y1) out.push([x0, bottom, z0, x1, y1, z1])
+  }
+  return out
+}
+
 /**
  * The side of the square tile street furniture is packed by, m: two blocks, so the city's 640 m and its outer streets
  * make 10 × 10 tiles, about forty-five poles to a tile.
@@ -213,11 +270,12 @@ function furnitureColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, furnit
 
 /**
  * Every box as a fixed cuboid: the city's buildings, and in a region the boxes it holds (a generated region's
- * workplaces, regionWorld.ts hollowLots: the glass, the furniture, the ceiling slab and what it carries). A box that is
- * not finite or has no extent is no collider.
+ * workplaces, regionWorld.ts hollowLots: the glass, the furniture, the ceiling slab and what it carries), as solidBoxes
+ * leaves them (a box standing inside another is clipped to the part above it). A box that is not finite or has no
+ * extent is no collider.
  */
 function boxColliders(world: RAPIER.World, fixed: RAPIER.RigidBody, boxes: readonly Box[]): void {
-  for (const [x0, y0, z0, x1, y1, z1] of boxes) {
+  for (const [x0, y0, z0, x1, y1, z1] of solidBoxes(boxes)) {
     if (![x0, y0, z0, x1, y1, z1].every(Number.isFinite) || !(x1 > x0 && y1 > y0 && z1 > z0)) continue
     world.createCollider(
       RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2),
