@@ -104,7 +104,8 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   // humanoid.ts garmentPoint: a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, or the skirt (slot
   // BOTTOM on the trunk with the trunk for its second bone too) about the trunk's, reshaped by the lower cut; the
   // normal by the cylinder's rule, its derivatives by central differences. code = the cut (0..15) + 16 under a coat
-  // (crowd.ts morphB.w). Column 2's x is how much of a skirt's hem the thigh beside it carries (bodyVertex).
+  // (crowd.ts morphB.w). Column 2 is how much of a skirt a leg carries and whether by the shin (humanoid.ts
+  // skirtFollow; bodyVertex picks the leg).
   let c = u32(code + 0.5);
   let cut = c & 15u;
   let bone0 = u32(rig.x + 0.5);
@@ -135,9 +136,11 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   let mr = nr * yy;
   let mt = nt * fr * yy / k;
   let my = n.y * fr - nr * fy;
-  // The skirt's sides stay with the trunk; its front and back follow (bodyVertex picks the thigh).
-  let follow = select(0.0, p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.hem)}, v.y) * bodyRamp(${f(LOWER.followSide)}, ${f(LOWER.followFull)}, abs(v.z)), skirt);
-  return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, 0.0, 0.0));
+  // The skirt follows the legs from just under its top, fully from the knee-level ring down; below the knee's rest
+  // height a midi's hem hangs from the shin (p0.w is the length).
+  let follow = select(0.0, p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), skirt);
+  let shin = select(0.0, 1.0, v.y < ${f(LOWER.waist)} - (${f(LOWER.waist)} - ${f(LANDMARK.knee)}) / p0.w);
+  return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, shin, 0.0));
 }
 fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f {
   // face = (region, weight): 1 brow, 2 jaw, 3 chin, 4 cheek, 5 nose, 6 eyes, 7 lips (humanoid.ts FACE_REGION, FACE).
@@ -412,14 +415,17 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   }
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
-  // A skirt's low rings hang from a thigh as well as the trunk, as much as the cut says (bodyGarment): the front from
-  // the thigh swung forward (the smaller hip angle), the back from the one swung back, so the hem spreads with the
-  // stride over the leading knee and the trailing calf instead of parting between them.
+  // A skirt hangs from a leg as well as the trunk, as much as the cut says (bodyGarment, humanoid.ts skirtFollow):
+  // the front from the leg swung forward (the smaller hip angle), the back from the one swung back, so the hem spreads
+  // with the stride over the leading knee and the trailing calf instead of parting between them; the sides from the
+  // leg on their own side, so a lean to one side carries them with it. The thigh, or the shin below a midi's knee.
   let follow = lower[2].x;
   let leftLeads = legL.x < legR.x;
   let leading = select(${BONE.THIGH_R}u, ${BONE.THIGH_L}u, leftLeads);
   let trailing = select(${BONE.THIGH_L}u, ${BONE.THIGH_R}u, leftLeads);
-  let boneB = select(bone1, select(trailing, leading, v.z >= 0.0), follow > 0.0);
+  let beside = select(${BONE.THIGH_L}u, ${BONE.THIGH_R}u, v.x >= 0.0);
+  let carrier = select(select(beside, trailing, v.z <= ${f(-LOWER.followSide)}), leading, v.z >= ${f(LOWER.followSide)});
+  let boneB = select(bone1, carrier + u32(lower[2].y), follow > 0.0);
   let weightB = select(weight, 1.0 - follow, follow > 0.0);
   if (boneB != bone0 && weightB < 1.0) {
     let b1 = bodyBone(boneB, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);

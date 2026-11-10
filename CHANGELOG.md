@@ -60,9 +60,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   card's silhouette uses too). Each trouser leg is reshaped about its own axis and the skirt about the trunk's.
   Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
   culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
-  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. A narrow or long
-  skirt's hem spreads with the stride: its front moves with the leading thigh and its back with the trailing one, so
-  the knees stay inside it more of the time (no cloth is simulated). Under a coat no skirt widens.
+  flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. Every cut skirt
+  follows the legs as well as the trunk (`humanoid.ts` skirtFollow): its front moves with the leg swung forward, its
+  back with the one swung back and its sides with the leg on their own side, fully from the knee-level ring down, and
+  a midi's hem below the knee hangs from the shin, so the legs stay inside it at a walk (no cloth is simulated; the
+  midi pencil's narrow hem still lets a knee show by up to 3 cm at the far end of a stride). Under a coat no skirt
+  widens.
   The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
   fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
   seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
@@ -1326,6 +1329,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `solidBoxes.test.ts` pins the clip, counts the city's clipped boxes (hundreds a seed) and replays the scrape beside
   thirty-five cars to the bit; `authority.node.test.ts` and `parity.fuzz.test.ts` drive bay cars along their lot
   walls and are never put back. Manual: Ghost-mode collision.
+- **A walking skirt let the swung thigh through its front, a leaning one let the shin through its side, and a midi's
+  hem stood out ahead of the knee.** Before this, a skirt hung from the trunk alone except for the part of its hem a
+  thigh carried, and that part tapered to nothing at the sides. On the CPU, at a brisk walk, the leading thigh came
+  about 6 to 18 cm through the front of every cut. A worker leaning sideways at a desk, or a body pushed from the side, let
+  the shin through the hem's side by up to 6.5 cm. A midi's hem, bound to the thigh's lever, rose 18 to 19 cm and
+  tilted 60 to 64 degrees from vertical mid-stride. Now every cut but the straight one (0, the skirt as it always
+  was) follows the legs fully from the knee-level ring down. The sides follow the leg on their own side, and a midi's
+  hem below the knee hangs from the shin. Each cut's follow is about the least that keeps the legs inside. In the same
+  model, at a walk, the legs stay within 1 cm of every cut but the midi pencil (within 3 cm). Bent 0.14 to 0.25 rad to
+  either side, forward or back, the legs stay within 1.5 cm. A hem's front never tilts further than the thigh swung
+  under it. `humanoid.test.ts` checks all three on every cut, at a neutral, a slumped and a long-legged body. The
+  Customizer's side view now blends a skirt's rings to the leg that carries them as the shader does. It had drawn the
+  hem up to 6 cm from the street body at a slumped or an upright posture.
+- **The skirt and the coat left a gap in their own shadows.** three's shadow pass draws a front-sided material's back
+  faces alone, so an open shell's wall nearer the sun stayed out of the shadow map. The crowd's material now draws
+  both faces into it (`shadowSide`); the closed tubes are deeper than the cascades' bias, so their lit faces do not
+  shadow themselves.
+- **A worker at a desk leaned toward the last push, not the desk.** The desk lean bends the body about the push's
+  direction less the heading, and nothing set the push's direction at a desk. A worker who was never pushed leaned 0.06 to
+  0.14 rad (the nod) to the side or backward, depending on which way the desk faced. At work the direction is now the heading (`crowd.wgsl`), so every worker leans toward the desk.
 - **The crowd's shadow pass ran the whole paint.** three multiplies a shadow's alpha by the material's colour alpha
   (`Renderer._getShadowNodes` reads `colorNode.a`), so every body's shadow-map fragment stage carried the look's whole
   paint, the weaves, cuts, hair, skin and faces, about 138,000 characters per body, run for every shadow-map texel a

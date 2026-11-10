@@ -108,14 +108,15 @@ export const SKIRT_CUT = Object.freeze({
 /**
  * Heights the lower cuts are shaped by, m on the base body: the skirt's waist ring (above it the high waist raises
  * the skirt, below it a midi lengthens it) and hem; where a slim leg starts and finishes narrowing; where a taper
- * takes hold below the knee and the ankle its slope counts from; the tulip's bulge over the hips; where the skirt's
- * hem starts to follow the thighs, and its sides, which stay with the trunk: the following rises from followSide
- * to followFull of |z|, so the front and the back follow and the sides between them stretch.
+ * takes hold below the knee and the ankle its slope counts from; the tulip's bulge over the hips; where the skirt
+ * starts to follow the legs (followFrom, just under its top ring) and from where it follows them as fully as its cut
+ * says (followTo, a short skirt's mid-thigh ring and a midi's knee), and how far either side of x = 0 its sides reach
+ * (|z| under followSide; skirtFollow).
  */
 export const LOWER = Object.freeze({
   waist: 0.92, hem: 0.56, top: 1.02,
   slimFrom: 0.85, slimTo: 0.5, taperFrom: 0.62, taperTo: 0.5, ankle: 0.095,
-  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 0.85, followSide: 0.02, followFull: 0.1,
+  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 1, followTo: 0.7, followSide: 0.02,
 })
 
 /**
@@ -158,27 +159,31 @@ export const TROUSER_SHAPE: readonly (readonly number[])[] = Object.freeze([
  * down to LOWER.hem) + bulge·hat(LOWER.bulgeAt, LOWER.bulgeHalf) − pencil·t(LOWER.pencilFrom down to LOWER.hem) −
  * narrowTop·t(LOWER.waist up to LOWER.top); below LOWER.waist the skirt stretches down by `length` (1.556 takes the
  * hem from 0.56 to a midi's 0.36), above it rises by `raise` per metre (0.8 takes the top from 1.02 to 1.1). Under a
- * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the hem a thigh carries
- * (crowdBody.ts: the skirt hangs from the trunk alone, so a narrow or a long hem would let the knees through
- * mid-stride): the front the thigh swung forward, the back the one swung back, so the hem spreads with the stride. Zeros, and length 1, reshape nothing.
+ * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the skirt a leg carries from
+ * LOWER.followTo down (skirtFollow; crowdBody.ts bodyVertex): hung from the trunk alone, a skirt lets the swung thigh
+ * through its front mid-stride (6 to 18 cm on the CPU at a brisk walk). The front follows the leg swung forward, the
+ * back the one swung back and the sides the leg on their own side; a midi's hem below the knee hangs from the shin,
+ * so it swings over the shin instead of standing out on the thigh's lever. Each value is about the least that keeps
+ * the legs inside at a walk (the pencils' narrow hems still show a knee at the far end of a stride) without tilting
+ * the hem's front further than the thigh. Zeros, and length 1, reshape nothing.
  */
 export const SKIRT_SHAPE: readonly (readonly number[])[] = Object.freeze([
   [0, 0.92, 0, 1, 0, 0, 0, 0], // straight
-  [0, 0.92, 0.22, 1, 0, 0, 0, 0.7], // pencil
-  [0.24, 0.95, 0, 1, 0, 0, 0, 0], // A-line
-  [0.08, 0.92, 0, 1, 0, 0, 0, 0.3], // pleated
-  [0.1, 0.92, 0, 1, 0, 0, 0, 0.3], // box pleat
-  [0.05, 0.92, 0, 1, 0, 0, 0, 0.4], // wrap
-  [0, 0.92, 0, 1.556, 0, 0, 0, 0.8], // midi
-  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.95], // midi pencil
-  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.4], // midi A-line
-  [0, 0.92, 0, 1, 0, 0, 0, 0], // back vent
-  [0, 0.92, 0, 1, 0, 0, 0, 0], // button front
-  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.65], // tulip
-  [0.12, 0.92, 0, 1, 0, 0, 0, 0.25], // panelled
-  [0, 0.92, 0, 1, 0, 0.8, 0.1, 0], // high-waisted
-  [0, 0.92, 0, 1, 0, 0, 0, 0], // belted
-  [0.42, 0.98, 0, 1, 0, 0, 0, 0], // flared
+  [0, 0.92, 0.22, 1, 0, 0, 0, 0.9], // pencil
+  [0.24, 0.95, 0, 1, 0, 0, 0, 0.6], // A-line
+  [0.08, 0.92, 0, 1, 0, 0, 0, 0.7], // pleated
+  [0.1, 0.92, 0, 1, 0, 0, 0, 0.7], // box pleat
+  [0.05, 0.92, 0, 1, 0, 0, 0, 0.7], // wrap
+  [0, 0.92, 0, 1.556, 0, 0, 0, 0.9], // midi
+  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.8], // midi pencil
+  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.8], // midi A-line
+  [0, 0.92, 0, 1, 0, 0, 0, 0.8], // back vent
+  [0, 0.92, 0, 1, 0, 0, 0, 0.8], // button front
+  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.9], // tulip
+  [0.12, 0.92, 0, 1, 0, 0, 0, 0.7], // panelled
+  [0, 0.92, 0, 1, 0, 0.8, 0.1, 0.8], // high-waisted
+  [0, 0.92, 0, 1, 0, 0, 0, 0.8], // belted
+  [0.42, 0.98, 0, 1, 0, 0, 0, 0.5], // flared
 ].map((row) => Object.freeze(row)))
 
 /** The body sliders, each 0..1 but the height in metres. */
@@ -487,6 +492,24 @@ export function garmentPoint(
 
 /** The central differences' steps garmentPoint and bodyGarment take, m. */
 export const GARMENT_STEP = Object.freeze({ r: 0.001, y: 0.002 })
+
+/**
+ * The leg that carries a skirt's rest point (x, y, z) and how much of it, for a cut and the two hip angles (rad, a
+ * smaller one swings its leg forward): crowdBody.ts bodyGarment and bodyVertex are the GPU twin. The share is
+ * SKIRT_SHAPE's follow, rising from LOWER.followFrom to the whole of it at LOWER.followTo. The front (z at or past
+ * followSide) hangs from the leading leg, the back from the trailing one, the sides between from the leg on their own
+ * side (x ≥ 0 is the right). The bone is that leg's thigh, or its shin where a lengthened skirt reaches below the
+ * knee (a rest height under LOWER.waist − (LOWER.waist − LANDMARK.knee) / length). Cut 0 carries nothing. Writes
+ * [share, bone] into `out` and returns it; the trunk carries the rest.
+ */
+export function skirtFollow(x: number, y: number, z: number, cut: number, hipL: number, hipR: number, out: number[] = [0, 0]): number[] {
+  const leftLeads = hipL < hipR
+  const leading = leftLeads ? BONE.THIGH_L : BONE.THIGH_R, trailing = leftLeads ? BONE.THIGH_R : BONE.THIGH_L
+  const thigh = z >= LOWER.followSide ? leading : z <= -LOWER.followSide ? trailing : x >= 0 ? BONE.THIGH_R : BONE.THIGH_L
+  out[0] = cut === 0 ? 0 : SKIRT_SHAPE[cut][7] * smoothTo(LOWER.followFrom, LOWER.followTo, y)
+  out[1] = thigh + (y < LOWER.waist - (LOWER.waist - LANDMARK.knee) / SKIRT_SHAPE[cut][3] ? 1 : 0)
+  return out
+}
 
 /** The per-agent scales the shader applies after the pose: the stature up the body, and its square root across. */
 export function scaleOf(f: ShapeFactors): { readonly y: number; readonly xz: number } {
@@ -1527,7 +1550,9 @@ const STILL: BodyPose = Object.freeze({ tilt: 0, bend: 0, fall: 0 })
  * The rings of `tubes`, standing, with the sliders applied (every ring's two edge points through facePoint on the
  * head, morphPoint, the standing pose's bones and the stature's scales, as the shader would place them) seen from the
  * front (`side` false: x edges) or from the person's left (`side` true: z edges). The legs' and arms' rings are
- * weighted to their own bone alone here (their blend to the trunk is a few millimetres at rest).
+ * weighted to their own bone alone here (their blend to the trunk is a few millimetres at rest); a cut skirt's rings
+ * are blended to the leg that carries them as the shader blends them (skirtFollow), which moves a midi's hem a few
+ * centimetres in the side view at a slumped or an upright posture.
  */
 function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean, lowerCut = 0, coat = false): SilhouetteRing[] {
   const f = shapeFactors(shape)
@@ -1536,7 +1561,9 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
   const a = walkAngles(0, 0, f)
   const out: SilhouetteRing[] = []
   const p = [0, 0, 0]
+  const q = [0, 0, 0]
   const g = [0, 0, 0, 0, 0, 0]
+  const carry = [0, 0]
   const edge = (x: number, y: number, z: number, r: Ring, th: number): number[] => {
     if (r.region !== undefined && r.bone === BONE.HEAD) facePoint(x, y, z, r.region, faceWeight(r, th), face, p)
     else if (lowerCut !== 0) {
@@ -1544,7 +1571,11 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
       p[0] = g[0]; p[1] = g[1]; p[2] = g[2]
     } else { p[0] = x; p[1] = y; p[2] = z }
     morphPoint(p[0], p[1], p[2], r.bone, f, p)
+    const skirt = lowerCut !== 0 && r.slot === SLOT.BOTTOM && r.bone === BONE.TRUNK && (r.bone1 ?? r.bone) === BONE.TRUNK
+    const share = skirt ? skirtFollow(x, y, z, lowerCut, a.hipL, a.hipR, carry)[0] : 0
+    if (share > 0) { q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; boneTransform(carry[1], q, 1, a, STILL, piv) }
     boneTransform(r.bone, p, 1, a, STILL, piv)
+    if (share > 0) for (let k = 0; k < 3; k++) p[k] += (q[k] - p[k]) * share
     p[0] *= scale.xz; p[1] *= scale.y; p[2] *= scale.xz
     return p
   }
