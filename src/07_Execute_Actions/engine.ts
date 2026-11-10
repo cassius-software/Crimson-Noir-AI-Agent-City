@@ -47,7 +47,6 @@ import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
-import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
@@ -921,11 +920,10 @@ export class Engine {
         cars: empty ? 0 : streets ? (requested.tracks === false ? 0 : Math.min(cars, streetCapacity(streets, requested.seed))) : cars,
         agents: empty ? AGENTS_RANGE[0] : Math.min(requested.agents ?? defaultLanes(profile, hardware, gpu.limits), laneCeiling(gpu.limits)), host: hints.host ?? 'browser',
       }
-      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // The scene pass's samples (governor.ts msaaCandidate), decided once here: every scene pipeline three builds keys on
       // them, so no tier change may move them. Only where the post chain can run (not split screen, lite or ?post=0).
       let sceneSamples: 0 | 4 = options.post && msaaCandidate(hints, profile, requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
-      // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
+      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
@@ -1559,6 +1557,11 @@ export class Engine {
   /** The city's one landmark (The Spire in the generated metropolis; the tallest tower of a surveyed region), or null in the procedural city. */
   landmark(): Landmark | null {
     return this.landmarkAt
+  }
+
+  /** The map's indoor workplaces (interiors.ts), read-only: the first walk's indoor stage reads where they are; empty in a surveyed region. */
+  workplaces(): readonly Workplace[] {
+    return this.rooms
   }
 
   /** Where pedestrian `agent` stands in the newest reading (a recruit's measured place), else where the player's body is. */

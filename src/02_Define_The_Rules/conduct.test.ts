@@ -153,17 +153,21 @@ test('the city is unarmed: 14A says so in its constants, the lexicon refuses eve
   assert.match(readFileSync(`${ROOT}MANUAL.md`, 'utf8'), /There are no weapons and no violence\s+anywhere in the product/)
 })
 
-test('a person may wear or carry nothing but the closed wardrobe: four business bodies, nine optional pieces (four of them hair, one the face itself), and every option, preset and console line is unarmed', () => {
+test('a person may wear or carry nothing but the closed wardrobe: four business bodies, the optional pieces (hair, headwear, the face itself, clothes and three carried things), and every option, preset and console line is unarmed', () => {
   assert.deepEqual([...LOOK_BODIES], ['suit', 'smart casual', 'pantsuit', 'skirt suit'])
   // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is
   // confirmed unarmed. The hair cap, the bob and the bun are hair; the face is the features (eyes, brows, nose, lips,
-  // ears) and nothing held.
-  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses', 'hairCap', 'bob', 'bun', 'face', 'coat', 'scarf'])
+  // ears) and nothing held. The volume, the crown's puff and the ponytail are hair too; the wrap, the turban, the hat and
+  // the brim are headwear (cloth over the head, nothing held, nothing printed on it); the beard is hair; the aids and
+  // the coils are hearing devices worn at the ear.
+  assert.deepEqual(Object.keys(LOOK_PIECE_BIT), ['tie', 'bag', 'cup', 'longHair', 'glasses', 'hairCap', 'bob', 'bun', 'face', 'coat', 'scarf', 'volume', 'topBun', 'ponytail', 'wrap', 'turban', 'hat', 'brim', 'beard', 'aidL', 'aidR', 'coilL', 'coilR'])
   assert.deepEqual([...WARDROBE.tie], ['none', 'tie'])
   assert.deepEqual([...WARDROBE.eyewear], ['none', 'glasses'])
   assert.deepEqual([...WARDROBE.bag], ['none', 'bag'])
   assert.deepEqual([...WARDROBE.cup], ['none', 'cup'])
-  assert.deepEqual([...WARDROBE.hairStyle], ['short', 'long', 'bob', 'bun', 'bald'])
+  assert.deepEqual([...WARDROBE.hairStyle].slice(0, 5), ['short', 'long', 'bob', 'bun', 'bald'])
+  assert.equal(WARDROBE.hairStyle.length, 32)
+  assert.deepEqual([...WARDROBE.headwear], ['none', 'hijab', 'turban', 'head wrap', 'kippah', 'durag', 'beanie', 'flat cap'])
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)

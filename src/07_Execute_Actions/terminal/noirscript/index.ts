@@ -27,9 +27,9 @@ import { KEYWORDS, TYPE_NAMES } from './lexer.ts'
 import { parse } from './parser.ts'
 import { check } from './types.ts'
 import type { Arena, CompiledFn, NoirHost, NoirLimits, NoirTables } from './vm.ts'
-import { DEFAULT_LOCKED, EMPTY_TABLES, LIMITS, TABLE_NAMES, execute, makeArena, saneLimits } from './vm.ts'
+import { DEFAULT_LOCKED, DEFAULT_NO_EXAM, EMPTY_TABLES, LIMITS, TABLE_NAMES, execute, makeArena, saneLimits } from './vm.ts'
 
-export type { NoirColumns, NoirTables, NoirWrites, NoirHost, NoirLimits } from './vm.ts'
+export type { NoirColumns, NoirTables, NoirWrites, NoirExam, NoirHost, NoirLimits } from './vm.ts'
 export { EMPTY_TABLES, LIMITS, ELITE_LIMITS } from './vm.ts'
 export { KEYWORDS, TYPE_NAMES } from './lexer.ts'
 export { INTRINSIC_NAMES } from './intrinsics.ts'
@@ -101,9 +101,15 @@ export class NoirSession {
         return { out: [], error: e instanceof Error ? e.message : String(e), steps: 0, defined }
       }
     }
-    // A `write` that is not an object (null, say) is no write surface: the intrinsics fail with the locked message.
+    // A `write` (or an `exam`) that is not an object (null, say) is no surface: its intrinsics fail with the host's message.
     const write = host?.write
-    const r = execute({ arena: this.arena, fns: this.fns, main: line.main, globalTop: this.globalTop, tables, write: typeof write === 'object' && write !== null ? write : undefined, locked: host?.locked ?? DEFAULT_LOCKED, limits: lim })
+    const exam = host?.exam
+    const r = execute({
+      arena: this.arena, fns: this.fns, main: line.main, globalTop: this.globalTop, tables,
+      write: typeof write === 'object' && write !== null ? write : undefined, locked: host?.locked ?? DEFAULT_LOCKED,
+      exam: typeof exam === 'object' && exam !== null ? exam : undefined, noExam: host?.noExam ?? DEFAULT_NO_EXAM,
+      limits: lim,
+    })
     return r.error === undefined ? { out: r.out, steps: r.steps, defined } : { out: r.out, error: r.error, steps: r.steps, defined }
   }
 

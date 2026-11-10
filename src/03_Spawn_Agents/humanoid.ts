@@ -16,7 +16,9 @@
  * no randomness.
  * What breaks if it is removed? The crowd has no body to draw, and the sliders have nothing to move.
  *
- * Frame: metres, feet on y = 0, the person faces +z, their left side at −x. The base person is HEIGHT_BASE tall;
+ * Frame: metres, feet on y = 0, the person faces +z. "Left" in this file (the _L bones, the cup's hand) is −x, the
+ * side a viewer facing them sees on their left, which is the person's own right in three's right-handed frame; the
+ * hearing devices' pieces (AID_L, COIL_L) are named for the person's own side. The base person is HEIGHT_BASE tall;
  * the sliders move away from them. Bones (BONE): the trunk bends about the hip; the chest twists about the spine;
  * the head nods about the neck; each leg is thigh, shin and foot about the hip, knee and ankle; each arm is upper
  * arm, forearm and hand about the shoulder, elbow and wrist. A vertex carries its slot (the colour the fragment stage
@@ -37,15 +39,27 @@ export const BONE = Object.freeze({
 export const BONES = 15
 
 /** The colour slots the fragment stage paints (crowd.ts: the top, the shirt, the skin, ..., the eye's white, the iris, the lips). */
-export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13 })
-export const SLOTS = 14
+export const SLOT = Object.freeze({ TOP: 0, SHIRT: 1, SKIN: 2, HAIR: 3, BOTTOM: 4, SHOES: 5, ACCENT: 6, PROP: 7, LEGWEAR: 8, FRAME: 9, EYE: 10, IRIS: 11, LIP: 12, SCARF: 13, HEADWEAR: 14, DEVICE: 15 })
+export const SLOTS = 16
 /**
  * The optional pieces, one bit each in a person's piece mask (look.ts LOOK_PIECE_BIT; 0 is "always drawn"). The hair
  * is pieces too: the cap (every style but bald), long hair, a bob, a bun. FACE is the features (eyes, brows, nose,
  * lips, ears): the eye pass sets its bit, the shadow pass leaves it clear. COAT is the outer layer over the jacket
- * (look.ts LAYER.coat), SCARF the wrap and tail round the neck.
+ * (look.ts LAYER.coat), SCARF the wrap and tail round the neck. The later hair pieces: VOLUME a full rounded shell
+ * (an afro, big curls), TOP_BUN a puff or knot on the crown, PONYTAIL a tail from the back of the head. The headwear
+ * (look.ts HEADWEAR, cloth slot HEADWEAR): WRAP a head scarf over the head, the ears and the neck with the face open,
+ * TURBAN a wound crown above the brow (a turban, a head wrap), HAT a snug crown (a beanie, a durag, a flat cap's) and
+ * BRIM a flat cap's peak; the near body alone has them: the far body keeps the hair's cap under them in the
+ * headwear's cloth (crowd.ts). A kippah is painted on the crown (crowd.ts), not a piece. BEARD is a long beard below
+ * the chin (shorter facial hair is painted); AID_L and AID_R a hearing aid behind each ear, COIL_L and COIL_R a
+ * cochlear implant's processor behind the ear with its coil on the side of the head (look.ts HEARING; device slot
+ * DEVICE), each named for the person's own left (+x) or right (−x).
  */
-export const PIECE = Object.freeze({ NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11 })
+export const PIECE = Object.freeze({
+  NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11,
+  VOLUME: 12, TOP_BUN: 13, PONYTAIL: 14, WRAP: 15, TURBAN: 16, HAT: 17, BRIM: 18,
+  BEARD: 19, AID_L: 20, AID_R: 21, COIL_L: 22, COIL_R: 23,
+})
 
 /**
  * The parts of a garment the fragment stage paints on the cloth (slot TOP) from a vertex's rest position and bone
@@ -74,6 +88,98 @@ export const LANDMARK = Object.freeze({
   ankle: 0.08, knee: 0.5, hip: 0.92, hipX: 0.095,
   chestPivot: 1.2, shoulder: 1.45, shoulderX: 0.2, elbow: 1.17, wrist: 0.92, neck: 1.52,
 })
+
+/**
+ * The lower garment's cuts: one list for the three trouser bodies, one for the skirt suit's (look.ts
+ * WARDROBE.trouserCut, WARDROBE.skirtCut name them in this order). Cut 0 is the straight leg or the straight skirt
+ * every body already wore, so a look without a cut is drawn as it always was. Some cuts reshape the cloth
+ * (TROUSER_SHAPE, SKIRT_SHAPE: garmentPoint and its GPU twin, crowdBody.ts bodyGarment); the fragment stage paints
+ * the rest on it (crowd.ts).
+ */
+export const TROUSER_CUT = Object.freeze({
+  straight: 0, crease: 1, pleated: 2, turnUps: 3, sideStripe: 4, wideLeg: 5, tapered: 6, flared: 7,
+  cropped: 8, culottes: 9, highWaisted: 10, belted: 11, piped: 12, slim: 13, pleatedTurnUps: 14, palazzo: 15,
+})
+export const SKIRT_CUT = Object.freeze({
+  straight: 0, pencil: 1, aLine: 2, pleated: 3, boxPleat: 4, wrap: 5, midi: 6, midiPencil: 7,
+  midiALine: 8, backVent: 9, buttonFront: 10, tulip: 11, panelled: 12, highWaisted: 13, belted: 14, flared: 15,
+})
+
+/**
+ * Heights the lower cuts are shaped by, m on the base body: the skirt's waist ring (above it the high waist raises
+ * the skirt, below it a midi lengthens it) and hem; where a slim leg starts and finishes narrowing; where a taper
+ * takes hold below the knee and the ankle its slope counts from; the tulip's bulge over the hips; where the skirt's
+ * hem starts to follow the thighs, and its sides, which stay with the trunk: the following rises from followSide
+ * to followFull of |z|, so the front and the back follow and the sides between them stretch.
+ */
+export const LOWER = Object.freeze({
+  waist: 0.92, hem: 0.56, top: 1.02,
+  slimFrom: 0.85, slimTo: 0.5, taperFrom: 0.62, taperTo: 0.5, ankle: 0.095,
+  bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 0.85, followSide: 0.02, followFull: 0.1,
+})
+
+/**
+ * Where the fragment stage ends the shorter trousers (crowd.ts), m: the cropped pair above the ankle, the culottes at
+ * the leg's 0.34 ring, the last one TROUSER_SHAPE widens (the band below it narrows back to the calf, painted as the
+ * hem's shadowed inside down to culottesInside, the leg below that).
+ */
+export const LOWER_PAINT = Object.freeze({ croppedHem: 0.19, culottesHem: 0.34, culottesInside: 0.27 })
+
+/**
+ * How each trouser cut reshapes a leg about its own axis (x = ±LANDMARK.hipX, z = 0), as
+ * [slim, wide, flare, wideAbove, wideTop, wideFull, taper, taperSlope]: a ring's radius r becomes r·(1 − slim·t),
+ * t rising from LOWER.slimFrom down to LOWER.slimTo; is raised toward wide + flare·(knee − y) (the flare grows below
+ * the knee only) as y falls from wideTop to wideFull, at or above wideAbove alone (the culottes' hem); and is lowered
+ * toward taper + taperSlope·(y − LOWER.ankle) as y falls from LOWER.taperFrom to LOWER.taperTo. Zeros reshape
+ * nothing: the painted cuts.
+ */
+export const TROUSER_SHAPE: readonly (readonly number[])[] = Object.freeze([
+  [0, 0, 0, 0, 0, 0, 0, 0], // straight
+  [0, 0, 0, 0, 0, 0, 0, 0], // pressed crease
+  [0, 0, 0, 0, 0, 0, 0, 0], // pleated
+  [0, 0, 0, 0, 0, 0, 0, 0], // turn-ups
+  [0, 0, 0, 0, 0, 0, 0, 0], // side stripe
+  [0, 0.08, 0, 0, 0.82, 0.6, 0, 0], // wide-leg: about 8 cm round from the thigh down
+  [0, 0, 0, 0, 0, 0, 0.036, 0.05], // tapered: 3.6 cm at the ankle
+  [0, 0.058, 0.09, 0, 0.56, 0.48, 0, 0], // flared: from the knee, 9.4 cm round at the hem
+  [0, 0, 0, 0, 0, 0, 0, 0], // cropped
+  [0, 0.085, 0, 0.29, 0.82, 0.6, 0, 0], // culottes: wide down to the calf
+  [0, 0, 0, 0, 0, 0, 0, 0], // high-waisted
+  [0, 0, 0, 0, 0, 0, 0, 0], // belted
+  [0, 0, 0, 0, 0, 0, 0, 0], // piped seam
+  [0.1, 0, 0, 0, 0, 0, 0, 0], // slim: a tenth narrower from the hip down
+  [0, 0, 0, 0, 0, 0, 0, 0], // pleated turn-ups
+  [0, 0.095, 0, 0, 0.86, 0.66, 0, 0], // palazzo: wider, from higher up
+].map((row) => Object.freeze(row)))
+
+/**
+ * How each skirt cut reshapes the skirt about the trunk's axis, as
+ * [flare, flareTop, pencil, length, bulge, raise, narrowTop, follow]: every radius scales by 1 + flare·t(flareTop
+ * down to LOWER.hem) + bulge·hat(LOWER.bulgeAt, LOWER.bulgeHalf) − pencil·t(LOWER.pencilFrom down to LOWER.hem) −
+ * narrowTop·t(LOWER.waist up to LOWER.top); below LOWER.waist the skirt stretches down by `length` (1.556 takes the
+ * hem from 0.56 to a midi's 0.36), above it rises by `raise` per metre (0.8 takes the top from 1.02 to 1.1). Under a
+ * coat no skirt widens (the coat hems where the skirt does). `follow` is how much of the hem a thigh carries
+ * (crowdBody.ts: the skirt hangs from the trunk alone, so a narrow or a long hem would let the knees through
+ * mid-stride): the front the thigh swung forward, the back the one swung back, so the hem spreads with the stride. Zeros, and length 1, reshape nothing.
+ */
+export const SKIRT_SHAPE: readonly (readonly number[])[] = Object.freeze([
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // straight
+  [0, 0.92, 0.22, 1, 0, 0, 0, 0.7], // pencil
+  [0.24, 0.95, 0, 1, 0, 0, 0, 0], // A-line
+  [0.08, 0.92, 0, 1, 0, 0, 0, 0.3], // pleated
+  [0.1, 0.92, 0, 1, 0, 0, 0, 0.3], // box pleat
+  [0.05, 0.92, 0, 1, 0, 0, 0, 0.4], // wrap
+  [0, 0.92, 0, 1.556, 0, 0, 0, 0.8], // midi
+  [0, 0.92, 0.2, 1.556, 0, 0, 0, 0.95], // midi pencil
+  [0.3, 0.95, 0, 1.556, 0, 0, 0, 0.4], // midi A-line
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // back vent
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // button front
+  [0, 0.92, 0.16, 1, 0.06, 0, 0, 0.65], // tulip
+  [0.12, 0.92, 0, 1, 0, 0, 0, 0.25], // panelled
+  [0, 0.92, 0, 1, 0, 0.8, 0.1, 0], // high-waisted
+  [0, 0.92, 0, 1, 0, 0, 0, 0], // belted
+  [0.42, 0.98, 0, 1, 0, 0, 0, 0], // flared
+].map((row) => Object.freeze(row)))
 
 /** The body sliders, each 0..1 but the height in metres. */
 export interface BodyShape {
@@ -319,6 +425,68 @@ export function morphNormal(nx: number, ny: number, nz: number, y: number, z: nu
   out[0] = x / l; out[1] = yy / l; out[2] = zz / l
   return out
 }
+
+/**
+ * A lower garment's cut at one point of its tube (TROUSER_SHAPE about a leg's axis, SKIRT_SHAPE about the trunk's):
+ * the radius `r` at height `y` reshaped, and the height stretched (a skirt's length and high waist). Writes
+ * [radius, height] into `out` and returns it. crowdBody.ts bodyLowerShape is the GPU twin.
+ */
+export function lowerShape(r: number, y: number, skirt: boolean, cut: number, coat: boolean, out: number[] = [0, 0]): number[] {
+  if (skirt) {
+    const [flare, flareTop, pencil, length, bulge, raise, narrowTop] = SKIRT_SHAPE[cut]
+    let s = 1 + flare * smoothTo(flareTop, LOWER.hem, y) + bulge * hat(y, LOWER.bulgeAt, LOWER.bulgeHalf)
+      - pencil * smoothTo(LOWER.pencilFrom, LOWER.hem, y) - narrowTop * smoothTo(LOWER.waist, LOWER.top, y)
+    if (coat) s = Math.min(s, 1)
+    out[0] = r * s
+    out[1] = y < LOWER.waist ? LOWER.waist - (LOWER.waist - y) * length : y + (y - LOWER.waist) * raise
+    return out
+  }
+  const [slim, wide, flare, wideAbove, wideTop, wideFull, taper, taperSlope] = TROUSER_SHAPE[cut]
+  let q = r * (1 - slim * smoothTo(LOWER.slimFrom, LOWER.slimTo, y))
+  const w = wide + flare * Math.max(0, LANDMARK.knee - y)
+  if (w > 0 && y >= wideAbove) q += smoothTo(wideTop, wideFull, y) * Math.max(0, w - q)
+  if (taper > 0) q -= smoothTo(LOWER.taperFrom, LOWER.taperTo, y) * Math.max(0, q - (taper + taperSlope * (y - LOWER.ankle)))
+  out[0] = q
+  out[1] = y
+  return out
+}
+
+/**
+ * A rest-pose vertex of the lower garment as its cut reshapes it, before the sliders (crowdBody.ts bodyGarment is
+ * the GPU twin): a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, the skirt (slot BOTTOM hung from the
+ * trunk alone: the trunk's own seat rings take the chest for a second bone) about the trunk's. The normal follows: in
+ * the tube's cylinder (radius, angle, height), with the radius taken to F(r, y) and the height to Y(y), a normal's
+ * radial, angular and height parts become (n_r·Y', n_θ·r·F_r·Y'/F, n_y·F_r − n_r·F_y), the derivatives by central
+ * differences, so an unchanged point keeps its normal and a flare is lit as one. Cut 0, and every other vertex, comes
+ * back as it went in. Writes [x, y, z, nx, ny, nz] into `out` and returns it.
+ */
+export function garmentPoint(
+  x: number, y: number, z: number, nx: number, ny: number, nz: number,
+  slot: number, bone0: number, bone1: number, cut: number, coat: boolean, out: number[] = [0, 0, 0, 0, 0, 0],
+): number[] {
+  out[0] = x; out[1] = y; out[2] = z; out[3] = nx; out[4] = ny; out[5] = nz
+  const leg = bone0 >= BONE.THIGH_L && bone0 <= BONE.FOOT_R
+  const skirt = bone0 === BONE.TRUNK && bone1 === BONE.TRUNK
+  if (cut === 0 || slot !== SLOT.BOTTOM || !(leg || skirt)) return out
+  const ax = leg ? Math.sign(x) * LANDMARK.hipX : 0
+  const dx = x - ax
+  const r = Math.max(Math.hypot(dx, z), 1e-6)
+  const [F, Y] = lowerShape(r, y, skirt, cut, coat)
+  const fr = (lowerShape(r + GARMENT_STEP.r, y, skirt, cut, coat)[0] - lowerShape(r - GARMENT_STEP.r, y, skirt, cut, coat)[0]) / (2 * GARMENT_STEP.r)
+  const up = lowerShape(r, y + GARMENT_STEP.y, skirt, cut, coat), dn = lowerShape(r, y - GARMENT_STEP.y, skirt, cut, coat)
+  const fy = (up[0] - dn[0]) / (2 * GARMENT_STEP.y), yy = (up[1] - dn[1]) / (2 * GARMENT_STEP.y)
+  const c = dx / r, s = z / r, k = F / r
+  out[0] = ax + dx * k; out[1] = Y; out[2] = z * k
+  const nr = nx * c + nz * s, nt = nz * c - nx * s
+  const mr = nr * yy, mt = nt * fr * yy / k, my = ny * fr - nr * fy
+  const ox = mr * c - mt * s, oz = mr * s + mt * c
+  const l = Math.hypot(ox, my, oz) || 1
+  out[3] = ox / l; out[4] = my / l; out[5] = oz / l
+  return out
+}
+
+/** The central differences' steps garmentPoint and bodyGarment take, m. */
+export const GARMENT_STEP = Object.freeze({ r: 0.001, y: 0.002 })
 
 /** The per-agent scales the shader applies after the pose: the stature up the body, and its square root across. */
 export function scaleOf(f: ShapeFactors): { readonly y: number; readonly xz: number } {
@@ -897,6 +1065,82 @@ function headTubes(): Tube[] {
     { y: 1.705, rx: 0.034, rz: 0.034, z: -0.122, slot: SLOT.HAIR, bone: H, far: true },
     { y: 1.735, rx: 0.018, rz: 0.018, z: -0.112, slot: SLOT.HAIR, bone: H, far: true },
   ]
+  // A full rounded shell (an afro, big curls): wide at the sides past the ears, its front inside the face below the
+  // brow (the front edge crosses the forehead above the brows), round over the crown.
+  const volume: Ring[] = [
+    { y: 1.6, rx: 0.12, rz: 0.05, back: 0.13, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.66, rx: 0.15, rz: 0.06, back: 0.15, z: -0.01, slot: SLOT.HAIR, bone: H },
+    { y: 1.7, rx: 0.158, rz: 0.07, back: 0.158, slot: SLOT.HAIR, bone: H },
+    { y: 1.74, rx: 0.155, rz: 0.15, back: 0.16, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.8, rx: 0.13, rz: 0.13, back: 0.135, slot: SLOT.HAIR, bone: H },
+    { y: 1.845, rx: 0.07, rz: 0.07, back: 0.075, slot: SLOT.HAIR, bone: H, far: true },
+  ]
+  // A puff or a knot on the crown.
+  const topBun: Ring[] = [
+    { y: 1.758, rx: 0.03, rz: 0.03, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.795, rx: 0.05, rz: 0.05, z: -0.02, slot: SLOT.HAIR, bone: H },
+    { y: 1.83, rx: 0.03, rz: 0.03, z: -0.02, slot: SLOT.HAIR, bone: H, far: true },
+  ]
+  // A tail gathered at the back of the head, hanging behind the neck.
+  const ponytail: Ring[] = [
+    { y: 1.7, rx: 0.026, rz: 0.026, z: -0.108, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.62, rx: 0.032, rz: 0.03, z: -0.13, slot: SLOT.HAIR, bone: H },
+    { y: 1.52, rx: 0.028, rz: 0.026, z: -0.135, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.5 },
+    { y: 1.42, rx: 0.016, rz: 0.016, z: -0.15, slot: SLOT.HAIR, bone: BONE.CHEST, far: true },
+  ]
+  // A head scarf: draped on the shoulders, round the neck and under the chin, over the sides of the face past the
+  // ears with its front inside the face (the face stays open, as the bob's front does), over the forehead and crown.
+  const W = SLOT.HEADWEAR
+  const wrapRings: Ring[] = [
+    { y: 1.43, rx: 0.17, rz: 0.11, back: 0.11, z: -0.01, slot: W, bone: BONE.CHEST, far: true },
+    { y: 1.5, rx: 0.095, rz: 0.08, back: 0.085, slot: W, bone: H, bone1: BONE.CHEST, w: 0.5 },
+    { y: 1.56, rx: 0.088, rz: 0.075, back: 0.098, slot: W, bone: H },
+    { y: 1.6, rx: 0.108, rz: 0.04, back: 0.114, z: -0.005, slot: W, bone: H, far: true },
+    { y: 1.665, rx: 0.12, rz: 0.04, back: 0.12, slot: W, bone: H },
+    { y: 1.725, rx: 0.11, rz: 0.104, back: 0.114, slot: W, bone: H, far: true },
+    { y: 1.758, rx: 0.084, rz: 0.088, back: 0.094, slot: W, bone: H },
+  ]
+  // A wound crown above the brow, taller than the skull (a turban; a head wrap wears it too, in another fabric).
+  const turban: Ring[] = [
+    { y: 1.705, rx: 0.108, rz: 0.112, back: 0.112, slot: W, bone: H, far: true },
+    { y: 1.75, rx: 0.116, rz: 0.12, back: 0.118, slot: W, bone: H },
+    { y: 1.8, rx: 0.11, rz: 0.11, back: 0.11, z: 0.005, slot: W, bone: H },
+    { y: 1.83, rx: 0.084, rz: 0.084, back: 0.084, z: 0.01, slot: W, bone: H, far: true },
+  ]
+  // A snug crown from the brow up (a beanie, a durag, a flat cap's), and the flat cap's peak.
+  const hat: Ring[] = [
+    { y: 1.705, rx: 0.103, rz: 0.108, back: 0.108, slot: W, bone: H, far: true },
+    { y: 1.74, rx: 0.099, rz: 0.1, back: 0.104, slot: W, bone: H },
+    { y: 1.772, rx: 0.074, rz: 0.078, back: 0.08, slot: W, bone: H, far: true },
+  ]
+  const brim: Ring[] = [
+    { y: 1.701, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
+    { y: 1.709, rx: 0.08, rz: 0.04, z: 0.118, slot: W, bone: H, far: true },
+  ]
+  // A long beard: from the jaw's front (inside the face above the chin) down over the throat to the chest.
+  const beard: Ring[] = [
+    { y: 1.625, rx: 0.074, rz: 0.03, z: 0.058, slot: SLOT.HAIR, bone: H, far: true },
+    { y: 1.585, rx: 0.068, rz: 0.042, z: 0.066, slot: SLOT.HAIR, bone: H },
+    { y: 1.545, rx: 0.052, rz: 0.036, z: 0.08, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.3, far: true },
+    { y: 1.5, rx: 0.034, rz: 0.026, z: 0.094, slot: SLOT.HAIR, bone: H, bone1: BONE.CHEST, w: 0.6 },
+    { y: 1.465, rx: 0.016, rz: 0.014, z: 0.104, slot: SLOT.HAIR, bone: BONE.CHEST, far: true },
+  ]
+  // A hearing aid: a small pod behind the ear's top.
+  const aid = (side: number): Ring[] => [
+    { y: 1.655, x: side * 0.109, z: -0.024, rx: 0.005, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+    { y: 1.692, x: side * 0.11, z: -0.02, rx: 0.006, rz: 0.01, slot: SLOT.DEVICE, bone: H },
+  ]
+  // A cochlear implant: a larger processor behind the ear and the coil, a disc on the side of the head above and
+  // behind it (rings stacked up its face, thin across the head), outside the hair's cap.
+  const processor = (side: number): Ring[] => [
+    { y: 1.648, x: side * 0.11, z: -0.026, rx: 0.006, rz: 0.01, slot: SLOT.DEVICE, bone: H },
+    { y: 1.694, x: side * 0.111, z: -0.022, rx: 0.007, rz: 0.012, slot: SLOT.DEVICE, bone: H },
+  ]
+  const coil = (side: number): Ring[] => [
+    { y: 1.698, x: side * 0.108, z: -0.05, rx: 0.003, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+    { y: 1.712, x: side * 0.109, z: -0.05, rx: 0.004, rz: 0.016, slot: SLOT.DEVICE, bone: H },
+    { y: 1.726, x: side * 0.108, z: -0.05, rx: 0.003, rz: 0.008, slot: SLOT.DEVICE, bone: H },
+  ]
   const rim = (y0: number, y1: number): Ring[] => [
     { y: y0, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
     { y: y1, rx: 0.095, rz: 0.014, z: 0.1, slot: SLOT.FRAME, bone: H },
@@ -930,6 +1174,20 @@ function headTubes(): Tube[] {
     { rings: long, segments: 10, farSegments: 6, capBottom: 1.31, piece: PIECE.LONG_HAIR, head: true, depth: 0 },
     { rings: bob, segments: 12, farSegments: 8, capBottom: 1.57, piece: PIECE.BOB, head: true, depth: 3 },
     { rings: bun, segments: 8, farSegments: 6, capTop: 1.75, capBottom: 1.66, piece: PIECE.BUN, head: true, depth: 0 },
+    { rings: volume, segments: 10, farSegments: 6, capTop: 1.858, capBottom: 1.592, piece: PIECE.VOLUME, head: true, depth: 3 },
+    { rings: topBun, segments: 6, farSegments: 4, capTop: 1.84, capBottom: 1.752, piece: PIECE.TOP_BUN, head: true, depth: 3 },
+    { rings: ponytail, segments: 6, farSegments: 4, capTop: 1.705, capBottom: 1.41, piece: PIECE.PONYTAIL, nearOnly: true, head: true, depth: 0 },
+    { rings: wrapRings, segments: 10, farSegments: 6, capTop: 1.772, piece: PIECE.WRAP, nearOnly: true, head: true, depth: 3 },
+    { rings: turban, segments: 10, farSegments: 6, capTop: 1.842, piece: PIECE.TURBAN, nearOnly: true, head: true, depth: 3 },
+    { rings: hat, segments: 10, farSegments: 6, capTop: 1.785, piece: PIECE.HAT, nearOnly: true, head: true, depth: 3 },
+    { rings: brim, segments: 8, farSegments: 6, capTop: 1.709, capBottom: 1.701, piece: PIECE.BRIM, nearOnly: true, head: true, depth: 4 },
+    { rings: beard, segments: 8, farSegments: 6, capBottom: 1.458, piece: PIECE.BEARD, head: true, depth: 4 },
+    { rings: aid(1), segments: 5, farSegments: 5, capTop: 1.696, capBottom: 1.651, piece: PIECE.AID_L, nearOnly: true, head: true, depth: 2 },
+    { rings: aid(-1), segments: 5, farSegments: 5, capTop: 1.696, capBottom: 1.651, piece: PIECE.AID_R, nearOnly: true, head: true, depth: 2 },
+    { rings: processor(1), segments: 5, farSegments: 5, capTop: 1.699, capBottom: 1.644, piece: PIECE.COIL_L, nearOnly: true, head: true, depth: 2 },
+    { rings: coil(1), segments: 6, farSegments: 6, capTop: 1.729, capBottom: 1.695, piece: PIECE.COIL_L, nearOnly: true, head: true, depth: 2 },
+    { rings: processor(-1), segments: 5, farSegments: 5, capTop: 1.699, capBottom: 1.644, piece: PIECE.COIL_R, nearOnly: true, head: true, depth: 2 },
+    { rings: coil(-1), segments: 6, farSegments: 6, capTop: 1.729, capBottom: 1.695, piece: PIECE.COIL_R, nearOnly: true, head: true, depth: 2 },
     { rings: nose, segments: 6, farSegments: 6, capBottom: 1.622, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },
     ...eye(-1), ...eye(1), brow(-1), brow(1),
     { rings: lips, segments: 8, farSegments: 8, capTop: 1.6125, capBottom: 1.6035, piece: PIECE.FACE, nearOnly: true, head: true, depth: 4 },
@@ -1086,6 +1344,9 @@ function skirtTube(): Tube {
   return { rings, segments: 16, farSegments: 8 }
 }
 
+/** Where each body's jacket hems over the trousers' seat (or the skirt), m: the trunk's slot turns from BOTTOM to TOP there. */
+export const JACKET_HEM = Object.freeze([0.9, 0.94, 0.92, 0.98])
+
 /** The four bodies' names, in draw-list order (crowd.ts VARIANT_NAMES, look.ts LOOK_BODIES). */
 export const BODY_NAMES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
 
@@ -1094,7 +1355,7 @@ export function bodyTubes(variant: number): Tube[] {
   const v = Number.isFinite(variant) ? Math.min(3, Math.max(0, Math.floor(variant))) : 0
   const woman = v >= 2
   const skirt = v === 3
-  const hem = v === 0 ? 0.9 : v === 1 ? 0.94 : v === 2 ? 0.92 : 0.98
+  const hem = JACKET_HEM[v]
   const profile = woman ? womanTrunk(hem) : manTrunk(hem)
   // The shirt's V, the lapels, the collar and the cuffs are painted on the cloth by the fragment stage (GARMENT).
   const tubes: Tube[] = [
@@ -1153,7 +1414,11 @@ class Loft {
 
   tube(t: Tube, far: boolean): void {
     if (far && t.nearOnly) return
-    const rings = far ? t.rings.filter((r, i) => r.far || i === 0 || i === t.rings.length - 1) : t.rings
+    // Laid from the lowest ring up whichever way the tube lists them: the quads' winding (counter-clockwise from
+    // outside, the face three draws) and the smooth normals face out only that way, and the caps meet the rings they
+    // name. A tube listed from the top down was drawn inside out, its outer face culled (the skirt showed the legs).
+    const listed = t.rings[t.rings.length - 1].y < t.rings[0].y ? [...t.rings].reverse() : t.rings
+    const rings = far ? listed.filter((r, i) => r.far || i === 0 || i === listed.length - 1) : listed
     if (rings.length < 2) return
     const n = far ? t.farSegments : t.segments
     const piece = t.piece ?? PIECE.NONE
@@ -1264,16 +1529,20 @@ const STILL: BodyPose = Object.freeze({ tilt: 0, bend: 0, fall: 0 })
  * front (`side` false: x edges) or from the person's left (`side` true: z edges). The legs' and arms' rings are
  * weighted to their own bone alone here (their blend to the trunk is a few millimetres at rest).
  */
-function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean): SilhouetteRing[] {
+function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean, lowerCut = 0, coat = false): SilhouetteRing[] {
   const f = shapeFactors(shape)
   const scale = scaleOf(f)
   const piv = pivotsOf(f)
   const a = walkAngles(0, 0, f)
   const out: SilhouetteRing[] = []
   const p = [0, 0, 0]
+  const g = [0, 0, 0, 0, 0, 0]
   const edge = (x: number, y: number, z: number, r: Ring, th: number): number[] => {
     if (r.region !== undefined && r.bone === BONE.HEAD) facePoint(x, y, z, r.region, faceWeight(r, th), face, p)
-    else { p[0] = x; p[1] = y; p[2] = z }
+    else if (lowerCut !== 0) {
+      garmentPoint(x, y, z, 0, 1, 0, r.slot, r.bone, r.bone1 ?? r.bone, lowerCut, coat, g)
+      p[0] = g[0]; p[1] = g[1]; p[2] = g[2]
+    } else { p[0] = x; p[1] = y; p[2] = z }
     morphPoint(p[0], p[1], p[2], r.bone, f, p)
     boneTransform(r.bone, p, 1, a, STILL, piv)
     p[0] *= scale.xz; p[1] *= scale.y; p[2] *= scale.xz
@@ -1307,10 +1576,12 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
  * The body's rings, standing, with the body sliders applied, seen from the front (`side` false: x edges) or from the
  * person's left (`side` true: z edges, so the posture's lean and the knees' and elbows' rest show), for a picture of
  * the look without a GPU. Optional pieces are included with their piece bit; the caller leaves out the ones the look
- * does not wear (the features, piece FACE, belong to faceRings). The face is the base one here.
+ * does not wear (the features, piece FACE, belong to faceRings). The face is the base one here. `lowerCut` reshapes the
+ * trousers or the skirt as the shader does (garmentPoint; `coat`: under a coat, where no skirt widens); the painted
+ * cuts are not shown.
  */
-export function silhouetteRings(variant: number, shape: BodyShape, side = false): SilhouetteRing[] {
-  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side)
+export function silhouetteRings(variant: number, shape: BodyShape, side = false, lowerCut = 0, coat = false): SilhouetteRing[] {
+  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side, lowerCut, coat)
 }
 
 /**
