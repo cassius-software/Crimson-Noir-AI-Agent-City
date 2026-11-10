@@ -6,7 +6,7 @@
  * starts the seven stages once the city is on screen, feeds the walk what the page sees (the HUD's snapshot a few times
  * a second: where the visitor stands, where the head points, how far they have come, whether they are at a wheel,
  * inside one of the workplaces, or at the console) and what the page reports outright (a goal sent to Sloane, a
- * console line run, the wardrobe or a shop's card put away, the exit program's doors), asks it once a second whether there is something to say, and hands
+ * console line run, the wardrobe, a shop's card or a home's doorstep card put away, the exit program's doors), asks it once a second whether there is something to say, and hands
  * the line to the card and the voice, in the model's rewording when one answers in time and keeps the words the
  * line needs. When the walk is passed it writes the one record that keeps the city open on the next visit. It
  * listens only; nothing here writes to the engine or the simulation (the card's accessible path is the host's).
@@ -138,8 +138,9 @@ export function useFirstWalk({ active, engine, hud, family, name, voice, termOpe
         family: familyOf(f),
         words: wordsOf(f),
         name: n,
-        // Whether the map has shops (the city's five, Lakefront Metro's up to five, a surveyed region's none) lets the look stage name them.
-        city: { fleet: engine.simControls().vehicles.count() > 0, rooms: rooms.length > 0, stores: engine.shops.length > 0 },
+        // Whether the map has shops (the city's five, Lakefront Metro's up to five, a surveyed region's none) and homes for
+        // sale (the city's seven, Lakefront Metro's up to seven, a surveyed region's none) lets the look stage name them.
+        city: { fleet: engine.simControls().vehicles.count() > 0, rooms: rooms.length > 0, stores: engine.shops.length > 0, homes: engine.homes.length > 0 },
         place: () => { const s = latest.current.hud ?? h; return s ? nearestPlace(rooms, s.customer.x, s.customer.z) : null },
         ...(t?.hintMs !== undefined && { hintMs: t.hintMs }),
         ...(t?.cooldownMs !== undefined && { cooldownMs: t.cooldownMs }),

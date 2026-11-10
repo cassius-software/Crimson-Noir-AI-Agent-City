@@ -51,6 +51,10 @@ export interface QualityKnobs {
   post: boolean
   /** Golden-hour sun shafts in the post chain (volumetrics.ts); needs `post`. Ultra and Peak. */
   volumetrics: boolean
+  /** Ambient occlusion in the post chain (postfx.ts GatedSSAO): depth taps per half-resolution pixel, 0 = off (its three
+   *  passes are skipped). A uniform loop bound, so a change never recompiles; needs `post` and a boot that built it
+   *  (aoCandidate). Ultra and Peak. */
+  aoTaps: number
   /** Fraction of pedestrians beyond nearRadius that are drawn (0..1). */
   crowdDensity: number
   /** Pedestrians closer than this use the detailed mesh, m. */
@@ -74,13 +78,14 @@ const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
  *  pass texels, crowd vertices) and culls the drawn crowd (the InstancedMesh draw counts), down to a few
  *  percent of Ultra's at Minimal; governor.test.ts models the GPU cull to hold that. High keeps the
  *  pre-governor look apart from a slightly thinner far crowd; below it every step also lowers the
- *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts. */
+ *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts
+ *  and ambient occlusion. */
 export const TIERS: readonly QualityKnobs[] = Object.freeze([
-  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
-  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
-  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
-  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 160, shadowRadius: 2, shadowTaps: 8, post: true, volumetrics: false, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
-  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 2.5, shadowTaps: 12, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
+  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
+  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
+  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
+  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 160, shadowRadius: 2, shadowTaps: 8, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
+  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 2.5, shadowTaps: 12, post: true, volumetrics: true, aoTaps: 12, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
 ])
 
 /**
@@ -88,7 +93,7 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
  * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
  * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 
@@ -99,11 +104,11 @@ export const LITE_TIER = -1
  * sun shadows (the same two 4096 cascades out to the same 240 m, so the atlas takes no more memory than Ultra's quarter
  * gigabyte: 4096 is the most a cascade can be, the atlas being two of them wide within WebGPU's default 8192, and a
  * farther reach would stretch the near cascade and coarsen the shadows nearest the eye) with a wider sixteen-tap
- * penumbra, and detailed bodies out to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
+ * penumbra, sixteen ambient-occlusion taps where Ultra takes twelve, and detailed bodies out to 90 m. Draw distance and the always-drawn radius stay: the haze hides the city past 700 m, and at density 1
  * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
  * (Governor.gpuSample).
  */
-export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
+export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, aoTaps: 16, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
 /** Peak's tier index: the highest a manual choice may pin, and the automatic ceiling of a Peak range (tierRange). */
 export const PEAK_TIER = TIERS.length
 
@@ -275,6 +280,17 @@ export function msaaCandidate(h: DeviceHints, p: DeviceProfile, msaa?: boolean, 
   if (p.lite || p.mobile) return false
   if (msaa !== undefined) return msaa
   return peakCandidate(h, p) && p.startTier >= TOP && h.screenPixels * baseRatio * baseRatio <= MSAA.maxPixels
+}
+
+/**
+ * Pure. Whether the boot builds the post chain's ambient occlusion (postfx.ts GatedSSAO): on every desktop-class profile
+ * unless the page's ?ao=0 says no. Built is not running: its passes run only on a tier with aoTaps (Ultra, Peak) and
+ * are skipped on every other, so building it costs two small pipelines at boot and two R8 targets at half resolution.
+ * Never a phone or a lite profile, whatever ?ao says: neither reaches Ultra by itself, and a lite boot has no post chain.
+ */
+export function aoCandidate(p: DeviceProfile, ao?: boolean): boolean {
+  if (p.lite || p.mobile) return false
+  return ao ?? true
 }
 
 /**

@@ -36,12 +36,14 @@ test('the hook\'s readers: the device\'s words from the glyphs, a bearing, the n
   assert.equal(TICK_MS, 1000)
 })
 
-test('the hook listens and never writes: readings from the snapshot, the engine asked only for its rooms, its car count and whether it has shops, the pass kept once', () => {
+test('the hook listens and never writes: readings from the snapshot, the engine asked only for its rooms, its car count and whether it has shops and homes, the pass kept once', () => {
   const src = read('./useFirstWalk.ts')
   assert.match(src, /engine\.workplaces\(\)/)
   assert.match(src, /engine\.simControls\(\)\.vehicles\.count\(\) > 0/)
   assert.match(src, /stores: engine\.shops\.length > 0/, 'the look stage names the shops only on a map that has them')
   assert.doesNotMatch(src, /engine\.shops(?!\.length > 0)/, 'and of the shops, only whether there are any')
+  assert.match(src, /homes: engine\.homes\.length > 0/, 'the look stage names the homes only on a map that has them')
+  assert.doesNotMatch(src, /engine\.homes(?!\.length > 0)/, 'and of the homes, only whether there are any')
   assert.doesNotMatch(src, /engine\.(?!workplaces\b|simControls\b)[a-zA-Z]+\(/, 'nothing else of the engine is called')
   assert.doesNotMatch(src, /simControls\(\)\.(?!vehicles\.count\(\))/, 'and of the controls, only the car count')
   assert.match(src, /insideRoom\(r, x, z\)/)
@@ -53,7 +55,7 @@ test('the hook listens and never writes: readings from the snapshot, the engine 
   assert.match(src, /if \(lawLine\(text\)\) note\('law'\)/)
 })
 
-test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe or a shop\'s card put away; the quiet watch waits for it', () => {
+test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe, a shop\'s card or a home\'s doorstep card put away; the quiet watch waits for it', () => {
   const src = read('../../App.tsx')
   assert.match(src, /needsFirstWalk\(new URLSearchParams\(window\.location\.search\), loadFirstWalk\(\)\)/)
   assert.match(src, /useFirstWalk\(\{ active: walk && veilDone/)
@@ -71,7 +73,10 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /if \(lookWas\.current && !lookOpen\) walkRef\.current\.note\('wardrobe'\)\s*lookWas\.current = lookOpen/)
   // Or a shop's card put away (Done, ×, Escape, the console, walking out of the shop, a headset) after it was open.
   assert.match(src, /if \(storeWas\.current && storeOpen === null\) walkRef\.current\.note\('store'\)\s*storeWas\.current = storeOpen !== null/)
-  assert.match(src, /<FirstWalkCard\s+visible=\{veilDone && !lookOpen && storeOpen === null && locked === null\}/, 'the walk\'s card steps aside for the wardrobe and a shop\'s card')
+  // Or a home's doorstep card put away (Done, ×, Escape, B, the console, walking out of the home, a headset) after it was open.
+  assert.match(src, /if \(homeWas\.current && homeOpen === null\) walkRef\.current\.note\('home'\)\s*homeWas\.current = homeOpen !== null/)
+  assert.match(src, /\}, \[lookOpen, storeOpen, homeOpen\]\)/, 'the effect that hears the cards runs when the doorstep card opens or closes')
+  assert.match(src, /<FirstWalkCard\s+visible=\{veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null\}/, 'the walk\'s card steps aside for the wardrobe, a shop\'s card and a home\'s doorstep card')
   assert.match(src, /onShow=\{showWalk\}/)
   assert.match(src, /walk: \(\) => walkRef\.current\.stage/, 'the smoke reads the stage')
   // The accessible path goes through the same controls the operator tier has, and the console's handle.
@@ -105,6 +110,9 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   assert.match(concierge, /const opened = visible && view !== 'chip'/)
   assert.match(card, /import \{ BESIDE_ROOM_QUERY \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
   assert.match(card, /const shown = visible && !\(crowded && !termOpen && !overlay && !compact && !roomy\)/)
+  // A hint that comes while the card is away is let go, never spoken late (closing a doorstep card can pass the stage
+  // in the same commit that shows the card again); an ask or the passed line waits for the card.
+  assert.match(card, /if \(!beat \|\| beat\.id === said\.current\) return\s*(?:\/\/[^\n]*\s*)*if \(!shown\) \{ if \(beat\.kind === 'hint'\) said\.current = beat\.id; return \}\s*said\.current = beat\.id\s*sayRef\.current\?\.\(beat\.text\)/)
   // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
   // query's width it still has at least the 22 rem her centred column never went under.
   const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
