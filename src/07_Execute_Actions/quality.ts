@@ -33,9 +33,9 @@
  * - Lit street lamps: World.setLampLights, the count of lamps nearest the player that carry a real PointLight. The
  *   lights are clustered (cityLights.ts): their count is a uniform and an unlit lamp's light is simply not visible,
  *   so the count moves without a recompile.
- * - Golden-hour volumetrics (Ultra and Peak): a strength uniform the engine writes (volumetrics.ts). The ray
- *   loop in the post chain is gated by that uniform, so the shader is compiled once with the pipeline and a
- *   tier change flips one float: no recompile either way.
+ * - Golden-hour volumetrics and ambient occlusion (Ultra and Peak): the rays' strength uniform (volumetrics.ts) and the
+ *   occlusion's tap count, strength and pass switch (postfx.ts GatedSSAO), which the engine writes; each shader compiles
+ *   once with the chain, so a tier change writes numbers and a flag: no recompile either way.
  * All of it is silent: no toast, no HUD notice; the terminal's `quality` command shows the tier.
  * What breaks if it is removed? The governor's tier changes and the terminal's `quality` command have no
  * visible effect, and the start tier chosen for a phone is never applied.
@@ -55,6 +55,9 @@ export interface QualityTargets {
   /** Sun shafts in the post chain: Volumetrics.strength 1 or 0 (a uniform; nothing recompiles). Only
    *  ever true together with `post`. */
   setVolumetrics(on: boolean): void
+  /** Ambient occlusion in the post chain: its taps per half-resolution pixel, 0 = off (the engine skips its passes and
+   *  writes its strength to 0; nothing recompiles). Only ever above 0 together with `post`. */
+  setAmbientOcclusion(taps: number): void
   /** Procedural (FBM) texture resolution, texels per edge: World.setTextureSize. */
   setTextureSize(size: number): void
   /** Street lamps lit by a real PointLight, the nearest to the player: World.setLampLights (0: none, and the rooms'
@@ -100,6 +103,9 @@ export function applyQuality(k: QualityKnobs, t: QualityTargets, prev?: QualityK
   // The shafts live in the post chain: a post cap (?post=0) folded into the knobs keeps them off too.
   const rays = k.volumetrics && k.post
   if (!prev || (prev.volumetrics && prev.post) !== rays) t.setVolumetrics(rays)
+  // So does the occlusion: a post cap writes 0 taps whatever the tier says.
+  const ao = k.post ? k.aoTaps : 0
+  if (!prev || (prev.post ? prev.aoTaps : 0) !== ao) t.setAmbientOcclusion(ao)
   if (!prev || prev.textureSize !== k.textureSize) t.setTextureSize(k.textureSize)
   if (!prev || prev.lampLights !== k.lampLights) t.setLampLights(k.lampLights)
   if (!prev || prev.crowdDensity !== k.crowdDensity || prev.lodDistance !== k.lodDistance ||

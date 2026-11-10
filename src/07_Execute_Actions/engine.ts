@@ -44,10 +44,12 @@ import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, 
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
+import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { doorDir, doorFront, drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
+import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -75,11 +77,12 @@ import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Ob
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import {
-  Governor, MSAA, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
+  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
   readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
 } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
+import { itemById } from './storeCatalog.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -98,7 +101,7 @@ import {
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
 import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
-import { buildPost, type CinemaPost, type VisionUniform } from './postfx.ts'
+import { buildPost, type AmbientOcclusion, type CinemaPost, type VisionUniform } from './postfx.ts'
 import { visionMatrix, visionWord, type Vision } from './access.ts'
 import { createGhost, type GhostView } from './ghost.ts'
 import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
@@ -209,6 +212,11 @@ export interface EngineOptions {
    * whether the post chain's scene pass draws 4 samples a pixel (split screen: the renderer's own frame), decided at boot.
    */
   msaa?: boolean
+  /**
+   * The post chain's ambient occlusion (?ao=0 leaves it out; absent or ?ao=1: built on any desktop, governor.ts
+   * aoCandidate), decided at boot. Built, it runs on the tiers with aoTaps (Ultra, Peak) and is skipped on the rest.
+   */
+  ao?: boolean
 }
 
 /**
@@ -311,6 +319,29 @@ function audioFrameOf(cars: number): AudioFrame {
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
 /** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
 const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
+/** The city's street address of a point, in the snapshot's own words: '9th Ave & 12th St'. */
+const cityAddress = (x: number, z: number): string => `${ordinal(Math.round(x / CITY.pitch) + 1)} Ave & ${ordinal(Math.round(z / CITY.pitch) + 1)} St`
+/** The eight compass words, clockwise from north (the engine's north is −z, its east +x, as the minimap draws them). */
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'] as const
+/** How far and which way (x, z) lies from (fromX, fromZ), in words: '330 m west', or 'here' within 15 m. */
+function wayTo(fromX: number, fromZ: number, x: number, z: number): string {
+  const dx = x - fromX, dz = z - fromZ, d = Math.hypot(dx, dz)
+  if (!(d >= 15)) return 'here'
+  const i = ((Math.round(Math.atan2(dx, -dz) / (Math.PI / 4)) % 8) + 8) % 8
+  return `${Math.round(d / 10) * 10} m ${COMPASS[i]}`
+}
+
+/**
+ * A home as the page knows it (01_Initialize_World/properties.ts Home): its deed's name (the catalogue's, line 224 + its
+ * property index), its street address (the city's grid at the doorway, or a region's own street names there), and its
+ * arrival: the spot on the sidewalk lane in front of the doorway where Go home puts the avatar (interiors.ts doorFront).
+ */
+export type PageHome = Home & { name: string; address: string; arrival: { x: number; z: number } }
+
+/** `h` with its name, address and arrival, the sidewalk lane `lane` metres off the street's centre line. */
+function pageHome(h: Home, address: string, lane: number): PageHome {
+  return { ...h, name: itemById(DEED_BASE + h.home)?.name ?? h.kind, address, arrival: doorFront(h, lane) }
+}
 
 /** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
 function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
@@ -331,7 +362,7 @@ interface QualityRig {
   applied: QualityKnobs
   /** URL caps (?shadows=0, ?post=0) folded into every tier. */
   mask: (k: QualityKnobs) => QualityKnobs
-  live: { post: boolean; volumetrics: boolean; cull: CullSettings; crowd: CrowdCull | null }
+  live: { post: boolean; volumetrics: boolean; ao: number; cull: CullSettings; crowd: CrowdCull | null }
 }
 
 /** The ?debug harness's view of the physics realm: the mirrored state and the command queue, nothing more. */
@@ -536,6 +567,25 @@ export class Engine {
   private shopHere = -1
   /** The mirror camera while a shop's catalogue is open: the shop and the orbit's angle, rad; null in first person. */
   private showroom: { shop: number; angle: number } | null = null
+  /**
+   * The world's homes (01_Initialize_World/properties.ts): the city's seven from its seed, or a generated region's on
+   * lots of its street window (region/homes.ts: up to seven, none in a surveyed region), each with its deed's name, its
+   * address and its arrival on the sidewalk. A home is known by its property index (Home.home), the same in every map,
+   * never by its place in this list. The page tells which one the avatar stands in (the HUD's chip, E or B opens its
+   * doorstep card), and Go home takes the avatar to one.
+   */
+  readonly homes: readonly PageHome[]
+  /** The home the avatar stood in on foot at the last frame (its property index), or −1. */
+  private homeHere = -1
+  /** The home whose doorstep card is open (its property index), or null: while it is open the avatar is held still. */
+  private homeCard: number | null = null
+  /**
+   * One more frame's drop after a doorstep card closes: the pad's press that closed it (padNav.ts clicks Done or ×
+   * after this frame's poll) reaches the next poll as a fresh edge, and must not reopen the card through the E line.
+   */
+  private drainNext = false
+  /** The homes the player owns, one bit per property index (the host's shopkeeper says, through setOwnedHomes). */
+  private ownedHomes = 0
   /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
   private readonly headPos = new Vector3()
   private readonly headRot = new Quaternion()
@@ -582,6 +632,8 @@ export class Engine {
   private cuts = 0
   /** Operator scale on the sun shafts (0–2; the tier decides whether they run at all). */
   private volumetricsScale = 1
+  /** Operator scale on the ambient occlusion (0–1; the tier decides whether it runs at all). */
+  private aoScale = 1
   private controls: SimControls | null = null
   /** The .agv recorder: local-only capture of the canvas or the camera, one telemetry record per frame. */
   private readonly recorder = new Recorder(() => this.frameTelemetry())
@@ -680,6 +732,11 @@ export class Engine {
    */
   onBrowse: ((index: number) => void) | null = null
   /**
+   * The host's: a home's doorstep card asked for (E or B on foot inside home `home`, its property index, with no car in
+   * reach to take the E). Null: nothing opens.
+   */
+  onHome: ((home: number) => void) | null = null
+  /**
    * The host's progression hand-off (App.tsx: the page's keeper earns the skill): called with the skill a deed of the
    * player's own earns, from a key frame() takes or a car door the player opened (received()). Null: the city earns
    * nothing. The engine keeps no record of its own, and never calls this per frame or from a setter the console,
@@ -747,17 +804,22 @@ export class Engine {
   /** The scene's samples per pixel as the boot decided them (governor.ts msaaCandidate; 0 after a refused 4x chain): the
    *  post chain's scene pass, fixed for the engine's life. Split screen's are the renderer's own (renderer.samples). */
   readonly sceneSamples: 0 | 4
+  /** The post chain's ambient occlusion where the boot built it (governor.ts aoCandidate): its switch, taps and strength
+   *  are written every frame from the tier (frame), and rain mode turns it off. */
+  readonly ao: AmbientOcclusion | null
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
+    homes: readonly PageHome[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
     this.shops = p.shops
+    this.homes = p.homes
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -766,6 +828,7 @@ export class Engine {
     this.profile = p.profile
     this.gpuF16 = p.gpu.device.features.has('shader-f16')
     this.sceneSamples = p.sceneSamples
+    this.ao = p.ao
     this.hardware = p.hardware
     this.hints = p.hints
     this.world = p.world
@@ -936,14 +999,20 @@ export class Engine {
       // The scene pass's samples (governor.ts msaaCandidate), decided once here: every scene pipeline three builds keys on
       // them, so no tier change may move them. Only where the post chain can run (not split screen, lite or ?post=0).
       let sceneSamples: 0 | 4 = options.post && msaaCandidate(hints, profile, requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
+      // The ambient occlusion (governor.ts aoCandidate), built into the chain once here where the chain can run; the tier
+      // then only writes its taps, strength and switch (frame), so no tier change compiles it.
+      const aoBuilt = options.post && aoCandidate(profile, requested.ao)
       // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
-      // are hollowed the same way. A surveyed region has no window and no lots: its copy is the pack.
+      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left; the worker
+      // is not told of the homes, whose glass reaches it as the world's boxes (no car fits through a home's planters).
+      // A surveyed region has no window and no lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
-      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots) : null
+      const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []
+      const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null
       // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
       // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
       // shore wall. A surveyed region has no window and none of it.
@@ -992,6 +1061,7 @@ export class Engine {
       const live: QualityRig['live'] = {
         post: true,
         volumetrics: false,
+        ao: 0,
         cull: hidden({ lodDistance: first.lodDistance, nearRadius: first.nearRadius, density: first.crowdDensity, maxDistance: first.maxDistance }),
         crowd: null,
       }
@@ -1003,6 +1073,7 @@ export class Engine {
         setCrowd: (c) => { live.cull = hidden(c); live.crowd?.setCull(live.cull) },
         setPost: (on) => { live.post = on },
         setVolumetrics: (on) => { live.volumetrics = on },
+        setAmbientOcclusion: (taps) => { live.ao = taps },
         setTextureSize: (size) => world.setTextureSize(size),
         setLampLights: (count) => world.setLampLights(count),
         setShadowTaps: (count) => world.setShadowTaps(count),
@@ -1040,8 +1111,8 @@ export class Engine {
       world.scene.add(netView.people, netView.cars)
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
       const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
-        buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples })
-      let { pipeline: post, volumetrics, cinema, vision, release } = chainOf(sceneSamples)
+        buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples, ao: aoBuilt })
+      let { pipeline: post, volumetrics, cinema, vision, ao, release } = chainOf(sceneSamples)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -1076,7 +1147,7 @@ export class Engine {
           console.warn(`[aa] the 4x scene pass failed WebGPU validation (${refused.message}); the chain is rebuilt at 1x`)
           release()
           sceneSamples = 0
-          ;({ pipeline: post, volumetrics, cinema, vision, release } = chainOf(sceneSamples))
+          ;({ pipeline: post, volumetrics, cinema, vision, ao, release } = chainOf(sceneSamples))
           gpu.device.pushErrorScope('validation')
           post.render()
           const retry = await gpu.device.popErrorScope()
@@ -1105,13 +1176,16 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
         // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
         // city's arcades name the city's districts, which a region does not have.
         shops: hollow ? hollow.shops.map((s) => (places ? { ...s, arcade: places.place(s.door.x, s.door.z) } : s)) : cityShops(options.seed),
+        // The city's homes, hollowed into its boxes by city.ts (properties.ts hollowProperties), or a generated region's
+        // (regionWorld.ts hollowLots), each at the address of its doorway: the city's grid there, or the region's streets.
+        homes: hollow ? hollow.homes.map((h) => pageHome(h, places ? places.place(h.door.x, h.door.z) : cityAddress(h.door.x, h.door.z), streets?.lane ?? CITY.lane)) : cityHomes(options.seed).map((h) => pageHome(h, cityAddress(h.door.x, h.door.z), CITY.lane)),
         // The code dissolve's crowd amounts: allocated by the draws above like the frame's buffers, written the same way.
         crowdDissolve: gpuBufferOf(gpu.renderer, view0.dissolve),
         crowdLook,
@@ -1148,11 +1222,12 @@ export class Engine {
     return (this.roomStations ??= stationTable(this.rooms))
   }
 
-  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces and shops over
-   * the footprints they were hollowed from, as the city's map draws its own); null in the procedural city. */
+  /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces, shops and homes
+   * over the footprints they were hollowed from, as the city's map draws its own, the homes the player owns in gold);
+   * null in the procedural city. */
   get mapLayer(): ((ctx: CanvasRenderingContext2D, x: number, z: number, radius: number, dark: boolean) => void) | null {
-    const p = this.places, rooms = this.rooms, shops = this.shops
-    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius) } : null
+    const p = this.places, rooms = this.rooms, shops = this.shops, homes = this.homes
+    return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius); drawHomes(ctx, homes, x, z, dark, this.ownedHomes, radius) } : null
   }
 
   resize(): void {
@@ -1661,6 +1736,73 @@ export class Engine {
     return true
   }
 
+  /**
+   * Opens the doorstep card of the home the avatar stands in, through the host (onHome), on foot: browse()'s rule, so
+   * `interact` (the E key's and the pad's south button's ask) leaves the press to a car in reach. Never in a headset:
+   * the card is the page's, and nothing in the headset would show it. Returns whether it did.
+   */
+  openHome(interact = false): boolean {
+    const st = this.sim.state
+    if (this.halted || this.disposed || !this.onHome || st.driving >= 0 || this.rig.headset) return false
+    const h = homeAt(this.homes, st.avatar.x, st.avatar.z)
+    if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
+    this.onHome(h)
+    return true
+  }
+
+  /**
+   * The doorstep card of home `home` (its property index) open, or null for none. While one is open the avatar is held
+   * still: each frame drops every queued action after the poll and zeroes the walk (a pad's edges queue and its stick
+   * walks even while the host suspends the game's input). Returns whether it took: only while the avatar stands in that
+   * home, on foot, out of a headset (the card would not show there), in a city that runs; closing always takes.
+   */
+  setHomeCard(home: number | null): boolean {
+    if (home === null) {
+      if (this.homeCard !== null) this.drainNext = true
+      this.homeCard = null
+      return true
+    }
+    const st = this.sim.state
+    if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
+    this.homeCard = home
+    return true
+  }
+
+  /** The homes the player owns, one bit per property index (bit i: deed 224 + i), for the HUD and the minimaps. */
+  setOwnedHomes(mask: number): void {
+    this.ownedHomes = Number.isInteger(mask) ? mask & 0x7f : 0
+  }
+
+  /**
+   * Takes the avatar to home `home` (its property index): onto its arrival spot on the sidewalk in front of the doorway,
+   * looking in through it (avatarHeading = yaw + π). Refused when the city has stopped, at the wheel, when the home is
+   * not in this map, and in a network room, where the room replays only the steps it saw and would put the player back.
+   * Returns whether it went.
+   */
+  goHome(home: number): boolean {
+    const h = this.homes.find((x) => x.home === home)
+    if (!h || this.halted || this.disposed || this.netRoom || this.sim.state.driving >= 0) return false
+    this.sim.send({ c: 'teleport', x: h.arrival.x, z: h.arrival.z })
+    const d = doorDir(h.side)
+    this.input.yaw = Math.atan2(d.x, d.z)
+    this.input.pitch = 0
+    return true
+  }
+
+  /**
+   * Where home `home` (its property index) stands, for a deed's row: `line` is its address and how far and which way it
+   * lies from the player ('9th Ave & 12th St, 330 m west'), and `why` says why Go home cannot take the player there now
+   * (in a network room, or the home is not in this map), else null.
+   */
+  homeWhere(home: number): { line: string; why: string | null } {
+    const h = this.homes.find((x) => x.home === home)
+    if (!h) return { line: '', why: 'stands in the city, not in this map' }
+    const st = this.sim.state
+    const o = st.driving * POSE.stride
+    const x = st.driving >= 0 ? st.poses[o + POSE.x] : st.avatar.x, z = st.driving >= 0 ? st.poses[o + POSE.z] : st.avatar.z
+    return { line: `${h.address}, ${wayTo(x, z, h.door.x, h.door.z)}`, why: this.netRoom ? 'not in a shared room: walk there' : null }
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -2028,14 +2170,22 @@ export class Engine {
     // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
+    // The microphone's mute (V, the right stick's click) is a privacy switch that nothing holds back, an action card's
+    // shield included: taken before a home's card drains the rest.
+    const mute = input.take('mute')
+    // A home's doorstep card holds the avatar still: whatever the poll queued (a pad's edges queue even while the host
+    // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
+    // right after it closes, which still carries the press that closed it.
+    if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
 
     // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
     // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
     // scripts and agents' acts share them and the console earns for its own commands.
     // Inside a shop on foot, E opens its catalogue unless a car is in reach to take it (storefronts.ts); B opens it
-    // whether or not a car is near. Only a press that went to the door is stamped.
-    if (input.take('interact') && !this.browse(true)) { this.doorPressedAt = performance.now(); this.interact() }
-    if (input.take('browse')) this.browse()
+    // whether or not a car is near. Inside a home (properties.ts), E and B open its doorstep card the same way. Only a
+    // press that went to the door is stamped.
+    if (input.take('interact') && !this.browse(true) && !this.openHome(true)) { this.doorPressedAt = performance.now(); this.interact() }
+    if (input.take('browse') && !this.browse()) this.openHome()
     if (input.take('timeForward')) { this.hours = (this.hours + 1) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
     if (input.take('timeBack')) { this.hours = (this.hours + 23) % 24; this.toast('Clock', formatClock(this.hours)); this.deed('optics') }
     if (input.take('ghost')) {
@@ -2046,7 +2196,7 @@ export class Engine {
       if (line.startsWith('on:') || (line === 'off' && this.views.length === 1 && !this.rig.headset && this.options.post)) this.deed('optics')
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
-    if (input.take('mute')) this.onMute?.()
+    if (mute) this.onMute?.()
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
@@ -2069,6 +2219,8 @@ export class Engine {
     if (driving < 0) {
       // A script's walk (a harness's, say) overrides the keys while it lasts; the worker still caps it at a run.
       applyWalk(this.scriptedWalk, nowMs, foot)
+      // A home's doorstep card holds the avatar still: the stick walks even under suspend, and a script's walk waits.
+      if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }
       this.pulseUntil = 0
     } else {
       // What the wheels received (vetted, L2-limited) in the audited state: the brake trigger feels it, the rumble
@@ -2132,6 +2284,10 @@ export class Engine {
     const show = this.showroom
     if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null
     else if (show) show.angle += SHOP.orbit.rate * dt
+    // Which home the avatar stands in on foot; out of the home with its card open (a teleport, the console's moves),
+    // the hold ends here and the host puts the card away at its next look.
+    this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
+    if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
@@ -2209,6 +2365,15 @@ export class Engine {
     // Sun shafts: the camera matrices are final (head rig) and the sun colour is this frame's.
     updateVolumetrics(this.volumetrics, cam, this.sun, this.world.sun.color)
     this.volumetrics.strength.value = this.quality.live.volumetrics ? this.volumetricsScale : 0
+    // Ambient occlusion: the tier's taps (0 = its passes skipped), off in rain mode (the falling code is light, not a
+    // surface in a crease) and at the operator's strength 0 (nothing would be applied, so nothing is drawn).
+    if (this.ao) {
+      const taps = this.quality.live.ao
+      const on = taps > 0 && !this.matrixOn && this.aoScale > 0
+      this.ao.node.on = on
+      if (on) this.ao.node.samples.value = taps
+      this.ao.strength.value = on ? this.aoScale : 0
+    }
 
     // A passage (contact.ts) draws nothing over the frame: the mesh passed through dissolves on its own (flushDissolve
     // below), so the post chain runs on the quality tier alone.
@@ -2645,6 +2810,12 @@ export class Engine {
     return { drawnNear: this.crowd.stats.drawnNear, drawnFar: this.crowd.stats.drawnFar, nudges: w.nudges, waiting: w.waiting, crossing: w.crossing, retreating: w.retreating, working: w.working }
   }
 
+  /** Home `home` (its property index) as the snapshot shows it: its kind, its deed's name, whether it is owned, and whether its card is open. */
+  private homeView(home: number): NonNullable<SipocSnapshot['customer']['home']> {
+    const h = this.homes.find((x) => x.home === home)
+    return { index: home, kind: h?.kind ?? '', name: h?.name ?? '', owned: ((this.ownedHomes >>> home) & 1) === 1, card: this.homeCard === home }
+  }
+
   private kernelStats(): KernelStats {
     const k = this.sim.state.kernel
     return { ...k, audit: { ...k.audit, panic: k.audit.panic ?? this.lockReason } }
@@ -2725,6 +2896,9 @@ export class Engine {
         streets: this.streets !== null,
         // The shop the avatar stands in (storefronts.ts), for the HUD's chip and the card; absent outside every shop.
         ...(this.shopHere >= 0 && { shop: { index: this.shopHere, kind: this.shops[this.shopHere].kind, name: this.shops[this.shopHere].name, showroom: this.showroom !== null } }),
+        // The home the avatar stands in (properties.ts), for the HUD's chip and the card; absent outside every home.
+        ...(this.homeHere >= 0 && { home: this.homeView(this.homeHere) }),
+        ownedHomes: this.ownedHomes,
         ...(this.captionsOn && { captions: this.captionLines() }),
       },
       experience: { sessionSeconds: this.simTime, longFrames: this.clock.longFrames, distanceWalked: this.walked, distanceDriven: this.driven },
@@ -3063,11 +3237,13 @@ export class Engine {
         uniforms: () => ({
           ...Object.fromEntries(lightKeys.map((k) => [`light.${k}`, this.world.tuning[k]])),
           'volumetrics.strength': this.volumetricsScale,
+          'ao.strength': this.aoScale,
         }),
         set: (key, value) => {
           if (key === 'volumetrics.strength') { this.volumetricsScale = Number.isFinite(value) ? Math.min(2, Math.max(0, value)) : 1; return }
+          if (key === 'ao.strength') { this.aoScale = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1; return }
           const k = key.replace(/^light\./, '') as keyof LightTuning
-          if (!key.startsWith('light.') || !lightKeys.includes(k)) throw new Error(`unknown shader key '${key}' (light.${lightKeys.join(', light.')}, volumetrics.strength)`)
+          if (!key.startsWith('light.') || !lightKeys.includes(k)) throw new Error(`unknown shader key '${key}' (light.${lightKeys.join(', light.')}, volumetrics.strength, ao.strength)`)
           this.world.tuning[k] = clampLight(k, value)
         },
       },

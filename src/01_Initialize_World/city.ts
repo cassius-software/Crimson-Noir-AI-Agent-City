@@ -11,6 +11,7 @@
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import { hollowWorkplaces } from './interiors.ts'
+import { hollowProperties, type Home } from './properties.ts'
 import { hollowShops } from './storefronts.ts'
 
 export const CITY = {
@@ -233,12 +234,15 @@ function shoreline(add: Add): void {
 }
 
 /**
- * Every box in the city and its finish, from the seed alone: the lots' buildings, the shoreline, and the sixteen workplace
- * lots hollowed into rooms (interiors.ts hollowWorkplaces: their podium becomes glass walls with a doorway, a ceiling
- * slab and furniture; the towers above and every other lot are as generated), then the five shop lots hollowed the
- * same way (storefronts.ts hollowShops, on lots the workplaces did not take).
+ * Every box in the city and its finish, from the seed alone, and the homes: the lots' buildings, the shoreline, and the
+ * sixteen workplace lots hollowed into rooms (interiors.ts hollowWorkplaces: their podium becomes glass walls with a
+ * doorway, a ceiling slab and furniture; the towers above and every other lot are as generated), then the five shop
+ * lots hollowed the same way (storefronts.ts hollowShops, on lots the workplaces did not take), then the seven homes'
+ * lots (properties.ts hollowProperties, on lots neither took: the shop's shell, a fill block behind a smaller home, the
+ * planters in the doorway). `{ homes: false }` leaves the homes' lots as generated, which only a test asks for: it
+ * shows the homes move nothing else.
  */
-export function generateBuildings(seed: number): Building[] {
+export function cityPlan(seed: number, o: { homes?: boolean } = {}): { buildings: Building[]; homes: Home[] } {
   const rng = createRng(seed)
   const out: Building[] = []
   const add: Add = (box, style) => { out.push({ box, style }) }
@@ -261,7 +265,13 @@ export function generateBuildings(seed: number): Building[] {
   shoreline(add)
   hollowWorkplaces(seed, out)
   hollowShops(seed, out)
-  return out
+  const homes = o.homes === false ? [] : hollowProperties(seed, out)
+  return { buildings: out, homes }
+}
+
+/** Every box in the city and its finish, from the seed alone (cityPlan's, the homes hollowed unless `o.homes` is false). */
+export function generateBuildings(seed: number, o: { homes?: boolean } = {}): Building[] {
+  return cityPlan(seed, o).buildings
 }
 
 /** The city's boxes alone: what the physics worker builds colliders from. */

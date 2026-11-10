@@ -53,10 +53,10 @@ test('engine: only split screen multisamples the renderer, by the same rule; a s
 test('engine: the scene pass\'s samples are decided once, where the post chain can run, and reach buildPost', () => {
   assert.match(CREATE, /let sceneSamples: 0 \| 4 = options\.post && msaaCandidate\(hints, profile, requested\.msaa, requested\.pixelRatio\) \? MSAA\.samples : 0/)
   assert.ok(CREATE.indexOf('post: requested.post && players === 1 && !lite') < CREATE.indexOf('let sceneSamples'), 'after the post chain is capped (split screen, lite, ?post=0)')
-  assert.match(CREATE, /buildPost\(gpu\.renderer, world\.scene, world\.camera, options\.cinema === false \? null : \{ resorted: world\.resorted \}, ghost, \{ sceneSamples: samples \}\)/)
-  assert.match(CREATE, /let \{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)/)
+  assert.match(CREATE, /buildPost\(gpu\.renderer, world\.scene, world\.camera, options\.cinema === false \? null : \{ resorted: world\.resorted \}, ghost, \{ sceneSamples: samples, ao: aoBuilt \}\)/)
+  assert.match(CREATE, /let \{ pipeline: post, volumetrics, cinema, vision, ao, release \} = chainOf\(sceneSamples\)/)
   assert.match(ENGINE, /^ {2}readonly sceneSamples: 0 \| 4$/m, 'the engine says what the boot chose (smoke, shot)')
-  assert.match(CREATE, /hints, post, volumetrics, cinema, vision, sceneSamples, crowdFrameSeconds/)
+  assert.match(CREATE, /hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds/)
 })
 
 test('engine: only the chain\'s own refusal rebuilds it at 1x, drawn again in its own scope; a direct-path refusal and anything else fail the boot as before', () => {

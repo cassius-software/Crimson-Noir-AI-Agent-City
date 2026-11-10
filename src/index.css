@@ -56,7 +56,7 @@ html[data-shell='tauri'] #root {
 }
 
 /* Accessibility (07_Execute_Actions/access.ts writes these onto <html>). --ui-zoom scales every overlay that carries
-   .ui-zoom (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the shops' card, the
+   .ui-zoom (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the shops' card, a home's doorstep card, the
    first walk's card, the onboarding, the touch Menu's sheet) without the canvas or the touch buttons, 100 % to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
    without each file knowing) to white on black with a solid border and no blur or shadow, lifts every light button
    inside one to black on white, and gives keyboard focus a thick ring; pulsing dots hold still. */

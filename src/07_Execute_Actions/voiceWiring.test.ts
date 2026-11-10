@@ -49,7 +49,9 @@ test('V and the right stick\'s click are the mute (M is rain mode, L3 the run la
   assert.match(PAD, /if \(rising & \(1 << PAD\.r3\)\) edges \|= PAD_EDGE\.mute/)
   assert.match(PAD, /if \(rising & \(\(1 << PAD\.l3\) \| PADDLE_LEFT\)\) l3 = true/, 'L3 stays the run latch')
   assert.match(ENGINE, /^\s+onMute: \(\(\) => void\) \| null = null$/m)
-  assert.match(ENGINE, /if \(input\.take\('mute'\)\) this\.onMute\?\.\(\)/)
+  // Taken before a home's doorstep card drains the poll's other presses: a privacy switch nothing holds back.
+  assert.match(ENGINE, /input\.poll\(dt\)\n(?:\s*\/\/[^\n]*\n)*\s*const mute = input\.take\('mute'\)\n(?:\s*\/\/[^\n]*\n)*\s*if \(this\.homeCard !== null \|\| this\.drainNext\) \{ input\.drain\(\); this\.drainNext = false \}/)
+  assert.match(ENGINE, /if \(mute\) this\.onMute\?\.\(\)/)
   assert.doesNotMatch(ENGINE, /from '\.\.\/04_Connect_Hardware\/microphone\.ts'|new Microphone\(/, 'the engine never holds the microphone')
   assert.match(APP, /e\.onMute = onMic/)
   assert.match(TOUCH, /\{ label: 'Microphone', on: host\.mic === true, run: \(\) => input\.press\('mute'\) \}/, 'the touch Menu\'s item is the same press')

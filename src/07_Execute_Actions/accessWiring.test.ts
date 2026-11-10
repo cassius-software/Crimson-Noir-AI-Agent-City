@@ -24,6 +24,7 @@ const ACT = read('./ActCard.tsx')
 const WARDROBE = read('./Customizer.tsx')
 const RECOVERY = read('./RecoveryCard.tsx')
 const STORE = read('./StoreCard.tsx')
+const HOME = read('./HomeCard.tsx')
 const ONBOARDING = read('./onboarding/Onboarding.tsx')
 const FIRST_WALK = read('./onboarding/FirstWalk.tsx')
 const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
@@ -107,7 +108,7 @@ function overlays(): { file: string; line: number; tokens: string[]; zoom: boole
 }
 
 test('every overlay root carries the zoom class, every card the blur utility the contrast rules key on; the HUD meter and captions follow', () => {
-  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1], ['the first walk', FIRST_WALK, 1], ['the touch Menu', TOUCH, 1]] as const) {
+  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1], ['HomeCard', HOME, 1], ['the first walk', FIRST_WALK, 1], ['the touch Menu', TOUCH, 1]] as const) {
     assert.equal(src.match(/className="ui-zoom (?:pointer-events-none )?(?:absolute|fixed) inset-0/g)?.length, roots, `${name}: its full-screen root${roots > 1 ? 's' : ''} zoom`)
   }
   // Every full-screen overlay in the page's components zooms or sits inside one that does, and none zooms inside
@@ -151,12 +152,12 @@ test('every overlay root carries the zoom class, every card the blur utility the
 test('the post chain ends in the filter on both paths, the identity until the host sets it, after the ghost so its colours move with the frame', () => {
   assert.match(POSTFX, /const vision: VisionUniform = uniform\(new Matrix3\(\)\)/, 'a three Matrix3 is the identity')
   assert.match(POSTFX, /const over = ghost && ghostPass \? ghostComposite\(image, ghostPass\.getTextureNode\('output'\), ghost\) : image\n\s+return vec4\(vision\.mul\(over\.rgb\)\.clamp\(\), over\.a\)/)
-  assert.equal(POSTFX.match(/, vision, release \}$/gm)?.length, 2, 'returned with and without the cinema camera')
+  assert.equal(POSTFX.match(/, vision, ao, release \}$/gm)?.length, 2, 'returned with and without the cinema camera')
   assert.match(POSTFX, /^ {2}vision: VisionUniform$/m, 'a member of the chain the engine is handed')
   // The chain built at boot, and the one rebuilt at one sample when the four-sample scene pass is refused: the engine
   // keeps the vision uniform of the chain it draws.
-  assert.match(ENGINE, /let \{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)/)
-  assert.match(ENGINE, /;\(\{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)\)/)
+  assert.match(ENGINE, /let \{ pipeline: post, volumetrics, cinema, vision, ao, release \} = chainOf\(sceneSamples\)/)
+  assert.match(ENGINE, /;\(\{ pipeline: post, volumetrics, cinema, vision, ao, release \} = chainOf\(sceneSamples\)\)/)
   assert.match(ENGINE, /this\.vision = p\.vision/)
   assert.equal(ENGINE.match(/this\.vision\.value\.set\(/g)?.length, 1, 'set in one place')
 })
@@ -187,7 +188,7 @@ test('a setting changed never rebuilds the city: the shell pins what it booted w
   assert.match(APP, /const \{ options, plan \} = boot\n/)
   // Exactly these: each is made once per shell (useState, a [] callback, the pinned boot; the first walk's switch is
   // App's own useState), so no setting renews one.
-  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
+  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
   assert.doesNotMatch(APP, /\}, \[options, plan, wearLook/)
 })
 
