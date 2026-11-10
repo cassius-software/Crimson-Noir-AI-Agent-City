@@ -1018,23 +1018,18 @@ test('generate: a larger context asks for a quarter of it as the answer; anythin
   assert.equal(contextOf(CONTEXT_MAX), CONTEXT_MAX)
 })
 
-test('contextFor reaches the generate format only: the chat body and the client without it are as they were', async () => {
-  const asked: string[] = []
-  const contextFor = (model: string): number => { asked.push(model); return 16384 }
+test("an answer's context reaches the generate format only: the chat body and an answer without one are as they were", async () => {
   const gen = fakeFetch(() => streamed(SAMPLE))
-  await createLocalCompute({ fetch: gen.f, contextFor }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  await createLocalCompute({ fetch: gen.f }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}, 16384)
   assert.deepEqual(JSON.parse(String(gen.calls[0].init?.body)).options, { num_ctx: 16384, num_predict: 4096 })
-  assert.deepEqual(asked, [DEFAULT_MODEL], 'asked for the model the answer sends')
-  // Without it: today's body.
+  // Without one: today's body.
   const plain = fakeFetch(() => streamed(SAMPLE))
   await createLocalCompute({ fetch: plain.f }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
   assert.match(String(plain.calls[0].init?.body), /,"options":\{"num_ctx":8192,"num_predict":2048\}\}$/)
-  // The chat format: never asked, and the body carries today's answer cap and no context.
-  asked.length = 0
+  // The chat format: the body carries today's answer cap and no context.
   const c = fakeFetch(() => streamed(CHAT))
-  await createLocalCompute({ fetch: c.f, contextFor, defaults: { api: 'chat', model: 'm' } }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  await createLocalCompute({ fetch: c.f, defaults: { api: 'chat', model: 'm' } }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {}, 16384)
   const sentChat = JSON.parse(String(c.calls[0].init?.body)) as Record<string, unknown>
   assert.equal(sentChat.max_tokens, ANSWER_TOKENS)
   assert.equal('options' in sentChat, false)
-  assert.deepEqual(asked, [])
 })

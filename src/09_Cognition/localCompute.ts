@@ -581,6 +581,13 @@ export interface SettingsStore {
 }
 
 /**
+ * A Mind over a local server: `answer` also takes the generate format's context for that one answer (the router's, for
+ * Ollama under auto: modelFit.ts widen, worked out once as the answer is sent); CONTEXT_TOKENS without it, and the
+ * chat format ignores it.
+ */
+export interface LocalMind extends Mind { answer(req: MindRequest, onPiece: (p: Piece) => void, context?: number): Promise<Answer> }
+
+/**
  * The local model as the operator tier uses it (operator.ts Mind): the server's address (a loopback address; the
  * default unless the operator set one), its wire format (generate unless the operator chose chat), the model (DEFAULT_MODEL unless the operator chose another) and whether it
  * thinks before it answers (off unless the operator turns it on: a small model on a modest machine can spend minutes,
@@ -589,13 +596,11 @@ export interface SettingsStore {
  * format); the Ollama API's are used without them. In the chat format the model ANY_MODEL means the first one the
  * server lists that writes text, asked once per server (LM Studio: before every answer and at `ask` alone).
  */
-export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeouts = TIMEOUTS, coldWait, contextFor }: {
+export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeouts = TIMEOUTS, coldWait }: {
   fetch: FetchLike; store?: SettingsStore; defaults?: { server?: string; model?: string; api?: WireFormat }; timeouts?: Timeouts
   /** A longer first-piece wait for `model`, ms (the router's: a big model takes long to read from disk, modelFit.ts coldWaitMs); never a shorter one. */
   coldWait?: (model: string) => number
-  /** The generate format's context for `model` (the router's, for Ollama under auto: modelFit.ts widen); CONTEXT_TOKENS without it. */
-  contextFor?: (model: string) => number
-}): Mind {
+}): LocalMind {
   const defaultServer = loopbackServer(defaults.server) ?? DEFAULT_SERVER
   const defaultModel = defaults.model?.trim() || DEFAULT_MODEL
   const defaultApi: WireFormat = isWireFormat(defaults.api) ? defaults.api : DEFAULT_API
@@ -693,13 +698,13 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
       }
       return names
     },
-    answer: async (req: MindRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+    answer: async (req: MindRequest, onPiece: (p: Piece) => void, context?: number): Promise<Answer> => {
       const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
       const name = await modelFor(req.signal)
       // A model that takes longer to load may wait longer for its first piece; the same timeouts when nothing is longer.
       const extra = coldWait?.(name) ?? 0
       const t = Number.isFinite(extra) && extra > timeouts.firstMs ? { ...timeouts, firstMs: extra } : timeouts
-      const r = { server, model: name, system, prompt: req.prompt, signal: req.signal, think, timeouts: t, ...(api === 'generate' && contextFor && { context: contextFor(name) }) }
+      const r = { server, model: name, system, prompt: req.prompt, signal: req.signal, think, timeouts: t, context }
       try {
         // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
         const a = await (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece))

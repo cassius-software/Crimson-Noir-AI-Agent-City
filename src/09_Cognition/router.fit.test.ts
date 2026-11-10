@@ -15,8 +15,10 @@
  * and the answer after a look, at a grown context, are measured there and go back when refused or failing partway;
  * Ollama gone at a grown context leaves it; the trained context Ollama reports is taken, with its own first waits; a
  * verdict on an older context is ignored, and /api/ps read once any answer to that model at another context ran,
- * measured or not, is no measurement; Seen and the step up are as without growth; and without a figure, in the chat
- * format, for the operator's model and under ask provider ollama every body is today's, byte for byte.
+ * measured or not, is no measurement; an answer goes, and is measured, at the context noted as it was sent, and one
+ * that ends after the figure has gone is not measured; Seen and the step up are as without growth; and without a
+ * figure, in the chat format, for the operator's model and under ask provider ollama every body is today's, byte for
+ * byte.
  * What breaks if it is removed? A change to the router could grow the model on a machine that gave no figure, keep a
  * model that does not fit, ask Ollama for a context that does not fit, or ask something off this machine, and nothing
  * in CI would say so.
@@ -1958,4 +1960,170 @@ test('a cut answer that lands after a look found nothing grows nothing: the cont
   await ask(r)
   assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048'])
   assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+})
+
+/** `m` behind a fetch whose next answer (/api/generate, or the chat format's) fails as an Ollama that has gone does, once `drop` is called. */
+const gone = (m: Fake): { f: Fake; drop: () => void } => {
+  let drop = false
+  const answer = (url: string): boolean => url.endsWith('/api/generate') || url.endsWith('/v1/chat/completions')
+  return { f: { ...m, f: async (url, init) => { if (drop && answer(url)) { drop = false; throw new TypeError('Failed to fetch') } return m.f(url, init) } }, drop: () => { drop = true } }
+}
+
+test('a look that begins as an answer is sent: that answer goes at the context it was noted at, and is measured there', async () => {
+  const m = ONE()
+  // The Windows app's reading is taken as the answer is sent; a look begun then finds nothing until Ollama lists again.
+  let looking = false
+  const r: MindRouter = make(m, { appVram: () => { if (looking) { looking = false; void r.installed().catch(() => {}) } return 24 } })
+  await ask(r)
+  await measured(m, 1)
+  assert.match(r.settings().fit ?? '', /gets 16,384 tokens of context/)
+  looking = true
+  await ask(r)
+  await measured(m, 2)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'])
+  assert.match(r.settings().fit ?? '', /; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 \(measured 5\.6 GB loaded at that context, all on the GPU\)$/)
+})
+
+test('the figure gone before an answer ends: no /api/ps for it, the first answer or the one more at 8,192 after a larger context is refused', async () => {
+  let reading: number | null = 24
+  const m = ONE()
+  const store = memory()
+  const r = make(m, { appVram: () => reading, store })
+  const first = latch()
+  m.state.holds = [first.held]
+  const plain = ask(r)
+  await until(() => bodies(m).length === 1)
+  reading = null
+  first.open()
+  await plain
+  await settle()
+  assert.equal(looks(m), 0, 'the first answer, sent with a figure, ends without one')
+  reading = 24
+  await ask(r)
+  await measured(m, 1)
+  const seen = fitOf(store)?.seen
+  m.state.writes[DEFAULT_MODEL] = { ...SLOW, refuseAbove: 8192 }
+  const { held, open } = latch()
+  m.state.holds = [held]
+  const asked = ask(r)
+  await until(() => bodies(m).length === 3)
+  reading = null
+  open()
+  assert.equal(await asked, `${DEFAULT_MODEL} says hi`)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096', '8192/2048'])
+  assert.equal(looks(m), 1, 'no /api/ps without a figure')
+  assert.deepEqual(fitOf(store)?.seen, seen, 'nothing measured')
+})
+
+test('grown, then the chat format: the answer after a look that finds Ollama is not measured, and back in the generate format the grown context stands', async () => {
+  const m = ONE()
+  const g = gone(m)
+  const r = make(g.f, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  r.setApi?.('chat')
+  g.drop()
+  assert.equal(await ask(r), 'chat says hi')
+  await settle()
+  assert.equal(looks(m), 1, 'Ollama chooses the context in the chat format: nothing to measure')
+  r.setApi?.('generate')
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'])
+})
+
+test("the answer after a look, at 8,192 with no figure, counts as an answer at its context: a reading at 16,384 taken after it ran says nothing", async () => {
+  // Grown to 16,384, not yet measured there. The Windows app's reading is gone for one ask whose answer finds Ollama
+  // gone; the look finds it and that ask's answer goes at 8,192, held.
+  let reading: number | null = 24
+  const m = ONE()
+  const g = gone(m)
+  const r = make(g.f, { appVram: () => reading, lookMs: 5000 })
+  await ask(r)
+  await measured(m, 1)
+  reading = null
+  g.drop()
+  const late = latch()
+  m.state.holds = [late.held]
+  const before = ask(r)
+  await until(() => bodies(m).length === 2)
+  // The reading is back: an answer at 16,384 whose /api/ps is answered only after the held answer has run.
+  reading = 24
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((done) => { release = done })
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  await until(() => looks(m) === 2)
+  late.open()
+  await before
+  release()
+  m.state.hold = null
+  await measured(m, 2)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096'])
+  assert.match(r.settings().fit ?? '', /; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured$/)
+})
+
+test("a settings change during a cut answer's measurement means no growth, though another answer's measurement at 8,192 fits", async () => {
+  // Two answers at 8,192 before either is measured: the first ends whole and its measurement (all on the GPU) lands;
+  // the second ends cut, and the operator changes a setting while its own /api/ps is under way.
+  const m = ONE(WHOLE)
+  const r = make(m, { vram: '24', lookMs: 5000 })
+  const one = latch(); const two = latch()
+  m.state.holds = [one.held, two.held]
+  const whole = ask(r)
+  const cut = ask(r)
+  await until(() => bodies(m).length === 2)
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((done) => { release = done })
+  one.open()
+  await whole
+  await until(() => looks(m) === 1)
+  m.state.writes[DEFAULT_MODEL] = CUT
+  two.open()
+  await cut
+  let again = (): void => {}
+  const next = new Promise<void>((done) => { again = done })
+  release()
+  m.state.hold = next
+  await until(() => looks(m) === 2)
+  r.setApi?.('generate')
+  again()
+  m.state.hold = null
+  await settle()
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048'])
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+})
+
+test('the newest measurement at 8,192 decides: a cut answer after a split one kept (nothing else fits) grows nothing', async () => {
+  const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 20e9, kv: 1e9 } }, writes: { [DEFAULT_MODEL]: WHOLE } })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  // Slow and split: measured, and kept, since Ollama lists nothing else.
+  m.state.ps[DEFAULT_MODEL] = { size: 5e9, vram: 4e9, kv: 1e9 }
+  m.state.writes[DEFAULT_MODEL] = SLOW
+  await ask(r)
+  await measured(m, 2)
+  m.state.writes[DEFAULT_MODEL] = CUT
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await settle()
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048', '8192/2048'])
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+})
+
+test('a model auto moved to grows by its own weights: the 14b, cut, gets 16,384 where the 4b\'s weights would leave no room', async () => {
+  // Doubling the 14b costs what it loads beyond its weights: 14 + 4.7 GB fits 22 GiB; by the 4b's weights, 14 + 10.7 would not.
+  const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9), L('qwen3:14b', 9.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 40e9, kv: 1e9 }, 'qwen3:14b': { size: 14e9, vram: 40e9, kv: 1e9 } }, writes: { [DEFAULT_MODEL]: WHOLE, 'qwen3:14b': CUT } })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  assert.equal(r.settings().model, 'qwen3:14b')
+  await ask(r)
+  await measured(m, 2)
+  assert.equal(await ask(r), 'qwen3:14b says hi')
+  assert.deepEqual(sent(m), [DEFAULT_MODEL, 'qwen3:14b', 'qwen3:14b'])
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096'])
 })

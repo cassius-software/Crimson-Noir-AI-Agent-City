@@ -2177,8 +2177,10 @@ any of them.
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
   (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
-  or `ask api` changed since). An answer at a larger context that Ollama refuses before any of it arrives is asked
-  once more at 8,192, within the same ask, unless a setting changed since it was sent (below). Under `auto`, an
+  or `ask api` changed since). When an ask's first answer goes at a larger context and Ollama refuses it before any
+  of it arrives, the ask is answered once more at 8,192, unless a setting changed since it was sent or a stop came
+  with the refusal; an answer that was itself the ask's one more (the moved model's retry, or the answer after a new
+  look) is not asked again (below). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
@@ -2229,7 +2231,8 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
   - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
     one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
-    much of it is on the GPU.
+    much of it is on the GPU. None follows an answer that ends after the figure has gone (the Windows app's reading
+    is read at each ask).
   - Once a measurement shows the model at least partly on the GPU, auto gives Ollama the largest text model it lists
     whose need fits the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
     loaded-to-weights ratio measured on this server.
@@ -2291,7 +2294,7 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
   back); another provider. Nor a context above 32,768 or more than one step a visit, and no larger context for the
   model you chose, in the chat format, under another provider (`ask provider ollama` included), or for the model
-  kept in this page: each of those asks for 8,192 and 2,048 exactly as before.
+  kept in this page: each of those sends exactly what it sent before the context could grow.
 - **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
   why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
   measures afresh`). Once a context grew it also says what became of it: grown and measured at the next answer,
@@ -2325,8 +2328,11 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   after the look, a stop landing with a refusal, an answer from an older context landing late, a reading taken while
   or after an answer at another context ran (measured or not: before the figure, under `ask provider ollama`, in the
   chat format) and not after another model's, the first waits at the trained context, a cut answer landing after a
-  look found nothing, the model settled first, the same step up and the same kept measurements with and without
-  growth, today's requests byte for byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
+  look found nothing, a look begun as an answer is sent (the answer goes, and is measured, at the context it was
+  noted at), the figure gone before an answer or a retry ends (no `/api/ps`), the chat format after a look, the answer after a
+  look at 8,192 counting as an answer at its context, a settings change during a cut answer's measurement, the newest
+  measurement at 8,192 deciding, a moved model growing by its own weights, the model settled first, the same step up
+  and the same kept measurements with and without growth, today's requests byte for byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
   back once auto is the provider again), the readers
   (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a

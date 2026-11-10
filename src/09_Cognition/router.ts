@@ -262,8 +262,9 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   let tick = 0
   const flights = new Map<string, Map<number, { open: number; ended: number }>>()
   // Under auto, a big model may wait longer for its first piece while Ollama reads it (modelFit.ts coldWaitMs; never
-  // shorter); under ask provider ollama the wait is the client's own. The context is the router's (contextFor).
-  const ollama = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'ollama', keep), ...(timeouts && { timeouts }), coldWait: (n) => (kept.provider === 'auto' ? coldWaitMs(bytesOf(n)) : 0), contextFor: (n) => contextFor(n) })
+  // shorter); under ask provider ollama the wait is the client's own. The context is the router's, handed to each
+  // answer as it is sent (flown).
+  const ollama = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'ollama', keep), ...(timeouts && { timeouts }), coldWait: (n) => (kept.provider === 'auto' ? coldWaitMs(bytesOf(n)) : 0) })
   const llamacpp = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'llamacpp', keep), defaults: { server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, api: 'chat' }, ...(timeouts && { timeouts }) })
   const openai = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'openai', keep), defaults: { server: OPENAI_SERVER, model: OPENAI_MODEL, api: 'chat' }, ...(timeouts && { timeouts }) })
   // The model file kept in this page: its own settings (the file chosen, think, the GPU) in its own slice.
@@ -592,15 +593,18 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   }
   /** One model on one server at one context, as verified and placements hold it: a grown context is measured apart. */
   const measuredKey = (s: Sent): string => `${keyOf(s.server, s.model)} ${s.ctx}`
-  /** `go`, the Ollama answer `s` says is sent (null: another provider's), noted as in flight until it ends (crossed). */
-  const flown = async (s: Flight | null, go: () => Promise<Answer>): Promise<Answer> => {
-    if (s === null) return go()
+  /**
+   * `m`'s answer to `req`. An Ollama answer (`s`; null: another provider's) goes at `s`'s context, worked out once as it
+   * was sent, so the body, the flight and the measurement agree; it is noted as in flight until it ends (crossed).
+   */
+  const flown = async (s: Flight | null, m: Mind, req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+    if (s === null) return m.answer(req, onPiece)
     const k = keyOf(s.server, s.model); const each = flights.get(k) ?? new Map<number, { open: number; ended: number }>()
     const f = each.get(s.ctx) ?? { open: 0, ended: 0 }
     each.set(s.ctx, f); flights.set(k, each)
     f.open++
     try {
-      return await go()
+      return await ollama.answer(req, onPiece, s.ctx)
     } finally {
       f.open--; f.ended = ++tick
     }
@@ -611,12 +615,12 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    */
   const crossed = (s: Sent): boolean => [...(flights.get(keyOf(s.server, s.model)) ?? [])].some(([ctx, f]) => ctx !== s.ctx && (f.open > 0 || f.ended > s.at))
   /**
-   * After an Ollama answer under auto with a figure (R3): one GET of /api/ps, detached and chained, when the answer was
-   * slow, ran out of time, or this server, model and context were not measured this visit; the next look or answer
-   * awaits it. Then, the context's growth is decided (R4), with no request of its own.
+   * After an Ollama answer under auto with a figure, still in force as it ends (R3): one GET of /api/ps, detached and
+   * chained, when the answer was slow, ran out of time, or this server, model and context were not measured this visit;
+   * the next look or answer awaits it. Then, the context's growth is decided (R4), with no request of its own.
    */
   const after = (sent: Sent, a: Answer | null, timedOut: 'cold' | 'stall' | null): void => {
-    if (sent.gen !== generation) return
+    if (sent.gen !== generation || figure() === null) return
     const counted = a !== null && a.pace !== undefined && a.tokens >= PACE_TOKENS
     const pace = a?.pace ?? (timedOut === 'stall' ? 0 : null)
     const slow = timedOut !== null || (counted && pace !== null && pace < PACE_FLOOR)
@@ -704,7 +708,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const once = async (req: AnswerRequest, onPiece: (p: Piece) => void, retry: Sent | null): Promise<Answer> => {
     let arrived = false
     try {
-      const a = await flown(retry ?? unmeasured(), () => ollama.answer(req, (p) => { arrived = true; onPiece(p) }))
+      const a = await flown(retry ?? unmeasured(), ollama, req, (p) => { arrived = true; onPiece(p) })
       if (retry) after(retry, a, null)
       return a
     } catch (e) {
@@ -747,7 +751,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const sent: Sent | null = m === ollama && os.api !== 'chat' && os.model !== null && figure() !== null ? sending(os.server, os.model) : null
     let arrived = false
     try {
-      const a = await flown(sent ?? (m === ollama ? unmeasured() : null), () => m.answer(req, (p) => { arrived = true; onPiece(p) }))
+      const a = await flown(sent ?? (m === ollama ? unmeasured() : null), m, req, (p) => { arrived = true; onPiece(p) })
       if (sent) after(sent, a, null)
       return a
     } catch (e) {
@@ -945,7 +949,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       if (kept.provider === 'auto') return autoAnswer(req, onPiece)
       // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
       const m = active()
-      return m === ollama ? flown(unmeasured(), () => m.answer(req, onPiece)) : m.answer(req, onPiece)
+      return flown(m === ollama ? unmeasured() : null, m, req, onPiece)
     },
   }
   return Object.freeze(router)
