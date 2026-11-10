@@ -174,11 +174,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   there up to its usual 38 rem); below 960 px the walk's card steps aside while her card is open (`onOpen`, `crowded`)
   and comes back when she settles into her chip. The browser smoke's `walk` scenario measures the two apart at
   960×540, 1024×640, 1152×648, 1280×720 and 1366×657 and the walk's card away at 900×600 while her question is open.
-  (`onGoalSent`); the engine shows its workplaces (`workplaces()`). **Opt-in in this version** (`FIRST_WALK_DEFAULT`
-  is false): the exit program's three words are not yet in NoirScript, so the last stage cannot be passed; the
-  default flips when they land. The quiet five-minute watch waits until the walk is passed. Pinned by node tests (the
-  stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand scrub); how the
-  card stands on a real phone, a pad or a screen reader is unverified.
+- **The first walk's look stage takes the homes too.** On a map with homes for sale (the city's seven, Lakefront
+  Metro's up to seven) the "Your look" stage can now be finished in a home as well: stepping inside, opening its
+  doorstep card (B, or E with no car near; the pad's south face button; the For sale chip on touch) and putting it
+  away again (Done, ×, Escape, B, the console taking over, or a headset) passes it, whether or not the deed was
+  bought (`HomeCard.tsx`, a `'home'` walk event, `city.homes`). Sloane's line, hint and eight-year-old's line name
+  the homes only on a map that has them, the line and the hint in the device's own words, and the line and the
+  eight-year-old's line say the smallest costs nothing to claim; the fifth why adds that a deed is one line of the
+  shops' catalogue kept by the one shopkeeper. The walk's card steps aside while a doorstep card is open, as it does
+  for the wardrobe and a shop's card. A hint that comes while the walk's card is away (the visitor busy in the
+  wardrobe, a shop's, a home's or Sloane's own card) is let go instead of being spoken when the card comes back,
+  where it could tell the visitor to do what closing that card had just done; a stage's first line still waits for
+  the card. A surveyed region, which has no homes, keeps the stage as it was. The browser smoke gains a `walkhome` scenario (the stage passed in the Micro-Loft,
+  its chip clear of the walk's card, nothing bought). Also drops a stale tail of the first walk's opt-in wording that a
+  merge had left under the side-by-side entry. Pinned by node tests (the home event, the stage kept when done early,
+  the lines with and without homes on each device, App's wiring).
 - **Lakefront Metro's transit map** (`src/01_Initialize_World/region/transit.ts`, pure: the page and the physics worker
   build it from the same seed, street window, craft boxes and bounds). A generated region's street window now carries
   what the procedural city has had since the fixed track network, and a little more. An **elevated train loop** on the

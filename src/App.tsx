@@ -867,10 +867,12 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null); walkRef.current.note('console') }
     engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null)
   }, [])
-  // The walk's look stage hears of the wardrobe card or a shop's card put away after it was open (Done, ×, Escape, the
-  // console taking over, or walking out of the shop): what changed, if anything, is the visitor's choice.
+  // The walk's look stage hears of the wardrobe card, a shop's card or a home's doorstep card put away after it was open
+  // (Done, ×, Escape, the console taking over, or walking out of the shop or the home): what changed or was bought, if
+  // anything, is the visitor's choice.
   const lookWas = useRef(false)
   const storeWas = useRef(false)
+  const homeWas = useRef(false)
   useEffect(() => {
     lookOpenRef.current = lookOpen
     storeOpenRef.current = storeOpen
@@ -880,6 +882,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     lookWas.current = lookOpen
     if (storeWas.current && storeOpen === null) walkRef.current.note('store')
     storeWas.current = storeOpen !== null
+    if (homeWas.current && homeOpen === null) walkRef.current.note('home')
+    homeWas.current = homeOpen !== null
   }, [lookOpen, storeOpen, homeOpen])
 
   useEffect(() => {
@@ -1366,12 +1370,12 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onOpen={setSloaneOpen}
         />
       )}
-      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe or a
-          shop's card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
+      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe, a
+          shop's card or a home's doorstep card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
           (from 60 rem her card stands left of it). It has no close: the console's exit program ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
-          visible={veilDone && !lookOpen && storeOpen === null && locked === null}
+          visible={veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           card={fw.card}
           beat={fw.beat}
           exam={fw.exam}

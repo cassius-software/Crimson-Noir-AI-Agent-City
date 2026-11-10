@@ -779,8 +779,12 @@ shows it (there is no city to walk).
      Storefronts) a shop does it too: walk in, open its card (B or E on a keyboard, the south face button on a pad, the
      **Browse** chip on touch), try a line on if you like (trying on is free; buying costs credits), and put the card
      away (**Done**, ×, Escape, the console, or walking out). Sloane names the shops only where there are some; the
-     walk's card steps aside while a shop's card is open, as it does for the wardrobe. Owned homes are not built yet;
-     when they are they join this stage the same way.
+     walk's card steps aside while a shop's card is open, as it does for the wardrobe. On a map with homes for sale
+     (the city's seven, Lakefront Metro's up to seven; see Homes) a home does it as well: step inside, open its
+     doorstep card (B or E on a keyboard, the south face button on a pad, the **For sale** chip on touch), read the
+     deed (the Micro-Loft's costs nothing to claim; the others need a level and credits), and put the card away
+     (**Done**, ×, Escape, B or the console). Sloane names the homes only where there are some, and the walk's card
+     steps aside while a doorstep card is open.
   6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
   7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
      learning to walk); Sloane says nothing of it until its turn would have come.
