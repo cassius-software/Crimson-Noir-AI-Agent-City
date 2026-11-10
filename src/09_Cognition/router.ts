@@ -256,9 +256,9 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   // server, model and context), and the grown contexts given one more chance after a first wait ran out with nothing
   // loaded. ask vram clears them; nothing of them is kept between visits.
   const wide = new Map<string, Wide>(); const placements = new Map<string, Placement>(); const coldWide = new Set<string>()
-  // The Ollama answers auto measures, as they go (crossed): for each server and model (keyOf), each context's answers
-  // in flight and the count `tick` stood at when the last one ended; `tick` counts each one sent and each one ended.
-  // They follow requests, not settings: ask vram leaves them.
+  // Every Ollama answer the router sends, measured or not, as it goes (crossed): for each server and model (keyOf), each
+  // context's answers in flight and the count `tick` stood at when the last one ended; `tick` counts each one sent and
+  // each one ended. They follow requests, not settings: ask vram leaves them.
   let tick = 0
   const flights = new Map<string, Map<number, { open: number; ended: number }>>()
   // Under auto, a big model may wait longer for its first piece while Ollama reads it (modelFit.ts coldWaitMs; never
@@ -577,16 +577,23 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     if (signal.aborted) throw signal.reason
   }
   /**
-   * An Ollama answer under auto with a GPU figure: where and what it was sent, at which context, the settings count
-   * then, and `tick` as it was sent.
+   * An Ollama answer as it is sent: where and what, at which context (0: one Ollama chooses itself, as in the chat
+   * format), and `tick` then.
    */
-  type Sent = { readonly server: string; readonly model: string; readonly gen: number; readonly ctx: number; readonly at: number }
+  type Flight = { readonly server: string; readonly model: string; readonly ctx: number; readonly at: number }
+  /** An Ollama answer under auto with a GPU figure, which auto measures: also the settings count as it was sent. */
+  type Sent = Flight & { readonly gen: number }
   /** What an Ollama answer to `model` at `server` is sent with now: the context contextFor gives it, under today's settings count. */
   const sending = (server: string, model: string): Sent => ({ server, model, gen: generation, ctx: contextFor(model), at: ++tick })
+  /** An Ollama answer auto does not measure (no figure yet, the chat format, ask provider ollama), as it is sent now. */
+  const unmeasured = (): Flight => {
+    const s = ollama.settings(); const model = s.model ?? DEFAULT_MODEL
+    return { server: s.server, model, ctx: s.api === 'chat' ? 0 : contextFor(model), at: ++tick }
+  }
   /** One model on one server at one context, as verified and placements hold it: a grown context is measured apart. */
   const measuredKey = (s: Sent): string => `${keyOf(s.server, s.model)} ${s.ctx}`
-  /** `go`, the answer `s` says is sent (null: one auto does not measure), noted as in flight until it ends (crossed). */
-  const flown = async (s: Sent | null, go: () => Promise<Answer>): Promise<Answer> => {
+  /** `go`, the Ollama answer `s` says is sent (null: another provider's), noted as in flight until it ends (crossed). */
+  const flown = async (s: Flight | null, go: () => Promise<Answer>): Promise<Answer> => {
     if (s === null) return go()
     const k = keyOf(s.server, s.model); const each = flights.get(k) ?? new Map<number, { open: number; ended: number }>()
     const f = each.get(s.ctx) ?? { open: 0, ended: 0 }
@@ -599,8 +606,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     }
   }
   /**
-   * Whether an answer to the same server and model at another context was in flight, or ended, since `s` was sent:
-   * Ollama may have loaded the model again for it (R6), so what /api/ps says now is not `s`'s placement.
+   * Whether an answer to the same server and model at another context (measured or not) was in flight, or ended, since
+   * `s` was sent: Ollama may have loaded the model again for it (R6), so what /api/ps says now is not `s`'s placement.
    */
   const crossed = (s: Sent): boolean => [...(flights.get(keyOf(s.server, s.model)) ?? [])].some(([ctx, f]) => ctx !== s.ctx && (f.open > 0 || f.ended > s.at))
   /**
@@ -689,18 +696,22 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     keep()
   }
   /**
-   * The ask's one answer more (R5's at the context grown from, or R8's from the model auto picks next), sent as `retry`
-   * says (null: not measured) and measured as any other. When it went at a grown context (R8's may) and Ollama refuses
-   * it or fails partway, that context goes back (R5), and the failure is the ask's.
+   * The ask's one answer more from Ollama (R5's at the context grown from, R8's from the model auto picks next, or the
+   * one after a new look), sent as `retry` says (null: not measured) and measured when it ends. When it went at a grown
+   * context (R8's and the look's may), a first wait that runs out or a stall there is measured too (the context's
+   * verdict), and when Ollama refuses it or fails partway, that context goes back (R5); the failure is the ask's.
    */
   const once = async (req: AnswerRequest, onPiece: (p: Piece) => void, retry: Sent | null): Promise<Answer> => {
     let arrived = false
     try {
-      const a = await flown(retry, () => ollama.answer(req, (p) => { arrived = true; onPiece(p) }))
+      const a = await flown(retry ?? unmeasured(), () => ollama.answer(req, (p) => { arrived = true; onPiece(p) }))
       if (retry) after(retry, a, null)
       return a
     } catch (e) {
-      if (retry && retry.ctx !== CONTEXT_TOKENS && !req.signal.aborted && e instanceof CognitionError && e.code === 'server') back(retry, arrived ? 'partway' : 'load')
+      if (retry && retry.ctx !== CONTEXT_TOKENS && !req.signal.aborted && e instanceof CognitionError) {
+        if (e.code === 'timeout') after(retry, null, arrived ? 'stall' : 'cold')
+        if (e.code === 'server') back(retry, arrived ? 'partway' : 'load')
+      }
       throw e
     }
   }
@@ -713,7 +724,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * by the next one (R8). A grown context Ollama will not load goes back, and the same ask is answered once more at the
    * context it grew from (R5): that, not R8 or a look, is the ask's one retry, and there is none after a settings
    * change. One that fails after some of the answer arrived goes back too, with no retry (the text shown would be
-   * written twice).
+   * written twice). The answer after a look that goes at a grown context is measured there, as R8's retry is.
    */
   const autoAnswer = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
     await settled(req.signal)
@@ -736,7 +747,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const sent: Sent | null = m === ollama && os.api !== 'chat' && os.model !== null && figure() !== null ? sending(os.server, os.model) : null
     let arrived = false
     try {
-      const a = await flown(sent, () => m.answer(req, (p) => { arrived = true; onPiece(p) }))
+      const a = await flown(sent ?? (m === ollama ? unmeasured() : null), () => m.answer(req, (p) => { arrived = true; onPiece(p) }))
       if (sent) after(sent, a, null)
       return a
     } catch (e) {
@@ -760,7 +771,12 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         if (again.model !== null && again.model !== sent.model) return once(req, onPiece, sending(again.server, again.model))
       }
       if (first === null || arrived || req.signal.aborted || !(e instanceof CognitionError && (e.code === 'offline' || e.code === 'refused'))) throw e
-      return (await look(req.signal)).answer(req, onPiece)
+      const n = await look(req.signal)
+      if (n !== ollama) return n.answer(req, onPiece)
+      // Ollama again: the ask's one answer more. At a grown context (inside the gate) it is measured there, and goes back
+      // when refused or failing partway, with no answer after it; at CONTEXT_TOKENS it is sent as before, not measured.
+      const s = ollama.settings()
+      return once(req, onPiece, s.model !== null && contextFor(s.model) !== CONTEXT_TOKENS ? sending(s.server, s.model) : null)
     }
   }
   // What answers: the chosen provider, or under auto the one found (Ollama's settings until a look has found one).
@@ -926,7 +942,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     installed: async (signal?: AbortSignal) => (kept.provider === 'auto' ? (await look(signal)).installed(signal) : active().installed(signal)),
     answer: async (req, onPiece) => {
       await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories, req.context, req.steering))
-      return kept.provider === 'auto' ? autoAnswer(req, onPiece) : active().answer(req, onPiece)
+      if (kept.provider === 'auto') return autoAnswer(req, onPiece)
+      // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
+      const m = active()
+      return m === ollama ? flown(unmeasured(), () => m.answer(req, onPiece)) : m.answer(req, onPiece)
     },
   }
   return Object.freeze(router)

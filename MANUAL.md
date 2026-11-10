@@ -2124,21 +2124,29 @@ prints decimal GB, so its 142GB is 132.2 GB here.
       model is not set aside);
     - failing in Ollama after some of the answer arrived: back, whatever changed since it was sent, and that failure
       is the ask's (the text already shown is never written again);
-    - the moved model's retry above, when the model it goes to grew, goes at that model's context; refused there or
-      failing partway, that context goes back, and the failure is the ask's. A stop that lands with a refusal learns
-      nothing;
+    - the moved model's retry above, when the model it goes to grew, goes at that model's context, and so does the
+      answer after a new look when Ollama had stopped answering; either is measured there (a first wait that runs out
+      counts toward the two, a stall is too slow); refused there or failing partway, that context goes back, and the
+      failure is the ask's (that answer was its one more). A stop that lands with a refusal learns nothing;
+    - Ollama not answering, or refusing this page, at the larger context is not the context's failure: it stays, and
+      the ask looks again as before;
     - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
-      uses that one when it is above 8,192 (12,288 gives answers of up to 3,072, measured at its next answer), else
-      stays at 8,192, and either way it does not grow again.
+      uses that one when it is above 8,192 (12,288 gives answers of up to 3,072, measured at its next answer, with two
+      first waits of its own), else stays at 8,192, and either way it does not grow again.
 
-    None of this sets a model aside or counts toward the two visits, and only measurements at 8,192 are kept, so the
-    model auto chooses is the same as without it. A model whose larger context went back does not grow again that
-    visit, and a measurement of an answer sent at an older context says nothing of the one in use. Nor is what
-    `/api/ps` says once an answer to that model at another context was under way, or ended, since the measured one
-    was sent (Ollama may have loaded the model again for it) a measurement at all, at 8,192 or above; only asks sent
-    at once through the router can do this, since the console sends one at a time. Nothing of the
-    context is kept between visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192
-    of answer; with one doubling a visit, auto asks at most 16,384 and 4,096 in this build.
+    None of this counts toward the two visits, and only measurements at 8,192 are kept, so the step up is decided as
+    without it. A context's failure never sets a model aside by itself, so a moved model that will not load at the
+    larger context is set aside only once it fails at 8,192 too: a refusal there is answered once more at 8,192 rather
+    than by the next model down (set aside one ask later), and nothing loaded after two first waits sends only the
+    context back. A model whose larger context went back does not grow again that visit, and a measurement of an
+    answer sent at an older context says nothing of the one in use. Nor is what `/api/ps` says once an answer to that
+    model at another context was under way, or ended, since the measured one was sent (Ollama may have loaded the
+    model again for it) a measurement at all, at 8,192 or above. That is any answer the router sent to Ollama,
+    measured or not: one sent before the figure arrived, under `ask provider ollama`, or in the chat format (which
+    sends no context, so Ollama chooses its own); an answer to another model does not count. Only asks sent at once
+    through the router can do this, since the console sends one at a time. Nothing of the context is kept between
+    visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192 of answer; with one
+    doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
   back); another provider. Nor a context above 32,768 or more than one step a visit, and no larger context for the
@@ -2172,10 +2180,13 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   the processor, the pace of 4.99 and 5.00, a refusal and its one retry measured at 8,192, a failure partway with
   none, the trained context, the first waits, nothing loaded after answers that were not first waits, `ask vram`, a
   settings change before and during the retry, a settings change before a refusal or a failure partway (back, no
-  retry, the moved model kept), the moved model's retry at a grown context, a stop landing with a refusal, an answer
-  from an older context landing late, a reading taken while or after an answer at another context ran, the model
-  settled first, the same model and the same kept measurements with and without growth, today's requests byte for
-  byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
+  retry, the moved model kept), the moved model's retry at a grown context (refused, failing partway, its first wait
+  running out with nothing loaded or with the model loaded, a stall), Ollama gone at a grown context and the answer
+  after the look, a stop landing with a refusal, an answer from an older context landing late, a reading taken while
+  or after an answer at another context ran (measured or not: before the figure, under `ask provider ollama`, in the
+  chat format) and not after another model's, the first waits at the trained context, a cut answer landing after a
+  look found nothing, the model settled first, the same step up and the same kept measurements with and without
+  growth, today's requests byte for byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
   back once auto is the provider again), the readers
   (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
