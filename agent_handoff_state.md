@@ -29,8 +29,6 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
   fail): see the Phase 18 section at the end, including why the published EFI's TimeDateStamp is not this
   container's, and the linker change that makes the next release's stamp the commit's alone. CI now runs on every
   pull request and push to main (ci.yml); PR #5 (merged) carried the self-heal workflow's first-run fixes.
-  container's. CI now runs on every pull request and push to main (ci.yml); PR #5 carries the self-heal workflow's
-  first-run fixes.
 - Phase 17 (the plan written between Phases 16 and 18, then skipped; picked up on 2026-10-08): the two code items
   Phase 18 had not covered are on the branch `claude/project-thread-q8gvxn`; see the Phase 17 section at the end.
 - Phase 14 (the approved hosted-runtime bridge) is complete: see the Phase 14 section at the end.
