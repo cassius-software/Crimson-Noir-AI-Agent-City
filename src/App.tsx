@@ -1480,6 +1480,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           onSay={onSay}
           heard={heard}
           beside={walking && fw.card !== null}
+          zoom={access.scale / 100}
           onOpen={setSloaneOpen}
         />
       )}
@@ -1499,6 +1500,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           onRun={runWalk}
           onSay={onSay}
           crowded={sloaneOpen}
+          zoom={access.scale / 100}
         />
       )}
       {hud && (

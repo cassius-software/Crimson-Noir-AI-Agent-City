@@ -57,7 +57,7 @@ html[data-shell='tauri'] #root {
 
 /* Accessibility (07_Execute_Actions/access.ts writes these onto <html>). --ui-zoom scales every overlay that carries
    .ui-zoom (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the shops' card, the
-   touch Menu's sheet) without the canvas or the touch buttons, 100 % to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
+   first walk's card, the onboarding, the touch Menu's sheet) without the canvas or the touch buttons, 100 % to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
    without each file knowing) to white on black with a solid border and no blur or shadow, lifts every light button
    inside one to black on white, and gives keyboard focus a thick ring; pulsing dots hold still. */
 :root {
@@ -132,8 +132,29 @@ html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-rose-
 html[data-contrast='high'] [class*='backdrop-blur'] .rounded-full:empty.bg-sky-500 {
   background-color: #38bdf8 !important;
 }
+/* The noir panels (brand/tokens.css .noir-panel: the onboarding's card and the first walk's) are ink, not frosted glass:
+   flattened the same way, their titanium greys white (the dimmest, titanium-600, is under 3:1 on ink), their buttons
+   ringed in white, and a pressed one reversed. */
+html[data-contrast='high'] .noir-panel {
+  background: #000 !important;
+  color: #fff !important;
+  border: 2px solid #fff !important;
+}
+html[data-contrast='high'] .noir-panel :is([class*='text-noir-titanium-'], .noir-label) {
+  color: #fff !important;
+}
+html[data-contrast='high'] .noir-panel .noir-button {
+  color: #fff !important;
+  background: #000 !important;
+  border: 2px solid #fff !important;
+}
+html[data-contrast='high'] .noir-panel .noir-button[aria-pressed='true'] {
+  color: #000 !important;
+  background: #fff !important;
+}
 html[data-contrast='high'] [class*='backdrop-blur'] input,
-html[data-contrast='high'] [class*='backdrop-blur'] textarea {
+html[data-contrast='high'] [class*='backdrop-blur'] textarea,
+html[data-contrast='high'] .noir-panel input {
   background-color: #000 !important;
   color: #fff !important;
   border: 2px solid #fff !important;

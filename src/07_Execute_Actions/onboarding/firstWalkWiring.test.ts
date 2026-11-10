@@ -98,13 +98,22 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   const concierge = read('../Concierge.tsx')
   const card = read('./FirstWalk.tsx')
   // App: Sloane is told the walk's card is up and tells App when her card is open; the walk's card hears it.
-  assert.match(app, /beside=\{walking && fw\.card !== null\}\s*onOpen=\{setSloaneOpen\}/)
+  assert.match(app, /beside=\{walking && fw\.card !== null\}\s*zoom=\{access\.scale \/ 100\}\s*onOpen=\{setSloaneOpen\}/)
   assert.match(app, /crowded=\{sloaneOpen\}/)
   // Sloane: her wide column moves left of the walk's card when there is room, and her open state is any view but the chip.
   assert.match(concierge, /className=\{beside && roomy \? WIDE_BESIDE : WIDE_COLUMN\}/)
   assert.match(concierge, /const opened = visible && view !== 'chip'/)
-  assert.match(card, /import \{ BESIDE_ROOM_QUERY \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
+  assert.match(card, /import \{ besideRoom \} from '\.\.\/Concierge\.tsx'/, 'one query for both sides')
+  // Both cards are inside the text size's zoom, so the room is zoomed rem: twice the window at 200 %, one store per zoom.
+  assert.match(concierge, /return `\(min-width: \$\{Math\.round\(BESIDE_ROOM_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
+  for (const src of [concierge, card]) assert.match(src, /const room = besideRoom\(zoom\)\n\s+const roomy = useSyncExternalStore\(room\.subscribe, room\.matches, room\.server\)/)
+  assert.equal(app.match(/zoom=\{access\.scale \/ 100\}/g)?.length, 2, 'App hands both cards the same zoom')
   assert.match(card, /const shown = visible && !\(crowded && !termOpen && !overlay && !compact && !roomy\)/)
+  // A window small only at the text size's zoom puts the card at the foot (not a sliver under the zoomed readout); it is
+  // the compact query itself at 100 %, and still steps aside for Sloane's card, which stays in the window's centre.
+  assert.match(card, /return `\(max-width: \$\{Math\.round\(639 \* z\)\}px\), \(max-height: \$\{Math\.round\(499 \* z\)\}px\)`/)
+  assert.match(card, /const SMALL = mediaStore\('\(max-width: 639px\), \(max-height: 499px\)'\)/)
+  assert.match(card, /const at = termOpen \? AT\.console : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
   // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
   // query's width it still has at least the 22 rem her centred column never went under.
   const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
@@ -114,7 +123,7 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   const [left, inset, past] = [Number(beside[1]), Number(beside[2]), Number(beside[3])]
   assert.equal(inset, walkRight, 'measured from the same right inset')
   assert.ok(past >= walkWidth + 0.5, `${past} rem clears the ${walkWidth} rem card with a gap`)
-  const room = Number(/BESIDE_ROOM_QUERY = '\(min-width: (\d+)px\)'/.exec(concierge)?.[1]) / 16
+  const room = Number(/export const BESIDE_ROOM_PX = (\d+)$/m.exec(concierge)?.[1]) / 16
   assert.ok(room - left - inset - past >= 22, `${room - left - inset - past} rem left for Sloane at ${room} rem`)
 })
 

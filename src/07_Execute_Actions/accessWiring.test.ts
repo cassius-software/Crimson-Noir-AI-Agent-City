@@ -25,6 +25,7 @@ const WARDROBE = read('./Customizer.tsx')
 const RECOVERY = read('./RecoveryCard.tsx')
 const STORE = read('./StoreCard.tsx')
 const ONBOARDING = read('./onboarding/Onboarding.tsx')
+const FIRST_WALK = read('./onboarding/FirstWalk.tsx')
 const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
 const CSS = read('../index.css')
 const POSTFX = read('./postfx.ts')
@@ -106,7 +107,7 @@ function overlays(): { file: string; line: number; tokens: string[]; zoom: boole
 }
 
 test('every overlay root carries the zoom class, every card the blur utility the contrast rules key on; the HUD meter and captions follow', () => {
-  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1], ['the touch Menu', TOUCH, 1]] as const) {
+  for (const [name, src, roots] of [['Hud', HUD, 1], ['Concierge', CONCIERGE, 2], ['ActCard', ACT, 1], ['Customizer', WARDROBE, 1], ['RecoveryCard', RECOVERY, 2], ['Onboarding', ONBOARDING, 1], ['StoreCard', STORE, 1], ['the first walk', FIRST_WALK, 1], ['the touch Menu', TOUCH, 1]] as const) {
     assert.equal(src.match(/className="ui-zoom (?:pointer-events-none )?(?:absolute|fixed) inset-0/g)?.length, roots, `${name}: its full-screen root${roots > 1 ? 's' : ''} zoom`)
   }
   // Every full-screen overlay in the page's components zooms or sits inside one that does, and none zooms inside
@@ -138,6 +139,12 @@ test('every overlay root carries the zoom class, every card the blur utility the
   assert.doesNotMatch(CSS, /canvas[^{]*\{[^}]*filter/, 'the canvas is never filtered by CSS: the colour-vision filter is the post chain\'s')
   assert.match(HUD, /style=\{\{ fontSize: `\$\{captionPx\}px` \}\} data-hint="captions"/)
   assert.match(HUD, /ctx\.fillStyle = contrast \? '#fff' : dark \?/, 'the meter is white on the flattened pill')
+  // The noir panels (the onboarding's card, the first walk's) are ink, not frosted: flattened by their own class.
+  for (const src of [ONBOARDING, FIRST_WALK]) assert.match(src, /className=\{?[`"]noir-panel /)
+  assert.match(CSS, /html\[data-contrast='high'\] \.noir-panel \{\n\s+background: #000 !important;\n\s+color: #fff !important;\n\s+border: 2px solid #fff !important;\n\}/)
+  assert.match(CSS, /html\[data-contrast='high'\] \.noir-panel :is\(\[class\*='text-noir-titanium-'\], \.noir-label\) \{\n\s+color: #fff !important;/, 'the titanium greys white')
+  assert.match(CSS, /html\[data-contrast='high'\] \.noir-panel \.noir-button \{\n\s+color: #fff !important;\n\s+background: #000 !important;\n\s+border: 2px solid #fff !important;/)
+  assert.match(CSS, /html\[data-contrast='high'\] \.noir-panel input \{/, 'the name field too')
   assert.match(HUD, /<MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\} contrast=\{highContrast\}/)
 })
 
@@ -147,7 +154,7 @@ test('the post chain ends in the filter on both paths, the identity until the ho
   assert.equal(POSTFX.match(/, vision, release \}$/gm)?.length, 2, 'returned with and without the cinema camera')
   assert.match(POSTFX, /^ {2}vision: VisionUniform$/m, 'a member of the chain the engine is handed')
   // The chain built at boot, and the one rebuilt at one sample when the four-sample scene pass is refused: the engine
-  // keeps the matrix of the chain it draws.
+  // keeps the vision uniform of the chain it draws.
   assert.match(ENGINE, /let \{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)/)
   assert.match(ENGINE, /;\(\{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)\)/)
   assert.match(ENGINE, /this\.vision = p\.vision/)
@@ -212,5 +219,15 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
   const dvh = layout.match(/100dvh/g)?.length ?? 0
   assert.ok(dvh > 0)
   assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
+  // The first walk's card: the touch buttons' edge and the stick's zone (the unzoomed touch layer's), the window's height
+  // and the console's share of it.
+  const walk = FIRST_WALK.slice(FIRST_WALK.indexOf('const AT = {'), FIRST_WALK.indexOf('} as const'))
+  const edges = walk.match(/var\(--touch-top,[^)]*\)/g) ?? []
+  assert.ok(edges.length > 0)
+  assert.equal(walk.match(/calc\(var\(--touch-top,[^)]*\)_\/_var\(--ui-zoom,1\)\)/g)?.length, edges.length, 'every --touch-top is divided by the zoom')
+  assert.equal(walk.match(/11\.5rem/g)?.length, walk.match(/calc\(11\.5rem_\/_var\(--ui-zoom,1\)\)/g)?.length, 'and the stick\'s zone')
+  const heights = walk.match(/\d+dvh/g) ?? []
+  assert.equal(heights.length, 4, 'four cards\' heights')
+  assert.equal(walk.match(/calc\(\d+dvh_\/_var\(--ui-zoom,1\)\)/g)?.length, heights.length, 'and the window\'s height')
   assert.match(HUD, /mt-\[max\(0px,calc\(var\(--chip-bottom,0px\)_-_var\(--hud-bottom,0px\)_\/_var\(--ui-zoom,1\)\)\)\]/, 'the HUD\'s toasts under the chip: the chip\'s foot is already in the zoom\'s lengths, the HUD\'s is not')
 })

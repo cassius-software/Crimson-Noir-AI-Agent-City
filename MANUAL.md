@@ -714,8 +714,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
   another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
   Menu's High contrast item, `?contrast=high`; `auto`, the default, follows the operating system's own contrast
-  switch) flattens every card (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card) to
-  white on black with solid borders, no frosted glass and a thick yellow focus ring; light buttons turn black on white,
+  switch) flattens every card (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the
+  shops' card, the onboarding's and the first walk's ink cards) to white on black with solid borders, no frosted glass and a thick yellow focus ring; light buttons turn black on white,
   the chosen one of a set (a wardrobe pill, a pressed toggle) white on black with a thick ring, and the status dots
   (a traffic signal's lights, the recording dot) keep their colours. A **colour-vision filter**
   (`access vision protan|deutan|tritan`, `?vision=`) is the post chain's last matrix over the finished frame: a
@@ -724,8 +724,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   red for a tritan); view-only, off by default, and the greys are never tinted. While a filter is chosen the post chain
   runs at every tier; where the page turned the chain off (the lite profile, a split screen, `?post=0`, a headset)
   the filter is not drawn, and `access` says so and why. The **text size** (`access text
-  125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card and the touch Menu's list, never the
-  canvas or the touch buttons, which are sized for thumbs. The **caption
+  125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card (the first walk's too) and the touch
+  Menu's list, never the canvas or the touch buttons, which are sized for thumbs. With a larger text size the first
+  walk's card stands beside Sloane's open card only in a window that wide at that size (1,920 px at 200 %; it steps
+  aside while hers is open below that), and where the window is small at that size (under about 1,000 px tall at
+  200 %) it stands at the foot of the screen instead of under the HUD's readout. The **caption
   size** (`access captions large|huge`, `?captions=large`) is the strip's own. `access` alone prints them, `access
   reset` restores the defaults. Four more are for the hands and the ears. The **dwell click** (`access dwell on`,
   `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over

@@ -103,7 +103,7 @@ const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-
 /** The same column while the first walk's card stands on the right of a wide screen (onboarding/FirstWalk.tsx AT.wide: 20
  *  rem wide, 1.25 rem in): it spans from the minimap's clearance to 0.75 rem short of that card, centred there up to 38
  *  rem, so the two stand side by side instead of the card lying over the right end of Sloane's (her Continue button
- *  among it) on any window under about 1,300 px across. It applies from 60 rem across (BESIDE_ROOM), where at least
+ *  among it) on any window under about 1,300 px across. It applies from 60 rem across (besideRoom, at the text size's zoom), where at least
  *  22.75 rem is left; in a narrower window the walk's card steps aside while this card is open instead. */
 const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
@@ -145,9 +145,22 @@ function mediaStore(query: string) {
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
 const LANDSCAPE = mediaStore('(orientation: landscape)')
-/** Wide enough for Sloane's card beside the first walk's (60 rem; FirstWalk.tsx steps its card aside below it). */
-export const BESIDE_ROOM_QUERY = '(min-width: 960px)'
-const BESIDE_ROOM = mediaStore(BESIDE_ROOM_QUERY)
+/** Wide enough for Sloane's card beside the first walk's: 60 rem at 100 % text (FirstWalk.tsx steps its card aside below it). */
+export const BESIDE_ROOM_PX = 960
+/**
+ * The same room at a text size's zoom (access.ts, `--ui-zoom`): both cards and every measure between them are inside
+ * the zoom, so at 200 % they need twice the window. One query for both sides; one store per zoom.
+ */
+export function besideRoomQuery(zoom: number): string {
+  return `(min-width: ${Math.round(BESIDE_ROOM_PX * Math.max(1, zoom))}px)`
+}
+const ROOM_STORES = new Map<string, ReturnType<typeof mediaStore>>()
+export function besideRoom(zoom: number): ReturnType<typeof mediaStore> {
+  const query = besideRoomQuery(zoom)
+  let store = ROOM_STORES.get(query)
+  if (!store) ROOM_STORES.set(query, (store = mediaStore(query)))
+  return store
+}
 
 function isEditable(t: EventTarget | null): boolean {
   if (!t || typeof t !== 'object') return false
@@ -208,13 +221,16 @@ export interface ConciergeProps {
   heard?: { id: number; text: string } | null
   /** Optional: the first walk's card is on screen (it stands on the right of a wide screen): the wide column keeps left of it. */
   beside?: boolean
+  /** Optional: the text size's zoom (access.ts scale / 100), for the room the two cards need side by side. */
+  zoom?: number
   /** Optional: told whether Sloane's card (not her chip) is on screen, so the first walk's card can step aside for it in a narrow window. */
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, beside = false, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
-  const roomy = useSyncExternalStore(BESIDE_ROOM.subscribe, BESIDE_ROOM.matches, BESIDE_ROOM.server)
+  const room = besideRoom(zoom)
+  const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const landscape = useSyncExternalStore(LANDSCAPE.subscribe, LANDSCAPE.matches, LANDSCAPE.server)
   const [view, setView] = useState<View>(() => (goal ? 'goal' : profile ? 'greet' : 'ask'))

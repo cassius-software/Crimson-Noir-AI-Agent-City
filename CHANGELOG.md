@@ -600,13 +600,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (where the page turned the chain off, under the lite profile, a split screen, `?post=0` or a headset, the
   console's `access` says the filter is not drawn and why); the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
   `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding, the shops'
-  card, the touch Menu's sheet), never the canvas or the touch buttons, which are sized for thumbs (inside it, every
+  card, the first walk's card, the touch Menu's sheet), never the canvas or the touch buttons, which are sized for thumbs (inside it, every
   length measured in the window's pixels, such as the touch buttons' edges or where the Menu's sheet opens, is divided
   by the zoom, so Sloane's card still clears the buttons at 200 %, and the Menu's sheet opens on the screen; a test
   reads every component's syntax tree for a full-screen overlay outside the zoom, or a zoom inside another); the
   caption strip has a size of its own. Checked in headless Chromium with a phone's touch layout: at 200 % the Menu's
   sheet opens on the screen at 360 × 740, 375 × 667 and 390 × 844 and in landscape, and at 150 and 175 % on a
-  320 × 568 phone; there at 200 % Sloane's open card lies over the Menu button. Verified by Node tests of the arithmetic (every filter keeps every
+  320 × 568 phone; there at 200 % Sloane's open card lies over the Menu button. The first walk's card (merged in from
+  main) takes the zoom on a layer of its own: the room for it beside Sloane's open card is 60 rem at that zoom
+  (`Concierge.tsx` `besideRoom`, 1,920 px at 200 %), and a window small at the zoom (`FirstWalk.tsx` `squeezedQuery`,
+  the compact query times the zoom) puts it at the foot of the screen, where at 200 % a 1,280 × 800 or 1,536 × 864
+  window gave it a strip 60 to 70 px tall under the zoomed readout (Chromium, before and after); high contrast
+  flattens the ink panels (`.noir-panel`: the onboarding's and the first walk's) like the frosted ones. Verified by Node tests of the arithmetic (every filter keeps every
   grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
   `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
 
