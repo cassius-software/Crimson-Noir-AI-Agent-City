@@ -14,6 +14,8 @@
  * the left hand (the d-pad moves), it moves focus for the right (A presses). Never a shoulder: L1 and R1 are that
  * hand's glance, which a card waiting for the OK leaves live. The
  * keyboard needs nothing here: the screens focus their first button, and Enter presses a focused button natively.
+ * The same edge rule, for any buttons a screen names (padEdges), serves a card with more than A and the d-pad to read,
+ * such as the home card's furnishing controls.
  * What breaks if it is removed? A player with only a pad has no way out of a failed boot or a halted city.
  */
 import { useEffect, type RefObject } from 'react'
@@ -28,23 +30,46 @@ export type PadAction = 'press' | 'next' | 'previous' | null
 /** The part of a Gamepad read here. */
 interface PadLike { buttons: readonly { pressed: boolean }[] }
 
+/** The buttons padStep reads: A and the d-pad, and start too with one hand (it does what that hand's side cannot). */
+const STEP_BUTTONS: readonly number[] = Object.freeze([PAD.a, PAD.up, PAD.down, PAD.left, PAD.right])
+const ONE_HAND_BUTTONS: readonly number[] = Object.freeze([...STEP_BUTTONS, PAD.start])
+
 /**
- * Pure. The buttons held across every pad now (as "pad:button", and each pad present as "pad:"), and the action this
- * poll asks for: a button counts only on the poll it goes down (it was not held at the previous poll) on a pad that
- * was there at the previous poll, A before the d-pad. One `hand` adds start: it presses for the left hand, it moves on
- * for the right.
+ * Pure. The given standard-mapping `buttons` held across every pad now (as "pad:button", and each pad present as
+ * "pad:"), and the buttons that went down on this poll: a button counts only when it is held now, was not held at the
+ * previous poll, and its pad was there at the previous poll. So the first poll (an empty `prev`) only learns what is
+ * held, and a pad that shows up with a button already down counts that button from its next press. A button held on
+ * several pads counts once. `prev` is the `held` of the previous poll made with the same `buttons`: a button that poll
+ * did not read reads as newly down.
  */
-export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[], hand: PadHand = 'both'): { held: Set<string>; action: PadAction } {
+export function padEdges(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[], buttons: readonly number[]): { held: Set<string>; down: Set<number> } {
   const held = new Set<string>()
+  const down = new Set<number>()
   pads.forEach((p, i) => {
     if (!p) return
     held.add(`${i}:`)
-    for (const b of [PAD.a, PAD.up, PAD.down, PAD.left, PAD.right, PAD.start]) if (p.buttons[b]?.pressed) held.add(`${i}:${b}`)
+    const there = prev.has(`${i}:`)
+    for (const b of buttons) {
+      if (!p.buttons[b]?.pressed) continue
+      held.add(`${i}:${b}`)
+      if (there && !prev.has(`${i}:${b}`)) down.add(b)
+    }
   })
-  const down = (b: number) => [...held].some((k) => k.endsWith(`:${b}`) && !prev.has(k) && prev.has(k.slice(0, k.indexOf(':') + 1)))
-  const press = down(PAD.a) || (hand === 'left' && down(PAD.start))
-  const next = down(PAD.down) || down(PAD.right) || (hand === 'right' && down(PAD.start))
-  const action: PadAction = press ? 'press' : next ? 'next' : down(PAD.up) || down(PAD.left) ? 'previous' : null
+  return { held, down }
+}
+
+/**
+ * Pure. The buttons held across every pad now (padEdges, for A and the d-pad, and start with one hand), and the action
+ * this poll asks for: a button counts only on the poll it goes down (it was not held at the previous poll) on a pad
+ * that was there at the previous poll, A before the d-pad. One `hand` adds start: it presses for the left hand, it
+ * moves on for the right (a hand chosen while start is held counts that start once). Both hands read what they did
+ * before padEdges.
+ */
+export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[], hand: PadHand = 'both'): { held: Set<string>; action: PadAction } {
+  const { held, down } = padEdges(prev, pads, hand === 'both' ? STEP_BUTTONS : ONE_HAND_BUTTONS)
+  const press = down.has(PAD.a) || (hand === 'left' && down.has(PAD.start))
+  const next = down.has(PAD.down) || down.has(PAD.right) || (hand === 'right' && down.has(PAD.start))
+  const action: PadAction = press ? 'press' : next ? 'next' : down.has(PAD.up) || down.has(PAD.left) ? 'previous' : null
   return { held, action }
 }
 
@@ -62,8 +87,11 @@ export function padsFor<T>(pads: readonly (T | null | undefined)[], accept?: (pa
   return accept ? pads.map((p, i) => (p && accept(i) ? p : null)) : pads
 }
 
-/** The pads, or none where the browser has no Gamepad API (or refuses it, as a permissions policy can). */
-function readPads(): readonly (Gamepad | null)[] {
+/**
+ * The pads, or none where the browser has no Gamepad API (or refuses it, as a permissions policy can). A card that
+ * reads more buttons than usePadNav does reads them through this and padEdges.
+ */
+export function readPads(): readonly (Gamepad | null)[] {
   try { return typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [] } catch { return [] }
 }
 

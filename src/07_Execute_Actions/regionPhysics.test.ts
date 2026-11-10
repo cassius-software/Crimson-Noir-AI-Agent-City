@@ -11,7 +11,8 @@
  *   the city: its back wall stops the avatar and its doorway lets it in; and the hollowed pack has no wall left on a
  *   room's lot;
  * - the core audits a region against a slab that holds it, not the city's;
- * - the worker's door refuses a malformed region, malformed workplaces and malformed shops each with its own reason.
+ * - the worker's door refuses a malformed region, malformed workplaces, malformed shops and malformed homes each with
+ *   its own reason, and a region's homes are the ones its core takes furniture for.
  * What breaks if it is removed? The avatar could walk through surveyed buildings, into the lake or off the map.
  */
 import assert from 'node:assert/strict'
@@ -31,6 +32,7 @@ import { SimCore } from './simCore.ts'
 import type { SimInit } from './simProtocol.ts'
 import { cityStreetGrid, streetGridOf } from '../01_Initialize_World/region/streets.ts'
 import { createSimHost } from './simHost.ts'
+import { homeFrames, homesAt } from '../01_Initialize_World/properties.ts'
 
 // Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
 // matrixMode.ts) imports its WGSL that way, so the modules that take it are imported once the hook is in place.
@@ -304,4 +306,65 @@ test('the worker refuses malformed shops, each with its own reason, and hands so
   assert.equal((await answer(init(shops), take)).t, 'ready')
   assert.equal((await answer(init(undefined), take)).t, 'ready')
   assert.deepEqual(handed, [shops, []])
+})
+
+test('the worker refuses malformed homes, each with its own reason, and hands sound ones to the core, which takes furniture for those homes alone', async () => {
+  const s = at(-150, -100)
+  const sound = cityStreetGrid()
+  sound.originX = 2000
+  sound.originZ = 2000
+  const rooms = [{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }]
+  const shops = [{ kind: 'tailor', k: 53, m: 53, side: 1 }]
+  const homes = [{ home: 2, k: 57, m: 53, side: 0 as const }, { home: 6, k: 55, m: 52, side: 3 as const }]
+  const init = (list: unknown, streets: unknown = sound) => ({ t: 'init' as const, seed: 1, cars: 0, agents: 256, boxes: [], furniture: { lamps: [], trees: [], signals: [] }, spawn: s, debug: false, region: regionPhysics(p, L), streets, workplaces: rooms, shops, homes: list })
+  const answer = async (msg: unknown, create = async (o: Parameters<typeof SimCore.create>[0]) => SimCore.create(o, null)) => {
+    const posts: unknown[] = []
+    await createSimHost((m: unknown) => posts.push(m), create)(msg as SimInit)
+    return posts.at(-1) as { t: string; message?: string }
+  }
+  const refused = async (msg: unknown, reason: RegExp, why: string) => {
+    const last = await answer(msg)
+    assert.equal(last.t, 'error', why)
+    assert.match(last.message ?? '', reason, why)
+  }
+  await refused({ ...init(homes, null), workplaces: undefined, shops: undefined }, /^init: homes need a region's street window$/, 'no street window')
+  await refused({ ...init(homes), region: null, workplaces: undefined, shops: undefined }, /^init: homes need a region's street window$/, 'the city has its own')
+  await refused(init({ 0: homes[0] }), /^init: homes are a list of at most 7$/, 'not a list')
+  await refused(init(Array.from({ length: 8 }, (_, i) => ({ home: i % 7, k: 50 + i, m: 60, side: 0 }))), /^init: homes are a list of at most 7$/, 'eight')
+  await refused(init([{ ...homes[0], k: 49 }]), /^init: a home stands on a lot of the street window$/, 'west of the window')
+  await refused(init([{ ...homes[0], m: 66 }]), /^init: a home stands on a lot of the street window$/, 'south of the window')
+  await refused(init([{ ...homes[0], k: 66 }]), /^init: a home stands on a lot of the street window$/, 'east of the window')
+  await refused(init([{ ...homes[0], m: 53.5 }]), /^init: a home stands on a lot of the street window$/, 'between lots')
+  await refused(init([7]), /^init: a home is a property index \(home\), a lot \(k, m\) and a side$/, 'not a record')
+  await refused(init([{ ...homes[0], side: 4 }]), /^init: a home's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no fifth street')
+  await refused(init([{ ...homes[0], home: 7 }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'an eighth property')
+  await refused(init([{ ...homes[0], home: -1 }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'before the first')
+  await refused(init([{ ...homes[0], home: 1.5 }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'between two')
+  await refused(init([{ ...homes[0], home: '2' }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'a string')
+  await refused(init([{ ...homes[0], kind: 'timberLoft', home: undefined }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'a kind, not an index')
+  await refused(init([homes[0], { ...homes[1], home: 2 }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'two timber lofts')
+  await refused(init([{ ...homes[0], k: 52, m: 52 }]), /^init: one home, shop or workplace to a lot$/, 'on the workplace\'s lot')
+  await refused(init([{ ...homes[0], k: 53, m: 53 }]), /^init: one home, shop or workplace to a lot$/, 'on the shop\'s lot')
+  await refused(init([homes[0], { ...homes[1], k: 57, m: 53 }]), /^init: one home, shop or workplace to a lot$/, 'two on a lot')
+  // Sound ones reach the core as they were sent; none is no homes.
+  const handed: unknown[] = []
+  const cores: SimCore[] = []
+  const take = async (o: Parameters<typeof SimCore.create>[0]) => { handed.push(o.homes); const c = await SimCore.create(o, null); cores.push(c); return c }
+  assert.equal((await answer(init(homes), take)).t, 'ready')
+  assert.equal((await answer(init(undefined), take)).t, 'ready')
+  assert.deepEqual(handed, [homes, []])
+  // The core takes a set for the timber loft and the sky-mansion where the region put them, and refuses every other home.
+  const [f2] = homeFrames(homesAt([homes[0]])).filter((f) => f !== null)
+  const a = toWorld(f2, 2, -1), b = toWorld(f2, 4, 1)
+  const box = [Math.min(a.x, b.x), 0, Math.min(a.z, b.z), Math.max(a.x, b.x), 0.85, Math.max(a.z, b.z)]
+  const idle = { steer: 0, fwd: 0, back: 0, handbrake: false }
+  const step = (c: SimCore, cmds: unknown[]) => c.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: idle, cmds }, new Float32Array(0))
+  const before = step(cores[0], []).physics.colliders
+  let st = step(cores[0], [{ c: 'home', index: 2, boxes: box }, { c: 'home', index: 6, boxes: [] }])
+  assert.equal(st.rejected, 0)
+  assert.equal(st.physics.colliders, before + 1)
+  st = step(cores[0], [{ c: 'home', index: 0, boxes: [] }, { c: 'home', index: 6, boxes: box }])
+  assert.equal(st.rejected, 2, 'no micro-loft here, and the timber loft\'s box is not inside the sky-mansion')
+  st = step(cores[1], [{ c: 'home', index: 2, boxes: box }])
+  assert.equal(st.rejected, 1, 'a region handed no homes takes furniture for none')
 })

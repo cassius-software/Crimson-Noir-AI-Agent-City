@@ -517,6 +517,63 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `homeCard.test.ts`, `input.test.ts` (the drain) and `homeWiring.test.ts` (also: the poll after a card closes is
   dropped too, so the pad press that closed it cannot reopen it; no card under the console or in a headset; while a
   city action waits, only its card reads the pad; in split screen only player 1's pads reach it).
+- **Furnishing a home you own: nine furniture lines, free floors and walls, and pieces you walk round.** The design
+  house's nine furniture lines go on sale through the same purchase gate as the deeds (`storeCatalog.ts` `OPEN_KINDS`
+  adds furniture; a line is bought once and serves every home you own). Inside a home you own, B, E or the HUD's chip,
+  which now reads "Furnish" and the home's name, opens the doorstep card as the furnishing view
+  (`src/07_Execute_Actions/HomeCard.tsx`, its visit in `furnishVisit.ts`); in a network room it shows the deed with
+  the engine's reason instead, and walking out of the home or putting on a headset closes it. The view has three tabs:
+  the furniture strip (an owned line says how many stand here out of its cap, any other says its price and offers
+  Order through the shopkeeper, or the gate's reason, and the pieces the record keeps that are not placed here are
+  listed with Clear), three floors and six walls, all free. Under them is the home's 32 × 32 floor plan, drawn on a
+  canvas (the back at the top, the doorway under an arrow, only the home's own rows, so a smaller home is a shorter
+  plan, the apron hatched, each piece in its finish's colour with its initial, a workstation's seat dotted, the people
+  in the home as dots, and the cursor with the piece in hand in green where it fits and red where it does not, the
+  reason in words under it), while the room shows the same draft as a ghost from a camera under the ceiling. Place,
+  Rotate, Remove, Undo (20 steps), View and Done each have a key, a pad button and a 48 px button; placing on a piece
+  picks it up, and closing the card or taking another line puts a picked-up piece back at its place in the saved order
+  (so a stored piece that fits only while it is out stays stored). The card's keys are taken in the capture phase,
+  never H or `, and Enter and Space stay Place after a mouse click on one of its buttons (how a button got the focus
+  is decided as the focus moves, as `input.ts` does, since Chromium already counts the key as keyboard use inside its
+  keydown); it reads the pad in its own frame loop through `padEdges`, so a button held as it opens counts only from
+  its next press, with the left stick past 0.5 moving the cursor (again after 300 ms, then every 120 ms; near a
+  diagonal the direction changes only when the other axis leads by 0.15, so the stick's noise never moves it every
+  frame) and the right stick turning the view while the engine holds the head's yaw and pitch where they were; a
+  pointer on the room's canvas reaches a cell through `pickCell`, the right button removes the piece pressed (nothing
+  when the press is on no cell) and the wheel turns. Every committed edit goes to App as the whole record, which saves
+  it in this browser (`src/05_Observe_Environment/homeStore.ts`, `civic-simulation:home:v1`) and hands it to the
+  engine with the deeds and lines the shopkeeper says are owned, at boot and on every change of what is owned. The
+  rules (`src/02_Define_The_Rules/homeLayout.ts` `canPlace` and `fitLayout`) keep the apron free, never cut off part
+  of a room or a workstation's seat, and keep a saved piece that no longer fits or is no longer owned without placing
+  it. The world draws every home's finishes and pieces in one HomeFurniture mesh (`homeView.ts`, `world.ts`; two new
+  styles, planted and lit), a home on sale shows a show home, and an owned home starts empty. The city's ground is
+  drawn in 128 m cells, as a region's is: as two triangles 3.2 km by 2 km, its depth on the software adapter came out
+  centimetres high in many views and the street showed through a home's floor finish 3 to 15 mm over it. The physics
+  realm takes each home's pieces as one collider each (the `'home'` command): one put down over someone stays off
+  until they step off it, and a network room takes them out of the world, while the room keeps every home's floor and
+  walls. A deed row at the design house whose price would leave less than the cheapest furniture on sale says so, and
+  an owned furniture line says "Place it at home (B)". Pinned by `homeLayout.test.ts` (the shapes, the finishes, each
+  verdict, the wall rule for every turn, 2,000 seeded runs keeping the apron free, every seat reachable and every
+  removal allowed, every show home fitting, no two boxes sharing a face), `homeStore.test.ts` (the round trip, the
+  size limit, bad records, homes and pieces refused one at a time, a save checked before it is written),
+  `homeView.test.ts` (pieces only for owned deeds and lines, the show homes, finishes only in a room, within the mesh,
+  the solids, the draft camera inside the room), `properties.test.ts` (the home frames and the box checks),
+  `physics.test.ts`, `simCore.test.ts` (the `'home'` command refused in a room and when malformed, a set stopping a
+  walking avatar, off over someone until they step off, a room taking the sets out, parity with the room's world),
+  `regionPhysics.test.ts`, `recoveryWiring.test.ts` (`padEdges` on its down edge only, the first poll only learning
+  what is held, `padStep` unchanged), `city.test.ts`, `storeCatalog.test.ts` (furniture on sale through the same gate,
+  a level 2 keeper buying the bookcase and the sofa, the cheapest line on sale), `intent.test.ts` (the label),
+  `homeCard.test.ts` (the furnishing view's verdict words and keys, never H, `, Esc or B, its pad by edges and its
+  sticks, every edit handed to App as a whole record, Undo of 20, the draft taken away on close, the pointer handlers,
+  every button 48 px, the store card's warning and hint, and App's record, save and engine calls),
+  `furnishVisit.test.ts` (a piece picked up put back at its place on closing or taking another line, past a stored
+  piece that wants its cells and in a full home; a right press on no cell removing nothing; the stick's timing, steady
+  and with noise on a diagonal; how a button got the focus) and `homeWiring.test.ts` (the HomeFurniture mesh, the
+  engine's refusals and its draft camera, the solids sent only when they change and never in a room, the chip's
+  "Furnish" and App's furnishing request). The browser smoke test has a `furnish` run (claim the loft, buy a bookcase
+  and a sofa, place both by keyboard, Enter after a real mouse click on View still the card's, Done, reload: the
+  layout kept and two more colliders), which passed with the `walkhome`, `homes`, `desktop` and `lakefront` runs on
+  the software adapter (97 checks). The page grew by about 55 KB.
 - **One command for every platform's build: `npm run build:matrix`.** `tools/build/matrix.mjs` (plain Node, programs
   with argument vectors, never a shell, so cmd.exe and sh run the same thing) builds the page once and then each
   target a machine can build: the Tauri 2 shell for Windows x64 (`windows-x64`: NSIS installer, .msi and bare .exe)
@@ -1445,6 +1502,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The prosthetics atelier sells its four limbs.** They were on order, waiting for limb slots the wardrobe gained
+  under other names (`prosthetic` and `prostheticFinish`, `look.ts` PROSTHETIC and WARDROBE.prostheticFinish). Each
+  line now sets the limb and its finish, and its name says the side: the brushed-titanium right arm (chrome), the
+  matte carbon-fibre left arm (carbon), the carbon-fibre right lower leg (carbon) and the skin-matched silicone left
+  leg (skin-matched). Ids, bits, levels and prices are unchanged. The running blade is renamed the right lower leg,
+  because the crowd draws a shin and an ankle in the chosen finish, not a blade. The wardrobe still sets any limb,
+  side and finish at no cost. `storeCatalog.test.ts` checks each line's limb and finish on every preset body. The
+  manual no longer lists the hearing processor as on order: it went on sale when the wardrobe gained `hearing`.
 - **A car in traffic is nobody's to take.** The only car a player may enter is a parked one: the realm's door
   (`simCore.ts` `#interact` asks the fleet for the nearest parked car; a car in traffic within reach gets the toast
   "that car has a driver", or "that car is being driven"), the console's `intent` (refused on an AI car: park it

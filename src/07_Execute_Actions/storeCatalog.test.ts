@@ -6,23 +6,25 @@
  * shopkeeper.ts) to their promises: ids and bits stable and unique, every bit inside its unlock space and the worn
  * lines inside the shops' own range of the look space; the spaces, the level cap and the verdicts the progression
  * engine's own (progression.ts); every worn line on sale dresses every body in something the wardrobe has; the deeds
- * are on sale and dress nobody, while the furniture stays on order until furnishing opens; a line on order is never
- * sold; the progression keeper (progress.ts createProgress) buys a line once, takes its price from the record, sets its
- * bit and keeps both across a reload, and refuses with the first reason; a new operator claims the free loft and is
- * told the level the brownstone needs, and a keeper at that level buys it; a keeper that refuses leaves no bit; the
- * 14A screen passes every name.
+ * and the furniture are on sale and dress nobody (furniture opened with furnishing, so no piece was sold before it
+ * could be placed), and the cheapest piece on sale is the bookcase; a line on order is never sold; the progression
+ * keeper (progress.ts createProgress) buys a line once, takes its price from the record, sets its bit and keeps both
+ * across a reload, and refuses with the first reason; a new operator claims the free loft and is told the level the
+ * brownstone and each piece of furniture need, and a keeper at those levels buys them; a keeper that refuses leaves no
+ * bit; the atelier's four limbs are on sale, each the limb, side and finish its name says; the 14A screen passes every
+ * name.
  * What breaks if it is removed? A shop could sell a line twice, sell a line nobody can wear, take credits for nothing,
  * or set a bit another thread's line means.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
-import { LOOK_PRESETS, LOOK_SLOTS, validateLook } from '../03_Spawn_Agents/look.ts'
+import { LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, validateLook } from '../03_Spawn_Agents/look.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 import { createProgress } from './progress.ts'
 import {
-  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, itemById, itemsOf, onSale, wearItem, wearing, whyOf,
+  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, cheapestOnSale, itemById, itemsOf, onSale, wearItem, wearing, whyOf,
   type ItemKind, type Space,
 } from './storeCatalog.ts'
 import { PROGRESS_WORD, createShopkeeper, progressionPurse, type ProgressLike } from './shopkeeper.ts'
@@ -67,21 +69,26 @@ test('the deeds are the plan\'s seven tiers, in level order, priced as its table
   assert.deepEqual(deeds.map((d) => d.index), [0, 1, 2, 3, 4, 5, 6])
 })
 
-test('deeds are on sale; furniture is still on order, and goes on sale only when furnishing opens its kind', () => {
-  assert.deepEqual([...OPEN_KINDS], ['deed'])
+test('deeds and furniture are on sale (furnishing opened its kind); without a kind in the open set, its lines are on order', () => {
+  assert.deepEqual([...OPEN_KINDS], ['deed', 'furniture'])
   const deeds = CATALOGUE.filter((i) => i.kind === 'deed')
   const furniture = CATALOGUE.filter((i) => i.kind === 'furniture')
   assert.equal(deeds.length, 7)
-  assert.ok(furniture.length > 0)
+  assert.equal(furniture.length, 9, 'the nine lines the home card places (homeLayout.ts SHAPES)')
   assert.ok(deeds.every((d) => d.shop === 'designHouse' && onSale(d)), 'the deeds are on sale')
-  assert.ok(furniture.every((f) => f.shop === 'designHouse' && !onSale(f)), 'no piece is sold before it can be placed')
-  // Furnishing adds its kind, and the pieces are on sale at once; without the deeds' kind, a deed is on order again.
-  const furnishing: ReadonlySet<ItemKind> = new Set<ItemKind>(['deed', 'furniture'])
-  assert.ok(furniture.every((f) => onSale(f, LOOK_SLOTS, furnishing)))
+  assert.ok(furniture.every((f) => f.shop === 'designHouse' && onSale(f)), 'every piece is on sale now that it can be placed')
+  assert.ok(furniture.every((f) => f.wear === null && f.space === 'furniture' && f.index === f.id - 160), 'a piece is a licence bit, never worn')
+  // Without furniture's kind a piece is on order again (as it was before furnishing), and without the deeds' a deed is.
+  assert.ok(furniture.every((f) => !onSale(f, LOOK_SLOTS, new Set<ItemKind>(['deed']))))
   assert.ok(deeds.every((d) => !onSale(d, LOOK_SLOTS, new Set<ItemKind>())))
   // A kind in the open set never puts a worn line on sale: those answer to the wardrobe alone.
   const watch = CATALOGUE.find((i) => i.wear && 'watch' in i.wear)!
   assert.equal(onSale(watch, LOOK_SLOTS, new Set<ItemKind>(['wear', 'deed', 'furniture'])), false)
+  // The cheapest piece on sale (the design house's warning on a deed's row measures against it) is the bookcase.
+  assert.equal(cheapestOnSale('furniture'), 1100)
+  assert.equal(itemById(164)?.name, 'Floor-to-ceiling bookcase')
+  assert.equal(cheapestOnSale('furniture', LOOK_SLOTS, new Set<ItemKind>(['deed'])), null, 'nothing on sale, no price')
+  assert.equal(cheapestOnSale('deed'), 0, 'the free loft')
 })
 
 test('every worn line on sale dresses every preset body in a valid look; a deed on sale dresses nobody; a line on order is never sold nor worn', () => {
@@ -112,6 +119,30 @@ test('every worn line on sale dresses every preset body in a valid look; a deed 
   assert.equal(onSale(watch, [...LOOK_SLOTS, 'watch']), true)
 })
 
+test('the atelier\'s four limbs are on sale, each setting the wardrobe\'s limb and finish its name says', () => {
+  const finish = (name: string) => WARDROBE.prostheticFinish.indexOf(name)
+  const limbs: readonly [number, string, number, number][] = [
+    [97, 'Brushed-titanium right arm', PROSTHETIC.rightArm, finish('chrome')],
+    [98, 'Matte carbon-fibre left arm', PROSTHETIC.leftArm, finish('carbon')],
+    [99, 'Carbon-fibre right lower leg', PROSTHETIC.rightLeg, finish('carbon')],
+    [100, 'Skin-matched silicone left leg', PROSTHETIC.leftLeg, finish('skin-matched')],
+  ]
+  assert.deepEqual(itemsOf('prosthetics').filter((i) => i.group === 'Limbs').map((i) => i.id), limbs.map(([id]) => id))
+  for (const [id, name, limb, fin] of limbs) {
+    const i = itemById(id)!
+    assert.equal(i.name, name)
+    assert.ok(fin >= 0, `${name}: its finish is in the wardrobe`)
+    assert.deepEqual(i.wear, { prosthetic: limb, prostheticFinish: fin })
+    assert.ok(onSale(i), `${name} is still on order`)
+    assert.equal(whyOf(i, GATE.unavailable, 0), 'not for sale', `${name} is refused, not on order`)
+    for (const p of LOOK_PRESETS) {
+      const worn = wearItem(p.look, i)!
+      assert.equal(worn.prosthetic, limb, `${name} on the ${p.name}`)
+      assert.equal(worn.prostheticFinish, fin, `${name} on the ${p.name}`)
+    }
+  }
+})
+
 test('every name passes the 14A screen and names no real place', () => {
   for (const i of CATALOGUE) {
     assert.ok(screen(i.name).admissible, `${i.name} fails the screen`)
@@ -126,7 +157,9 @@ test('whyOf says why in words', () => {
   assert.equal(whyOf(coat, GATE.bought, 9999), 'for sale')
   assert.equal(whyOf(coat, GATE.owned, 0), 'owned')
   assert.match(whyOf(itemById(129)!, GATE.unavailable, 0), /on order/)
-  assert.match(whyOf(itemById(160)!, GATE.unavailable, 0), /furnishing/)
+  assert.equal(whyOf(itemById(160)!, GATE.unavailable, 0), 'not for sale', 'furniture is on sale too, so an unavailable piece is refused, not on order')
+  assert.match(whyOf(itemById(160)!, GATE.level, 0), /needs level 3/)
+  assert.match(whyOf(itemById(164)!, GATE.credits, 150), /950 more credits/)
   assert.equal(whyOf(itemById(225)!, GATE.unavailable, 0), 'not for sale', 'a deed is on sale, so an unavailable one is refused, not on order')
   assert.match(whyOf(itemById(226)!, GATE.level, 0), /needs level 6/)
 })
@@ -172,7 +205,7 @@ test('the progression keeper behind the shopkeeper: a new operator\'s level and 
   // Refused with the reason, nothing taken: above the level, on order, no such line.
   assert.equal(k.buy(5).verdict, GATE.level)
   assert.equal(k.buy(129).verdict, GATE.unavailable)
-  assert.equal(k.buy(160).verdict, GATE.unavailable, 'furniture is on order')
+  assert.equal(k.buy(160).verdict, GATE.level, 'furniture is on sale, above a new operator\'s level')
   assert.equal(k.buy(4242).verdict, GATE.unavailable)
   assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price)
   // The gate refuses what is not a purchase.
@@ -192,15 +225,17 @@ test('the progression keeper sells homes: a new operator claims the Micro-Loft f
   const k = createShopkeeper({ purse: progressionPurse(createProgress({ store: s, seed: () => 1337, now: () => 0 })) })
   let calls = 0
   k.onChange(() => { calls++ })
-  // The design house's card: the free loft for sale, the other six deeds gated by level, every piece of furniture on order.
+  // The design house's card: the free loft for sale, the other six deeds gated by level, and every piece of furniture
+  // on sale but above a new operator's level 1 (the bookcase and the sofa ask level 2), each saying which level it needs.
   const rows = k.rows('designHouse', null)
   assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').map((r) => r.verdict),
     [GATE.bought, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level, GATE.level])
   assert.deepEqual(rows.filter((r) => r.item.kind === 'deed').slice(1).map((r) => r.why),
     ['needs level 3', 'needs level 6', 'needs level 10', 'needs level 14', 'needs level 17', 'needs level 20'])
   for (const r of rows.filter((row) => row.item.kind === 'furniture')) {
-    assert.equal(r.verdict, GATE.unavailable, r.item.name)
-    assert.equal(r.why, 'on order: opens with furnishing')
+    assert.equal(r.verdict, GATE.level, r.item.name)
+    assert.equal(r.why, `needs level ${r.item.level}`)
+    assert.ok(!/on order/.test(r.why))
   }
   assert.ok(rows.every((r) => !r.worn))
   // The free loft is claimed for nothing, and sets property bit 0.
@@ -229,6 +264,24 @@ test('the progression keeper sells homes: a new operator claims the Micro-Loft f
   assert.equal(k3.purse.credits(), 1000)
   assert.equal(p.owns('property', 1), true)
   assert.match(k3.buy(226).message, /Pierside Timber Loft: needs level 6/)
+})
+
+test('furniture through the same gate: a level 2 keeper with 3,000 cr buys a bookcase and a sofa, sets their bits, and is told the workstation\'s level', () => {
+  // The browser smoke's furnishing run takes the same path: the loft claimed, then these two pieces (2,700 cr).
+  const p = fakeProgress(2, 3000)
+  const k = createShopkeeper({ purse: progressionPurse(p) })
+  assert.equal(k.buy(224).verdict, GATE.bought, 'the free loft')
+  const bookcase = k.buy(164), sofa = k.buy(163)
+  assert.equal(bookcase.verdict, GATE.bought, bookcase.message)
+  assert.equal(sofa.verdict, GATE.bought, sofa.message)
+  assert.equal(k.purse.credits(), 300)
+  assert.deepEqual([p.owns('furniture', 4), p.owns('furniture', 3), k.owns(164), k.owns(163)], [true, true, true, true], 'furniture bit = id - 160')
+  assert.equal(k.buy(164).verdict, GATE.owned, 'a line is a licence, bought once for every home')
+  assert.match(k.buy(168).message, /Agent workstation: needs level 3/)
+  assert.match(k.buy(167).message, /Hydroponic green wall: needs level 4/)
+  assert.equal(k.wear(164, LOOK_PRESETS[0].look), null, 'a piece is never worn')
+  const rows = k.rows('designHouse', null)
+  assert.deepEqual(rows.filter((r) => r.owned).map((r) => r.item.id), [163, 164, 224])
 })
 
 /** A stand-in for the progression keeper, by its documented contract (docs/progression.md, the purchase gate): any level, and a refusal on demand. */

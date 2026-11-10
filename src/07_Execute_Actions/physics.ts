@@ -3,7 +3,9 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It owns the Rapier3D world (WASM, SIMD build): static colliders for every
- * building box, every lamp, tree and signal pole (packed into one compound sensor per tile), the ground, and
+ * building box, every lamp, tree and signal pole (packed into one compound sensor per tile), the ground, each home's
+ * furniture (a fixed body per home whose cuboids follow the page's set, a piece that stayed put keeping its own, and
+ * which the realm switches on once nobody stands by them: setHome, enableHome), and
  * fixed-timestep stepping. Vehicles and the
  * player's character controller live in this one shared space. It is built and stepped only inside the
  * physics worker (simCore.ts), so the page never loads Rapier or holds a handle into this world. It also
@@ -308,6 +310,58 @@ export class Physics {
   /** A region: builds the wall tiles around (x, z) that do not exist yet (see WallStream). Nothing in the city. */
   streamAt(x: number, z: number): void {
     this.walls?.at(x, z)
+  }
+
+  /** Each home's furniture (setHome): per slot, one fixed body and its cuboids, each with the box it was made from. */
+  private readonly homes = new Map<number, { body: RAPIER.RigidBody; parts: { box: Box; collider: RAPIER.Collider }[] }>()
+
+  /**
+   * Slot `slot`'s set of fixed boxes (a home's furniture, simCore.ts 'home'), made from the set the slot holds now. A
+   * box it already holds (the same six numbers) keeps its collider untouched, on or off as it was: a piece that stayed
+   * put through an edit stays solid with no gap. (In this Rapier a collider made or switched on or off reaches the
+   * avatars' moves only at the world's next step, which rebuilds the tree they search; one taken away is gone at once.)
+   * Every other old collider goes, and each new box gets a cuboid on the slot's one fixed body, with Rapier's default
+   * groups as every building box has (boxColliders), created off: enableHome turns them on once nobody stands in them.
+   * An empty list removes the slot's body, every collider with it, at once. A box that is not finite or has no extent
+   * is no collider (the caller has checked them). Returns the slot's boxes that are off now: the new ones, and any kept
+   * one that was still off.
+   */
+  setHome(slot: number, boxes: readonly Box[]): Box[] {
+    const home = this.homes.get(slot)
+    const sound = boxes.filter(([x0, y0, z0, x1, y1, z1]) => [x0, y0, z0, x1, y1, z1].every(Number.isFinite) && x1 > x0 && y1 > y0 && z1 > z0)
+    if (sound.length === 0) {
+      if (home) this.world.removeRigidBody(home.body)
+      this.homes.delete(slot)
+      return []
+    }
+    const body = home?.body ?? this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
+    const old = home ? home.parts.slice() : []
+    const parts: { box: Box; collider: RAPIER.Collider }[] = []
+    const fresh: Box[] = []
+    for (const box of sound) {
+      // Each old collider stands for one box of the new set at most (two equal boxes keep two colliders).
+      const at = old.findIndex((p) => p.box.every((n, i) => n === box[i]))
+      if (at >= 0) parts.push(...old.splice(at, 1))
+      else fresh.push(box)
+    }
+    for (const p of old) this.world.removeCollider(p.collider, false)
+    for (const box of fresh) {
+      const [x0, y0, z0, x1, y1, z1] = box
+      const desc = RAPIER.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2).setEnabled(false)
+      parts.push({ box: [x0, y0, z0, x1, y1, z1], collider: this.world.createCollider(desc, body) })
+    }
+    this.homes.set(slot, { body, parts })
+    return parts.filter((p) => !p.collider.isEnabled()).map((p) => p.box)
+  }
+
+  /**
+   * Turns slot `slot`'s colliders on or off (player.ts setEnabled is the same switch); one already so is left alone.
+   * Nothing for an empty slot.
+   */
+  enableHome(slot: number, on: boolean): void {
+    const home = this.homes.get(slot)
+    if (!home) return
+    for (const p of home.parts) if (p.collider.isEnabled() !== on) p.collider.setEnabled(on)
   }
 
   static async create(boxes: Box[], furniture: Furniture, region: RegionGround | null = null): Promise<Physics> {

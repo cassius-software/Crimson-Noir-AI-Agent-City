@@ -21,13 +21,18 @@
  * the same seed, never one of theirs, so neither picker changes; the dice are a stream of their own. No name is read
  * here: the page reads each deed's name from the catalogue (deed id DEED_BASE + the property index), so the catalogue
  * and the wardrobe stay out of the physics worker, which reaches this file through city.ts.
+ *
+ * The worker also checks a home's furniture here (homeFrames, checkHomeBoxes): the page sends each home's solid boxes
+ * in city metres (simCore.ts 'home'), and each one must stand inside that home's floor plan, on its floor, under its
+ * ceiling, tall enough not to be stepped onto, and off the apron in front of the doorway. Nothing else about the
+ * furniture is known here, so this file stays fit for the worker.
  * What breaks if it is removed? The deeds have no homes to stand for: nothing to walk into, nowhere to go home to.
  */
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
-import { DEPTH, GRID, INSET, backEdge } from '../02_Define_The_Rules/homeGrid.ts'
+import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge } from '../02_Define_The_Rules/homeGrid.ts'
 // city.ts imports hollowProperties back: a cycle, safe because neither module reads the other at load (every use is in a function).
 import { CITY, CITY_CENTER, HERITAGE_COLUMNS, STYLE, cityPlan, districtOfLot, type Box, type Building } from './city.ts'
-import { ROOM, doorDir, insideRoom, toWorld, workplaceLots, type RoomCanvas, type Side } from './interiors.ts'
+import { ROOM, doorDir, insideRoom, toLocal, toWorld, workplaceLots, type RoomCanvas, type Side } from './interiors.ts'
 import { shopLots } from './storefronts.ts'
 
 /** The seven property kinds, in a fixed order: the index is the property's bit, and its deed's id is DEED_BASE + index. */
@@ -267,6 +272,79 @@ export function homeAt(list: readonly Home[], x: number, z: number): number {
   if (!Number.isFinite(x) || !Number.isFinite(z)) return -1
   for (const h of list) if (insideRoom(h, x, z)) return h.home
   return -1
+}
+
+// ---------------------------------------------------------------- the furniture's solids, as the worker checks them
+
+/**
+ * The bounds a solid box of a home's furniture is checked against (checkHomeBoxes), m. A piece's solid stands 1 cm
+ * inside its cells (the page's floor plan, 02_Define_The_Rules/homeLayout.ts), so a sound one never comes near any of them.
+ */
+export const HOME_SOLID = Object.freeze({
+  /** How far past the floor plan's edges a box may reach: its back edge, its two sides and its doorway edge (all at GRID_HALF but the back). */
+  slack: 0.01,
+  /** The thinnest a box may be, along x and along z. */
+  thin: 0.05,
+  /** The lowest a box may start: the floor, less the slack. */
+  floor: -0.01,
+  /** The highest a box may reach: 5 cm under the ceiling slab at ROOM.height. */
+  ceiling: 4.15,
+  /** The least a box may stand: anything lower is a step the avatar's controller could climb (it climbs 0.35 m). */
+  height: 0.4,
+} as const)
+
+/** A home's room frame, all the worker needs to check a box against it: the property index, the lot's centre, the doorway's street front and the floor plan's back edge (homeGrid.ts backEdge). */
+export interface HomeFrame { home: number; cx: number; cz: number; side: Side; back: number }
+
+/**
+ * The room frames of the homes on `list` (a region's lots, as SimInit.homes carries them, or the city's homes from
+ * cityHomes), by property index: entry i is home i's frame, or null when this map has no home i. The same lot gives
+ * the same frame as homesAt builds the home on. An index outside PROPERTY_KINDS, or one listed twice, is refused.
+ */
+export function homeFrames(list: readonly HomeLot[]): (HomeFrame | null)[] {
+  const out: (HomeFrame | null)[] = PROPERTY_KINDS.map(() => null)
+  for (const { home, k, m, side } of list) {
+    if (!Number.isInteger(home) || home < 0 || home >= PROPERTY_KINDS.length) throw new RangeError(`no property ${home}`)
+    if (out[home] !== null) throw new RangeError(`property ${home} listed twice`)
+    out[home] = Object.freeze({ home, cx: (k + 0.5) * CITY.pitch, cz: (m + 0.5) * CITY.pitch, side, back: backEdge(home) })
+  }
+  return out
+}
+
+/**
+ * One home's set of solid boxes as the page sends it (simCore.ts 'home'), checked: six city numbers per box (x0, y0,
+ * z0, x1, y1, z1), at most HOME_PIECES boxes. Each box is turned into the room frame and must stand inside the floor
+ * plan (u from the back edge to GRID_HALF, v within GRID_HALF, each with HOME_SOLID.slack), on the floor, under the
+ * ceiling, at least HOME_SOLID.height tall and HOME_SOLID.thin across, and must not overlap the apron (homeGrid.ts
+ * APRON: the cells in front of the doorway, kept clear so the way in is never blocked). Returns the boxes as city
+ * boxes; anything else throws, with the reason. An empty list is sound: no solids.
+ */
+export function checkHomeBoxes(frame: HomeFrame, flat: unknown): Box[] {
+  if (!Array.isArray(flat)) throw new Error('home: boxes must be a list of numbers')
+  if (flat.length % 6 !== 0) throw new Error('home: boxes come in sixes (x0, y0, z0, x1, y1, z1)')
+  if (flat.length / 6 > HOME_PIECES) throw new Error(`home: at most ${HOME_PIECES} boxes`)
+  for (const n of flat) if (typeof n !== 'number' || !Number.isFinite(n)) throw new Error('home: every number of a box must be finite')
+  const { slack, thin, floor, ceiling, height } = HOME_SOLID
+  const edge = GRID_HALF + slack
+  // The apron's rectangle, shrunk by a micrometre: a box that only touches it (to within the rounding of the turn into
+  // the room frame) keeps off it.
+  const touch = 1e-6
+  const apronU0 = -GRID_HALF + APRON.r0 * CELL + touch, apronU1 = -GRID_HALF + (APRON.r1 + 1) * CELL - touch
+  const apronV0 = -GRID_HALF + APRON.c0 * CELL + touch, apronV1 = -GRID_HALF + (APRON.c1 + 1) * CELL - touch
+  const out: Box[] = []
+  for (let i = 0; i < flat.length; i += 6) {
+    const [x0, y0, z0, x1, y1, z1] = flat.slice(i, i + 6) as number[]
+    if (!(x1 - x0 >= thin && z1 - z0 >= thin)) throw new Error(`home: a box must be at least ${thin} m across`)
+    if (y0 < floor) throw new Error('home: a box must start on the floor')
+    if (y1 > ceiling) throw new Error(`home: a box must stay under ${ceiling} m`)
+    if (y1 - y0 < height) throw new Error(`home: a box must stand at least ${height} m tall`)
+    const a = toLocal(frame, x0, z0), b = toLocal(frame, x1, z1)
+    const u0 = Math.min(a.u, b.u), u1 = Math.max(a.u, b.u), v0 = Math.min(a.v, b.v), v1 = Math.max(a.v, b.v)
+    if (u0 < frame.back - slack || u1 > edge || v0 < -edge || v1 > edge) throw new Error("home: a box must stand inside the home's floor plan")
+    if (u1 > apronU0 && u0 < apronU1 && v1 > apronV0 && v0 < apronV1) throw new Error('home: a box must keep off the apron in front of the doorway')
+    out.push([x0, y0, z0, x1, y1, z1])
+  }
+  return out
 }
 
 // ---------------------------------------------------------------- the minimap
