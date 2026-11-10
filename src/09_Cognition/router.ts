@@ -28,8 +28,8 @@
  * store; every provider only ever addresses a loopback origin (02_Define_The_Rules/airgap.ts is the gate), or none
  * at all (the in-page and scripted providers), so no prompt leaves this machine from the page. The 14A screen is not here: it is applied once for every provider in the
  * operator tier (gatedAsk), before a prompt reaches this router.
- * Under auto, given the GPUs' memory (ask vram, or vram= in the address), it sizes Ollama's model by what Ollama
- * measured (modelFit.ts).
+ * Under auto, given the GPUs' memory (ask vram, vram= in the address, or the Windows app's reading), it sizes
+ * Ollama's model by what Ollama measured (modelFit.ts).
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
 import { scriptedAction } from '../06_Make_Decisions/actions.ts'
@@ -170,7 +170,7 @@ export interface MindRouter extends Mind {
   setKey(key: string): string | null
   /** Sets the Claude provider's effort (empty clears it); returns it. */
   setEffort(level: string): string | null
-  /** The GPUs' memory in GB for auto's Ollama model, 0 for none, or auto (the page's address); forgets what was measured; returns what it now is. */
+  /** The GPUs' memory in GB for auto's Ollama model, 0 for none, or auto (the page's address, else the Windows app's reading); forgets what was measured; returns what it now is. */
   setVram(value: string): string
   /**
    * One line: chooses the provider and, when given, its server (a loopback address) and, for the Claude provider,
@@ -206,10 +206,12 @@ function noInPage(): Mind {
  * `inPage` builds the in-page provider over its own slice of the router's store (09_Cognition/inPage.ts, from the
  * host); without it the stand-in above answers for that provider.
  */
-export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, vram }: {
+export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, vram, appVram }: {
   fetch: FetchLike; store?: SettingsStore; timeouts?: Timeouts; lookMs?: number; inPage?: (store: SettingsStore) => Mind
   /** the page's vram= query value, for auto's Ollama model (modelFit.ts) */
   vram?: string | null
+  /** the Windows app's reading of the GPUs' memory, GB (modelFit.ts figureFromAdapters); null until it arrives, or none */
+  appVram?: () => number | null
 }): MindRouter {
   const kept: Kept = { v: 3, provider: DEFAULT_PROVIDER, claude: { server: CLAUDE_GATEWAY, model: DEFAULT_CLAUDE_MODEL, key: null, effort: null }, ollama: null, llamacpp: null, openai: null, inpage: null }
   try {
@@ -318,8 +320,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const listedHere = (): readonly Weighed[] | null => (catalog?.server === ollama.settings().server ? catalog.models : null)
   /** A model's listed weight bytes on this server (null: not listed, or no size); `qwen3` is the listed `qwen3:latest`. */
   const bytesOf = (n: string): number | null => listedHere()?.find((m) => sameModel(m.name, n))?.bytes ?? null
-  /** The GPU figure in force: the console's, else the page's address (modelFit.ts figureOf). */
-  const figure = () => figureOf(kept.fit?.vram ?? null, vram)
+  /** The GPU figure in force: the console's, else the page's address, else the Windows app's (modelFit.ts figureOf). */
+  const figure = () => figureOf(kept.fit?.vram ?? null, vram, appVram?.() ?? null)
   /** The measurements kept that still count (R12): this server's, at the weights it lists now. */
   const seenHere = () => {
     const server = ollama.settings().server
@@ -776,9 +778,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       const under = kept.provider !== 'auto' ? '; it applies under ask provider auto' : ''
       if (v === 'auto') {
         const f = figure()
-        return `${f !== null ? `auto: ${f.gb.toFixed(1)} GB from the page's address (vram=); what was measured before is forgotten` : 'auto: no GPU size given, so auto keeps its usual model; what was measured before is forgotten'}${under}`
+        const from = f?.from === 'app' ? 'read from the GPUs by the Windows app' : "from the page's address (vram=)"
+        return `${f !== null ? `auto: ${f.gb.toFixed(1)} GB ${from}; what was measured before is forgotten` : 'auto: no GPU size given, so auto keeps its usual model; what was measured before is forgotten'}${under}`
       }
-      if (v === 0) return `0: auto sizes nothing by the GPU, whatever the page's address says; what was measured before is forgotten (ask vram auto hands it back)${under}`
+      if (v === 0) return `0: auto sizes nothing by the GPU, whatever the page's address or the Windows app says; what was measured before is forgotten (ask vram auto hands it back)${under}`
       return `${v.toFixed(1)} GB at the console, kept: auto may give Ollama a bigger model it already has once an answer has been measured; what was measured before is forgotten${under}`
     },
     connect: (provider: string, url?: string, key?: string): string => {

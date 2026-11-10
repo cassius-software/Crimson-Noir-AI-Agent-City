@@ -3,14 +3,14 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It draws the fleet on the page: the procedural bodies (one extruded side profile per kind
- * of vehicle, car.ts VEHICLE_KINDS: a sedan, a transit pod, a van, a coach, a courier robot, an SUV, a coupe and a
- * utility rig; shader-painted glass and lamps, metallic paint, a dark cabin shell seen from the driver's seat, brake
- * lights that follow the brake demand, a warm interior glow or an amber beacon where the kind has one) and the
- * wheels, from the pose buffer the physics worker sends every step (simProtocol.ts POSE). One InstancedMesh per kind
- * holds that kind's cars in compact slots (slotOf maps a vehicle to its mesh and slot), and one InstancedMesh holds
- * every wheel, four per vehicle. It holds no physics: numbers in, matrices out. (The crowd reads the cars in the
- * worker, from the fleet itself.) Every silhouette stays within DISSOLVE.reach of its chassis class's box, so the
- * dissolve (dissolve.ts) has the mesh before the camera does.
+ * of vehicle, car.ts VEHICLE_KINDS: a sedan, a transit pod, a van, a coach, a courier robot, an SUV, a coupe, a
+ * utility rig, a box truck, an automated guided vehicle and a forklift; shader-painted glass and lamps, metallic
+ * paint, a dark cabin shell seen from the driver's seat, brake lights that follow the brake demand, a warm interior
+ * glow or an amber beacon where the kind has one) and the wheels, from the pose buffer the physics worker sends
+ * every step (simProtocol.ts POSE). One InstancedMesh per kind holds that kind's cars in compact slots (slotOf maps a
+ * vehicle to its mesh and slot), and one InstancedMesh holds every wheel, four per vehicle. It holds no physics:
+ * numbers in, matrices out. (The crowd reads the cars in the worker, from the fleet itself.) Every silhouette stays
+ * within DISSOLVE.reach of its chassis class's box, so the dissolve (dissolve.ts) has the mesh before the camera does.
  * What breaks if it is removed? The cars simulate in the worker but are never seen.
  */
 import {
@@ -30,7 +30,8 @@ export type Profile = readonly (readonly [number, number])[]
 
 /**
  * The side profiles, one per kind, authored at the sedan's scale (the kind's scale in car.ts stretches them about the
- * chassis origin). Every one stays inside x ±2.34 (the sedan's bumpers) and above the road by at least 0.3 m.
+ * chassis origin). Every one stays inside x ±2.34 (the sedan's bumpers) but the forklift's fork tips (2.46, which its
+ * 0.62 scale along the car brings inside the box), and above the road by at least 0.3 m.
  */
 export const PROFILES: Readonly<Record<VehicleKind['id'], Profile>> = Object.freeze({
   sedan: [
@@ -54,6 +55,23 @@ export const PROFILES: Readonly<Record<VehicleKind['id'], Profile>> = Object.fre
   utility: [
     [-2.3, 0.4], [-2.33, 0.7], [-2.3, 1.0], [-2.25, 1.05], [-0.9, 1.05], [-0.9, 0.95], [-0.6, 0.95], [-0.5, 1.52], [-0.3, 1.56],
     [1.5, 1.52], [1.9, 1.1], [2.2, 0.9], [2.34, 0.6], [2.3, 0.4],
+  ],
+  // Cab-over: a flat, tall front with the windscreen high, a cargo box behind the cab to the tail. The driver's eye
+  // sits in the box as in the van and the coach.
+  truck: [
+    [-2.3, 0.4], [-2.34, 0.7], [-2.3, 2.28], [-2.2, 2.36], [0.75, 2.36], [0.85, 2.2], [0.9, 2.02], [1.05, 1.98],
+    [1.95, 1.94], [2.18, 1.6], [2.3, 1.0], [2.34, 0.56], [2.3, 0.4],
+  ],
+  // Bi-directional and cab-less: a tall box with the same bevelled end both ways and a sensor dome amidships.
+  agv: [
+    [-2.0, 0.34], [-2.08, 0.72], [-2.04, 1.52], [-1.88, 1.74], [-0.42, 1.78], [-0.26, 1.96], [0.26, 1.96], [0.42, 1.78],
+    [1.88, 1.74], [2.04, 1.52], [2.08, 0.72], [2.0, 0.34],
+  ],
+  // Drawn at 0.62 of the length: a counterweight at the tail, the seat under an overhead guard, the mast at the nose
+  // with the fork tips just under it (the head lamps sit on the mast's face, within lampEdges of the tips).
+  forklift: [
+    [-2.3, 0.4], [-2.34, 0.7], [-2.26, 1.08], [-1.4, 1.16], [-1.0, 1.28], [-0.62, 2.1], [-0.5, 2.18], [1.3, 2.18],
+    [1.42, 2.1], [1.6, 2.3], [2.22, 2.3], [2.3, 1.2], [2.3, 0.44], [2.46, 0.44], [2.46, 0.3], [2.0, 0.3],
   ],
 })
 
@@ -93,7 +111,25 @@ function glassOf(id: VehicleKind['id'], p: Node<'vec3'>, n: Node<'vec3'>, y: Nod
     // A band from just above the lamps to the roof: the driver's eye sits at 1.18, so lower glass is the road ahead.
     case 'courier': return y.greaterThan(0.85).and(abs(n.y).lessThan(0.8))
     case 'utility': return greenhouse.and(p.x.greaterThan(-0.6))
+    // The cab's windscreen and side glass, high on the flat front; the box behind is painted.
+    case 'truck': return y.greaterThan(1.05).and(y.lessThan(1.9)).and(p.x.greaterThan(0.95))
+    // A dark sensor band all round, from just above the lamps to the shoulder of the box: the driver's eye (1.18) looks
+    // out through it, as from the courier's. The roof and the dome are painted (the beacon sits on the dome).
+    case 'agv': return y.greaterThan(0.82).and(y.lessThan(1.5)).and(abs(n.y).lessThan(0.8))
+    // The open cab between the guard's posts, from the seat's height to under the roof, and the mast's face seen
+    // through (above the head lamps): the driver's eye (1.18) looks out at the sides and ahead.
+    case 'forklift': return y.greaterThan(0.95).and(y.lessThan(2.08)).and(p.x.greaterThan(-0.95)).and(p.x.lessThan(1.45))
+      .or(p.x.greaterThan(2.0).and(n.x.greaterThan(0.4)).and(y.greaterThan(0.85)).and(y.lessThan(2.25)))
     default: return greenhouse
+  }
+}
+
+/** Where a kind with a beacon (VehicleKind.lights) carries it, from the vertex's geometry position and height above the road. */
+function beaconOf(id: VehicleKind['id'], p: Node<'vec3'>, y: Node<'float'>): B {
+  switch (id) {
+    case 'agv': return y.greaterThan(1.85).and(abs(p.x).lessThan(0.5))
+    case 'forklift': return y.greaterThan(2.1).and(abs(p.x.sub(0.2)).lessThan(0.2))
+    default: return y.greaterThan(1.5).and(abs(p.x.sub(0.9)).lessThan(0.3))
   }
 }
 
@@ -232,8 +268,8 @@ export class FleetView {
       // A warm cabin light through the glass at night.
       lamps = select(glass, vec3(1.0, 0.75, 0.45).mul(night.mul(0.6)), lamps)
     } else if (kind.lights === 'beacon') {
-      // An amber beacon on the cab roof, flashing.
-      const beacon = y.greaterThan(1.5).and(abs(p.x.sub(0.9)).lessThan(0.3))
+      // An amber beacon, flashing: on the utility rig's cab roof, the guided vehicle's dome, the forklift's guard.
+      const beacon = beaconOf(kind.id, p, y)
       lamps = select(beacon, vec3(1.0, 0.45, 0.05).mul(beaconPulse().mul(5).add(0.5)), lamps)
     }
     mat.emissiveNode = select(frontFacing, lamps, vec3(0))

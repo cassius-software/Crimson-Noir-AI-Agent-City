@@ -69,16 +69,16 @@ export const MODES: readonly DriveMode[] = ['ai', 'player', 'parked']
 
 /**
  * One scheduled craft's slice of the craft buffer (Float32Array, `TRACK_POSE.stride` floats per craft): the train
- * sets, drones, planes and VTOLs that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
+ * sets, drones, planes, VTOLs and ferries that follow the corridors of 06_Make_Decisions/tracks.ts on the realm's own clock
  * (trackFleet.ts), in network order (track by track, each track's craft by index). `kind` is the craft's index in
  * TRACK_KINDS, `track` its track id, `s` its arc length along the track (m) and `speed` its speed along it (m/s).
  * The page only draws it; the Ring-0 audit reads it (every value finite, every craft at or above its corridor's
- * floor) before it leaves the realm.
+ * floor, a ferry's hull on the lake side of its shore) before it leaves the realm.
  */
 export const TRACK_POSE = { x: 0, y: 1, z: 2, heading: 3, kind: 4, track: 5, s: 6, speed: 7, stride: 8 } as const
 
 /** TrackKind as it is stored in the craft buffer (index = code). Cars never appear in it: they are in the pose buffer. */
-export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane', 'vtol']
+export const TRACK_KINDS: readonly TrackKind[] = ['car', 'train', 'drone', 'plane', 'vtol', 'ferry']
 
 /**
  * The rig stream (StepState.rigs): one slice of `RIG_POSE.stride` floats per rig slot (`SimMeta.rigSlots` of them),
@@ -142,7 +142,7 @@ export interface SimInit {
   streets?: StreetGrid | null
   /**
    * A generated region's indoor workplaces (01_Initialize_World/region/workplaces.ts regionWorkplaceLots): at most
-   * six lots of the street window, each with its kind and its doorway's street front, which the page picked from its
+   * sixteen lots of the street window, each with its kind and its doorway's street front, which the page picked from its
    * pack and the worker builds the same rooms from (interiors.ts workplacesAt), so the two never disagree. Their boxes
    * come in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose rooms are its seed's.
    */
@@ -203,7 +203,7 @@ export interface SimMeta {
   /** Rig slots in every rig stream (RIG_SLOTS with the ragdoll on in the city; 0 off, or in a region: the stream is null). */
   rigSlots: number
   /**
-   * Indoor workplaces this realm's crowd was handed (01_Initialize_World/interiors.ts): the city's six, a generated
+   * Indoor workplaces this realm's crowd was handed (01_Initialize_World/interiors.ts): the city's sixteen, a generated
    * region's that came in SimInit.workplaces, none in a surveyed region or without a crowd. A read-out for the page.
    */
   rooms: number
