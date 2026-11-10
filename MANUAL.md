@@ -64,6 +64,7 @@ at all (see Track B under Ring-0 console).
 | Run | Shift (either) | left-stick click | Run button |
 | Enter / exit a car | E | south face button | Enter car / Exit car |
 | Browse a shop (on foot inside a storefront) | E (a car in reach keeps E for its door), or B | south face button | tap the Browse chip |
+| Open a home's card, or furnish a home you own (on foot inside it) | E (a car in reach keeps E for its door), or B | south face button (with no car near) | tap the For sale or Furnish chip |
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
@@ -386,11 +387,15 @@ record (the progression engine's, kept in this browser), so the console's `progr
   over `progress.ts` `pageProgress`): worn lines at look 512 and up, furniture from 0, homes 0 to 6. A line above your
   level says which level it needs; one you cannot afford says how many more credits.
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
-  eyewear; the watch shop's leather briefcase. Lines that need slots the wardrobe does not have yet (the tattoo
-  designs and inks, prosthetic limbs, the hearing processor, watches, the lapel pin, the umbrella, headphones) are
-  listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
-  deeds (level 1 to 20, free to 4,500,000 credits) are on sale (see Homes); its furniture is on order until furnishing
-  opens, so nothing is sold before it can be placed.
+  eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
+  carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
+  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase.
+  Lines that need slots the wardrobe does not have yet (the tattoo designs and inks, watches, the lapel pin, the
+  umbrella, headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
+  deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
+  credits) are on sale (see Homes and Furnishing). A furniture line you own says **Place it at home (B)**, and so does
+  the line the card says when you buy one. A deed whose price would leave you less than the cheapest furniture on sale
+  says so on its row ("Leaves 900 cr, less than any furniture"); the free loft never does.
 - **Limits.** The wardrobe card is not gated by
   what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
   so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
@@ -424,8 +429,8 @@ first, and among them the grander homes get the better-built ones (if a podium t
 grandest home there takes it), so a home's name does not promise a view of the lake or a tower there; a window with
 too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
 
-On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Your home** and its
-name. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
+On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Furnish** and the
+name of a home you own. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
 home's doorstep card (`07_Execute_Actions/HomeCard.tsx`): the name and the address, a line about the home, its level
 and price, **Buy** (**Claim (free)** for the Micro-Loft) or the reason the purchase gate refuses, and your purse; once it
 is yours the card says **Yours**. While the card is open you stand still: the game's keys rest, the touch controls step
@@ -446,7 +451,66 @@ answers that card instead.
 - **What a new operator can own.** At level 1 with 150 credits you can claim the Micro-Loft for nothing at once.
   The Brownstone (level 3, 4,000 credits) and the rest say which level they need ("needs level 3", 6, 10, 14, 17 and
   20) until your progression gets there, then how many more credits. Deeds are bought through the same progression
-  purchase gate as the clothes. Furniture stays on order until furnishing opens.
+  purchase gate as the clothes, and so is the furniture (see Furnishing).
+
+### Furnishing
+
+The card that opens inside a home you own is where you furnish it (`07_Execute_Actions/HomeCard.tsx`): on a wide screen
+at the right, on a phone a sheet over the lower half, so the room stays in view above it. The camera leaves your head
+for a point under the ceiling a few metres from the cursor, looking down at it, and your look comes back when the card
+closes. In a network room the card shows the deed instead, with the reason ("Furnishing waits until you leave the
+shared room: it replays your walk and does not know your furniture"), and switches to furnishing by itself once you
+leave the room. Walking out of the home or putting on a headset closes the card.
+
+- **Three tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
+  holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
+  hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
+  ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
+  house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
+  **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
+  board-formed concrete, blackened steel) are free.
+- **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
+  doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
+  in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
+  its initial, a workstation's seat is dotted, and anyone standing in the home is a dot. The cursor carries the piece
+  in hand, green where it fits and red where it does not, and the line under the plan says why: "Something is already
+  there", "Keeps the doorway clear", "Goes against a wall" (the bookcase, the bar and the green wall stand against a
+  wall), "3 of these is the most for one home", "16 pieces is the most a home holds", "You are standing there", "Would
+  cut off part of the room", "Would block a workstation's seat" or "Not yours yet: Order it". The room shows the same
+  piece as a ghost where it would go.
+- **Placing.** **Place** puts the piece in hand down where it fits. On a piece already placed, with nothing picked up,
+  it picks that piece up: it leaves the home and goes with the cursor until you place it again. **Remove** takes the
+  piece under the cursor (or the one picked up) out of the home. **Rotate** turns the piece in hand a quarter.
+  **Undo** takes back the last edit, up to 20, putting a piece picked up back in hand. Closing the card, or taking
+  another piece in hand, with a piece picked up puts it back where it was. **View** turns the camera a quarter round
+  the cursor. Enter and Space are Place, also after a click on one of the card's buttons; a button you reach with Tab
+  takes them as buttons do.
+- **Saved in this browser.** Every edit is saved at once in this browser (`civic-simulation:home:v1`), and the pieces
+  are solid: you walk round them. A piece cannot go down where someone playing on this screen stands, and one placed
+  over a player who is still there turns solid once they step off. The room
+  is never closed off: the cells in front of the doorway stay free, and a piece that would cut off part of the room
+  or a workstation's seat is refused. A saved piece whose line is no longer yours, or that no longer fits, is listed
+  as **Not placed here** with **Clear**, and comes back when it fits again.
+- **Show homes.** A home on sale is furnished as a show home, solid like any other. It empties when the deed is
+  bought: the new owner starts with a bare room in the home's own finishes.
+- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid: the room replays the
+  walk it saw and knows nothing of the furniture.
+
+| Furnishing | Keyboard | Mouse | Pad | Touch |
+|---|---|---|---|---|
+| Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
+| Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
+| Rotate | R | wheel | north (Y) | Rotate |
+| Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
+| Previous / next piece | Q / E | click in the strip | left / right shoulder | ◀ ▶, or tap in the strip |
+| Tabs | 1 / 2 / 3 | the tab | left / right trigger | the tab |
+| Choose a finish (Floor or Walls) | ← → or Q / E | the swatch | left / right shoulder | the swatch |
+| Undo | Z or Ctrl+Z | Undo | View | Undo |
+| Turn the camera | C | View | right stick left / right | View |
+| Done | Esc or B | Done or × | east (B) or Menu | Done |
+
+H still hides the HUD and `~` still opens the console (which puts the card away). A pad button held as the card opens
+counts only from its next press, and in split screen the card is player 1's.
 
 ## The surveyed map
 

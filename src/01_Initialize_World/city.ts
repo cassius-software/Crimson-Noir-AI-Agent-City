@@ -79,8 +79,11 @@ export function districtName(x: number, z: number): string {
  * of curtain wall, stone, brick and panel; the rest are finishes. Only 'mixed', 'stone', 'brick' and 'condo' have
  * windows and shopfronts; trim, roofs, plain concrete and masonry, the pier's deck and its rails have none. 'glass' is
  * the floor-to-ceiling curtain wall of a workplace's ground floor (interiors.ts): the downtown mix's glass, chosen.
+ * 'planted' (a green wall's leaves) and 'lit' (a screen, a hologram's field, the furnishing cursor: dark glass with a
+ * fine grid of light that always glows) dress only the homes' furniture (07_Execute_Actions/homeView.ts); no box of a
+ * city or a region plan uses them, and they have no windows either.
  */
-export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9, glass: 10 })
+export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9, glass: 10, planted: 11, lit: 12 })
 
 /** A box and its finish. */
 export interface Building { box: Box; style: number }

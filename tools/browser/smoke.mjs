@@ -97,9 +97,15 @@
  * - homes: the seven homes of seed 1337 and their deeds, on the progression keeper (nothing here costs a credit): B in
  *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
  *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
- *   planters, the HUD's chip says the home is yours, B opens the doorstep card saying Yours, the avatar stands still
- *   under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and still knows
- *   the loft is owned;
+ *   planters, the HUD's chip offers to furnish the home (Furnish), B opens the doorstep card saying Yours, the avatar
+ *   stands still under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and
+ *   still knows the loft is owned;
+ * - furnish: the loft claimed and the operator's record given level 2 and 3,000 credits by hand (sealed again, then
+ *   reloaded), B inside opens the furnishing view, its strip's Order buys a bookcase and a sofa, E or Q takes each in
+ *   hand, the arrows move the cursor and Enter places it, each piece one more collider in the physics realm; after a
+ *   real mouse click on View, Enter still reaches the card (it picks up the sofa under the cursor) and never presses
+ *   View again, and Z puts the sofa back; Done closes the view, the layout is saved in this browser, and after a
+ *   reload both pieces are still solid and placed;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -115,7 +121,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,lakefront,homes,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,lakefront,homes,furnish,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -2231,7 +2237,7 @@ const SCENARIOS = {
       check(inside, 'homes: W walks the avatar into the loft')
       const chip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && c.textContent })()`, 10_000).catch(() => '')
       const snap = await p.eval('window.__SIM__.snapshot().customer')
-      check(/Your home: Metro-Line Micro-Loft/.test(chip ?? '') && snap.home?.owned === true && (snap.ownedHomes & 1) === 1, 'homes: the HUD\'s chip says the loft is yours', `${chip}; ${JSON.stringify(snap.home)} owned ${snap.ownedHomes}`)
+      check(/Furnish Metro-Line Micro-Loft/.test(chip ?? '') && snap.home?.owned === true && (snap.ownedHomes & 1) === 1, 'homes: the HUD\'s chip offers to furnish the loft, which is yours', `${chip}; ${JSON.stringify(snap.home)} owned ${snap.ownedHomes}`)
       // B opens the doorstep card, which says Yours; the avatar stands still under it, W held or not.
       await p.tap('KeyB', 'b', 66)
       const doorstep = await p.waitFor(`!!${at('aside[data-home="0"]')}`, 10_000).then(() => true, () => false)
@@ -2258,6 +2264,170 @@ const SCENARIOS = {
       check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
       check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)
       p.health('homes lakefront')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * Furnishing (HomeCard.tsx's furnishing view, slice 2b) in the loft, by keyboard. The loft is claimed through the
+   * shopkeeper, and the operator's record then gets level 2 and 3,000 credits by hand (a new operator has 150, and no
+   * furniture costs less than 1,100): the record in this browser rewritten and sealed again as progression.ts sealOf
+   * does, then the page reloaded, which is the only way a record changes outside the page's own keeper. In the loft B
+   * opens the furnishing view; the strip's Order buys a bookcase and a sofa; E takes the bookcase in hand, the arrows
+   * move the cursor and Enter places it; Q takes the sofa and it is placed the same way. Each piece is one more
+   * collider in the physics realm. A real mouse click on View leaves that button focused, and Chromium counts the next
+   * key as keyboard use (:focus-visible) before the key's own handlers run: Enter must still be the card's Place (with
+   * the sofa in hand over the sofa, it picks that sofa up), never a second press of View; Z undoes it. Done closes the
+   * view, the layout is saved in this browser, and after a reload the loft still has both pieces, both solid, and the
+   * view says so.
+   */
+  async furnish(chrome, origin) {
+    const p = await open(chrome)
+    const at = (sel) => `document.querySelector(${JSON.stringify(sel)})`
+    const view = 'aside[data-home="0"][data-furnish] [data-furnishing]'
+    const colliders = () => p.eval('window.__SIM__.engine.sim.state.physics.colliders')
+    // Go home, then W walks in through the planters (the canvas clicked first, as a person would).
+    const walkIn = async () => {
+      await p.eval('window.__SIM__.engine.goHome(0)')
+      const a = (await p.eval('window.__SIM__.homes()'))[0].arrival
+      await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${a.x}, v.z - ${a.z}) < 0.6 })()`, 30_000).catch(() => {})
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.key('keyDown', 'KeyW', 'w', 87)
+      const inside = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 0`, 30_000).then(() => true, () => false)
+      await p.frames(6)
+      await p.key('keyUp', 'KeyW', 'w', 87)
+      await p.frames(10)
+      return inside
+    }
+    const cursor = () => p.eval(`${at(view)}?.getAttribute('data-cursor') ?? ''`)
+    // The arrows, one cell a press, until the cursor stands on (c, r): ← → are columns, ↑ ↓ rows (the back at the top).
+    const moveTo = async (c, r) => {
+      for (let i = 0; i < 64; i++) {
+        const now = await cursor()
+        const [nc, nr] = now.split(',').map(Number)
+        if (nc === c && nr === r) return true
+        const [code, vk] = nc < c ? ['ArrowRight', 39] : nc > c ? ['ArrowLeft', 37] : nr < r ? ['ArrowDown', 40] : ['ArrowUp', 38]
+        await p.tap(code, code, vk)
+        await p.waitFor(`(${at(view)}?.getAttribute('data-cursor') ?? '') !== ${JSON.stringify(now)}`, 10_000).catch(() => {})
+      }
+      return false
+    }
+    const inHand = async (id, code, key, vk) => {
+      for (let i = 0; i < 4 && (await p.eval(`${at(view)}?.getAttribute('data-piece')`)) !== String(id); i++) {
+        await p.tap(code, key, vk)
+        await p.frames(2)
+      }
+      return (await p.eval(`${at(view)}?.getAttribute('data-piece')`)) === String(id)
+    }
+    try {
+      await p.goto(`${origin}/?${LIGHT}&seed=1337`)
+      await p.booted()
+      // The loft claimed (free), then the record given level 2 and 3,000 credits and sealed again, and the page reloaded.
+      const claimed = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(224); return k.owns(224) })()`)
+      check(claimed, 'furnish: the Metro-Line Micro-Loft\'s deed is claimed')
+      await p.eval(`(() => {
+        const key = 'civic-simulation:progress:v1'
+        const data = JSON.parse(localStorage.getItem(key))
+        const w = data.words
+        w[14] = 2
+        w[16] = 3000
+        let h = 0x811c9dc5
+        for (let i = 0; i < w.length; i++) {
+          if (i === 63) continue
+          const v = w[i] >>> 0
+          h = Math.imul(h ^ (v & 0xff), 0x01000193)
+          h = Math.imul(h ^ ((v >>> 8) & 0xff), 0x01000193)
+          h = Math.imul(h ^ ((v >>> 16) & 0xff), 0x01000193)
+          h = Math.imul(h ^ (v >>> 24), 0x01000193)
+        }
+        w[63] = h | 0
+        localStorage.setItem(key, JSON.stringify(data))
+      })()`)
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const purse = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; return { level: k.purse.level(), credits: k.purse.credits(), loft: k.owns(224) } })()`)
+      check(purse.level === 2 && purse.credits === 3000 && purse.loft, 'furnish: the reloaded record is level 2 with 3,000 credits and the loft', JSON.stringify(purse))
+      const inside = await walkIn()
+      check(inside, 'furnish: the avatar walks into the loft')
+      const chip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && c.textContent })()`, 10_000).catch(() => '')
+      check(/Furnish Metro-Line Micro-Loft/.test(chip ?? ''), 'furnish: the HUD\'s chip says Furnish', chip)
+      const base = await colliders()
+
+      // B opens the furnishing view: the strip has all nine lines, none owned, the bookcase and the sofa for sale.
+      await p.tap('KeyB', 'b', 66)
+      const opened = await p.waitFor(`!!${at(view)}`, 10_000).then(() => true, () => false)
+      const strip = await p.eval(`(() => { const s = ${at(view)}; const li = [...(s?.querySelectorAll('li[data-line]') ?? [])]
+        return { lines: li.length, owned: li.filter((l) => l.hasAttribute('data-owned')).length, order: li.filter((l) => l.querySelector('[data-action="order"]')).map((l) => l.getAttribute('data-line')),
+          saved: ${at('aside[data-home="0"] [data-saved]')}?.textContent ?? '' } })()`)
+      check(opened && strip.lines === 9 && strip.owned === 0 && strip.order.includes('163') && strip.order.includes('164'), 'furnish: B in the owned loft opens the furnishing view, its strip of nine lines offering Order', JSON.stringify(strip))
+      check(strip.saved === 'Saved in this browser · Esc or B to finish', 'furnish: the view says where it saves and how to finish', strip.saved)
+      // Order the bookcase (1,100) and the sofa (1,600) from the strip.
+      await p.eval(`${at(`${view} li[data-line="164"] [data-action="order"]`)}?.click()`)
+      await p.waitFor(`!!${at(`${view} li[data-line="164"][data-owned]`)}`, 10_000).catch(() => {})
+      await p.eval(`${at(`${view} li[data-line="163"] [data-action="order"]`)}?.click()`)
+      await p.waitFor(`!!${at(`${view} li[data-line="163"][data-owned]`)}`, 10_000).catch(() => {})
+      const paid = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; return { credits: k.purse.credits(), bookcase: k.owns(164), sofa: k.owns(163) } })()`)
+      check(paid.bookcase && paid.sofa && paid.credits === 300, 'furnish: Order buys the bookcase and the sofa through the shopkeeper', JSON.stringify(paid))
+
+      // E takes the bookcase; the arrows bring the cursor to the back wall; Enter places it, and the realm gains its collider.
+      const bookcase = await inHand(164, 'KeyE', 'e', 69)
+      const reached1 = await moveTo(4, 20)
+      const fit1 = await p.eval(`${at(view)}?.getAttribute('data-fit')`)
+      await p.tap('Enter', 'Enter', 13)
+      const placed1 = await p.waitFor(`${at(view)}?.getAttribute('data-placed') === '1'`, 10_000).then(() => true, () => false)
+      check(bookcase && reached1 && fit1 === 'ok' && placed1, 'furnish: E, the arrows and Enter place the bookcase against the back wall', JSON.stringify({ bookcase, reached1, fit1, cursor: await cursor(), reason: await p.eval(`${at('aside[data-home="0"] [data-reason]')}?.textContent ?? ''`) }))
+      // Q takes the sofa; placed the same way.
+      const sofa = await inHand(163, 'KeyQ', 'q', 81)
+      const reached2 = await moveTo(8, 23)
+      const fit2 = await p.eval(`${at(view)}?.getAttribute('data-fit')`)
+      await p.tap('Enter', 'Enter', 13)
+      const placed2 = await p.waitFor(`${at(view)}?.getAttribute('data-placed') === '2'`, 10_000).then(() => true, () => false)
+      check(sofa && reached2 && fit2 === 'ok' && placed2, 'furnish: Q, the arrows and Enter place the sofa', JSON.stringify({ sofa, reached2, fit2, cursor: await cursor(), reason: await p.eval(`${at('aside[data-home="0"] [data-reason]')}?.textContent ?? ''`) }))
+      const solid = await p.waitFor(`window.__SIM__.engine.sim.state.physics.colliders === ${base + 2}`, 20_000).then(() => true, () => false)
+      check(solid, 'furnish: each piece placed is one more collider in the physics realm', `${base} -> ${await colliders()}`)
+      await p.shot('furnish')
+
+      // A real mouse click on View (the button keeps the focus), then Enter with its text, as a keyboard sends it: the
+      // card's Place picks up the sofa under the cursor, and View is not pressed a second time. Z puts the sofa back.
+      const viewButton = await p.eval(`(() => { const r = ${at('aside[data-home="0"] [data-action="view"]')}?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null })()`)
+      if (viewButton) {
+        await p.mouse('mousePressed', viewButton.x, viewButton.y, 1)
+        await p.mouse('mouseReleased', viewButton.x, viewButton.y)
+      }
+      const turned = await p.waitFor(`${at(view)}?.getAttribute('data-view') === '1'`, 10_000).then(() => true, () => false)
+      const focused = await p.eval(`document.activeElement?.getAttribute('data-action') ?? ''`)
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' })
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+      const picked = await p.waitFor(`${at(view)}?.getAttribute('data-placed') === '1'`, 10_000).then(() => true, () => false)
+      await p.frames(4)
+      const views = await p.eval(`${at(view)}?.getAttribute('data-view') ?? ''`)
+      check(turned && focused === 'view' && picked && views === '1', 'furnish: after a mouse click on View, Enter is still the card\'s Place (it picks up the sofa) and never presses View again', JSON.stringify({ turned, focused, picked, views }))
+      await p.tap('KeyZ', 'z', 90)
+      const undone = await p.waitFor(`${at(view)}?.getAttribute('data-placed') === '2' && ${at(view)}?.getAttribute('data-piece') === '163'`, 10_000).then(() => true, () => false)
+      check(undone, 'furnish: Z puts the sofa back', await p.eval(`${at(view)}?.getAttribute('data-placed') ?? 'no view'`))
+
+      // Done closes the view and the engine's hold; the layout is in this browser's record.
+      await p.eval(`${at('aside[data-home="0"] [data-action="done"]')}?.click()`)
+      const done = await p.waitFor(`!${at('aside[data-home]')} && window.__SIM__.snapshot().customer.home?.card === false`, 10_000).then(() => true, () => false)
+      check(done, 'furnish: Done closes the furnishing view')
+      const saved = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:home:v1')).homes[0] } catch { return null } })()`)
+      const pieces = saved?.[2] ?? []
+      const has = (id, c, r) => pieces.some((q) => q[0] === id && q[1] === c && q[2] === r && q[3] === 0)
+      check(pieces.length === 2 && has(164, 4, 20) && has(163, 8, 23), 'furnish: the loft\'s layout is saved in this browser', JSON.stringify(saved))
+      const errs = (await p.snap()).errors
+      check(errs.length === 0, 'furnish: the engine recorded no error', errs.join(' | ').slice(0, 300))
+      p.health('furnish')
+
+      // Reloaded: the loft keeps both pieces, solid, and the view opens on them.
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const back = await walkIn()
+      const again = await p.waitFor(`window.__SIM__.engine.sim.state.physics.colliders === ${base + 2}`, 30_000).then(() => true, () => false)
+      check(back && again, 'furnish: after a reload the loft\'s two pieces are still solid', `${base + 2} expected, ${await colliders()}`)
+      await p.tap('KeyB', 'b', 66)
+      const kept = await p.waitFor(`${at(view)}?.getAttribute('data-placed') === '2'`, 10_000).then(() => true, () => false)
+      check(kept, 'furnish: after a reload the furnishing view has both pieces placed', await p.eval(`${at(view)}?.getAttribute('data-placed') ?? 'no view'`))
+      await p.tap('Escape', 'Escape', 27)
+      await p.waitFor(`!${at('aside[data-home]')}`, 10_000).catch(() => {})
+      p.health('furnish reloaded')
     } finally { await p.b.close() }
   },
 

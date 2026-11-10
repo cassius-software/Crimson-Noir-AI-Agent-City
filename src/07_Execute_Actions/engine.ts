@@ -31,6 +31,8 @@
  * The progression stays the host's too: player 1's own deeds (a car boarded with the door key; the clock, ghost and
  * rain keys) are handed to App through onDeed, and a check App reports back is cued by checkCue as a head-locked chime
  * and, with haptics on, a short tap on the pad or the phone. The engine imports no keeper and keeps no record.
+ * So is the homes' furnishing: App hands in its record and what is owned (setFurnishings); the engine draws it
+ * (homeView.ts), sends the realm only solids that changed, never in a network room, and poses the draft camera.
  * App.tsx owns the requestAnimationFrame loop and calls frame(). Beside that loop, a PerformanceObserver on the
  * browser's `longtask` entries (longTasks.ts) writes one silent console line per main-thread stall over 50 ms,
  * with the heap and the live worker count, so a micro-stutter leaves evidence; where the API is missing it is a no-op.
@@ -42,14 +44,17 @@ import { GRAPHICS_RESET } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
-import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
+import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { doorDir, doorFront, drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { doorDir, doorFront, drawRooms, stationTable, toLocal, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
+import { inMask } from '../02_Define_The_Rules/homeGrid.ts'
+import { cellAt, cellsNear, SHAPE_IDS } from '../02_Define_The_Rules/homeLayout.ts'
+import { freshHomes, HOME_COUNT, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
@@ -83,6 +88,7 @@ import {
 } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { itemById } from './storeCatalog.ts'
+import { furnishEye, homeInstances, homePlaced, homeSolids, type Draft } from './homeView.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -343,6 +349,24 @@ function pageHome(h: Home, address: string, lane: number): PageHome {
   return { ...h, name: itemById(DEED_BASE + h.home)?.name ?? h.kind, address, arrival: doorFront(h, lane) }
 }
 
+/** How far above a home's floor pickCell meets the ray from the draft camera, m: just over the floor finish's top. */
+const PICK_FLOOR = 0.05
+/** How far past a person's radius someone standing in a home keeps a new piece off them (blockedCells), m. */
+const STAND_CLEAR = 0.05
+/** Every deed's bit (one per home) and every furniture line's bit (one per line), for the masks setFurnishings takes. */
+const DEED_BITS = (1 << HOME_COUNT) - 1
+const LINE_BITS = (1 << SHAPE_IDS.length) - 1
+
+/** A furnishing draft as the engine keeps it: a copy, so a card that changes its own object later changes nothing here. */
+const draftCopy = (d: Draft): Draft => ({ home: d.home, cursor: { c: d.cursor.c, r: d.cursor.r }, piece: d.piece && { ...d.piece }, ok: d.ok, view: d.view })
+/** Whether two drafts would draw and pose the same (the same home, cursor, piece in hand, verdict and side). */
+function sameDraft(a: Draft | null, b: Draft | null): boolean {
+  if (a === null || b === null) return a === b
+  const p = a.piece, q = b.piece
+  const piece = p === null || q === null ? p === q : p.id === q.id && p.c === q.c && p.r === q.r && p.rot === q.rot
+  return piece && a.home === b.home && a.cursor.c === b.cursor.c && a.cursor.r === b.cursor.r && a.ok === b.ok && a.view === b.view
+}
+
 /** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
 function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
   if (!b.dirty) return
@@ -590,6 +614,42 @@ export class Engine {
   private drainNext = false
   /** The homes the player owns, one bit per property index (the host's shopkeeper says, through setOwnedHomes). */
   private ownedHomes = 0
+  /**
+   * The homes' furnishing as the host last handed it over (setFurnishings): the saved record (homeStore.ts), the deeds
+   * owned (bit i: deed 224 + i) and the furniture lines owned (bit i: line 160 + i). Nothing furnished and nothing owned
+   * until then, so the default finishes and the show homes draw from the first frame.
+   */
+  private homeRecord: HomeRecord = freshHomes()
+  private homeDeeds = 0
+  private homeLines = 0
+  /**
+   * Per property index, the solids last sent to the realm ('home') as text: '' for none (the realm starts with no set),
+   * null when the realm's copy is not known. A network room refuses the command, even one queued just before the room
+   * began, so joining forgets them all and leaving sends every home afresh.
+   */
+  private readonly homeSent: (string | null)[] = Array.from({ length: HOME_COUNT }, () => '')
+  /** The floor the homes stand on, m: the street's in the city (0), the paved floors' in a region (SURFACE.sidewalk). */
+  private readonly homeBase: number
+  /** The home being furnished (its property index), or null: the card's furnishing view, the draft camera and pickCell. */
+  private furnishHome: number | null = null
+  /**
+   * The look when furnishing began, held every frame while it lasts and given back when it ends: the card's right stick
+   * turns its draft camera, and Input turns the head by the stick even under suspend.
+   */
+  private furnishYaw = 0
+  private furnishPitch = 0
+  /** The card's draft (homeView.ts Draft), drawn and posed only while its home is being furnished; null for none. */
+  private draft: Draft | null = null
+  /**
+   * The draft camera as last drawn, for pickCell: a copy of the camera taken in present() before the head's pose goes
+   * back, with its world transform and inverse projection. Null until the first such draw.
+   */
+  private pickCam: PerspectiveCamera | null = null
+  /** The home whose draft camera pickCam holds, or −1 (furnishing ended or not drawn yet). */
+  private pickHome = -1
+  /** pickCell's points, reused: the draft camera's eye and a point on the ray through the page's point. */
+  private readonly pickEye = new Vector3()
+  private readonly pickAt = new Vector3()
   /** The head's pose while the mirror camera draws a frame (present() alone sees the orbit; the listener keeps the head). */
   private readonly headPos = new Vector3()
   private readonly headRot = new Quaternion()
@@ -826,6 +886,7 @@ export class Engine {
     this.startAt = Object.freeze({ x: p.start.x, z: p.start.z })
     this.shops = p.shops
     this.homes = p.homes
+    this.homeBase = p.places ? SURFACE.sidewalk : 0
     this.streets = p.streets
     this.regionName = p.options.region?.name ?? null
     this.landmarkAt = p.landmark
@@ -930,6 +991,9 @@ export class Engine {
       this.errors.push(`device lost: ${info.message}`)
       this.halt(`${GRAPHICS_RESET} the page's GPU device was lost (${info.reason}): ${info.message || 'no message'}`)
     })
+    // The homes from the first frame, before the host hands over its record and what is owned: every home in its
+    // default finishes with its show home standing, drawn and solid (setFurnishings again once the host calls it).
+    this.setFurnishings(freshHomes(), 0, 0)
   }
 
   static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage) => void = () => {}): Promise<Engine> {
@@ -1012,9 +1076,11 @@ export class Engine {
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
-      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left; the worker
-      // is not told of the homes, whose glass reaches it as the world's boxes (no car fits through a home's planters).
-      // A surveyed region has no window and no lots: its copy is the pack.
+      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left. The homes'
+      // glass reaches the worker as the world's boxes (no car fits through a home's planters); it is handed their lots
+      // only to check each home's furniture against that home's room frame (properties.ts homeFrames, the 'home'
+      // command). In the city the worker builds the frames from the seed itself. A surveyed region has no window and no
+      // lots: its copy is the pack.
       const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
       const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
       const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []
@@ -1047,6 +1113,7 @@ export class Engine {
         ...(lots.length > 0 && { workplaces: lots }),
         ...(craftBoxes && craftBoxes.length > 0 && { craftBoxes }),
         ...(shopLots.length > 0 && { shops: shopLots }),
+        ...(homeLots.length > 0 && { homes: homeLots }),
       })
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
@@ -1540,6 +1607,12 @@ export class Engine {
         // and of anything the player queued before it.
         this.sim.send({ c: 'room', on: true }, true)
         this.netRoom = true
+        // The room's authority knows only the city's own boxes, and the realm switches every home's pieces off: furnishing
+        // ends, the homes are drawn again without pieces (their finishes stay), and the realm's copy of each home's
+        // solids is forgotten, since a 'home' still queued behind the room's start is refused there. Leaving sends them all.
+        this.endFurnish()
+        this.homeSent.fill(null)
+        this.redrawHomes()
         this.netJoin?.resolve(`joined ${this.netUrl ?? 'the room'} as player ${c.id}`)
         this.netJoin = null
         this.toast('Network', `joined as player ${c.id}`)
@@ -1613,8 +1686,12 @@ export class Engine {
 
   /** The session over: no poses drawn or placed, every peer voice let go, a join still waiting told why, the room mode off. */
   private netLetGo(why: string): void {
+    const inRoom = this.netRoom
     if (this.netRoom && !this.halted && !this.disposed) this.sim.send({ c: 'room', on: false }, true)
     this.netRoom = false
+    // Out of the room the homes' pieces come back: drawn again, and every home's solids sent behind the room's end (the
+    // realm keeps a set it already had, so sending it again changes nothing).
+    if (inRoom) { this.redrawHomes(); this.sendHomes() }
     this.netPeers = NO_PEERS
     this.netMove = null
     this.netFix = 0
@@ -1761,8 +1838,12 @@ export class Engine {
    * still: each frame drops every queued action after the poll and zeroes the walk (a pad's edges queue and its stick
    * walks even while the host suspends the game's input). Returns whether it took: only while the avatar stands in that
    * home, on foot, out of a headset (the card would not show there), in a city that runs; closing always takes.
+   * `furnish` asks for the card's furnishing view as well: it begins only where furnishRefusal allows it (the card
+   * stays the deed's otherwise, with the reason), keeps the look's yaw to give back when it ends, and ends with the
+   * card, on a card asked for without it, and as soon as it is refused (frame()).
    */
-  setHomeCard(home: number | null): boolean {
+  setHomeCard(home: number | null, furnish = false): boolean {
+    if (home === null || !furnish || home !== this.furnishHome || this.furnishRefusal(home) !== null) this.endFurnish()
     if (home === null) {
       if (this.homeCard !== null) this.drainNext = true
       this.homeCard = null
@@ -1771,7 +1852,49 @@ export class Engine {
     const st = this.sim.state
     if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
     this.homeCard = home
+    if (furnish && this.furnishHome === null && this.furnishRefusal(home) === null) this.beginFurnish(home)
     return true
+  }
+
+  /**
+   * Why furnishing home `home` (its property index) is refused now, in the words the card shows, or null when it is
+   * allowed. Refused in a network room (its authority replays the player's walk against the city's own boxes and knows
+   * nothing of the furniture), in a headset (the plan is drawn on the page), at the wheel, outside that home, and for a
+   * home whose deed the player does not own (setFurnishings' deeds).
+   */
+  furnishRefusal(home: number): string | null {
+    const st = this.sim.state
+    if (this.halted || this.disposed) return 'The city has stopped'
+    if (this.netRoom) return 'Furnishing waits until you leave the shared room: it replays your walk and does not know your furniture'
+    if (this.rig.headset) return 'Furnishing waits until the headset is off: the plan is drawn on the page'
+    if (st.driving >= 0) return 'Furnishing waits until you step out of the car'
+    if (homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) return 'Furnishing happens inside the home: walk in first'
+    if (((this.homeDeeds >>> home) & 1) !== 1) return 'Only the owner furnishes a home: buy or claim the deed first'
+    return null
+  }
+
+  /** Whether a home is being furnished (setHomeCard with `furnish`, allowed): the draft camera draws and pickCell answers. */
+  get furnishing(): boolean {
+    return this.furnishHome !== null
+  }
+
+  /** Furnishing home `home` begins: the look (yaw and pitch) kept to hold and give back, and the card's draft drawn if it is this home's. */
+  private beginFurnish(home: number): void {
+    this.furnishHome = home
+    this.furnishYaw = this.input.yaw
+    this.furnishPitch = this.input.pitch
+    this.pickHome = -1
+    this.redrawHomes()
+  }
+
+  /** Furnishing ends (nothing to do when it is not on): the look given back, the ghost and the cursor gone, no picking. */
+  private endFurnish(): void {
+    if (this.furnishHome === null) return
+    this.furnishHome = null
+    this.input.yaw = this.furnishYaw
+    this.input.pitch = this.furnishPitch
+    this.pickHome = -1
+    this.redrawHomes()
   }
 
   /** The homes the player owns, one bit per property index (bit i: deed 224 + i), for the HUD and the minimaps. */
@@ -1812,6 +1935,117 @@ export class Engine {
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
+  }
+
+  /**
+   * The homes' furnishing as the host keeps it: the saved record (homeStore.ts), the deeds owned (bit i: deed 224 + i)
+   * and the furniture lines owned (bit i: line 160 + i), as the shopkeeper's furniture and property spaces say. Every
+   * home is drawn again (redrawHomes), and each home whose solids changed is sent to the realm (sendHomes). The host
+   * calls it at boot, on every committed edit and on every change of what is owned; the engine draws the default
+   * finishes and the show homes by itself before then. In a network room nothing is sent: every home is sent once the
+   * room is left.
+   */
+  setFurnishings(record: HomeRecord, deedMask: number, lineMask: number): void {
+    this.homeRecord = record
+    this.homeDeeds = Number.isInteger(deedMask) ? deedMask & DEED_BITS : 0
+    this.homeLines = Number.isInteger(lineMask) ? lineMask & LINE_BITS : 0
+    this.redrawHomes()
+    this.sendHomes()
+  }
+
+  /**
+   * The furnishing card's draft (homeView.ts Draft: the cursor, the piece in hand and whether it fits, the camera's
+   * side), or null for none. While its home is being furnished the homes are drawn again with its ghost (only when the
+   * piece fits) and its cursor marker, and present() poses the draft camera on its cursor from its side. A draft that
+   * would draw and pose the same as the last is not drawn again (the card may send one on every pointer move).
+   */
+  setHomeDraft(draft: Draft | null): void {
+    if (sameDraft(this.draft, draft)) return
+    this.draft = draft && draftCopy(draft)
+    if (this.furnishHome !== null) this.redrawHomes()
+  }
+
+  /**
+   * The cells of home `home`'s floor plan someone stands on or near (canPlace's `blocked`, homeLayout.ts cellsNear):
+   * every local avatar on foot inside that home, out to a person's radius and STAND_CLEAR more. None for a home that is
+   * not in this map.
+   */
+  blockedCells(home: number): Uint8Array {
+    const h = this.homes.find((x) => x.home === home)
+    const st = this.sim.state
+    const people: { u: number; v: number }[] = []
+    if (h) {
+      for (let k = 0; k < st.avatars.length; k++) {
+        const a = st.avatars[k]
+        if ((st.drivings[k] ?? -1) < 0 && homeAt(this.homes, a.x, a.z) === home) people.push(toLocal(h, a.x, a.z))
+      }
+    }
+    return cellsNear(people, PERSON.radius + STAND_CLEAR)
+  }
+
+  /**
+   * The cell of the home being furnished under a point of the page (clientX, clientY, CSS pixels, as a pointer event
+   * gives them), or null: not furnishing, the draft camera not drawn yet, off player 1's view, a ray that never comes
+   * down to the floor, or a cell outside the home's floor plan. The point is taken back through the draft camera as it
+   * was last drawn (present() keeps a copy), met with the plane PICK_FLOOR over the home's floor and turned into the
+   * room frame.
+   */
+  pickCell(clientX: number, clientY: number): { c: number; r: number } | null {
+    const home = this.furnishHome, cam = this.pickCam
+    const h = home === null ? undefined : this.homes.find((x) => x.home === home)
+    if (home === null || !h || !cam || this.pickHome !== home || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null
+    // Player 1's view: the whole canvas alone (its rect is only cut again for a split screen), else its own rect.
+    const b = this.canvas.getBoundingClientRect(), cw = this.canvas.clientWidth, ch = this.canvas.clientHeight
+    const view = this.views.length > 1 ? this.views[0].rect : { x: 0, y: 0, width: cw, height: ch }
+    if (!(b.width > 0 && b.height > 0 && view.width > 0 && view.height > 0)) return null
+    // The point in the canvas's own pixels (whatever CSS scales the element by), then in player 1's view.
+    const px = ((clientX - b.left) * cw) / b.width - view.x
+    const py = ((clientY - b.top) * ch) / b.height - view.y
+    if (!(px >= 0 && px <= view.width && py >= 0 && py <= view.height)) return null
+    // The eye, and a point of the ray at a depth inside the frustum (which way the depth buffer runs does not matter).
+    const eye = cam.getWorldPosition(this.pickEye)
+    const d = this.pickAt.set((px / view.width) * 2 - 1, 1 - (py / view.height) * 2, 0.5).unproject(cam).sub(eye)
+    const y = this.homeBase + PICK_FLOOR
+    if (!(d.y < 0 && eye.y > y)) return null
+    const t = (y - eye.y) / d.y
+    const at = toLocal(h, eye.x + d.x * t, eye.z + d.z * t)
+    const cell = cellAt(at.u, at.v)
+    return cell && inMask(home, cell.c, cell.r) ? cell : null
+  }
+
+  /** The draft camera while a home is being furnished: homeView.ts furnishEye on the draft's cursor from its side; else null. */
+  private furnishView(): ReturnType<typeof furnishEye> | null {
+    const d = this.draft, home = this.furnishHome
+    if (home === null || !d || d.home !== home) return null
+    const h = this.homes.find((x) => x.home === home)
+    return h ? furnishEye(h, d.cursor, d.view) : null
+  }
+
+  /**
+   * Every home drawn again (World.setHomes, homeView.ts homeInstances): its finishes always, so a home never shows the
+   * street's ground; its pieces, or its show home while its deed is unowned, except in a network room, whose realm
+   * keeps every piece off; then the draft's ghost and cursor while its home is being furnished.
+   */
+  private redrawHomes(): void {
+    if (this.disposed) return
+    const d = this.draft, draft = d && this.furnishHome !== null && d.home === this.furnishHome ? d : null
+    this.world.setHomes(homeInstances(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, { room: this.netRoom, base: this.homeBase, draft }))
+  }
+
+  /**
+   * Each home's solids (homeView.ts homeSolids of the pieces drawn: homePlaced) to the realm as the 'home' command,
+   * only when they differ from what was last sent, so at most one command per home. Never in a network room, whose
+   * realm refuses the command (every home is sent again once it is left), and never once the city has stopped.
+   */
+  private sendHomes(): void {
+    if (this.netRoom || this.halted || this.disposed) return
+    for (const h of this.homes) {
+      const boxes = homeSolids(h, homePlaced(h.home, this.homeRecord, this.homeDeeds, this.homeLines))
+      const key = boxes.join(' ')
+      if (this.homeSent[h.home] === key) continue
+      this.homeSent[h.home] = key
+      this.sim.send({ c: 'home', index: h.home, boxes })
+    }
   }
 
   /**
@@ -2183,6 +2417,10 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
+    // While a home is furnished the card's right stick turns its draft camera, and the head the poll just turned by
+    // that stick (Input reads the look even under suspend) is held where it was: the player's figure does not turn in
+    // the draft, and no tilt is left over when the card closes.
+    if (this.furnishHome !== null) { input.yaw = this.furnishYaw; input.pitch = this.furnishPitch }
 
     // Player 1's own deeds earn here, once per press: the door key is stamped for the boarding received() pays, and
     // the clock, ghost and rain keys earn Optics and cinema. The setters behind them stay silent, because the console,
@@ -2294,6 +2532,8 @@ export class Engine {
     // the hold ends here and the host puts the card away at its next look.
     this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
     if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null
+    // Furnishing ends with its card, and as soon as it is refused (a network room, a headset, the deed gone).
+    if (this.furnishHome !== null && (this.homeCard !== this.furnishHome || this.furnishRefusal(this.furnishHome) !== null)) this.endFurnish()
     // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
     this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
@@ -2341,8 +2581,9 @@ export class Engine {
     // The mirror camera (a shop's catalogue open): for this draw alone the eye leaves the head and circles the body,
     // whose own figure shows once the camera is past crowd.ts OWN_BODY.radius. Its matrices are refreshed before the
     // cull, the sun shafts and the cinema camera's motion read them, and the head's pose is put back after the draw,
-    // so the listener, the gaze and the ping keep the head.
-    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle)
+    // so the listener, the gaze and the ping keep the head. The draft camera (a home being furnished: furnishView) is
+    // posed the same way, looking down at the draft's cursor from the side the card asks for.
+    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle) || this.furnishView()
     if (mirror) {
       this.headPos.copy(cam.position)
       this.headRot.copy(cam.quaternion)
@@ -2401,6 +2642,11 @@ export class Engine {
     if (post) this.post.render()
     else this.gpu.renderer.render(this.world.scene, cam)
     if (mirror) {
+      // The draft camera as drawn, for pickCell: its world transform and inverse projection, before the head goes back.
+      if (!this.showroom && this.furnishHome !== null) {
+        this.pickCam = (this.pickCam ?? cam.clone()).copy(cam, false)
+        this.pickHome = this.furnishHome
+      }
       cam.position.copy(this.headPos)
       cam.quaternion.copy(this.headRot)
       cam.updateMatrixWorld()
