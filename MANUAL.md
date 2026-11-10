@@ -2118,15 +2118,19 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     - split, all on the processor, slower than that, or split when its first wait runs out: back to 8,192 for the rest
       of the visit; nothing loaded after two first waits ran out there: back too;
     - refused by Ollama before any of it arrives: back, and the same ask is answered once more at 8,192. That is the
-      ask's one retry: the moved model's retry above and a new look do not follow it;
+      ask's one retry: the moved model's retry above and a new look do not follow it. A settings change while that
+      answer runs drops its measurement, and one before the refusal means no retry;
+    - failing in Ollama after some of the answer arrived: back, and that failure is the ask's (the text already shown
+      is never written again);
     - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
       uses that one when it is above 8,192 (12,288 gives answers of up to 3,072, measured at its next answer), else
       stays at 8,192, and either way it does not grow again.
 
     None of this sets a model aside or counts toward the two visits, and only measurements at 8,192 are kept, so the
-    model auto chooses is the same as without it. Nothing of the context is kept between visits, and `ask vram`
-    starts it over. The client takes at most 32,768 tokens and 8,192 of answer; with one doubling a visit, auto asks
-    at most 16,384 and 4,096 in this build.
+    model auto chooses is the same as without it. A model whose larger context went back does not grow again that
+    visit, and a measurement of an answer sent at an older context says nothing of the one in use. Nothing of the
+    context is kept between visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192
+    of answer; with one doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
   back); another provider. Nor a context above 32,768 or more than one step a visit, and no larger context for the
@@ -2157,9 +2161,11 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
   auto`, the operator's own model, the paths asked, what is kept; and for the context: the growth and its one step,
   the room exactly at the budget and a byte over, a split, the processor, the pace of 4.99 and 5.00, a refusal and its
-  one retry, the trained context, the first waits, `ask vram`, a settings change, the model settled first, the same
-  model and the same kept measurements with and without growth, and today's requests byte for byte with no figure, in
-  the chat format, for your own model and under `ask provider ollama`), the readers
+  one retry measured at 8,192, a failure partway with none, the trained context, the first waits, `ask vram`, a
+  settings change before and during the retry, an answer from an older context landing late, the model settled
+  first, the same model and the same kept measurements with and without growth, today's requests byte for byte with
+  no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context back once
+  auto is the provider again), the readers
   (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
   4 GB card at DXGI's lower reading),

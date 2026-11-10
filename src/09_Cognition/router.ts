@@ -607,10 +607,13 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const n = widen({ reason: a.reason, tokens: a.tokens, pace: a.pace ?? null, ctx: sent.ctx, placed: placements.get(measuredKey(sent)) ?? null, weights: bytesOf(sent.model), figure: f, grown: wide.has(k) })
     if (n !== null) wide.set(k, { state: 'grown', from: sent.ctx, ctx: n, tried: n })
   }
-  /** A grown context goes back to the one it grew from for the rest of this visit (R5), and why. */
+  /**
+   * A grown context goes back to the one it grew from for the rest of this visit (R5), and why: only while it is the
+   * context `sent` was sent at (an answer from an older one says nothing of it).
+   */
   const back = (sent: Sent, why: Back): void => {
     const k = keyOf(sent.server, sent.model); const w = wide.get(k)
-    if (w !== undefined && w.state !== 'back') wide.set(k, { state: 'back', from: w.from, ctx: w.from, tried: sent.ctx, why, ...(w.trained !== undefined && { trained: w.trained }) })
+    if (w !== undefined && w.state !== 'back' && w.ctx === sent.ctx) wide.set(k, { state: 'back', from: w.from, ctx: w.from, tried: sent.ctx, why, ...(w.trained !== undefined && { trained: w.trained }) })
   }
   /**
    * R5: the measurement of an answer at a grown context: modelFit.ts contextVerdict says whether it stays, takes the
@@ -663,7 +666,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * With a GPU figure, Ollama's model is chosen again from the list kept before it is sent, the answer is measured
    * after (R3), and a model auto moved to that Ollama will not load is set aside and the same ask answered once more
    * by the next one (R8). A grown context Ollama will not load goes back, and the same ask is answered once more at the
-   * context it grew from (R5): that, not R8 or a look, is the ask's one retry.
+   * context it grew from (R5): that, not R8 or a look, is the ask's one retry. One that fails after some of the answer
+   * arrived goes back too, with no retry (the text shown would be written twice).
    */
   const autoAnswer = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
     await settled(req.signal)
@@ -691,12 +695,16 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return a
     } catch (e) {
       if (sent && !req.signal.aborted && e instanceof CognitionError && e.code === 'timeout') after(sent, null, arrived ? 'stall' : 'cold')
-      if (sent && sent.ctx !== CONTEXT_TOKENS && sent.gen === generation && !arrived && !req.signal.aborted && e instanceof CognitionError && e.code === 'server') {
-        // R5: once, at the context it grew from, and that answer is measured as any other.
+      if (sent && sent.ctx !== CONTEXT_TOKENS && sent.gen === generation && !req.signal.aborted && e instanceof CognitionError && e.code === 'server') {
+        // R5: some of the answer was shown: back for the visit, and the failure is the ask's (no retry, no R8, no look).
+        if (arrived) { back(sent, 'partway'); throw e }
+        // Once, at the context it grew from, and that answer is measured as any other: what it is sent with is taken
+        // before it is sent, so a settings change while it runs drops its measurement.
         back(sent, 'load')
-        const a = await ollama.answer(req, onPiece)
         const again = ollama.settings()
-        if (again.model !== null) after({ server: again.server, model: again.model, gen: generation, ctx: contextFor(again.model) }, a, null)
+        const retry: Sent | null = again.model !== null ? { server: again.server, model: again.model, gen: sent.gen, ctx: contextFor(again.model) } : null
+        const a = await ollama.answer(req, onPiece)
+        if (retry) after(retry, a, null)
         return a
       }
       if (sent && !arrived && !req.signal.aborted && e instanceof CognitionError && e.code === 'server' && moved() && unchosen()) {
@@ -704,9 +712,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         const n = listedHere()?.map((x) => x.name); if (n) repick(n)
         const again = ollama.settings()
         if (again.model !== null && again.model !== sent.model) {
-          // R8: once, and that answer is measured too.
+          // R8: once, and that answer is measured too (unless the settings change while it runs).
+          const retry: Sent = { server: again.server, model: again.model, gen: generation, ctx: contextFor(again.model) }
           const a = await ollama.answer(req, onPiece)
-          after({ server: again.server, model: again.model, gen: generation, ctx: contextFor(again.model) }, a, null)
+          after(retry, a, null)
           return a
         }
       }

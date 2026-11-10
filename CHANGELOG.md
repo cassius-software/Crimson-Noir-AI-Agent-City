@@ -1180,19 +1180,6 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
   when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
   real GPU is untried.
-- **Ollama's context and answer length grow on measurement, for the visit.** Under `auto` with the GPUs' memory given
-  and Ollama in the generate format, an answer cut at its 2,048-token limit on a model auto chose, measured all on
-  the GPU at 8,192 tokens of context (Ollama's own `context_length`, v0.10.0 and later), fast enough to write the
-  longer answer in 5 minutes, and with room under the figure less 2 GB, doubles that model's context once, to
-  16,384, with answers of up to a quarter of it (4,096). The first answer there is measured (one more `GET /api/ps`):
-  split, all on the processor, slower than 5 tokens a second, or refused by Ollama goes back to 8,192 for the visit
-  (a refusal answers the same ask once more at 8,192, its one retry), and a smaller context Ollama reports (the one
-  it was trained on) is used when above 8,192. It never sets a model aside, and only measurements at 8,192 are kept,
-  so the model chosen is unchanged; nothing of it is kept between visits, and `ask vram` starts it over. The `fit`
-  row gains a clause once a context grew. Without a figure, in the chat format, for the operator's own model and
-  under `ask provider ollama`, every request is today's, byte for byte. The quarter, 32,768 at most, one doubling a
-  visit, the 1 GB least cost and the 5 minutes are starting values. CI proves it in Node against a fake Ollama (every
-  boundary one step either side, mutation-checked); no real GPU or real Ollama ran it.
 
 ### Changed
 
@@ -1324,6 +1311,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   mode is not seen (type `ask vram` there). CI proves the page's side in Node (the rule, the order of figures, a fake
   shell that answers oddly, refuses or hangs, and the launcher's sum and rounding) and compiles the app on Windows; no
   Windows machine ran it.
+- **Ollama's context and answer length grow on measurement, for the visit.** Under `auto` with the GPUs' memory given
+  and Ollama in the generate format, an answer cut at its 2,048-token limit on a model auto chose, measured all on
+  the GPU at 8,192 tokens of context (Ollama's own `context_length`, v0.10.0 and later), fast enough to write the
+  longer answer in 5 minutes, and with room under the figure less 2 GB, doubles that model's context once, to
+  16,384, with answers of up to a quarter of it (4,096). The first answer there is measured (one more `GET /api/ps`):
+  split, all on the processor, slower than 5 tokens a second, refused by Ollama, or failing in Ollama after some of
+  the answer arrived goes back to 8,192 for the visit and does not grow again (a refusal before any of the answer
+  answers the same ask once more at 8,192, its one retry; a failure partway is not answered again, since its text was
+  shown), and a smaller context Ollama reports (the one it was trained on) is used when above 8,192. It never sets a
+  model aside, and only measurements at 8,192 are kept, so the model chosen is unchanged; nothing of it is kept
+  between visits, and `ask vram` starts it over. The `fit` row gains a clause once a context grew. Without a figure,
+  in the chat format, for the operator's own model and under `ask provider ollama`, every request is today's, byte
+  for byte. The quarter, 32,768 at most, one doubling a visit, the 1 GB least cost and the 5 minutes are starting
+  values. CI proves it in Node against a fake Ollama; its boundaries were mutation-checked by hand (CI runs no
+  mutation check). No real GPU or real Ollama ran it.
 
 ### Removed
 

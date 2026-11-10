@@ -396,7 +396,7 @@ test('answerTokensFor: a quarter of the context, never below 2,048; 8,192 still 
 test('widen: a cut answer, counted and quick enough, on a model measured all on the GPU at the context Ollama said, with room, grows once to twice its context; each boundary one step either side', () => {
   // 10 GB loaded at 8,192 for 8 GB of weights: doubling costs 2 GB; the figure of 24 leaves 22 GiB.
   const placed: Placement = { loaded: 10e9, gpu: 10e9, ctx: 8192 }
-  const base = { reason: 'length', tokens: 2048, pace: 41.2, ctx: 8192, placed, weights: 8e9, figure: ASK(24), grown: false }
+  const base: Parameters<typeof widen>[0] = { reason: 'length', tokens: 2048, pace: 41.2, ctx: 8192, placed, weights: 8e9, figure: ASK(24), grown: false }
   const at = (over: Partial<typeof base>): number | null => widen({ ...base, ...over })
   assert.equal(at({}), 16384)
   assert.equal(ANSWER_WAIT_S, FIRST_PIECE_MS / 1000)
@@ -498,6 +498,8 @@ test('fitLine: the context clause, once something grew or was learned; with none
       '16,384 tokens of context was too slow here, so qwen3:14b stays at 8,192 for this visit'],
     ['back: refused', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'load' },
       '16,384 tokens of context would not load in Ollama, so qwen3:14b stays at 8,192 for this visit'],
+    ['back: failed partway through an answer', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'partway' },
+      '16,384 tokens of context failed partway through an answer in Ollama, so qwen3:14b stays at 8,192 for this visit'],
     ['back from the trained context', { state: 'back', from: 8192, ctx: 8192, tried: 12288, why: 'split', trained: 12288 },
       '12,288 tokens of context did not fit the GPU (some of it ran on the processor), so qwen3:14b stays at 8,192 for this visit'],
   ]

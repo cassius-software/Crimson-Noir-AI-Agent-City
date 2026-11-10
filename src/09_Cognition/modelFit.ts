@@ -18,8 +18,9 @@
  * a model measured all on the GPU at the context it was sent (Ollama's own context_length), fast enough to write the
  * longer answer within FIRST_PIECE_MS, with room under the figure less RESERVE_BYTES, the context doubles once (widen,
  * at most CONTEXT_MAX) and the answer cap with it (answerTokensFor); the first answer at the larger context is measured,
- * and one split, slow, on the processor or refused goes back for the rest of the visit (contextVerdict). A context
- * verdict never sets a model aside, and only measurements at CONTEXT_TOKENS are kept as Seen, so choose is unchanged.
+ * and one split, slow, on the processor (contextVerdict), refused or failing partway (the router's) goes back for the
+ * rest of the visit. A context verdict never sets a model aside, and only measurements at CONTEXT_TOKENS are kept as
+ * Seen, so choose is unchanged.
  * Every number marked a starting value is a guess the MANUAL names as one; none is from a real big GPU. Everything here
  * is a pure function of what it is given: the router (router.ts) asks the server and keeps what was measured.
  */
@@ -218,15 +219,18 @@ export function widen(i: { reason: string; tokens: number; pace: number | null; 
   return p.loaded + Math.max(p.loaded - i.weights, WIDEN_FLOOR_BYTES) <= budgetOf(i.figure) ? n : null
 }
 
-/** Why a larger context went back to the one it grew from: split, all on the processor, too slow, or refused by Ollama. */
-export type Back = 'split' | 'cpu' | 'slow' | 'load'
+/**
+ * Why a larger context went back to the one it grew from: split, all on the processor, too slow, refused by Ollama, or
+ * failed in Ollama after some of an answer arrived.
+ */
+export type Back = 'split' | 'cpu' | 'slow' | 'load' | 'partway'
 /**
  * What the first measured answer at a grown context `ctx` (grown from `from`) says (R5): good (keep it); trained (Ollama
  * ran it at its trained context, `placed.ctx`, below `ctx`: `ctx` becomes that when it is above `from`, else `from`, and
  * nothing grows again); or back to `from` and why. Null when it says nothing: not loaded, or a first wait that ran out
  * (the model may still be loading) with the model not split.
  */
-export type ContextVerdict = { readonly kind: 'good' } | { readonly kind: 'trained'; readonly trained: number; readonly ctx: number } | { readonly kind: 'back'; readonly why: Exclude<Back, 'load'> }
+export type ContextVerdict = { readonly kind: 'good' } | { readonly kind: 'trained'; readonly trained: number; readonly ctx: number } | { readonly kind: 'back'; readonly why: Exclude<Back, 'load' | 'partway'> }
 export function contextVerdict(i: { placed: Placement | null; from: number; ctx: number; slow: boolean; cold: boolean }): ContextVerdict | null {
   const p = i.placed
   if (p === null) return null
@@ -276,7 +280,7 @@ function contextLine(w: Wide & { readonly model: string }): string {
   const measuredAt = w.loaded !== undefined ? ` (measured ${gbText(w.loaded)} loaded at that context, all on the GPU)` : ''
   if (w.state === 'back') {
     if (w.why === 'trained') return `${w.model} was trained on ${at(w.trained ?? w.from)}, so it stays at ${n(w.from)} for this visit`
-    const why = w.why === 'split' ? 'did not fit the GPU (some of it ran on the processor)' : w.why === 'cpu' ? 'did not fit the GPU (all of it ran on the processor)' : w.why === 'slow' ? 'was too slow here' : 'would not load in Ollama'
+    const why = w.why === 'split' ? 'did not fit the GPU (some of it ran on the processor)' : w.why === 'cpu' ? 'did not fit the GPU (all of it ran on the processor)' : w.why === 'slow' ? 'was too slow here' : w.why === 'partway' ? 'failed partway through an answer in Ollama' : 'would not load in Ollama'
     return `${at(w.tried)} ${why}, so ${w.model} stays at ${n(w.from)} for this visit`
   }
   if (w.trained !== undefined) return `${w.model} was trained on ${at(w.trained)}, so it runs at that with answers of up to ${n(answerTokensFor(w.ctx))}${measuredAt}`

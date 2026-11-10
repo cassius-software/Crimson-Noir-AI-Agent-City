@@ -9,10 +9,11 @@
  * kept across visits are undone by ask vram; a measurement that lands after a settings change is dropped; the
  * operator's own model is measured and never replaced; and every request stays on Ollama's own paths on this machine.
  * Ollama's context and answer cap double once a visit after a cut answer on a settled model measured all on the GPU,
- * with room; the first answer there is measured and goes back when split, slow, on the processor or refused (that ask
- * answered once more at 8,192, once); the trained context Ollama reports is taken; Seen and the model chosen are the
- * same as without growth; and without a figure, in the chat format, for the operator's model and under ask provider
- * ollama every body is today's, byte for byte.
+ * with room; the first answer there is measured and goes back when split, slow, on the processor, refused (that ask
+ * answered once more at 8,192, once, and measured there) or failed partway (not answered again); the trained context
+ * Ollama reports is taken; a verdict on an older context is ignored; Seen and the model chosen are the same as without
+ * growth; and without a figure, in the chat format, for the operator's model and under ask provider ollama every body
+ * is today's, byte for byte.
  * What breaks if it is removed? A change to the router could grow the model on a machine that gave no figure, keep a
  * model that does not fit, ask Ollama for a context that does not fit, or ask something off this machine, and nothing
  * in CI would say so.
@@ -53,10 +54,11 @@ interface Call { readonly url: string; readonly mode?: string; readonly model?: 
  * A fake machine: Ollama on :11434 (its list with sizes and capabilities, /api/generate, /api/ps, /api/version, and
  * the chat format), nothing listening on any other port (:8080, :1234, :8089). Every request is noted. `hold` keeps
  * /api/ps waiting; `psFails` makes the next /api/ps requests answer 500; `psHang` makes /api/ps never answer (until
- * the request is cut off); `down` takes Ollama away.
+ * the request is cut off); `down` takes Ollama away. Each /api/generate takes the next entry of `holds` (none left, or
+ * null: it answers at once) and answers, as `writes` then says, only once that resolves.
  */
 function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Record<string, Writes> }) {
-  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean; psFails: number; psHang: boolean; ctx: Record<string, number> } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false, psFails: 0, psHang: false, ctx: {} }
+  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean; psFails: number; psHang: boolean; ctx: Record<string, number>; holds: (Promise<void> | null)[] } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false, psFails: 0, psHang: false, ctx: {}, holds: [] }
   const calls: Call[] = []
   const generate = (model: string, signal: AbortSignal | undefined, numCtx: number): Promise<Response> | Response => {
     const w = state.writes[model] ?? {}
@@ -125,7 +127,11 @@ function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Re
         }),
       })
     }
-    if (u.pathname === '/api/generate') return generate(body?.model ?? '', signal, body?.options?.num_ctx ?? 0)
+    if (u.pathname === '/api/generate') {
+      const held = state.holds.shift()
+      if (held) await held
+      return generate(body?.model ?? '', signal, body?.options?.num_ctx ?? 0)
+    }
     if (u.pathname === '/v1/models') return json({ data: state.models.map((m) => ({ id: m.name })) })
     if (u.pathname === '/v1/chat/completions') {
       return new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(sse({ choices: [{ delta: { content: 'chat says hi' } }] }, { choices: [{ delta: {}, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n')); c.close() } }), { status: 200, headers: { 'content-type': 'text/event-stream' } })
@@ -1228,4 +1234,216 @@ test('the model is settled first: a cut answer whose measurement steps up to a b
   await measured(m, 2)
   assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'the 14b was too slow: back to the 4b')
   assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048'])
+})
+
+/** A promise and the call that resolves it: a /api/generate held (machine `holds`) until the test lets it answer. */
+const latch = (): { held: Promise<void>; open: () => void } => {
+  let open = (): void => {}
+  const held = new Promise<void>((done) => { open = done })
+  return { held, open }
+}
+
+test('a larger context that fails after some of its answer arrived goes back for the visit with no retry: the text shown is never written twice', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  m.state.writes[DEFAULT_MODEL] = 'broke'
+  const pieces: string[] = []
+  await assert.rejects(r.answer(req(), (p) => { pieces.push(p.text) }), (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.deepEqual(pieces, [`${DEFAULT_MODEL} says hi`], 'shown once')
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'], 'one answer in that ask: no retry')
+  await settle()
+  assert.equal(r.settings().fit, `${ROW}; 16,384 tokens of context failed partway through an answer in Ollama, so qwen3-vl:4b stays at 8,192 for this visit`)
+  m.state.writes[DEFAULT_MODEL] = CUT
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'the model was not set aside')
+  await settle()
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '8192/2048'], 'back, and not grown again this visit')
+  assert.equal(looks(m), 1, 'nothing more to measure')
+})
+
+test('the same ask answered once more at 8,192 is measured there, under the model it was sent to; a settings change while it runs drops that measurement', async () => {
+  // Refused at 16,384; the answer at 8,192 is slow (2 tokens a second), so it is measured though 8,192 was.
+  const m = ONE()
+  const store = memory()
+  const r = make(m, { vram: '24', store })
+  await ask(r)
+  await measured(m, 1)
+  m.state.writes[DEFAULT_MODEL] = { ...SLOW, refuseAbove: 8192 }
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 2)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048'])
+  assert.deepEqual(fitOf(store)?.seen.map((s) => [s.model, s.pace]), [[DEFAULT_MODEL, 2]], 'measured at 8,192, so kept as Seen, with its own pace')
+  // The operator chooses another model while the answer at 8,192 runs: its measurement is dropped, not taken as
+  // gemma3:1b's placement at qwen3-vl:4b's pace.
+  const x = ONE()
+  x.state.ps['gemma3:1b'] = { size: 1.5e9, vram: 1.5e9 }
+  const kept = memory()
+  const y = make(x, { vram: '24', store: kept })
+  await ask(y)
+  await measured(x, 1)
+  x.state.writes[DEFAULT_MODEL] = { ...SLOW, refuseAbove: 8192 }
+  const { held, open } = latch()
+  x.state.holds = [null, held]
+  const asked = ask(y)
+  await until(() => bodies(x).length === 3)
+  y.setModel('gemma3:1b')
+  open()
+  assert.equal(await asked, `${DEFAULT_MODEL} says hi`)
+  await settle()
+  assert.equal(looks(x), 1, 'not measured')
+  assert.deepEqual(fitOf(kept)?.seen.map((s) => [s.model, s.pace]), [[DEFAULT_MODEL, 40.96]])
+})
+
+test('a settings change while the larger context is refused: no retry, the refusal is the answer', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  m.state.writes[DEFAULT_MODEL] = { ...CUT, refuseAbove: 8192 }
+  const { held, open } = latch()
+  m.state.holds = [held]
+  const asked = ask(r)
+  await until(() => bodies(m).length === 2)
+  r.setApi?.('generate')
+  open()
+  await assert.rejects(asked, (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096'])
+})
+
+test('the answer R8 gives once more: a settings change while it runs drops its measurement', async () => {
+  const m = machine({ models: [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)], ps: { 'qwen3:8b': { size: 6e9, vram: 6e9 } }, writes: { 'qwen3:235b': 500, 'qwen3:8b': QUICK } })
+  const store = memory()
+  const r = make(m, { vram: '318.5', store })
+  const { held, open } = latch()
+  m.state.holds = [null, held]
+  const asked = ask(r)
+  await until(() => sent(m).length === 2)
+  r.setApi?.('generate')
+  open()
+  assert.equal(await asked, 'qwen3:8b says hi')
+  await settle()
+  assert.equal(looks(m), 0)
+  assert.deepEqual(fitOf(store)?.seen, [])
+})
+
+test("grown, then ask provider ollama: today's body byte for byte; back under auto, the grown context", async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  r.setProvider('ollama')
+  await ask(r)
+  r.setProvider('auto')
+  await ask(r)
+  const gen = m.calls.filter((c) => c.url.endsWith('/api/generate'))
+  assert.ok(gen[1].body?.endsWith(TODAY), gen[1].body?.slice(-60))
+  assert.equal(gen[1].body, gen[0].body, 'byte for byte the body sent before it grew')
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096'])
+})
+
+test("a cut answer on the operator's own model grows nothing that ask model auto then uses", async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await r.installed()
+  r.setModel(DEFAULT_MODEL)
+  await ask(r)
+  await measured(m, 1)
+  assert.equal(r.setModel('auto'), `auto: auto chooses the Ollama model again (${DEFAULT_MODEL} now)`)
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048'])
+})
+
+test('ask vram forgets what was measured at each context and a trained context learned: a cut answer after it grows only on a fresh measurement', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  await ask(r)
+  await measured(m, 2)
+  r.setVram('24')
+  // The measurement after the next answer fails: nothing measured at 8,192 since ask vram, so nothing grows.
+  m.state.psFails = 1
+  await ask(r)
+  await measured(m, 3)
+  await ask(r)
+  await measured(m, 4)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '8192/2048', '16384/4096'], 'grown again once measured afresh')
+  // A trained context learned (12,288) is forgotten too.
+  const t = ONE(CUT, { trained: 12288 })
+  const x = make(t, { vram: '24' })
+  await ask(x)
+  await measured(t, 1)
+  await ask(x)
+  await measured(t, 2)
+  assert.match(x.settings().fit ?? '', /was trained on 12,288 tokens of context/)
+  x.setVram('24')
+  assert.doesNotMatch(x.settings().fit ?? '', /tokens of context/)
+  await ask(x)
+  assert.deepEqual(bodies(t), ['8192/2048', '16384/4096', '8192/2048'])
+})
+
+test('ask vram gives a larger context one more chance again after a first wait with nothing loaded', async () => {
+  const placed: Placed = { size: 5e6, vram: 1e9, kv: 1e6 }
+  const m = machine({ models: [L(DEFAULT_MODEL, 4e6)], ps: { [DEFAULT_MODEL]: placed }, writes: { [DEFAULT_MODEL]: CUT } })
+  const r = make(m, { vram: '3.1' })
+  const nothingLoaded = async (n: number): Promise<void> => {
+    delete m.state.ps[DEFAULT_MODEL]
+    m.state.writes[DEFAULT_MODEL] = 'hang'
+    await assert.rejects(ask(r), timedOut)
+    await measured(m, n)
+  }
+  await ask(r)
+  await measured(m, 1)
+  await nothingLoaded(2)
+  assert.match(r.settings().fit ?? '', /gets 16,384 tokens of context/, 'one more chance')
+  r.setVram('3.1')
+  m.state.ps[DEFAULT_MODEL] = placed
+  m.state.writes[DEFAULT_MODEL] = CUT
+  await ask(r)
+  await measured(m, 3)
+  await nothingLoaded(4)
+  assert.match(r.settings().fit ?? '', /gets 16,384 tokens of context/, 'one more chance again, as at the start of the visit')
+  await nothingLoaded(5)
+  assert.match(r.settings().fit ?? '', /; 16,384 tokens of context would not load in Ollama, so qwen3-vl:4b stays at 8,192 for this visit$/)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '16384/4096', '16384/4096'])
+})
+
+test('a verdict on an answer sent at an older context is ignored: asks at once, one measured, one failed partway', async () => {
+  const m = ONE(CUT, { trained: 12288 })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  // Two asks at 16,384 held while a third at 16,384 learns the trained context and a fourth is measured good there.
+  const one = latch(); const two = latch()
+  m.state.holds = [one.held, two.held]
+  const quick = ask(r)
+  await until(() => bodies(m).length === 2)
+  const broke = ask(r)
+  await until(() => bodies(m).length === 3)
+  await ask(r)
+  await measured(m, 2)
+  await ask(r)
+  await measured(m, 3)
+  const good = `${ROW}; qwen3-vl:4b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072 (measured 5.1 GB loaded at that context, all on the GPU)`
+  assert.equal(r.settings().fit, good)
+  // The first held answer lands and is measured: at 16,384 it says nothing of 12,288.
+  one.open()
+  await quick
+  await measured(m, 4)
+  assert.equal(r.settings().fit, good, 'a measurement of 16,384')
+  // The second fails after its first piece: nor does that.
+  m.state.writes[DEFAULT_MODEL] = 'broke'
+  two.open()
+  await assert.rejects(broke, (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  await settle()
+  assert.equal(r.settings().fit, good, 'a failure at 16,384')
+  m.state.writes[DEFAULT_MODEL] = CUT
+  await ask(r)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096', '16384/4096', '12288/3072', '12288/3072'])
+  assert.equal(looks(m), 4)
 })
