@@ -20,7 +20,7 @@ import type { CarBodyState } from './simProtocol.ts'
 import { RAPIER, type Physics } from './physics.ts'
 import { CAR, CAR_TUNE_RANGE, clampTuning, RIDE_HEIGHT, type CarTuning, type DriveMode } from './car.ts'
 import {
-  ackermann, buildCarRig, carState, carSubstep, clampSpeed, forwardSpeedOf, headingOf, NOT_PEOPLE, planFleet, rebuildCarRig, yawQuat, type CarRig,
+  ackermann, buildCarRig, carState, carSubstep, clampSpeed, forwardSpeedOf, headingOf, NOT_PEOPLE, planFleet, rebuildCarRig, yawQuat, type CarRig, type FleetBays,
 } from './carRig.ts'
 import { MODES, POSE } from './simProtocol.ts'
 import type { VehicleFootprint } from './sanctuary.ts'
@@ -44,8 +44,8 @@ const AT_REST = 0.05
 const HOLD_CLEAR = KERNEL.standoff + 0.5
 /** Reach of the bonnet obstacle rays, m. */
 const GAP_RANGE = 22
-/** A parked car this far (lateral, m) off its ring or nearer counts in the ring's order; further, it stands elsewhere. */
-const ON_LANE = 3
+/** A parked car this far (lateral, m) off its ring or nearer counts in the ring's order; further, it stands elsewhere (a bay, parking.ts). */
+export const ON_LANE = 3
 /**
  * Seconds a track follower stands queued right behind a parked car on its ring before it drives on through it. A car the
  * player leaves on a lane is held there (in a network room the room holds it where it was left), and chassis never pair
@@ -61,6 +61,11 @@ export interface Vehicle {
   readonly index: number
   driver: DriverLike
   mode: DriveMode
+  /**
+   * The kerbside bay the plan seated it in (parking.ts), or null for a car seated in traffic. A bay car starts parked, is
+   * the kind of car a player may take, and goes back to its bay when a network room opens (simCore.ts, rebay).
+   */
+  readonly bay: { readonly x: number; readonly z: number; readonly heading: number } | null
   /** Index into car.ts VEHICLE_KINDS: the silhouette the page draws and the HUD's name for it. */
   kind: number
   /** The heavy chassis class (the SUV's box, mass, power and drag): VEHICLE_KINDS[kind].heavy. */
@@ -91,6 +96,11 @@ export interface FleetOptions {
    * their rings. Absent, every car takes the random street-hopping Driver, exactly as before.
    */
   network?: TrackNetwork
+  /**
+   * With a network: the world's solid boxes and the street grid's corner, so the plan's parked share is seated in
+   * kerbside bays (carRig.ts planFleet, parking.ts). Absent (or null), every car is seated in traffic.
+   */
+  bays?: FleetBays | null
 }
 
 /** A whole turn, normalised to [0, 2π), with a turn a hair short of 2π read as none (rounding at contact). */
@@ -253,7 +263,7 @@ export class Fleet {
     this.#network = opts.network ?? null
     // The seeded plan (carRig.ts planFleet): seats or streets, SUVs, drivers and paint, from one stream that goes on
     // to drive the AI. The room's authority reads the same plan.
-    const plan = planFleet(count, seed, this.#network)
+    const plan = planFleet(count, seed, this.#network, opts.bays ?? null)
     this.#trackGap = new Float64Array(count).fill(Infinity)
     this.#ranked = new Uint8Array(count)
     this.#ahead = new Int32Array(count).fill(-1)
@@ -267,8 +277,8 @@ export class Fleet {
 
     const paint: number[] = []
     for (let i = 0; i < count; i++) {
-      const { pose, kind, suv, driver } = plan.cars[i]
-      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, kind, suv, driver)
+      const { pose, kind, suv, driver, bay } = plan.cars[i]
+      const vehicle = this.#create(i, pose.x, pose.z, pose.heading, kind, suv, driver, bay ? pose : null)
       paint.push(plan.cars[i].paint)
       this.vehicles.push(vehicle)
       this.#commands.push({ throttle: 0, brake: 0, steer: 0 })
@@ -281,15 +291,16 @@ export class Fleet {
     Object.freeze(this)
   }
 
-  #create(index: number, x: number, z: number, heading: number, kind: number, suv: boolean, driver: DriverLike): Vehicle {
+  #create(index: number, x: number, z: number, heading: number, kind: number, suv: boolean, driver: DriverLike, bay: Vehicle['bay']): Vehicle {
     const rig = buildCarRig(this.#physics.world, x, z, heading, suv)
     const { mass } = rig
     this.#rigs[index] = rig
     this.#byCollider.set(rig.collider.handle, index)
     const vehicle: Vehicle = {
-      index, driver, mode: 'ai', kind, suv, mass, steer: 0,
+      index, driver, mode: bay ? 'parked' : 'ai', bay: bay ? Object.freeze({ x: bay.x, z: bay.z, heading: bay.heading }) : null, kind, suv, mass, steer: 0,
       lastCommand: { throttle: 0, brake: 0, steer: 0 }, handbrake: false,
     }
+    Object.defineProperty(vehicle, 'bay', { writable: false, configurable: false })
     return Object.defineProperty(vehicle, 'index', { writable: false, configurable: false })
   }
 
@@ -362,6 +373,17 @@ export class Fleet {
       this.recover(v, p.x, p.z, p.heading)
     }
     v.mode = 'ai'
+  }
+
+  /**
+   * Car `v` back in its kerbside bay (parking.ts), at rest and parked: what a network room expects of every bay car it
+   * does not hold for the player (garage.node.ts whyNotEnter). A car with no bay is left as it is.
+   */
+  rebay(v: Vehicle): void {
+    const bay = v.bay
+    if (!bay) return
+    this.recover(v, bay.x, bay.z, bay.heading)
+    v.mode = 'parked'
   }
 
   /**
@@ -658,10 +680,11 @@ export class Fleet {
     return this.#prints
   }
 
-  nearest(x: number, z: number, maxDistance: number): Vehicle | null {
+  nearest(x: number, z: number, maxDistance: number, mode?: DriveMode): Vehicle | null {
     let best: Vehicle | null = null
     let bestD = maxDistance
     for (const v of this.vehicles) {
+      if (mode !== undefined && v.mode !== mode) continue
       const t = this.#rigs[v.index].body.translation(this.#pos)
       const d = Math.hypot(t.x - x, t.z - z)
       if (d < bestD) { bestD = d; best = v }

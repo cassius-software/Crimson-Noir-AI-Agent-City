@@ -17,7 +17,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { DEFAULT_MODEL, type Weighed } from './localCompute.ts'
 import {
-  budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, FAILS_KEPT, failed, figureOf, fitLine, gbText, GIB, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
+  budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, FAILS_KEPT, failed, DXGI_FLOOR_BYTES, figureFromAdapters, figureOf, fitLine, gbText, GIB, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
   RESERVE_BYTES, SEEN_MAX, todaysPick, VRAM_MAX_GB, VRAM_USAGE, whereOf, type Figure, type FitInput, type Seen, type Where,
 } from './modelFit.ts'
 
@@ -68,11 +68,44 @@ test('figureOf: the console beats the address; 0 at the console sizes nothing wh
   assert.deepEqual(figureOf(null, '24'), { gb: 24, from: 'address' })
   assert.deepEqual(figureOf(null, '318.5'), { gb: 318.5, from: 'address' })
   for (const address of ['0', '0.0', 'lots', '5000', '-1', '24GB', '', null, undefined]) assert.equal(figureOf(null, address), null, String(address))
+  // The Windows app's reading: below the console and the address. vram=0 in the address sizes nothing, as at the
+  // console; an address figure the page does not take is no address at all, so the app's reading stands.
+  assert.deepEqual(figureOf(null, null, 7.9), { gb: 7.9, from: 'app' })
+  assert.deepEqual(figureOf(null, 'lots', 7.9), { gb: 7.9, from: 'app' }, 'an address the page does not take leaves the app\'s reading')
+  assert.deepEqual(figureOf(null, '24', 7.9), { gb: 24, from: 'address' }, 'the address beats the app')
+  assert.deepEqual(figureOf(16, '24', 7.9), { gb: 16, from: 'ask' }, 'the console beats both')
+  assert.equal(figureOf(0, null, 7.9), null, '0 at the console: off, whatever the app read')
+  assert.equal(figureOf(null, '0', 7.9), null, 'vram=0 in the address: off, whatever the app read')
+  for (const app of [0, -1, NaN, Infinity, VRAM_MAX_GB + 0.1, null]) assert.equal(figureOf(null, null, app), null, String(app))
+  assert.deepEqual(figureOf(null, null, VRAM_MAX_GB), { gb: VRAM_MAX_GB, from: 'app' })
   // The budget a bigger model's need must fit: the figure less the reserve.
   assert.equal(RESERVE_BYTES, 2 * GIB)
   assert.equal(GIB, 2 ** 30)
   assert.equal(budgetOf(ASK(24)), 22 * GIB)
   assert.equal(budgetOf(ADDRESS(23.9)), 23.9 * GIB - 2 * GIB)
+})
+
+test('figureFromAdapters: the Windows app\'s reading: adapters under 3.5 GiB are not counted, the rest summed as the launcher sums, in GB rounded down to 0.1', () => {
+  assert.equal(DXGI_FLOOR_BYTES, 3.5 * GIB)
+  // An integrated GPU's carve-out (512 MB) alone: no figure, so auto keeps its usual model, as before.
+  assert.equal(figureFromAdapters([512 * 2 ** 20]), null)
+  assert.equal(figureFromAdapters([]), null)
+  // A 3 GB card, or a 3 GB carve-out, is not counted; the floor itself is.
+  assert.equal(figureFromAdapters([3 * GIB]), null)
+  assert.equal(figureFromAdapters([3.5 * GIB - 1]), null, 'just under the floor')
+  assert.equal(figureFromAdapters([3.5 * GIB]), 3.5)
+  // A laptop's 4 GB card beside its integrated GPU, as DXGI reads it (3,949 MB, a little under 4 GiB): the card alone
+  // counts, rounded down (3.856 is 3.8, not 3.9).
+  assert.equal(figureFromAdapters([512 * 2 ** 20, 3949 * 2 ** 20]), 3.8)
+  assert.equal(figureFromAdapters([4 * GIB]), 4)
+  // Four 80 GB data-centre GPUs are summed.
+  assert.equal(figureFromAdapters([80 * GIB, 80 * GIB, 80 * GIB, 80 * GIB]), 320)
+  // A sum above the page's ceiling is no figure; nothing is capped.
+  assert.equal(figureFromAdapters(Array.from({ length: 52 }, () => 80 * GIB)), null)
+  assert.equal(figureFromAdapters(Array.from({ length: 51 }, () => 80 * GIB)), 4080)
+  // Anything that is not a whole number of bytes up to 2^50 is not counted; anything not a list is no figure.
+  assert.equal(figureFromAdapters([8 * GIB, -8 * GIB, 8.5 * GIB + 0.5, NaN, Infinity, 2 ** 51, '8589934592', null]), 8)
+  for (const reading of [null, undefined, 8 * GIB, '8589934592', { 0: 8 * GIB, length: 1 }]) assert.equal(figureFromAdapters(reading), null, String(reading))
 })
 
 test('whereOf: nothing on the GPU is the processor, all of it the GPU, between is split', () => {
@@ -287,14 +320,18 @@ test('fitLine: every sentence, exactly', () => {
   const ADDR = "23.9 GB given by the page's address (vram=)"
   const table: [string, Partial<FitInput>, string | undefined][] = [
     ['off', { off: true, figure: null },
-      "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address)"],
+      "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address or the Windows app)"],
     ['off, whatever the address', { off: true },
-      "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address)"],
+      "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address or the Windows app)"],
     ['no figure', { figure: null }, undefined],
     ['another provider', { figure: ADDRESS(8), found: 'inpage' },
       "8.0 GB given by the page's address (vram=); auto sizes only a model Ollama lists (inpage answers now)"],
     ['chat', { figure: ASK(24), chat: true },
       "24.0 GB given at the console (ask vram); auto sizes Ollama's model only in the generate format (ask api generate)"],
+    ['the Windows app', { figure: { gb: 7.9, from: 'app' }, found: null, choice: null },
+      "7.9 GB read from the GPUs by the Windows app; auto sizes Ollama's model once a look finds Ollama on this machine"],
+    ['the Windows app, stepped down', { figure: { gb: 100, from: 'app' }, usual: { name: 'deepseek-r1:671b', bytes: 404e9 }, choice: { name: 'qwen3:8b', step: 'down', bytes: 5.2e9, cause: 'misfit' } },
+      "100.0 GB read from the GPUs by the Windows app; deepseek-r1:671b has 376.3 GB of weights alone, more than the GPU's 100.0 GB; auto answers with qwen3:8b, the largest smaller one Ollama lists (ask model <name> keeps another); ask vram auto measures afresh"],
     ['theirs', { theirs: 'llama3:70b', last: small },
       `${ADDR}; the model is yours (ask model chose it): auto sizes only a model it chose (ask model auto hands it back)`],
     ['theirs, measured', { theirs: 'llama3:70b', last: S('llama3:70b', 40e9, 42e9, 21e9, { pace: 3.2 }) },

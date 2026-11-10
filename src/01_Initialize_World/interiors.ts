@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the city's indoor workplaces: six downtown lots whose ground floor is hollowed into
- * a room people can walk into, one per workplace kind (a robotics lab, a boardroom, a logistics warehouse, a triage
- * clinic, legal chambers and a telemetry command room), each with its furniture and the workstations where the
- * pedestrians the crowd assigns to it stand and work. Everything here is pure and seeded: which lots, which way the
- * doorway faces, the furniture boxes (axis-aligned, like every box of the city, so Rapier, the flow field and the
- * crowd read the same shapes), the stations and the route from the sidewalk to each one.
+ * Why does this file exist? It is the city's indoor workplaces: sixteen downtown lots whose ground floor is hollowed
+ * into a room people can walk into, one per workplace kind (WORKPLACE_KINDS: a robotics lab, a warehouse, a server
+ * vault, metro operations, a control tower, a kitchen, a micro-fab, a twin studio, a fleet bay, a greenhouse, an
+ * acoustics chamber, a response centre, a clearing floor, a gait lab, a microgrid room and the console deck), each with
+ * its furniture and the eight workstations where the pedestrians the crowd assigns to it stand and work. Everything
+ * here is pure and seeded: which lots, which way the doorway faces, the furniture boxes (axis-aligned, like every box
+ * of the city, so Rapier, the flow field and the crowd read the same shapes), the stations and the route from the
+ * sidewalk to each one. The kind's index is its slot: the crowd's station slots, the uniform's rooms and the flat
+ * tables another thread dispatches by (workplaceTable, stationTable) all count rooms in WORKPLACE_KINDS order.
  *
  * Three readers share these numbers, and this file keeps them one:
  * - city.ts (`hollowWorkplaces`) swaps a chosen lot's solid podium for the room's shell: floor-to-ceiling glass walls
@@ -36,8 +39,11 @@ export const ROOM = Object.freeze({
   height: 4.2,
   /** Half the doorway's width, m (a 4 m opening, centred on its wall). */
   door: 2.0,
-  /** Rooms the crowd shader's uniform carries: one per workplace kind. */
-  slots: 6,
+  /**
+   * Rooms the crowd shader's uniform carries: one per workplace kind (WORKPLACE_KINDS.length). Sixteen rooms of
+   * struct Room (416 bytes each) put Params at about 11,360 bytes, well inside the 65,536 a uniform binding has.
+   */
+  slots: 16,
   /** Furniture boxes per room the uniform carries (a layout has at most this many). */
   furniture: 16,
   /** Stations per room (a layout has exactly this many). */
@@ -62,14 +68,18 @@ export const ROOM = Object.freeze({
 /** The crowd's workday, frozen. */
 export const WORK = Object.freeze({
   /**
-   * Workers per station, about: the share of the crowd with a workplace is set so that the 48 stations have this many
-   * people each over a day (on shift WORK.shift / WORK.cycle of the time, so about one at a station at once). A
-   * bigger crowd has a smaller share, never a crowded room.
+   * Workers per station, about: the share of the crowd with a workplace is set so that the 128 stations (sixteen rooms
+   * of eight) have this many people each over a day (on shift WORK.shift / WORK.cycle of the time, so about one at a
+   * station at once). A bigger crowd has a smaller share, never a crowded room.
    */
   perStation: 1.6,
   /** The largest share there is: one pedestrian in this many, whatever the crowd's size. */
   minOneIn: 8,
-  /** Coprime with the 48 stations: the w-th worker is dealt station w × deal mod 48, every station once before any twice. */
+  /**
+   * Coprime with the 128 stations (29 is odd, 128 a power of two): the w-th worker is dealt station w × deal mod 128,
+   * every station once before any twice. It was 29 for the 48 stations of six rooms too, and stays: 29 is coprime
+   * with 128 as it was with 48.
+   */
   deal: 29,
   /** A worker's day, s: the shift, then the rest of the cycle off duty on the streets. */
   cycle: 480,
@@ -84,8 +94,18 @@ export const WORK = Object.freeze({
   salt: 0x7f4a7c15,
 } as const)
 
-/** The six workplace kinds, in station-slot order. */
-export const WORKPLACE_KINDS = ['roboticsLab', 'boardroom', 'warehouse', 'clinic', 'legalChambers', 'telemetryCommand'] as const
+/**
+ * The sixteen workplace kinds, in station-slot order: the index is the kind's stable id (the crowd's station slots,
+ * the uniform's room slots, the flat tables and the console's `rooms` all count by it), so a kind is never moved and
+ * a new one goes on the end. Six of them are the first rooms the city had under other names: roboticsLab and
+ * warehouse as they were, controlTower was telemetryCommand, twinStudio the boardroom, clearingFloor the legal
+ * chambers and gaitLab the clinic; their furniture and stations are unchanged. consoleDeck is a room: the Sanctuary of
+ * 07_Execute_Actions/sanctuary.ts is the First Law's shield inside Rapier and has nothing to do with it.
+ */
+export const WORKPLACE_KINDS = [
+  'roboticsLab', 'warehouse', 'serverVault', 'metroOps', 'controlTower', 'kitchen', 'microFab', 'twinStudio',
+  'fleetBay', 'greenhouse', 'acousticsLab', 'responseCenter', 'clearingFloor', 'gaitLab', 'microgrid', 'consoleDeck',
+] as const
 export type WorkplaceKind = (typeof WORKPLACE_KINDS)[number]
 
 /** What a person does at a station: the crowd draws the same working pose for each (ACTIVITY.working); the word is the HUD's. */
@@ -153,7 +173,7 @@ export function toLocal(room: { cx: number; cz: number; side: Side }, x: number,
   return { u: dx * d.x + dz * d.z, v: dx * a.x + dz * a.z }
 }
 
-// ---------------------------------------------------------------- the six layouts
+// ---------------------------------------------------------------- the sixteen layouts
 
 /** A row of four pieces along u (the four bays at u = −9, −5, −1, 3), each `along` long, between v0 and v1. */
 const bays = (v0: number, v1: number, y0: number, y1: number, style: number, along = 3): Piece[] =>
@@ -162,17 +182,43 @@ const bays = (v0: number, v1: number, y0: number, y1: number, style: number, alo
 const row = (v: number, fv: 1 | -1, task: Task): LocalStation[] => [-9, -5, -1, 3].map((u) => ({ u, v, fu: 0, fv, task }))
 
 /**
- * The layouts, in the room's frame. Every one keeps the hub's cross aisle (u = ROOM.hub, |v| ≤ 5) and the station rows
- * (v = ±4.6, or ±3 round the boardroom table) clear of furniture by more than a pedestrian's reach, so the route
- * doorway → hub → row → station is a straight walk on each leg (interiors.test.ts holds that for every station).
+ * The layouts, in the room's frame, in WORKPLACE_KINDS order. Every one keeps the hub's cross aisle (u = ROOM.hub,
+ * |v| ≤ 5) and the station rows (v = ±4.6, or ±3 round the twin studio's table) clear of furniture by more than a
+ * pedestrian's reach, so the route doorway → hub → row → station is a straight walk on each leg (interiors.test.ts
+ * holds that for every station). The rules every piece keeps, so the tests' walkers never stall:
+ * - a piece beside a station row stands at |v| ≥ 5.6 (the row at 4.6, the reach 0.35, a tenth to spare), and a piece
+ *   between the rows within |v| ≤ 2.4 (the aisles at ±3 stay clear by more than the reach) unless it touches the back
+ *   wall (u0 ≤ −12.3), which nobody stands behind;
+ * - a piece in a station's row ends at u ≤ −9.6 (the first station at −9) and nothing stands past u = 5 towards the
+ *   doorway, so a slide along any face towards the hub comes off its end into open floor;
+ * - a back-wall piece that spans a bay row's v ends at u ≤ −11.5 when the row's first bay starts at u ≥ −10.5: grown
+ *   by the reach, its face (−11.15) is then behind the bay's (−10.85 at most), so someone sliding along the bay towards
+ *   the room's axis never meets the back-wall piece's side and stands in the corner (the first kitchen's cold store
+ *   reached −10.3 and pinned a walker let go at (−12, −9) there); a piece beside a back-wall piece's end starts at
+ *   u ≥ −10.5 for the same reason;
+ * - a column standing on a counter sits inside the counter's footprint (the robotics lab's arm columns), never behind
+ *   it, where its side and the counter's back would meet in a corner;
+ * - a piece running along a side wall ends at |v| ≤ 10.4 (the robotics lab's rack): the flow grid rasterises a box
+ *   grown by FLOW.pad (0.5) over 2 m cells whose centres fall on odd metres, so the row of cells at |v| = 11 stays open,
+ *   and an operator standing between the piece and the glass has an open cell indoors, which leads the recruit on the
+ *   sidewalk round by the doorway instead of to the glass opposite them (the first micro-fab's rail reached 10.6 and
+ *   pinned every recruit there); a piece touching the wall itself (|v| ≥ 11.7, the acoustics lab's shaker tables) is
+ *   no different from the wall;
+ * - a back-wall piece ends at |v| ≤ 4 where a bay row starts at |v| = 5.6 (the clearing floor's vault), or spans past
+ *   the row: grown by the reach, that leaves a 0.9 m corridor between its end and the first bay, which is where
+ *   roomWay's corner (0.6 m off the bay) stands for someone asked over into the pocket behind the bay (the first
+ *   greenhouse's pumps ended at 5 and left a 0.1 m notch nobody was led through);
+ * - a row of pieces along u is four bays at u = −9, −5, −1, 3, each at most 3 m long, so the gaps between them are a
+ *   metre or more and someone asked over can be led down one (crowd.wgsl roomWay rounds a corner at 0.6 m).
  */
 function layouts(): Record<WorkplaceKind, Layout> {
   const { trim, concrete, masonry, deck, rail } = STYLE
   return {
+    // 1. The robotics lab, as it was: the furniture and the stations of the first room the city had.
     roboticsLab: {
-      name: 'Sim-to-Real Robotics Lab',
+      name: 'Dexterous Robotics and Manipulator Lab',
       furniture: [
-        // Four robot arm cells: a pedestal and the arm's column rising from it.
+        // Four manipulator cells: a pedestal and the arm's column rising from it.
         ...bays(-8.2, -5.6, 0, 1.1, concrete, 2.4),
         ...[-9, -5, -1, 3].map((u): Piece => ({ local: [u - 0.3, -7.2, u + 0.3, -6.6, 1.1, 2.4], style: trim })),
         // Sensor calibration tables, a server rack along the wall behind them, telemetry terminals on the back wall.
@@ -182,10 +228,86 @@ function layouts(): Record<WorkplaceKind, Layout> {
       ],
       stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
     },
-    boardroom: {
-      name: 'Executive Boardroom',
+    // 2. The warehouse, as it was.
+    warehouse: {
+      name: 'Automated Fulfillment and Forklift Warehouse',
       furniture: [
-        // The conference table, and the holographic city plinth by the door.
+        // High-bay pallet racks, a conveyor sorting lane, AGV charging docks behind it (0.3 m: a step the operator takes).
+        ...bays(-10.4, -5.6, 0, 3.8, masonry, 2.8),
+        { local: [-10, 5.6, 4, 6.4, 0, 0.8], style: trim },
+        ...[-9, -5, -1, 3].map((u): Piece => ({ local: [u - 0.6, 9.4, u + 0.6, 10.6, 0, 0.3], style: concrete })),
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
+    },
+    // 3. The server vault: a hot aisle and a cold aisle of racks, the chillers on the back wall, two coolant manifolds
+    // with their valve actuators on the room's axis.
+    serverVault: {
+      name: 'Tier-4 Server Vault and Cooling Plant',
+      furniture: [
+        ...bays(-9.0, -5.6, 0, 2.2, rail, 2.8),
+        ...bays(5.6, 9.0, 0, 2.2, rail, 2.8),
+        { local: [-12.3, -10, -11.7, 10, 0, 2.6], style: concrete },
+        { local: [-10.5, -1.2, -9.5, 1.2, 0, 1.4], style: trim },
+        { local: [-6.5, -1.2, -5.5, 1.2, 0, 1.4], style: trim },
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
+    },
+    // 4. Metro operations: the signal board along the back wall (0.8 m off the floor: a display, not a cabinet), the
+    // switch consoles, the dispatch desks, the line schematic table on the axis, the platform camera wall on one side.
+    metroOps: {
+      name: 'Lakefront Metro Operations and Dispatch Centre',
+      furniture: [
+        { local: [-12.3, -8, -11.7, 8, 0.8, 3.4], style: trim },
+        ...bays(-7.2, -5.6, 0, 1.0, deck, 2.8),
+        ...bays(5.6, 6.8, 0, 0.9, deck),
+        { local: [-9, -1.5, -3, 1.5, 0, 0.9], style: masonry },
+        { local: [-10.5, 9.6, 3, 10.4, 0, 2.4], style: rail },
+      ],
+      stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'collaborating')],
+    },
+    // 5. The control tower, the telemetry command room as it was: the radar desks (a desk and its display bank), the
+    // telemetry consoles, the traffic wall at the back.
+    controlTower: {
+      name: 'Air Traffic and Drone Swarm Control Tower',
+      furniture: [
+        ...bays(-7.0, -5.6, 0, 0.9, deck),
+        ...bays(-6.6, -6.2, 0.9, 1.6, trim, 2.8),
+        ...bays(5.6, 6.8, 0, 1.4, rail, 2.4),
+        { local: [-12.3, -8, -11.7, 8, 0.6, 3.2], style: trim },
+      ],
+      stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'typing')],
+    },
+    // 6. The kitchen: four induction islands, the prep counters with a prep arm's column standing on each, the plating
+    // conveyor along one side, the cold store's doors along the back wall.
+    kitchen: {
+      name: 'Commercial Culinary and Automated Prep Line',
+      furniture: [
+        ...bays(-8.4, -5.6, 0, 0.95, concrete, 2.8),
+        ...bays(5.6, 7.0, 0, 0.9, deck),
+        ...[-9, -5, -1, 3].map((u): Piece => ({ local: [u - 0.3, 6.2, u + 0.3, 6.8, 0.9, 2.2], style: trim })),
+        { local: [-10, 9.6, 4, 10.4, 0, 0.9], style: trim },
+        { local: [-12.3, -6, -11.5, 6, 0, 2.8], style: concrete },
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'collaborating')],
+    },
+    // 7. The micro-fab: four CNC cells, four wafer handlers, the gantry's floor rail along one side (its bridge rides
+    // above head height and is no box), the cleanroom airlock on the back wall, a metrology bench on the axis.
+    microFab: {
+      name: 'Precision CNC and Cleanroom Micro-Fab',
+      furniture: [
+        ...bays(-9.0, -5.6, 0, 1.8, concrete, 2.8),
+        ...bays(5.6, 7.0, 0, 1.6, trim, 2.4),
+        { local: [-11, 9.4, 5, 10.4, 0, 0.5], style: rail },
+        { local: [-12.3, -2, -10.9, 2, 0, 2.6], style: trim },
+        { local: [-6, -1.0, -2, 1.0, 0, 0.9], style: deck },
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
+    },
+    // 8. The twin studio, the boardroom as it was: the drafting table the stations ring at v = ±3, and the digital
+    // twin's load-simulator plinth by the door.
+    twinStudio: {
+      name: 'Civic Architecture and Digital Twin Studio',
+      furniture: [
         { local: [-10, -1.8, -2, 1.8, 0, 0.75], style: deck },
         { local: [2, -0.8, 3.6, 0.8, 0, 1.0], style: trim },
       ],
@@ -194,20 +316,73 @@ function layouts(): Record<WorkplaceKind, Layout> {
         ...[-9, -6.5, -4, -1.5].map((u): LocalStation => ({ u, v: 3, fu: 0, fv: -1, task: 'collaborating' })),
       ],
     },
-    warehouse: {
-      name: 'Automated Logistics Warehouse',
+    // 9. The fleet bay: four lift platforms (0.4 m: a wall to a walker, and to the operator's 0.3 m autostep), the
+    // charging cabinets, the swap robot's rail along one side, the battery rack on the back wall.
+    fleetBay: {
+      name: 'Autonomous Fleet Maintenance and Battery Swap Bay',
       furniture: [
-        // High-bay pallet racks, a conveyor sorting lane, AGV charging docks behind it.
-        ...bays(-10.4, -5.6, 0, 3.8, masonry, 2.8),
-        { local: [-10, 5.6, 4, 6.4, 0, 0.8], style: trim },
-        ...[-9, -5, -1, 3].map((u): Piece => ({ local: [u - 0.6, 9.4, u + 0.6, 10.6, 0, 0.3], style: concrete })),
+        ...bays(-10.0, -5.6, 0, 0.4, concrete, 2.8),
+        ...bays(5.6, 6.6, 0, 1.6, trim, 2.4),
+        { local: [-10, 9.6, 4, 10.4, 0, 1.2], style: masonry },
+        { local: [-12.3, -10, -11.7, 10, 0, 2.4], style: rail },
       ],
       stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
     },
-    clinic: {
-      name: 'Medical Triage Clinic',
+    // 10. The greenhouse: two rows of grow towers (each carries its LED rig), the dosing pumps on the back wall, the
+    // nutrient tank in the back corner, the seedling table on the axis.
+    greenhouse: {
+      name: 'Vertical Hydroponic and Agri-Tech Greenhouse',
       furniture: [
-        // Two diagnostic imaging bays, four triage desks, the pharmacy dispensers along the back wall.
+        ...bays(-9.4, -5.6, 0, 3.0, masonry, 2.6),
+        ...bays(5.6, 9.4, 0, 3.0, masonry, 2.6),
+        { local: [-12.3, -4, -11.5, 4, 0, 1.6], style: trim },
+        { local: [-12.3, 9.8, -10.8, 11.6, 0, 2.4], style: concrete },
+        { local: [-9, -1.2, -4, 1.2, 0, 0.9], style: deck },
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'inspecting')],
+    },
+    // 11. The acoustics chamber: the anechoic chamber on the back wall (its face at −9.6, 0.6 m from the first
+    // station), baffle panels along both side walls, four shaker tables, four analysis benches.
+    acousticsLab: {
+      name: 'Materials Testing and Acoustics Chamber',
+      furniture: [
+        { local: [-12.3, -4, -9.6, 4, 0, 3.6], style: concrete },
+        { local: [-11, -12.3, 4, -11.7, 0, 3.0], style: trim },
+        { local: [-11, 11.7, 4, 12.3, 0, 3.0], style: trim },
+        ...bays(-8.2, -5.6, 0, 1.0, concrete, 2.4),
+        ...bays(5.6, 6.6, 0, 0.9, deck),
+      ],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
+    },
+    // 12. The response centre: the weather grid along the back wall, two rows of dispatch terminals, the incident
+    // model table on the axis, the supply shelving along one side.
+    responseCenter: {
+      name: 'Emergency Response and Disaster Recovery Sim Centre',
+      furniture: [
+        { local: [-12.3, -9, -11.7, 9, 0.6, 3.4], style: trim },
+        ...bays(-7.0, -5.6, 0, 0.9, deck),
+        ...bays(5.6, 7.0, 0, 0.9, deck),
+        { local: [-10, -2.0, -3, 2.0, 0, 0.9], style: masonry },
+        { local: [-10.5, 9.6, 2, 10.4, 0, 2.2], style: rail },
+      ],
+      stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'typing')],
+    },
+    // 13. The clearing floor, the legal chambers as they were: settlement terminals, the ledger vault against the
+    // back wall, the clearing desks.
+    clearingFloor: {
+      name: 'Financial and Smart-Contract Clearing Floor',
+      furniture: [
+        ...bays(-7.4, -5.6, 0, 1.1, trim, 2.6),
+        { local: [-12.3, -4, -9.5, 4, 0, 2.6], style: masonry },
+        ...bays(5.6, 6.6, 0, 0.9, deck),
+      ],
+      stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'collaborating')],
+    },
+    // 14. The gait lab, the clinic as it was: two gait capture volumes, four fitting desks, the prosthetics
+    // dispensers along the back wall.
+    gaitLab: {
+      name: 'Biomedical Prosthetics and Gait Calibration Lab',
+      furniture: [
         { local: [-9.5, -9.4, -6.5, -5.6, 0, 2.2], style: concrete },
         { local: [-3.5, -9.4, -0.5, -5.6, 0, 2.2], style: concrete },
         ...bays(5.6, 6.6, 0, 0.9, deck),
@@ -215,24 +390,29 @@ function layouts(): Record<WorkplaceKind, Layout> {
       ],
       stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
     },
-    legalChambers: {
-      name: 'Civic Legal Chambers',
+    // 15. The microgrid room: four transformer relay cabinets, four inverters, the switchgear along the back wall,
+    // the battery bank along one side, the control desk on the axis.
+    microgrid: {
+      name: 'Renewable Microgrid and Substation Control Room',
       furniture: [
-        // Contract verification terminals, the registry vault against the back wall, arbitration desks.
-        ...bays(-7.4, -5.6, 0, 1.1, trim, 2.6),
-        { local: [-12.3, -4, -9.5, 4, 0, 2.6], style: masonry },
-        ...bays(5.6, 6.6, 0, 0.9, deck),
+        ...bays(-9.2, -5.6, 0, 2.4, concrete, 2.6),
+        ...bays(5.6, 7.0, 0, 1.8, rail, 2.4),
+        { local: [-12.3, -9, -11.5, 9, 0, 2.6], style: trim },
+        { local: [-10.5, 9.4, 3, 10.4, 0, 2.0], style: masonry },
+        { local: [-7, -1.4, -3.4, 1.4, 0, 0.9], style: deck },
       ],
-      stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'collaborating')],
+      stations: [...row(-4.6, -1, 'inspecting'), ...row(4.6, 1, 'typing')],
     },
-    telemetryCommand: {
-      name: 'Telemetry Command',
+    // 16. The console deck: the mainframe plinth on the back wall, the console ring in two arcs of four, a glass data
+    // pillar along each side.
+    consoleDeck: {
+      name: 'The Sanctuary: Ring-0 Executive Console Deck',
       furniture: [
-        // Multi-monitor desks (a desk and its monitor bank), orchestration consoles, the wall display at the back.
-        ...bays(-7.0, -5.6, 0, 0.9, deck),
-        ...bays(-6.6, -6.2, 0.9, 1.6, trim, 2.8),
-        ...bays(5.6, 6.8, 0, 1.4, rail, 2.4),
-        { local: [-12.3, -8, -11.7, 8, 0.6, 3.2], style: trim },
+        { local: [-12.3, -2.4, -9.6, 2.4, 0, 3.2], style: trim },
+        ...bays(-7.0, -5.6, 0, 0.9, deck, 2.8),
+        ...bays(5.6, 7.0, 0, 0.9, deck, 2.8),
+        { local: [-11, -10.4, 2, -9.6, 0, 3.0], style: rail },
+        { local: [-11, 9.6, 2, 10.4, 0, 3.0], style: rail },
       ],
       stations: [...row(-4.6, -1, 'typing'), ...row(4.6, 1, 'typing')],
     },
@@ -242,15 +422,17 @@ function layouts(): Record<WorkplaceKind, Layout> {
 // ---------------------------------------------------------------- the lots and the rooms
 
 /**
- * The seed's workplace lots: one per kind, each in its own sixth of the downtown (three columns of lots by two rows),
- * never the ring, the heritage quarter, the lakefront rows or the park, so every room has four streets and a doorway
- * side the dice may pick freely. Lots and sides from the seed alone.
+ * The seed's workplace lots: one per kind, each in its own sixteenth of the downtown (four columns of lots by four
+ * rows: three lots across each column, three or four down each row), never the ring, the heritage quarter, the
+ * lakefront rows or the park, so every room has four streets and a doorway side the dice may pick freely, and every
+ * lot a podium to hollow (city.ts downtownLot builds one on every downtown lot). Lots and sides from the seed alone;
+ * sixteen different lots, since the cells are disjoint.
  */
 export function workplaceLots(seed: number): WorkplaceLot[] {
   const rng = createRng(seed ^ 0x1a7e)
   const k0 = HERITAGE_COLUMNS, k1 = CITY.blocks // downtown columns [k0, k1)
   const m0 = 0, m1 = CITY.blocks - 2 // downtown rows [m0, m1): the lakefront row and the park are below
-  const cols = 3, rows = 2
+  const cols = 4, rows = 4
   return WORKPLACE_KINDS.map((kind, i) => {
     const c = i % cols, r = Math.floor(i / cols)
     const ka = k0 + Math.floor(((k1 - k0) * c) / cols), kb = k0 + Math.floor(((k1 - k0) * (c + 1)) / cols)
@@ -269,7 +451,7 @@ function worldBox(room: { cx: number; cz: number; side: Side }, u0: number, v0: 
 /** A workplace's lot: its kind, the lot (between streets k and k + 1, m and m + 1) and its doorway's street front. */
 export interface WorkplaceLot { kind: WorkplaceKind; k: number; m: number; side: Side }
 
-/** The seed's six workplaces, geometry and all. `podium` gives a lot's podium height (the ceiling slab's top). */
+/** The seed's sixteen workplaces, geometry and all. `podium` gives a lot's podium height (the ceiling slab's top). */
 export function workplaces(seed: number, podium: (k: number, m: number) => number = () => ROOM.height + 1): Workplace[] {
   return workplacesAt(workplaceLots(seed), podium)
 }
@@ -493,6 +675,62 @@ export function drawRooms(ctx: RoomCanvas, rooms: readonly Workplace[], x: numbe
   }
 }
 
+// ---------------------------------------------------------------- the flat tables (for a swarm that dispatches by slot)
+
+/**
+ * The layout of workplaceTable: one row of `stride` floats per kind slot (ROOM.slots rows, WORKPLACE_KINDS order),
+ * the fields in this order. kind is the slot's index in WORKPLACE_KINDS, or −1 for a slot this world has no room for
+ * (a region with fewer lots), whose row is otherwise zero; x, y, z are the lot's centre in engine metres (y = 0: the
+ * floor); doorX, doorZ the doorway's centre on the wall's outer face; doorYaw the heading from the doorway into the
+ * room (atan2(x, z), the crowd's heading: forward is (sin yaw, cos yaw)); stations how many stations the room has
+ * (ROOM.stations). Frozen: another thread reads rows by it (window.__SIM__.engine.workplaceTable).
+ */
+export const WORKPLACE_TABLE = Object.freeze({ stride: 8, fields: Object.freeze(['kind', 'x', 'y', 'z', 'doorX', 'doorZ', 'doorYaw', 'stations'] as const) })
+
+/**
+ * The layout of stationTable: ROOM.slots × ROOM.stations rows of `stride` floats, slot `r`'s station `s` at row
+ * r × ROOM.stations + s (the crowd's station slot), each where to stand in engine metres (y = 0) and the way to face
+ * (yaw as above); an empty slot's rows are zero.
+ */
+export const STATION_TABLE = Object.freeze({ stride: 4, fields: Object.freeze(['x', 'y', 'z', 'yaw'] as const), perRoom: ROOM.stations })
+
+/**
+ * The rooms as a flat table (WORKPLACE_TABLE): slot i is the room of kind WORKPLACE_KINDS[i] when `rooms` has one
+ * (the city's sixteen, a region's first few: the same order the crowd's station slots count), kind −1 and zeros
+ * where it has none. A caller's `out` must hold ROOM.slots × WORKPLACE_TABLE.stride floats; it is filled whole.
+ */
+export function workplaceTable(rooms: readonly Workplace[], out = new Float32Array(ROOM.slots * WORKPLACE_TABLE.stride)): Float32Array {
+  const n = WORKPLACE_TABLE.stride
+  if (out.length < ROOM.slots * n) throw new RangeError(`the workplace table is ${ROOM.slots * n} floats, got ${out.length}`)
+  out.fill(0)
+  for (let i = 0; i < ROOM.slots; i++) out[i * n] = -1
+  for (const room of rooms) {
+    const i = WORKPLACE_KINDS.indexOf(room.kind)
+    if (i < 0) continue
+    const o = i * n, d = doorDir(room.side)
+    out[o] = i; out[o + 1] = room.cx; out[o + 2] = 0; out[o + 3] = room.cz
+    out[o + 4] = room.door.x; out[o + 5] = room.door.z; out[o + 6] = Math.atan2(-d.x, -d.z); out[o + 7] = room.stations.length
+  }
+  return out
+}
+
+/** The rooms' stations as a flat table (STATION_TABLE), in the same slot order as workplaceTable; empty slots zero. */
+export function stationTable(rooms: readonly Workplace[], out = new Float32Array(ROOM.slots * ROOM.stations * STATION_TABLE.stride)): Float32Array {
+  const n = STATION_TABLE.stride
+  if (out.length < ROOM.slots * ROOM.stations * n) throw new RangeError(`the station table is ${ROOM.slots * ROOM.stations * n} floats, got ${out.length}`)
+  out.fill(0)
+  for (const room of rooms) {
+    const i = WORKPLACE_KINDS.indexOf(room.kind)
+    if (i < 0) continue
+    if (room.stations.length > ROOM.stations) throw new RangeError(`${room.kind}: too many stations`)
+    room.stations.forEach((s, k) => {
+      const o = (i * ROOM.stations + k) * n
+      out[o] = s.x; out[o + 1] = 0; out[o + 2] = s.z; out[o + 3] = s.yaw
+    })
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- the uniform (crowd.wgsl Params.rooms)
 
 /** Floats per room in the uniform: a, b, the furniture boxes, the stations (vec4f each). */
@@ -549,7 +787,7 @@ export function workOneIn(agentCount: number): number {
  * Agent i's station slot (room × ROOM.stations + station) in a crowd of `agentCount`, or −1 for someone with no
  * workplace (crowd.wgsl workerSlot; the shader also says −1 for a slot whose room this world does not have). The
  * workers are the indices one short of a multiple of WORK_ONE_IN (never 0, the player's own body), and the w-th of
- * them is dealt station w × WORK.deal mod 48: every station once before any twice, the rooms in turn.
+ * them is dealt station w × WORK.deal mod 128: every station once before any twice, the rooms in turn.
  */
 export function workerSlot(i: number, agentCount: number): number {
   const oneIn = workOneIn(agentCount)

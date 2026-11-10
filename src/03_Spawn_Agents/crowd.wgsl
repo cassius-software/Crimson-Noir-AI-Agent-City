@@ -118,8 +118,9 @@ struct Params {
   // on it (bit 1); the east-west segments (index m · CITY_BLOCKS + k) then the north-south ((CITY_BLOCKS + 1) ·
   // CITY_BLOCKS + k · CITY_BLOCKS + m). The procedural city sets every bit.
   streets: array<vec4u, STREET_VEC4S>,
-  // The indoor workplaces (interiors.ts): the procedural city's six, a generated region's (on lots of its street
-  // window, region/workplaces.ts), or empty slots in a region without them.
+  // The indoor workplaces (interiors.ts): the procedural city's sixteen, a generated region's (on lots of its street
+  // window, region/workplaces.ts, up to sixteen), or empty slots in a region without them. ROOM_SLOTS is the kinds'
+  // count; a slot's index is its kind's.
   rooms: array<Room, ROOM_SLOTS>,
   // The commute's route table (region/workplaces.ts packRoutes): per room slot, ROUTE_ROOM_VEC4S rows of four bits per
   // window intersection (index m · (CITY_BLOCKS + 1) + k, eight to a word): the street to take to come one intersection

@@ -22,7 +22,7 @@ import type { Server } from 'node:http'
 import { hostname, tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
-import { VRAM_MAX_GB } from './09_Cognition/modelFit.ts'
+import { DXGI_FLOOR_BYTES, figureFromAdapters, VRAM_MAX_GB } from './09_Cognition/modelFit.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const LAUNCH: string = '../tools/web/launch.mjs'
@@ -321,6 +321,21 @@ test('gpuMemory reads nvidia-smi\'s MiB per GPU, skips [N/A] and GPUs under 4 Gi
   assert.equal(launcher.gpuMemory({ smi: () => '24564.5\n-24564\n0x6000\n1e5\n', ...NO_DRM }), null, 'only whole MiB')
   assert.equal(launcher.gpuMemory({ smi: () => '9'.repeat(30), ...NO_DRM }), null, 'a count past any GPU is not believed')
   assert.equal(launcher.gpuMemory({ smi: () => `${'81559\n'.repeat(64)}`, ...NO_DRM }), null, 'above the page\'s 4096 GB ceiling: no figure')
+})
+
+test('both desktops: the launcher and the Windows app sum and round alike, and a 4 GB card counts on both though DXGI reads it a little under', () => {
+  const MIB = 2 ** 20
+  // DXGI's dedicated memory runs a little under nvidia-smi's total, so the app's floor sits under the launcher's.
+  assert.ok(DXGI_FLOOR_BYTES < launcher.GPU_FLOOR_BYTES && DXGI_FLOOR_BYTES > 3 * 2 ** 30)
+  // The same byte counts (none between the two floors): the same figure.
+  for (const mib of [[24564], [24564, 24564], [81559, 81559, 81559, 81559], [2048], [2048, 8192], [3072], [4096], [], Array.from({ length: 64 }, () => 81559), Array.from({ length: 51 }, () => 81920)]) {
+    const smi = launcher.gpuMemory({ smi: () => mib.map((m) => `${m}\n`).join(''), ...NO_DRM })
+    assert.equal(figureFromAdapters(mib.map((m) => m * MIB)), smi?.gb ?? null, mib.join(','))
+  }
+  // One 4 GB card as each reads it: nvidia-smi's 4096 MiB, and DXGI's 3,949 MB (dxdiag's figure for one such card in a
+  // public report). A figure on both, the app's a little smaller.
+  assert.deepEqual(launcher.gpuMemory({ smi: () => '4096\n', ...NO_DRM }), { gb: 4, from: 'nvidia-smi' })
+  assert.equal(figureFromAdapters([3949 * MIB]), 3.8)
 })
 
 test('gpuMemory falls back to the amdgpu driver\'s VRAM per card in a temporary sysfs tree; connector folders and carve-outs are skipped', () => {

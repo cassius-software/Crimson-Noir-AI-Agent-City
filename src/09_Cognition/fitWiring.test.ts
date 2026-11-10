@@ -7,7 +7,9 @@
  * page's address and hands it to the city's router alone (the onboarding's router never answers under auto, so it is
  * given none); the scripted and cloud fallback wrappers bind the router's setVram, so `ask vram` reaches it; modelFit.ts
  * stays a pure rule that imports only localCompute.ts (this machine's check included) and asks no server itself; the
- * router is the module that uses it; and the operator's and the bridge's askSet both take 'vram'.
+ * router is the module that uses it; and the operator's and the bridge's askSet both take 'vram'. In the Windows app,
+ * App asks the shell for the GPUs' memory once (desktopShell.ts shellGpuMemory over src-tauri/src/gpu.rs), judges it
+ * by modelFit.ts figureFromAdapters, and hands it to the same router alone, below the address's figure.
  * What breaks if it is removed? The launcher's vram= could stop reaching the router, the onboarding's router could
  * start sizing a model of its own, a wrapper could hide setVram so `ask vram` says no provider grows with the GPU, or
  * the pure rule could start asking a server or judging what is on this machine by itself, with no test going red.
@@ -70,10 +72,24 @@ test('modelFit.ts is a pure rule: it imports only localCompute.ts, this machine\
   assert.doesNotMatch(code(read('./localCompute.ts')), /\bnew URL\(|\.hostname\b/, 'placementOf and installedSizes go through loopbackServer')
 })
 
-test('the router is the module that sizes by modelFit.ts: it imports it, and its figure is the console\'s, else the address\'s', () => {
+test('the router is the module that sizes by modelFit.ts: it imports it, and its figure is the console\'s, else the address\'s, else the Windows app\'s', () => {
   assert.ok(specifiers(ROUTER).includes('./modelFit.ts'), 'router.ts imports modelFit.ts')
   assert.match(ROUTER, /^import \{ [^}]*\bfigureOf\b[^}]* \} from '\.\/modelFit\.ts'$/m)
-  assert.match(ROUTER, /\bfigureOf\(kept\.fit\?\.vram \?\? null, vram\)/, 'the vram App hands the router is the address\'s figure')
+  assert.match(ROUTER, /\bfigureOf\(kept\.fit\?\.vram \?\? null, vram, appVram\?\.\(\) \?\? null\)/, 'the vram App hands the router is the address\'s figure, and appVram the app\'s')
+  assert.equal(count(code(ROUTER), /\bfigureOf\(/g), 1, 'one figure, read in one place')
+})
+
+test('App: the Windows app\'s GPU reading is asked once, judged by figureFromAdapters, and handed to the city\'s router alone', () => {
+  assert.ok(specifiers(APP).includes('./07_Execute_Actions/desktopShell.ts'), 'App imports the shell view')
+  assert.match(APP, /^import \{ figureFromAdapters \} from '\.\/09_Cognition\/modelFit\.ts'$/m)
+  assert.match(APP, /^import \{ shellGpuMemory \} from '\.\/07_Execute_Actions\/desktopShell\.ts'$/m)
+  assert.equal(count(APP_CODE, /\bshellGpuMemory\(/g), 1, 'asked in one place')
+  const before = between(APP, '        let inPage!: InPageMind\n', '        const local = createMindRouter({')
+  assert.match(before, /^ {8}let appVram: number \| null = null\n {8}void shellGpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}\)\n$/m, 'asked as the city\'s router is built, judged by figureFromAdapters')
+  const city = between(APP, '        const local = createMindRouter({', '        inPageMind = inPage\n')
+  assert.match(city, /^ {10}appVram: \(\) => appVram,$/m, 'a property of the city router\'s own call')
+  assert.equal(count(APP_CODE, /\bappVram: \(\) =>/g), 1, 'one router is handed it')
+  assert.doesNotMatch(between(APP, 'function onboardingVoice(): Voice {', '\n}\n'), /appVram|shellGpuMemory/, 'the onboarding\'s router sizes nothing')
 })
 
 test('the operator\'s askSet and the bridge\'s both take \'vram\', and the mind\'s setter is optional', () => {

@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the eight kinds of vehicle (car.ts VEHICLE_KINDS) to the two chassis classes the
+ * Why does this file exist? It pins the eleven kinds of vehicle (car.ts VEHICLE_KINDS) to the two chassis classes the
  * First Law was proven on: the one seeded draw that used to say "SUV or sedan" now says which kind, with the heavy
  * kinds on exactly the old SUV share, so every fleet a seed laid out before keeps the same chassis in every slot;
  * every silhouette fits inside its class's box plus the dissolve's reach, so the camera never enters a body the
  * dissolve has not yet taken; the plan, the fleet, the realm's meta and the page's view all carry the kind; and the
- * eight are all drawn by a fleet of a few hundred.
- * What breaks if it is removed? A ninth kind, or a silhouette longer than its box, could go in without a stopping
+ * eleven are all drawn by a fleet of a few hundred.
+ * What breaks if it is removed? A twelfth kind, or a silhouette longer than its box, could go in without a stopping
  * envelope of its own, and a seed's fleet could change class under a saved room.
  */
 import assert from 'node:assert/strict'
@@ -41,10 +41,10 @@ const NO_FURNITURE = { lamps: [], trees: [], signals: [] }
 /** Open ground off the street grid (simCore.test.ts spawns there too). */
 const OPEN = { x: -600, z: 0 }
 
-test('eight kinds, distinct ids and names, each a frozen record with a profile of its own', () => {
-  assert.equal(VEHICLE_KINDS.length, 8)
-  assert.equal(new Set(VEHICLE_KINDS.map((k) => k.id)).size, 8)
-  assert.equal(new Set(VEHICLE_KINDS.map((k) => k.name)).size, 8)
+test('eleven kinds, distinct ids and names, each a frozen record with a profile of its own', () => {
+  assert.equal(VEHICLE_KINDS.length, 11)
+  assert.equal(new Set(VEHICLE_KINDS.map((k) => k.id)).size, 11)
+  assert.equal(new Set(VEHICLE_KINDS.map((k) => k.name)).size, 11)
   assert.ok(Object.isFrozen(VEHICLE_KINDS))
   for (const [i, k] of VEHICLE_KINDS.entries()) {
     assert.ok(Object.isFrozen(k) && Object.isFrozen(k.scale), k.id)
@@ -53,9 +53,10 @@ test('eight kinds, distinct ids and names, each a frozen record with a profile o
     assert.ok(k.scale.every((s) => s > 0.5 && s <= 1.5) && k.wheel > 0.5 && k.wheel <= 1.1, k.id)
     assert.ok(['none', 'interior', 'beacon'].includes(k.lights))
   }
-  assert.equal(VEHICLE_KINDS.filter((k) => k.heavy).length, 4, 'four heavy, four light')
+  assert.equal(VEHICLE_KINDS.filter((k) => k.heavy).length, 5, 'five heavy, six light')
+  assert.deepEqual(VEHICLE_KINDS.slice(0, 8).map((k) => k.id), ['sedan', 'pod', 'van', 'coach', 'courier', 'suv', 'coupe', 'utility'], 'the first eight keep their indices')
   assert.deepEqual(kindOf(-1), VEHICLE_KINDS[0])
-  assert.deepEqual(kindOf(8), VEHICLE_KINDS[0])
+  assert.deepEqual(kindOf(11), VEHICLE_KINDS[0])
   assert.deepEqual(kindOf(Number.NaN), VEHICLE_KINDS[0])
   assert.deepEqual(kindOf(KIND.coach), VEHICLE_KINDS[3])
 })
@@ -69,7 +70,7 @@ test('kindFromDraw: the heavy kinds take exactly the old SUV share (u < 0.3), ev
     seen.add(k)
     assert.equal(VEHICLE_KINDS[k].heavy, u < 0.3, `u = ${u}`)
   }
-  assert.equal(seen.size, 8, 'every kind is drawn somewhere in [0, 1)')
+  assert.equal(seen.size, 11, 'every kind is drawn somewhere in [0, 1)')
   for (const bad of [-0.1, 1, 1.5, Number.NaN, Infinity]) assert.equal(kindFromDraw(bad), KIND.sedan)
 })
 
@@ -135,7 +136,7 @@ test('planFleet: each car carries its kind, suv is the kind\'s class, and the cl
   for (const seed of [11, 1337, 7]) {
     const { cars } = planFleet(64, seed, null)
     for (const c of cars) {
-      assert.ok(Number.isInteger(c.kind) && c.kind >= 0 && c.kind < 8)
+      assert.ok(Number.isInteger(c.kind) && c.kind >= 0 && c.kind < VEHICLE_KINDS.length)
       assert.equal(c.suv, VEHICLE_KINDS[c.kind].heavy)
     }
     const kinds = new Set(cars.map((c) => c.kind))
@@ -182,13 +183,13 @@ test('the fleet and the realm carry the kind: Vehicle.kind, SimMeta.kind beside 
 })
 
 test('FleetView: one mesh per kind with compact slots, the kind\'s scale on its matrices, brake lights from the pose', () => {
-  const kinds = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3]
+  const kinds = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 8, 9, 10]
   const view = new FleetView(kinds, kinds.map(() => 0x808080), uniform(0))
-  assert.equal(view.bodies.length, 8)
-  assert.deepEqual(view.bodies.map((m) => m.count), [2, 1, 1, 2, 1, 1, 1, 1])
+  assert.equal(view.bodies.length, 11)
+  assert.deepEqual(view.bodies.map((m) => m.count), [2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1])
   assert.deepEqual(view.bodies.map((m) => m.name), VEHICLE_KINDS.map((k) => `Cars:${k.id}`))
-  assert.deepEqual([...view.slotOf], [0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
-  assert.equal(view.wheels.count, 40)
+  assert.deepEqual([...view.slotOf], [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0])
+  assert.equal(view.wheels.count, 52)
   // Poses: car i at x = 10 i, upright, heading 0, braking on the odd ones.
   const poses = new Float32Array(kinds.length * POSE.stride)
   for (let i = 0; i < kinds.length; i++) {

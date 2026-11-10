@@ -130,19 +130,28 @@ test('hollowing with the shops: their buildings hidden, a shop on each in its po
   let carried = 0
   for (const w of WINDOWS) {
     const at = `seed ${w.seed} ${w.zone}`
+    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
+    // The sixteen workplaces take the hubs and the tall lots first, and in none of these windows does anything stand a
+    // floor above the slab of a shop of its own. So the carrying is held on one shop more, hollowed with the window's
+    // own: the first candidate lot that is no workplace's or shop's with something that high on it, where there is one.
+    const taken = new Set([...w.lots, ...w.shops].map(key))
+    const tall = lotCandidates(w.pack, w.layout, w.g, w.start).find((c) => {
+      const here = on[c.j * w.g.blocks + c.i], top = Math.max(slabPodium(here)?.height ?? 0, ROOM.height + 0.3)
+      return !taken.has(`${w.g.originX / P + c.i},${w.g.originZ / P + c.j}`) && here.some((b) => b.height >= top + 3.3 - 1e-6)
+    })
+    const shops: ShopLot[] = tall ? [...w.shops, { kind: SHOP_KINDS[0], k: w.g.originX / P + tall.i, m: w.g.originZ / P + tall.j, side: tall.sides[0] }] : w.shops
     const plain = hollowLots(w.pack, w.layout, w.lots)
-    const h = hollowLots(w.pack, w.layout, w.lots, w.shops)
+    const h = hollowLots(w.pack, w.layout, w.lots, shops)
     assert.deepEqual(plain.shops, [], `${at}: no shop lots, no shops`)
     assert.deepEqual(h.rooms, plain.rooms, `${at}: the workplaces as they were`)
     // Every building on a shop lot or a room's is hidden, and no other.
-    const chosen = new Set([...w.lots, ...w.shops].map(key))
+    const chosen = new Set([...w.lots, ...shops].map(key))
     for (let i = 0; i < w.pack.buildings.height.length; i++) {
       const on = buildingLot(w.pack, w.layout.offset, i)
       assert.equal(h.pack.buildings.height[i], on && chosen.has(`${on.K},${on.M}`) ? 0 : w.pack.buildings.height[i], `${at}: building ${i}`)
     }
     // Each shop is the storefront shopsAt builds on its lot, with the podium's height and finish for its slab.
-    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
-    const want = shopsAt(w.shops, (k, m) => {
+    const want = shopsAt(shops, (k, m) => {
       const { i, j } = local(w, { k, m })
       const p = slabPodium(on[j * w.g.blocks + i])
       return p ? { top: Math.max(p.height, ROOM.height + 0.3), style: buildingStyle(w.pack, w.layout, p.i) } : { top: ROOM.height + 0.3, style: STYLE.mixed }

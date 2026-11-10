@@ -631,16 +631,21 @@ test('with the real Fleet in the engine order (guard, nudge, move, updateControl
   assert.equal(alleyShielded.avatar!.collider.isSensor(), false)
 })
 
-test('a shielded person is never an obstacle to a character controller', async () => {
+test('a person is never an obstacle to a character controller, shielded or not', async () => {
   const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
   const still = new Avatar(physics, 0, 0)
   const walker = new Avatar(physics, -1.5, 0)
   // Scene queries only see colliders after a world step.
   physics.step(H, () => {})
+  // A solid (unshielded) person: the one rule of collision.ts (canCollide(player, player) is 0) has the controller
+  // skip every kinematic body (player.ts PASS_VEHICLES), so the walker passes through without a deflection.
   for (let i = 0; i < 30; i++) physics.step(H, (h) => walker.move(2, 0, h))
-  assert.ok(walker.x < -0.55, `walked through a solid person to x = ${walker.x.toFixed(2)}`)
+  assert.ok(walker.x > -0.55, `a solid person blocked the walker at x = ${walker.x.toFixed(2)}`)
+  assert.ok(Math.abs(walker.z) < 1e-6, `deflected sideways by a solid person to z = ${walker.z}`)
+  // A shielded person (a sensor): the same, by Rapier's own rule for sensors.
   still.collider.setSensor(true)
-  for (let i = 0; i < 60; i++) physics.step(H, (h) => walker.move(2, 0, h))
+  walker.teleport(-1.5, 0)
+  for (let i = 0; i < 90; i++) physics.step(H, (h) => walker.move(2, 0, h))
   assert.ok(walker.x > 0.6, `a sensor blocked the walker at x = ${walker.x.toFixed(2)}`)
 })
 
