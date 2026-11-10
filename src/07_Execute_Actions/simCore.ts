@@ -251,18 +251,13 @@ export class SimCore {
     // On tracks, the network is built here from the seed: nothing about the routes crosses from the page. In a region
     // with a street window (streets.ts) the rings are the window's, laid over its own car streets.
     const streets = r ? (o.streets ?? null) : null
-    const network = o.tracks === true ? (streets ? streetNetwork(o.seed, streets) : buildTrackNetwork(o.seed, o.boxes)) : null
-    // The parked share of the fleet in kerbside bays (parking.ts): on the city's grid, or a street window's own.
-    const bays = network ? { boxes: o.boxes, origin: streets ? { x: streets.originX, z: streets.originZ } : undefined } : null
-    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined, bays })
-    // The corridors are laid over the city's grid (the VTOL pads on its own roofs): a region has no elevated loop and
-    // no racetrack over it. A lite boot asks for none (SimInit.craft false); the page draws them (craftView.ts).
-    this.#craft = network && !r && o.craft !== false ? new TrackFleet(network) : null
     // With a street window the network is the window's own (region/transit.ts windowNetwork): its car rings, then its
     // elevated loop, drone corridors, racetrack (held inside the region) and VTOL routes between the roofs of the craft
     // boxes the page sent; the page builds the same from the same four arguments for the craft view.
     const network = o.tracks === true ? (streets ? windowNetwork(o.seed, streets, o.craftBoxes ?? [], r ?? null) : buildTrackNetwork(o.seed, o.boxes)) : null
-    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined })
+    // The parked share of the fleet in kerbside bays (parking.ts): on the city's grid, or a street window's own.
+    const bays = network ? { boxes: o.boxes, origin: streets ? { x: streets.originX, z: streets.originZ } : undefined } : null
+    this.#fleet = new Fleet(physics, o.cars, o.seed, { exposeRig: this.#debug, network: network ?? undefined, bays })
     // The corridors are laid over the city's grid, or over a region's street window; a surveyed region has no window and
     // so no corridors (its fleet's network is the city's rings, which seat no craft). A lite boot asks for none
     // (SimInit.craft false); the page draws them (craftView.ts).
