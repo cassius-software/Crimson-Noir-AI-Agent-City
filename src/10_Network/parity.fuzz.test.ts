@@ -18,7 +18,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { generateCity, streetFurniture } from '../01_Initialize_World/city.ts'
+import { CITY, generateCity, streetFurniture } from '../01_Initialize_World/city.ts'
 import { gen, type Gen } from '../02_Define_The_Rules/property.ts'
 import { SimCore } from '../07_Execute_Actions/simCore.ts'
 import { doorOf, ENTER_RANGE, footWish, POSE, RUN, type DriveControls, type SimCommand, type StepState } from '../07_Execute_Actions/simProtocol.ts'
@@ -29,6 +29,12 @@ import { startHost } from './replication.node.ts'
 const SEED = 1337
 const CARS = 36
 const IDLE: DriveControls = { steer: 0, fwd: 0, back: 0, handbrake: false }
+/**
+ * The podiums left standing in the city of the seed, as the physics holds them: each a box from the ground over a whole
+ * lot, taller than any car. A workplace or a shop hollows exactly such a box into its glass room, so whichever lots they
+ * take, every box here is solid; a driver aimed at one meets a wall the test knows is there.
+ */
+const SOLID = generateCity(SEED).filter(([x0, y0, z0, x1, y1, z1]) => y0 === 0 && y1 > 2 && x1 - x0 === 2 * CITY.lotHalf && z1 - z0 === 2 * CITY.lotHalf)
 const yieldNow = (): Promise<void> => new Promise((r) => setImmediate(r))
 
 async function until(cond: () => boolean, what: string, ms = 8000): Promise<void> {
@@ -144,18 +150,46 @@ async function page(url: string, token: string, name: string, clock: { now: numb
     }
     return best
   }
+  // The bearing from the bonnet of a car at pose offset o to (x, z), radians within a half turn either way (heading is
+  // atan2(x, z) of the bonnet).
+  const bearing = (o: number, x: number, z: number): number => {
+    const off = Math.atan2(x - poses[o + POSE.x], z - poses[o + POSE.z]) - poses[o + POSE.heading]
+    return Math.atan2(Math.sin(off), Math.cos(off))
+  }
+  // The standing podium (SOLID) to run at from the car at pose offset o: the nearest whose centre is at least 35 m off
+  // (a run-up that long meets the wall at twice and more the 5 m/s a crash sheds; a podium a lot away gives too short a
+  // run to be sure of it), within 45 degrees of the bonnet if any is, so a car already rolling keeps its run.
+  const podiumFor = (o: number): { x: number; z: number } => {
+    let best = { x: 0, z: 0, cost: Infinity }
+    for (const [x0, , z0, x1, , z1] of SOLID) {
+      const x = (x0 + x1) / 2, z = (z0 + z1) / 2, d = Math.hypot(x - poses[o + POSE.x], z - poses[o + POSE.z])
+      const cost = d + (Math.abs(bearing(o, x, z)) > Math.PI / 4 ? 1e4 : 0)
+      if (d >= 35 && cost < best.cost) best = { x, z, cost }
+    }
+    return best
+  }
   // The driver: chase a car, take it, drive it hard for a few seconds (full throttle, a weave, the handbrake, now and
-  // then reverse), leave it, and again.
+  // then reverse), leave it, and again. Until it has crashed once, a drive opens with a run straight at a standing
+  // podium, throttle floored and brakes off, to the crash: the crash path is held whichever lots the workplaces and
+  // shops take, where the weave alone met a wall only as the lots happened to fall (and after its first crash the car
+  // mostly stays wedged against that wall, so the run comes first).
   let phase: 'chase' | 'drive' = 'chase'
   let left = 0
   let steer = 0
+  let ram: { x: number; z: number } | null = null
   const act = (dt: number): void => {
     if (st === null || client.status !== 'joined') { frame(dt, { x: 0, z: 0 }, IDLE); return }
     if (phase === 'chase') {
       const car = nearest()
       if (car.d < ENTER_RANGE - 0.4) {
         frame(dt, { x: 0, z: 0 }, IDLE, [{ c: 'interact' }])
-        if (st.driving >= 0) { phase = 'drive'; left = g.float(2, 8) }
+        if (st.driving >= 0) {
+          phase = 'drive'
+          left = g.float(2, 8)
+          ram = crashes === 0 ? podiumFor(st.driving * POSE.stride) : null
+          // Long enough for the run (some 3 s) to reach the wall.
+          if (ram) left = Math.max(left, 6)
+        }
         return
       }
       const a = st.avatar
@@ -168,6 +202,14 @@ async function page(url: string, token: string, name: string, clock: { now: numb
     if (left <= 0) {
       frame(dt, { x: 0, z: 0 }, IDLE, [{ c: 'interact' }])
       if (st.driving < 0) phase = 'chase'
+      return
+    }
+    if (ram && st.driving >= 0) {
+      // Steer for the podium's centre (positive steer turns left, towards a larger heading); the run ends at the crash
+      // and the weave takes over.
+      const was = crashes
+      frame(dt, { x: 0, z: 0 }, { steer: Math.max(-1, Math.min(1, 2 * bearing(st.driving * POSE.stride, ram.x, ram.z))), fwd: 1, back: 0, handbrake: false })
+      if (crashes > was) ram = null
       return
     }
     if (g.bool(0.05)) steer = g.float(-1, 1)

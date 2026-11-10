@@ -1875,7 +1875,7 @@ test('the commute\'s route table: packed after the rooms every step over a windo
   const window = cityStreetGrid()
   window.originX = 2000; window.originZ = 2000; window.roadHalf = 3.3; window.lane = 4.9
   window.h.fill(0, 8 * CITY.blocks, 9 * CITY.blocks)
-  const rooms = workplacesAt([{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'boardroom', k: 55, m: 51, side: 3 }])
+  const rooms = workplacesAt([{ kind: 'roboticsLab', k: 52, m: 52, side: 0 }, { kind: 'twinStudio', k: 55, m: 51, side: 3 }])
   const words = packRoutes(rooms, window)
   assert.ok(words.some((w) => w !== 0) && words.subarray(2 * ROUTE_ROOM_VEC4S * 4).every((w) => w === 0), 'two rooms routed, the other slots empty')
   const device = new MockDevice()
@@ -1884,7 +1884,7 @@ test('the commute\'s route table: packed after the rooms every step over a windo
   assert.deepEqual(read(device), [...words], 'the spawn pass sees the table')
   crowd.step(simInput({ dt: 0.12 }))
   assert.deepEqual(read(device), [...words])
-  // The city's crowd, with its own six rooms: every word zero, so its commute is the greedy walk it always was.
+  // The city's crowd, with its own sixteen rooms: every word zero, so its commute is the greedy walk it always was.
   const city = new MockDevice()
   const cityCrowd = await CrowdSim.create(city as unknown as GPUDevice, AGENTS, null, null, workplaces(1337))
   cityCrowd.step(simInput())

@@ -281,7 +281,7 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: everyone here stays on the ground', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
   { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
-    label: 'Going indoors: the six workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
+    label: 'Going indoors: the sixteen workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
     modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
   { re: /\b(?:buy(?:ing)?|purchase|shop(?:s|ping)?|stores?|money|cash|coins?|credits?)\b/,
     label: 'Shopping: five shops in the city and five in the lakefront metropolis sell clothes and accessories for civic credits; walk into one and press B to browse (Sloane cannot buy for you)',

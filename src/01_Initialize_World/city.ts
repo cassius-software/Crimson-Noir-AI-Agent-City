@@ -233,7 +233,7 @@ function shoreline(add: Add): void {
 }
 
 /**
- * Every box in the city and its finish, from the seed alone: the lots' buildings, the shoreline, and the six workplace
+ * Every box in the city and its finish, from the seed alone: the lots' buildings, the shoreline, and the sixteen workplace
  * lots hollowed into rooms (interiors.ts hollowWorkplaces: their podium becomes glass walls with a doorway, a ceiling
  * slab and furniture; the towers above and every other lot are as generated), then the five shop lots hollowed the
  * same way (storefronts.ts hollowShops, on lots the workplaces did not take).
