@@ -3609,34 +3609,48 @@ system's nixpkgs); on a channel-based one,
   `-- vram=0` none; `--check` reads nothing.
 
 **Ollama with it.** `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service
-(`services.ollama`) on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider looks for it, so the
-agents answer from the GPU with nothing typed:
+(`services.ollama`) on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider looks for it. Given a
+model, the agents then answer from it with nothing typed at the console:
 
 ```nix
 programs.crimson-noir-agent-city.ollama = {
   enable = true;
   acceleration = "vulkan";        # the default; or "rocm", "cuda", "cpu", or null for services.ollama's own choice
-  models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started (services.ollama.loadModels)
+  integratedGpu = false;          # true lets Ollama use an integrated GPU (see below)
+  models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started; without one it starts empty
   extraOrigins = [ ];             # other page addresses Ollama should answer, such as the web copy's
 };
 ```
 
 - **The build.** NixOS 26.05 has one Ollama package per backend and no longer has `services.ollama.acceleration`, so
-  the option picks the package, `pkgs.ollama-<acceleration>`. Vulkan, the default, runs on AMD, Intel and NVIDIA GPUs
-  through the graphics driver, and the option turns on `hardware.graphics.enable` for it. `"rocm"` is AMD's compute
-  stack. `"cuda"` is NVIDIA's: it is unfree, so the configuration has to allow it (`nixpkgs.config.allowUnfree`, or its
-  libraries by name), and the NixOS binary cache does not carry it, so it builds on the machine. A nixpkgs without the
-  chosen package stops the build with a message naming it.
+  the option picks the package, `pkgs.ollama-<acceleration>`; a nixpkgs without it stops the build with a message
+  naming it.
+  - `"vulkan"`, the default, runs on discrete AMD, Intel and NVIDIA GPUs through the graphics driver.
+  - `"rocm"` is AMD's compute stack; a card ROCm does not list may need `services.ollama.rocmOverrideGfx`.
+  - `"cuda"` is NVIDIA's. It needs NVIDIA's driver (`services.xserver.videoDrivers = [ "nvidia" ]`, as for the city
+    itself, or `hardware.nvidia.datacenter.enable` for a data-centre card), it is unfree, so the
+    configuration has to allow it (`nixpkgs.config.allowUnfree`, or its libraries by name), and the NixOS binary cache
+    does not carry it, so it builds on the machine.
+  - `"cpu"` uses no GPU.
+  The option turns on `hardware.graphics.enable` for Vulkan and CUDA: both load their driver from it.
+- **An integrated GPU.** Ollama leaves integrated GPUs out by default (under Vulkan, all of them: a Ryzen's Radeon,
+  Intel graphics), so on a machine whose only GPU is integrated it runs on the processor. `integratedGpu = true` sets
+  `OLLAMA_IGPU_ENABLE=1` and lets it use one. On a machine with a discrete GPU too, the integrated one may then share
+  the model with it, so leave it off there. The launcher counts an integrated Radeon given 4 GB or more by its
+  firmware (The GPUs' memory, above): with this off, Ollama does not use it, and the measurement shows the model on
+  the processor.
 - **The address.** Ollama answers pages from `http://127.0.0.1` and `http://localhost` on any port by itself, so the
   launcher's page needs nothing. The web copy, or the city opened from another address, goes in `extraOrigins`
   (`OLLAMA_ORIGINS`).
-- **Your own settings win.** Everything the option sets on `services.ollama` is a default, so a configuration's own
-  `host`, `port`, `package` or `OLLAMA_ORIGINS` keeps its value. It warns when Ollama would answer other machines (a host
-  other than loopback), when the port is not 11434 (type `ask server http://localhost:<port>` at the console then), and
-  when an `OLLAMA_ORIGINS` set elsewhere means `extraOrigins` is not used.
+- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and sets
+  `enable`, `package`, `OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as defaults, so a configuration's own values for any of
+  them win. `models` are added to the configuration's own `services.ollama.loadModels`. It warns when Ollama would
+  answer other machines (a host other than loopback), when the port is not 11434 (type
+  `ask connect ollama http://localhost:<port>` at the console then), and when an `OLLAMA_ORIGINS` set elsewhere means
+  `extraOrigins` is not used.
 - **On its own.** It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve models to itself
   without the city. It sets no context length (`OLLAMA_CONTEXT_LENGTH`): in Ollama's generate format the city sends
-  its own with each answer (How big a model auto gives Ollama), and a configuration can still set one for the rest.
+  its own with each answer (Bounded, under The model providers), and a configuration can still set one for the rest.
 - **Moving from your own `ollama serve`.** The service keeps its models in `/var/lib/ollama`, not in your home folder,
   so models pulled before are pulled again (`models`, or `ollama pull`, which talks to the service). Stop your own
   server first: two cannot share port 11434.
@@ -3656,9 +3670,11 @@ the page built from source stay the same.
 What is verified: the `nix` workflow (`.github/workflows/nix.yml`) runs on every pull request and push to main on an
 x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the package, and the module evaluated on a
 minimal NixOS system, its package evaluating once the page is allowed and refused while it is not; its Ollama option
-evaluated alone: loopback at 11434, the Vulkan build by default and the CPU one when chosen, the graphics driver on only
-for Vulkan, CUDA refused until unfree packages are allowed, origins and the model loader only when given, the
-system's own host, port and origins winning, with the three warnings), the Nix page
+evaluated alone: loopback at 11434, the Vulkan build by default, the CPU one when chosen and services.ollama's own
+with null, the graphics driver on for Vulkan and CUDA and off for CPU, ROCm and null, CUDA refused until unfree
+packages are allowed, origins, the model loader and the integrated GPU only when asked for, the system's own host
+(plain or as a default), port, package, origins and `enable = false` winning, its models added to the option's, with
+the three warnings), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins

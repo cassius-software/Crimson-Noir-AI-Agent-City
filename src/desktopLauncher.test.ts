@@ -295,11 +295,13 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
   assert.match(module, /^ {4}ollama = \{\n {6}enable = lib\.mkEnableOption/m, 'an option of its own, apart from the city\'s enable')
   assert.match(module, /default = "vulkan";/, 'the free, cached GPU build by default')
   assert.match(module, /llmPackage = if llm\.acceleration == null then null else "ollama-\$\{llm\.acceleration\}";/)
-  assert.match(module, /host = lib\.mkDefault "127\.0\.0\.1";\n {8}port = lib\.mkDefault 11434;/, 'where auto looks, as defaults the system can override')
+  assert.doesNotMatch(module, /^\s*(host|port) = /m, 'host and port stay nixpkgs\' own 127.0.0.1:11434, where auto looks, so a system\'s own value wins')
+  assert.match(module, /OLLAMA_IGPU_ENABLE = lib\.mkDefault "1";/, 'an integrated GPU only when asked for')
+  assert.match(module, /ask connect ollama http:\/\/localhost:/, 'the port warning names the command that works under auto')
   assert.doesNotMatch(module, /^\s*acceleration = (?!lib\.mkOption)/m, 'services.ollama.acceleration is gone in nixpkgs 26.05')
   for (const never of [/openFirewall/, /OLLAMA_HOST/, /modelsDir/, /services\.ollama\.models\b/, /OLLAMA_CONTEXT_LENGTH/]) assert.doesNotMatch(module, never, String(never))
   const flakeChecks = read('flake.nix')
-  for (const proof of ['plain.pkgs.ollama-vulkan.drvPath', 'cpu.pkgs.ollama-cpu.drvPath', '!(builtins.tryEval cuda.config.services.ollama.package.drvPath).success', '(env theirs).OLLAMA_ORIGINS == "https://b.example"', 'lib.length (ours theirs) == 3']) assert.ok(flakeChecks.includes(proof), `nix flake check proves ${proof}`)
+  for (const proof of ['plain.pkgs.ollama-vulkan.drvPath', 'cpu.pkgs.ollama-cpu.drvPath', 'cuda.config.hardware.graphics.enable', '(env igpu).OLLAMA_IGPU_ENABLE == "1"', '(env ownDefault).OLLAMA_HOST == "0.0.0.0:11434"', '!(builtins.tryEval cuda.config.services.ollama.package.drvPath).success', '(env theirs).OLLAMA_ORIGINS == "https://b.example"', 'lib.length (ours theirs) == 3']) assert.ok(flakeChecks.includes(proof), `nix flake check proves ${proof}`)
 })
 
 test('Nix leaves nothing the repository\'s walkers, the page build or git would pick up', () => {

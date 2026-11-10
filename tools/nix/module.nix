@@ -76,17 +76,30 @@ in
         );
         default = "vulkan";
         description = ''
-          Which nixpkgs build of Ollama runs it: pkgs.ollama-<this>. "vulkan" runs on AMD, Intel and NVIDIA GPUs
-          through the graphics driver (hardware.graphics.enable is turned on for it); "rocm" is AMD's compute stack;
-          "cuda" is NVIDIA's, unfree, so it has to be allowed in nixpkgs.config and is not in the NixOS binary
-          cache; "cpu" uses no GPU. null leaves services.ollama.package as it is.
+          Which nixpkgs build of Ollama runs it: pkgs.ollama-<this>. "vulkan" runs on discrete AMD, Intel and NVIDIA
+          GPUs through the graphics driver (an integrated one only with integratedGpu); "rocm" is AMD's compute stack
+          (a card ROCm does not list may need services.ollama.rocmOverrideGfx); "cuda" is NVIDIA's, unfree, so it has
+          to be allowed in nixpkgs.config, needs NVIDIA's driver (services.xserver.videoDrivers = [ "nvidia" ], or
+          hardware.nvidia.datacenter.enable) and is not in the NixOS binary
+          cache; "cpu" uses no GPU. hardware.graphics.enable is turned on for "vulkan" and "cuda", which load the
+          driver from it. null leaves services.ollama.package as it is.
+        '';
+      };
+      integratedGpu = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Let Ollama use an integrated GPU (a Ryzen's Radeon, Intel graphics): OLLAMA_IGPU_ENABLE=1. Ollama leaves
+          them out by default (under Vulkan, all of them), so on a machine whose only GPU is integrated it runs on the
+          processor unless this is on. On a machine with a discrete GPU too, the integrated one may then share the
+          model with it.
         '';
       };
       models = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
         example = [ "qwen3-vl:4b" ];
-        description = "Models Ollama pulls once it has started (services.ollama.loadModels).";
+        description = "Models Ollama pulls once it has started, added to services.ollama.loadModels. Without one, Ollama starts empty.";
       };
       extraOrigins = lib.mkOption {
         type = lib.types.listOf lib.types.str;
@@ -119,19 +132,26 @@ in
         lib.optional (!lib.elem config.services.ollama.host [ "127.0.0.1" "localhost" "::1" "[::1]" ])
           "services.ollama.host is ${config.services.ollama.host}: Ollama then answers other machines too, and the city needs only this one"
         ++ lib.optional (config.services.ollama.port != 11434)
-          "services.ollama.port is ${toString config.services.ollama.port}: the city's auto provider looks at 11434, so type ask server http://localhost:${toString config.services.ollama.port} at its console"
+          "services.ollama.port is ${toString config.services.ollama.port}: the city's auto provider looks at 11434, so type ask connect ollama http://localhost:${toString config.services.ollama.port} at its console"
         ++ lib.optional (
           llm.extraOrigins != [ ] && (config.services.ollama.environmentVariables.OLLAMA_ORIGINS or origins) != origins
         ) "services.ollama.environmentVariables.OLLAMA_ORIGINS is set elsewhere, so programs.crimson-noir-agent-city.ollama.extraOrigins is not used";
-      # Vulkan finds its drivers through the graphics stack (/run/opengl-driver).
-      hardware.graphics.enable = lib.mkIf (llm.acceleration == "vulkan") (lib.mkDefault true);
+      # Vulkan's loader finds its drivers, and the CUDA build NVIDIA's libcuda, under /run/opengl-driver, which only
+      # the graphics stack provides.
+      hardware.graphics.enable = lib.mkIf (lib.elem llm.acceleration [
+        "vulkan"
+        "cuda"
+      ]) (lib.mkDefault true);
+      # host and port stay nixpkgs' own defaults (127.0.0.1 and 11434, where auto looks), so a configuration's own
+      # value, plain or mkDefault, wins; the flake check proves the address.
       services.ollama = {
         enable = lib.mkDefault true;
-        host = lib.mkDefault "127.0.0.1";
-        port = lib.mkDefault 11434;
         package = lib.mkIf (llmPackage != null && pkgs ? ${llmPackage}) (lib.mkDefault pkgs.${llmPackage});
-        loadModels = llm.models;
-        environmentVariables = lib.mkIf (llm.extraOrigins != [ ]) { OLLAMA_ORIGINS = lib.mkDefault origins; };
+        loadModels = lib.mkIf (llm.models != [ ]) llm.models;
+        environmentVariables = lib.mkMerge [
+          (lib.mkIf (llm.extraOrigins != [ ]) { OLLAMA_ORIGINS = lib.mkDefault origins; })
+          (lib.mkIf llm.integratedGpu { OLLAMA_IGPU_ENABLE = lib.mkDefault "1"; })
+        ];
       };
     })
   ];
