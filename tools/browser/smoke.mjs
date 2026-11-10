@@ -83,6 +83,9 @@
  *   sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
+ * - walkhome: the same stage through a home: Sloane names the homes in the keyboard's words, the home's chip is clear of
+ *   the walk's card, B opens the doorstep card and the walk's card steps aside, nothing is bought, and Esc puts the
+ *   card away and passes the stage;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -107,7 +110,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,lakefront,homes,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,lakefront,homes,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -1994,6 +1997,60 @@ const SCENARIOS = {
       check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
         'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
       p.health('walkshop')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * The first walk's look stage through a home (src/01_Initialize_World/properties.ts, HomeCard.tsx): the stage names the
+   * homes, the home's chip shows clear of the walk's card, B opens the doorstep card (nothing is bought, and the walk's
+   * card steps aside), and the card put away with Esc passes the stage.
+   */
+  async walkhome(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      // Sloane's name question skipped with Esc, as walkshop does: her open card stands over the bottom-centre chips here.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
+      await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('move')
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('voice')
+      for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
+      const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
+      const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
+      check(at && /a home for sale/.test(said) && /press B to read its deed/.test(said), 'walkhome: the look stage names the homes, in the keyboard\'s words', `stage ${await stage()}; ${said.replace(/\s+/g, ' ').slice(0, 260)}`)
+      // Into the first home (the Micro-Loft; every city seed has the seven), on foot, three metres past its doorway: the
+      // line from the sidewalk's arrival spot through the doorway points into the room.
+      const homes = await p.eval('window.__SIM__.homes()')
+      const h = homes[0]
+      const dx = h.door.x - h.arrival.x, dz = h.door.z - h.arrival.z, len = Math.hypot(dx, dz) || 1
+      await p.eval(`window.__SIM__.teleport(${h.door.x + (dx / len) * 3}, ${h.door.z + (dz / len) * 3}, 0)`)
+      const inHome = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 0 && !!document.querySelector('[data-hint="home"]')`, 20_000).then(() => true, () => false)
+      const chip = await p.eval(`document.querySelector('[data-hint="home"]')?.textContent ?? ''`)
+      const over = await p.eval(`(() => { const c = document.querySelector('[data-hint="home"]'); if (!c) return 'no chip'; const r = c.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); if (top && c.contains(top)) return ''; const at = (e) => e ? e.tagName.toLowerCase() + [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'aria-label').map((a) => '[' + a.name + '=' + a.value.slice(0, 24) + ']').join('') : 'nothing'; return 'under ' + at(top) + ' in ' + at(top?.closest('aside,section,div[data-walk]') ?? null) + ' at ' + Math.round(r.left) + ',' + Math.round(r.top) })()`)
+      await p.shot('walk-home-chip')
+      check(inHome && over === '' && chip.includes(`For sale: ${h.name}`), 'walkhome: in the home, its For sale chip shows and the walk\'s card does not cover it', `${h.name}: in ${inHome}, chip "${chip}" ${over || 'clear'}`)
+      // B, as the stage says, from the city rather than a field: the canvas is clicked first, as a person would.
+      const credits = () => p.eval('window.__SIM__.shopkeeper.purse.credits()')
+      const c0 = await credits()
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.tap('KeyB', 'b', 66)
+      const open1 = await p.waitFor(`!!document.querySelector('aside[data-home="0"]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(open1 && (await stage()) === 'style', 'walkhome: B opens the home\'s doorstep card and the walk\'s card steps aside', `card ${open1}, walk card ${await p.eval(`!!document.querySelector('[data-walk-show]')`)}, stage ${await stage()}`)
+      await p.shot('walk-home')
+      await p.tap('Escape', 'Escape', 27)
+      const away = await past('style', 10_000)
+      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('aside[data-home]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkhome: Esc puts the doorstep card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      check((await credits()) === c0 && ((await p.eval('window.__SIM__.snapshot().customer.ownedHomes')) & 1) === 0, 'walkhome: reading the deed bought nothing', `credits ${c0} -> ${await credits()}`)
+      p.health('walkhome')
     } finally { await p.b.close() }
   },
 
