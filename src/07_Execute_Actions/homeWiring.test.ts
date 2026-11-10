@@ -136,7 +136,7 @@ test('App: one home card state; the engine and the chip open it; input suspended
   assert.ok(src.includes('engineRef.current?.input.suspend(lookOpen || storeOpen !== null || homeOpen !== null || termOpenRef.current)'))
   assert.ok(src.includes('}, [lookOpen, storeOpen, homeOpen])'))
   assert.ok(src.includes('if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null) e.input.suspend(true)'), 'an engine that arrives under an open card starts suspended')
-  assert.ok(src.includes('if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null) }'), 'the console opening puts the card away')
+  assert.ok(src.includes("if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null); walkRef.current.note('console') }"), 'the console opening puts the card away (and the first walk hears of it)')
   assert.ok(src.includes("if (homeOpenRef.current !== null && ((s.customer.home?.index ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()"), 'out of the home or into a headset, the card goes')
   assert.ok(src.includes('{engine && hud && !termOpen && homeOpen === null && ( <TouchControls'), 'no touch controls under the card')
   assert.ok(src.includes('visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null}'), 'Sloane steps aside')
