@@ -119,7 +119,7 @@ function clearAhead(all: readonly State[], i: number, metres: number): boolean {
   return true
 }
 
-/** The highest-index car nobody is driving (the avatar may be at the wheel of one), an AI car ahead of a parked one; -1 if none. */
+/** The highest-index car nobody is driving (the avatar may be at the wheel of one), an AI car ahead of a parked one (a bay car is left in its bay when there is a choice); -1 if none. */
 function spareCar(sim: SimControls): number {
   let parked = -1
   for (let i = sim.vehicles.count() - 1; i >= 0; i--) {
@@ -132,11 +132,12 @@ function spareCar(sim: SimControls): number {
 
 /**
  * Takes the borrowed car to a pose on open ground and holds it there on its brakes for `ms` (it drops onto
- * its wheels, and its AI driver must not pull away with it meanwhile). A parked car is first handed to its
- * driver, since a parked car ignores intents; restoreCar() parks it again after.
+ * its wheels, and its AI driver must not pull away with it meanwhile). An AI car is parked first: a scripted intent
+ * takes a parked car, as a player does, and is refused on a car with a driver (simCore.ts `intent`); restoreCar()
+ * hands it back to its driver after.
  */
 async function borrow(ctx: Ctx, v: number, origin: State, x: number, z: number, heading: number, ms = SETTLE_MS): Promise<void> {
-  if (origin.mode === 'parked') ctx.sim.vehicles.setMode(v, 'ai')
+  if (origin.mode === 'ai') ctx.sim.vehicles.setMode(v, 'parked')
   ctx.sim.vehicles.recover(v, x, z, heading)
   for (let t = 0; t < ms; t += FRAME_MS) {
     ctx.sim.vehicles.intent(v, 0, KERNEL.maxBrake, 0)

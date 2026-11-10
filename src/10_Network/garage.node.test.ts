@@ -59,10 +59,13 @@ const exited = (st: StepState) => st.events.find((e): e is Extract<SimEvent, { e
 test('the garage reads the fleet\'s own plan: every car\'s ring and SUV flag, from the seed and the fleet size alone', async () => {
   const g = await theGarage()
   const p = await Physics.create([], { lamps: [], trees: [], signals: [] })
-  const fleet = new Fleet(p, CARS, SEED, { network: g.network })
+  const fleet = new Fleet(p, CARS, SEED, { network: g.network, bays: { boxes: generateCity(SEED) } })
   assert.equal(g.plan.length, CARS)
+  assert.ok(g.plan.filter((c) => c.bay).length >= 8, 'the parked share is in its bays')
   for (let i = 0; i < CARS; i++) {
     assert.equal(g.plan[i].suv, fleet.vehicles[i].suv, `car ${i}`)
+    assert.equal(g.plan[i].bay, fleet.vehicles[i].bay !== null, `car ${i}: the same bays`)
+    assert.equal(fleet.vehicles[i].mode, g.plan[i].bay ? 'parked' : 'ai', `car ${i}: parked in its bay, driven on its ring`)
     assert.ok(g.plan[i].track >= 0 && g.network.tracks[g.plan[i].track].kind === 'car', `car ${i} is seated on a car ring`)
     const at = fleet.position(fleet.vehicles[i])
     assert.ok(Math.abs(at.x - g.plan[i].pose.x) < 1e-3 && Math.abs(at.z - g.plan[i].pose.z) < 1e-3, `car ${i} starts at its seat`)
@@ -75,9 +78,9 @@ test('a car replayed in the garage is the page\'s car to the bit: taking the whe
   g.join(1)
   const { step, poses } = await page()
   const r = rng(5)
-  // Let the traffic run, then stand 2.5 m beside a car on its ring and take its wheel.
+  // Let the traffic run, then stand 2.5 m beside a parked car in its bay (on its road side) and take its wheel.
   for (let k = 0; k < 120; k++) step()
-  const i = 3
+  const i = g.plan.findIndex((c) => c.bay)
   const c = chassisOf(poses, i), h = poses[i * POSE.stride + POSE.heading]
   const at = { x: c.x + Math.cos(h) * 2.5, z: c.z - Math.sin(h) * 2.5 }
   const st0 = step({ cmds: [{ c: 'teleport', ...at }, { c: 'interact' }] })
@@ -137,46 +140,46 @@ test('a car replayed in the garage is the page\'s car to the bit: taking the whe
   assert.equal(g.worlds, 0)
 })
 
-test('the door rules: reach, the car\'s ring, lane, heading, speed, height, spin, a parked car\'s spot, the fleet\'s bounds', async () => {
+test('the door rules: reach, a parked car in its bay at rest, upright, at a car\'s height; a car in traffic is nobody\'s; the fleet\'s bounds', async () => {
   const g = await theGarage()
   g.join(7)
-  const car = g.plan[0]
+  // A car in traffic, honestly on its lane at its ring's speed: it has a driver, and the door is refused.
+  const lane = g.plan.findIndex((c) => !c.bay)
+  const car = g.plan[lane]
   const track = g.network.tracks[car.track]
   const t = tangentAt(track, projectOnto(track, car.pose.x, car.pose.z).s)
   const yaw = car.pose.heading - Math.PI / 2
-  const ok: CarState = { x: car.pose.x, y: 0.56, z: car.pose.z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), vx: t[0] * 8, vy: 0, vz: t[1] * 8, wx: 0, wy: 0, wz: 0 }
-  assert.ok(Math.abs(headingOf({ x: ok.qx, y: ok.qy, z: ok.qz, w: ok.qw }) - car.pose.heading) < 1e-9)
-  const at = { x: car.pose.x + 2, z: car.pose.z }
-  assert.equal(g.whyNotEnter(7, at, 0, ok), null, 'a car on its lane, facing along it, at speed, upright, in reach')
-  const why = (o: Partial<CarState>, where = at, index = 0) => g.whyNotEnter(7, where, index, { ...ok, ...o })
+  const moving: CarState = { x: car.pose.x, y: 0.56, z: car.pose.z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), vx: t[0] * 8, vy: 0, vz: t[1] * 8, wx: 0, wy: 0, wz: 0 }
+  assert.match(g.whyNotEnter(7, { x: car.pose.x + 2, z: car.pose.z }, lane, moving) ?? '', /has a driver/, 'a car in traffic is not taken from its driver')
+  // A bay car (parking.ts): parked where the seed put it, at rest, facing along its lane; the player on its road side.
+  const b = g.plan.findIndex((c) => c.bay)
+  const bay = g.plan[b]
+  const byaw = bay.pose.heading - Math.PI / 2
+  const ok: CarState = { x: bay.pose.x, y: 0.56, z: bay.pose.z, qx: 0, qy: Math.sin(byaw / 2), qz: 0, qw: Math.cos(byaw / 2), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
+  assert.ok(Math.abs(headingOf({ x: ok.qx, y: ok.qy, z: ok.qz, w: ok.qw }) - bay.pose.heading) < 1e-9)
+  const at = { x: bay.pose.x + Math.cos(bay.pose.heading) * 2, z: bay.pose.z - Math.sin(bay.pose.heading) * 2 }
+  assert.equal(g.whyNotEnter(7, at, b, ok), null, 'a parked car in its bay, at rest, in reach')
+  const why = (o: Partial<CarState>, where = at, index = b) => g.whyNotEnter(7, where, index, { ...ok, ...o })
   assert.match(why({}, { x: at.x + ENTER_RANGE, z: at.z }) ?? '', /from the room's pose/)
   assert.match(why({}, at, CARS) ?? '', /no car 36/)
   assert.match(why({}, at, -1) ?? '', /no car -1/)
   assert.match(why({}, at, 1.5) ?? '', /no car 1.5/)
-  // Another car's index claims this car's spot: its ring runs elsewhere.
-  const other = g.plan.findIndex((c) => c.track !== car.track && Math.hypot(c.pose.x - car.pose.x, c.pose.z - car.pose.z) > 50)
-  assert.match(why({}, at, other) ?? '', /off its ring's lane/)
-  // Off the lane: a lateral step of the lane envelope and a little more.
-  const n = [t[1], -t[0]]
-  assert.match(why({ x: ok.x + n[0] * (GARAGE.lane + 0.05), z: ok.z + n[1] * (GARAGE.lane + 0.05) }, { x: at.x + n[0] * (GARAGE.lane + 0.05), z: at.z + n[1] * (GARAGE.lane + 0.05) }) ?? '', /off its ring's lane/)
-  assert.equal(why({ x: ok.x + n[0] * (GARAGE.lane - 0.05), z: ok.z + n[1] * (GARAGE.lane - 0.05) }), null, 'inside the envelope')
-  assert.match(why({ qy: Math.sin((yaw + 1) / 2), qw: Math.cos((yaw + 1) / 2) }) ?? '', /facing along its ring/)
-  assert.match(why({ vx: t[0] * 20, vz: t[1] * 20 }) ?? '', /past its ring's/)
+  // Another bay car's index for this bay's state: its bay is elsewhere.
+  const other = g.plan.findIndex((c, k) => c.bay && k !== b)
+  assert.match(why({}, at, other) ?? '', /from its bay/)
+  // Out of its bay by more than the door; settled within it.
+  const f = [Math.sin(bay.pose.heading), Math.cos(bay.pose.heading)]
+  assert.match(why({ x: ok.x + f[0] * 0.6, z: ok.z + f[1] * 0.6 }, { x: at.x + f[0] * 0.6, z: at.z + f[1] * 0.6 }) ?? '', /0\.60 m from its bay/)
+  assert.equal(why({ x: ok.x + f[0] * 0.4, z: ok.z + f[1] * 0.4 }, { x: at.x + f[0] * 0.4, z: at.z + f[1] * 0.4 }), null, 'within the door')
+  // Turned, moving, spinning, in the air, on its side, malformed: refused. Settled on its springs: let through.
+  assert.match(why({ qy: Math.sin((byaw + 0.3) / 2), qw: Math.cos((byaw + 0.3) / 2) }) ?? '', /turned 0\.30 rad in its bay/)
+  assert.equal(why({ qy: Math.sin((byaw + 0.03) / 2), qw: Math.cos((byaw + 0.03) / 2) }), null, 'settled a hair')
+  assert.match(why({ vx: f[0] * 8, vz: f[1] * 8 }) ?? '', /stands parked in its bay, not moving \(8\.00 m\/s/)
+  assert.match(why({ vy: 12 }) ?? '', /not moving \(12\.00 m\/s/)
+  assert.match(why({ wy: 5 }) ?? '', /not moving \(0\.00 m\/s, 5\.00 rad\/s\)/)
+  assert.equal(why({ vy: -0.09, wz: 0.1, y: 0.548 }), null, 'settling onto its springs')
   assert.match(why({ y: 3 }) ?? '', /height/)
   assert.match(why({ y: 1.2 }) ?? '', /height/, 'a chassis held 0.6 m off the street')
-  assert.match(why({ wy: 5 }) ?? '', /spinning/)
-  // The whole state the room would adopt (found by the Phase 13 review: only the speed's size was checked, so a car could
-  // be claimed moving upward and the room's own replay landed it on a roof).
-  const f = [t[0], t[1]], side = [t[1], -t[0]]
-  assert.match(why({ vx: f[0] * 5, vy: 10, vz: f[1] * 5 }) ?? '', /moving up at 10\.0 m\/s/)
-  assert.match(why({ vy: -3 }) ?? '', /moving down at 3\.0 m\/s/)
-  assert.equal(why({ vy: -0.74 }), null, 'settling onto its springs at the start')
-  assert.match(why({ vx: f[0] * 6 + side[0] * 5, vz: f[1] * 6 + side[1] * 5 }) ?? '', /sliding sideways at 5\.0 m\/s/)
-  assert.match(why({ vx: -f[0] * 3, vz: -f[1] * 3 }) ?? '', /reversing at 3\.0 m\/s/)
-  assert.match(why({ wx: f[0] * 2, wz: f[1] * 2, wy: 0 }) ?? '', /pitching or rolling/, 'a roll rate past the fleet\'s')
-  assert.match(why({ wx: side[0] * 2, wz: side[1] * 2, wy: 0 }) ?? '', /pitching or rolling/, 'a pitch rate past the fleet\'s')
-  // The fleet's own extremes pass: an emergency stop's pitch, a corner's slip and yaw, the springs' bounce.
-  assert.equal(why({ vx: f[0] * 9 + side[0] * 1.6, vy: -0.17, vz: f[1] * 9 + side[1] * 1.6, wy: 1.2, wx: side[0] * 0.3, wz: side[1] * 0.3 }), null)
   assert.match(why({ qx: 0.5, qy: 0, qz: 0, qw: Math.sqrt(0.75) }) ?? '', /upright/)
   assert.match(why({ x: Number.NaN }) ?? '', /the car state/)
   assert.match(why({ qw: 2 }) ?? '', /the car state/)
@@ -186,45 +189,49 @@ test('the door rules: reach, the car\'s ring, lane, heading, speed, height, spin
 test('a car the room holds is checked against where it was left; an exit is checked against the realm\'s rule', async () => {
   const g = await theGarage()
   g.join(8)
-  const car = g.plan[2]
+  // The plan's second bay car, taken from its bay (the only kind of car the door opens on).
+  const i = g.plan.map((c, k) => (c.bay ? k : -1)).filter((k) => k >= 0)[1]
+  const car = g.plan[i]
   const yaw = car.pose.heading - Math.PI / 2
   const s: CarBodyState = { x: car.pose.x, y: 0.56, z: car.pose.z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0 }
   const at = { x: car.pose.x + 1, z: car.pose.z }
-  assert.equal(g.whyNotEnter(8, at, 2, s), null)
-  g.enter(8, 2, s)
+  assert.equal(g.whyNotEnter(8, at, i, s), null)
+  g.enter(8, i, s)
   assert.match(g.whyNotEnter(8, at, 3, s) ?? '', /already at a wheel/)
   g.drive(8, [[0.6, 0, 0.1, 0, 60]])
   const chassis = g.chassis(8)!
   assert.deepEqual(g.exitPoint(8), exitPoint(chassis.x, chassis.z, headingOf({ x: chassis.qx, y: chassis.qy, z: chassis.qz, w: chassis.qw })))
   g.park(8)
-  const held = g.parkedAt(8, 2)!
+  const held = g.parkedAt(8, i)!
   assert.ok(Math.hypot(held.x - s.x, held.z - s.z) > 1, 'it drove somewhere first')
   const near = { x: held.x + 1, z: held.z }
-  assert.equal(g.whyNotEnter(8, near, 2, { ...held, x: held.x + 0.4 }), null, 'within 0.5 m of where it was left')
-  assert.match(g.whyNotEnter(8, near, 2, { ...held, x: held.x + 0.6 }) ?? '', /0\.60 m from where it was left/)
+  assert.equal(g.whyNotEnter(8, near, i, { ...held, x: held.x + 0.4 }), null, 'within 0.5 m of where it was left')
+  assert.match(g.whyNotEnter(8, near, i, { ...held, x: held.x + 0.6 }) ?? '', /0\.60 m from where it was left/)
   // Where it was left, but not as it was left (found by the Phase 13 review: only the position was checked, so a car
   // left at rest could be taken back moving at 36 m/s, 30 of them upward, and the room's replay put it on a roof).
   const yawBy = (q: CarBodyState, a: number): CarBodyState => {
     const h = { x: 0, y: Math.sin(a / 2), z: 0, w: Math.cos(a / 2) }
     return { ...q, qx: h.w * q.qx + h.x * q.qw + h.y * q.qz - h.z * q.qy, qy: h.w * q.qy - h.x * q.qz + h.y * q.qw + h.z * q.qx, qz: h.w * q.qz + h.x * q.qy - h.y * q.qx + h.z * q.qw, qw: h.w * q.qw - h.x * q.qx - h.y * q.qy - h.z * q.qz }
   }
-  assert.match(g.whyNotEnter(8, near, 2, { ...held, vx: 20, vy: 30 }) ?? '', /was left at rest, not moving \(36\.06 m\/s/)
-  assert.match(g.whyNotEnter(8, near, 2, { ...held, wy: 2 }) ?? '', /was left at rest, not moving/)
-  assert.match(g.whyNotEnter(8, near, 2, yawBy(held, 0.3)) ?? '', /turned 0\.30 rad from how it was left/)
+  assert.match(g.whyNotEnter(8, near, i, { ...held, vx: 20, vy: 30 }) ?? '', /was left at rest, not moving \(36\.06 m\/s/)
+  assert.match(g.whyNotEnter(8, near, i, { ...held, wy: 2 }) ?? '', /was left at rest, not moving/)
+  assert.match(g.whyNotEnter(8, near, i, yawBy(held, 0.3)) ?? '', /turned 0\.30 rad from how it was left/)
   // A car settled on its springs since: a little lower, a little turned, barely moving.
-  assert.equal(g.whyNotEnter(8, near, 2, { ...yawBy(held, 0.03), y: held.y - 0.012, vy: -0.09, wz: 0.1 }), null)
-  assert.match(g.whyNotEnter(8, near, 2, { ...s, x: car.pose.x }) ?? '', /from where it was left|from the room's pose/, 'not at its old seat any more')
+  assert.equal(g.whyNotEnter(8, near, i, { ...yawBy(held, 0.03), y: held.y - 0.012, vy: -0.09, wz: 0.1 }), null)
+  assert.match(g.whyNotEnter(8, near, i, { ...s, x: car.pose.x }) ?? '', /from where it was left|from the room's pose/, 'not in its bay any more: where it was left')
   g.leave(8)
 })
 
-test('the lane envelope: the fleet\'s own cars stay within every door bound, in their lane, speed, heading and motion', async () => {
+test('the lane envelope: the fleet\'s own cars keep their lanes, upright and at a car\'s height; the bay cars never leave their bays', async () => {
   const g = await theGarage()
   const p = await Physics.create(generateCity(SEED), streetFurniture(SEED))
-  const fleet = new Fleet(p, CARS, SEED, { network: g.network, exposeRig: true })
+  const fleet = new Fleet(p, CARS, SEED, { network: g.network, exposeRig: true, bays: { boxes: generateCity(SEED) } })
   let clock = 0, lat = 0, dh = 0, over = 0
   /** The most lateral on a straight and in a corner (cornerAhead 0), every frame: a cut lasts only a few frames. */
   const lane = { straight: 0, corner: 0 }
-  const most = { rise: 0, fall: 0, side: 0, back: 0, yaw: 0, tilt: 0, up: 1, low: Infinity, high: -Infinity }
+  const most = { up: 1, low: Infinity, high: -Infinity }
+  /** What the room asks of a bay car at its door, read every frame: in its bay, facing as laid out, at rest. */
+  const bays = { off: 0, turned: 0, speed: 0, cars: 0 }
   for (let k = 0; k < 1800; k++) {
     clock += 1 / 60
     fleet.think(1 / 60, clock)
@@ -232,6 +239,20 @@ test('the lane envelope: the fleet\'s own cars stay within every door bound, in 
     for (let i = 0; i < CARS; i++) {
       const v = fleet.vehicles[i], track = g.network.tracks[g.plan[i].track]
       const at = fleet.position(v)
+      const m = motionOf(fleet.bodyState(v))
+      most.up = Math.min(most.up, m.up)
+      const y = fleet.bodyState(v).y
+      most.low = Math.min(most.low, y)
+      most.high = Math.max(most.high, y)
+      if (v.bay) {
+        if (k === 0) bays.cars++
+        bays.off = Math.max(bays.off, Math.hypot(at.x - v.bay.x, at.z - v.bay.z))
+        let d = fleet.heading(v) - v.bay.heading
+        d = Math.atan2(Math.sin(d), Math.cos(d))
+        bays.turned = Math.max(bays.turned, Math.abs(d))
+        bays.speed = Math.max(bays.speed, Math.abs(fleet.speed(v)))
+        continue
+      }
       const pr = projectOnto(track, at.x, at.z)
       lat = Math.max(lat, Math.abs(pr.lateral))
       if (cornerAhead(track, pr.s) === 0) lane.corner = Math.max(lane.corner, Math.abs(pr.lateral))
@@ -240,36 +261,21 @@ test('the lane envelope: the fleet\'s own cars stay within every door bound, in 
       let d = fleet.heading(v) - Math.atan2(tg[0], tg[1])
       d = Math.atan2(Math.sin(d), Math.cos(d))
       dh = Math.max(dh, Math.abs(d))
-      if (Math.abs(fleet.speed(v)) > track.speedLimit + GARAGE.speedSlack) over++
-      // The whole state a page would report at its door, read as the room reads it.
-      const m = motionOf(fleet.bodyState(v))
-      most.rise = Math.max(most.rise, m.vertical)
-      most.fall = Math.max(most.fall, -m.vertical)
-      most.side = Math.max(most.side, Math.abs(m.side))
-      most.back = Math.max(most.back, -m.forward)
-      most.yaw = Math.max(most.yaw, Math.abs(m.yaw))
-      most.tilt = Math.max(most.tilt, m.tilt)
-      most.up = Math.min(most.up, m.up)
-      const y = fleet.bodyState(v).y
-      most.low = Math.min(most.low, y)
-      most.high = Math.max(most.high, y)
+      if (Math.abs(fleet.speed(v)) > track.speedLimit + 0.5) over++
     }
   }
-  assert.ok(lat < GARAGE.lane, `lateral ${lat.toFixed(3)} m`)
   // The lane the track followers hold, every frame (trackDriver.ts: pure pursuit with lateral feedback): never past
-  // 0.78 m in a corner nor 0.53 m on a straight, the bounds GARAGE.lane documents (measured: 0.58 and 0.18).
+  // 0.78 m in a corner nor 0.53 m on a straight (measured: 0.58 and 0.18).
   assert.ok(lane.corner < 0.78, `${lane.corner.toFixed(3)} m off the lane in a corner`)
   assert.ok(lane.straight < 0.53, `${lane.straight.toFixed(3)} m off the lane on a straight`)
   assert.ok(lat > 0.3, 'corners are cut: the envelope is not slack for nothing')
-  assert.ok(dh < GARAGE.heading, `heading ${dh.toFixed(3)} rad`)
+  assert.ok(dh < 0.5, `heading ${dh.toFixed(3)} rad`)
   assert.equal(over, 0)
-  // Every motion bound holds the fleet with room to spare (each is at least twice what the fleet does here).
-  const twice = (v: number, bound: number, what: string) => assert.ok(2 * v <= bound, `${what}: ${v.toFixed(3)} against a bound of ${bound}`)
-  twice(most.rise, GARAGE.rise, 'rising')
-  twice(most.fall, GARAGE.fall, 'falling (the first frames settle the fleet onto its springs)')
-  twice(most.side, GARAGE.slip, 'sideways slip')
-  twice(Math.max(0, most.back), GARAGE.speedSlack, 'reversing')
-  twice(most.yaw, GARAGE.spin, 'yaw rate')
-  twice(most.tilt, GARAGE.tilt, 'pitch and roll rate')
   assert.ok(most.up >= GARAGE.upright && most.low >= GARAGE.low && most.high <= GARAGE.high, JSON.stringify(most))
+  // The bay cars: within a fifth of the door's bounds the whole half minute, with the traffic lapping past them, so a
+  // player's claim of one as it stands is let through.
+  assert.ok(bays.cars >= 8, `${bays.cars} bay cars`)
+  assert.ok(bays.off < GARAGE.door / 5, `a bay car drifted ${bays.off.toFixed(3)} m`)
+  assert.ok(bays.turned < GARAGE.heldTurn / 5, `a bay car turned ${bays.turned.toFixed(3)} rad`)
+  assert.ok(bays.speed < GARAGE.heldSpeed / 5, `a bay car moved at ${bays.speed.toFixed(3)} m/s`)
 })

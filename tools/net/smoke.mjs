@@ -12,8 +12,9 @@
  * realm runs), and then sends crafted, illegal movement packets: a position written into memory, a speed hack in the
  * packet's shape, a speed hack on the clock (honest bursts past the banked seconds: the one past the bank is the one
  * refused), a walk through a wall, an injected velocity, and the car exploits of Phase 13: a teleport through a car's
- * door (a car claimed where the player is not), a car claimed beside the player but off every ring, a door out of a car
- * never taken, and a wheel never taken. Each must be refused instantly: no message but its correction comes back, within
+ * door (a car claimed where the player is not), a car in traffic claimed beside the player (it has a driver: only a
+ * parked car is anyone's to take), a bay car claimed beside the player far from its bay, a door out of a car never
+ * taken, and a wheel never taken. Each must be refused instantly: no message but its correction comes back, within
  * LIMIT_MS of the packet leaving, and the server's truth must not have moved. It prints one row per packet and exits 1
  * if any check fails. Nothing leaves this machine: the server listens on 127.0.0.1 and the client speaks only to it.
  * What breaks if it is removed? Nothing at runtime; the room's anti-cheat loses its one end-to-end check against the
@@ -186,7 +187,11 @@ try {
   const drive = (state, door) => input([[0.5, 0, 0, 0, 1]], { x: state.x, y: state.y, z: state.z }, { mode: 'drive', ...(door && { door }) })
   await crafted(`a teleport through a door: car 0 claimed ${Math.hypot(seat.x - at.x, seat.z - at.z).toFixed(0)} m away`, drive(far, { enter: { car: 0, state: far } }), /from the room's pose/)
   const beside = carAt(at.x - 2, at.z, 0)
-  await crafted('a car claimed beside the player, off every ring', drive(beside, { enter: { car: 0, state: beside } }), /off its ring's lane/)
+  await crafted('a car in traffic claimed beside the player', drive(beside, { enter: { car: 0, state: beside } }), /car 0 has a driver/)
+  // A bay car (the last quarter of the plan sits in kerbside bays) is anyone's to take, but only where it is parked.
+  const bayCar = predictor.garage.plan.findIndex((c) => c.bay && Math.hypot(c.pose.x - beside.x, c.pose.z - beside.z) > 1)
+  check(bayCar >= 0, `the fleet of ${CARS} has a bay car (car ${bayCar})`)
+  await crafted(`a bay car claimed beside the player, far from its bay`, drive(beside, { enter: { car: bayCar, state: beside } }), new RegExp(`car ${bayCar} is .* from its bay`))
   await crafted('a door out of a car never taken', input([[0, 0, 1]], at, { door: { exit: { x: at.x - 2, z: at.z } } }), /exit: not at a wheel/)
   await crafted('a wheel never taken: a drive with no door', drive(beside), /at a wheel without taking one/)
 

@@ -126,6 +126,7 @@ const CORE = [
   { name: 'version', usage: 'version', summary: 'print the product version' },
   { name: 'boot', usage: 'boot [gui|tty|status]', summary: 'which shell is up; boot gui reloads as the city, boot tty as this console alone (?boot=tty, no 3D engine)' },
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
+  { name: 'rooms', usage: 'rooms', summary: 'the indoor workplaces of this map: slot, kind, lot, doorway, stations and name (the city has sixteen; the metropolis the lots its window gave)' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
   { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on, and the three-line NoirScript program that is its only way out (nothing here turns the walk off)" },
@@ -1442,6 +1443,19 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === current) return { lines: [sys(`map: already on ${a}`)] }
     return { lines: [sys(a === 'city' ? 'map city: reloading into the procedural city (people and traffic)...' : 'map lakefront: reloading into the metropolis...')], map: a }
   },
+
+  /** The indoor workplaces, one row each in slot order (the slot is the kind's id: what a swarm dispatches by). Read-only. */
+  rooms: bare('rooms', (b) => {
+    if (!b.rooms) return fail('rooms: no city is running (this console alone; boot gui walks a map)')
+    const rows = b.rooms()
+    if (rows.length === 0) return { lines: [out('rooms: none (this map has no indoor workplaces)')] }
+    const lines: Line[] = [out('slot  kind              lot      door x      z  stations  name')]
+    for (const r of rows) {
+      lines.push(out(`${String(r.slot).padStart(4)}  ${r.kind.padEnd(16)}  ${`${r.k},${r.m}`.padEnd(7)}  ${r.doorX.toFixed(0).padStart(6)} ${r.doorZ.toFixed(0).padStart(6)}  ${String(r.stations).padStart(8)}  ${r.name}`))
+    }
+    lines.push(sys(`${rows.length} workplace${rows.length === 1 ? '' : 's'}; door x, z in metres; the slot is the kind's index (interiors.ts WORKPLACE_KINDS), the row of engine.workplaceTable`))
+    return { lines }
+  }),
 
   // Raw: the rest of the line is an R0 line for the session's machine. No bridge is touched: the machine is blind.
   r0(args, _b, _history, _line, session) {

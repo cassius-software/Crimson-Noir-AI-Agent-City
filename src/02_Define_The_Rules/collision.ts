@@ -14,6 +14,13 @@
  * rays (vehicles.ts) and the avatar gives its capsule (player.ts). It is pure — no Rapier import — so it runs in
  * Node without WASM and the page may import it; collision.test.ts is the structural guard that keeps the ragdoll's
  * importers to the realm and the bit table from drifting.
+ * The same policy as one table: LAYER names what every collider is (terrain, structure, player, agent, vehicle, prop)
+ * and canCollide() is the one rule over the table, branchless: contact is exchanged only where something that moves
+ * (a player, an agent, a vehicle) meets the solid world (the ground, a structure), never between two things that
+ * move and never with a prop. COLLIDERS lists every collider class the realm builds with its layer and the Rapier
+ * words it carries, and collision.test.ts checks Rapier's pairing of those words against the rule for every pair, so
+ * the words cannot say one thing and the table another. WALL_CONTACT is how a vehicle meets the solid world: a
+ * contact solved by Rapier with a small restitution, a rebound and a slide; there is no damage model of any kind.
  * What breaks if it is removed? Two cars could exchange impulses again (a car pushed into a person's path by
  * another car), a wheel could ride up on a car it passes through, an avatar could shove a fallen person, and nothing
  * would say in one place what the realm's contact policy is.
@@ -119,3 +126,113 @@ export const RAGDOLL_GROUPS = interactionGroups(GROUP.ragdoll, ALL_GROUPS & ~(GR
  * ground and the furniture hold it up. Two robots pass through each other, as two rigs do.
  */
 export const ROBOT_GROUPS = RAGDOLL_GROUPS
+
+/** Rapier's default words: every bit in both. What the ground, the buildings and the furniture carry. */
+export const DEFAULT_GROUPS = interactionGroups(ALL_GROUPS, ALL_GROUPS)
+
+/**
+ * The realm's contact layers: what each collider is, for the one rule below (canCollide). A layer is one bit, so a
+ * mask of layers is their OR. They are the names of the policy; the Rapier words above are its mechanism, and
+ * COLLIDERS ties each collider class to both.
+ */
+export const LAYER = Object.freeze({
+  none: 0,
+  /** What everything stands on: the ground tiles, a region's tiles, the pier's deck. */
+  terrain: 1 << 0,
+  /** What never moves and never breaks: buildings, walls, the seawall and its railings, a region's walls. */
+  structure: 1 << 1,
+  /** An avatar's capsule on foot (07_Execute_Actions/player.ts). */
+  player: 1 << 2,
+  /** A pedestrian's promoted rig (03_Spawn_Agents/ragdollRig.ts) or a robot's links (07_Execute_Actions/articulated.ts). */
+  agent: 1 << 3,
+  /** A chassis (07_Execute_Actions/carRig.ts): a car, and every kind drawn over its two chassis classes. */
+  vehicle: 1 << 4,
+  /** Street furniture: lamps, trees and signal poles, in the world as sensors (physics.ts). */
+  prop: 1 << 5,
+} as const)
+
+/** The solid world: what a body may be stopped by. */
+export const SOLID_WORLD = LAYER.terrain | LAYER.structure
+/** What moves: a player, an agent, a vehicle. */
+export const ACTORS = LAYER.player | LAYER.agent | LAYER.vehicle
+
+/** 1 when any bit of `v` (a 32-bit integer) is set, else 0, without a branch: the sign bit of v | −v. */
+const any = (v: number): number => (v | -v) >>> 31
+
+/**
+ * The 14A contact rule, branchless: every bit set (−1) when one of the two layers is an actor and the other the solid
+ * world, 0 for every other pair. So a player, an agent and a vehicle each meet the ground and the structures and
+ * nothing else: not each other (a car never shoves a person or another car, a player never shoves anyone), and not a
+ * prop (a lamp stops nobody). Two pieces of the world never meet (neither moves), and a prop meets nothing.
+ */
+export function canCollide(layerA: number, layerB: number): number {
+  const aActs = any(layerA & ACTORS), bActs = any(layerB & ACTORS)
+  const aSolid = any(layerA & SOLID_WORLD), bSolid = any(layerB & SOLID_WORLD)
+  return -((aActs & bSolid) | (bActs & aSolid)) | 0
+}
+
+/** How a collider class lives in Rapier: fixed (never moves), kinematic (moved by hand) or dynamic (solved). */
+export type BodyKind = 'fixed' | 'kinematic' | 'dynamic'
+
+/** One collider class the realm builds: its layer, the packed Rapier words it carries, its body kind, and whether it is a sensor. */
+export interface ColliderClass {
+  readonly layer: number
+  readonly groups: number
+  readonly body: BodyKind
+  readonly sensor: boolean
+}
+
+/**
+ * Every collider class the realm builds, with its layer and the Rapier words it is built with (physics.ts for the
+ * fixed ones, player.ts, ragdollRig.ts, articulated.ts and carRig.ts for the rest). collision.test.ts takes every
+ * pair and checks that Rapier's own pairing of the words (and its rules that a sensor exchanges no contact and that two
+ * fixed or two kinematic bodies never meet) says exactly what canCollide says of the layers.
+ */
+export const COLLIDERS: Readonly<Record<'ground' | 'building' | 'avatar' | 'rig' | 'robot' | 'chassis' | 'furniture', ColliderClass>> = Object.freeze({
+  ground: Object.freeze({ layer: LAYER.terrain, groups: DEFAULT_GROUPS, body: 'fixed' as const, sensor: false }),
+  building: Object.freeze({ layer: LAYER.structure, groups: DEFAULT_GROUPS, body: 'fixed' as const, sensor: false }),
+  avatar: Object.freeze({ layer: LAYER.player, groups: AVATAR_GROUPS, body: 'kinematic' as const, sensor: false }),
+  rig: Object.freeze({ layer: LAYER.agent, groups: RAGDOLL_GROUPS, body: 'dynamic' as const, sensor: false }),
+  robot: Object.freeze({ layer: LAYER.agent, groups: ROBOT_GROUPS, body: 'dynamic' as const, sensor: false }),
+  chassis: Object.freeze({ layer: LAYER.vehicle, groups: VEHICLE_CHASSIS_GROUPS, body: 'dynamic' as const, sensor: false }),
+  furniture: Object.freeze({ layer: LAYER.prop, groups: DEFAULT_GROUPS, body: 'fixed' as const, sensor: true }),
+})
+
+/**
+ * Rapier's own pairing rule over two packed words: a and b interact iff (a.membership & b.filter) != 0 and
+ * (b.membership & a.filter) != 0. Pure, for the test and for anyone reading the table.
+ */
+export function rapierPairs(a: number, b: number): boolean {
+  return ((a >>> 16) & b & 0xffff) !== 0 && ((b >>> 16) & a & 0xffff) !== 0
+}
+
+/**
+ * Whether Rapier would exchange contact between two collider classes: the words pair, neither is a sensor, and the
+ * two are not both fixed or both kinematic (Rapier solves no contact between two bodies it never moves itself; the
+ * character controller's own sweeps exclude kinematic bodies too, player.ts PASS_VEHICLES). What collision.test.ts
+ * holds equal to canCollide over the layers, pair by pair.
+ */
+export function rapierContact(a: ColliderClass, b: ColliderClass): boolean {
+  if (a.sensor || b.sensor) return false
+  if (a.body === 'fixed' && b.body === 'fixed') return false
+  if (a.body === 'kinematic' && b.body === 'kinematic') return false
+  return rapierPairs(a.groups, b.groups)
+}
+
+/**
+ * How a vehicle meets the solid world (the only contact a chassis ever exchanges): Rapier's contact solver with this
+ * restitution and friction on the chassis collider (carRig.ts buildCarRig), so a car driven into a wall stops dead
+ * at it and slides along it, and the wall does not move. A sedan at 25 m/s stops inside 0.15 m, stays on its
+ * wheels and reverses away (wallContact.test.ts). There is no damage model of any kind: no deformation, no fire, no
+ * breakdown, no health, no event; a car that ends on its side or roof is set back on its wheels (vehicles.ts
+ * recover: an AI car rights itself, the console's `recover` rights the one you drive). The restitution is zero on
+ * purpose: a bounce is paid out of the contact solver's warm-start impulses, state no setter reaches, so a car rebuilt
+ * from a room correction (carRig.ts rebuildCarRig) would leave a wall on a different path from the room's own and
+ * the replay would never again agree (mirror.node.test.ts, "a correction carries the car"). Frozen: policy, not tuning.
+ */
+export const WALL_CONTACT = Object.freeze({
+  /** Coefficient of restitution of a chassis against the solid world: a dead stop, so a replay can copy it. */
+  restitution: 0,
+  /** Friction of a chassis sliding along a wall. */
+  friction: 0.4,
+} as const)

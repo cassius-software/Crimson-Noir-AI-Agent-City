@@ -21,7 +21,8 @@ import { KERNEL, TRAFFIC } from './civic.ts'
 import { createRng } from './degrees.ts'
 import type { Intent } from './laws.ts'
 import { auditCraft, CRAFT, kernelPanic, panicReason, RING0, Ring0Auditor, type AuditPerson, type AuditResult, type AuditVehicle, type Violation } from './ring0.ts'
-import { TRACKS, buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
+import { TRACKS, buildTrackNetwork, poseAt } from '../06_Make_Decisions/tracks.ts'
+import { LAKE } from '../01_Initialize_World/city.ts'
 import { TRACK_KINDS, TRACK_POSE } from '../07_Execute_Actions/simProtocol.ts'
 import { TrackFleet } from '../07_Execute_Actions/trackFleet.ts'
 import { Driver } from '../06_Make_Decisions/traffic.ts'
@@ -938,11 +939,13 @@ test('the craft buffer: a NaN or a train below its deck halts with a named reaso
   // The audit reads the protocol's layout and the tracks' floors (02 imports neither: the numbers are pinned equal here).
   assert.equal(CRAFT.stride, TRACK_POSE.stride)
   assert.equal(CRAFT.y, TRACK_POSE.y)
+  assert.equal(CRAFT.z, TRACK_POSE.z)
+  assert.equal(CRAFT.heading, TRACK_POSE.heading)
   assert.equal(CRAFT.kind, TRACK_POSE.kind)
   const names = Object.entries(TRACK_POSE).filter(([k]) => k !== 'stride').sort((a, b) => a[1] - b[1]).map(([k]) => k)
   assert.deepEqual([...CRAFT.fields], names)
   assert.deepEqual([...CRAFT.kinds], [...TRACK_KINDS])
-  assert.deepEqual([...CRAFT.floor], [NaN, TRACKS.train.deck, TRACKS.drone.altitude[0], TRACKS.plane.altitude, TRACKS.vtol.floor])
+  assert.deepEqual([...CRAFT.floor], [NaN, TRACKS.train.deck, TRACKS.drone.altitude[0], TRACKS.plane.altitude, TRACKS.vtol.floor, TRACKS.ferry.water])
   // A VTOL under the lowest roof a pad is set on has left its corridor; one sat on that roof (its hover over it) passes.
   const one = new Float32Array(S)
   one[TRACK_POSE.kind] = TRACK_KINDS.indexOf('vtol')
@@ -950,10 +953,65 @@ test('the craft buffer: a NaN or a train below its deck halts with a named reaso
   assert.deepEqual(auditCraft(one), { code: 'OFF_CORRIDOR', subject: 'vtol craft 0', detail: 'y=23.99m below its 24m floor' })
   one[TRACK_POSE.y] = TRACKS.vtol.floor + TRACKS.vtol.hover
   assert.equal(auditCraft(one), null)
+  // A ferry's corridor is the lake: under its waterline, or with its hull reaching the land side of its shore, it has
+  // left the proof. Only the ferry has a shore and a hull, pinned to the pier's end and TRACKS.ferry; the pier's end
+  // lies on the lake side of the seawall with a whole hull to spare, and every pose of the route, read as the stream
+  // carries it (32-bit), keeps its hull more than a metre on the lake side of it.
+  const FERRY = TRACK_KINDS.indexOf('ferry')
+  const F = TRACKS.ferry
+  const ferry = buildTrackNetwork(1337).tracks.find((t) => t.kind === 'ferry')!
+  const edge = CRAFT.shore[FERRY]
+  for (const a of [CRAFT.shore, CRAFT.halfLength, CRAFT.halfBeam]) assert.equal(a.length, CRAFT.kinds.length)
+  CRAFT.shore.forEach((v, k) => assert.equal(Number.isNaN(v), k !== FERRY, `kind ${CRAFT.kinds[k]}: a shore only for the ferry`))
+  assert.equal(edge, LAKE.shore + LAKE.pier.length, "the shore is the pier's end")
+  assert.equal(CRAFT.halfLength[FERRY], F.halfLength)
+  assert.equal(CRAFT.halfBeam[FERRY], F.halfBeam)
+  assert.ok(edge - Math.hypot(F.halfLength, F.halfBeam) > LAKE.shore + LAKE.wall.thickness, 'a hull clear of the shore is clear of the seawall at any heading')
+  const ferryAt = (x: number, z: number, heading: number): Float32Array => {
+    one.fill(0)
+    one[TRACK_POSE.kind] = FERRY
+    one[TRACK_POSE.x] = x
+    one[TRACK_POSE.y] = F.water
+    one[TRACK_POSE.z] = z
+    one[TRACK_POSE.heading] = heading
+    return one
+  }
+  let least = Infinity
+  for (let s = 0; s < ferry.length; s += 0.05) {
+    const p = poseAt(ferry, s)
+    assert.equal(auditCraft(ferryAt(p.x, p.z, p.heading)), null, `the route at s ${s.toFixed(2)}`)
+    least = Math.min(least, Math.fround(p.z) - Math.abs(Math.cos(Math.fround(p.heading))) * F.halfLength - Math.abs(Math.sin(Math.fround(p.heading))) * F.halfBeam)
+  }
+  assert.ok(least > edge + 1, `the route's hulls come no nearer than ${least} m`)
+  // Alongside the pier head, broadside either way, it passes; the same place bow or stern to the land, or under its
+  // waterline, halts.
+  const call = poseAt(ferry, ferry.stations[0])
+  assert.equal(auditCraft(ferryAt(call.x, call.z, call.heading)), null, 'a ferry alongside the pier head')
+  assert.equal(auditCraft(ferryAt(call.x, call.z, call.heading + Math.PI)), null, 'the other way round')
+  for (const h of [0, Math.PI]) assert.deepEqual(auditCraft(ferryAt(call.x, call.z, h)), { code: 'OFF_CORRIDOR', subject: 'ferry craft 0', detail: 'hull reaches z=739.50m, on the land side of its 746m shore' })
+  ferryAt(call.x, call.z, call.heading)[TRACK_POSE.y] = 0.04
+  assert.deepEqual(auditCraft(one), { code: 'OFF_CORRIDOR', subject: 'ferry craft 0', detail: 'y=0.04m below its 0.05m floor' })
+  // Alongside the pier, 2 m off its side, where a centre-only shore at the seawall would have passed it, the hull is
+  // on the land side of the pier's end.
+  assert.equal(auditCraft(ferryAt(LAKE.pier.x + LAKE.pier.halfWidth + F.halfLength + 2, 700, Math.PI / 2))?.code, 'OFF_CORRIDOR')
+  // At every quarter and oblique heading, the hull's nearest corner a centimetre off the shore passes and a centimetre
+  // over it halts: the reach is the sum of both halves' projections, whichever way the hull points.
+  for (let q = -4; q < 4; q++) {
+    const h = (q * Math.PI) / 4, f32 = Math.fround(h)
+    const reach = Math.abs(Math.cos(f32)) * F.halfLength + Math.abs(Math.sin(f32)) * F.halfBeam
+    assert.equal(auditCraft(ferryAt(100, edge + reach + 0.01, h)), null, `heading ${h.toFixed(2)}: a hull just off the shore passes`)
+    assert.equal(auditCraft(ferryAt(100, edge + reach - 0.01, h))?.code, 'OFF_CORRIDOR', `heading ${h.toFixed(2)}: a hull just over the shore halts`)
+  }
+  // A craft of a kind with no shore is never read for one: a VTOL far on the land side passes.
+  one.fill(0)
+  one[TRACK_POSE.kind] = TRACK_KINDS.indexOf('vtol')
+  one[TRACK_POSE.y] = TRACKS.vtol.floor
+  one[TRACK_POSE.z] = -500
+  assert.equal(auditCraft(one), null)
   // Frozen, like every other export.
   const mutable = (o: unknown) => o as Record<string, unknown>
   assert.throws(() => { mutable(CRAFT).stride = 1 }, TypeError)
   assert.throws(() => { mutable(CRAFT.floor)[1] = -100 }, TypeError)
   assert.throws(() => { mutable(auditCraft).disarmed = true }, TypeError)
-  for (const o of [CRAFT, CRAFT.floor, CRAFT.kinds, CRAFT.fields, auditCraft, RING0, kernelPanic, panicReason, Ring0Auditor, Ring0Auditor.prototype]) assert.ok(Object.isFrozen(o))
+  for (const o of [CRAFT, CRAFT.floor, CRAFT.shore, CRAFT.halfLength, CRAFT.halfBeam, CRAFT.kinds, CRAFT.fields, auditCraft, RING0, kernelPanic, panicReason, Ring0Auditor, Ring0Auditor.prototype]) assert.ok(Object.isFrozen(o))
 })
