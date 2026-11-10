@@ -14,19 +14,22 @@
  * two together). Mute releases the device (the browser's own indicator goes out with the pill's), it does not merely
  * silence a track: a privacy mute the visitor can trust. Pure where it can be: the settings, the phase words and the
  * meter are functions a Node test runs; `Microphone` takes the browser's objects as arguments.
- * MIC_OPEN_BY_DEFAULT is the one line that decides whether a first visit opens the microphone at boot: it ships false
- * (the visitor taps first) until the owner says otherwise; a saved switch (the visitor's own choice) reopens it either way.
+ * MIC_OPEN_BY_DEFAULT is the one line that decides whether a first visit opens the microphone at boot: it ships true
+ * (the owner's choice, 2026-11-07), so the browser asks its permission as the city starts; a saved switch (the visitor's
+ * own choice: left on, or muted) wins over it either way, so a mute holds across visits.
  * What breaks if it is removed? No microphone pill, no voice to Sloane, no barge-in: the on-device recogniser still
  * answers `recruit listen` in the console, with its own small MIC chip.
  */
 import { VAD, VAD_PROCESSOR, VadCore, vadFrame, vadWorkletSource, type VadMessage } from './vad.ts'
 
 /**
- * Whether a first visit opens the microphone as the city starts, without a tap. False: the pill reads "Mic off" until
- * the visitor presses it (or V), and the browser asks its permission then. A visitor who turned it on and left it on
- * finds it open on the next visit whatever this says (their choice, kept under MIC_KEY). Flip it here, nowhere else.
+ * Whether a visit with no kept switch opens the microphone as the city starts, without a tap. True (the owner's word,
+ * 2026-11-07): the browser asks its permission as the city starts and the pill reads Listening once it is given (Mic
+ * blocked when it is refused, and then again on the next visit, until the visitor presses the pill or mutes). A visitor
+ * who muted it finds it muted on the next visit, and one who left it on finds it on, whatever this says (their choice,
+ * kept under MIC_KEY). False would make a first visit wait for a press. Flip it here, nowhere else.
  */
-export const MIC_OPEN_BY_DEFAULT = false
+export const MIC_OPEN_BY_DEFAULT = true
 
 /** Where the switch is kept between visits. */
 export const MIC_KEY = 'civic-simulation:voice:v1'
@@ -39,8 +42,10 @@ export interface MicState { phase: MicPhase; detail: string }
 export interface VoiceSettings {
   /** The visitor turned the microphone on and has not muted it: it opens again on the next visit. */
   readonly on: boolean
+  /** The visitor chose (opened it, or muted it) and the choice is kept: `on` decides the boot, not the default. */
+  readonly kept: boolean
 }
-export const VOICE_DEFAULTS: VoiceSettings = Object.freeze({ on: false })
+export const VOICE_DEFAULTS: VoiceSettings = Object.freeze({ on: false, kept: false })
 
 export interface KeyStore { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void }
 
@@ -54,8 +59,8 @@ export function loadVoiceSettings(store: KeyStore | null = browserStore()): Voic
     const raw = store.getItem(MIC_KEY)
     if (typeof raw !== 'string' || !raw || raw.length > 64) return VOICE_DEFAULTS
     const d = JSON.parse(raw) as { v?: unknown; on?: unknown }
-    if (!d || typeof d !== 'object' || d.v !== 1) return VOICE_DEFAULTS
-    return Object.freeze({ on: d.on === true })
+    if (!d || typeof d !== 'object' || d.v !== 1 || typeof d.on !== 'boolean') return VOICE_DEFAULTS
+    return Object.freeze({ on: d.on, kept: true })
   } catch { return VOICE_DEFAULTS }
 }
 
@@ -64,9 +69,9 @@ export function saveVoiceSettings(s: VoiceSettings, store: KeyStore | null = bro
   try { store.setItem(MIC_KEY, JSON.stringify({ v: 1, on: s.on === true })) } catch { /* storage unavailable */ }
 }
 
-/** Whether the microphone opens at boot: the kept switch, else the one line above. */
+/** Whether the microphone opens at boot: the kept switch (left on, or muted), else the one line above. */
 export function opensAtBoot(s: VoiceSettings, byDefault = MIC_OPEN_BY_DEFAULT): boolean {
-  return s.on || byDefault
+  return s.kept ? s.on : byDefault
 }
 
 /** The pill's word for a phase (Sloane speaking is the host's word, not the microphone's: pillWord takes it). */
@@ -270,7 +275,15 @@ export class Microphone extends EventTarget {
       stream = await media.getUserMedia(MIC_CONSTRAINTS as unknown as { audio: Record<string, unknown> })
     } catch (e) {
       if (generation !== this.#generation) return this.state
-      return this.#set(...refusal(e))
+      const [phase, detail] = refusal(e)
+      // The visitor said no at the browser's prompt (or the browser keeps their no): kept like a mute, so a page that
+      // opens at boot does not ask again on every visit (Firefox asks each time unless told to remember). A press asks
+      // again. A missing device or an insecure page is not their choice and keeps nothing.
+      if (phase === 'blocked') {
+        this.#settings = Object.freeze({ on: false, kept: true })
+        this.#keep()
+      }
+      return this.#set(phase, detail)
     }
     if (generation !== this.#generation || this.#disposed) {
       for (const t of stream.getTracks()) t.stop()
@@ -281,7 +294,7 @@ export class Microphone extends EventTarget {
     for (const t of tracks) t.addEventListener?.('ended', () => { if (this.#stream === stream) this.#lost() })
     await this.#graph(stream)
     if (generation !== this.#generation || this.#disposed) return this.state
-    this.#settings = Object.freeze({ on: true })
+    this.#settings = Object.freeze({ on: true, kept: true })
     this.#keep()
     return this.#set('listening', this.path === 'worklet' ? 'on-device detector in an audio worklet' : this.path === 'page' ? 'on-device detector on the page' : 'open; this browser has no Web Audio, so no level or speech state')
   }
@@ -290,7 +303,7 @@ export class Microphone extends EventTarget {
   mute(): MicState {
     this.#generation++
     this.#teardown()
-    this.#settings = Object.freeze({ on: false })
+    this.#settings = Object.freeze({ on: false, kept: true })
     this.#keep()
     return this.#set('muted', '')
   }
@@ -518,7 +531,7 @@ export function voiceStatus(m: Microphone, speaking: boolean, recognition: strin
     `mic       ${s.phase}${s.detail ? ` · ${s.detail}` : ''}`,
     `pill      ${pillWord(s.phase, speaking)}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
     `detector  ${m.path === 'worklet' ? 'audio worklet' : m.path === 'page' ? 'on the page' : 'none'}${m.open ? m.speech ? ' · hearing you' : ' · the room' : ''}`,
-    `boot      ${m.opensAtBoot() ? 'opens at boot' : 'off until pressed'}  (kept switch ${m.settings().on ? 'on' : 'off'}; the default ${MIC_OPEN_BY_DEFAULT ? 'open' : 'off'})`,
+    `boot      ${m.opensAtBoot() ? 'opens at boot' : 'off until pressed'}  (kept switch ${m.settings().kept ? m.settings().on ? 'on' : 'muted' : 'none'}; the default ${MIC_OPEN_BY_DEFAULT ? 'open' : 'off'})`,
     `words     ${recognition}`,
   ]
 }

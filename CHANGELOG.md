@@ -22,11 +22,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`), which
   goes through even while an action card waits for the OK. Mute
   releases the device, so the browser's own indicator goes out with the pill's, and the device is never open
-  without the pill, which outlives `H` like REC (on a phone the pill shows only while the device is open, opening or
-  could not open: the Menu's item is the switch there, and the smallest screens have no row to spare). A first visit
-  starts with the microphone off until that first press: `MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`
-  is the one line that would open it at boot instead; a visitor who left it on finds it on again (key
-  `civic-simulation:voice:v1`). Open, a voice activity
+  without the pill, which outlives `H` like REC (on a phone it is a 28 px badge on the minimap's lower-left corner, a
+  microphone glyph struck through when it could not open and the pill's dot, shown only while the device is open,
+  opening or could not open: the Menu's item is the switch there, and as a row of the panels' column, up from the
+  start, it pushed them into Sloane's chip at the wheel on a 320 × 568 phone). The
+  microphone opens as the city starts (`MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`, true on Julian's
+  word of 2026-11-07), so the browser asks its permission then; after that the visitor's own choice is kept (key
+  `civic-simulation:voice:v1`): one who left it on finds it on, one who muted it finds it muted, and a no at the
+  browser's prompt is kept like a mute, so the page does not ask again at every boot (a press asks again); a missing
+  device or an insecure page keeps nothing. Open, a voice activity
   detector (`vad.ts`: energy over an adaptive floor, the zero-crossing rate and spectral flatness, per frame of about
   11 ms, with onset and release counts) runs in an audio worklet where the browser has one and polled from the page
   where it has not (each poll feeds the samples since the last by the context's clock), feeding the meter and the

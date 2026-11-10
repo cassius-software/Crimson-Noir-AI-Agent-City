@@ -669,9 +669,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const [roster] = useState(() => new Roster())
   const [agents, setAgents] = useState(() => roster.list())
   useEffect(() => roster.onChange(() => setAgents(roster.list())), [roster])
-  // The microphone (04_Connect_Hardware/microphone.ts): off until the visitor presses the pill, V, the right stick's
-  // click or the Menu's item (MIC_OPEN_BY_DEFAULT is the one line that would open it at boot instead), its switch kept
-  // between visits; one per shell, disposed with it. The engine hands the presses here and never opens one itself.
+  // The microphone (04_Connect_Hardware/microphone.ts): opened as the city starts (MIC_OPEN_BY_DEFAULT, the one line)
+  // unless the visitor muted it or said no at the browser's prompt on an earlier visit; the pill, V, the right stick's
+  // click and the Menu's item mute and unmute it, the switch kept between visits; one per shell, disposed with it. The
+  // engine hands the presses here and never opens one itself.
   const [mic] = useState(() => new Microphone())
   const onMic = useCallback(() => { void mic.toggle() }, [mic])
   // Closed, not disposed, on unmount: React's development double mount runs this cleanup and then the shell again with
@@ -1172,7 +1173,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           r.removeEventListener('heard', onHeard)
           unquiet()
         }
-        // A kept switch (the visitor left the microphone on) opens it as the city starts; a first visit waits for a press.
+        // The microphone opens as the city starts: on a first visit (the one line), or as the visitor left it (on, not muted).
         if (mic.opensAtBoot()) void mic.listen()
         // The operator's progression (progress.ts, the page's one keeper). The city's own deeds earn into it: the engine
         // says which (a boarding, the clock, ghost and rain keys), someone recruited arriving, a spoken request understood.

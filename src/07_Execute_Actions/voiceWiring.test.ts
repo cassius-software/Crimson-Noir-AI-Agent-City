@@ -28,10 +28,11 @@ const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
 const MIC = read('../04_Connect_Hardware/microphone.ts')
 const COMMANDS = read('./terminal/commands.ts')
 
-test('the microphone ships off until pressed: one line, false; the page opens the device only on the kept switch, a press, the console or beside the recogniser', () => {
-  assert.match(MIC, /^export const MIC_OPEN_BY_DEFAULT = false$/m, 'the one line')
+test('the microphone opens at boot: one line, true; the page opens the device only at boot (the kept switch, else the line), on a press, the console or beside the recogniser', () => {
+  assert.match(MIC, /^export const MIC_OPEN_BY_DEFAULT = true$/m, 'the one line (the owner\'s word, 2026-11-07)')
+  assert.match(MIC, /return s\.kept \? s\.on : byDefault/, 'a kept choice (a mute too) wins over the line')
   assert.equal(MIC.match(/MIC_OPEN_BY_DEFAULT/g)?.length, 5, 'declared, read by opensAtBoot twice and the console line, named in the doc comment; set nowhere else')
-  assert.match(APP, /if \(mic\.opensAtBoot\(\)\) void mic\.listen\(\)/, 'the boot asks the kept switch (or the one line) first')
+  assert.match(APP, /if \(mic\.opensAtBoot\(\)\) void mic\.listen\(\)/, 'the boot asks the kept switch (else the one line) first')
   const opens = APP.match(/mic\.listen\(\)/g) ?? []
   assert.equal(opens.length, 3, 'the boot, the recogniser already listening, and the console: nowhere else')
   assert.match(APP, /detail\.state === 'listening' && !mic\.open && mic\.phase !== 'opening'\) void mic\.listen\(\)/, 'the recogniser open (recruit listen) opens the pill\'s microphone too')
@@ -59,7 +60,15 @@ test('the HUD\'s pill: a button named by the device\'s state, fed every snapshot
   assert.match(APP, /s\.supplier\.voice = \{ phase: mic\.phase, detail: mic\.state\.detail, speaking: speaker\.speaking, path: mic\.path, words: recruiter !== null && recruiter\.mic\.state === 'listening' \}\n\s+if \(recruiter\) s\.supplier\.recruiting = hudLine\(/, 'written before the recruiter\'s line, every HUD interval')
   assert.match(APP, /<Hud s=\{hud\}[^\n]* mic=\{mic\} onMic=\{onMic\}[^\n]*\/>/)
   assert.match(HUD, /const micNeeded = voice \? micOpen \|\| voice\.phase === 'opening' \|\| voice\.phase === 'blocked' \|\| voice\.phase === 'error' \|\| voice\.phase === 'unavailable' : false/)
-  assert.match(HUD, /const micPill = voice && \(micOpen \|\| \(visible && \(!compact \|\| micNeeded\)\)\) && <MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\}/, 'always while open; at rest on a desktop; on a phone only opening, open or failed (the Menu is the switch there)')
+  assert.match(HUD, /const micShown = voice && \(micOpen \|\| \(visible && \(!compact \|\| micNeeded\)\)\)\n\s+const micPill = micShown && <MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\}/, 'always while open; at rest on a desktop; on a phone only opening, open or failed (the Menu is the switch there)')
+  // On a phone the pill is a badge on the minimap's corner: with the microphone open from the start it is up all the
+  // time, and as a row of the panels' column it pushed them into Sloane's chip at the wheel on a 320 x 568 phone.
+  assert.match(HUD, /const micBadge = micShown && visible && compact && <MicBadge voice=\{voice\} onMic=\{onMic\} panel=\{panel\} \/>/)
+  const compactFrame = HUD.slice(HUD.indexOf('{visible && compact && ('), HUD.indexOf('{visible && pingChip}'))
+  assert.ok(compactFrame.length > 0 && !compactFrame.includes('{micPill}'), 'no pill row in the phone\'s panels')
+  assert.match(compactFrame, /data-hud="minimap">[^]*?<div className="relative">\n\s+<Minimap [^\n]*\/>\n\s+\{micBadge && <div className="absolute bottom-0 left-0">\{micBadge\}<\/div>\}\n\s+<\/div>/, 'inside the minimap\'s box, so it moves nothing')
+  assert.match(HUD, /function MicBadge[^]*?className=\{`pointer-events-auto relative flex h-7 w-7 [^`]*focus-visible:outline-2[^`]*\$\{panel\}`\}\n\s+data-hint="voice"/, '28 px, the pill\'s focus ring and hint')
+  assert.match(HUD, /\{failed && <path d="M2\.5 2\.5l11 11" \/>\}/, 'struck through when the device could not open')
   assert.match(HUD, /\{!visible && \(recChip \|\| micPill \|\| rc\?\.listening \|\| captionStrip\) && \(/, 'the hidden HUD still frames an open microphone')
   assert.match(HUD, /<button\n\s+type="button"\n\s+onClick=\{onMic\}\n\s+aria-label=\{pillLabel\(voice\.phase, voice\.speaking, failed \? voice\.detail : ''\)\}\n\s+aria-pressed=\{open\}/)
   assert.match(HUD, /className=\{`pointer-events-auto flex [^`]*focus-visible:outline-2[^`]*\$\{panel\}`\}/, 'the one HUD element that takes the pointer, with a visible focus ring')

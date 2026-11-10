@@ -102,7 +102,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   under browser bars, on foot, driving and driving with a paired pad, that every control is on screen and clear of the
   others, the stick, the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the
   minimap and the HUD's panels and as wide as its buttons, that the HUD, with two of its messages raised at each size,
-  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. The overlay also judges
+  stays clear of the buttons and the stick, that the microphone's badge (up from the start) is clear of all of them,
+  and that the Menu's sheet stays inside the screen. The overlay also judges
   itself (`04_Connect_Hardware/touchLayout.ts`): after every layout it measures each control and checks that it is on
   screen, finger-sized (at least 48 px on its shorter side, Material's 48 dp and above Apple's 44 pt) and one of the
   eight sizes on its ladder (in px, or in rem when a phone's text scaling enlarges the root font, since the Menu and
@@ -679,14 +680,17 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 - **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
   reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
   **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
-  `V`, the right stick's click or the touch Menu's Microphone item opens the microphone (the browser asks its
-  permission the first time) or mutes it, even while an action card waits for your OK. Mute releases the device, so the browser's own microphone indicator goes
-  out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone the pill
-  shows only while the microphone is open, opening or could not open: the Menu's Microphone item is the switch there,
-  and the smallest screens have no row to spare above Sloane's chip. A first visit starts
-  with the microphone **off** until that first press: `MIC_OPEN_BY_DEFAULT` in `microphone.ts` is the one line that
-  would open it at boot instead. A visitor who turned it on and left it on finds it on again on the next visit; one
-  who muted it finds it off (key `civic-simulation:voice:v1`). Open, an on-device voice activity detector (energy over
+  `V`, the right stick's click or the touch Menu's Microphone item mutes the microphone or opens it again, even while an action card waits for your OK. Mute releases the device, so the browser's own microphone indicator goes
+  out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone (and in
+  any compact window) the pill is a round badge on the minimap's lower-left corner instead (a microphone, struck
+  through when it could not open, and the pill's coloured dot; no meter), so it takes no row above Sloane's chip,
+  and it shows only while the microphone is open, opening or could not open: the Menu's Microphone item is the
+  switch there, and a tap on the badge does what the pill's does. The microphone opens
+  as the city starts (`MIC_OPEN_BY_DEFAULT` in `microphone.ts` is the one line, true), so on a first visit the
+  browser asks its permission then. After that your choice is kept (key `civic-simulation:voice:v1`): left on, it
+  opens again on the next visit; muted, it stays muted; and a no at the browser's prompt is kept like a mute, so the
+  page does not ask again every time it starts (press the pill to be asked again). A missing microphone or a page
+  that is not secure keeps nothing. Open, an on-device voice activity detector (energy over
   the room's floor, zero crossings, spectral flatness, in an audio worklet where the browser has one and polled from
   the page where it has not) drives the meter and the **Hearing you** state. It reads the crossings and the flatness
   over the band your microphone actually carries, so the hiss of a headset that records at 16 kHz, or of a call
