@@ -116,10 +116,12 @@ jobs:
         run: sh tools/verify/fvps.sh smt && sh tools/verify/fvps.sh ir && sh tools/verify/fvps.sh wasm
 
   # The page as a person meets it: Chrome on SwiftShader's WebGPU, which renders a few frames a second, so every check
-  # waits on the page's own state. A red run here is a browser-visible bug the Node suite cannot see.
+  # waits on the page's own state. A red run here is a browser-visible bug the Node suite cannot see. The whole run took
+  # about 22 minutes before the anti-aliasing pages (split screen and Ultra booted again at 4 samples a pixel, and the
+  # faked big desktop drawing every frame at 4) took it past 30; 45 leaves room for the scenarios still to come.
   browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:

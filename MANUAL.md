@@ -158,6 +158,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 |---|---|
 | `?quality=auto` (default) | The quality governor picks the tier; `?quality=0`…`4` pins one: Minimal, Low, Medium, High, Ultra; `?quality=-1` or `?quality=lite` pins Lite, below Minimal (see Autoscaling); `?quality=5` or `?quality=peak` pins Peak, above Ultra |
 | `?peak=1`, `?peak=0` | `?peak=1` lets the governor try Peak on this computer even when it would not pick it by itself (it still needs the GPU's own timings); `?peak=0` keeps Peak away. Phones and the lite profile never try it (see Autoscaling) |
+| `?msaa=1`, `?msaa=0` | `?msaa=1` draws the scene 4x multisampled on this computer even when it would not pick it by itself; `?msaa=0` never. Decided at start; phones and the lite profile never draw it (see Anti-aliasing) |
 | `?vram=24` | The GPUs' memory in GB (2^30 bytes), from 0 to 4096, for the size of model auto gives Ollama (How big a model auto gives Ollama, under The model providers). The NixOS launcher adds it from `nvidia-smi` or the amdgpu driver; `?vram=0` sizes nothing; `ask vram` at the console beats it. Absent: auto keeps its usual model |
 | `?fps=60` | Frame-rate target (default: estimated from the display, held within 60–90) |
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
@@ -178,6 +179,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
 | `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
+| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
 
@@ -237,7 +239,41 @@ The fixed track network (`06_Make_Decisions/tracks.ts`) is laid over the grid fr
 rings for the cars, one round each 2 × 2-block cell; one elevated train loop on a deck 9 m over the median of the
 two arterial streets, with four mid-block stations and guideway columns at the kerb; drone corridors at 40 m and
 46 m over the 4 × 4-block face rings; one plane racetrack at 400 m; and two VTOL routes along the avenues at 75 and
-85 m, each calling at four rooftop pads. See Vehicles.
+85 m, each calling at four rooftop pads. See Vehicles. Lakefront Metro's street window gets the same network laid over
+its own streets, and a transit map besides (`region/transit.ts`: zebra crossings, paved plazas, a ferry pier and a
+STOL strip; see The surveyed map).
+
+### Anti-aliasing
+
+Every tier with the post chain (Low and up) smooths edges with FXAA, on the finished picture. On a computer with the
+most room to spare the scene is also drawn **4x multisampled** before any of that: four depth and coverage samples a
+pixel, averaged as the scene is finished, so thin things (lamp poles, mast arms, signal poles, roof edges) stay whole
+farther into the distance instead of breaking into dashes, and edges crawl less as you turn. Who gets it by itself: a
+computer the device profile starts on Ultra, which means a recent separate NVIDIA card, or an AMD Radeon RX or Radeon
+Pro where the browser names the card (stock Chrome, Edge and WebView2 give only the vendor and architecture, so an AMD
+card starts on High there and needs `?msaa=1`), with 8 or more processor threads and, where the browser says, 8 GB or
+more of memory, on a screen of up to 2560 × 1440 drawn pixels (`?scale` counted). Anyone else can ask for it with
+`?msaa=1`; `?msaa=0` turns it off. Phones and the lite profile never draw it, whatever the address says.
+
+- **Decided once, at start.** The sample count is part of every scene shader's pipeline, so changing it while you play
+  would rebuild all of them: the tiers never touch it, and a reload with `?msaa` changes it. If the browser refuses
+  the multisampled scene at start, the post chain is built again at one sample and the city starts without it rather
+  than not at all (the browser's developer console says so).
+- **What it costs.** Four samples a pixel of colour, motion and depth: about 150 MB more graphics memory at 1080p on
+  High or Ultra, about 270 MB at 1440p (about 420 MB on Peak, which draws 1.25 times the resolution on each side), and
+  a share of each frame the governor measures as it measures everything else. It is not taken away tier by tier: the
+  narrow automatic rule is the safeguard. With one player, Minimal draws without the post chain and so without the
+  samples, unless ghost view is on (which keeps the chain, and its samples, running).
+- **Split screen** has no post chain, so with `?msaa=1` (or on a computer that would get it by itself) the renderer's
+  own picture is drawn 4x multisampled instead, every view in it. The renderer keeps that for its life, so split
+  screen keeps the samples at every tier, Minimal included; `?post=0` turns them off. It has no one-sample fallback: a
+  browser that refused it would fail the start like any other refused first frame.
+- **What it does not do.** The samples are averaged in linear light before the film curve, so a bright lamp's edge
+  stays hard and a thin dark pole against a bright daytime sky keeps only part of its contrast (it reads as a faint
+  continuous line). Edges a shader draws (road markings, rain mode's glyphs, the code dissolve) are not multisampled.
+  Under the cinema shutter the motion at a silhouette is averaged too, which can leave a faint halo on something
+  moving fast. The headset has no anti-aliasing, and neither do `?post=0` and Minimal with one player. How it looks
+  and what it costs on a real graphics card is unverified: the pictures behind this were drawn by the software adapter.
 
 ### Storefronts
 
@@ -368,7 +404,21 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
   the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  metropolis is still quiet. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
+  metropolis is still quiet. The window has its **transit map** too (`region/transit.ts`, pure: the page and the
+  physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
+  round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of the
+  window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m kerb;
+  drone corridors at 40 and 46 m over every walkable 4-block cell; the plane racetrack at 400 m, centred on the window
+  and held inside the region, moved by whole blocks off The Spire; VTOL routes between rooftop pads of the window's own
+  buildings, in the city's band of 24 to 60 m roofs where the window has them and in a second band over the map's
+  towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window with no such roofs has none: seed 7's east
+  bluffs and north ridge); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
+  the plaza lots (the hubs' squares) paved at the sidewalks' height; a harbour ferry pier from the lake shore nearest
+  the window, 60 m out over the water with railings and a berth platform at its end, the shore wall opened for it
+  (no vessel sails yet); and a STOL strip, 300 × 24 m of asphalt with threshold bars and a centreline on the open land
+  nearest the window, clear of everything built (the planes keep the racetrack and do not land). No subterranean
+  line: a track has one height. `transit.test.ts` proves all of it on fourteen windows of three seeds, the craft to
+  the same INV-1 envelopes as the city's. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
   `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
   `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
   the hubs, are committed under `world/lakefront/` and regenerated with `node tools/world/lakefront.mjs` (`--check`
@@ -423,8 +473,8 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
 - **Not there yet** (the surveyed region; Lakefront Metro has its street window, above):
   - traffic and pedestrians (the AI drives and walks the procedural grid, so the surveyed region's fleet is empty and
     the crowd it keeps is hidden, kilometres away);
-  - the craft (the elevated loop, the corridors and the VTOL pads are laid over the procedural grid and its roofs, so
-    no region gets trains, drones, planes or VTOLs);
+  - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
+    Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
   - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
   - terrain (the region is flat: no ravines, no bluffs);
@@ -695,6 +745,87 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   rewording when it answers in time and keeps the key or name the line needs. Nothing of it is saved; the expert
   path (`?onboarding=0`, "I know my way around") and returning visitors are never watched.
 
+### The first walk (the first-run tutorial)
+
+Sloane's first walk is the first-run tutorial: seven stages that a brand-new visitor goes through before the city is
+theirs, each one a thing to do rather than a thing to read, and the only way out a three-line program typed at the
+Ring-0 console. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
+`FIRST_WALK_DEFAULT`, one constant): **on by default**, so every first run of the city shell opens on the walk until it
+has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) the only ways to keep it away, and
+`?tutorial=1` the way to walk it again. The pass is kept in this browser (`localStorage`, key
+`civic-simulation:first-walk:v1`), written only when the console's exam has unlocked the city; `?boot=tty` never
+shows it (there is no city to walk).
+
+- **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
+  stick and the buttons on a phone, and at the foot of the screen while the console is open. On a wide screen from
+  960 px across, Sloane's own open card (her name question, a goal) stands to its left rather than under it; in a
+  narrower window the walk's card steps aside while hers is open and comes back when she settles into her chip. It names the stage (1 of
+  7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
+  controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
+  time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
+  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the six workplaces; the closed business-casual wardrobe; the four laws, the
+  twelve checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
+  it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
+  line when it answers in time and keeps the key or command the line needs.
+- **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
+  1. **Look and walk**: a turn of the head of about twenty degrees and three metres on foot.
+  2. **Talk to Sloane**: a goal sent from the chip in your own words (opening the microphone with `recruit listen`
+     or turning the captions counts too).
+  3. **The parked fleet**: get into a car (the stage is passed over on a map with no cars).
+  4. **Inside a workplace**: stand inside one of the six workplaces (passed over on a surveyed map, which has none).
+  5. **Your look**: open the wardrobe card from **Look** on Sloane's chip (or **Change my look** in her list) and put
+     it away again (**Done**, its close button or Escape); changing something is up to you. The card is the wardrobe
+     described under The character customizer. On a map with shops (the city's five, Lakefront Metro's; see
+     Storefronts) a shop does it too: walk in, open its card (B or E on a keyboard, the south face button on a pad, the
+     **Browse** chip on touch), try a line on if you like (trying on is free; buying costs credits), and put the card
+     away (**Done**, ×, Escape, the console, or walking out). Sloane names the shops only where there are some; the
+     walk's card steps aside while a shop's card is open, as it does for the wardrobe. Owned homes are not built yet;
+     when they are they join this stage the same way.
+  6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
+  7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
+     learning to walk); Sloane says nothing of it until its turn would have come.
+
+  Sloane says each stage as it starts and, after forty-five seconds with no progress, one hint, more plainly (the
+  nearest workplace by name, distance and compass point, say), never two lines within forty-five seconds of each
+  other and never the same line twice.
+- **The accessible path.** Every card has one button that has Sloane do the stage's action for a visitor who cannot
+  (a switch, a screen reader, a phone with no keyboard): *Walk for me* turns the head and walks four metres; *Plan one
+  for me* plans "make it night" as the chip would; *Take me to a car* puts you down at the nearest parked car's door
+  and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open the wardrobe* opens the
+  wardrobe card (the walk's card steps aside while it is open, and **Done** brings it back); *Open it for me* opens the
+  console on `laws`; on the last card three buttons type each line of the program into the console's prompt and
+  **Run** runs it, so the walk is completable with taps alone. Everything goes through the same controls the operator
+  tier has (`engine.simControls`), never past the realm: the car's door is the realm's to open, as always.
+- **The exit program**, typed one `noir` line at a time (the console's session keeps `seal` and `swarm` between lines):
+
+  ```
+  noir let seal = verify_ring0();
+  noir let swarm = spawn_subagents(24, "sim2real_workplaces");
+  noir unlock_city(seal, swarm);
+  ```
+
+  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
+  console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
+  the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
+  by rank and title, the gate's twelve checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
+  standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
+  memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
+  lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
+  most eight at a time; the one role today is `sim2real_workplaces`, which asks for Robotics, Rust, Python, Data,
+  Testing, Design, TypeScript and Security in turn), and answers with how many were actually asked, never the number
+  wished for: stand on a sidewalk near people, or it answers 0 and says so. `unlock_city(seal, swarm)` opens the city
+  for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
+  pass answers that the city is already yours. After each line the console prints what the doors said. In the console
+  shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
+  stage and the program; there is no `tutorial off`.
+- **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
+  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke, whose `walk` scenario does the whole walk
+  on the accessible path in CI's Chrome (every button, the exit program, the pass kept). How the card stands on a real
+  phone, a pad or a screen reader is unverified.
+- **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
+  and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is
+  unverified.
+
 ## The character customizer
 
 Sloane's chip has a **Look** button ("Change my look" in the full list) that opens the wardrobe card
@@ -775,6 +906,74 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   (slight, lean, athletic, muscular, broad, stocky, soft, full: the somatotypes' span in plain words) that set mass,
   muscle, shoulders and hips together; any slider moved after is your own, and the height is never a build's.
   `look build athletic` does the same at the console.
+- **Hair, headwear and face shapes.** The **Hair** row holds thirty-two styles: the five every look had (short, long,
+  bob, bun, bald, their numbers kept) and buzz cut, fade, side part, afro, tapered afro, afro puff, top knot, ponytail,
+  braided ponytail, cornrows, cornrow ponytail, box braids, braided bun, braided updo, locs, short locs, locs updo,
+  twists, long twists, twist-out, layered, half up, undercut, centre strip, waves, bun with fade and side part bun. Each is
+  the hair's pieces (the cap, the length, a bob, a bun, and three new shapes: a full rounded shell, a puff on the crown
+  and a tail) and a paint over them (cropped close, faded or shaved at the sides, a parting, cornrows' rows, braids'
+  plaits, locs' cords, twists, waves round the crown). A **Curl pattern** row (1A to 4C, or "as styled") lays the
+  hair's own texture over any style: straight streaks, waves, curls, coils, finer down the scale; every pedestrian
+  has one. A **Headwear** row (none, hijab, turban, head wrap, kippah, durag, beanie, flat cap) with a **Headwear
+  colour** row of eight cloths: a hijab covers the head, the ears and the neck with the face open; a turban and a
+  head wrap are a wound crown above the brow (the wrap printed in two shades); a durag, a beanie and a flat cap a snug
+  crown (the cap with its peak), the length below them still showing; a kippah is painted on the crown. They are
+  clothing, worn plain, with no symbol printed on any of them. A few pedestrians wear one (a hijab or a head wrap for
+  about seven women in a hundred; a turban, a kippah or a flat cap for about five men in a hundred). The far body
+  draws no headwear shapes: it paints the hair's cap in the cloth. A **Face shape** row above the face sliders
+  holds twenty-four starting faces named by their shape alone (oval, round, square, heart, long, diamond, triangle,
+  rectangle, their softer, broader, narrower or more defined kin, and four that move one feature); each sets the
+  head and the seven face sliders, and any slider moved after is your own. At the console: `look hairStyle afro`,
+  `look curl 4C`, `look headwear hijab`, `look headwearColour 3`, `look face heart`.
+- **Facial hair, hearing devices and prosthetics.** A **Facial hair** row (none, stubble, moustache, goatee, short
+  beard, full beard, long beard) paints the face in the hair's colour, greying with the hair; the long beard is a
+  shape of its own below the chin. A **Hearing devices** row (none, hearing aids, cochlear implant, cochlear implants,
+  implant and aid) puts a hearing aid behind the ear, or a cochlear implant's processor behind the ear with its coil
+  on the side of the head; on the near body only, the far body is too small to show them. A **Prosthetic** row (none,
+  left arm, right arm, left leg, right leg, both arms, both legs) with a **Prosthetic finish** row (matte, carbon,
+  chrome, skin-matched) paints the hand and wrist below the sleeve, or the shin and the ankle below the knee, with the
+  socket's line; a leg shows where the leg is bare (under a skirt, or below cropped trousers and culottes), and
+  trousers cover it as they would. Some
+  pedestrians have them too (facial hair for about forty-five men in a hundred, hearing aids for about two people in
+  a hundred, an implant for under one, a prosthetic for one). At the console: `look facialHair goatee`, `look hearing
+  cochlear implant`, `look prosthetic left arm`, `look prostheticFinish carbon`.
+- **Weaves.** A **Weave** row (plain, twill, herringbone, pinstripe, chalk stripe, houndstooth, glen check,
+  windowpane, tartan, tweed, linen, silk, cashmere, merino, batik, strip weave) weaves the jacket's cloth (the coat's
+  under a coat, and a matching trim with it), and a **Trousers' weave** row (**Skirt's weave** on the skirt suit) the
+  bottom's. Its first option, **matching**, wears the jacket's weave when the trousers are the jacket's cloth and is
+  plain otherwise. Fine threads fade to the cloth's own shade at a distance, so a far pinstripe suit reads as a
+  slightly lighter cloth. Silk is smoother, and linen, tweed and cashmere drier. About four pedestrians in ten wear a
+  woven top. At the console: `look topWeave herringbone`, `look bottomWeave matching`.
+- **Cuts and garments.** A **Cut** row (**Coat's cut** under a coat) cuts the outer layer: notch lapel (as every
+  jacket was), peak lapel, shawl collar (faced in satin), double-breasted (two rows of buttons), band collar (closed
+  to the neck, buttoned), turtleneck (a knit up the neck under the open jacket), waistcoat (the sleeves the
+  shirt's, a lining at the back), cardigan (a ribbed knit, buttoned), open front (the shirt down to the hem),
+  belted, cropped (the shirt below the waist), wrap front, zip front, side closure, quilted (diamond stitching) and
+  patch pockets. Each is named for the cut, never for a people's dress. A **Garment** row above it dresses the outer
+  layer in one of forty-four named tops (suit jackets, blazers, evening jackets, band-collar and side-closure
+  jackets, waistcoats, cardigans, cropped, belted, wrap, quilted and zip-front jackets, a trench coat, overcoats, a
+  long band-collar coat, a wrap coat and a quilted coat): it sets the layer, the cut and the weave (the evening
+  jackets' facings take the darkest trim) and keeps your colours, so every garment comes in every colour the body's
+  palette holds. A band collar, a turtleneck, a zip front, a side closure and a quilted jacket take the tie off.
+  Under shirt sleeves the jacket is off and its cut is not shown. About three pedestrians in ten wear
+  a cut other than the notch lapel. At the console: `look cut double-breasted`, `look garment belted trench coat`.
+- **Trousers and skirts.** A **Trousers' cut** row (**Chinos' cut** on smart casual, **Skirt's cut** on the skirt
+  suit) cuts the lower garment. Trousers: straight (as every pair was), pressed crease, pleated, turn-ups, side stripe
+  (in satin), wide-leg, tapered, flared, cropped (ending above the ankle), culottes (ending at the calf), high-waisted
+  (the trousers' cloth up to the waist where it shows: in shirt sleeves or under a cropped jacket), belted (a belt
+  where the waist shows), piped seam, slim, pleated turn-ups and palazzo. Skirts: straight (as every skirt was),
+  pencil, A-line, pleated, box pleat, wrap, midi (to mid-calf), midi pencil, midi A-line, back vent, button front,
+  tulip, panelled, high-waisted, belted and flared. The wide-leg, palazzo, flared, culottes, tapered and slim trousers
+  and every skirt cut but the straight, the back vent, the button front and the belted change the shape (a wider or
+  narrower leg, a skirt that swings out, narrows or reaches mid-calf), and the silhouette on the card shows it; the
+  rest are lines on the cloth. Under a coat a skirt does not widen. Changing between the skirt suit and the other
+  bodies puts the cut back to straight. A **Trousers** or **Skirts** row above it holds the twelve named pairs of
+  trousers (pinstripe suit trousers, glen check trousers, pleated chinos, pleated tweed trousers, turn-up wool
+  trousers, dinner trousers, wide-leg trousers, palazzo trousers, tapered chinos, flared trousers, cropped linen
+  trousers, twill culottes) or the eight skirts (pencil, midi pencil, A-line, midi A-line, pleated, box-pleat check,
+  wrap and button-front): each sets the cut and the weave and keeps your colours. Only the ones your body wears are
+  listed, and the console refuses a skirt on a trouser body. About one pedestrian in three wears a lower cut. At the
+  console: `look bottomCut midi`, `look garment wide-leg trousers`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -785,11 +984,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   place of the hash, and the page's cull reads the body out of the first to pick what to draw. No simulation pass
   binds any of them, so nothing of a look reaches the pedestrians' motion, the First-Law sensing, the protocol or
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
-  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo and freckles, and words 5 to 15 are
-  spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
+  the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
+  weave, the bottom's and the outer layer's cut; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin word through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -799,8 +999,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles) adds a tail of eight symbols per word with its own
-  check, `-XXXXXXXX`, and its head's check then covers every word, so the head cut off alone is refused rather than
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut) adds a tail carrying those words up to the
+  last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
+  cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
@@ -847,7 +1048,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   person's joints sit a few centimetres off its shapes for as long as the fall lasts (`?rigs=capsules` shows the rig
   bare), and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
-  looks. There is no facial hair, and the hair is a shape, not strands. Heads turn to you and to the way their owner
+  looks. The hair is a shape, not strands, and facial hair is paint on the face (the long beard is a shape). Heads turn to you and to the way their owner
   goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
   under it while a stride shrinks to standing. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
   is a browser check not yet made (see Browser support); the skinned body and its face have been looked at on a
@@ -1058,7 +1259,7 @@ while you type.
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
-  `look [show [<agent>]|<slot> <n|name>|preset <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
+  `look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
@@ -1639,8 +1840,19 @@ them that answers (`auto`):
   OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
   below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
-  model that writes text answers (embedding, reranking and speech models are passed over, by name); only when none
-  has one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
+  the newer default addresses, asked at the same moment and each given 2 s too: a llama.cpp server at
+  `http://localhost:9931` (llama-server's default since build b11521, October 2026), then vLLM at
+  `http://localhost:8000` and SGLang at `http://localhost:30000` for the OpenAI-compatible provider. These are used
+  only when none of the three has a text model (and called off once the three have been heard and one has). The first that lists a text model
+  answers and is kept as that provider's address, as `ask server` would keep it: the next visit asks it first (and
+  the old default goes into this second round, so auto finds it again if the server moves back), and `ask provider
+  openai` or `ask provider llamacpp` uses it too until `ask server <url>` sets another. The second round never looks
+  past an address you set that is not one of these, never moves a provider to a server that does not list the model
+  you chose for it with `ask model` (the reason says so), and never asks the gateway's address. Nothing listening
+  there is the usual case, and port 8000 is many a web server's, so the reason names a server there only when it
+  refuses this page, has no text model or lacks the model you chose (and, on an isolated page, vLLM's flag when
+  nothing answered on 8000). Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -1667,7 +1879,7 @@ them that answers (`auto`):
   OpenAI-compatible chat-completions format, at `http://localhost:8080`, the one model the server was started
   with), for offline environments.
 - **`openai`**: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM
-  Studio at its default `http://localhost:1234`, vLLM, a loopback proxy), with its own address and the first text
+  Studio at its default `http://localhost:1234`, vLLM, SGLang, a loopback proxy), with its own address and the first text
   model it lists unless you choose one (`ask model <name>`). For both chat-format providers the model reads
   `default` until you choose one: before the first answer the server is asked which models it lists, and the first
   that writes text, in the server's own order, is sent (asked once per server, and again after the server says it no
@@ -1791,14 +2003,14 @@ any of them.
   to `OLLAMA_ORIGINS` where Ollama starts (on Windows, `setx OLLAMA_ORIGINS "http://tauri.localhost"` in cmd, then quit
   and restart Ollama from its tray icon). A llama.cpp server (`llama-server`) answers any page unless it was started
   with its tools or agent options; LM Studio answers pages only with CORS turned on (Enable CORS in its server settings, or
-  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default,
-  where auto does not look: start it with `--port 8080`, or `ask connect llamacpp http://localhost:9931`. vLLM 0.32
-  and later answers no other page unless started with `--allowed-origins` naming the page's origin (on Linux:
-  `--allowed-origins '["http://127.0.0.1:4180"]'`), and since it listens on every network interface unless told
-  otherwise, also start it with `--host 127.0.0.1`; SGLang answers any page and listens on 127.0.0.1 by default. Both
-  speak the chat format: `ask connect openai http://localhost:8000` (vLLM) or `http://localhost:30000` (SGLang). On a
-  cross-origin isolated page (the launcher, the preview, the Windows app and the installed web copy all are) a
-  server refusing the origin cannot be told from one that is not running, so the sentence says it may be either.
+  `lms server start --cors`). A llama.cpp server built since b11521 (October 2026) listens on port 9931 by default;
+  auto finds it there in its second round (under `ask provider llamacpp`, `ask server http://localhost:9931`). vLLM 0.32 and later answers no other page unless started with
+  `--allowed-origins` naming the page's origin (on Linux: `--allowed-origins '["http://127.0.0.1:4180"]'`), and since
+  it listens on every network interface unless told otherwise, also start it with `--host 127.0.0.1`; SGLang answers
+  any page and listens on 127.0.0.1 by default. Auto finds both on their default ports in its second round (vLLM
+  first); at another address, `ask connect openai <url>`. On a cross-origin isolated page (the launcher, the preview,
+  the Windows app and the installed web copy all are) a server refusing the origin cannot be told from one that is
+  not running, so the sentence says it may be either, and names vLLM's flag when nothing answered at its port.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
   that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
@@ -1809,9 +2021,10 @@ any of them.
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
   or `ask api` changed since). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
-  first ask the three model servers above for their lists of models, all on this machine, then read the list of model
-  files kept in this page (no request), and ask the Claude gateway (which asks the Claude API) only when none of them
-  has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
+  first ask the three model servers above for their lists of models, and with them up to three more at the newer
+  default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
+  then read the list of model files kept in this page (no request), and ask the Claude gateway (which asks the
+  Claude API) only when none of them has a model that writes text. No provider can leave the machine: every one that addresses a server asks the one gate
   (`02_Define_The_Rules/airgap.ts loopbackServer`) before anything is sent, and the fetch they are handed is the
   page's own under the gate's wrapper; the in-page provider and the script address nothing. The engine holds no
   network code: App builds the router and hands it to the operator tier, which knows only its shape (`Mind` in
@@ -3010,7 +3223,24 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   deck at 9 m, the drones at 40 m, the planes at 400 m); anything else is a kernel panic with a named reason
   (`Corridor Exploit: train craft 0 left its corridor (y=2.00m below its 9m floor).`), the buffer that halted the
   realm never leaves it, and a halted realm ships no craft. The check only halts, never corrects. A surveyed region
-  gets no craft.
+  gets no craft; Lakefront Metro's street window gets its own (next but one).
+- **In Lakefront Metro** (`01_Initialize_World/region/transit.ts` `windowNetwork`). A region with a street window
+  gets the network laid over the window's own streets: the car rings of the window's cells first, then an elevated
+  loop round a rectangle of walkable streets (the city's corridor when the window has all four of its sides, else the
+  largest walkable rectangle, at least 4 blocks a side; the same deck, arcs and four stations; `tracks.ts` `trainLoop`
+  and `guideway(track, kerb)` with the window's 3.9 m kerb, which clears its two-lane carriageway and its lamps at 10
+  and 30 m, trees at 20 m and signal poles), the drone corridors over every walkable 4-block cell, the racetrack about
+  the window's middle held inside the region (and moved by whole blocks when The Spire comes within the envelope's
+  half-length of it), and the VTOL routes from the window's **craft boxes**: the rectangular buildings on the window's
+  lots and the ring of lots round them, every building that reaches into the racetrack's envelope, and the region's
+  plan, which the page computes from the pack it drew and sends in the init (`SimInit.craftBoxes`, at most 4,096,
+  judged in the worker like every other field), since the worker holds the pack's walls and not its boxes.
+  `vtolRoutes(boxes, cells, band)` takes the window's cells and a band of roofs: the city's (24 to 60 m, cruising at
+  75 and 85) where the window has such roofs, and a second over a generated map's towers (60 to 140 m, cruising at
+  150 and 160, both over the drones and under the planes; the cells cut where the towers stand, `padCells`); a
+  window with no roof in either band has no VTOL route. Both sides build the network from the same seed, window,
+  boxes and bounds, so the realm's craft count is the page's (the view refuses otherwise). The lite profile keeps the
+  craft off, as in the city.
 - **The craft on the page** (`craftView.ts`). The page builds the realm's network again from the same seed and boxes
   (the craft count must agree, or the view refuses) and draws, from the stream, one InstancedMesh a kind: each train
   set as three cars laid along the loop about the set's head, the drones nosed a little into their way, the planes

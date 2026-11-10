@@ -10,7 +10,8 @@
  *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
  *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
- *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule;
+ *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule; nor is it a
+ *   multisampling candidate: one sample a pixel everywhere (FXAA alone);
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
@@ -20,7 +21,8 @@
  *   Ping, Reset and Exit car clear of the stick, every text field reads at 16 px, and a mouse moving over a
  *   touch-first screen leaves the touch overlay where it is;
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
- *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own;
+ *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own; then
+ *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off);
  * - file: dist/index.html opened from disk, the way the README says to play, with no server and so no cross-origin
  *   isolation (the bridge's private-buffer path); the model in this page cannot run there (Chromium refuses the
  *   runtime's module worker on a page whose origin is opaque), so `ask file` opens no picker and keeps nothing, and
@@ -28,11 +30,14 @@
  * - ultra: the top tier of the table pinned, so the shadowed, post and volumetric pipelines are compiled once and must
  *   validate; then Peak pinned above it for a few frames (Ultra's sun shadows, 240 m on the 8192-wide atlas of two 4096
  *   cascades, with Peak's wider sixteen-tap penumbra, 1.25 times the pixel ratio, detailed bodies to 90 m, the HUD
- *   reading Peak) and Ultra back after, with its penumbra and pixels; the Nix job runs this one too;
+ *   reading Peak) and Ultra back after, with its penumbra and pixels; then Ultra again with ?msaa=1 under the cinema
+ *   camera: the scene pass's colour and velocity at 4 samples (the sun shafts reading its multisampled depth), nothing
+ *   of it compiled at one sample through Low, Peak and Ultra, and ghost view and rain mode validating over it; the Nix
+ *   job runs this one too;
  * - peak: a big desktop faked in full (16 threads, 8 GB, a WebGPU adapter reading 'nvidia / blackwell / NVIDIA GeForce
  *   RTX 5090'), at ?fps=1 without the camera so only Peak's GPU rule can move the tier, with three's timing resolve
  *   replaced, before the page's first frame, by one that counts and gives nothing. It starts on Ultra, never above,
- *   with no GPU reading. Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
+ *   with no GPU reading, and its scene pass multisampled without being asked (msaaCandidate). Where SwiftShader's device has timestamp-query (recorded), the range reaches Peak, the engine
  *   resolves timings for the governor on Ultra, auto keeps a pinned Peak, the in-page model's hold on the GPU brings it
  *   down to Ultra and the release keeps Ultra, and GPU readings fed over the limit bring it down by itself (gpu busy)
  *   with its shadow distance and pixels. Where it has none, the range stops at Ultra, nothing is resolved, and auto from a
@@ -41,7 +46,8 @@
  * - lite: the weakest phone the city serves, faked in full (an entry-level Android handset in Chrome: its user agent and
  *   client hints, 412 × 915 at a device pixel ratio of 2.625, touch, 4 GB, and a WebGPU adapter reading 'arm / bifrost'
  *   like a Mali-G52), loaded without the light load's crowd, cars and scale, so the device profile decides them: the
- *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, and the post chain never compiled. SwiftShader still draws
+ *   Lite tier, 2,500 pedestrians, 12 cars, frames drawn, the post chain never compiled and nothing multisampled
+ *   (with ?lite=0, the post chain compiled, and ?msaa=1 still refused to a phone). SwiftShader still draws
  *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
  *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
  *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
@@ -72,6 +78,11 @@
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
  *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
+ * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
+ *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
+ *   sizes and the walk's card stepping aside for it under 960 px;
+ * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
+ *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the six workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -96,7 +107,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,lakefront,homes,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,lakefront,homes,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -188,9 +199,8 @@ const ANDROID = {
 /**
  * Its GPU and memory, set before the page's scripts: WebGPU's adapter info (the adapter's and the device's copy) reads
  * vendor 'arm' and architecture 'bifrost', as Chrome reports a Mali-G52, every other field the real adapter's; and
- * navigator.deviceMemory reads 4. The page's render pipelines are counted too, with how many write two colour targets:
- * only the post chain's scene pass under the cinema camera does (colour and velocity), so none means it was never
- * compiled. An init script reaches the page, not the physics worker, which reads no adapter info.
+ * navigator.deviceMemory reads 4 (the page's render pipelines are counted on every page: PIPELINE_COUNTER). An init
+ * script reaches the page, not the physics worker, which reads no adapter info.
  */
 const MALI_G52 = `(() => {
   const fake = (real) => {
@@ -204,18 +214,7 @@ const MALI_G52 = `(() => {
     if (d && d.get) Object.defineProperty(proto, key, { configurable: true, get() { return fake(d.get.call(this)) } })
   }
   if (typeof GPUAdapter !== 'undefined') wrap(GPUAdapter.prototype, 'info')
-  if (typeof GPUDevice !== 'undefined') {
-    wrap(GPUDevice.prototype, 'adapterInfo')
-    window.__smokePipelines = { render: 0, twoTargets: 0 }
-    const count = (desc) => {
-      window.__smokePipelines.render++
-      if ((desc && desc.fragment && desc.fragment.targets || []).length >= 2) window.__smokePipelines.twoTargets++
-    }
-    for (const key of ['createRenderPipeline', 'createRenderPipelineAsync']) {
-      const own = GPUDevice.prototype[key]
-      if (typeof own === 'function') GPUDevice.prototype[key] = function (desc) { count(desc); return own.call(this, desc) }
-    }
-  }
+  if (typeof GPUDevice !== 'undefined') wrap(GPUDevice.prototype, 'adapterInfo')
   Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 4 })
 })()`
 
@@ -268,6 +267,36 @@ const PEAK_STATE = `(() => { const S = window.__SIM__, s = S.snapshot(), e = S.e
 const RUNTIME_NO_ADAPTER = /^\[\w+\] ggml_webgpu: Failed to get an adapter\b/
 
 /** Counts animation frames, so a check can wait for the page to have read its input n more times. */
+/**
+ * The page's render pipelines, counted on every page before its scripts: how many write two colour targets (only the
+ * post chain's scene pass under the cinema camera does, colour and velocity, so none means it was never compiled), how
+ * many draw 4 samples a pixel (the scene's multisampling, governor.ts msaaCandidate), and how many write two targets at
+ * one sample (none on a page whose scene pass is multisampled: the chain was built once, at 4).
+ */
+const PIPELINE_COUNTER = `(() => {
+  if (typeof GPUDevice === 'undefined') return
+  window.__smokePipelines = { render: 0, twoTargets: 0, msaa4: 0, twoTargets1x: 0 }
+  const count = (desc) => {
+    const n = window.__smokePipelines
+    const two = (desc && desc.fragment && desc.fragment.targets || []).length >= 2
+    const four = !!(desc && desc.multisample && desc.multisample.count === 4)
+    n.render++
+    if (two) n.twoTargets++
+    if (four) n.msaa4++
+    if (two && !four) n.twoTargets1x++
+  }
+  for (const key of ['createRenderPipeline', 'createRenderPipelineAsync']) {
+    const own = GPUDevice.prototype[key]
+    if (typeof own === 'function') GPUDevice.prototype[key] = function (desc) { count(desc); return own.call(this, desc) }
+  }
+})()`
+
+/** A page expression: the samples the boot chose (the scene pass's, the renderer's own) and the pipelines counted. */
+const AA_STATE = `(() => { const S = window.__SIM__, e = S.engine
+  return { scene: e.sceneSamples, renderer: e.gpu.renderer.samples, post: e.options.post, pipelines: window.__smokePipelines, errors: S.errors().slice(0, 5) } })()`
+/** An AA_STATE as a log line. */
+const aaLine = (a) => `scene ${a.scene}x, renderer ${a.renderer}, ${a.pipelines ? `${a.pipelines.render} pipelines, ${a.pipelines.msaa4} at 4x, ${a.pipelines.twoTargets} with two targets (${a.pipelines.twoTargets1x} at 1x)` : 'not counted'}`
+
 const FRAME_COUNTER = `(() => { window.__smokeFrames = 0; const tick = () => { window.__smokeFrames++; requestAnimationFrame(tick) }; requestAnimationFrame(tick) })()`
 
 /**
@@ -432,6 +461,7 @@ async function open(chrome, { mobile = false, width = 960, height = 540, args = 
   const page = new Page(b)
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: PAD_SHIM })
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: FRAME_COUNTER })
+  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: PIPELINE_COUNTER })
   if (mobile) {
     await b.send('Emulation.setUserAgentOverride', { userAgent: IPHONE.userAgent, platform: 'iPhone' })
     await b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
@@ -488,6 +518,27 @@ async function serveStatic(dir) {
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   return { origin: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); server.close() } }
+}
+
+/**
+ * A llama-server built since b11521 as the page meets it: every origin allowed (its default), one text model listed;
+ * only the lists a look asks are answered. It listens on a free port, which the browser is told is localhost:9931 (its
+ * new default port), so nothing on this machine is reached or needed free. Until `on()` it drops every connection, as
+ * a port with nothing listening would.
+ */
+async function serveLlamaServer() {
+  let ready = false
+  const server = createServer((req, res) => {
+    if (!ready) { req.socket.destroy(); return }
+    const head = { 'Access-Control-Allow-Origin': req.headers.origin ?? '*', 'Cache-Control': 'no-store' }
+    if (new URL(req.url ?? '/', 'http://x').pathname === '/v1/models') {
+      res.writeHead(200, { ...head, 'Content-Type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'smoke-9931.gguf', object: 'model' }] }))
+      return
+    }
+    res.writeHead(404, head).end()
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  return { port: server.address().port, on: () => { ready = true }, close: () => { server.closeAllConnections(); server.close() } }
 }
 
 /** Navigates again to `url` and waits until the new document has booted (the old one is marked, so it cannot answer). */
@@ -653,6 +704,37 @@ async function tether(p, skill, tries = 6) {
 }
 
 /**
+ * Puts the operator down on a sidewalk beside the nearest person who knows `skill` (the first half of `tether`,
+ * without the recruit), so an ask within earshot can be sent: the first walk's exam asks people over through the
+ * recruiter, under the recruiter's own checks (on foot, off the road, within AUDIBLE_RADIUS, the person idle).
+ */
+async function besideSomeone(p, skill) {
+  const seen = await p.eval(`new Promise((resolve) => { const h = window.__SIM__.engine.recruitHost(); const off = h.onState((s) => {
+    const f = s.crowdFrame; if (!f || f.length < 4 * h.agents) return; off()
+    const xz = new Array(2 * h.agents); for (let k = 0; k < h.agents; k++) { xz[2 * k] = f[4 * k]; xz[2 * k + 1] = f[4 * k + 2] }
+    resolve({ xz, me: h.operator() }) }) })`)
+  if (!seen.me) return { ok: false, note: 'the operator is not on foot' }
+  const xz = Float32Array.from(seen.xz)
+  let best = null
+  for (let k = 1; 2 * k + 1 < xz.length; k++) {
+    const x = xz[2 * k], z = xz[2 * k + 1]
+    if (!skillsOf(k).includes(skill) || !Number.isFinite(x) || onRoad(x, z)) continue
+    const d = Math.hypot(x - seen.me.x, z - seen.me.z)
+    if (best && d >= best.d) continue
+    for (const [ox, oz] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
+      const at = { x: x + ox, z: z + oz }
+      if (!onRoad(at.x, at.z) && eligible(xz, k, at, skill) >= 0) { best = { k, at, d }; break }
+    }
+  }
+  if (!best) return { ok: false, note: `nobody with ${skill} on a sidewalk` }
+  await p.eval(`window.__SIM__.teleport(${best.at.x}, ${best.at.z})`)
+  await p.frames(3)
+  // The recruiter's copy of the crowd is refreshed every 250 ms (recruitment.ts COPY_INTERVAL_MS).
+  await new Promise((r) => setTimeout(r, 400))
+  return { ok: true, note: `agent ${best.k}, ${best.d.toFixed(0)} m away` }
+}
+
+/**
  * A worker the page makes from a blob, which inherits the page's policy, fetching a name off this machine: what the
  * worker saw (its securitypolicyviolation events, and how the fetch ended).
  */
@@ -726,6 +808,9 @@ const SCENARIOS = {
       // Not a Peak candidate (a software adapter): every such device boots as it did before Peak.
       const nc = await p.eval(PEAK_STATE)
       check(nc.max === 4 && nc.timestamps === false && nc.peak === null, 'desktop: a device that is not a Peak candidate keeps the range Minimal..Ultra, no GPU timestamps and no Peak rule', `range ${nc.min}..${nc.max}, timestamps ${nc.timestamps}, peak ${JSON.stringify(nc.peak)}`)
+      // Nor a multisampling candidate: one sample everywhere, as before (FXAA alone).
+      const aa = await p.eval(AA_STATE)
+      check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.render > 0 && aa.pipelines.msaa4 === 0, 'desktop: a device that is not a multisampling candidate draws one sample a pixel everywhere', aaLine(aa))
       // The hardware class: a software adapter in a desktop browser is a desktop (never a workstation: no Peak
       // candidate), and the snapshot's quality carries the class the console names.
       const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
@@ -1107,6 +1192,8 @@ const SCENARIOS = {
       await p.booted()
       const views = await p.eval('window.__SIM__.snapshot().output.players?.count ?? 1')
       check(views === 2, 'split: ?players=2 cuts the screen in two', `${views} views`)
+      const aa = await p.eval(AA_STATE)
+      check(aa.renderer === 0 && aa.scene === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'split: a device that is not a multisampling candidate splits at one sample', aaLine(aa))
       // Seats go to the pads in turn: the first pad to appear takes player 2's seat, the next player 1's. A pad without
       // the standard mapping appears only once a face button wakes it (hal.ts), and that press does nothing more.
       await p.eval('window.__smokePad.connect(0)')
@@ -1163,6 +1250,20 @@ const SCENARIOS = {
       await p.shot('split')
       p.health('split')
     } finally { await p.b.close() }
+    // ?msaa=1 with the screen split: the post chain is off, so the renderer's own frame takes the 4 samples (its
+    // framebuffer target, both views drawn into it), and no scene pass is multisampled or compiled with two targets.
+    const m = await open(chrome)
+    try {
+      await m.goto(`${origin}/?${LIGHT}&players=2&msaa=1`)
+      await m.booted()
+      await m.frames(3)
+      const views = await m.eval('window.__SIM__.snapshot().output.players?.count ?? 1')
+      const aa = await m.eval(AA_STATE)
+      check(views === 2 && aa.renderer === 4 && aa.scene === 0 && aa.post === false && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.pipelines.twoTargets === 0 && aa.errors.length === 0,
+        'split: ?msaa=1 draws both views 4 samples a pixel on the renderer\'s own frame, and validates', `${views} views, ${aaLine(aa)}`)
+      await m.shot('split-msaa')
+      m.health('split (?msaa=1)')
+    } finally { await m.b.close() }
   },
 
   async file(chrome) {
@@ -1238,6 +1339,41 @@ const SCENARIOS = {
       p.saveTranscript('ultra')
       p.health('ultra')
     } finally { await p.b.close() }
+    // ?msaa=1 at Ultra under the cinema camera: the scene pass draws colour and velocity 4 samples a pixel, the sun
+    // shafts read its multisampled depth, and the chain is built once at 4 (no two-target pipeline at one sample); tier
+    // changes across the post chain's range compile nothing at one sample, and ghost view and rain mode validate.
+    const m = await open(chrome, { width: 640, height: 360 })
+    try {
+      await m.goto(`${origin}/?debug&onboarding=0&crowd=512&cars=8&scale=0.5&audio=0&quality=4&msaa=1`)
+      await m.booted()
+      await m.frames(3)
+      const aa = await m.eval(AA_STATE)
+      check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.pipelines.twoTargets > 0 && aa.pipelines.twoTargets1x === 0 && aa.errors.length === 0,
+        'ultra: ?msaa=1 multisamples the scene pass (colour and velocity at 4x, nothing of it at 1x), and the chain validates', aaLine(aa))
+      await m.shot('ultra-msaa')
+      await m.eval(`[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Skip')?.click()`)
+      check(await m.openConsole(), 'ultra: the console opens (?msaa=1)')
+      const before = aa.pipelines.render
+      await m.command('quality 1', /tier 1 Low \(fixed\)/)
+      await m.frames(3)
+      await m.command('quality 5', /tier 5 Peak \(fixed\)/)
+      await m.frames(3)
+      await m.command('quality 4', /tier 4 Ultra \(fixed\)/)
+      await m.frames(3)
+      const tiers = await m.eval(AA_STATE)
+      check(tiers.errors.length === 0 && tiers.pipelines.twoTargets1x === 0, 'ultra: Low, Peak and Ultra again keep the multisampled chain: no error, nothing compiled at one sample', aaLine(tiers))
+      info('ultra: render pipelines compiled by the tier changes (?msaa=1)', `${tiers.pipelines.render - before}`)
+      await m.eval('window.__SIM__.engine.setGhost(true)')
+      await m.frames(3)
+      await m.eval('window.__SIM__.engine.setGhost(false)')
+      await m.eval('window.__SIM__.engine.setMatrix(true)')
+      await m.frames(3)
+      const looks = await m.eval(AA_STATE)
+      check(looks.errors.length === 0 && looks.pipelines.twoTargets1x === 0, 'ultra: ghost view and rain mode validate over the multisampled scene', aaLine(looks))
+      await m.shot('ultra-msaa-rain')
+      m.saveTranscript('ultra-msaa')
+      m.health('ultra (?msaa=1)')
+    } finally { await m.b.close() }
   },
 
   async peak(chrome, origin) {
@@ -1258,6 +1394,9 @@ const SCENARIOS = {
       check(JSON.stringify(s.profile) === JSON.stringify({ mobile: false, gpuClass: 'discrete', startTier: 4, lite: false }), 'peak: it profiles as a discrete desktop starting on Ultra, never above', JSON.stringify(s.profile))
       const st = s.state
       check(st.tier === 4 && st.label === 'Ultra' && st.auto === true && st.reason === '', 'peak: the governor starts it on Ultra in auto', JSON.stringify(st))
+      // The same hardware, on a screen under 2560 × 1440: the boot multisamples the scene pass by itself (msaaCandidate).
+      const aa = await p.eval(AA_STATE)
+      check(aa.scene === 4 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 > 0 && aa.errors.length === 0, 'peak: a high-end desktop starting on Ultra multisamples the scene pass without being asked', aaLine(aa))
       check(st.timestamps === s.feature, 'peak: three writes GPU timestamps exactly where the device has timestamp-query', `timestamps ${st.timestamps}, feature ${s.feature}`)
       info(`peak: SwiftShader's device ${s.feature ? 'has' : 'lacks'} timestamp-query`, s.feature ? 'the GPU rule is driven end to end' : 'the range stops at Ultra; the no-evidence path is checked')
       // As in ultra: a first visit's concierge may hold the keyboard in its name field; skipped, the tilde reaches the page.
@@ -1334,8 +1473,8 @@ const SCENARIOS = {
       check(s.cars === 12 && s.vehicles === 12, 'lite: 12 cars (the profile\'s default)', `${s.cars} in the realm, ${s.vehicles} reported`)
       check(s.craft === 0 && s.rigSlots === 0, 'lite: no scheduled craft and no ragdoll rigs in the realm', `craft ${s.craft}, rig slots ${s.rigSlots}`)
       check(Math.abs(s.ratio - 0.5) < 1e-9, 'lite: the canvas draws at half the CSS pixel edge whatever the device pixel ratio', `pixel ratio ${s.ratio}`)
-      check(s.post === false && s.pipelines && s.pipelines.render > 0 && s.pipelines.twoTargets === 0, 'lite: the post chain is off and was never compiled (no colour-and-velocity pipeline)',
-        s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets` : 'not counted')
+      check(s.post === false && s.pipelines && s.pipelines.render > 0 && s.pipelines.twoTargets === 0 && s.pipelines.msaa4 === 0, 'lite: the post chain is off and was never compiled (no colour-and-velocity pipeline), and nothing is multisampled',
+        s.pipelines ? `${s.pipelines.render} render pipelines, ${s.pipelines.twoTargets} with two targets, ${s.pipelines.msaa4} at 4x` : 'not counted')
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${s.crowdFrames + 2} && window.__SIM__.snapshot().output.fps > 0`, 60_000).then(() => true, () => false)
       check(ran, 'lite: frames are drawn and the crowd runs')
       const hud = await p.eval(`document.body.innerText.includes('Lite')`)
@@ -1361,13 +1500,16 @@ const SCENARIOS = {
       p.health('lite')
     } finally { await p.b.close() }
     // The same phone with ?lite=0: the profile it had before (Minimal, 5,000 pedestrians, 36 cars), and the post chain
-    // compiled at boot as on every uncapped device, which also shows the pipeline count above can see it.
+    // compiled at boot as on every uncapped device, which also shows the pipeline count above can see it. It asks for
+    // ?msaa=1 too, which a phone never takes (governor.ts msaaCandidate).
     const q = await androidPhone(chrome)
     try {
-      await q.goto(`${origin}/?debug&onboarding=0&audio=0&lite=0`)
+      await q.goto(`${origin}/?debug&onboarding=0&audio=0&lite=0&msaa=1`)
       await q.booted()
       const s = await q.eval(`(() => { const S = window.__SIM__, s = S.snapshot(), e = S.engine
         return { quality: s.quality, agents: e.sim.meta.agents, cars: e.sim.meta.count, max: e.quality.governor.max, pipelines: window.__smokePipelines } })()`)
+      const aa = await q.eval(AA_STATE)
+      check(aa.scene === 0 && aa.renderer === 0 && aa.pipelines && aa.pipelines.msaa4 === 0, 'lite: a phone with ?lite=0 and ?msaa=1 still draws one sample a pixel', aaLine(aa))
       check(s.quality.tier === 0 && s.quality.label === 'Minimal' && s.quality.lite === undefined && s.max === 2, 'lite: ?lite=0 gives the phone its old profile (Minimal, capped at Medium)', JSON.stringify(s.quality))
       check(s.agents === 5000 && s.cars === 36, 'lite: ?lite=0 simulates 5,000 pedestrians and 36 cars', `${s.agents}, ${s.cars}`)
       check(s.pipelines && s.pipelines.twoTargets > 0, 'lite: ?lite=0 compiles the post chain at boot (colour-and-velocity pipelines counted)',
@@ -1600,7 +1742,9 @@ const SCENARIOS = {
    * plain JS, as the debug handle allows (App.tsx `window.__SIM__.engine`).
    */
   async actions(chrome, origin) {
-    const p = await open(chrome)
+    // The page's localhost:9931 is the fake llama-server below; every other address stays off the network.
+    const llama = await serveLlamaServer()
+    const p = await open(chrome, { args: [`--host-resolver-rules=MAP localhost:9931 127.0.0.1:${llama.port}`] })
     try {
       // The slowest day (one sim minute a real minute at 60 fps, slower on a software GPU, whose frames are clamped to
       // 50 ms of sim time): the clock an action set is read back minutes later, so the hour is compared, not the minute.
@@ -1664,12 +1808,193 @@ const SCENARIOS = {
       const log = await p.command('act log verify', /chain: /)
       check(gone && /stop {4}act-5 .*CapabilityTethered: Aborted \(Spatial Tether Lost\): agent \d+ \(Design(?:, [^)]*)?\): no longer tethered to the operator/.test(log ?? '') && /chain: 11 entries verify from genesis/.test(log ?? '') && /^22:/.test(await clock()),
         'actions: a lost tether ends the proposal in the gateway\'s words; the trail has every proposal, decision and end, and verifies', lastLine(log))
+
+      // A llama-server on its new default port (router.ts KNOWN_SERVERS): nothing answers at 8080, so auto's second
+      // round finds it on 9931, through the page's own air gap and connect-src, and keeps that address.
+      llama.on()
+      await p.command('ask provider auto', /provider\s+auto/)
+      check(!!(await p.command('ask', /found\s+llamacpp at http:\/\/localhost:9931, found answering on this machine/, 30_000)),
+        'actions: auto finds a llama-server on its new default port, 9931, when nothing answers at 8080')
       await p.shot('actions')
       p.health('actions')
     } finally {
       p.saveTranscript('actions')
       await p.b.close()
+      llama.close()
     }
+  },
+
+  /**
+   * The first walk (09_Cognition/firstWalk.ts, onboarding/FirstWalk.tsx and exam.ts) end to end on its accessible
+   * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
+   * stage's action (walk, plan a goal, a car's door, a workplace's doorway, the wardrobe card, `laws`) and the page's
+   * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
+   * where the exam seals the live kernel, asks people over through the recruiter (so the visitor is first put down on a
+   * sidewalk beside someone who knows Robotics) and unlocks the city; the card goes and the pass is kept.
+   */
+  async walk(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const card = () => p.eval(`!!document.querySelector('[data-walk-show]')`)
+      const show = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return null; const t = b.textContent.trim(); b.click(); return t })()`)
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      const shown = await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).then(() => true, () => false)
+      check(shown && (await stage()) === 'move', 'walk: a first run opens on the first walk, at its first stage', `card ${shown}, stage ${await stage()}`)
+      const buttons = await p.eval(`[...document.querySelectorAll('[data-walk] button')].map((b) => b.textContent.trim() + (b.getAttribute('aria-label') ? ' [' + b.getAttribute('aria-label') + ']' : ''))`)
+      check(buttons.length > 0 && !buttons.some((w) => /skip|close|dismiss|later|\bx\b/i.test(w)), 'walk: the card has no skip and no close', buttons.join(', '))
+      // A first run also opens on Sloane's name question: from 60 rem across her card stands left of the walk's, at every
+      // window size up to where the two met before (about 1,300 px); in a narrower window the walk's card steps aside
+      // while hers is open, and comes back at 960 px.
+      if (await p.waitFor(`!!document.querySelector('aside[data-concierge="ask"]')`, 30_000).then(() => true, () => false)) {
+        const apart = []
+        for (const [width, height] of [[960, 540], [1024, 640], [1152, 648], [1280, 720], [1366, 657]]) {
+          await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+          await p.frames(3)
+          const m = await p.eval(`(() => { const r = (q) => { const e = document.querySelector(q); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom } }; return { walk: r('[data-walk]'), sloane: r('aside[data-concierge="ask"]') } })()`)
+          const meet = !m.walk || !m.sloane || (m.sloane.r > m.walk.l && m.sloane.l < m.walk.r && m.sloane.b > m.walk.t && m.sloane.t < m.walk.b)
+          apart.push(`${width}x${height} ${meet ? 'MEET' : `gap ${Math.round(m.walk.l - m.sloane.r)}`}`)
+        }
+        check(!apart.some((a) => a.includes('MEET')), 'walk: Sloane\'s open question stands beside the walk\'s card, never under it', apart.join(', '))
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 600, deviceScaleFactor: 1, mobile: false })
+        const aside = await p.waitFor(`!document.querySelector('[data-walk]') && !!document.querySelector('aside[data-concierge="ask"]')`, 5_000).then(() => true, () => false)
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: 960, height: 540, deviceScaleFactor: 1, mobile: false })
+        const back = await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 5_000).then(() => true, () => false)
+        await p.frames(3)
+        await p.shot('walk-beside')
+        check(aside && back, 'walk: under 60 rem across the walk\'s card steps aside while Sloane\'s card is open, and is back at 960 px', `aside at 900 px ${aside}, back at 960 px ${back}`)
+      } else check(false, 'walk: Sloane\'s name question opens with the walk')
+      await p.tap('Escape', 'Escape', 27)
+      await p.frames(3)
+      check(await card(), 'walk: Escape does not put the card away')
+
+      // 1 Look and walk: "Walk for me" turns the head and walks; the page's own readings pass the stage.
+      const seen = () => p.eval(`(() => { const s = window.__SIM__.snapshot(); return { yaw: s.customer.viewYaw, m: s.experience.distanceWalked, x: s.customer.x, z: s.customer.z } })()`)
+      const w0 = await seen()
+      const b1 = await show()
+      const walked = await past('move')
+      const w1 = await seen()
+      check(walked, `walk: "${b1}" turns the head and walks the three metres`, `stage ${await stage()}; yaw ${w0.yaw.toFixed(2)} -> ${w1.yaw.toFixed(2)}, ${(w1.m - w0.m).toFixed(1)} m walked, from (${w0.x.toFixed(1)}, ${w0.z.toFixed(1)}) to (${w1.x.toFixed(1)}, ${w1.z.toFixed(1)})`)
+      // 2 Talk to Sloane: "Plan one for me" plans a goal as the chip would.
+      check((await stage()) === 'voice', 'walk: stage 2 is a goal for Sloane', `stage ${await stage()}`)
+      const b2 = await show()
+      check(await past('voice'), `walk: "${b2}" plans a goal and the stage passes`, `stage ${await stage()}`)
+      // 3 The parked fleet: "Take me to a car" puts the visitor at a parked car's door and the realm opens it.
+      check((await stage()) === 'fleet', 'walk: stage 3 is the parked fleet', `stage ${await stage()}`)
+      const b3 = await show()
+      check(await past('fleet', 60_000), `walk: "${b3}" puts the visitor at a car's door and the realm opens it`, `stage ${await stage()}`)
+      check((await p.snap()).mode === 'vehicle', 'walk: at the wheel after stage 3')
+      // 4 Inside a workplace: "Take me inside" puts the visitor down just inside a doorway (out of the car first).
+      check((await stage()) === 'work', 'walk: stage 4 is a workplace', `stage ${await stage()}`)
+      const b4 = await show()
+      check(await past('work', 60_000), `walk: "${b4}" puts the visitor inside a workplace`, `stage ${await stage()}`)
+      check((await p.snap()).mode === 'foot', 'walk: on foot again inside')
+      // 5 Your look: "Open the wardrobe" opens the wardrobe card the chip opens (the walk's card steps aside while it is
+      // open); its Done puts it away, and that passes the stage.
+      check((await stage()) === 'style', 'walk: stage 5 is the wardrobe', `stage ${await stage()}`)
+      const b5 = await show()
+      const dressed = await p.waitFor(`!!document.querySelector('[data-customizer]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(dressed && (await stage()) === 'style', `walk: "${b5}" opens the wardrobe card and the walk's card steps aside`, `wardrobe ${dressed}, stage ${await stage()}`)
+      await p.shot('walk-wardrobe')
+      await p.eval(`document.querySelector('[data-customizer] [data-action="done"]')?.click()`)
+      const away = await past('style', 10_000)
+      check(away && await p.waitFor(`!document.querySelector('[data-customizer]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walk: Done puts the wardrobe away, the stage passes and the walk\'s card is back', `stage ${await stage()}`)
+      // 6 Ring-0: "Open it for me" runs laws at the console.
+      check((await stage()) === 'ring0', 'walk: stage 6 is Ring-0', `stage ${await stage()}`)
+      const b6 = await show()
+      check(await past('ring0', 30_000), `walk: "${b6}" runs laws and the stage passes`, `stage ${await stage()}`)
+      // 7 The way out: beside someone on a sidewalk first (spawn_subagents asks through the recruiter, within earshot),
+      // then the three line buttons and Run, each line's doors reported by the console.
+      check((await stage()) === 'exam', 'walk: stage 7 is the exit program', `stage ${await stage()}`)
+      const by = await besideSomeone(p, 'Robotics')
+      check(by.ok, 'walk: the visitor is put down on a sidewalk beside someone who knows Robotics', by.note)
+      const lines = await p.eval(`[...document.querySelectorAll('[data-walk-line-button]')].length`)
+      check(lines === 3 && await p.eval(`!!document.querySelector('[data-walk-run]')`), 'walk: the last card has three line buttons and Run', `${lines} lines`)
+      await p.shot('walk-exam')
+      const line = async (i, done) => {
+        await p.eval(`document.querySelector('[data-walk-line-button="${i}"]')?.click()`)
+        const typed = await p.waitFor(`(document.querySelector('[aria-label="Ring-0 command line"]')?.value ?? '').startsWith('noir ')`, 10_000).then(() => true, () => false)
+        await p.eval(`document.querySelector('[data-walk-run]')?.click()`)
+        const t = await p.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return ${done}.test(t) && t })()`, 30_000).catch(() => null)
+        p.transcript.push(`[line ${i}, typed ${typed}]\n${t ?? `(nothing matching ${done} after 30 s)\n${await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
+        return { typed, t }
+      }
+      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 12 checks, contained, realm standing/)
+      check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
+      const l2 = await line(2, /spawn_subagents: \d+ of 24 asked over for sim2real_workplaces/)
+      check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 asks people over through the recruiter (at least one)', lastLine(l2.t))
+      const l3 = await line(3, /unlock_city: /)
+      check(/unlock_city: the city is yours/.test(l3.t ?? ''), 'walk: line 3 unlocks the city', lastLine(l3.t))
+      const gone = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
+      check(gone && kept?.v === 1 && kept?.passed === true, 'walk: the card goes and the pass is kept for the next visit', JSON.stringify(kept))
+      await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      const status = await p.command('tutorial status', /tutorial: /)
+      check(/^tutorial: the first walk is passed: the city is yours$/.test(lastLine(status)), 'walk: tutorial status says the walk is passed', lastLine(status))
+      await p.shot('walk')
+      p.health('walk')
+    } finally {
+      p.saveTranscript('walk')
+      await p.b.close()
+    }
+  },
+
+  /**
+   * The first walk's look stage through a shop (storefronts.ts, StoreCard.tsx): with Sloane's name question skipped and
+   * the earlier stages passed (the first two by their buttons, the next two by the reports the page would make, the
+   * car and the room, which the walk scenario takes by their buttons), Sloane names the shops on a map that has
+   * them; the visitor stands in the first shop, the HUD's Browse chip is not under the walk's card and opens the
+   * shop's card; the walk's card steps aside; trying a line on costs nothing and passes nothing; Done puts the shop's
+   * card away, which passes the stage, and the walk's card is back on Ring-0.
+   */
+  async walkshop(chrome, origin) {
+    const p = await open(chrome)
+    try {
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      const stage = () => p.eval('window.__SIM__.walk()')
+      const past = (s, ms = 30_000) => p.waitFor(`window.__SIM__.walk() !== ${JSON.stringify(s)}`, ms).then(() => true, () => false)
+      // Sloane's name question skipped with Esc, as the desktop scenario does and a visitor who wants to walk would: her
+      // open card stands over the bottom-centre prompts in a window this short, the Browse chip among them.
+      if (await p.waitFor(`!document.querySelector('.boot-veil') && document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) {
+        await p.tap('Escape', 'Escape', 27)
+      }
+      await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
+      // Walk for me, then Plan one for me (a goal planned as the chip would).
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('move')
+      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
+      await past('voice')
+      for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
+      const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
+      const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
+      check(at && /shops on the street/.test(said) && /press B/.test(said), 'walkshop: the look stage names the shops, in the keyboard\'s words', `stage ${await stage()}; ${said.replace(/\s+/g, ' ').slice(0, 200)}`)
+      // Into the first shop (the city always has five), on foot, at its fitting spot; the realm's reading says so.
+      const shop = await p.eval(`window.__SIM__.shops()[0]`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z}, 0)`)
+      const inShop = await p.waitFor(`window.__SIM__.snapshot().customer.shop?.index === 0 && !!document.querySelector('[data-hint="shop"]')`, 20_000).then(() => true, () => false)
+      // The Browse chip is the shop's way in on every device; nothing of the walk's card lies over its middle.
+      const over = await p.eval(`(() => { const c = document.querySelector('[data-hint="shop"]'); if (!c) return 'no chip'; const r = c.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); if (top && c.contains(top)) return ''; const at = (e) => e ? e.tagName.toLowerCase() + [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'aria-label').map((a) => '[' + a.name + '=' + a.value.slice(0, 24) + ']').join('') : 'nothing'; return 'under ' + at(top) + ' in ' + at(top?.closest('aside,section,div[data-walk]') ?? null) + ' at ' + Math.round(r.left) + ',' + Math.round(r.top) })()`)
+      await p.shot('walk-shop-chip')
+      check(inShop && over === '', 'walkshop: in the shop, the Browse chip shows and the walk\'s card does not cover it', `${shop.name}: in ${inShop}, chip ${over || 'clear'}`)
+      await p.eval(`document.querySelector('[data-hint="shop"]')?.click()`)
+      const open1 = await p.waitFor(`!!document.querySelector('[data-store]') && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(open1 && (await stage()) === 'style', 'walkshop: Browse opens the shop\'s card and the walk\'s card steps aside', `card ${open1}, stage ${await stage()}`)
+      const credits = () => p.eval('window.__SIM__.shopkeeper.purse.credits()')
+      const c0 = await credits()
+      const tried = await p.eval(`(() => { const b = document.querySelector('[data-store] [data-action="try"]'); if (!b) return false; b.click(); return true })()`)
+      await p.frames(3)
+      check(tried && (await credits()) === c0 && (await stage()) === 'style', 'walkshop: trying a line on costs nothing and does not pass the stage', `tried ${tried}, credits ${c0} -> ${await credits()}, stage ${await stage()}`)
+      await p.shot('walk-shop')
+      await p.eval(`document.querySelector('[data-store] [data-action="done"]')?.click()`)
+      const away = await past('style', 10_000)
+      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      p.health('walkshop')
+    } finally { await p.b.close() }
   },
 
   async lakefront(chrome, origin) {
@@ -1687,6 +2012,13 @@ const SCENARIOS = {
       check(r.people > 0, 'lakefront: the window has people', `${r.people} pedestrians`)
       check(r.drawn === 6 && r.crowd === 6, 'lakefront: six indoor workplaces drawn, and six reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
       check(Number.isInteger(r.working) && r.working >= 0, 'lakefront: the HUD counts who is at work indoors', `working ${r.working}`)
+      // The window's transit (region/transit.ts): the realm schedules craft on the window's own network (its elevated loop,
+      // drone corridors and racetrack at least) and the page draws them and the painted crossings.
+      const c = await p.eval(`(() => { const e = window.__SIM__.engine, kinds = {}
+        for (const t of (e.craftView?.tracks ?? [])) kinds[t.kind] = (kinds[t.kind] ?? 0) + 1
+        return { craft: e.sim.meta.craft, view: e.craftView !== null, kinds, markings: e.world.scene.children.some((m) => m.name === 'RegionMarkings') } })()`)
+      check(c.craft > 0 && c.view && c.kinds.train === 1 && c.kinds.drone > 0 && c.kinds.plane === 1, 'lakefront: the window has scheduled craft on its own loop, corridors and racetrack, and the page draws them', `${c.craft} craft, view ${c.view}, kinds ${JSON.stringify(c.kinds)}`)
+      check(c.markings, 'lakefront: the zebra crossings are drawn')
       const f0 = (await p.snap()).crowdFrames
       const advanced = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
       check(advanced, 'lakefront: the crowd simulation advances', `${f0} -> ${(await p.snap()).crowdFrames}`)
