@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BUILD_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -27,7 +27,7 @@ import {
   type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type MicBridge, type AccessBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
-import { LOOK_BODIES, LOOK_BUILDS, LOOK_PRESETS, LOOK_SLOTS, lookOptions } from '../../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_GARMENTS, LOOK_LOWER_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, lookOptions } from '../../03_Spawn_Agents/look.ts'
 import { PING_KINDS, PING_WORDS } from '../../08_Swarm/ping.ts'
 import { apiDoc, exec, scriptApi, type SimControls } from '../operator.ts'
 import { createSwarm } from '../../08_Swarm/orchestrator.ts'
@@ -40,6 +40,7 @@ import { harnesses } from '../harness.ts'
 import { FEATURES } from '../../09_Cognition/features.ts'
 import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
+import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
@@ -52,7 +53,7 @@ const LAWS = [
 
 const CORE_NAMES = [
   'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'mic', 'access', 'goal', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
-  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'exit',
+  'uname', 'whoami', 'version', 'boot', 'map', 'r0', 'noir', 'tutorial', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
 
@@ -770,7 +771,7 @@ test('help lists every command with usage, in two groups; help <cmd> explains on
   assert.match(all, /captions \[on\|off\]/)
   assert.match(all, /haptics \[on\|off\]/)
   assert.match(all, /ping \[go\|look\|gather\|wait\|clear\]/)
-  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|code <code>\|random \[<seed>\]\|reset\]/)
+  assert.match(all, /look \[show \[<agent>\]\|<slot> <n\|name>\|preset <name>\|build <name>\|face <name>\|garment <name>\|code <code>\|random \[<seed>\]\|reset\]/)
   assert.match(all, /boot \[gui\|tty\|status\]/)
   assert.match(all, /r0 <words\.\.\.>\|r0 reset\|r0 words/)
   assert.match(all, /net \[join <ws-url> \[<token>\]\|leave\|status\|forget\]/)
@@ -1779,17 +1780,29 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('haptics '), ['haptics off', 'haptics on'])
   assert.deepEqual(complete('ping '), ['ping clear', 'ping gather', 'ping go', 'ping look', 'ping wait'])
   assert.deepEqual(complete('ping g'), ['ping gather', 'ping go'])
-  assert.deepEqual(complete('look '), [...['build', 'code', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
-  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look brow', 'look build'])
+  assert.deepEqual(complete('look '), [...['build', 'code', 'face', 'garment', 'preset', 'random', 'reset', 'show'], ...LOOK_SLOT_ARGS].sort().map((a) => `look ${a}`))
+  assert.deepEqual(complete('look b'), ['look bag', 'look body', 'look bottom', 'look bottomCut', 'look bottomWeave', 'look brow', 'look build'])
+  assert.deepEqual(complete('look bottomCut p'), ['look bottomCut palazzo', 'look bottomCut panelled', 'look bottomCut pencil', 'look bottomCut piped seam', 'look bottomCut pleated', 'look bottomCut pleated turn-ups', 'look bottomCut pressed crease'])
+  assert.deepEqual(complete('look topWeave h'), ['look topWeave herringbone', 'look topWeave houndstooth'])
+  assert.deepEqual(complete('look bottomWeave m'), ['look bottomWeave matching', 'look bottomWeave merino'])
   assert.deepEqual(complete('look build '), LOOK_BUILD_ARGS.map((a) => `look build ${a}`))
+  assert.deepEqual(complete('look face '), LOOK_FACE_ARGS.map((a) => `look face ${a}`))
+  assert.deepEqual(complete('look face ov'), ['look face oval'])
+  assert.deepEqual(complete('look garment '), LOOK_GARMENT_ARGS.map((a) => `look garment ${a}`))
+  assert.deepEqual(complete('look garment tw'), ['look garment tweed blazer', 'look garment tweed waistcoat', 'look garment twill culottes'])
+  assert.deepEqual(complete('look cut p'), ['look cut patch pockets', 'look cut peak lapel'])
   assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
   assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
   assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
-  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look height', 'look hips'])
+  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look headwear', 'look headwearColour', 'look hearing', 'look height', 'look hips'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])
   assert.deepEqual(complete('look preset n'), ['look preset navy blazer', 'look preset navy skirt suit', 'look preset navy suit'])
-  assert.deepEqual(complete('look hairStyle '), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle bun', 'look hairStyle long', 'look hairStyle short'])
+  assert.deepEqual(complete('look hairStyle b'), ['look hairStyle bald', 'look hairStyle bob', 'look hairStyle box braids', 'look hairStyle braided bun', 'look hairStyle braided ponytail', 'look hairStyle braided updo', 'look hairStyle bun', 'look hairStyle bun with fade', 'look hairStyle buzz cut'])
+  assert.deepEqual(complete('look hairStyle '), [...WARDROBE.hairStyle].sort().map((n) => `look hairStyle ${n}`), 'every style, the catalogue\'s names')
+  assert.deepEqual(complete('look curl '), [...WARDROBE.curl].sort().map((n) => `look curl ${n}`))
+  assert.deepEqual(complete('look headwear '), [...WARDROBE.headwear].sort().map((n) => `look headwear ${n}`))
+  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
   assert.deepEqual(complete('look undertone '), ['look undertone cool', 'look undertone neutral', 'look undertone olive', 'look undertone warm'])
   assert.deepEqual(complete('look layer '), ['look layer coat', 'look layer jacket', 'look layer shirt sleeves'])
   assert.deepEqual(complete('look trim '), ['look trim matching'])
@@ -2141,6 +2154,7 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   run('look body skirt suit', b, [])
   run('look HairColour grey', b, [])
   run('look preset navy skirt suit', b, [])
+  run('look garment belted trench coat', b, [])
   run('look code abcd-efgh', b, [])
   run('look random 77', b, [])
   run('look random', b, [])
@@ -2150,12 +2164,13 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
     { kind: 'slot', slot: 'body', value: 'skirt suit' },
     { kind: 'slot', slot: 'hairColour', value: 'grey' },
     { kind: 'preset', name: 'navy skirt suit' },
+    { kind: 'garment', name: 'belted trench coat' },
     { kind: 'code', code: 'abcd-efgh' },
     { kind: 'random', seed: 77 },
     { kind: 'random', seed: Number.NaN },
     { kind: 'reset' },
   ])
-  assert.deepEqual(b.calls, ['look show me', 'look show me', 'look show 12', 'look show 99', 'look set slot', 'look set slot', 'look set slot', 'look set preset', 'look set code',
+  assert.deepEqual(b.calls, ['look show me', 'look show me', 'look show 12', 'look show 99', 'look set slot', 'look set slot', 'look set slot', 'look set preset', 'look set garment', 'look set code',
     'look set random', 'look set random', 'look set reset'])
   // The host's own refusals (the wardrobe is closed) are lines.
   assert.deepEqual(run('look code ZZZZ-ZZZZ', b, []).lines, [{ kind: 'err', text: "look: not a look code: 'ZZZZ-ZZZZ' (eight symbols, XXXX-XXXX)" }])
@@ -2178,8 +2193,14 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual([...LOOK_BODY_ARGS], [...LOOK_BODIES].sort())
   assert.deepEqual([...LOOK_PRESET_ARGS], LOOK_PRESETS.map((p) => p.name).sort())
   assert.deepEqual([...LOOK_BUILD_ARGS], LOOK_BUILDS.map((x) => x.name).sort())
+  assert.deepEqual([...LOOK_FACE_ARGS], LOOK_FACE_SHAPES.map((x) => x.name).sort())
+  assert.deepEqual([...LOOK_GARMENT_ARGS], [...LOOK_GARMENTS, ...LOOK_LOWER_GARMENTS].map((x) => x.name).sort(), 'the garments by their names, tops and lower garments')
+  assert.deepEqual([...LOOK_BOTTOM_CUT_ARGS], [...new Set([...WARDROBE.trouserCut, ...WARDROBE.skirtCut])].sort(), 'the lower cuts by their names, trousers\' and skirts\'')
+  assert.deepEqual([...LOOK_CUT_ARGS], [...WARDROBE.cut].sort(), 'the cuts by their names')
   for (const slot of ['vitiligo', 'freckles'] as const) assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the wardrobe's names`)
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
+  assert.deepEqual([...LOOK_WEAVE_ARGS], [...WARDROBE.weave].sort(), 'the weaves by their names')
+  assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {
@@ -3213,4 +3234,52 @@ test('xr: the status line at once; vr, ar and off reach the bridge inside the ke
   assert.equal(b.calls.length, 4, 'a refused line touches nothing')
   assert.deepEqual(complete('xr '), ['xr ar', 'xr off', 'xr vr'])
   assert.ok(isErr(run('xr', offlineBridge(BRAND), [])), 'the offline bridge: an error line, no exception')
+})
+
+test('tutorial reads the walk\'s stage and the exit program from the exam, or says the shell has none; noir hands the exam over, prints what its doors said, and opens no write', () => {
+  const b = fake()
+  const program = ["the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):", ...PROGRAM.map((l) => `  noir ${l}`)]
+  // No exam (the console shell): one plain line and the program, nothing touched, and no `tutorial off`.
+  assert.deepEqual(texts(run('tutorial', b, [])), ['tutorial: no first walk in this shell (it runs in the city)', ...program])
+  assert.deepEqual(texts(run('tutorial status', b, [])), ['tutorial: no first walk in this shell (it runs in the city)'])
+  assert.deepEqual(texts(run('tutorial program', b, [])), program)
+  assert.deepEqual(kinds(run('tutorial', b, [])), ['out', 'sys', 'out', 'out', 'out'])
+  assert.ok(isErr(run('tutorial off', b, [])))
+  assert.ok(isErr(run('tutorial status now', b, [])))
+  assert.deepEqual(b.calls, [])
+  assert.deepEqual(complete('tutorial '), ['tutorial program', 'tutorial status'])
+  // The three words without an exam: they type-check and compile, and fail at run time with the shell's own message.
+  assert.deepEqual(run('noir print(verify_ring0());', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
+  assert.deepEqual(run('noir print(spawn_subagents(24, "sim2real_workplaces"), unlock_city(1u, 1));', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
+  assert.ok(run('noir asm unlock_city(verify_ring0(), spawn_subagents(24, "sim2real_workplaces"));', b, []).lines.every((l) => l.kind === 'out'))
+  // With an exam (the city): status and program are its; the doors answer in lane types, the session keeps seal and
+  // swarm between lines, and what the doors said follows the output as sys lines.
+  const said: string[] = []
+  const doors: unknown[][] = []
+  const e = fake()
+  e.exam = {
+    verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing'); return 0xc0ffee },
+    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} asked over for ${role}`); return 2 },
+    unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
+    report: () => said.splice(0),
+    status: () => 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)',
+    program: () => PROGRAM,
+  }
+  assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
+  const session = replSession()
+  assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 12 checks, contained, realm standing' }])
+  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 asked over for sim2real_workplaces' }])
+  assert.deepEqual(run(`noir ${PROGRAM[2]}`, e, [], session).lines, [{ kind: 'sys', text: 'unlock_city: the city is yours' }])
+  assert.deepEqual(run('noir print(seal, swarm);', e, [], session).lines, [{ kind: 'out', text: '12648430 2' }])
+  assert.deepEqual(doors, [['verify'], ['spawn', 24, 'sim2real_workplaces'], ['unlock', 0xc0ffee, 2]])
+  // The exam opens no write: a write intrinsic is still the elite tier's, and nothing of the bridge but the columns was touched.
+  assert.deepEqual(run('noir print(tune("car.power", 2.0));', e, [], session).lines, [{ kind: 'err', text: "noir: elite tier locked: 'ring0 unlock --elite <passphrase>' opens it" }])
+  assert.ok(e.calls.every((c) => c === 'soa tables'), e.calls.join(', '))
+  assert.deepEqual(e.operator.opCalls, [])
+  // A door that throws is the run's error, and what the doors said so far still prints.
+  e.exam = { ...e.exam, spawnSubagents: () => { said.push('spawn_subagents: nobody'); throw new Error("spawn_subagents: unknown role 'x'") } }
+  assert.deepEqual(run('noir print(spawn_subagents(1, "x"));', e, [], session).lines, [{ kind: 'err', text: "noir: spawn_subagents: unknown role 'x'" }, { kind: 'sys', text: 'spawn_subagents: nobody' }])
+  // The words list has the three names.
+  const words = run('noir words', e, [], session).lines[0].text.split(' ')
+  for (const w of ['verify_ring0', 'spawn_subagents', 'unlock_city']) assert.ok(words.includes(w), w)
 })

@@ -83,6 +83,10 @@ const R0_NOTE_STEPS = 100_000
 const NOIR_NOTE_STEPS = 100_000
 /** What a NoirScript write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
 const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"
+/** What an exam intrinsic fails with on a host without the first walk's exam (the console shell). */
+const NOIR_NO_EXAM = 'no first walk in this shell: the exit program runs in the city'
+/** The exit program as `tutorial program` prints it where no exam is wired (09_Cognition/firstWalk.ts PROGRAM is the one source; a test pins them equal). */
+const EXAM_PROGRAM: readonly string[] = Object.freeze(['let seal = verify_ring0();', 'let swarm = spawn_subagents(24, "sim2real_workplaces");', 'unlock_city(seal, swarm);'])
 /** A number as typed for a point: -12, 3.5. */
 const NUMBER = /^-?\d+(?:\.\d+)?$/
 
@@ -105,7 +109,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, skin, vitiligo, freckles, hair, top, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; off until pressed, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
@@ -126,6 +130,7 @@ const CORE = [
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
+  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on, and the three-line NoirScript program that is its only way out (nothing here turns the walk off)" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -200,12 +205,47 @@ const PING_WORDS: Record<PingKind, string> = { go: 'go there', look: 'look there
 /** The look's slots, bodies and presets, as typed after `look` (commands.test.ts pins them to 03_Spawn_Agents/look.ts, not imported here). */
 export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
-  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'hairColour', 'layer', 'top', 'trim', 'bottom', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
+  'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
 export const LOOK_PRESET_ARGS = ['burgundy pantsuit', 'camel blazer', 'camel skirt suit', 'charcoal suit', 'cream pantsuit', 'navy blazer', 'navy skirt suit', 'navy suit'] as const
-const LOOK_ACTIONS = ['build', 'code', 'preset', 'random', 'reset', 'show'] as const
+export const LOOK_FACE_ARGS = [
+  'broad nose', 'broad square', 'broad triangle', 'defined long', 'defined oval', 'diamond', 'full heart', 'full lips', 'full round', 'heart', 'long',
+  'narrow diamond', 'narrow heart', 'narrow long', 'narrow nose', 'oval', 'rectangle', 'round', 'soft oval', 'soft round', 'soft square', 'square',
+  'triangle', 'wide eyes',
+] as const
+export const LOOK_WEAVE_ARGS = [
+  'batik', 'cashmere', 'chalk stripe', 'glen check', 'herringbone', 'houndstooth', 'linen', 'merino', 'pinstripe', 'plain', 'silk', 'strip weave',
+  'tartan', 'tweed', 'twill', 'windowpane',
+] as const
+export const LOOK_CUT_ARGS = [
+  'band collar', 'belted', 'cardigan', 'cropped', 'double-breasted', 'notch lapel', 'open front', 'patch pockets', 'peak lapel', 'quilted',
+  'shawl collar', 'side closure', 'turtleneck', 'waistcoat', 'wrap front', 'zip front',
+] as const
+/** The lower cuts, trousers' and skirts' together (the host takes the names the body wears). */
+export const LOOK_BOTTOM_CUT_ARGS = [
+  'A-line', 'back vent', 'belted', 'box pleat', 'button front', 'cropped', 'culottes', 'flared', 'high-waisted', 'midi', 'midi A-line', 'midi pencil',
+  'palazzo', 'panelled', 'pencil', 'piped seam', 'pleated', 'pleated turn-ups', 'pressed crease', 'side stripe', 'slim', 'straight', 'tapered', 'tulip',
+  'turn-ups', 'wide-leg', 'wrap',
+] as const
+/** The garments, tops and lower garments together. */
+export const LOOK_GARMENT_ARGS = [
+  'A-line skirt', 'band-collar batik jacket', 'band-collar jacket', 'band-collar long coat', 'band-collar silk jacket', 'belted jacket', 'belted trench coat',
+  'box-pleat check skirt', 'button-front skirt', 'cashmere blazer', 'cashmere cardigan', 'chalk stripe suit jacket', 'check overcoat',
+  'cropped houndstooth jacket', 'cropped jacket', 'cropped linen trousers', 'dinner trousers', 'double-breasted chalk stripe jacket',
+  'double-breasted glen check jacket', 'double-breasted overcoat', 'double-breasted suit jacket', 'flared trousers', 'glen check trousers',
+  'herringbone blazer', 'herringbone overcoat', 'houndstooth blazer', 'linen blazer', 'merino cardigan', 'midi A-line skirt', 'midi pencil skirt',
+  'palazzo trousers', 'peak-lapel pinstripe jacket', 'peak-lapel suit jacket', 'pencil skirt', 'pinstripe suit jacket', 'pinstripe suit trousers',
+  'pinstripe waistcoat', 'pleated chinos', 'pleated skirt', 'pleated tweed trousers', 'quilted coat', 'quilted jacket', 'shawl-collar dinner jacket',
+  'side-closure jacket', 'side-closure silk jacket', 'silk evening jacket', 'silk wrap jacket', 'strip-weave blazer', 'tapered chinos',
+  'turn-up wool trousers', 'turtleneck and blazer', 'turtleneck and tweed jacket', 'tweed blazer', 'tweed waistcoat', 'twill culottes',
+  'unbuttoned blazer', 'unbuttoned linen blazer', 'waistcoat', 'wide-leg trousers', 'windowpane blazer', 'wrap coat', 'wrap jacket', 'wrap skirt',
+  'zip-front jacket',
+] as const
+const LOOK_ACTIONS = ['build', 'code', 'face', 'garment', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
 const ARGS: Record<string, readonly string[]> = {
@@ -235,13 +275,29 @@ const ARGS: Record<string, readonly string[]> = {
   'access text': ['100', '125', '150', '175', '200'],
   'access captions': ['huge', 'large', 'normal'],
   'look body': LOOK_BODY_ARGS,
-  'look hairStyle': ['bald', 'bob', 'bun', 'long', 'short'],
+  'look hairStyle': [
+    'afro', 'afro puff', 'bald', 'bob', 'box braids', 'braided bun', 'braided ponytail', 'braided updo', 'bun', 'bun with fade', 'buzz cut',
+    'centre strip', 'cornrow ponytail', 'cornrows', 'fade', 'half up', 'layered', 'locs', 'locs updo', 'long', 'long twists', 'ponytail', 'short',
+    'short locs', 'side part', 'side part bun', 'tapered afro', 'top knot', 'twist-out', 'twists', 'undercut', 'waves',
+  ],
+  'look curl': ['1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C', 'as styled'],
+  'look headwear': ['beanie', 'durag', 'flat cap', 'head wrap', 'hijab', 'kippah', 'none', 'turban'],
+  'look facialHair': ['full beard', 'goatee', 'long beard', 'moustache', 'none', 'short beard', 'stubble'],
+  'look hearing': ['cochlear implant', 'cochlear implants', 'hearing aids', 'implant and aid', 'none'],
+  'look prosthetic': ['both arms', 'both legs', 'left arm', 'left leg', 'none', 'right arm', 'right leg'],
+  'look prostheticFinish': ['carbon', 'chrome', 'matte', 'skin-matched'],
+  'look topWeave': LOOK_WEAVE_ARGS,
+  'look bottomWeave': ['matching', ...LOOK_WEAVE_ARGS].sort(),
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],
   'look skin': ['mst-01', 'mst-02', 'mst-03', 'mst-04', 'mst-05', 'mst-06', 'mst-07', 'mst-08', 'mst-09', 'mst-10'],
   'look vitiligo': ['face', 'hands', 'hands and face', 'none', 'one side', 'scattered', 'widespread'],
   'look freckles': ['dense', 'light', 'medium', 'none'],
   'look build': LOOK_BUILD_ARGS,
+  'look face': LOOK_FACE_ARGS,
   'look layer': ['coat', 'jacket', 'shirt sleeves'],
+  'look cut': LOOK_CUT_ARGS,
+  'look garment': LOOK_GARMENT_ARGS,
+  'look bottomCut': LOOK_BOTTOM_CUT_ARGS,
   'look trim': ['matching'],
   'look scarf': ['none'],
   'look preset': LOOK_PRESET_ARGS,
@@ -259,6 +315,7 @@ const ARGS: Record<string, readonly string[]> = {
   'ring0 unlock': ['--elite'],
   'ring0 elite': ['set'],
   noir: ['asm', 'reset', 'words'],
+  tutorial: ['program', 'status'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   robot: ['arm', 'calibrate', 'cell', 'demo', 'disarm', 'fit', 'mode', 'relay', 'remove', 'set', 'shape', 'spawn', 'urdf'],
@@ -701,6 +758,8 @@ function lookChange(action: string, rest: readonly string[]): LookChange | strin
   }
   if (action === 'preset') return rest.length ? { kind: 'preset', name: rest.join(' ') } : 'usage: look preset <name>'
   if (action === 'build') return rest.length === 1 ? { kind: 'build', name: rest[0] } : `usage: look build <${LOOK_BUILD_ARGS.join('|')}>`
+  if (action === 'face') return rest.length ? { kind: 'face', name: rest.join(' ') } : 'usage: look face <shape> (oval, round, square, heart, long, diamond, triangle, ...)'
+  if (action === 'garment') return rest.length ? { kind: 'garment', name: rest.join(' ') } : 'usage: look garment <name> (pinstripe suit jacket, tweed blazer, waistcoat, belted trench coat, wide-leg trousers, pencil skirt, ...)'
   if (action === 'code') return rest.length === 1 ? { kind: 'code', code: rest[0] } : 'usage: look code <XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX>'
   const slot = LOOK_SLOT_ARGS.find((x) => x.toLowerCase() === action.toLowerCase())
   if (!slot) return `look: no slot named '${action}': ${LOOK_SLOT_ARGS.join(', ')}`
@@ -1488,11 +1547,33 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     const writes = eliteWritesOf(b)
-    const host: NoirHost = writes === null ? { tables: () => tables, locked: NOIR_LOCKED } : { tables: () => tables, write: writes, locked: NOIR_LOCKED }
+    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the recruiter's own
+    // lane, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
+    const exam = b.exam
+    const host: NoirHost = {
+      tables: () => tables, locked: NOIR_LOCKED, noExam: NOIR_NO_EXAM,
+      ...(writes === null ? {} : { write: writes }),
+      ...(exam === undefined ? {} : { exam }),
+    }
     const r = n.run(rest, host, writes === null ? undefined : ELITE_LIMITS)
     const lines = r.out.map(out)
     if (r.error !== undefined) lines.push(err(`noir: ${r.error}`))
+    if (exam !== undefined) for (const line of exam.report()) lines.push(sys(line))
     if (r.steps >= NOIR_NOTE_STEPS) lines.push(sys(`-- ${r.steps} steps --`))
+    return { lines }
+  },
+
+  // Read-only: the walk's stage and its exit program. There is no `tutorial off`: the program is the way out.
+  tutorial(args, b) {
+    const a = args[0]
+    if (args.length > 1 || (a !== undefined && a !== 'status' && a !== 'program')) return fail(usage('tutorial'))
+    const e = b.exam
+    const lines: Line[] = []
+    if (a !== 'program') lines.push(out(e === undefined ? 'tutorial: no first walk in this shell (it runs in the city)' : e.status()))
+    if (a !== 'status') {
+      lines.push(sys("the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):"))
+      for (const l of e?.program() ?? EXAM_PROGRAM) lines.push(out(`  noir ${l}`))
+    }
     return { lines }
   },
 

@@ -322,6 +322,10 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   for (const name of ['Drones', 'Planes']) assert.ok(mains.has(name) && !shadowed.has(name), `city: ${name} is drawn and casts no shadow`)
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
+  // Its shadow pass draws the pose and the dissolve's shadow mask, nothing of the paint: three multiplies the shadow's
+  // alpha by the colour's, which once wrote every weave and cut into the shadow map's fragment stage (about 138
+  // thousand characters, run for every texel a body covers; the browser job outran its half hour).
+  for (const b of built.filter((r) => r.pass === 'shadow' && r.name.startsWith('People.'))) assert.ok(b.fragment <= 4096, `city: ${b.name}'s shadow fragment is ${b.fragment} characters, not the paint`)
   assert.ok([...shadowed].some((n) => n.startsWith('Rig ')), 'city: the rigs were built for the shadow pass')
   assert.equal([...shadowed].filter((n) => n.startsWith('Cars:')).length, VEHICLE_KINDS.length, 'city: every vehicle kind was built for the shadow pass')
 })

@@ -143,9 +143,13 @@ test('every overlay root carries the zoom class, every card the blur utility the
 
 test('the post chain ends in the filter on both paths, the identity until the host sets it, after the ghost so its colours move with the frame', () => {
   assert.match(POSTFX, /const vision: VisionUniform = uniform\(new Matrix3\(\)\)/, 'a three Matrix3 is the identity')
-  assert.match(POSTFX, /const over = ghost \? ghostComposite\(image, pass\(ghost\.scene, camera\)\.getTextureNode\('output'\), ghost\) : image\n\s+return vec4\(vision\.mul\(over\.rgb\)\.clamp\(\), over\.a\)/)
-  assert.equal(POSTFX.match(/, vision \}$/gm)?.length, 2, 'returned with and without the cinema camera')
-  assert.match(ENGINE, /const \{ pipeline: post, volumetrics, cinema, vision \} = buildPost\(/)
+  assert.match(POSTFX, /const over = ghost && ghostPass \? ghostComposite\(image, ghostPass\.getTextureNode\('output'\), ghost\) : image\n\s+return vec4\(vision\.mul\(over\.rgb\)\.clamp\(\), over\.a\)/)
+  assert.equal(POSTFX.match(/, vision, release \}$/gm)?.length, 2, 'returned with and without the cinema camera')
+  assert.match(POSTFX, /^ {2}vision: VisionUniform$/m, 'a member of the chain the engine is handed')
+  // The chain built at boot, and the one rebuilt at one sample when the four-sample scene pass is refused: the engine
+  // keeps the matrix of the chain it draws.
+  assert.match(ENGINE, /let \{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)/)
+  assert.match(ENGINE, /;\(\{ pipeline: post, volumetrics, cinema, vision, release \} = chainOf\(sceneSamples\)\)/)
   assert.match(ENGINE, /this\.vision = p\.vision/)
   assert.equal(ENGINE.match(/this\.vision\.value\.set\(/g)?.length, 1, 'set in one place')
 })
@@ -174,8 +178,9 @@ test('the hands and the ears: the dwell and the scan run above every shell, the 
 test('a setting changed never rebuilds the city: the shell pins what it booted with, and the engine effect depends on nothing an accessibility change renews', () => {
   assert.match(APP, /const \[boot\] = useState\(\(\) => \(\{ options, plan \}\)\)/)
   assert.match(APP, /const \{ options, plan \} = boot\n/)
-  // Exactly these: each is made once per shell (useState, a [] callback, the pinned boot), so no setting renews one.
-  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, keeper, openStore, closeStore, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
+  // Exactly these: each is made once per shell (useState, a [] callback, the pinned boot; the first walk's switch is
+  // App's own useState), so no setting renews one.
+  assert.match(APP, /\}, \[boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, mic, onMic, onAccess, announcer\]\)/, 'no options or plan object among the deps: App renders them anew on every setting')
   assert.doesNotMatch(APP, /\}, \[options, plan, wearLook/)
 })
 

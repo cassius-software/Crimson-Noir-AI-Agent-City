@@ -745,8 +745,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; sceneSamples: 0 | 4; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
@@ -1034,10 +1033,9 @@ export class Engine {
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
-      const { pipeline: post, volumetrics, cinema, vision } = buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost)
       const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
         buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples })
-      let { pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples)
+      let { pipeline: post, volumetrics, cinema, vision, release } = chainOf(sceneSamples)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -1072,7 +1070,7 @@ export class Engine {
           console.warn(`[aa] the 4x scene pass failed WebGPU validation (${refused.message}); the chain is rebuilt at 1x`)
           release()
           sceneSamples = 0
-          ;({ pipeline: post, volumetrics, cinema, release } = chainOf(sceneSamples))
+          ;({ pipeline: post, volumetrics, cinema, vision, release } = chainOf(sceneSamples))
           gpu.device.pushErrorScope('validation')
           post.render()
           const retry = await gpu.device.popErrorScope()
@@ -1101,8 +1099,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, sceneSamples, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
@@ -1553,6 +1550,11 @@ export class Engine {
   /** The city's one landmark (The Spire in the generated metropolis; the tallest tower of a surveyed region), or null in the procedural city. */
   landmark(): Landmark | null {
     return this.landmarkAt
+  }
+
+  /** The map's indoor workplaces (interiors.ts), read-only: the first walk's indoor stage reads where they are; empty in a surveyed region. */
+  workplaces(): readonly Workplace[] {
+    return this.rooms
   }
 
   /** Where pedestrian `agent` stands in the newest reading (a recruit's measured place), else where the player's body is. */

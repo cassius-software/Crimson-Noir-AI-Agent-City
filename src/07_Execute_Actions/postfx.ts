@@ -69,23 +69,6 @@ export function pickMotion(material: unknown, resorted: ReadonlySet<unknown>, ca
 /** The colour-vision filter's matrix (access.ts visionMatrix), the identity until the host sets one. */
 export type VisionUniform = UniformNode<'mat3', Matrix3>
 
-export function buildPost(
-  renderer: WebGPURenderer, scene: Scene, camera: PerspectiveCamera, cinema: CinemaScene | null = null,
-  ghost: GhostLayer | null = null,
-): { pipeline: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform } {
-  const scenePass = pass(scene, camera)
-  const pipeline = new RenderPipeline(renderer)
-  pipeline.outputColorTransform = false
-  const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
-  // The colour-vision filter (access.ts): one 3×3 over the finished, display-referred frame, the identity unless the
-  // host sets a protan, deutan or tritan daltonisation. After the ghost, so its colours are moved with the frame's.
-  const vision: VisionUniform = uniform(new Matrix3())
-  // Last of all, over the finished (shuttered, graded, anti-aliased) frame: ghost view, when the page has one. Its
-  // shapes render in a pass of their own, never in the scene pass, so they reach no velocity buffer.
-  const finish = (fxaaImage: Node): Node => {
-    const image = fxaaImage as unknown as Node<'vec4'>
-    const over = ghost ? ghostComposite(image, pass(ghost.scene, camera).getTextureNode('output'), ghost) : image
-    return vec4(vision.mul(over.rgb).clamp(), over.a)
 /** The post chain's anti-aliasing as the boot decided it: the scene pass's samples per pixel (governor.ts MSAA). */
 export interface PostAa { sceneSamples: 0 | 4 }
 
@@ -94,6 +77,7 @@ export interface PostChain {
   pipeline: RenderPipeline
   volumetrics: Volumetrics
   cinema: CinemaPost | null
+  vision: VisionUniform
   release: () => void
 }
 
@@ -114,10 +98,14 @@ export function buildPost(
   const pipeline = new RenderPipeline(renderer)
   pipeline.outputColorTransform = false
   const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
+  // The colour-vision filter (access.ts): one 3×3 over the finished, display-referred frame, the identity unless the
+  // host sets a protan, deutan or tritan daltonisation. After the ghost, so its colours are moved with the frame's.
+  const vision: VisionUniform = uniform(new Matrix3())
   // Last of all, over the finished (shuttered, graded, anti-aliased) frame: ghost view, when the page has one.
   const finish = (fxaaImage: Node): Node => {
     const image = fxaaImage as unknown as Node<'vec4'>
-    return ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
+    const over = ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
+    return vec4(vision.mul(over.rgb).clamp(), over.a)
   }
   // Every node that owns a render target, for release(): RenderPipeline.dispose frees its own quad's material alone.
   const owners: { dispose(): void }[] = [scenePass, ...(ghostPass ? [ghostPass] : [])]
@@ -135,12 +123,10 @@ export function buildPost(
     // the scene pass is sequenced before the bloom and ray targets that read it.
     const lit = color.rgb.add(glow.rgb).add(rays.rgb).mul(vignette)
     // Tone map first, then anti-alias the display-referred image (FXAA expects it).
-    pipeline.outputNode = finish(fxaa(renderOutput(vec4(lit, 1))))
-    return { pipeline, volumetrics, cinema: null, vision }
     const smooth = fxaa(renderOutput(vec4(lit, 1)))
     owners.push(rays, glow, smooth.textureNode)
     pipeline.outputNode = finish(smooth)
-    return { pipeline, volumetrics, cinema: null, release }
+    return { pipeline, volumetrics, cinema: null, vision, release }
   }
 
   const volumetrics = createVolumetrics()
@@ -164,10 +150,8 @@ export function buildPost(
   const nd = uniform(0)
   const exposure = uniform(1)
   const filtered = lit.mul(exp2(nd.negate())).mul(exposure)
-  pipeline.outputNode = finish(fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace)))
-  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, vision }
   const smooth = fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace))
   owners.push(rays, shutter, glow, smooth.textureNode)
   pipeline.outputNode = finish(smooth)
-  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, release }
+  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, vision, release }
 }

@@ -113,11 +113,21 @@ export interface TerminalHandle {
    * while the tap that asked for it is still being handled, so call this from the tap's own click handler.
    */
   open(): void
+  /**
+   * Opens the console and puts `text` into its prompt in place of whatever is typed, without taking focus: the first
+   * walk's card (onboarding/FirstWalk.tsx) types the exit program's lines this way, and a phone's keyboard does not
+   * rise for a tap on the card. Enter (or `run`) submits it.
+   */
+  type(text: string): void
+  /** Opens the console and submits `line` as if typed (the prompt's own text is left as it is); with no line, submits the prompt's text. */
+  run(line?: string): void
 }
 
-export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, ref }: {
+export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, onLine, ref }: {
   bridge: TerminalBridge | null
   onOpenChange(open: boolean): void
+  /** Every line submitted, as typed (trimmed), after it ran: the first walk's Ring-0 stage listens for a law line. */
+  onLine?(line: string): void
   /** Track B: the console is the whole page, open from the start; the toggle key and Esc never close it. */
   fullscreen?: boolean
   /** A `boot gui|tty` result: the host reloads the page on that track. */
@@ -154,8 +164,11 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const bridgeRef = useRef(bridge)
   const onOpenChangeRef = useRef(onOpenChange)
   const fullRef = useRef(fullscreen)
+  const onLineRef = useRef(onLine)
   /** The console's R0 machine (commands.ts `r0`), made on the first line that needs it. */
   const session = useRef<ReplSession | null>(null)
+  /** `submit` as of the latest render, for the handle's `run` (the handle is built once). */
+  const submitRef = useRef<(raw: string) => void>(() => {})
 
   useImperativeHandle(ref, () => ({
     open() {
@@ -164,12 +177,23 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       flushSync(() => setOpen(true))
       inputRef.current?.focus({ preventScroll: true })
     },
+    type(text) {
+      if (!fullRef.current) flushSync(() => setOpen(true))
+      setValue(text)
+      setSel([text.length, text.length])
+      caretTo.current = text.length
+    },
+    run(line) {
+      if (!fullRef.current) flushSync(() => setOpen(true))
+      submitRef.current(line ?? inputRef.current?.value ?? '')
+    },
   }), [])
 
   useEffect(() => {
     bridgeRef.current = bridge
     onOpenChangeRef.current = onOpenChange
     fullRef.current = fullscreen
+    onLineRef.current = onLine
   })
 
   useEffect(() => {
@@ -361,7 +385,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     if (r.close && !fullscreen) setOpen(false)
     if (r.boot) onBoot?.(r.boot)
     if (r.map) onMap?.(r.map)
+    if (line) onLineRef.current?.(line)
   }
+  useEffect(() => { submitRef.current = submit })
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     e.stopPropagation()

@@ -33,7 +33,15 @@ export interface NoirWrites {
   cull(density: number): number
   steer(feature: string, value: number): number
 }
-export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; readonly locked?: string } // `locked`: the message a write intrinsic fails with when `write` is absent (default "elite tier locked")
+/** The first walk's exam (the host wires 07_Execute_Actions/onboarding/exam.ts; absent: every exam intrinsic fails with the host's reason). Each may throw: the message becomes the run's error. */
+export interface NoirExam {
+  verifyRing0(): number                             // a u32 seal over the live kernel; 0 when it does not hold
+  spawnSubagents(n: number, role: string): number   // how many were asked over, never how many were wished for
+  unlockCity(seal: number, swarm: number): boolean
+}
+export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; readonly locked?: string; readonly exam?: NoirExam; readonly noExam?: string }
+// `locked`: the message a write intrinsic fails with when `write` is absent (default "elite tier locked");
+// `noExam`: the message an exam intrinsic fails with when `exam` is absent (default "no first walk here").
 export interface NoirLimits { readonly steps: number; readonly out: number; readonly cells: number; readonly depth: number }
 export const LIMITS: NoirLimits        // { steps: 1_000_000, out: 16_384, cells: 262_144 (1 MiB of 32-bit cells), depth: 1_024 }
 export const ELITE_LIMITS: NoirLimits  // { steps: 50_000_000, out: 65_536, cells: 4_194_304 (16 MiB), depth: 4_096 }
@@ -174,6 +182,12 @@ each add; int vectors -> their scalar type, wrapping), `hmin hmax`; `any(mask) a
 Host: `tune(key: str, v: f32) -> f32`, `intent(car: i32, throttle: f32, brake: f32, steer: f32) -> bool`,
 `cull(density: f32) -> f32`, `steer(feature: str, v: f32) -> f32`. Without `host.write` these fail at RUN time with
 `host.locked ?? 'elite tier locked'` as the error (they still type-check and compile, so `asm` works).
+Exam: `verify_ring0() -> u32`, `spawn_subagents(n: i32, role: str) -> i32`, `unlock_city(seal: u32, swarm: i32) -> bool`
+(the first walk's exit program: `let seal = verify_ring0(); let swarm = spawn_subagents(24, "sim2real_workplaces");
+unlock_city(seal, swarm);`, three lines on one session or one). Without `host.exam` these fail at RUN time with
+`host.noExam ?? 'no first walk here'`. The results are coerced to their lanes (a seal `>>> 0`, a count `| 0`, an
+unlock by truthiness). Neither surface opens the other: an exam is no write, and the console hands the exam over
+with or without the elite tier.
 Overload resolution is by argument types; a mismatch names the signatures: "min: no form takes (i32, f32)".
 
 ## Bytecode and VM (`compiler.ts`, `vm.ts`)
@@ -239,7 +253,9 @@ Tables: a fake host with 10 crowd rows and 3 cars; `query cars where speed > 5.0
 over `crowd.n` summing `crowd.x[i]`; `load_f32x4` striding by 4 over 10 rows with zero fill; tables are a snapshot
 (mutating the host's arrays after `run` started changes nothing); null host -> EMPTY_TABLES; write intrinsics fail
 with the locked message without `host.write`, and call through with it (record the calls), a throwing write becomes
-the error.
+the error; exam intrinsics fail with the noExam message without `host.exam`, call through with it in lane types
+(u32 seal, i32 count, bool), a throw becomes the error, and the exit program runs as three lines on one session
+with `seal` and `swarm` kept as globals.
 Turing witness: Rule 110 (a universal cellular automaton) over a 64-cell array for 32 generations, output pinned
 against a direct JS implementation in the test; a small tape-machine interpreter written in NoirScript.
 Branchless witness: for 1000 seeded triples, `select(mask(a < b), a, b) == min(a, b)` and the f32 form.

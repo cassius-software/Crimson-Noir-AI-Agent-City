@@ -325,6 +325,27 @@ export interface SoaBridge {
   tables(): NoirTables
 }
 
+/**
+ * The first walk's exam (onboarding/exam.ts, composed by the host over the walk, the kernel and the recruiter): the
+ * three doors NoirScript's exit program opens (the shape of noirscript's NoirExam, which the console hands the VM;
+ * tsc holds the two together), the lines each door said since last read (the console prints them after the run), the
+ * stage the visitor is on, and the program itself. Absent in the console shell.
+ */
+export interface ExamBridge {
+  /** A u32 seal over the live kernel; 0 when it does not hold. */
+  verifyRing0(): number
+  /** How many were asked over for the role, never how many were wished for. */
+  spawnSubagents(n: number, role: string): number
+  /** Whether the city opened: this session's live seal and a swarm of one or more. */
+  unlockCity(seal: number, swarm: number): boolean
+  /** What the doors said since last read, cleared by the call. */
+  report(): string[]
+  /** One line: the stage the visitor is on, or that the walk is off or passed. */
+  status(): string
+  /** The exit program, one console line each (without the `noir ` the console wants in front). */
+  program(): readonly string[]
+}
+
 /** A ping's kind (08_Swarm/ping.ts PingKind): what the operator means by the mark. */
 export type PingKind = 'go' | 'look' | 'gather' | 'wait'
 
@@ -442,6 +463,8 @@ export interface TerminalBridge {
   topics?: TopicBridge
   /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
   soa?: SoaBridge
+  /** The first walk's exam for NoirScript's exit program; absent on a host without a city (the TTY shell). */
+  exam?: ExamBridge
   ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
