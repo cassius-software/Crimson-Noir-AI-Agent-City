@@ -104,7 +104,8 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   // humanoid.ts garmentPoint: a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, or the skirt (slot
   // BOTTOM on the trunk with the trunk for its second bone too) about the trunk's, reshaped by the lower cut; the
   // normal by the cylinder's rule, its derivatives by central differences. code = the cut (0..15) + 16 under a coat
-  // (crowd.ts morphB.w). Column 2 is how much of a skirt the legs carry and whether by the shin (humanoid.ts
+  // (crowd.ts morphB.w). Column 2 is how much of a skirt the legs carry, whether by the shin, and 1 under a coat,
+  // where above LOWER.followTo bodyVertex takes the legs' carry at the point straight below at followTo (humanoid.ts
   // skirtFollow; bodyVertex shares it between the legs).
   let c = u32(code + 0.5);
   let cut = c & 15u;
@@ -114,9 +115,10 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   let leg = bone0 >= ${BONE.THIGH_L}u && bone0 <= ${BONE.FOOT_R}u;
   let skirt = bone0 == ${BONE.TRUNK}u && u32(skin.x + 0.5) == ${BONE.TRUNK}u;
   if (cut == 0u || !bottom || !(leg || skirt)) {
-    // Unshaped; but the straight skirt under a coat follows the legs with the coat (its hem above the knee: the thigh).
-    let plain = select(0.0, ${f(LOWER.coatFollow)} * bodyRamp(${f(LOWER.followFrom - LOWER.coatLag)}, ${f(LOWER.followTo - LOWER.coatLag)}, v.y), coat && bottom && skirt);
-    return mat3x3f(v, n, vec3f(plain, 0.0, 0.0));
+    // Unshaped; but the straight skirt under a coat follows the legs as the coat does (humanoid.ts coatFollow; its hem
+    // above the knee: the thigh).
+    let plain = select(0.0, ${f(LOWER.coatFollow)} * clamp((${f(LOWER.coatFrom)} - v.y) / ${f(LOWER.coatFrom - LOWER.followTo)}, 0.0, 1.0), coat && bottom && skirt);
+    return mat3x3f(v, n, vec3f(plain, 0.0, select(0.0, 1.0, coat)));
   }
   var shapes = array<vec4f, ${(TROUSER_SHAPE.length + SKIRT_SHAPE.length) * 2}>(${LOWER_TABLE});
   let at = select(0u, ${TROUSER_SHAPE.length * 2}u, skirt) + cut * 2u;
@@ -140,12 +142,12 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   let mt = nt * fr * yy / k;
   let my = n.y * fr - nr * fy;
   // The skirt follows the legs from just under its top, fully from the knee-level ring down; under a coat as the
-  // coat does, by its reshaped height and LOWER.coatLag lower, so the coat stays over it; below the knee's rest
+  // coat does (humanoid.ts coatFollow), by its reshaped height, so the coat stays over it; below the knee's rest
   // height a midi's hem hangs from the shin (p0.w is the length).
-  let share = select(p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), ${f(LOWER.coatFollow)} * bodyRamp(${f(LOWER.followFrom - LOWER.coatLag)}, ${f(LOWER.followTo - LOWER.coatLag)}, o.y), coat);
+  let share = select(p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), ${f(LOWER.coatFollow)} * clamp((${f(LOWER.coatFrom)} - o.y) / ${f(LOWER.coatFrom - LOWER.followTo)}, 0.0, 1.0), coat);
   let follow = select(0.0, share, skirt);
   let shin = select(0.0, 1.0, v.y < ${f(LOWER.waist)} - (${f(LOWER.waist)} - ${f(LANDMARK.knee)}) / p0.w);
-  return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, shin, 0.0));
+  return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, shin, select(0.0, 1.0, coat)));
 }
 fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f {
   // face = (region, weight): 1 brow, 2 jaw, 3 chin, 4 cheek, 5 nose, 6 eyes, 7 lips (humanoid.ts FACE_REGION, FACE).
@@ -420,26 +422,40 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   }
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
-  // The coat's panels below the waist (the rings the trunk alone turns) follow the legs as a skirt does (humanoid.ts
-  // coatFollow, coatPose), by the thigh.
+  // The coat's panels below the waist (the rings the trunk alone turns) follow the legs as panels hung from the
+  // waist (humanoid.ts coatFollow, coatPose), by the thigh.
   let coatPanel = opt == ${PIECE.COAT}u && bone0 == ${BONE.TRUNK}u && bone1 == ${BONE.TRUNK}u;
-  let follow = select(lower[2].x, ${f(LOWER.coatFollow)} * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), coatPanel);
+  let follow = select(lower[2].x, ${f(LOWER.coatFollow)} * clamp((${f(LOWER.coatFrom)} - v.y) / ${f(LOWER.coatFrom - LOWER.followTo)}, 0.0, 1.0), coatPanel);
   if (follow > 0.0) {
     // A skirt hangs from the legs as well as the trunk, as much as the cut says (bodyGarment, humanoid.ts skirtPose):
     // the front from the leg that carries it furthest forward, the back from the one that carries it furthest back,
     // handed over across LOWER.followEase of the difference so the hem never jumps from one shin to the other, and
     // the sides from the leg on their own side, so a lean carries them with it. The thigh, or the shin below a midi's
     // knee, its knee bent by LOWER.followKnee of the leg's own, so the calf does not kick the hem's back over the
-    // ring above it. A coat's panel the same way, by the thigh (bodyGarment leaves its column 2 at zero).
+    // ring above it. A coat's panel the same way, by the thigh (coatPanel: bodyGarment gives it no share). Under a
+    // coat, above LOWER.followTo, a panel or a skirt takes the carry of the point straight below at followTo, beyond
+    // where the trunk carries that point, so it hangs straight from the waist instead of standing out in a ledge; its
+    // normal turns by all of LOWER.coatFollow, as the panel's face does, not by the share that says how far it moved.
     let bentL = vec4f(legL.x, legL.y * ${f(LOWER.followKnee)}, legL.zw);
     let bentR = vec4f(legR.x, legR.y * ${f(LOWER.followKnee)}, legR.zw);
     let byShin = u32(lower[2].y);
-    let onL = bodyBone(${BONE.THIGH_L}u + byShin, rest, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
-    let onR = bodyBone(${BONE.THIGH_R}u + byShin, rest, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    let hung = (coatPanel || lower[2].z > 0.5) && v0.y > ${f(LOWER.followTo)};
+    var at = rest;
+    var still = b0;
+    if (hung) {
+      at = bodyMorph(vec3f(v0.x, ${f(LOWER.followTo)}, v0.z), n0, bone0, m, fD, fLegs, fTrunk);
+      still = bodyBone(bone0, at, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    }
+    let onL = bodyBone(${BONE.THIGH_L}u + byShin, at, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    let onR = bodyBone(${BONE.THIGH_R}u + byShin, at, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
     let ahead = onL[0].z - onR[0].z;
     let ownSide = select(1.0, 0.0, v.x >= 0.0);
     let byLeft = select(select(ownSide, bodyRamp(${f(LOWER.followEase)}, ${f(-LOWER.followEase)}, ahead), v.z <= ${f(-LOWER.followSide)}), bodyRamp(${f(-LOWER.followEase)}, ${f(LOWER.followEase)}, ahead), v.z >= ${f(LOWER.followSide)});
-    b = b0 * (1.0 - follow) + (onL * byLeft + onR * (1.0 - byLeft)) * follow;
+    let carried = onL * byLeft + onR * (1.0 - byLeft) - still;
+    b = b0 + carried * follow;
+    if (hung) {
+      b[1] = b0[1] + carried[1] * ${f(LOWER.coatFollow)};
+    }
   } else if (bone1 != bone0 && weight < 1.0) {
     let b1 = bodyBone(bone1, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
     b = b0 * weight + b1 * (1.0 - weight);

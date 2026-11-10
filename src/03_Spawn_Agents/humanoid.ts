@@ -113,16 +113,17 @@ export const SKIRT_CUT = Object.freeze({
  * says (followTo, a short skirt's mid-thigh ring and a midi's knee), how far either side of x = 0 its sides reach
  * (|z| under followSide), how much of the knee's bend a shin passes on to a midi's hem (followKnee: all of it lifts
  * the hem's back over the ring above it as the calf kicks up), over how many metres of the two legs' reach the front
- * and the back hand over from one leg to the other (followEase), how much of the carry a coat's panels below the
- * waist take (coatFollow), and how much lower than the coat a skirt under it starts to follow (coatLag: the skirt has
- * fewer rings than the coat, and a panel of it spanning the coat's bend at the 0.86 ring would cut the corner out
- * through the coat; skirtFollow, skirtLeft, coatFollow).
+ * and the back hand over from one leg to the other (followEase), how much of the legs' carry a coat's panels below
+ * the waist take, and every skirt under a coat (coatFollow), and from where they start to (coatFrom: between the hip
+ * and the coat's waist ring; hung from the waist ring, a panel at a desk lean pressed 0.6 cm into a slumped back, and
+ * hung from the hip its band above followTo tilted half again as far as the thigh), as skirtFollow, skirtLeft and
+ * coatFollow read them.
  */
 export const LOWER = Object.freeze({
   waist: 0.92, hem: 0.56, top: 1.02,
   slimFrom: 0.85, slimTo: 0.5, taperFrom: 0.62, taperTo: 0.5, ankle: 0.095,
   bulgeAt: 0.84, bulgeHalf: 0.14, pencilFrom: 0.85, followFrom: 1, followTo: 0.7, followSide: 0.02,
-  followKnee: 0.6, followEase: 0.1, coatFollow: 0.9, coatLag: 0.06,
+  followKnee: 0.6, followEase: 0.1, coatFollow: 0.9, coatFrom: 0.98,
 })
 
 /**
@@ -173,8 +174,7 @@ export const TROUSER_SHAPE: readonly (readonly number[])[] = Object.freeze([
  * on the thigh's lever. Each value is about the least that keeps the legs inside at a walk (the midi pencil's narrow
  * hem still lets a bent knee show a centimetre or two at the far end of a stride) without tilting the hem's front
  * further than the thigh. Under a coat every skirt, the straight one too, follows as the coat does (coatFollow),
- * a little lower down (LOWER.coatLag), so it stays inside the coat as both swing. Zeros, and length 1, reshape
- * nothing.
+ * so it stays inside the coat as both swing. Zeros, and length 1, reshape nothing.
  */
 export const SKIRT_SHAPE: readonly (readonly number[])[] = Object.freeze([
   [0, 0.92, 0, 1, 0, 0, 0, 0], // straight
@@ -503,34 +503,39 @@ export function garmentPoint(
 export const GARMENT_STEP = Object.freeze({ r: 0.001, y: 0.002 })
 
 /**
- * How much of a skirt's rest point at height `y` the legs carry, and by which part, for a cut, under a coat or not:
- * crowdBody.ts bodyGarment is the GPU twin. The share is SKIRT_SHAPE's follow, rising from LOWER.followFrom to the
- * whole of it at LOWER.followTo (cut 0 carries nothing). Under a coat every cut follows as the coat does
- * (LOWER.coatFollow), by its reshaped height and LOWER.coatLag lower down, so the coat, which follows the legs too
- * (coatFollow), stays over it: a skirt hung from the trunk alone under a following coat came 6 to 9 cm out through
- * the coat's back at a desk lean, and one that stopped following where the coat covered it let the knee through
- * skirt and coat at a walk. The part is 0 for the thigh, 1 for the shin where a lengthened skirt reaches below the
- * knee (a rest height under LOWER.waist − (LOWER.waist − LANDMARK.knee) / length). Writes [share, part] into `out`
- * and returns it; the trunk carries the rest, and skirtLeft says which leg.
+ * How the legs carry a skirt's rest point at height `y`, for a cut, under a coat or not: crowdBody.ts bodyGarment is
+ * the GPU twin. Without a coat the share is SKIRT_SHAPE's follow, rising from LOWER.followFrom to the whole of it at
+ * LOWER.followTo (cut 0 carries nothing), and the legs carry the point itself. Under a coat every cut follows as the
+ * coat does (coatFollow, by its reshaped height), so the coat, which follows the legs too, stays over it: a skirt hung
+ * from the trunk alone under a following coat came 6 to 9 cm out through the coat's back at a desk lean, and one that
+ * stopped following where the coat covered it let the knee through skirt and coat at a walk. The part is 0 for the
+ * thigh, 1 for the shin where a lengthened skirt reaches below the knee (a rest height under LOWER.waist −
+ * (LOWER.waist − LANDMARK.knee) / length). Writes [share, part, panel] into `out` and returns it: panel is 1 under a
+ * coat, where above LOWER.followTo the legs' carry is taken at the point straight below at followTo (skirtPose); the
+ * trunk carries the rest, and skirtLeft says which leg.
  */
-export function skirtFollow(y: number, cut: number, coat: boolean, out: number[] = [0, 0]): number[] {
+export function skirtFollow(y: number, cut: number, coat: boolean, out: number[] = [0, 0, 0]): number[] {
   const length = SKIRT_SHAPE[cut][3]
-  out[0] = coat
-    ? LOWER.coatFollow * smoothTo(LOWER.followFrom - LOWER.coatLag, LOWER.followTo - LOWER.coatLag, lowerShape(1, y, true, cut, coat)[1])
-    : SKIRT_SHAPE[cut][7] * smoothTo(LOWER.followFrom, LOWER.followTo, y)
+  out[0] = coat ? coatFollow(lowerShape(1, y, true, cut, coat)[1]) : SKIRT_SHAPE[cut][7] * smoothTo(LOWER.followFrom, LOWER.followTo, y)
   out[1] = y < LOWER.waist - (LOWER.waist - LANDMARK.knee) / length ? 1 : 0
+  out[2] = coat ? 1 : 0
   return out
 }
 
 /**
- * How much of a coat's rest point at height `y` the legs carry, by the thigh: crowdBody.ts bodyVertex is the GPU
- * twin. The coat's panels below the waist (the rings the trunk alone turns) follow the legs as a skirt does,
- * LOWER.coatFollow of the carry from LOWER.followTo down, rising from nothing at LOWER.followFrom, the front and the
- * back handed between the legs by skirtLeft; the rings the chest turns too stay with the trunk and the chest. Hung
- * from the trunk alone, the coat let a stepping thigh 12 to 18 cm out through its front at a brisk walk.
+ * How much of the legs' carry a coat's rest point at height `y` takes, and a skirt's under a coat at its reshaped
+ * height (skirtFollow): crowdBody.ts bodyGarment and bodyVertex are the GPU twins. The coat's panels below the waist
+ * (the rings the trunk alone turns) follow the legs by the thigh, the front and the back handed between them by
+ * skirtLeft, as panels hung from the waist: from nothing at LOWER.coatFrom the carry grows in step with the depth
+ * below it to LOWER.coatFollow at LOWER.followTo, and above followTo it is the carry of the point straight below at
+ * followTo (coatPose), so each panel turns about the waist with the thigh and hangs straight; from followTo down the
+ * point itself is carried. Hung from the trunk alone, the coat let a stepping thigh 12 to 18 cm out through its front
+ * at a brisk walk; with each point carried by itself and the share eased in, its band between the 0.86 and the 0.7
+ * rings stood out in a ledge, tilted nearly twice as far as the thigh. The rings the chest turns too stay with the
+ * trunk and the chest.
  */
 export function coatFollow(y: number): number {
-  return LOWER.coatFollow * smoothTo(LOWER.followFrom, LOWER.followTo, y)
+  return LOWER.coatFollow * clamp01((LOWER.coatFrom - y) / (LOWER.coatFrom - LOWER.followTo))
 }
 
 /**
@@ -548,46 +553,62 @@ export function skirtLeft(x: number, z: number, zL: number, zR: number): number 
 }
 
 /**
- * A skirt's point posed as the shader poses it (crowdBody.ts bodyVertex): `p` the rest point (x, y, z) after its
- * cut and the sliders (garmentPoint, morphPoint), the trunk's pose blended with the legs' by skirtFollow's share,
- * each leg's part bending its knee by LOWER.followKnee of the leg's own and skirtLeft sharing the carry between them;
- * then the body's tilt. Writes the point into `out` (which may be `p`) and returns it.
+ * A skirt's rest point (x, y, z) posed as the shader poses it (crowdBody.ts bodyGarment, bodyVertex): through its cut
+ * and the sliders (garmentPoint, morphPoint); the trunk's pose, plus skirtFollow's share of how much further the legs
+ * carry it, each leg's part bending its knee by LOWER.followKnee of the leg's own and skirtLeft sharing the carry
+ * between them (under a coat, above LOWER.followTo, the carry of the point straight below at followTo); then the
+ * body's tilt. Writes the point into `out` and returns it.
  */
 export function skirtPose(
-  x: number, y: number, z: number, p: readonly number[], cut: number, coat: boolean, a: WalkAngles, pose: BodyPose, piv: Pivots,
+  x: number, y: number, z: number, cut: number, coat: boolean, a: WalkAngles, pose: BodyPose, f: ShapeFactors, piv: Pivots,
   out: number[] = [0, 0, 0],
 ): number[] {
-  const [share, part] = skirtFollow(y, cut, coat, SKIRT_CARRY)
-  return legCarry(x, z, p, share, part, a, pose, piv, out)
+  const g = garmentPoint(x, y, z, 0, 1, 0, SLOT.BOTTOM, BONE.TRUNK, BONE.TRUNK, cut, coat, CARRY_GARMENT)
+  const [share, part, panel] = skirtFollow(y, cut, coat, SKIRT_CARRY)
+  const p = morphPoint(g[0], g[1], g[2], BONE.TRUNK, f, CARRY_REST)
+  const at = panel && g[1] > LOWER.followTo ? morphPoint(g[0], LOWER.followTo, g[2], BONE.TRUNK, f, CARRY_AT) : p
+  return legCarry(x, z, p, at, share, part, a, pose, piv, out)
 }
-const SKIRT_CARRY = [0, 0]
+const SKIRT_CARRY = [0, 0, 0]
+const CARRY_GARMENT = [0, 0, 0, 0, 0, 0]
+const CARRY_REST = [0, 0, 0]
+const CARRY_AT = [0, 0, 0]
 
 /**
- * A coat's point posed as the shader poses it (crowdBody.ts bodyVertex): `p` the rest point (x, y, z) after the
- * sliders (morphPoint), on a ring the trunk alone turns; the trunk's pose blended with the thighs' by coatFollow's
- * share, skirtLeft sharing the carry between them, then the body's tilt. Writes the point into `out` (which may be
- * `p`) and returns it.
+ * A coat's rest point (x, y, z) on a ring the trunk alone turns, posed as the shader poses it (crowdBody.ts
+ * bodyVertex): through the sliders (morphPoint); the trunk's pose, plus coatFollow's share of how much further the
+ * thighs carry it (above LOWER.followTo, the point straight below at followTo), skirtLeft sharing the carry between
+ * them; then the body's tilt. Writes the point into `out` and returns it.
  */
 export function coatPose(
-  x: number, y: number, z: number, p: readonly number[], a: WalkAngles, pose: BodyPose, piv: Pivots, out: number[] = [0, 0, 0],
+  x: number, y: number, z: number, a: WalkAngles, pose: BodyPose, f: ShapeFactors, piv: Pivots, out: number[] = [0, 0, 0],
 ): number[] {
-  return legCarry(x, z, p, coatFollow(y), 0, a, pose, piv, out)
+  const p = morphPoint(x, y, z, BONE.TRUNK, f, CARRY_REST)
+  const at = y > LOWER.followTo ? morphPoint(x, LOWER.followTo, z, BONE.TRUNK, f, CARRY_AT) : p
+  return legCarry(x, z, p, at, coatFollow(y), 0, a, pose, piv, out)
 }
 
-/** skirtPose's and coatPose's carry: the trunk's pose, `share` of it handed to the legs' `part`, then the tilt. */
+/**
+ * skirtPose's and coatPose's carry: the trunk's pose of the slid rest point `p`, plus `share` of how much further the
+ * legs' `part` carry the slid point `at` (p itself, or the point straight below it at LOWER.followTo) than the trunk
+ * does; then the tilt.
+ */
 function legCarry(
-  x: number, z: number, p: readonly number[], share: number, part: number, a: WalkAngles, pose: BodyPose, piv: Pivots, out: number[],
+  x: number, z: number, p: readonly number[], at: readonly number[], share: number, part: number, a: WalkAngles, pose: BodyPose,
+  piv: Pivots, out: number[],
 ): number[] {
   const upright: BodyPose = { tilt: 0, bend: pose.bend, fall: pose.fall }
-  const px = p[0], py = p[1], pz = p[2]
-  out[0] = px; out[1] = py; out[2] = pz
+  const own = at === p
+  const ax = at[0], ay = at[1], az = at[2]
+  out[0] = p[0]; out[1] = p[1]; out[2] = p[2]
   boneTransform(BONE.TRUNK, out, 1, a, upright, piv)
   if (share > 0) {
+    const still = own ? [out[0], out[1], out[2]] : boneTransform(BONE.TRUNK, [ax, ay, az], 1, a, upright, piv)
     const bent: WalkAngles = { ...a, kneeL: a.kneeL * LOWER.followKnee, kneeR: a.kneeR * LOWER.followKnee }
-    const l = boneTransform(BONE.THIGH_L + part, [px, py, pz], 1, bent, upright, piv)
-    const r = boneTransform(BONE.THIGH_R + part, [px, py, pz], 1, bent, upright, piv)
+    const l = boneTransform(BONE.THIGH_L + part, [ax, ay, az], 1, bent, upright, piv)
+    const r = boneTransform(BONE.THIGH_R + part, [ax, ay, az], 1, bent, upright, piv)
     const w = skirtLeft(x, z, l[2], r[2])
-    for (let k = 0; k < 3; k++) out[k] += (l[k] * w + r[k] * (1 - w) - out[k]) * share
+    for (let k = 0; k < 3; k++) out[k] += (l[k] * w + r[k] * (1 - w) - still[k]) * share
   }
   rotAxisAbout(out, 0, Math.cos(pose.fall), -Math.sin(pose.fall), pose.tilt, 1)
   return out
@@ -1647,16 +1668,18 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
   const g = [0, 0, 0, 0, 0, 0]
   let coatTube = false
   const edge = (x: number, y: number, z: number, r: Ring, th: number): number[] => {
-    if (r.region !== undefined && r.bone === BONE.HEAD) facePoint(x, y, z, r.region, faceWeight(r, th), face, p)
-    else if (lowerCut !== 0) {
-      garmentPoint(x, y, z, 0, 1, 0, r.slot, r.bone, r.bone1 ?? r.bone, lowerCut, coat, g)
-      p[0] = g[0]; p[1] = g[1]; p[2] = g[2]
-    } else { p[0] = x; p[1] = y; p[2] = z }
-    morphPoint(p[0], p[1], p[2], r.bone, f, p)
     const skirt = (lowerCut !== 0 || coat) && r.slot === SLOT.BOTTOM && r.bone === BONE.TRUNK && (r.bone1 ?? r.bone) === BONE.TRUNK
-    if (skirt) skirtPose(x, y, z, p, lowerCut, coat, a, STILL, piv, p)
-    else if (coatTube && r.bone === BONE.TRUNK && r.bone1 === undefined) coatPose(x, y, z, p, a, STILL, piv, p)
-    else boneTransform(r.bone, p, 1, a, STILL, piv)
+    if (skirt) skirtPose(x, y, z, lowerCut, coat, a, STILL, f, piv, p)
+    else if (coatTube && r.bone === BONE.TRUNK && r.bone1 === undefined) coatPose(x, y, z, a, STILL, f, piv, p)
+    else {
+      if (r.region !== undefined && r.bone === BONE.HEAD) facePoint(x, y, z, r.region, faceWeight(r, th), face, p)
+      else if (lowerCut !== 0) {
+        garmentPoint(x, y, z, 0, 1, 0, r.slot, r.bone, r.bone1 ?? r.bone, lowerCut, coat, g)
+        p[0] = g[0]; p[1] = g[1]; p[2] = g[2]
+      } else { p[0] = x; p[1] = y; p[2] = z }
+      morphPoint(p[0], p[1], p[2], r.bone, f, p)
+      boneTransform(r.bone, p, 1, a, STILL, piv)
+    }
     p[0] *= scale.xz; p[1] *= scale.y; p[2] *= scale.xz
     return p
   }

@@ -65,9 +65,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   furthest forward, its back with the one that carries it furthest back, handed over smoothly, and its sides with the
   leg on their own side, fully from the knee-level ring down, and a midi's hem below the knee hangs from the shin, so
   the legs stay inside it at a walk (no cloth is simulated; the midi pencil's narrow hem still lets a bent knee show
-  by up to 2 cm at the far end of a stride). A coat's panels below the waist follow the legs the same way
+  by up to 2 cm at the far end of a stride). A coat's panels below the waist follow the legs too, hung from its waist
   (`humanoid.ts` coatPose). Under a coat no skirt widens, and every skirt, the straight one too, follows as the coat
-  does, a little lower down, so it stays inside the coat.
+  does, so it stays inside the coat.
   The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
   fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
   seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
@@ -1350,16 +1350,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the hem up to 6 cm from the street body at a slumped or an upright posture.
 - **A walking coat let the legs out through its front.** The coat hung from the trunk alone, so at a brisk walk the
   stepping thigh came 12 to 18 cm out through it on every body, measured on the CPU. Its panels below the waist now
-  follow the legs as a skirt does (`humanoid.ts` coatFollow and coatPose, `crowdBody.ts` bodyVertex): 0.9 of the
-  legs' carry from the knee-level height down, rising from nothing at its waist ring, the front with the leg that
-  carries it furthest forward and the back with the one furthest back. A skirt under the coat follows as the coat
-  does, 6 cm lower down, the straight skirt too. A skirt that stopped following where the coat covered it let the
-  knee through skirt and coat at a walk, and a straight skirt hung from the trunk alone under a following coat came
-  6 to 9 cm out through the coat's back at a desk lean. On the CPU, on a neutral, a slumped, an upright, a heavy and
-  a short body, the trunk and legs under the coat now stay within 1.5 cm of it at a walk and inside it at a desk lean.
-  Every skirt stays within 1.5 cm of the coat at a walk and at a desk lean, sampled along its ring and column edges,
-  not its ring vertices alone, and a midi keeps the legs below the coat inside it. The far body's coarser midi still
-  comes up to 3 cm out of the coat's front mid-stride.
+  hang from its waist and follow the legs (`humanoid.ts` coatFollow and coatPose, `crowdBody.ts` bodyVertex): 0.9 of
+  the thighs' carry at the knee-level height and below, and above it the carry of the point straight below at that
+  height, growing in step with the depth below 0.98 m, so each panel turns about the waist with the thigh, hangs
+  straight and is lit as one face. The front goes with the leg that carries it furthest forward and the back with the
+  one furthest back. Carried point by point as a skirt is, with the share eased in, the panels stood out in a ledge
+  between the 0.86 and the 0.7 rings, tilted 1.2 rad against the thigh's 0.67; now no band tilts more than 0.06 rad
+  past the thigh and its own flare. A skirt under the coat follows the same way, at the same heights, the straight
+  skirt too: one that stopped following where the coat covered it let the knee through skirt and coat at a walk, one
+  hung from the trunk alone came 6 to 9 cm out through the coat's back at a desk lean, and with the skirt's rule one
+  that followed 6 cm lower than the coat came up to 1.6 cm out of it. On the CPU, on a neutral, a slumped, an upright,
+  a heavy and a short body, measured along the ray from the coat's axis through each point, the trunk and legs under
+  the coat now stay within 1 cm of it at a walk and half a centimetre at a desk lean. Every skirt stays within 1 cm of
+  it at a walk and at a desk lean, sampled over every triangle, and a midi keeps the legs below the coat inside it. On
+  the far body's coarser coat, the trunk and legs stay within 1 cm and every skirt within 2 cm at a walk. The coat
+  moves smoothly through the stride and never turns inside out. As a rigid panel, the coat's hem lifts 17 to 19 cm at
+  the front at the far end of a stride, as a cut skirt's does (no cloth is simulated).
 - **The skirt and the coat left a gap in their own shadows.** three's shadow pass draws a front-sided material's back
   faces alone, so an open shell's wall nearer the sun stayed out of the shadow map. The crowd's material now draws
   both faces into it (`shadowSide`).
