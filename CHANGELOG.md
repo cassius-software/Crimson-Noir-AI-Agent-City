@@ -34,7 +34,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   them, every probe under six tenths of the gas on a ten-thousand-row city, the window walk, determinism), the runner
   over a fake host (placement, the bodies and the rally range, isolation through the gate at the first tick with a
   verified ledger, replacement and late answers, a host that throws), the console's `lanes`, the App wiring and
-  Sloane's voice.
+  Sloane's voice. After main's first walk, shops and hardware classes landed beside it: a lane's session grows its
+  arena for the city's columns and keeps its own 64 Ki cells of room above them (`NoirSession`'s `tableRoom`), so a
+  team on a workstation-class crowd (32,768 people, up to `?crowd=60000`) reads instead of every lane being isolated
+  for memory at its first tick, and a prelude's fault names its reason on the lane; "twenty-four sub-agents" (the
+  first walk's own swarm) is 24, with the teens and tens-and-units counted; a goal about something the city already
+  has (the shops, the workplaces, the wardrobe) is answered with where to find it and sends nobody, and "tasks" or
+  "jobs" in a goal that names work no longer bring the missions note; a desk the map has no room for reads around
+  where the player started (`teamCentre`), not the map's corner; Sloane's rewording belongs to the brief it was asked
+  for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
+  each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
+  `commands.test.ts`).
 - **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
   the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
   by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane

@@ -105,9 +105,17 @@ export const deskAt = (kind: string): Desk | null => DESKS.find((d) => d.kinds.i
 /** Every desk's id, in slot order. */
 export const DESK_IDS: readonly DeskId[] = Object.freeze(DESKS.map((d) => d.id))
 
-/** How many: "24 agents", "a 24-agent drill", "six sub-agents", "12 robots". Never "ten people" (the crowd) or "three lanes" (the roads). */
-const COUNT = /\b(\d{1,5}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty)(?: ?- ?| )?(?:sub ?-? ?agents?|agents?|workers?|robots?|bots?|scouts?|hands)\b/
-const WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, twenty: 20, thirty: 30 }
+/**
+ * How many: "24 agents", "a 24-agent drill", "six sub-agents", "twenty-four sub-agents" (the first walk's own swarm),
+ * "fifteen robots". Never "ten people" (the crowd) or "three lanes" (the roads).
+ */
+const COUNT = /\b(\d{1,5}|(?:twenty|thirty)(?: ?- ?| )(?:one|two|three|four|five|six|seven|eight|nine)|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)(?: ?- ?| )?(?:sub ?-? ?agents?|agents?|workers?|robots?|bots?|scouts?|hands)\b/
+const WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+  fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30,
+}
+/** A count's number: digits, one word, or tens and units ("twenty four", "thirty-one"). */
+const countOf = (word: string): number => (/^\d+$/.test(word) ? Number(word) : word.split(/[ -]+/).reduce((n, w) => n + (WORDS[w] ?? 0), 0))
 /** The verb that sends work, at most two words before a work word or a count ("run a 24-agent drill", "run a quick warehouse audit", "optimize the metro schedule"): it goes with the work, so "run" is not a pace on foot. Never across a preposition ("run to the warehouse" stays a run). */
 const VERB = /\b(?:run|running|hold|start|launch|stage|conduct|kick off|organi[sz]e|arrange|do|execute|carry out|optimi[sz]e|improve|review|measure|check|plan)(?: (?:a|an|the|another|our|my|some|this|that))?(?: (?!(?:to|around|through|into|onto|over|past|across|along|by|in|at|on|off|from|with|for|of|and|or|but|then|up|down|out|away|back|home)\b)[a-z0-9']+){0,2} $/
 
@@ -136,8 +144,7 @@ export function scanWork(text: string): WorkScan {
   }
   const c = COUNT.exec(text)
   if (c) {
-    const word = c[1]!
-    count = WORDS[word] ?? Number(word)
+    count = countOf(c[1]!)
     take(c.index, c[0].length)
   }
   // Every desk's matches; where two overlap ("fire drill" and "drill", "wind farms" and "farms") the longer phrase is

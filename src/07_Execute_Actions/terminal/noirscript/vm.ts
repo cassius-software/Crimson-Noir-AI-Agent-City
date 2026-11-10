@@ -108,9 +108,10 @@ export const ELITE_LIMITS: NoirLimits = Object.freeze({ steps: 50_000_000, out: 
 /** The gas of one sub-agent lane for one tick: the instructions its program may take before it is a fault. */
 export const MAX_OPS_PER_TICK = 4096
 /**
- * A sub-agent lane's limits (08_Swarm/lanes.ts): MAX_OPS_PER_TICK steps a tick, a short output, a 256 KiB arena of
- * its own (the city's columns are copied into it each tick, so a lane reads the city and never the arena of
- * another lane), and a shallow stack. Running a budget out, an index past an array or a column, the arena, the depth
+ * A sub-agent lane's limits (08_Swarm/lanes.ts): MAX_OPS_PER_TICK steps a tick, a short output, 64 Ki cells (256 KiB)
+ * of room for its globals and frames, and a shallow stack. Its arena is its own: the city's columns are copied into it
+ * each tick, below that room (a lane's session grows the arena to hold them, never the room), so a lane reads the
+ * city and never the arena of another lane. Running a budget out, an index past an array or a column, the arena, the depth
  * or the output is a fault the lane's host isolates it for; a plain error is not.
  */
 export const LANE_LIMITS: NoirLimits = Object.freeze({ steps: MAX_OPS_PER_TICK, out: 256, cells: 65_536, depth: 32 })
@@ -317,12 +318,25 @@ function fail(message: string, fault: NoirFault | null = null): never { throw ne
 /** A table's row count as the host states it: NaN and anything below one give 0; Infinity is as many as the columns hold. */
 const rowsOf = (n: unknown): number => (typeof n === 'number' && n > 0 ? Math.floor(n) : 0)
 
-/** Copies the tables into the arena above the globals and fills the register file; returns the first free cell. */
-function snapshot(t: NoirTables, arena: Arena, globalTop: number, cells: number, regs: Int32Array, regsF32: Float32Array): number {
+/** The host's columns in COLUMNS order, and each table's rows: as many as its shortest column, so none is read past its end. */
+function tableRows(t: NoirTables): { sources: ArrayLike<number>[]; rows: number[] } {
   const sources: ArrayLike<number>[] = [t.crowd.x, t.crowd.z, t.cars.x, t.cars.z, t.cars.heading, t.cars.speed, t.cars.mode]
-  // A table has as many rows as its shortest column, so no column is ever read past its end.
   const rows = [rowsOf(t.crowd.n), rowsOf(t.cars.n), 0, 0]
   for (const c of COLUMNS) rows[c.table] = Math.min(rows[c.table]!, sources[c.id]?.length ?? 0)
+  return { sources, rows }
+}
+
+/** The first cell above the tables once snapshot() has copied them over globals ending at `globalTop`. */
+export function tableTop(t: NoirTables, globalTop: number): number {
+  const { rows } = tableRows(t)
+  let cur = align16(globalTop)
+  for (const c of COLUMNS) cur = align16(cur + rows[c.table]!)
+  return cur
+}
+
+/** Copies the tables into the arena above the globals and fills the register file; returns the first free cell. */
+function snapshot(t: NoirTables, arena: Arena, globalTop: number, cells: number, regs: Int32Array, regsF32: Float32Array): number {
+  const { sources, rows } = tableRows(t)
   for (let i = 0; i < 4; i++) regs[REG_N + i] = rows[i]!
   let cur = align16(globalTop)
   for (const c of COLUMNS) {

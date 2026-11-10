@@ -65,9 +65,12 @@ interface Hyp {
   /** Added by a why-answer as a means to the goal, not by the goal itself: no why-question of its own. */
   derived: boolean
 }
-interface Unmapped { label: string; modules: readonly string[] }
+/** A wish the controls do not carry. `exists`: the row points at something the city already has (the shops, the
+ *  workplaces, the wardrobe), so it is an answer, not a gap. `chore`: "jobs" and "tasks", which say nothing
+ *  against a goal that names work. */
+interface Unmapped { label: string; modules: readonly string[]; exists?: true; chore?: true }
 /** Why a goal has no hypotheses: it asked for harm, it was "I don't know", or nothing in the taxonomy fits. */
-type Flag = 'none' | 'harm' | 'unsure' | 'unmapped'
+type Flag = 'none' | 'harm' | 'unsure' | 'unmapped' | 'pointed'
 interface Frame {
   readonly goal: string
   readonly hyps: Hyp[]
@@ -288,20 +291,27 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
     label: 'Company: the city is single-player; you can ask someone over by their skill (say "recruit" and a skill, or type recruit <skill> in the console), but nobody holds a conversation yet', modules: ['08_Swarm/recruitment.ts', '03_Spawn_Agents/skills.ts', '06_Make_Decisions/intent.ts'] },
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: everyone here stays on the ground', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
-  { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
+  { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|tower)|enter (?:a |the )?(?:building|shop|tower))\b/,
+    label: 'Going indoors: the six workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
+    modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'], exists: true },
+  // A home of one's own is not one of them yet: the same note, as a gap (a goal saying both reads as a gap).
+  { re: /\b(?:inside (?:a |the )?house|enter (?:a |the )?house|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
     label: 'Going indoors: the six workplaces open onto the street, in the city and in the lakefront metropolis, and so do five shops in each (walk in and press B to browse); every other building is a solid shell for now',
     modules: ['01_Initialize_World/interiors.ts', '01_Initialize_World/storefronts.ts', '01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
   { re: /\b(?:buy(?:ing)?|purchase|shop(?:s|ping)?|stores?|money|cash|coins?|credits?)\b/,
     label: 'Shopping: five shops in the city and five in the lakefront metropolis sell clothes and accessories for civic credits; walk into one and press B to browse (Sloane cannot buy for you)',
-    modules: ['01_Initialize_World/storefronts.ts', '07_Execute_Actions/storeCatalog.ts', '07_Execute_Actions/StoreCard.tsx'] },
-  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?|jobs?|tasks?)\b/,
+    modules: ['01_Initialize_World/storefronts.ts', '07_Execute_Actions/storeCatalog.ts', '07_Execute_Actions/StoreCard.tsx'], exists: true },
+  { re: /\b(?:missions?|quests?|objectives?|high ?scores?|level up|achievements?|rewards?|unlock(?:s|able)?)\b/,
     label: 'Missions and scores: there are none; the city is a place, not a game to beat', modules: ['07_Execute_Actions/engine.ts', '06_Make_Decisions/intent.ts'] },
+  // The same note for "jobs" and "tasks" alone, which a goal that names work uses for the work ("assign tasks at the warehouse").
+  { re: /\b(?:jobs?|tasks?)\b/,
+    label: 'Missions and scores: there are none; the city is a place, not a game to beat', modules: ['07_Execute_Actions/engine.ts', '06_Make_Decisions/intent.ts'], chore: true },
   { re: /\b(?:more (?:buildings|streets|blocks)|bigger city|larger city|expand the city|new (?:buildings|district)|build (?:a |something|houses)|construct)\b/,
     label: 'A bigger city: the street grid is fixed when the city starts', modules: ['01_Initialize_World/city.ts', '01_Initialize_World/world.ts'] },
   { re: /\b(?:vr|virtual reality|headset|webxr|xr)\b/,
     label: 'A headset: the head rig is ready for one, but there is no XR session yet', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/engine.ts'] },
   { re: /\b(?:change|different|new|customi[sz]e|edit|pick|choose) (?:my |the )?(?:avatar|character|outfit|clothes|body|face|skin|hair)\b|\b(?:avatar|outfit|clothes|clothing|hair|skin colou?r)\b/,
-    label: 'Your look: the wardrobe is a tap away (Look on Sloane\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'] },
+    label: 'Your look: the wardrobe is a tap away (Look on Sloane\'s chip, or Change my look in the full list): presets, swatches and a code to share', modules: ['07_Execute_Actions/Customizer.tsx', '03_Spawn_Agents/look.ts', '05_Observe_Environment/lookStore.ts'], exists: true },
   { re: /\b(?:save (?:the |my )?(?:game|city|progress|state)|load (?:the |my )?(?:game|save)|checkpoint|photo mode|record(?:ing)? (?:a |the )?(?:video|clip)|screenshots?|share (?:this|it|the city))\b/,
     label: 'Saving, sharing and photo mode: not in the city yet (your name is the only thing remembered)', modules: ['05_Observe_Environment/profile.ts', 'App.tsx'] },
 ]
@@ -441,7 +451,16 @@ function read(input: string, peak: boolean): Reading {
   for (const sp of work.spans) { text = blankSpan(text, sp); kept = blankSpan(kept, sp) }
   for (const u of UNSUPPORTED) {
     const m = u.re.exec(text)
-    if (m) { unmapped.push({ label: u.label, modules: u.modules }); consume(m) }
+    if (!m) continue
+    consume(m)
+    // One note a label: it points at something the city has, or is a chore word, only if every row that said it does.
+    const had = unmapped.find((x) => x.label === u.label)
+    if (had) {
+      if (!u.exists) delete had.exists
+      if (!u.chore) delete had.chore
+      continue
+    }
+    unmapped.push({ label: u.label, modules: u.modules, ...(u.exists ? { exists: true as const } : {}), ...(u.chore ? { chore: true as const } : {}) })
   }
   const unsureMatch = UNSURE.exec(text)
   const unsure = unsureMatch ? unsureMatch[0] : null
@@ -512,11 +531,16 @@ function analyze(input: string, scouts = false): Analysis {
   // "I don't know", never a goal without a word in it): the two scouts go, and the goal is no dead end.
   const named = work.kinds.length > 0 || work.count !== null
   const worded = /[a-z0-9]/.test(normalize(input))
-  const team = harm ? null : named || (scouts && worded && hyps.length === 0 && unsure === null) ? teamOf(work, input) : null
+  // A goal whose every note points at something the city has ("where are the shops", "go indoors") is answered by the
+  // notes: nobody is sent to scout for it.
+  const pointed = unmapped.length > 0 && unmapped.every((u) => u.exists === true)
+  const team = harm ? null : named || (scouts && worded && hyps.length === 0 && unsure === null && !pointed) ? teamOf(work, input) : null
   if (team) mergeHyp(hyps, { control: 'dispatch', value: team.lanes.length, confidence: team.scouting ? 0.5 : work.count !== null ? 1 : 0.9, at: work.at, derived: false })
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
-  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : 'unmapped'
-  return { hyps, tags, unmapped, flag, team }
+  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : pointed ? 'pointed' : 'unmapped'
+  // Work the goal names is the work: its "tasks" and "jobs" are not a wish for missions.
+  const notes = team && !team.scouting ? unmapped.filter((u) => u.chore !== true) : unmapped
+  return { hyps, tags, unmapped: notes, flag, team }
 }
 
 /** The controls a goal names, strongest first: the keyword/phrase taxonomy on its own. */
@@ -643,7 +667,8 @@ const BOTH = ['both', 'both', 'all', 'either', 'each'] as const
 const PROBES: readonly Probe[] = [
   {
     key: 'redirect',
-    when: (f) => f.hyps.length === 0,
+    // A goal the notes already answer (`pointed`) is not asked again.
+    when: (f) => f.hyps.length === 0 && f.flag !== 'pointed',
     // An answer that emptied the frame (a goal with nothing to map is a dispatch, never a redirect), or harm, or "I don't know".
     ask: (f) => ({
       question: f.flag === 'harm'
@@ -966,6 +991,7 @@ function rootOf(f: Frame): string {
   if (!p) {
     if (f.flag === 'harm') return 'Nothing here can hurt anyone, so let’s find what the city can do for you.'
     if (f.flag === 'unsure') return 'You’re happy just looking around for now.'
+    if (f.flag === 'pointed') return 'That is already in the city; here is where to find it.'
     return 'I couldn’t map this one yet.'
   }
   const district = find(f, 'district')?.value
@@ -1051,7 +1077,10 @@ function markdownOf(goal: string, whys: readonly { question: string; answer: str
   if (now.length) lines.push('### Now — the Concierge applies these', ...now.map(item))
   if (later.length) lines.push('### Later — the operator’s console or a restart', ...later.map(item))
   if (team) lines.push('', '## Team', `${team.lanes.length} ${team.scouting ? 'scouts' : 'sub-agents'}, one isolated lane each (\`08_Swarm/lanes.ts\`), a NoirScript probe a tick under the lane limits:`, ...teamLines(team))
-  if (unmapped.length) lines.push('', '## Not mapped', ...unmapped.map((u) => `- ${u.label}${u.modules.length ? ` — would touch ${code(u.modules)}` : ''}`))
+  const there = unmapped.filter((u) => u.exists === true)
+  const gaps = unmapped.filter((u) => u.exists !== true)
+  if (there.length) lines.push('', '## Already in the city', ...there.map((u) => `- ${u.label}${u.modules.length ? ` — ${code(u.modules)}` : ''}`))
+  if (gaps.length) lines.push('', '## Not mapped', ...gaps.map((u) => `- ${u.label}${u.modules.length ? ` — would touch ${code(u.modules)}` : ''}`))
   lines.push('', '---', '_Written by the concierge’s 5-Whys engine (deterministic, offline). Module paths are under `src/`._', '')
   return lines.join('\n')
 }

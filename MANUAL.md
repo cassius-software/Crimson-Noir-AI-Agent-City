@@ -679,8 +679,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
   control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
-  goal is how many, up to 32), and a goal nothing maps to sends two scouts (the twin studio and the control
-  tower) that read the city and report, so no goal is a dead end; the rest is laid out as a plan, the lanes'
+  goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
+  scouts (the twin studio and the control tower) that read the city and report, so no goal is a dead end; a goal
+  about something the city already has (the shops, the workplaces, the wardrobe) is answered with where to find it,
+  and nobody is sent; a desk this map has no room for asks nobody over and its lanes read the streets around
+  where you started; the rest is laid out as a plan, the lanes'
   readings show under the brief as they run, and "Copy brief" gives an engineer a note naming the modules each
   step would touch. For each desk one person within earshot with its skill is asked over (as `recruit` asks),
   and sent in only once you stand within 9 m of that desk's door: the tether is never loosened. The planner
@@ -1103,7 +1106,8 @@ anywhere in the product.
   `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
   without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
   own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
-  tick, 256 characters of output, a 256 KiB arena the city's columns are copied into, 32 frames of stack. The gate
+  tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
+  own arena each tick, however many rows the city has), 32 frames of stack. The gate
   reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
   out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
   words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the

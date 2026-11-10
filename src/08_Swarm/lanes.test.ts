@@ -16,6 +16,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CAP_MOVE, CAP_NET, CAP_SUBAGENT_SPAWN, CAP_VEHICLE_TELEOP, CAP_WORKPLACE_TASK } from '../02_Define_The_Rules/capabilities.ts'
 import { EMPTY_TABLES, LANE_LIMITS, MAX_OPS_PER_TICK, type NoirTables, type NoirWrites } from '../07_Execute_Actions/terminal/noirscript/index.ts'
+import { LANE_RANGE } from '../05_Observe_Environment/governor.ts'
+import { teamFor, laneSpec } from '../06_Make_Decisions/dispatch.ts'
 import { LANE_MAX, LaneRunner, type LaneDeps, type LaneSpec } from './lanes.ts'
 
 const WORK = CAP_MOVE | CAP_WORKPLACE_TASK
@@ -53,6 +55,39 @@ test('each lane runs its own program each tick against the same tables and repor
   assert.equal(r.tick, 2)
   assert.equal(r.ledger.length, 0)
   assert.equal(r.ledger.verify().ok, true)
+})
+
+test('a city as big as the realm takes (LANE_RANGE\'s top, 60,000 people, and a large fleet) fits under every lane: the columns go below its room, the room stays LANE_LIMITS', () => {
+  const people = LANE_RANGE[1], fleet = 2048
+  const big: NoirTables = {
+    ...city(),
+    crowd: { n: people, x: new Float32Array(people).fill(5), z: new Float32Array(people) },
+    cars: { n: fleet, x: new Float32Array(fleet).fill(10), z: new Float32Array(fleet), heading: new Float32Array(fleet), speed: new Float32Array(fleet).fill(3), mode: new Int32Array(fleet) },
+  }
+  // Two columns of 60,000 alone are past the lane's 65,536 cells: before the arena grew for the tables, every lane's
+  // first tick was a memory fault and the gate isolated it (a team dispatched on a workstation-class machine).
+  assert.ok(2 * people > LANE_LIMITS.cells)
+  const team = teamFor('run a 30-agent drill across the warehouse, the control tower, the robotics lab and the twin studio')
+  const specs = team.lanes.map((l) => laneSpec(l, { x: 5, z: 0 }))
+  const r = new LaneRunner([...specs, spec('let huge = [0; 60000];'), spec('print(crowd.x[59999] + cars.x[2047]);')], deps())
+  for (let tick = 0; tick < 3; tick++) r.step(big)
+  const views = r.views()
+  const lanes = views.slice(0, specs.length)
+  assert.equal(lanes.length, 30)
+  assert.equal(r.count, LANE_MAX)
+  assert.ok(lanes.every((v) => v.state === 'ready' && v.fault === null && v.error === null && typeof v.value === 'string'), JSON.stringify(lanes.filter((v) => v.state !== 'ready').slice(0, 2)))
+  assert.ok(lanes.every((v) => v.steps < MAX_OPS_PER_TICK))
+  assert.ok(lanes.some((v) => /people within 20 m 48 of 48/.test(v.value ?? '')), 'a crowd probe reads its window of the big crowd')
+  // The room is still the lane's: a global past it is a memory fault however big the arena grew for the city.
+  assert.deepEqual([views[30]!.state, views[30]!.fault], ['isolated', 'memory'])
+  // And the last rows of both tables are read whole.
+  assert.deepEqual([views[31]!.state, views[31]!.value], ['ready', '15'])
+})
+
+test('a prelude that reaches a bound names its reason on the view: the lane is isolated and its error says why', () => {
+  const r = new LaneRunner([{ role: 'worker', caps: WORK, program: 'print(1);', prelude: 'let a = [1; 4]; let b = a[9];', tag: 'reading' }], deps())
+  const [v] = r.step(city())
+  assert.deepEqual([v!.state, v!.fault, v!.error], ['isolated', 'bounds', 'index 9 out of bounds (len 4)'])
 })
 
 test('a program that runs its gas out is isolated alone: the gate\'s Zeroth-Law sentence, the fault on the ledger, the word zeroed, the other lanes and the frame go on', () => {

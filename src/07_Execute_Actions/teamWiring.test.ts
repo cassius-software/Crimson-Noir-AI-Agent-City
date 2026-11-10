@@ -50,6 +50,7 @@ test('App: the team runner over the page\'s own parts, ticked from the frame loo
   assert.match(src, /contained: \(\) => airgapInstalled\(globalThis\)/, 'the air gap vouches, or the gate fails closed')
   assert.match(src, /panic: \(\) => e\.panicReason/)
   assert.match(src, /rooms: \(\) => e\.teamRooms/)
+  assert.match(src, /centre: \(\) => e\.teamCentre/, 'a desk this map has no room for reads around where the player started')
   assert.match(src, /recruit: \(skill\) => r\.recruit\(skill\)/, 'the same ask recruit makes')
   assert.match(src, /rally: \(agent, x, z\) => r\.rally\(agent, x, z\)/)
   assert.match(src, /log: \(line\) => \{ console\.error\(line\); e\.toast\('Lane isolated', line\) \}/)
@@ -76,9 +77,9 @@ test('the Concierge rewords through a Voice and shows the team: no Mind, no .ans
   assert.match(card, /import type \{ Voice \} from '\.\/onboarding\/voice\.ts'/)
   assert.doesNotMatch(card, /\bMind\b/)
   assert.equal((card.match(/\.answer\(/g) ?? []).length, 2, 'whys.answer(text) and resume\'s whys.answer(a): the person\'s own answers, no model')
-  assert.match(card, /reword\.say\(root, ctl\.signal\)\.then\(\(text\) => \{ if \(!ctl\.signal\.aborted && text && text !== root\) setWorded\(\{ root, text \}\) \}, \(\) => \{\}\)/)
+  assert.match(card, /reword\.say\(root, ctl\.signal\)\.then\(\(text\) => \{ if \(!ctl\.signal\.aborted && text && text !== root\) setWorded\(\{ brief: b, text \}\) \}, \(\) => \{\}\)/)
   assert.match(card, /return \(\) => ctl\.abort\(\)/, 'a new brief or a card that goes ends the ask')
-  assert.match(card, /worded\?\.root === brief\.root \? worded\.text : brief\.root/, 'the words belong to one brief')
+  assert.match(card, /worded\?\.brief === brief \? worded\.text : brief\.root/, 'the words belong to one brief (the brief itself, not its sentence: a later brief with the same root starts from the planner\'s words)')
   assert.match(card, /data-team aria-label="The team at work"/)
   assert.match(card, /lanes\.slice\(0, TEAM_ROWS\)/)
   // What is spoken stays the planner's sentence (spokenLine reads brief.root, never the rewording).
@@ -88,6 +89,8 @@ test('the Concierge rewords through a Voice and shows the team: no Mind, no .ans
 test('the engine hands the team runner its rooms with their door fronts on this map\'s lane, and the realm\'s standing; the runner imports no engine, renderer or React', () => {
   const engine = read('07_Execute_Actions/engine.ts')
   assert.match(engine, /get teamRooms\(\): readonly \{ kind: string; name: string; door: \{ x: number; z: number \} \}\[\]/)
+  assert.match(engine, /get teamCentre\(\): \{ readonly x: number; readonly z: number \} \{ return this\.startAt \}/)
+  assert.match(engine, /places, landmark, streets, start: spawn,/)
   assert.match(engine, /door: doorFront\(r, this\.streets\?\.lane \?\? CITY\.lane\)/)
   assert.match(engine, /get panicReason\(\): string \| null \{ return this\.sim\.state\.kernel\.audit\.panic \?\? this\.lockReason \}/)
   const team = read('08_Swarm/team.ts')

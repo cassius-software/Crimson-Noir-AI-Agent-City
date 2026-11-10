@@ -2793,7 +2793,7 @@ test('act: alone it says what waits for the OK, or that nothing does; act ok all
   const calls = b.operator.opCalls.length
   // `act gate` is the Ring-0 action gate's own table (pinned to ring0Gate.ts CHECKS, which the console must not import): every check, its law and its text, locked or not.
   const gate = texts(run('act gate', b, []))
-  assert.match(gate[0], /^Every ask, every proposal and every run passes these before any state changes/)
+  assert.match(gate[0], /^Every ask, every proposal and every run passes the twelve that are not a lane's, and every sub-agent lane's tick and effect passes Contained, GasWithin, MemoryWithin, RealmStanding and LaneCapable, before any state changes/)
   assert.equal(gate.length, CHECKS.length + 2)
   CHECKS.forEach((c, i) => {
     const row = gate[i + 1]
@@ -3081,6 +3081,12 @@ test('lanes: the team runner through the bridge (status, the ledger verified on 
     { kind: 'out', text: 'You want the city to work on it.' },
     { kind: 'out', text: '  done     Send 2 sub-agents' },
     { kind: 'sys', text: '  warehouse:1    at the Automated Logistics Warehouse: reads the crowd' },
+  ])
+  // A done step's detail is said too: how many lanes opened, and the desks this map has no room for.
+  const away = { ...b, goal: () => ({ root: 'You want the city to work on it.', steps: [{ label: 'Send one sub-agent to metro operations', state: 'done' as const, detail: '1 lane open; not on this map: the metro operations room' }], notes: [] }) }
+  assert.deepEqual(run('goal optimise the metro schedule', away, []).lines, [
+    { kind: 'out', text: 'You want the city to work on it.' },
+    { kind: 'out', text: '  done     Send one sub-agent to metro operations: 1 lane open; not on this map: the metro operations room' },
   ])
 })
 

@@ -123,7 +123,7 @@ test('dispatch opens one lane a sub-agent at its desk\'s door, asks one body a d
   const capped = crew.dispatch(teamFor('send 40 agents to the clinic'))
   assert.deepEqual([capped.lanes, capped.dropped, capped.bodies, capped.missing], [32, 8, 1, ['the gait lab']])
   assert.match(crew.status()[0]!, /\(32 running, 0 isolated, 8 asked for beyond the cap\)/)
-  assert.ok(crew.status().some((l) => /^ {2}gait:1 {8}nowhere {3}this map has no gait lab: nobody asked over, its lanes read around the city centre$/.test(l)))
+  assert.ok(crew.status().some((l) => /^ {2}gait:1 {8}nowhere {3}this map has no gait lab: nobody asked over, its lanes read around the map's origin$/.test(l)), 'a host without a centre')
 })
 
 test('bodies: an arrived recruit is sent to the desk\'s door only when the player stands within rally range of it; farther, the distance is said; driving, nobody moves; a desk this map lacks says so', async () => {
@@ -165,8 +165,21 @@ test('bodies: an arrived recruit is sent to the desk\'s door only when the playe
   await settle()
   assert.deepEqual(k.calls, [])
   kitchen.tick()
-  assert.match(kitchen.status().find((l) => l.startsWith('  kitchen:1 '))!, /nowhere {3}this map has no kitchen: nobody asked over, its lanes read around the city centre$/)
+  assert.match(kitchen.status().find((l) => l.startsWith('  kitchen:1 '))!, /nowhere {3}this map has no kitchen: nobody asked over, its lanes read around the map's origin$/)
   assert.equal(kitchen.lines()[0]!.reading, `people within 12 m ${within(12, 0, 0)} of 48 from row 0`, 'read around the origin')
+  // With the host's centre (where the player started), the lane reads around it, and the note says so.
+  const centred = new TeamRunner(host({ centre: () => ({ x: 60, z: 0 }) }))
+  centred.dispatch(teamFor('the kitchen prep line'))
+  centred.tick()
+  assert.match(centred.status().find((l) => l.startsWith('  kitchen:1 '))!, /nowhere {3}this map has no kitchen: nobody asked over, its lanes read around where you started$/)
+  assert.equal(centred.lines()[0]!.reading, `people within 12 m ${within(12, 60, 0)} of 48 from row 0`, 'read around the centre')
+  // A centre that is nowhere, or a host that throws for it, leaves the origin.
+  for (const centre of [() => ({ x: Number.NaN, z: 0 }), () => { throw new Error('no map') }]) {
+    const odd = new TeamRunner(host({ centre }))
+    odd.dispatch(teamFor('the kitchen prep line'))
+    odd.tick()
+    assert.equal(odd.lines()[0]!.reading, `people within 12 m ${within(12, 0, 0)} of 48 from row 0`)
+  }
   // A refused ask over: the body is refused and the reason kept; a rally the host refuses is kept as its message.
   const shy = host({ recruit: async () => ({ ok: false, agent: -1, message: 'nobody within earshot has Go' }) })
   const t = new TeamRunner(shy)

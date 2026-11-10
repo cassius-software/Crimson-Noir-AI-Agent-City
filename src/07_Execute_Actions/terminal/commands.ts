@@ -787,7 +787,8 @@ const INVARIANT_LINES: readonly (readonly [string, string, string])[] = [
 /**
  * The Ring-0 action gate's checks, in rank order, with the law each stands under (commands.test.ts pins them to
  * 02_Define_The_Rules/ring0Gate.ts CHECKS, which this file must not import). Every ask, every proposal and every run
- * passes them before any state changes; the first failed check names the law in the refusal.
+ * passes the twelve that are not a lane's (GasWithin, MemoryWithin and LaneCapable are only a sub-agent lane's, which
+ * also passes Contained and RealmStanding) before any state changes; the first failed check names the law in the refusal.
  */
 const GATE_LINES: readonly (readonly [string, string, string])[] = [
   ['Contained', 'Zeroth Law', "the page's outbound primitives are held to this machine (airgap.ts), as the host vouches"],
@@ -1215,7 +1216,8 @@ const HANDLERS: Record<Name, Handler> = {
     } catch (e) {
       return fail(`goal: ${message(e)}`)
     }
-    const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}`)))
+    // A step's detail is said whatever its state: a dispatch says how many lanes opened and which desks this map has no room for.
+    const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}${st.detail ? `: ${st.detail}` : ''}`)))
     for (const n of plan.notes) lines.push(sys(`  ${n}`))
     for (const t of plan.team ?? []) lines.push(sys(`  ${t}`))
     if (!lines.length) lines.push(sys('  nothing in the city maps to that yet'))
@@ -1766,9 +1768,9 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'gate') {
       return {
         lines: [
-          sys('Every ask, every proposal and every run passes these before any state changes; the first failed check names its law in the refusal:'),
+          sys('Every ask, every proposal and every run passes the twelve that are not a lane\'s, and every sub-agent lane\'s tick and effect passes Contained, GasWithin, MemoryWithin, RealmStanding and LaneCapable, before any state changes; the first failed check names its law in the refusal:'),
           ...GATE_LINES.map(([name, law, text]) => out(`  ${name.padEnd(18)}${law.padEnd(12)}${text}`)),
-          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, applied the same way every time; they are not a proof about a model.'),
+          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, and a lane\'s gas, arena and capability word, applied the same way every time; they are not a proof about a model.'),
         ],
       }
     }

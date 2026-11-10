@@ -227,15 +227,16 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   /** The one text field: the name, then a goal, then each answer. */
   const [draft, setDraft] = useState('')
   const [dialogue, setDialogue] = useState<Dialogue>(() => resume(goal))
-  /** The brief's sentence in Sloane's own words, once the mind has answered for this brief (its root names it). */
-  const [worded, setWorded] = useState<{ root: string; text: string } | null>(null)
+  /** The brief's sentence in Sloane's own words, once the mind has answered for this brief (the brief itself names it:
+   *  a later brief with the same sentence starts from the planner's words again, whatever the provider is by then). */
+  const [worded, setWorded] = useState<{ brief: Brief; text: string } | null>(null)
   // One ask a brief: the planner's sentence shows (and is spoken) meanwhile, and a new brief or a card that goes ends the ask.
   useEffect(() => {
     const b = dialogue.brief
     if (!reword || !b) return
     const ctl = new AbortController()
     const root = b.root
-    reword.say(root, ctl.signal).then((text) => { if (!ctl.signal.aborted && text && text !== root) setWorded({ root, text }) }, () => {})
+    reword.say(root, ctl.signal).then((text) => { if (!ctl.signal.aborted && text && text !== root) setWorded({ brief: b, text }) }, () => {})
     return () => ctl.abort()
   }, [reword, dialogue.brief])
   /** The brief on the clipboard, or shown to copy by hand where the clipboard is out of reach. */
@@ -547,7 +548,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     view === 'ask' ? <>Hi, I’m {SLOANE.name}, your concierge. I’ll get you set up — what should I call you?</>
     : view === 'goal' ? (
       step ? step.question
-      : brief ? (worded?.root === brief.root ? worded.text : brief.root)
+      : brief ? (worded?.brief === brief ? worded.text : brief.root)
       : <>What would you like the city to do? The time of day, the crowds, the traffic, how it runs, where to go — say it plainly.</>
     )
     : view === 'help' ? (name ? <>Here’s everything you can do, <bdi>{name}</bdi>.</> : <>Here’s everything you can do.</>)

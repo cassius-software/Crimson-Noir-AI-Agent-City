@@ -7,7 +7,7 @@
  * memory) with a capability word (02_Define_The_Rules/capabilities.ts), a program the dispatcher wrote for it and
  * a tag naming what its last printed line measures. Each tick (`step`) runs every open lane's program once against
  * one snapshot of the city's columns, under the lane limits (MAX_OPS_PER_TICK instructions, a short output, a
- * quarter-megabyte arena, a shallow stack), and puts the result to the Ring-0 action gate (ring0Gate.ts admitLane):
+ * quarter-megabyte room for globals and frames above the copied columns, a shallow stack), and puts the result to the Ring-0 action gate (ring0Gate.ts admitLane):
  * a program that ran its gas out, reached past its bounds, or asked a write for a capability the lane does not hold
  * trips the lane panic (ring0Panic.ts lanePanic), which zeroes the lane's word for good and hashes the fault onto
  * the runner's ledger; the other lanes and the frame go on. `ask` puts an effect outside the VM (a rally, a station)
@@ -111,7 +111,7 @@ export class LaneRunner {
     this.#table = new CapabilityLanes(kept.length)
     this.#lanes = kept.map((spec, lane) => {
       this.#table.grant(lane, spec.caps)
-      return { spec, session: new NoirSession(limits), ticks: 0, steps: 0, total: 0, value: null, error: null, fault: null, audit: null }
+      return { spec, session: new NoirSession(limits, { tableRoom: true }), ticks: 0, steps: 0, total: 0, value: null, error: null, fault: null, audit: null }
     })
   }
 
@@ -167,7 +167,10 @@ export class LaneRunner {
           const p = l.session.run(l.spec.prelude, host)
           steps += p.steps
           if (p.out.length > 0) l.value = p.out[p.out.length - 1]!
-          if (p.fault !== undefined) fault = { kind: p.fault satisfies NoirFault, text: p.error ?? p.fault }
+          if (p.fault !== undefined) {
+            fault = { kind: p.fault satisfies NoirFault, text: p.error ?? p.fault }
+            l.error = p.error ?? p.fault
+          }
         }
         // A prelude that reached a bound is the tick's fault; the program waits for a verdict it will not get.
         const r = fault === null ? l.session.run(l.spec.program, host) : null

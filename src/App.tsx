@@ -569,7 +569,7 @@ function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' |
       else if (step.control === 'dispatch' && step.team && b.lanes) {
         const d = b.lanes.dispatch(step.team)
         team = teamRows(step.team)
-        const away = d.missing?.length ? `; not on this map: ${d.missing.join(', ')} (nobody asked over, those lanes read around the city centre)` : ''
+        const away = d.missing?.length ? `; not on this map: ${d.missing.join(', ')} (nobody asked over, those lanes read around where you started)` : ''
         steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open${away}` })
         continue
       }
@@ -1188,6 +1188,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           contained: () => airgapInstalled(globalThis),
           panic: () => e.panicReason,
           rooms: () => e.teamRooms,
+          centre: () => e.teamCentre,
           operator: () => host.operator(),
           recruits: () => r.recruits,
           recruit: (skill) => r.recruit(skill),

@@ -47,6 +47,8 @@ export interface TeamHost {
   panic(): string | null
   /** The indoor workplaces of this map (none in a surveyed region). */
   rooms(): readonly TeamRoom[]
+  /** Where a desk this map has no room for reads from: where the player started (absent or null: the map's origin). */
+  centre?(): { readonly x: number; readonly z: number } | null
   /** Where the player stands on foot, or null (driving, halted). */
   operator(): { x: number; z: number } | null
   /** The recruiter's list: who was asked over, and who has arrived. */
@@ -62,7 +64,7 @@ export interface TeamHost {
 /** A lane as the HUD's snapshot and the Concierge show it. */
 export interface LaneLine { readonly tag: string; readonly role: string; readonly state: 'ready' | 'isolated'; readonly reading: string | null }
 
-/** What a dispatch opened. `missing`: the desks this map has no room for (nobody asked over; their lanes read around the city centre). */
+/** What a dispatch opened. `missing`: the desks this map has no room for (nobody asked over; their lanes read around the host's centre, where the player started). */
 export interface Dispatched { readonly lanes: number; readonly dropped: number; readonly label: string; readonly bodies: number; readonly missing: readonly string[] }
 
 /** The console's surface over a team (terminal/bridge.ts LanesBridge). */
@@ -130,7 +132,8 @@ export class TeamRunner {
     this.#notes = []
     const rooms = this.#rooms()
     const placed = team.lanes.map((l) => roomFor(rooms, l.kind))
-    const specs = team.lanes.map((l, i) => laneSpec(l, placed[i]?.door ?? null))
+    const centre = this.#centre()
+    const specs = team.lanes.map((l, i) => laneSpec(l, placed[i]?.door ?? centre))
     const runner = new LaneRunner(specs, {
       contained: () => this.#host.contained(),
       panic: () => this.#host.panic(),
@@ -155,9 +158,9 @@ export class TeamRunner {
         continue
       }
       if (placed[lane] === null) {
-        // No door to stand at: nobody is asked over for it, and its lanes read around the city centre.
+        // No door to stand at: nobody is asked over for it, and its lanes read around where the player started.
         body.state = 'nowhere'
-        body.note = `this map has no ${desk.title.replace(/^the /, '')}: nobody asked over, its lanes read around the city centre`
+        body.note = `this map has no ${desk.title.replace(/^the /, '')}: nobody asked over, its lanes read ${centre ? 'around where you started' : 'around the map\'s origin'}`
         missing.push(desk.title)
         continue
       }
@@ -382,6 +385,16 @@ export class TeamRunner {
       return this.#host.operator() !== null
     } catch {
       return true
+    }
+  }
+
+  /** The host's centre, when it gives a finite one; a host that throws or gives none leaves the map's origin. */
+  #centre(): { x: number; z: number } | null {
+    try {
+      const c = this.#host.centre?.() ?? null
+      return c && Number.isFinite(c.x) && Number.isFinite(c.z) ? { x: c.x, z: c.z } : null
+    } catch {
+      return null
     }
   }
 

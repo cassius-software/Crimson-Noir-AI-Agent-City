@@ -28,7 +28,7 @@ import { KEYWORDS, TYPE_NAMES } from './lexer.ts'
 import { parse } from './parser.ts'
 import { check } from './types.ts'
 import type { Arena, CompiledFn, NoirHost, NoirLimits, NoirTables } from './vm.ts'
-import { DEFAULT_LOCKED, DEFAULT_NO_EXAM, EMPTY_TABLES, LIMITS, TABLE_NAMES, execute, makeArena, saneLimits } from './vm.ts'
+import { DEFAULT_LOCKED, DEFAULT_NO_EXAM, EMPTY_TABLES, LIMITS, MAX_CELLS, TABLE_NAMES, execute, makeArena, saneLimits, tableTop } from './vm.ts'
 
 export type { NoirColumns, NoirTables, NoirWrites, NoirExam, NoirHost, NoirLimits } from './vm.ts'
 export type { NoirFault } from './ast.ts'
@@ -67,9 +67,18 @@ export class NoirSession {
   /** Set while a line runs, so a host write that calls `run` again meets "session busy" rather than the arena in use. */
   private running = false
 
-  constructor(limits: NoirLimits = LIMITS) {
+  /** Whether each run grows the arena to hold the host's tables under a full limits.cells of room (see the constructor). */
+  private readonly tableRoom: boolean
+
+  /**
+   * `tableRoom`: before each run, grow the arena so the host's tables fit below a whole `limits.cells` of room for
+   * globals and frames (a sub-agent lane's session: its room stays its limits however many rows the city has). The
+   * frames are bounded by the run's limits either way (vm.ts execute); without it the tables share the arena with them.
+   */
+  constructor(limits: NoirLimits = LIMITS, opts?: { readonly tableRoom?: boolean }) {
     this.limits = saneLimits(limits, LIMITS)
     this.arena = makeArena(this.limits.cells)
+    this.tableRoom = opts?.tableRoom === true
   }
 
   /** Compiles and runs one line (it may hold several statements and newlines). Never throws. */
@@ -109,6 +118,13 @@ export class NoirSession {
         tables = host.tables() ?? EMPTY_TABLES
       } catch (e) {
         return { out: [], error: e instanceof Error ? e.message : String(e), steps: 0, defined }
+      }
+    }
+    if (this.tableRoom) {
+      try {
+        this.ensureArena(Math.min(MAX_CELLS, tableTop(tables, this.globalTop) + lim.cells))
+      } catch {
+        // The machine would not give the cells: the run below meets the arena's end and says "memory exhausted".
       }
     }
     // A `write` (or an `exam`) that is not an object (null, say) is no surface: its intrinsics fail with the host's message.

@@ -50,7 +50,7 @@ export const LANE_LIMITS: NoirLimits   // { steps: MAX_OPS_PER_TICK, out: 256, c
 export type NoirFault = 'gas' | 'bounds' | 'memory' | 'depth' | 'output'   // the bound that ended a run, when one did
 export interface NoirResult { readonly out: string[]; readonly error?: string; readonly steps: number; readonly defined: readonly string[]; readonly fault?: NoirFault } // defined: fns and globals this line declared
 export class NoirSession {
-  constructor(limits?: NoirLimits)
+  constructor(limits?: NoirLimits, opts?: { tableRoom?: boolean })
   /** Compiles and runs one line (may hold several statements and newlines). Never throws. */
   run(source: string, host?: NoirHost | null, limits?: NoirLimits): NoirResult   // limits are made sane first (see Session)
   /** Compiles only and returns the bytecode listing (or the compile error as `error`). */
@@ -241,8 +241,10 @@ Overload resolution is by argument types; a mismatch names the signatures: "min:
   the same session while a line runs gets `error: "session busy: a host write re-entered run()"` and installs
   nothing. A host `write` that is not an object (null, say) is no write surface: the locked message.
 - `LANE_LIMITS` are a sub-agent lane's: `MAX_OPS_PER_TICK` (4,096) steps a tick, 256 characters of output, 65,536
-  cells (the city's columns are copied in each tick, so a lane reads the city and never another lane's arena) and 32
-  frames. One session per lane: a global of one lane is unknown to another.
+  cells of room for globals and frames, and 32 frames. The city's columns are copied into the lane's own arena each
+  tick, below that room: a lane's session is made with `{ tableRoom: true }`, which grows the arena to hold the tables
+  (60,000 people are 120,000 cells of columns) and never the room, so a lane reads the city and never another lane's
+  arena. One session per lane: a global of one lane is unknown to another.
 - No `console.log` anywhere. Nothing async.
 
 ## What the tests pin (every bullet is at least one test)

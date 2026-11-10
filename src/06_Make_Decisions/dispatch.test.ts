@@ -111,6 +111,16 @@ test('scanWork: the desks in order of first mention, the count in digits or word
   assert.deepEqual(scanWork('hold a triage with six scouts').count, 6)
   assert.deepEqual(scanWork('twelve robots please').count, 12)
   assert.deepEqual(scanWork('a 400 agent drill').count, 400)
+  // Tens and units, and the teens: the first walk's own "twenty-four sub-agents" is 24, never the 4 at its end.
+  assert.deepEqual(scanWork(plainWords('spawn twenty-four sub-agents')).count, 24)
+  assert.deepEqual(scanWork('send twenty four agents to the warehouse').count, 24)
+  assert.deepEqual(scanWork('thirty-one robots').count, 31)
+  assert.deepEqual(scanWork(plainWords('thirty-one robots')).count, 31)
+  assert.deepEqual(scanWork('fifteen agents').count, 15)
+  assert.deepEqual(scanWork('fourteen bots').count, 14)
+  assert.deepEqual(scanWork('nineteen workers').count, 19)
+  assert.deepEqual(scanWork('twenty agents').count, 20)
+  assert.deepEqual(teamFor('spawn twenty-four sub-agents').lanes.length, 24)
   // A word that is also a knob's stays the knob's: "traffic" is the cars' (air traffic is the tower's).
   assert.deepEqual(scanWork('less traffic').kinds, [])
   assert.deepEqual(scanWork('the traffic flow downtown').kinds, [])
@@ -250,6 +260,45 @@ test('deterministic: the same goal gives the same team, lane for lane, and the s
   assert.notEqual(laneSpec(a.lanes[1]!, { x: 1, z: 2 }).prelude, laneSpec(a.lanes[1]!, null).prelude, 'the desk\'s place is in the prelude')
   assert.match(laneSpec(a.lanes[1]!, null).prelude, /let at_x = 0\.000; let at_z = 0\.000;/)
   assert.match(laneSpec(a.lanes[1]!, { x: Number.NaN, z: Number.POSITIVE_INFINITY }).prelude, /let at_x = 0\.000; let at_z = 0\.000;/, 'a place that is nowhere reads at the origin')
+})
+
+test('a goal the city already answers sends nobody: the shops, the workplaces and the wardrobe are pointed at, not scouted for; a home or company is still a gap', () => {
+  const ROOT = 'That is already in the city; here is where to find it.'
+  for (const g of ['where are the shops', 'buy a coat', 'go indoors', 'go inside a shop', 'change my outfit']) {
+    const w = new FiveWhys(g)
+    const b = w.brief()
+    assert.equal(b.root, ROOT, g)
+    assert.deepEqual(b.plan, [], g)
+    assert.ok(b.unmapped.length > 0, g)
+    assert.equal(w.next(), null, `${g}: no "I didn't catch that" after the answer`)
+    assert.match(b.markdown, /## Already in the city/, g)
+    assert.doesNotMatch(b.markdown, /## Not mapped/, g)
+  }
+  // A home of one's own is not in the city yet (the same note as a gap), nor is company: the scouts go.
+  for (const g of ['go inside my house', 'enter a house', 'make friends']) {
+    const b = new FiveWhys(g).brief()
+    assert.match(b.root, /^Nothing in the city does that yet, so 2 scouts are on what it can do instead\.$/, g)
+    assert.deepEqual(b.plan.map((s) => s.control), ['dispatch'], g)
+    assert.match(b.markdown, /## Not mapped[^]*would touch `0[18]_/, g)
+  }
+  // Work named alongside a pointer still sends its team, with the pointer beside it.
+  const both = new FiveWhys('send three agents to buy me a suit').brief()
+  assert.deepEqual([both.plan.map((s) => s.control), both.unmapped.length], [['dispatch'], 1])
+  // A pointer beside a real gap is a gap: the weather is not in the city.
+  assert.match(new FiveWhys('go shopping in the snow').brief().root, /^Nothing in the city does that yet/)
+})
+
+test('"tasks" and "jobs" in a goal that names work are the work, not a wish for missions; alone, or beside "missions", the note stays', () => {
+  const MISSIONS = 'Missions and scores: there are none; the city is a place, not a game to beat'
+  for (const g of ['assign tasks at the warehouse', 'give the robotics lab some jobs', 'run warehouse tasks with six agents']) {
+    const b = new FiveWhys(g).brief()
+    assert.deepEqual(b.plan.map((s) => s.control), ['dispatch'], g)
+    assert.ok(!b.unmapped.includes(MISSIONS), g)
+  }
+  for (const g of ['give me some tasks', 'any missions or tasks here', 'missions at the warehouse']) {
+    assert.ok(new FiveWhys(g).brief().unmapped.includes(MISSIONS), g)
+  }
+  assert.equal(new FiveWhys('any missions or tasks here').brief().unmapped.filter((u) => u === MISSIONS).length, 1, 'one note a label')
 })
 
 test('the engine around the planner: a desk phrase wins over a bare unsupported word inside it, work words say nothing about Peak, a goal without a word sends nobody, and a team an answer names replaces the scouts', () => {
