@@ -85,7 +85,11 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   useEffect(() => { sayRef.current = onSay }, [onSay])
   const said = useRef(-1)
   useEffect(() => {
-    if (!beat || beat.id === said.current || !shown) return
+    if (!beat || beat.id === said.current) return
+    // A line that comes while the card is away waits for it, except a hint: that came while the visitor was busy in
+    // another card (the wardrobe, a shop's, a home's, Sloane's own), and closing that card has often done what it asks,
+    // so it is let go unspoken rather than said a moment before the next stage's line cuts it off.
+    if (!shown) { if (beat.kind === 'hint') said.current = beat.id; return }
     said.current = beat.id
     sayRef.current?.(beat.text)
   }, [beat, shown])

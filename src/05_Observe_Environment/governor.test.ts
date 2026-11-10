@@ -81,13 +81,18 @@ test('tiers: five frozen, uniquely named steps that only ever add work going up'
     assert.ok(!p.shadows || t.shadows, 'shadows never switch off going up')
     assert.ok(!p.post || t.post, 'post never switches off going up')
     assert.ok(!p.volumetrics || t.volumetrics, 'volumetrics never switch off going up')
+    assert.ok(t.aoTaps >= p.aoTaps, `${t.label}.aoTaps >= ${p.label}.aoTaps`)
     if (p.shadows) assert.ok(t.shadowMapSize >= p.shadowMapSize)
     for (const k of ['shadowDistance', 'shadowRadius', 'shadowTaps'] as const) assert.ok(t[k] >= p[k], `${t.label}.${k} >= ${p.label}.${k}`)
     assert.ok(t.lampLights > p.lampLights, 'every step up lights more lamps')
-    const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
+    const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.aoTaps / 16 + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
     assert.ok(cost(t) > cost(p), `${t.label} is strictly more work than ${p.label}`)
   }
   for (const t of TIERS) assert.ok(!t.volumetrics || t.post, `${t.label}: volumetrics live in the post chain`)
+  for (const t of [LITE, ...TIERS, PEAK]) {
+    assert.ok(t.aoTaps === 0 || t.post, `${t.label}: the ambient occlusion lives in the post chain`)
+    assert.ok(Number.isInteger(t.aoTaps) && t.aoTaps >= 0 && t.aoTaps <= 16, `${t.label}: ${t.aoTaps} occlusion taps`)
+  }
   for (const t of [LITE, ...TIERS, PEAK]) {
     // The sun's shadow atlas is two cascades wide (sunShadow.ts): within WebGPU's default largest texture, the device asking no limits.
     assert.ok(2 * t.shadowMapSize <= 8192, `${t.label}: the atlas fits an 8192 texture`)
@@ -100,6 +105,12 @@ test('tiers: five frozen, uniquely named steps that only ever add work going up'
 test('tiers: golden-hour volumetrics are the Ultra tier alone', () => {
   assert.deepEqual(TIERS.map((t) => t.volumetrics), [false, false, false, false, true])
   assert.equal(TIERS[4].label, 'Ultra')
+})
+
+test('tiers: ambient occlusion runs at Ultra (12 taps) and Peak (16), and nowhere below', () => {
+  assert.deepEqual(TIERS.map((t) => t.aoTaps), [0, 0, 0, 0, 12])
+  assert.equal(PEAK.aoTaps, 16)
+  assert.equal(LITE.aoTaps, 0)
 })
 
 test('tiers: High keeps the pre-governor look (bar a thinner far crowd); the lowest drops shadows, post and texture detail', () => {
@@ -125,7 +136,7 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
   assert.ok(!TIERS.includes(LITE), 'no index of the table moves: ?quality=0…4 and the console keep their meaning')
   assert.ok(Object.isFrozen(LITE))
   assert.deepEqual({ ...LITE }, {
-    label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false,
+    label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0,
     crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0,
   })
   // The same rules as the table, one step further down.
@@ -148,17 +159,17 @@ test('tiers: Peak sits above the table like Lite', () => {
   assert.equal(knobsOf(9), PEAK)
   assert.equal(knobsOf(4), TIERS[4])
   assert.deepEqual(PEAK, {
-    label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true,
+    label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, aoTaps: 16,
     crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384,
   })
   // The same rules as the table, one step further up.
   const ultra = TIERS[4]
-  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'shadowMapSize', 'shadowDistance', 'shadowRadius', 'shadowTaps', 'lampLights'] as const) {
+  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'shadowMapSize', 'shadowDistance', 'shadowRadius', 'shadowTaps', 'aoTaps', 'lampLights'] as const) {
     assert.ok(PEAK[k] >= ultra[k], `Peak.${k} >= Ultra.${k}`)
   }
   assert.equal(PEAK.lampLights, 384, 'the whole pool the world builds (liteWiring.test.ts pins FULL_WORLD to it)')
   assert.ok(PEAK.shadows && PEAK.post && PEAK.volumetrics, 'nothing switches off going up')
-  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
+  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.aoTaps / 16 + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(PEAK) > cost(ultra), `Peak is strictly more work than Ultra (${cost(PEAK)} > ${cost(ultra)})`)
   // Ultra's cascades (4096 each: the atlas, two wide, is WebGPU's default largest texture) to Ultra's reach (a farther one
   // would stretch the near cascade, coarser nearest the eye than Ultra), softer.
@@ -875,6 +886,7 @@ function mockTargets(fit?: { maxEdge: number; cssEdge(): number }) {
   const texture: number[] = []
   const lamps: number[] = []
   const taps: number[] = []
+  const ao: number[] = []
   const t = {
     renderer, sun, basePixelRatio: 2,
     setCrowd: (c: (typeof crowd)[number]) => { crowd.push(c); log.push('crowd') },
@@ -883,9 +895,10 @@ function mockTargets(fit?: { maxEdge: number; cssEdge(): number }) {
     setTextureSize: (size: number) => { texture.push(size); log.push(`texture ${size}`) },
     setLampLights: (count: number) => { lamps.push(count); log.push(`lamps ${count}`) },
     setShadowTaps: (count: number) => { taps.push(count); log.push(`taps ${count}`) },
+    setAmbientOcclusion: (count: number) => { ao.push(count); log.push(`ao ${count}`) },
     ...(fit && { fit }),
   }
-  return { t: t as unknown as QualityTargets, renderer, shadow, sun, crowd, post, volumetrics, texture, lamps, taps, log }
+  return { t: t as unknown as QualityTargets, renderer, shadow, sun, crowd, post, volumetrics, texture, lamps, taps, ao, log }
 }
 
 test('applyQuality: first application sets everything and decides the compiled shadow variant', () => {
@@ -900,6 +913,7 @@ test('applyQuality: first application sets everything and decides the compiled s
   assert.deepEqual(m.taps, [8])
   assert.deepEqual(m.post, [true])
   assert.deepEqual(m.volumetrics, [false], 'High: the ray strength is written to 0 once, before the first frame')
+  assert.deepEqual(m.ao, [0], 'High: no occlusion taps, written once before the first frame')
   assert.deepEqual(m.texture, [256])
   assert.deepEqual(m.lamps, [192])
   assert.deepEqual(m.crowd, [{ lodDistance: 30, nearRadius: 22, density: TIERS[3].crowdDensity, maxDistance: 450 }])
@@ -915,6 +929,7 @@ test('applyQuality: first application sets everything and decides the compiled s
   const desktop = mockTargets()
   applyQuality(TIERS[4], desktop.t)
   assert.deepEqual(desktop.volumetrics, [true], 'Ultra starts with the sun shafts on')
+  assert.deepEqual(desktop.ao, [12], 'and the occlusion at twelve taps')
 })
 
 test('applyQuality: only what changed; identical knobs touch nothing', () => {
@@ -924,10 +939,10 @@ test('applyQuality: only what changed; identical knobs touch nothing', () => {
   applyQuality(TIERS[3], m.t, TIERS[3])
   assert.deepEqual(m.log, [])
   applyQuality(TIERS[4], m.t, TIERS[3])
-  assert.deepEqual(m.log, ['mapSize 4096', 'distance 240', 'radius 2.5', 'taps 12', 'volumetrics true', 'lamps 256', 'crowd'], 'Ultra differs from High in shadow texels, reach and softness, sun shafts, lit lamps and crowd only')
+  assert.deepEqual(m.log, ['mapSize 4096', 'distance 240', 'radius 2.5', 'taps 12', 'volumetrics true', 'ao 12', 'lamps 256', 'crowd'], 'Ultra differs from High in shadow texels, reach and softness, sun shafts, occlusion, lit lamps and crowd only')
   m.log.length = 0
   applyQuality(TIERS[3], m.t, TIERS[4])
-  assert.deepEqual(m.log, ['mapSize 2048', 'distance 160', 'radius 2', 'taps 8', 'volumetrics false', 'lamps 192', 'crowd'], 'and back: uniform writes, no post toggle')
+  assert.deepEqual(m.log, ['mapSize 2048', 'distance 160', 'radius 2', 'taps 8', 'volumetrics false', 'ao 0', 'lamps 192', 'crowd'], 'and back: uniform writes, no post toggle')
   m.log.length = 0
   applyQuality(TIERS[2], m.t, TIERS[3])
   assert.deepEqual(m.log, ['pixelRatio 1.7', 'mapSize 1024', 'distance 120', 'radius 1.5', 'taps 5', 'texture 192', 'lamps 128', 'crowd'], 'the operator\'s rule: crowd, lamps, shadows and texture detail go down together')
@@ -941,15 +956,16 @@ test('applyQuality: the sun shafts follow the post cap — Ultra with post cappe
   applyQuality(capped, m.t)
   assert.deepEqual(m.post, [false])
   assert.deepEqual(m.volumetrics, [false])
+  assert.deepEqual(m.ao, [0], 'and the occlusion: no taps under the cap')
   m.log.length = 0
   applyQuality(TIERS[3], m.t, capped)
-  assert.ok(!m.log.some((l) => l.startsWith('volumetrics')), 'off to off: no write')
+  assert.ok(!m.log.some((l) => l.startsWith('volumetrics') || l.startsWith('ao')), 'off to off: no write')
   m.log.length = 0
   applyQuality(TIERS[4], m.t, capped)
-  assert.deepEqual(m.log, ['post true', 'volumetrics true'], 'lifting the cap at Ultra brings the shafts with it')
+  assert.deepEqual(m.log, ['post true', 'volumetrics true', 'ao 12'], 'lifting the cap at Ultra brings the shafts and the occlusion with it')
   m.log.length = 0
   applyQuality(capped, m.t, TIERS[4])
-  assert.deepEqual(m.log, ['post false', 'volumetrics false'])
+  assert.deepEqual(m.log, ['post false', 'volumetrics false', 'ao 0'])
 })
 
 test('applyQuality: shadows off/on never flips the renderer-wide or light cache keys', () => {
@@ -1005,12 +1021,12 @@ test('applyQuality: Ultra to Peak supersamples and widens the sun\'s penumbra on
   applyQuality(TIERS[4], m.t)
   m.log.length = 0
   applyQuality(PEAK, m.t, TIERS[4])
-  assert.deepEqual(m.log, ['pixelRatio 2.5', 'radius 3', 'taps 16', 'lamps 384', 'crowd'], 'Peak differs from Ultra in pixels, shadow softness, lit lamps and detailed bodies only: no new shadow map, no farther reach')
+  assert.deepEqual(m.log, ['pixelRatio 2.5', 'radius 3', 'taps 16', 'ao 16', 'lamps 384', 'crowd'], 'Peak differs from Ultra in pixels, shadow softness, occlusion taps, lit lamps and detailed bodies only: no new shadow map, no farther reach')
   m.log.length = 0
   applyQuality(PEAK, m.t, PEAK)
   assert.deepEqual(m.log, [])
   applyQuality(TIERS[4], m.t, PEAK)
-  assert.deepEqual(m.log, ['pixelRatio 2', 'radius 2.5', 'taps 12', 'lamps 256', 'crowd'], 'and back: uniform writes')
+  assert.deepEqual(m.log, ['pixelRatio 2', 'radius 2.5', 'taps 12', 'ao 12', 'lamps 256', 'crowd'], 'and back: uniform writes')
   assert.equal(m.shadow.mapSize.x, 4096, 'the atlas never moved')
 
   const first = mockTargets()

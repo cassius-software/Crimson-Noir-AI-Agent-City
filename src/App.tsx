@@ -52,7 +52,10 @@ import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
-import { createShopkeeper, progressionPurse } from './07_Execute_Actions/shopkeeper.ts'
+import { HomeCard } from './07_Execute_Actions/HomeCard.tsx'
+import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
+import type { StoreItem } from './07_Execute_Actions/storeCatalog.ts'
+import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -165,6 +168,13 @@ const pageStore = (key: string) => ({
     }
   },
 })
+
+/** The homes the shopkeeper says the player owns, one bit per property index (bit i: deed DEED_BASE + i). */
+function ownedHomes(keeper: Shopkeeper): number {
+  let mask = 0
+  for (let i = 0; i < PROPERTY_KINDS.length; i++) if (keeper.owns(DEED_BASE + i)) mask |= 1 << i
+  return mask
+}
 
 /**
  * The console's network knob over the engine's session controls (NetControls), with the session token kept on this
@@ -459,6 +469,9 @@ function readOptions(): Options {
     // The scene's multisampling (governor.ts msaaCandidate): ?msaa=1 draws 4 samples a pixel on any desktop, ?msaa=0
     // never; absent, the device profile decides. A phone or a lite profile never does. Read once, at boot.
     msaa: q.get('msaa') === '1' ? true : q.get('msaa') === '0' ? false : undefined,
+    // The post chain's ambient occlusion (governor.ts aoCandidate): ?ao=0 leaves it out; absent (or ?ao=1), any desktop
+    // builds it and Ultra and Peak run it. A phone or a lite profile never builds it. Read once, at boot.
+    ao: q.get('ao') === '1' ? true : q.get('ao') === '0' ? false : undefined,
     // The GPUs' memory in GB for the size of model auto gives Ollama (09_Cognition/modelFit.ts): the NixOS launcher adds
     // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it, and it beats the Windows app's reading;
     // absent (and with no reading), auto keeps its usual model.
@@ -642,6 +655,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   // The frame loop's view of it: the open shop's index, or null.
   const storeOpenRef = useRef<number | null>(null)
   const [trying, setTrying] = useState<{ id: number; look: Look } | null>(null)
+  // The homes (01_Initialize_World/properties.ts): the home whose doorstep card is open (its property index, 0 to 6), or
+  // null, and the frame loop's view of it.
+  const [homeOpen, setHomeOpen] = useState<number | null>(null)
+  const homeOpenRef = useRef<number | null>(null)
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
@@ -721,6 +738,33 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const closeStore = useCallback(() => { setStoreOpen(null); setTrying(null) }, [])
   const onTry = useCallback((id: number | null, next: Look | null) => setTrying(id !== null && next ? { id, look: next } : null), [])
   useEffect(() => { engine?.setShowroom(storeOpen) }, [engine, storeOpen])
+  // A home's doorstep card: E, B or the HUD's chip inside a home opens it (the engine's onHome, the chip's tap). The
+  // engine holds the avatar still while it is open, and refuses it unless the avatar stands in that home on foot in a
+  // city that runs: then nothing opens. The effect keeps the engine's hold on the card as it is (a close from anywhere
+  // lets go); a card left open out of its home (a teleport, a new engine) is closed by the HUD's tick below.
+  const openHome = useCallback((home: number) => {
+    // Never under the console: the card would be hidden there while the engine held the avatar still.
+    if (termOpenRef.current || engineRef.current?.setHomeCard(home) !== true) return
+    setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home)
+  }, [])
+  const closeHome = useCallback(() => setHomeOpen(null), [])
+  // The doorstep card is player 1's: in split screen only seat 0's pads press or move through it (input.ts).
+  const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])
+  useEffect(() => { engine?.setHomeCard(homeOpen) }, [engine, homeOpen])
+  // Which homes the player owns, for the HUD's chip and the minimaps: the shopkeeper's every change (a purchase here or
+  // on a doorstep, a reset from the console) is told to the engine.
+  useEffect(() => {
+    if (!engine) return
+    engine.setOwnedHomes(ownedHomes(keeper))
+    return keeper.onChange(() => engine.setOwnedHomes(ownedHomes(keeper)))
+  }, [engine, keeper])
+  // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
+  // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
+  const goHome = useCallback((item: StoreItem) => {
+    const e = engineRef.current
+    if (e && item.kind === 'deed' && !e.goHome(item.index)) e.toast('Home', 'Walk there: a shared room replays your steps')
+  }, [])
+  const whereFor = useCallback((item: StoreItem) => (item.kind === 'deed' ? engine?.homeWhere(item.index) ?? null : null), [engine])
   // The card's changes, worn as the console's are. The card calls this on every swatch and every slider step, so only
   // the first change of a visit that really alters the look earns Architecture and commerce (progress.ts), retried
   // while no action is left. The console's `look` keeps wearLook and earns for itself, so the two never pay twice.
@@ -826,22 +870,27 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const onTermOpen = useCallback((open: boolean) => {
     termOpenRef.current = open
     setTermOpen(open)
-    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); walkRef.current.note('console') }
-    engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null)
+    if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null); walkRef.current.note('console') }
+    engineRef.current?.input.suspend(open || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null)
   }, [])
-  // The walk's look stage hears of the wardrobe card or a shop's card put away after it was open (Done, ×, Escape, the
-  // console taking over, or walking out of the shop): what changed, if anything, is the visitor's choice.
+  // The walk's look stage hears of the wardrobe card, a shop's card or a home's doorstep card put away after it was open
+  // (Done, ×, Escape, the console taking over, or walking out of the shop or the home): what changed or was bought, if
+  // anything, is the visitor's choice.
   const lookWas = useRef(false)
   const storeWas = useRef(false)
+  const homeWas = useRef(false)
   useEffect(() => {
     lookOpenRef.current = lookOpen
     storeOpenRef.current = storeOpen
-    engineRef.current?.input.suspend(lookOpen || storeOpen !== null || termOpenRef.current)
+    homeOpenRef.current = homeOpen
+    engineRef.current?.input.suspend(lookOpen || storeOpen !== null || homeOpen !== null || termOpenRef.current)
     if (lookWas.current && !lookOpen) walkRef.current.note('wardrobe')
     lookWas.current = lookOpen
     if (storeWas.current && storeOpen === null) walkRef.current.note('store')
     storeWas.current = storeOpen !== null
-  }, [lookOpen, storeOpen])
+    if (homeWas.current && homeOpen === null) walkRef.current.note('home')
+    homeWas.current = homeOpen !== null
+  }, [lookOpen, storeOpen, homeOpen])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -911,6 +960,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           // Out of the open shop (a teleport, the console's own moves) or into a headset (the card is not drawn there, and
           // the game's input must not stay suspended): its card goes.
           if (storeOpenRef.current !== null && ((s.customer.shop?.index ?? -1) !== storeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeStore()
+          // Out of the home whose card is open, or into a headset, the doorstep card goes the same way.
+          if (homeOpenRef.current !== null && ((s.customer.home?.index ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()
           shown = true
         }
         throws = 0
@@ -1161,9 +1212,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
           log: () => inPage.log(),
         })
-        if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null) e.input.suspend(true)
-        // E, B or the HUD's chip inside a storefront opens its card (the chip calls openStore itself).
+        if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null) e.input.suspend(true)
+        // E, B or the HUD's chip inside a storefront opens its card (the chip calls openStore itself), and inside a home
+        // its doorstep card (the chip calls openHome itself).
         e.onBrowse = openStore
+        e.onHome = openHome
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         setBridge(Object.freeze({
@@ -1225,6 +1278,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
               shops: () => e.shops.map((s, index) => ({ index, kind: s.kind, name: s.name, door: s.door, fitting: s.fitting })),
               browse: () => e.browse(),
               shopkeeper: keeper,
+              // The homes: where they stand (the arrival is Go home's spot on the sidewalk), and the E key's own path into a
+              // home's doorstep card.
+              homes: () => e.homes.map((h) => ({ home: h.home, kind: h.kind, name: h.name, address: h.address, side: h.side, door: h.door, arrival: h.arrival })),
+              openHome: () => e.openHome(),
               // The network session (10_Network): join a room, leave it, or read it as plain data.
               net: e.net,
               // Headless browsers cannot take pointer lock; this hides the capture hint for screenshots.
@@ -1267,7 +1324,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore])
+  }, [options, plan, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome])
+
+  // The open home's name and street address as the engine knows them (the city's grid, or a region's own streets).
+  const opened = homeOpen !== null ? engine?.homes.find((h) => h.home === homeOpen) : undefined
+  const homeInfo = opened ? { name: opened.name, address: opened.address } : undefined
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1279,8 +1340,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} onBrowse={openStore} />
-      {engine && hud && !termOpen && (
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} />
+      {/* No touch controls under a home's doorstep card: the avatar is held still there, and the card takes the taps. */}
+      {engine && hud && !termOpen && homeOpen === null && (
         <TouchControls
           input={engine.input}
           driving={hud.input.mode === 'vehicle'}
@@ -1304,7 +1366,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           thrown frame is). The look card and the action card step aside the same way below. */}
       {hud && (
         <Concierge
-          visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && locked === null}
+          visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           profile={profile}
           onProfile={setProfile}
           family={hud.supplier.glyphs}
@@ -1321,12 +1383,12 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onOpen={setSloaneOpen}
         />
       )}
-      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe or a
-          shop's card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
+      {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe, a
+          shop's card or a home's doorstep card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
           (from 60 rem her card stands left of it). It has no close: the console's exit program ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
-          visible={veilDone && !lookOpen && storeOpen === null && locked === null}
+          visible={veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           card={fw.card}
           beat={fw.beat}
           exam={fw.exam}
@@ -1363,7 +1425,21 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           mirror={hud.customer.shop?.showroom === true}
           onTry={onTry}
           onWear={wearLook}
+          onGo={goHome}
+          whereFor={whereFor}
           onClose={closeStore}
+          dark={hud.customer.daylight < 0.35}
+        />
+      )}
+      {hud && (
+        <HomeCard
+          visible={homeOpen !== null && veilDone && !termOpen && locked === null}
+          home={homeOpen}
+          keeper={keeper}
+          homeInfo={homeInfo}
+          pad={act === null || !bridge}
+          padFrom={playerOnePad}
+          onClose={closeHome}
           dark={hud.customer.daylight < 0.35}
         />
       )}

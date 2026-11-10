@@ -22,11 +22,13 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, shops, type Shop } from '../01_Initialize_World/storefronts.ts'
+import { DEED_BASE, drawHomes, type Home } from '../01_Initialize_World/properties.ts'
 import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 import type { HudPing, HudProgress, Light, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
+import { credits, itemById } from './storeCatalog.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
 /** A ping's colour by what it asks, on the minimap and the chip. */
@@ -107,7 +109,7 @@ const CALM = mediaStore('(prefers-reduced-motion: reduce)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, onBrowse }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, onBrowse, homes = null, onHome }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -117,6 +119,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   mapLayer?: MapLayer | null
   /** Open the catalogue of the shop the avatar stands in (the chip's tap; E and B go through the engine). */
   onBrowse?: (index: number) => void
+  /** The world's homes (engine.homes), for the procedural city's minimap; a region's map layer draws its own. */
+  homes?: readonly Home[] | null
+  /** Open the doorstep card of the home the avatar stands in, by its property index (the chip's tap; E and B go through the engine). */
+  onHome?: (home: number) => void
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -156,6 +162,18 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     <button type="button" onClick={() => onBrowse?.(shop.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="shop">
       {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
       <span>Browse <bdi className="font-semibold">{shop.name}</bdi></span>
+    </button>
+  )
+  // Inside a home (properties.ts), on foot, its card closed, the console shut: the home's deed for sale with its level
+  // and price, or the player's own home, as a button that opens its card; the key is the shop chip's.
+  const home = c.home
+  const deed = home ? itemById(DEED_BASE + home.index) : null
+  const homeChip = home && !home.card && !driving && !terminalOpen && (
+    <button type="button" onClick={() => onHome?.(home.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="home" data-owned={home.owned || undefined}>
+      {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
+      {home.owned
+        ? <span>Your home: <bdi className="font-semibold">{home.name}</bdi></span>
+        : <span>For sale: <bdi className="font-semibold">{home.name}</bdi>{deed && ` · Level ${deed.level} · ${deed.price === 0 ? 'Free' : credits(deed.price)}`}</span>}
     </button>
   )
   // Desktop, mouse not captured, player not yet under way: how to look around, plus the controls the
@@ -359,7 +377,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
 
           <div className="absolute top-0 left-1/2 flex w-96 -translate-x-1/2 flex-col gap-2">{toasts}</div>
 
-          <Minimap s={s} dark={dark} ui={1} layer={mapLayer} className={`absolute bottom-0 left-0 h-52 w-52 overflow-hidden rounded-full border-4 ${mapRing} shadow-[0_10px_40px_rgba(15,23,42,0.35)]`} />
+          <Minimap s={s} dark={dark} ui={1} layer={mapLayer} homes={homes} className={`absolute bottom-0 left-0 h-52 w-52 overflow-hidden rounded-full border-4 ${mapRing} shadow-[0_10px_40px_rgba(15,23,42,0.35)]`} />
 
           <div className={`absolute right-0 bottom-0 flex items-end gap-4 px-5 py-4 ${panel}`}>
             {driving ? (
@@ -378,7 +396,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             )}
           </div>
 
-          {(enterPrompt || shopChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{enterPrompt}</div>}
+          {(enterPrompt || shopChip || homeChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{homeChip}{enterPrompt}</div>}
           {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. */}
           {captionStrip && <div className="absolute bottom-32 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
@@ -447,18 +465,19 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">
-            <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
+            <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} homes={homes} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
             {driving && !short && speedChip}
           </div>
 
           {/* Bottom-centre, between the thumbs: the capture hint (a small desktop window), the enter
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
-          {(captureHint || enterPrompt || shopChip || (driving && short) || captionStrip) && (
+          {(captureHint || enterPrompt || shopChip || homeChip || (driving && short) || captionStrip) && (
             <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
+              {homeChip}
               {enterPrompt}
               {driving && short && speedChip}
             </div>
@@ -636,7 +655,7 @@ function shopsOf(seed: number): readonly Shop[] {
   return shopsFor.shops
 }
 
-function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: boolean, seed?: number): void {
+function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: boolean, seed?: number, homes: readonly Home[] | null = null, owned = 0): void {
   const { pitch, lotHalf, roadHalf } = CITY
   // The lake beyond the seawall.
   ctx.fillStyle = dark ? '#0c2a3a' : '#9cc9dd'
@@ -659,6 +678,8 @@ function cityMap(ctx: CanvasRenderingContext2D, x: number, z: number, dark: bool
   if (seed !== undefined) drawRooms(ctx, roomsOf(seed), x, z, dark)
   // The storefronts, the same way in the shops' own colour (storefronts.ts drawShops).
   if (seed !== undefined) drawShops(ctx, shopsOf(seed), x, z, dark)
+  // The homes, the same way: the player's own in gold, the rest (on sale) in violet (properties.ts drawHomes).
+  if (homes) drawHomes(ctx, homes, x, z, dark, owned)
   // Roads.
   ctx.fillStyle = dark ? '#334155' : '#ffffff'
   for (let i = 0; i <= CITY.blocks; i++) {
@@ -674,7 +695,7 @@ export type MapLayer = (ctx: CanvasRenderingContext2D, x: number, z: number, rad
  * Radar minimap, heading-up: rotated so the view direction points to the top. The canvas is always
  * 208 px; `ui` scales the arrow and the north marker so they stay legible when CSS shows it smaller.
  */
-function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; dark: boolean; ui: number; className: string; layer?: MapLayer | null }) {
+function Minimap({ s, dark, ui, className, layer = null, homes = null }: { s: SipocSnapshot; dark: boolean; ui: number; className: string; layer?: MapLayer | null; homes?: readonly Home[] | null }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = ref.current
@@ -692,7 +713,7 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
     ctx.scale(scale, scale)
     ctx.translate(-x, -z)
     if (layer) layer(ctx, x, z, 150, dark)
-    else cityMap(ctx, x, z, dark, s.process.seed)
+    else cityMap(ctx, x, z, dark, s.process.seed, homes, s.customer.ownedHomes ?? 0)
     // Vehicles.
     for (const car of s.map) {
       if (Math.abs(car.x - x) > 150 || Math.abs(car.z - z) > 150) continue
@@ -749,6 +770,6 @@ function Minimap({ s, dark, ui, className, layer = null }: { s: SipocSnapshot; d
     ctx.textAlign = 'center'
     ctx.fillText('N', 0, -size / 2 + 18 * ui)
     ctx.restore()
-  }, [s, dark, ui, layer])
+  }, [s, dark, ui, layer, homes])
   return <canvas ref={ref} width={208} height={208} className={className} />
 }
