@@ -181,31 +181,43 @@ function nonFinite(v: AuditVehicle): string {
 const m3 = (x: number): string => `${x.toFixed(3)}m`
 
 /**
- * The scheduled craft stream (the train sets, drones and planes on the corridors of 06_Make_Decisions/tracks.ts,
- * packed by 07_Execute_Actions/trackFleet.ts) as this audit reads it: `stride` floats per craft, named in `fields`
- * (simProtocol.ts TRACK_POSE; ring0.test.ts pins the two equal), the kind codes of `kinds` (simProtocol.ts
- * TRACK_KINDS), and per kind the floor of its corridor, m over the street plane: a train's deck, the lower drone
- * altitude, the planes' altitude, the lowest roof a VTOL pad is set on (tracks.ts TRACKS, pinned equal by
- * ring0.test.ts). A craft has no body, no driver
- * and no Bouncer: what keeps it from ever reaching a person is that its corridor is in the air (tracks.test.ts
- * INV-1), so one below its floor, or of a kind with no corridor (a car: NaN), has left the proof and halts the realm.
+ * The scheduled craft stream (the train sets, drones, planes, VTOLs and ferries on the corridors of
+ * 06_Make_Decisions/tracks.ts, packed by 07_Execute_Actions/trackFleet.ts) as this audit reads it: `stride` floats per
+ * craft, named in `fields` (simProtocol.ts TRACK_POSE; ring0.test.ts pins the two equal), the kind codes of `kinds`
+ * (simProtocol.ts TRACK_KINDS), and per kind the floor of its corridor, m over the street plane: a train's deck, the
+ * lower drone altitude, the planes' altitude, the lowest roof a VTOL pad is set on, a ferry's waterline (tracks.ts
+ * TRACKS, pinned equal by ring0.test.ts). A craft has no body, no driver and no Bouncer: what keeps it from ever
+ * reaching a person is that its corridor is in the air (tracks.test.ts INV-1), so one below its floor, or of a kind
+ * with no corridor (a car: NaN), has left the proof and halts the realm. A ferry's corridor is not in the air but on
+ * the lake, so its kind also has a `shore`: the least z any part of its hull may reach, m, the end of the city's pier
+ * (01_Initialize_World city.ts LAKE: the furthest anything built reaches into the lake, 80 m beyond the seawall), and
+ * its hull's `halfLength` and `halfBeam` (tracks.ts TRACKS.ferry), so the reach is read at the craft's heading: a hull
+ * reaching the land side of the shore has left the proof too (NaN: a kind with no shore, and no hull read). Ferries
+ * sail on the city's lake only (tracks.ts buildTrackNetwork; a region's street window gets a network of its own,
+ * 01_Initialize_World region/transit.ts windowNetwork, with no ferry), so the shore is the city's.
  */
 export const CRAFT = Object.freeze({
   stride: 8,
   fields: Object.freeze(['x', 'y', 'z', 'heading', 'kind', 'track', 's', 'speed'] as const),
   y: 1,
+  z: 2,
+  heading: 3,
   kind: 4,
-  kinds: Object.freeze(['car', 'train', 'drone', 'plane', 'vtol'] as const),
-  floor: Object.freeze([NaN, 9, 40, 400, 24] as const),
+  kinds: Object.freeze(['car', 'train', 'drone', 'plane', 'vtol', 'ferry'] as const),
+  floor: Object.freeze([NaN, 9, 40, 400, 24, 0.05] as const),
+  shore: Object.freeze([NaN, NaN, NaN, NaN, NaN, 746] as const),
+  halfLength: Object.freeze([0, 0, 0, 0, 0, 13] as const),
+  halfBeam: Object.freeze([0, 0, 0, 0, 0, 4.5] as const),
 } as const)
 
 /**
  * Audits one craft buffer, allocating only for a violation: every value finite, every craft of a kind that has a
- * corridor and at or above its floor, and the buffer a whole number of craft. The first fault found is returned
- * (NON_FINITE or OFF_CORRIDOR); null when the buffer is clean. It only ever halts: nothing is corrected.
+ * corridor and at or above its floor, every hull of a kind with a shore on the lake side of it, and the buffer a whole
+ * number of craft. The first fault found is returned (NON_FINITE or OFF_CORRIDOR); null when the buffer is clean. It
+ * only ever halts: nothing is corrected.
  */
 export function auditCraft(craft: Float32Array): Violation | null {
-  const { stride, fields, y: Y, kind: K, kinds, floor } = CRAFT
+  const { stride, fields, y: Y, z: Z, heading: H, kind: K, kinds, floor, shore, halfLength, halfBeam } = CRAFT
   const n = Math.floor(craft.length / stride)
   if (craft.length !== n * stride) return { code: 'OFF_CORRIDOR', subject: 'craft buffer', detail: `${craft.length} floats is not a whole number of craft` }
   for (let i = 0; i < n; i++) {
@@ -219,6 +231,12 @@ export function auditCraft(craft: Float32Array): Violation | null {
     if (Number.isNaN(fl)) return { code: 'OFF_CORRIDOR', subject: `craft ${i}`, detail: `kind ${kind} (${kinds[kind] ?? 'unknown'}) has no corridor` }
     const y = craft[o + Y]
     if (y < fl) return { code: 'OFF_CORRIDOR', subject: `${kinds[kind]} craft ${i}`, detail: `y=${y.toFixed(2)}m below its ${fl}m floor` }
+    const edge = shore[kind]
+    if (Number.isNaN(edge)) continue
+    // The hull's reach towards the shore at its heading (forward (sin h, cos h), across (−cos h, sin h)).
+    const h = craft[o + H]
+    const near = craft[o + Z] - Math.abs(Math.cos(h)) * halfLength[kind] - Math.abs(Math.sin(h)) * halfBeam[kind]
+    if (near < edge) return { code: 'OFF_CORRIDOR', subject: `${kinds[kind]} craft ${i}`, detail: `hull reaches z=${near.toFixed(2)}m, on the land side of its ${edge}m shore` }
   }
   return null
 }

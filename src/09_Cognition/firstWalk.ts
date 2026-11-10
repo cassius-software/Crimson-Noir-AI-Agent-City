@@ -229,7 +229,7 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
     case 'fleet':
       return { text: `See the cars? Find one that is parked, stand right by its door until a prompt appears, and ${pressHow(o, o.words.interact)} to get in. Drive a little; the car will not let you hurt anyone.`, keep: [o.words.interact] }
     case 'work':
-      return { text: 'Now go indoors. Six workplaces have open doors on the street: a robotics lab, a boardroom, a warehouse, a clinic, the legal chambers and a control room. Step through any one of them.', keep: ['door'] }
+      return { text: 'Now go indoors. Sixteen workplaces have open doors on the street, from a robotics lab, a warehouse and a kitchen to a greenhouse, a control tower and a server vault. Step through any one of them.', keep: ['door'] }
     case 'style': {
       const shops = o.city.stores === true ? ` Or walk into one of the shops on the street and ${browseHow(o)} to try its lines on; trying on is free.` : ''
       const homes = o.city.homes === true ? ` Or step into a home for sale, a glass room on its own lot, and ${doorstepHow(o)} to read its deed; the smallest is free to claim.` : ''
@@ -317,7 +317,7 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
     ])
     case 'work': return Object.freeze([
       'Why are there workplaces at all? Because agents need somewhere to do a job, and a job needs a bench, a table or a bed to stand by; the rooms give every task a place.',
-      'Why six kinds? Because six trades cover most of what an agent is asked for: build, decide, move, heal, judge, watch.',
+      'Why sixteen kinds? Because sixteen trades cover most of what an agent is asked for: build, store, compute, route, watch, cook, make, model, move, grow, test, respond, settle, heal, power and command.',
       'Why can the HUD count who is at work? Because every station knows whether someone stands at it, and that number is a reading like any other, the same one the console shows.',
       'Why mention robots in here? Because a robot’s joints can drive a body in this city and a body here can lead a robot’s joints, over the joint bridge; the city is where the simulated and the real meet.',
       'Why does it matter to you? Because what you ask the city to do ends up at a station like these, done by someone, and you can walk in and watch.',

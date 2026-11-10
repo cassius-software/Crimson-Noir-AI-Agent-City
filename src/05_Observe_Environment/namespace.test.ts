@@ -55,7 +55,7 @@ function sample(): SipocSnapshot {
       x: 10.5, z: -20.25, heading: 1.5, signalEW: 'green', signalNS: 'red', signalRemaining: 12,
     },
     experience: { sessionSeconds: 600, longFrames: 3, distanceWalked: 1500.5, distanceDriven: 3200 },
-    map: [{ x: 1, z: 2, heading: 0.5, player: true }, { x: -3.5, z: 4, heading: 3, player: false }],
+    map: [{ x: 1, z: 2, heading: 0.5, player: true, parked: false }, { x: -3.5, z: 4, heading: 3, player: false, parked: false }],
     toasts: [],
   }
   ;(s.output as Record<string, unknown>)[RAIN_KEY] = true
@@ -481,7 +481,7 @@ test('publishSnapshot: a non-finite reading is skipped and counted refused; the 
 test('publishSnapshot: at most 64 vehicles, zero-padded to three digits', () => {
   const bus = new TopicBus()
   const s = sample()
-  s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0 }))
+  s.map = Array.from({ length: 70 }, (_, i) => ({ x: i, z: -i, heading: 0, player: i === 0, parked: false }))
   assert.equal(publishSnapshot(bus, s, PHYSICS, 1), 86 - 8 + 64 * 4)
   assert.equal(bus.topics(`${P}Traffic/Cell/+/x`).length, 64)
   assert.equal(value(bus, `${P}Traffic/Cell/Vehicle063/x`), 63)

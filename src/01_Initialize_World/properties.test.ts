@@ -110,7 +110,7 @@ test('seven lots of their own for every seed, never a workplace\'s or a shop\'s,
   }
   // The seed the design was drawn on.
   const l1337 = propertyLots(1337, generateBuildings(1337, { homes: false })).map((l) => [l.k, l.m, l.side])
-  assert.deepEqual(l1337.map(([k, m]) => [k, m]), [[8, 11], [4, 3], [7, 14], [9, 7], [11, 14], [14, 14], [7, 7]])
+  assert.deepEqual(l1337.map(([k, m]) => [k, m]), [[8, 11], [4, 3], [7, 14], [7, 9], [11, 14], [14, 14], [7, 7]])
   assert.deepEqual([l1337[0][2], l1337[1][2], l1337[2][2]], [0, 3, 0], 'the loft faces south onto the loop\'s street')
   assert.ok((tally.get('loft 8,11') ?? 0) > 50, 'the loft stands by the south platform in most seeds')
 })

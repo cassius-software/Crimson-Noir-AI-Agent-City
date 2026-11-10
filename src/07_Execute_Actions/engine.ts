@@ -46,8 +46,8 @@ import { RegionPlaces, hollowLots, layoutOf, regionPhysics } from '../01_Initial
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { doorDir, doorFront, drawRooms, stationTable, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
-import { doorDir, doorFront, drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -119,6 +119,9 @@ import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type HardwareReport, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
+
+/** POSE.mode of a parked car (simProtocol.ts MODES): nobody at its wheel, the kind of car a player may take. */
+const PARKED = MODES.indexOf('parked')
 
 /**
  * Where Engine.create has got to, for the boot veil's 'Still starting' line (bootFailure.ts BOOT_STAGE): a player who
@@ -538,9 +541,12 @@ export class Engine {
   /**
    * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots of its street
    * window (region/workplaces.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
-   * work in them.
+   * work in them; the console's `rooms` lists them; `workplaceTable` and `stationTable` hand them to a swarm.
    */
   private readonly rooms: readonly Workplace[]
+  /** The rooms as the flat tables (interiors.ts workplaceTable, stationTable), built on the first read and kept: the rooms never change while the engine lives. */
+  private roomTable: Float32Array | null = null
+  private roomStations: Float32Array | null = null
   /**
    * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed, or a generated region's
    * from its pack (region/shops.ts; none in a surveyed region).
@@ -972,7 +978,7 @@ export class Engine {
       // The scene pass's samples (governor.ts msaaCandidate), decided once here: every scene pipeline three builds keys on
       // them, so no tier change may move them. Only where the post chain can run (not split screen, lite or ?post=0).
       let sceneSamples: 0 | 4 = options.post && msaaCandidate(hints, profile, requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
-      // A generated region's indoor workplaces (region/workplaces.ts): up to six lots of its street window near the start,
+      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
       // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
       // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
       // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
@@ -1174,6 +1180,20 @@ export class Engine {
     } finally {
       document.removeEventListener('visibilitychange', onVisibility)
     }
+  }
+
+  /**
+   * The workplaces as a flat table for a swarm that dispatches by slot (interiors.ts WORKPLACE_TABLE: one row of eight
+   * floats per kind slot, kind −1 where this world has no such room), computed once; read from the page as
+   * window.__SIM__.engine.workplaceTable (with ?debug). The same array every time: a reader must not write it.
+   */
+  get workplaceTable(): Float32Array {
+    return (this.roomTable ??= workplaceTable(this.rooms))
+  }
+
+  /** Every room's stations as a flat table (interiors.ts STATION_TABLE: ROOM.slots × ROOM.stations rows of x, y, z, yaw), computed once. */
+  get stationTable(): Float32Array {
+    return (this.roomStations ??= stationTable(this.rooms))
   }
 
   /** The minimap's layer in a region (its water, buildings and streets near a point, then its workplaces, shops and homes
@@ -1904,6 +1924,9 @@ export class Engine {
       } else if (ev.e === 'exited') {
         this.pulseUntil = 0
         this.toast('Vehicle parked', 'Hazards on, doors locked.')
+      } else if (ev.e === 'rejected' && ev.reason.startsWith('that car')) {
+        // A door tried on a car with a driver (an AI's, another player's): said, never taken from them.
+        this.toast('Vehicle', ev.reason)
       }
     }
     const stepDt = Math.max(0, s.simTime - prev.simTime)
@@ -2664,12 +2687,14 @@ export class Engine {
     return out
   }
 
-  /** Index of the car nearest (x, z) within `range` in the newest state, or −1. */
-  private nearestCar(x: number, z: number, range: number): number {
+  /** Index of the car nearest (x, z) within `range` in the newest state, or −1; with `parked`, among the parked cars
+   *  only: the kind the realm lets a player take (simCore.ts #interact), so the door prompt and a headset's pinch agree. */
+  private nearestCar(x: number, z: number, range: number, parked = false): number {
     const p = this.sim.state.poses
     let best = -1, bestD = range
     for (let i = 0; i < this.sim.meta.count; i++) {
       const o = i * POSE.stride
+      if (parked && p[o + POSE.mode] !== PARKED) continue
       const d = Math.hypot(p[o + POSE.x] - x, p[o + POSE.z] - z)
       if (d < bestD) { bestD = d; best = i }
     }
@@ -2751,7 +2776,7 @@ export class Engine {
     const map = []
     for (let i = 0; i < this.sim.meta.count; i++) {
       const q = i * POSE.stride
-      map.push({ x: p[q + POSE.x], z: p[q + POSE.z], heading: p[q + POSE.heading], player: i === st.driving })
+      map.push({ x: p[q + POSE.x], z: p[q + POSE.z], heading: p[q + POSE.heading], player: i === st.driving, parked: p[q + POSE.mode] === PARKED })
     }
     const snap: SipocSnapshot = {
       supplier: {
@@ -2762,7 +2787,7 @@ export class Engine {
         xr: { state: this.xr.state, detail: this.xrLine() },
         robots: this.robots.summary(),
       },
-      input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0 },
+      input: { mode: driving ? 'vehicle' : 'foot', nearVehicle: !driving && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0 },
       process: {
         // A surveyed region has no pedestrians of its own (the procedural crowd it keeps is hidden, kilometres away); a
         // generated one walks its street window.
@@ -2865,6 +2890,9 @@ export class Engine {
       // pair() must stay synchronous up to requestDevice/requestPort: the Enter keydown is the user gesture.
       hal: Object.freeze({ summary: () => hal.summary(), devices: () => hal.devices(), pair: (k: 'hid' | 'serial' | 'bluetooth') => hal.pair(k), get shellHid() { return hal.shellHid } }),
       adapter: () => this.adapter,
+      // The indoor workplaces as rows (the city's sixteen, a region's lots, none in a surveyed region): plain data, the
+      // slot being the kind's index, as workplaceTable counts them.
+      rooms: () => this.rooms.map((r) => ({ slot: WORKPLACE_KINDS.indexOf(r.kind), kind: r.kind, name: r.name, k: r.k, m: r.m, doorX: r.door.x, doorZ: r.door.z, stations: r.stations.length })),
       // The rooms' stations, read-only, for `robot cell`: kind id, index in the room, where to stand and which way to
       // face (the surveyed region has no rooms: an empty list; Lakefront Metro has its own).
       roomStations: () => this.rooms.flatMap((r) => r.stations.map((s, i) => ({ kind: r.kind as string, station: i, x: s.x, z: s.z, yaw: s.yaw }))),
@@ -3228,7 +3256,7 @@ export class Engine {
       select: () => {
         // A pinch (or a hand's select) with no controller: the interaction at hand, else a ping where the head looks.
         const st = this.sim.state
-        const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0
+        const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0
         this.input.press(near ? 'interact' : 'ping')
       },
       started: (mode, blend) => {

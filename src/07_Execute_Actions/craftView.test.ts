@@ -4,11 +4,11 @@
 /**
  * Why does this file exist? It proves the craft renderer in Node, with no GPU: every body it draws lies inside the
  * envelope the track network proves clear for its kind (a train car within the set's width and height over the deck,
- * a drone within its half-metre, a plane within its length and height, a VTOL within its box, a pad within the roof
- * it is set on); a view over the city's network has one slot per craft of the realm's stream and refuses another
- * count; and a stream placed on it puts every train car on the deck along the loop, eight metres apart, every drone at
- * its corridor's altitude, every plane banked into the racetrack's turns, every VTOL where the stream has it, and the
- * pads on their roofs. The shaders themselves are built by shadowShaders.test.ts with the rest of the city's.
+ * a drone within its half-metre, a plane within its length and height, a VTOL within its box, a ferry within its hull,
+ * a pad within the roof it is set on); a view over the city's network has one slot per craft of the realm's stream and
+ * refuses another count; and a stream placed on it puts every train car on the deck along the loop, eight metres
+ * apart, every drone at its corridor's altitude, every plane banked into the racetrack's turns, every VTOL and ferry
+ * where the stream has it (a ferry upright on the water), and the pads on their roofs. The shaders themselves are built by shadowShaders.test.ts with the rest of the city's.
  * What breaks if it is removed? A body could grow past the envelope Ring-0 and INV-1 guarantee, or the stream's numbers
  * could land on the wrong bodies, and only a device would show it.
  */
@@ -32,7 +32,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { CraftView, droneGeometry, padGeometry, planeGeometry, trainCarGeometry, vtolGeometry } = await import('./craftView.ts')
+const { CraftView, droneGeometry, ferryGeometry, padGeometry, planeGeometry, trainCarGeometry, vtolGeometry } = await import('./craftView.ts')
 
 const SEED = 1337
 const boxes = generateBuildings(SEED).map((b) => b.box)
@@ -67,8 +67,27 @@ test('every body lies inside the envelope its kind is proved clear by', () => {
   assert.ok(-vtol.low <= TRACKS.vtol.hover, 'a VTOL sat at its hover stands over the roof')
   const pad = extent(padGeometry())
   assert.ok(pad.r <= TRACKS.vtol.padHalf && pad.low >= -0.15 - 1e-6 && pad.high <= 0.16, `pad ${JSON.stringify(pad)}`)
-  for (const g of [trainCarGeometry(), droneGeometry(), planeGeometry(), vtolGeometry(), padGeometry()]) {
+  const ferry = extent(ferryGeometry())
+  const F = TRACKS.ferry
+  assert.ok(ferry.x <= F.halfLength && ferry.z <= F.halfBeam && -ferry.low <= F.draft && ferry.high <= F.height, `ferry ${JSON.stringify(ferry)}`)
+  assert.ok(ferry.low < 0 && ferry.high > 0, 'a ferry floats: its hull under the waterline, its cabins over it')
+  for (const g of [trainCarGeometry(), droneGeometry(), planeGeometry(), vtolGeometry(), padGeometry(), ferryGeometry()]) {
     assert.ok(g.getAttribute('part') && g.getAttribute('normal') && g.index, 'a part per vertex, normals and an index')
+    g.dispose()
+  }
+})
+
+test('the red port light is on the left of every craft that carries one and the green starboard light on the right', () => {
+  // The view's yaw puts a body's +z on the right of travel (checked on the stream below), so port is −z.
+  const PORT = 2, STARBOARD = 3
+  for (const [name, g] of [['drone', droneGeometry()], ['plane', planeGeometry()], ['ferry', ferryGeometry()]] as const) {
+    const part = g.getAttribute('part'), p = g.getAttribute('position')
+    let port = 0, starboard = 0
+    for (let i = 0; i < p.count; i++) {
+      if (part.getX(i) === PORT) { port++; assert.ok(p.getZ(i) < 0, `${name}: the port light on the left (−z)`) }
+      if (part.getX(i) === STARBOARD) { starboard++; assert.ok(p.getZ(i) > 0, `${name}: the starboard light on the right (+z)`) }
+    }
+    assert.ok(port > 0 && starboard > 0, `${name} carries both side lights`)
     g.dispose()
   }
 })
@@ -83,6 +102,8 @@ test('a view over the city network: a slot per craft of the stream, the structur
   assert.equal(view.planes.count, of('plane'))
   assert.equal(view.vtols.count, of('vtol'))
   assert.ok(view.vtols.count >= 2, 'the city has VTOLs')
+  assert.equal(view.ferries.count, of('ferry'))
+  assert.equal(view.ferries.count, TRACKS.ferry.count, 'the city has its ferries')
   const routes = network.tracks.filter((t) => t.kind === 'vtol')
   assert.equal(view.pads.count, routes.length * TRACKS.vtol.pads)
   const m = new Matrix4(), p = new Vector3(), q = new Quaternion(), s = new Vector3()
@@ -102,7 +123,7 @@ test('a view over the city network: a slot per craft of the stream, the structur
   assert.equal(p.y, 0, 'a column stands on the ground')
   const deck = extent(view.guideway.geometry as BufferGeometry)
   assert.ok(deck.low >= train.y - 0.6 - 1e-6 && deck.high <= train.y + 4.7, 'the deck lies under the rail top, the canopies over the envelope')
-  assert.deepEqual(view.meshes.map((o) => o.name), ['Trains', 'Drones', 'Planes', 'VTOLs', 'VTOLPads', 'Guideway', 'GuidewayColumns', 'GuidewayBeams'])
+  assert.deepEqual(view.meshes.map((o) => o.name), ['Trains', 'Drones', 'Planes', 'VTOLs', 'VTOLPads', 'Ferries', 'Guideway', 'GuidewayColumns', 'GuidewayBeams'])
   for (const mesh of view.meshes) assert.ok(mesh.castShadow === mesh.receiveShadow)
   assert.throws(() => new CraftView(network, fleet.count + 1, night, null), /craft/)
   view.dispose()
@@ -131,7 +152,7 @@ test('a stream placed on the view: train cars on the deck along the loop 8 m apa
           assert.ok(Math.abs(fwd.x - Math.sin(want.heading)) < 1e-4 && Math.abs(fwd.z - Math.cos(want.heading)) < 1e-4 && Math.abs(fwd.y) < 1e-6, 'a car faces along the loop')
         }
       } else {
-        const mesh = kind === 'drone' ? view.drones : kind === 'plane' ? view.planes : view.vtols
+        const mesh = kind === 'drone' ? view.drones : kind === 'plane' ? view.planes : kind === 'ferry' ? view.ferries : view.vtols
         mesh.getMatrixAt(view.slotOf[i], m)
         m.decompose(p, q, s)
         assert.ok(Math.abs(p.x - buf[o]) < 1e-3 && Math.abs(p.y - buf[o + 1]) < 1e-3 && Math.abs(p.z - buf[o + 2]) < 1e-3, `${kind} ${i} where the stream has it`)
@@ -141,9 +162,13 @@ test('a stream placed on the view: train cars on the deck along the loop 8 m apa
         assert.ok(Math.abs(fwd.x / flat - Math.sin(h)) < 1e-4 && Math.abs(fwd.z / flat - Math.cos(h)) < 1e-4, `${kind} ${i} faces its heading`)
         if (kind === 'drone') assert.ok(fwd.y < 0 && fwd.y > -0.2, 'a drone under way noses down a little')
         if (kind === 'vtol') assert.ok(fwd.y <= 1e-9 && fwd.y >= -0.2 && (buf[o + TRACK_POSE.speed] > 0 || Math.abs(fwd.y) < 1e-9), 'a VTOL noses down with its speed, upright on a pad')
+        // The body's +z is the right of travel: the starboard light's side (and the plane's right wing).
+        right.set(0, 0, 1).applyQuaternion(q)
+        const across = Math.hypot(right.x, right.z)
+        assert.ok(Math.abs(right.x / across + Math.cos(h)) < 1e-4 && Math.abs(right.z / across - Math.sin(h)) < 1e-4, `${kind} ${i}: its +z side is the right of travel`)
+        if (kind === 'ferry') assert.ok(Math.abs(fwd.y) < 1e-9 && Math.abs(right.y) < 1e-9 && Math.abs(p.y - TRACKS.ferry.water) < 1e-6, 'a ferry sits level on the water, neither pitched nor rolled')
         if (kind === 'plane') {
-          // Rolled into a right turn (positive sweep) with the right wing (−z) down; level on the straights.
-          right.set(0, 0, -1).applyQuaternion(q)
+          // Rolled into a right turn (positive sweep) with the right wing (+z) down; level on the straights.
           const piece = pieceAt(planeTrack, buf[o + TRACK_POSE.s])
           if (piece.kind === 'arc') {
             const want = Math.atan((TRACKS.plane.speed ** 2) / (9.81 * piece.radius))

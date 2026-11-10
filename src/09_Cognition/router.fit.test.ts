@@ -121,7 +121,7 @@ const memory = (json: string | null = null) => {
 }
 const FAST: Timeouts = { firstMs: 50, stallMs: 50 }
 type Fake = ReturnType<typeof machine>
-const make = (m: Fake, o: { vram?: string | null; store?: ReturnType<typeof memory>; timeouts?: Timeouts | undefined; lookMs?: number; inPage?: () => Mind } = {}): MindRouter =>
+const make = (m: Fake, o: { vram?: string | null; appVram?: () => number | null; store?: ReturnType<typeof memory>; timeouts?: Timeouts | undefined; lookMs?: number; inPage?: () => Mind } = {}): MindRouter =>
   createMindRouter({ fetch: m.f, lookMs: 50, timeouts: FAST, ...o })
 
 const req = (): AnswerRequest => ({ tethers: [{ agent: 7, serial: 1, skills: ['Rust'] }], prompt: 'hi', signal: new AbortController().signal })
@@ -223,6 +223,32 @@ test("a model whose weights alone exceed the figure is never chosen while a smal
   assert.equal(keptOf(store).picked, 'qwen3:235b')
   assert.equal(fitOf(store)?.usual, 'deepseek-r1:671b')
   assert.equal(r.settings().fit, "318.5 GB given by the page's address (vram=); deepseek-r1:671b has 376.3 GB of weights alone, more than the GPU's 318.5 GB; auto answers with qwen3:235b, the largest smaller one Ollama lists (ask model <name> keeps another); ask vram auto measures afresh")
+})
+
+test('the Windows app\'s figure: used when neither the console nor the address gives one, read at each ask (so a reading that arrives late counts), and never kept', async () => {
+  const m = machine({ models: [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)] })
+  const store = memory()
+  // Nothing read yet (the shell has not answered): today's pick, and no fit row.
+  let reading: number | null = null
+  const r = make(m, { appVram: () => reading, store })
+  assert.equal(await ask(r), 'deepseek-r1:671b says hi')
+  assert.equal(r.settings().fit, undefined)
+  // The reading arrives: the next ask is sized by it, and the row says where it came from.
+  reading = 318.5
+  assert.equal(await ask(r), 'qwen3:235b says hi')
+  await settle()
+  assert.equal(r.settings().fit, "318.5 GB read from the GPUs by the Windows app; deepseek-r1:671b has 376.3 GB of weights alone, more than the GPU's 318.5 GB; auto answers with qwen3:235b, the largest smaller one Ollama lists (ask model <name> keeps another); ask vram auto measures afresh")
+  assert.equal(fitOf(store)?.vram, null, 'the app\'s figure is read afresh each visit, never kept as the console\'s')
+  // ask vram auto names it; ask vram 0 turns it off; a console figure beats it.
+  assert.equal(r.setVram('auto'), 'auto: 318.5 GB read from the GPUs by the Windows app; what was measured before is forgotten')
+  assert.equal(r.setVram('0'), "0: auto sizes nothing by the GPU, whatever the page's address or the Windows app says; what was measured before is forgotten (ask vram auto hands it back)")
+  assert.equal(await ask(r), 'deepseek-r1:671b says hi')
+  r.setVram('8')
+  assert.match(r.settings().fit ?? '', /^8\.0 GB given at the console \(ask vram\); /)
+  // The address beats it.
+  const a = make(machine({ models: [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9)] }), { vram: '500', appVram: () => 318.5 })
+  assert.equal(await ask(a), 'deepseek-r1:671b says hi', '500 GB from the address: the 404 GB model fits by its weights')
+  assert.match(a.settings().fit ?? '', /^500\.0 GB given by the page's address \(vram=\); /)
 })
 
 test('need is the largest loaded-to-weights ratio this server measured', async () => {
@@ -623,9 +649,9 @@ test("ask vram: 0 sizes nothing whatever the address says; auto hands back to th
   assert.equal(await ask(r), 'qwen3:235b says hi')
   await settle()
   // 0 at the console: off, whatever the address says, and the model auto moved goes back at once.
-  assert.equal(r.setVram('0'), "0: auto sizes nothing by the GPU, whatever the page's address says; what was measured before is forgotten (ask vram auto hands it back)")
+  assert.equal(r.setVram('0'), "0: auto sizes nothing by the GPU, whatever the page's address or the Windows app says; what was measured before is forgotten (ask vram auto hands it back)")
   assert.equal(r.settings().model, 'deepseek-r1:671b')
-  assert.equal(r.settings().fit, "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address)")
+  assert.equal(r.settings().fit, "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address or the Windows app)")
   const before = looks(m)
   assert.equal(await ask(r), 'deepseek-r1:671b says hi')
   await settle()

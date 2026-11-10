@@ -3,23 +3,25 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the realm's fleet of scheduled craft: the train sets on the elevated loop, the
- * drones on their corridors, the planes on the racetrack and the VTOLs between their rooftop pads, all of the fixed
- * track network (06_Make_Decisions/tracks.ts). Each is a pure function of the realm's own clock (scheduledPose), so a step only evaluates the
- * timetable at simTime and packs the result as plain numbers (simProtocol.ts TRACK_POSE) for the page to draw and
- * for the Ring-0 audit to read before it leaves. No craft has a Rapier body, a driver or a Bouncer ruling: INV-1
- * (tracks.test.ts) proves their corridors never meet the street, the sidewalk or a car lane (a VTOL's lowest point is
- * a roof 24 m up), so none can reach a person, and the audit holds them to that (every value finite, every craft at
- * or above its corridor's floor). The craft never interact: a set's place depends on t alone, never on another
- * set's. Nothing here is loaded, and nothing returned is a reference into it.
- * What breaks if it is removed? The realm has no trains, drones, planes or VTOLs to report, and the sky and the
- * elevated loop stay empty.
+ * drones on their corridors, the planes on the racetrack, the VTOLs between their rooftop pads and the ferries on the
+ * lake, all of the fixed track network (06_Make_Decisions/tracks.ts). Each is a pure function of the realm's own
+ * clock (scheduledPose), so a step only evaluates the timetable at simTime and packs the result as plain numbers
+ * (simProtocol.ts TRACK_POSE) for the page to draw and for the Ring-0 audit to read before it leaves. No craft has a
+ * Rapier body, a driver or a Bouncer ruling: INV-1 (tracks.test.ts) proves their corridors never meet the street,
+ * the sidewalk or a car lane (a VTOL's lowest point is a roof 24 m up; a ferry's hull stays on the lake, a berth off
+ * the pier and the seawall), so none can reach a person, and the audit holds them to that (every value finite, every
+ * craft at or above its corridor's floor, a ferry's hull beyond its shore). The craft never interact: a set's place
+ * depends on t alone, never on another set's. Nothing here is loaded, and nothing returned is a reference into it.
+ * What breaks if it is removed? The realm has no trains, drones, planes, VTOLs or ferries to report, and the sky,
+ * the elevated loop and the lake stay empty.
  */
 import { lapSeconds, poseAt, projectOnto, scheduledCount, scheduledPose, vtolSchedule, wrap, type Track, type TrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { TRACK_KINDS, TRACK_POSE } from './simProtocol.ts'
 
 /**
- * Half the window of the central difference a train's speed is read from, s. Its timetable is continuous in speed
- * (comfortable acceleration between stations), so the chord over 2h is within a·h/2 = 0.025 m/s of the true speed.
+ * Half the window of the central difference a train's (or a ferry's) speed is read from, s. Its timetable is
+ * continuous in speed (comfortable acceleration between stations), so the chord over 2h is within a·h/2 = 0.025 m/s
+ * of the true speed (a ferry's gentler rate: 0.002 m/s).
  */
 const SPEED_WINDOW = 1 / 60
 
@@ -77,7 +79,7 @@ export class TrackFleet {
       const o = i * TRACK_POSE.stride
       const p = scheduledPose(track, c.index, c.count, t)
       let s: number, speed: number
-      if (track.kind === 'train') {
+      if (track.kind === 'train' || track.kind === 'ferry') {
         // The timetable's arc length is not exported: project the pose back onto the loop from the last one (a
         // stale hint, as after a long idle, falls back to the global search), and read the speed off the chord.
         s = projectOnto(track, p.x, p.z, hints[i]).s

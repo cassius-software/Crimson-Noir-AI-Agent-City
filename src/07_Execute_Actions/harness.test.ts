@@ -243,7 +243,9 @@ class FakeCity implements SimControls {
     },
     intent: (i: number, throttle: number, brake: number, steer: number) => {
       const c = this.car(i)
-      if (c.mode === 'ai') c.mode = 'player'
+      // As the realm (simCore.ts `intent`): a scripted intent takes a parked car; a car with a driver is not taken.
+      if (c.mode === 'ai') throw new Error(`intent: car ${i} has a driver (park it first: setMode parked)`)
+      if (c.mode === 'parked') c.mode = 'player'
       c.cmd.throttle = clamp(throttle, -1, 1)
       c.cmd.brake = clamp(brake, 0, KERNEL.maxBrake)
       c.cmd.steer = steer
@@ -366,13 +368,14 @@ test('brake-distance: a stop from 40 km/h fits the envelope; weak brakes fail; t
   assert.match(r6.lines[0], /^car 6 reached/)
   assert.deepEqual(some.vehicles.state(7), { x: 5 * CITY.pitch - TRAFFIC.laneOffset, z: 140, heading: 0, speed: 0, mode: 'parked', suv: false })
   assert.equal(some.vehicles.state(6).mode, 'ai')
-  // Only parked cars left: one is handed to its driver for the trial (a parked car ignores intents) and parked again after.
+  assert.deepEqual(some.calls.filter((c) => c.startsWith('vehicles.setMode')), ['vehicles.setMode 6 parked', 'vehicles.setMode 6 ai'], 'an AI car is parked for the trial (a scripted intent takes a parked car) and handed back to its driver after')
+  // Only parked cars left: one is taken as it stands (no mode to change first) and parked again after.
   const lot = new FakeCity()
   lot.cars.forEach(park)
   const r7 = await runHarness('brake-distance', lot, lot.sleep)
   assert.ok(r7.pass, r7.lines.join('\n'))
   assert.match(r7.lines[0], /^car 7 reached 4[01] km\/h/)
-  assert.deepEqual(lot.calls.filter((c) => c.startsWith('vehicles.setMode')), ['vehicles.setMode 7 ai', 'vehicles.setMode 7 parked'])
+  assert.deepEqual(lot.calls.filter((c) => c.startsWith('vehicles.setMode')), ['vehicles.setMode 7 parked'])
   assert.ok(lot.cars.every((c) => c.mode === 'parked'))
 })
 

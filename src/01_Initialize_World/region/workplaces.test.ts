@@ -4,10 +4,10 @@
 /**
  * Why does this file exist? Lakefront Metro's workplaces are chosen from its pack (region/workplaces.ts) and walked to
  * on a street window that has dropped streets, dead ends and water. These tests hold the choice to its promises on the
- * real generated map (three seeds, the five zones each): at most six lots of the window, each with its doorway on a
+ * real generated map (three seeds, the five zones each): at most sixteen lots of the window, each with its doorway on a
  * two-way street with a sidewalk whose corner the visitor can walk to, never The Spire's lot or a lot under water, the
- * kinds in order, the same lots every time and the pack untouched, and seed 1337's metropolis on its six transit-hub
- * lots. They hold the route table too, through a mirror of the shader's commute (crowd.wgsl commuteCorner): from every
+ * kinds in order, the same lots every time and the pack untouched, and seed 1337's metropolis on its twelve transit-hub
+ * lots first. They hold the route table too, through a mirror of the shader's commute (crowd.wgsl commuteCorner): from every
  * corner the visitor's can reach, a commuter arrives at the workplace's corner within twice the streets between plus
  * two, on streets that exist; while the greedy walk the city uses, with its dice, strands someone for good. And they
  * hold the hollowing (regionWorld.ts hollowLots): a copy of the pack with only the chosen lots' buildings put out of
@@ -76,10 +76,11 @@ const pointIn = (x: number, z: number, ring: readonly (readonly [number, number]
   return c
 }
 
-test('six lots of the window, each with its doorway on a two-way street the visitor can walk to; never The Spire\'s lot or the lake; the kinds in order; the same every time; the pack untouched', () => {
+test('sixteen lots of the window, each with its doorway on a two-way street the visitor can walk to; never The Spire\'s lot or the lake; the kinds in order; the same every time; the pack untouched', () => {
   for (const w of WINDOWS) {
     const at = `seed ${w.seed} ${w.zone}`
     const { lots, g } = w
+    // Every window of the three seeds has at least sixteen candidates (fewer would be legal: the slots would stay empty).
     assert.equal(lots.length, ROOM.slots, `${at}: ${lots.length} lots`)
     assert.equal(new Set(lots.map((l) => `${l.k},${l.m}`)).size, lots.length, `${at}: every lot once`)
     assert.deepEqual(lots.map((l) => l.kind), WORKPLACE_KINDS.slice(0, lots.length), `${at}: the kinds in order`)
@@ -101,15 +102,17 @@ test('six lots of the window, each with its doorway on a two-way street the visi
   assert.notDeepEqual(WINDOWS[0].lots, WINDOWS[5].lots, 'another seed, other doorways')
 })
 
-test('seed 1337\'s metropolis puts its six workplaces on the transit-hub lots: a low podium over the lot carrying a tower', () => {
+test('seed 1337\'s metropolis puts its first twelve workplaces on the transit-hub lots (a low podium over the lot carrying a tower), the first six where the six rooms stood, and the last four on the next tier', () => {
   const w = WINDOWS.find((x) => x.seed === 1337 && x.zone === 'metropolis')!
   // Map lots: the engine's lot indices less the region corner's 50 blocks (regionWorld.ts REGION_CORNER, 2000 m).
-  assert.deepEqual(w.lots.map((l) => `${l.k - 50},${l.m - 50}`).sort(), ['30,16', '30,17', '31,17', '32,17', '33,16', '33,17'])
+  const at = (l: { k: number; m: number }) => `${l.k - 50},${l.m - 50}`
+  assert.deepEqual(w.lots.slice(0, 6).map(at).sort(), ['30,16', '30,17', '31,17', '32,17', '33,16', '33,17'], 'the six rooms\' lots, first')
+  assert.deepEqual(w.lots.map(at).sort(), ['30,14', '30,15', '30,16', '30,17', '31,14', '31,17', '32,14', '32,17', '32,22', '32,23', '33,14', '33,15', '33,16', '33,17', '33,22', '33,24'])
   const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
-  for (const l of w.lots) {
+  w.lots.forEach((l, n) => {
     const { i, j } = local(w, l)
-    assert.ok(podiumOf(on[j * w.g.blocks + i]), `lot ${l.k},${l.m} is a hub`)
-  }
+    assert.equal(podiumOf(on[j * w.g.blocks + i]) !== null, n < 12, `lot ${l.k},${l.m} (pick ${n}) ${n < 12 ? 'is' : 'is not'} a hub`)
+  })
 })
 
 // ---------------------------------------------------------------- the commute, mirrored from crowd.wgsl
@@ -172,7 +175,7 @@ function hops(g: StreetGrid, k: number, m: number): Map<string, number> {
 test('the route table: from every corner the visitor can reach, a commuter arrives at the workplace\'s corner within twice the streets between plus two, on streets that exist', () => {
   assert.equal(ROUTE_LINES, 17)
   assert.equal(ROUTE_ROOM_VEC4S, 10, 'a room\'s 289 nibbles in whole vec4u rows: 37 words, 10 rows')
-  assert.equal(ROUTE_VEC4S, 60)
+  assert.equal(ROUTE_VEC4S, 160, 'sixteen slots of ten rows')
   let walks = 0
   for (const w of WINDOWS) {
     const { g } = w
@@ -285,11 +288,12 @@ test('each room\'s ceiling slab carries its lot\'s podium in the podium\'s finis
     carried += above
   }
   assert.ok(carried > 0, 'something stood above a slab')
-  // Seed 1337's metropolis: six hubs, each slab its two-floor podium, each tower carried from it.
+  // Seed 1337's metropolis: twelve hubs, each slab its two-floor podium, each tower carried from it; then four lots of
+  // the next tier, whose slab is the room's least (4.5 m) and carries nothing.
   const m = WINDOWS.find((x) => x.seed === 1337 && x.zone === 'metropolis')!
   const h = hollowLots(m.pack, m.layout, m.lots)
-  assert.deepEqual(h.rooms.map((r) => r.shell[5].box[4]), Array(6).fill(6.6))
-  assert.equal(h.plan.length - h.rooms.reduce((n, r) => n + r.shell.length + r.furniture.length, 0), 6, 'a tower on each')
+  assert.deepEqual(h.rooms.map((r) => r.shell[5].box[4]), [...Array(12).fill(6.6), ...Array(4).fill(ROOM.height + 0.3)])
+  assert.equal(h.plan.length - h.rooms.reduce((n, r) => n + r.shell.length + r.furniture.length, 0), 12, 'a tower on each hub')
 })
 
 test('a building on a chosen lot that is not one plain rectangle is hidden and not carried: a turned square, a courtyard', () => {

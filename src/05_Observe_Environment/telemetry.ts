@@ -109,7 +109,7 @@ export interface HudProgress {
   cueAge: number
 }
 
-export interface MapCar { x: number; z: number; heading: number; player: boolean }
+export interface MapCar { x: number; z: number; heading: number; player: boolean; /** Nobody at its wheel: a car to take. */ parked: boolean }
 
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
 export type GlyphFamily = 'keyboard' | 'abxy' | 'bayx' | 'numbered' | 'generic' | 'touch'

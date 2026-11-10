@@ -95,7 +95,7 @@ test('the fleet: a dissolve amount per vehicle staged and scattered to each kind
   assert.equal(view.dissolve.bodies.count, 3, 'one staged amount per vehicle')
   assert.equal(wheels.count, 12, 'wheel w of car i is slot i * 4 + w')
   assert.ok([...(view.dissolve.bodies.array as Float32Array)].every((v) => v === 0), 'every car solid at boot')
-  assert.equal(view.bodies.length, 8, 'one mesh per kind')
+  assert.equal(view.bodies.length, 11, 'one mesh per kind')
   const sedans = view.bodies[0].geometry.getAttribute('dissolve') as InstancedBufferAttribute
   const suvs = view.bodies[5].geometry.getAttribute('dissolve') as InstancedBufferAttribute
   assert.equal(sedans.count, 2)

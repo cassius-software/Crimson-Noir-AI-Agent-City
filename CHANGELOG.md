@@ -15,6 +15,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sixteen indoor workplaces, in a fixed order that is their id** (`src/01_Initialize_World/interiors.ts`). The six
+  rooms become sixteen, `WORKPLACE_KINDS` in this order: roboticsLab, warehouse, serverVault, metroOps, controlTower,
+  kitchen, microFab, twinStudio, fleetBay, greenhouse, acousticsLab, responseCenter, clearingFloor, gaitLab,
+  microgrid, consoleDeck (the Sanctuary, a Ring-0 executive console deck: a room, unrelated to the First Law's
+  `sanctuary.ts`). The six first rooms keep their furniture and stations to the centimetre under their new ids
+  (telemetryCommand is controlTower, the boardroom twinStudio, the legal chambers clearingFloor, the clinic gaitLab);
+  the ten new layouts (hot and cold aisle racks and coolant manifolds, signal boards and switch consoles, induction
+  islands and prep arms and a plating conveyor, CNC cells and wafer handlers and the gantry's rail, lift platforms
+  and a battery rack, grow towers and dosing pumps, an anechoic chamber with shaker tables, a weather grid and
+  dispatch terminals, relay cabinets and inverters, a mainframe plinth and the console ring) keep every rule the
+  crowd's mirror tests hold a layout to, written down over the layouts (station rows at v = ±4.6, the aisles clear,
+  nothing past u = 5, a back-wall piece shallow where a bay row starts). `ROOM.slots` is 16: the crowd shader's
+  `Params` grows from 5,600 to 11,360 bytes (sixteen rooms of 416, the route table to 160 rows), still far inside the
+  65,536 a uniform binding has; the workday deals 128 stations with the same stride 29 (coprime with 128 as it was
+  with 48), one worker in about 205 pedestrians instead of one in 77, never fewer than one in eight. The procedural
+  city picks sixteen lots on a 4 × 4 grid over the inner downtown (`workplaceLots`; every downtown lot has a podium to
+  hollow); Lakefront Metro's `regionWorkplaceLots` returns up to sixteen, and every window of the three test seeds
+  yields sixteen (seed 1337's metropolis: its twelve transit hubs first, the six old lots among them, then four more).
+  Two flat tables for a swarm that dispatches by slot, pure and documented in the manual: `workplaceTable` (16 rows of
+  `kind, x, y, z, doorX, doorZ, doorYaw, stations`, kind −1 where a map has no such room) and `stationTable` (128 rows
+  of `x, y, z, yaw`, row r × 8 + s the crowd's own station slot), with frozen `WORKPLACE_TABLE` and `STATION_TABLE`
+  layouts; the engine exposes both as getters computed once (`window.__SIM__.engine.workplaceTable`,
+  `.stationTable`). The console gains `rooms` (`terminal/commands.ts`, `bridge.ts` `RoomRow`): slot, kind, lot,
+  doorway, stations and name, in the city and in Lakefront Metro, `none` on the surveyed region, refused in the
+  console-alone shell. The first walk's indoor stage says sixteen workplaces and its why says sixteen trades (`firstWalk.ts`). The worker's refusal says "one of the sixteen kinds"; the browser smoke pins sixteen rooms on
+  the desktop and sixteen drawn and sixteen in the crowd on `?map=lakefront`. Tests: `interiors.test.ts` (every
+  invariant over the sixteen layouts and four seeds, the six old rooms' geometry pinned piece by piece, the tables),
+  `region/workplaces.test.ts` (sixteen lots on every window, seed 1337's picks), `commands.test.ts` (`rooms`), and the
+  pins in `simCore`, `regionPhysics`, `crowdCompute` and `intent` (`wgslHost` reads the room's size from the source). The passer-by mirror in
+  `interiors.test.ts` now judges "already inside" as the shader does (strictly within the walls), since a lot's
+  position can round the doorway band's outer edge a hair either way. Unverified from the cloud (no GPU): the ten new
+  rooms, their furniture and the workday on screen; the shader is validated by `naga` and run on the CPU by the
+  `wgslHost` tests as before.
 - **Sixteen trouser cuts, sixteen skirt cuts and twenty lower garments.** The cloth word's next four bits carry the
   lower garment's cut (`LOOK_FIELD.bottomCut`, word 5 bits 12 to 15; `humanoid.ts` TROUSER_CUT, SKIRT_CUT). The three
   trouser bodies share one list: straight (0, every pair as it was, so every older look and code reads back unchanged
@@ -524,6 +557,49 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   guardrails, the deeds only at the keys and the boarding, one listener taken back on a halt and with the city). How the
   chime sounds, how the pad's tap and the phone's vibration feel on real devices, the chip's glow in a real browser, and
   the plan's under-16 ms budget are unverified. An action card's cost in pips is not in this change.
+- **A box truck, an automated guided vehicle and a counterbalance forklift.** Three working kinds join
+  `VEHICLE_KINDS` (`src/07_Execute_Actions/car.ts`), eleven in all: a cab-over box truck on the heavy class, and a
+  cab-less guided vehicle and a forklift under its overhead guard on the light class, the last two drawn smaller than
+  the sedan's box, with an amber beacon on the guided vehicle's sensor dome and on the forklift's guard. Each has its
+  own extruded profile and glass (`fleetView.ts` `PROFILES`; the driver's eye looks out through the guided vehicle's
+  sensor band and the forklift's open cab and mast), inside its class's box plus the dissolve's reach (`vehicleKinds.test.ts`), and a name the conduct test
+  reads. The first eight kinds keep their indices and the heavy share of the fleet's draw is unchanged, so every slot
+  keeps its chassis class; a slot's kind within its class can change. Manual: Vehicles.
+- **Two harbour ferries on the lake.** A new craft kind, `ferry` (`src/06_Make_Decisions/tracks.ts` `ferryRoutes`,
+  `TRACKS.ferry`; `simProtocol.ts` `TRACK_KINDS`): two 26 m ferries share one 1.8 km route on the lake, calling
+  alongside the pier head for 30 s with the hull 2 m off the pier's end, then sailing at up to 6 m/s, half a lap
+  apart, on the train's timetable machinery with their own acceleration and dwell. `craftView.ts` draws them
+  (`ferryGeometry`, a pointed hull with the crimson stripe, cabin, wheelhouse, side lights and a mast beacon). The
+  proof is the seawall, not height: `tracks.test.ts` measures the hull (`hullGap`, a rectangle, not a disc) every
+  half metre against every box of four seeds (closest approach: the 2 m berth) and keeps every hull corner 2 m off
+  the seawall; `trackFleet.test.ts` reads the hull's clearance off the stream for ten minutes (more than a lap) and
+  the ferries on the water, on their route and clean for the audit for two hours of realm time. The Ring-0 craft
+  audit gains the kind's floor (its waterline) and a shore, the pier's end (`CRAFT.shore`, 746 m), read with the
+  hull at its heading (`CRAFT.halfLength`, `CRAFT.halfBeam`): a ferry whose hull reaches the land side of it halts
+  the realm, and every pose of the route keeps its hull more than a metre clear (`ring0.test.ts`). Nobody boards a
+  craft yet. Manual: Vehicles.
+- **Kerbside bays, and the only car you may take.** One car in four of a fleet is seated, empty, in a kerbside bay
+  (`src/07_Execute_Actions/parking.ts` `BAYS`, `bayNear`, `bayClear`; `carRig.ts` `planFleet` takes the city's
+  boxes): the last quarter of the plan, so every earlier slot is as it was and the seed's stream is not drawn from,
+  on the sidewalk's inner strip 5.2 m from the street's centreline on the right-hand side of travel, 15 m or 25 m
+  along a block side (clear of the lamps and the tree), facing along the lane, and only where the lot's boxes leave a
+  car's footprint clear; a region's street window has its own origin. The traffic passes a bay without queueing
+  behind it or finding it with its bonnet rays, and a pedestrian walks round it. The minimap draws a bay car green
+  (`MapCar.parked`). A bay car a player leaves stands where it was left; when a network room starts, when the room's
+  held cars overflow, or when the room puts a driver out, it goes back to its bay (`Fleet.rebay`), so the page and
+  the room expect the same car in the same place with no further state. `parking.test.ts` checks the plan, every
+  bay's place and clearance, the realm's traffic flowing past the bays for 1,800 ticks (no follower stands beside a
+  bay for more than 3 s), and the door on both kinds of car. Manual: Vehicles.
+- **The contact policy as one rule.** Six collision layers (`src/02_Define_The_Rules/collision.ts` `LAYER`:
+  terrain, structure, player, agent, vehicle, prop) and one branchless rule, `canCollide`: an actor (a player, an
+  agent, a vehicle) meets the solid world (terrain, a structure) and nothing else, −1 or 0, the same either way
+  round. The Rapier words that already carried the policy (each collider class's body kind, sensor flag and
+  interaction groups, now listed in `COLLIDERS`) are checked against the rule pair by pair, and the sources that
+  set them are pinned, so a group that drifts from the rule fails the suite. `wallContact.test.ts` drives a sedan and
+  an SUV into a wall at the speed cap in real Rapier: a dead stop inside 0.15 m, upright, nothing added to or taken
+  from the world, no First-Law ruling, and away again in reverse; a corner hit slides along the wall. `WALL_CONTACT`
+  (restitution 0, friction 0.4) is on every chassis. There is no damage model, and the suite checks that none is
+  named in any vehicle, physics or collision source. Manual: Ghost-mode collision.
 - **Every street lamp near you is a real light, and every workplace has a lit ceiling.** The city's night lighting
   moves to three r186's clustered (Forward+) lighting (`src/01_Initialize_World/cityLights.ts`): the lamps' point
   lights live in a texture, a compute pass bins them once a render into a 48 × 27 × 24 grid of view-frustum cells,
@@ -777,7 +853,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   adapter.
 - **Unarmed by construction, pinned.** `conduct.test.ts` now proves the city carries no weapon: the wardrobe's five
   optional pieces (a tie, a bag, a cup, long hair, glasses), the ragdoll's eleven body segments and ten joints, the
-  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eight vehicle kinds
+  crowd's eight activities, the seven action verbs with their rules and hints, the skills and the eleven vehicle kinds
   name none; the agents' mesh descriptors, rigs, shaders and action tables carry no weapon word in code or comment; an
   `ACTION` line that asks for one is refused before any model is involved; and the asset gate's four forbidden words
   are all in the conduct lexicon, so an ask about one is not engaged with. A new optional piece or activity has to be
@@ -1127,6 +1203,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **A car in traffic is nobody's to take.** The only car a player may enter is a parked one: the realm's door
+  (`simCore.ts` `#interact` asks the fleet for the nearest parked car; a car in traffic within reach gets the toast
+  "that car has a driver", or "that car is being driven"), the console's `intent` (refused on an AI car: park it
+  first with `setMode parked`), and a network room's garage (`garage.node.ts` `whyNotEnter`: a car the room does not
+  hold must be a bay car standing in its bay within 0.5 m, turned at most 0.1 rad, upright, at a car's height and at
+  rest; a lane car is refused, `enter: car N has a driver`). The earlier door for a moving lane car (on its ring's
+  lane within 1 m, facing along it, at the ring's speed or under) is gone; the fleet is still measured against that
+  envelope in `garage.node.test.ts`. The room tests (`mirror.node.test.ts`, `authority.node.test.ts`,
+  `parity.fuzz.test.ts`, `simPlayers.test.ts`, `simCore.test.ts`) take bay cars now. Manual: Vehicles, Networking.
+- **Players pass through players.** The avatar's controller skipped dynamic bodies and sensors and now skips
+  kinematic bodies too (`src/07_Execute_Actions/player.ts` `PASS_VEHICLES`), as the one contact rule says of two
+  players, so in a room two people at the same spot never block each other; a wall still stops both. A chassis
+  carries `WALL_CONTACT` instead of Rapier's default contact (friction 0.4 where it was 0.5; restitution 0 as
+  before, now stated and tested: a bounce would live in the solver's warm-start, which a car rebuilt from a room
+  correction cannot copy, so the room's replay would part from the page's at every wall, `mirror.node.test.ts`).
 - **The web copy on GitHub Pages follows main by itself.** `.github/workflows/web.yml` ran only when someone started
   it, so the public copy fell behind main (it last showed the Oct 31 build). It now also runs each time ci passes on
   main (a `workflow_run` trigger on ci, main only): it builds the commit ci tested and publishes it only while that
@@ -1135,7 +1226,6 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   copy never steps back to an older build or shows a commit ci has not passed. A failed or cancelled ci, or one for a
   pull request (a fork's branch named main included), publishes nothing. Run workflow still publishes main by hand.
   The trigger takes effect once the file is on main; what it does there is not yet shown by a run.
-
 - **The physics realm's step is a quarter to a third faster: the street furniture is a hundred compound sensors,
   not 4,599 colliders.** rapier.js walks every collider in the world through a WebAssembly-to-JavaScript callback at
   the end of each `world.step()`, so the city's lamps, trees and signal poles (sensors nothing in the realm touches or
@@ -1215,8 +1305,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the same model. The 2 GB reserve, 5 tokens a second over 32 tokens, two visits, 200 MB a second and the launcher's 4 GB
   floor are starting values, not measured. CI proves it in Node against a fake Ollama and a stubbed `nvidia-smi`, and
   in the browser smoke on a software adapter (the row and the commands); no real GPU ran it. Nothing grows on a phone,
-  and on Windows the figure has to be typed (`ask vram`) for now; on NixOS the launcher also counts an integrated
-  Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes nothing). Nothing is downloaded, and
+  and in a browser on Windows the figure has to be typed (`ask vram`; the Windows app reads it, below); on NixOS the
+  launcher also counts an integrated Radeon given 4 GB or more by its firmware (not tried on one; `-- vram=0` sizes
+  nothing). Nothing is downloaded, and
   the page still addresses only this machine.
 - **auto finds llama-server, vLLM and SGLang on their own default ports.** With the three usual addresses, provider
   `auto` now asks llama-server's new default `http://localhost:9931` (since build b11521), vLLM's
@@ -1230,6 +1321,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Node against fake servers by port, and in the browser smoke (a fake llama-server answering as `localhost:9931`); no
   real llama-server, vLLM or SGLang ran it. The addresses are on the same loopback host, so the air gap is
   unchanged.
+- **The Windows app reads the GPUs' memory itself.** Auto's Ollama model no longer needs `ask vram` typed in the
+  Windows app: as the city starts, the app asks DXGI for each hardware adapter's dedicated memory (one new command,
+  `gpu_memory` in `src-tauri/src/gpu.rs`, read only) and the page sums the adapters of 3.5 GB or more, rounded down to
+  0.1 GB, as the NixOS launcher sums. DXGI reads a card a little under its size (one 4 GB card is reported at
+  3,949 MB), hence the floor under the launcher's 4 GB: a 4 GB card counts on both. The console's figure and `vram=`
+  in the address still beat it, `ask vram 0` turns it off, and with no adapter counted (an integrated GPU's usual
+  share) nothing changes. An integrated Radeon given 3.5 GB or more is counted, and a data-centre card in TCC or MCDM
+  mode is not seen (type `ask vram` there). CI proves the page's side in Node (the rule, the order of figures, a fake
+  shell that answers oddly, refuses or hangs, and the launcher's sum and rounding) and compiles the app on Windows; no
+  Windows machine ran it.
 
 ### Removed
 
@@ -1240,6 +1341,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **Craft show red to port and green to starboard, and planes bank into their turns.** A craft's body has its right
+  side on +z under the view's yaw (`craftView.ts`), but the drone's and the plane's red light sat on +z, and a plane
+  rolled its outer wing down through a turn. The side lights move to their own sides (the new ferry's too), the bank
+  lowers the inner wing, and `craftView.test.ts` now pins both: every side light on its side of the body, every
+  craft's +z on the right of travel as the stream places it, and the plane's right wing down in a right turn. The
+  drawing only; no craft moves differently.
+- **A scrape along a lot wall replays to the bit.** The city's lots are boxes that overlap (a plinth, and buildings
+  raised from the street inside it), so a street face was two solid faces in one plane up to the plinth's top. A
+  chassis working its corner along it got two identical contacts, and how Rapier split the impulse between them
+  depended on which other bodies shared the broad phase's cell (the traffic beside a kerbside bay): the page's car
+  and a network room's replay of it parted by one float32 step a frame (15 µm at 150 m, 13 mm after ten seconds),
+  and the room put an honest driver back every frame of the scrape; a steady slide along the doubled face also paid
+  two frictions for one wall. `src/07_Execute_Actions/physics.ts` `solidBoxes` clips a box standing inside another
+  to the part above it before the colliders are built, on the page and in the room alike (a box wholly inside is
+  left out; boxes on top of, beside or straddling another are as they were; what is drawn is unchanged).
+  `solidBoxes.test.ts` pins the clip, counts the city's clipped boxes (hundreds a seed) and replays the scrape beside
+  thirty-five cars to the bit; `authority.node.test.ts` and `parity.fuzz.test.ts` drive bay cars along their lot
+  walls and are never put back. Manual: Ghost-mode collision.
 - **The crowd's shadow pass ran the whole paint.** three multiplies a shadow's alpha by the material's colour alpha
   (`Renderer._getShadowNodes` reads `colorNode.a`), so every body's shadow-map fragment stage carried the look's whole
   paint, the weaves, cuts, hair, skin and faces, about 138,000 characters per body, run for every shadow-map texel a

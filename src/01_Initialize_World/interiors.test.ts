@@ -5,7 +5,7 @@
  * Why does this file exist? The indoor workplaces are read by four things that must agree: the city's boxes (what
  * Rapier and the renderer take), the flow field (what a summoned person routes by), the crowd shader's uniform and
  * containment (what the workday walks), and the spatial audit (what counts as "inside a lot"). These tests hold the
- * geometry to its promises: six rooms on inner downtown lots from the seed alone; a doorway the flow field routes
+ * geometry to its promises: sixteen rooms on inner downtown lots from the seed alone; a doorway the flow field routes
  * through to every station and back out; a containment that lets nobody through a wall or a piece of furniture over
  * five thousand steps of five hundred jostled walkers commuting in and out; the uniform laid out as the shader reads
  * it; and the workday's dice at the share they promise.
@@ -23,19 +23,19 @@ import { PERSON } from '../07_Execute_Actions/simProtocol.ts'
 import { Physics } from '../07_Execute_Actions/physics.ts'
 import { Avatar } from '../07_Execute_Actions/player.ts'
 import {
-  ROOM, ROOM_FLOATS, ROOMS_FLOATS, WORK, WORKPLACE_KINDS, workOneIn, containInRoom, crossesGlass, doorDir, doorFront, drawRooms, glassPanes, hitsBox, insideRoom, onDuty,
-  packRooms, penetrates, routeIn, targetCorner, toLocal, toWorld, workerSlot, workplaceLots, workplaces, workplacesAt, type Workplace,
+  ROOM, ROOM_FLOATS, ROOMS_FLOATS, STATION_TABLE, WORK, WORKPLACE_KINDS, WORKPLACE_TABLE, workOneIn, containInRoom, crossesGlass, doorDir, doorFront, drawRooms, glassPanes, hitsBox,
+  insideRoom, onDuty, packRooms, penetrates, routeIn, stationTable, targetCorner, toLocal, toWorld, workerSlot, workplaceLots, workplaceTable, workplaces, workplacesAt, type Workplace,
 } from './interiors.ts'
 
 const SEEDS = [1337, 7, 42, 2026]
 const h = CITY.lotHalf
 
-test('six rooms, one per kind, on six different inner downtown lots, from the seed alone', () => {
+test('sixteen rooms, one per kind, on sixteen different inner downtown lots, from the seed alone', () => {
   for (const seed of SEEDS) {
     const lots = workplaceLots(seed)
     assert.deepEqual(lots.map((l) => l.kind), [...WORKPLACE_KINDS])
     assert.deepEqual(workplaceLots(seed), lots)
-    assert.equal(new Set(lots.map((l) => `${l.k},${l.m}`)).size, 6, 'six different lots')
+    assert.equal(new Set(lots.map((l) => `${l.k},${l.m}`)).size, ROOM.slots, 'sixteen different lots')
     for (const { k, m, side } of lots) {
       assert.equal(districtOfLot(k, m), 'downtown')
       assert.ok(k >= HERITAGE_COLUMNS && k < CITY.blocks && m >= 0 && m < CITY.blocks - 2, `${seed}: lot ${k},${m} is an inner downtown lot`)
@@ -45,13 +45,13 @@ test('six rooms, one per kind, on six different inner downtown lots, from the se
   assert.notDeepEqual(workplaceLots(1337), workplaceLots(7), 'another seed, other lots')
 })
 
-test('the rooms are made from their lots alone: the seed picks the lots, workplacesAt builds the same six from them', () => {
+test('the rooms are made from their lots alone: the seed picks the lots, workplacesAt builds the same sixteen from them', () => {
   for (let seed = 0; seed <= 20; seed++) assert.deepEqual(workplacesAt(workplaceLots(seed)), workplaces(seed), `seed ${seed}`)
   // Lots handed in from elsewhere (a region's, region/workplaces.ts) give rooms on those lots, in that order, and fewer
-  // than six lots give fewer rooms.
-  const lots = [{ kind: 'clinic', k: 61, m: 57, side: 2 }, { kind: 'boardroom', k: 58, m: 60, side: 0 }] as const
+  // than sixteen lots give fewer rooms.
+  const lots = [{ kind: 'gaitLab', k: 61, m: 57, side: 2 }, { kind: 'twinStudio', k: 58, m: 60, side: 0 }] as const
   const rooms = workplacesAt(lots, () => 9)
-  assert.deepEqual(rooms.map((r) => [r.kind, r.k, r.m, r.side, r.cx, r.cz]), [['clinic', 61, 57, 2, 61.5 * CITY.pitch, 57.5 * CITY.pitch], ['boardroom', 58, 60, 0, 58.5 * CITY.pitch, 60.5 * CITY.pitch]])
+  assert.deepEqual(rooms.map((r) => [r.kind, r.k, r.m, r.side, r.cx, r.cz]), [['gaitLab', 61, 57, 2, 61.5 * CITY.pitch, 57.5 * CITY.pitch], ['twinStudio', 58, 60, 0, 58.5 * CITY.pitch, 60.5 * CITY.pitch]])
   assert.ok(rooms.every((r) => r.shell[5].box[4] === 9), 'the ceiling slab rises to the podium it was given')
 })
 
@@ -163,7 +163,7 @@ test('the city is hollowed: each workplace lot has its glass walls, the doorway 
         assert.ok(!mine.some(({ box }) => box[1] < 1.8 && box[4] > 0.3 && px > box[0] && px < box[3] && pz > box[2] && pz < box[5]), `${room.kind}: the doorway at ${door.x},${door.z} is open`)
       }
     }
-    // Every other box of the seed's city is the one generateBuildings gave before hollowing: the same count outside the six lots.
+    // Every other box of the seed's city is the one generateBuildings gave before hollowing: the same count outside the sixteen lots.
     const outside = list.filter(({ box }) => !rooms.some((r) => Math.abs((box[0] + box[3]) / 2 - r.cx) < h && Math.abs((box[2] + box[5]) / 2 - r.cz) < h))
     assert.ok(outside.length > 2000)
   }
@@ -234,19 +234,34 @@ function walk(room: Workplace, me: { x: number; z: number }, to: { x: number; z:
   const pace = 1.3
   const vx = (dist > 1e-6 ? (dx / dist) * pace : 0) + jostle.x, vz = (dist > 1e-6 ? (dz / dist) * pace : 0) + jostle.z
   const next = { x: me.x + vx * dt, z: me.z + vz * dt }
-  const held = mayEnter || insideRoom(room, me.x, me.z) ? containInRoom(room, me, next) : containOut(room, me, next)
+  // Already inside as the shader judges it (crowd.wgsl contain: insideRoom, strictly within the walls; the doorway's
+  // band is the street's), never by the band's outer edge, which a lot's position can round a hair either way.
+  const l = toLocal(room, me.x, me.z)
+  const inside = Math.max(Math.abs(l.u), Math.abs(l.v)) < h - ROOM.wall
+  const held = mayEnter || inside ? containInRoom(room, me, next) : containOut(room, me, next)
   return held
 }
-/** A passer-by's containment: the doorway is shut to them (crowd.wgsl contain with mayEnter false, outside). */
+/**
+ * A passer-by's containment (crowd.wgsl containRoom with mayEnter false): the doorway is shut to them, so a step
+ * landing in the walls' band is put back on the side it came from (clamped inside from inside, out to the lot's pad
+ * along the shorter axis from outside), and then the furniture holds as it does for anyone.
+ */
 function containOut(room: Workplace, from: { x: number; z: number }, to: { x: number; z: number }): { x: number; z: number } {
-  const { u, v } = toLocal(room, to.x, to.z)
-  const limOut = h + ROOM.pad
-  if (Math.max(Math.abs(u), Math.abs(v)) >= limOut) return to
-  // Outside the lot's pad on the shorter axis, as pushOut does.
-  const uu = limOut - Math.abs(u) < limOut - Math.abs(v) ? (u >= 0 ? limOut : -limOut) : u
-  const vv = uu === u ? (v >= 0 ? limOut : -limOut) : v
-  void from
-  return toWorld(room, uu, vv)
+  const limOut = h + ROOM.pad, limIn = h - ROOM.wall - ROOM.pad
+  let { u, v } = toLocal(room, to.x, to.z)
+  const m = Math.max(Math.abs(u), Math.abs(v))
+  if (m > limIn && m < limOut) {
+    const f = toLocal(room, from.x, from.z)
+    if (Math.max(Math.abs(f.u), Math.abs(f.v)) < h - ROOM.wall / 2) {
+      u = Math.max(-limIn, Math.min(limIn, u))
+      v = Math.max(-limIn, Math.min(limIn, v))
+    } else if (limOut - Math.abs(u) < limOut - Math.abs(v)) {
+      u = u >= 0 ? limOut : -limOut
+    } else {
+      v = v >= 0 ? limOut : -limOut
+    }
+  }
+  return containInRoom(room, from, toWorld(room, u, v))
 }
 
 test('5,000 steps of 500 jostled walkers commuting in through the doorway to their stations and back out: zero penetrations, everyone arrives', () => {
@@ -303,7 +318,8 @@ test('the doorway is shut to a passer-by jostled off the sidewalk, open only to 
   // Pushed straight at the doorway from the lane, a passer-by stops at the lot's pad; may they enter, they walk in.
   let me = front
   for (let i = 0; i < 200; i++) me = walk(room, me, toWorld(room, 0, 0), { x: 0, z: 0 }, 0.05, false)
-  assert.ok(toLocal(room, me.x, me.z).u >= h + ROOM.pad - 1e-9 && !insideRoom(room, me.x, me.z), 'held at the doorway')
+  const held = toLocal(room, me.x, me.z)
+  assert.ok(Math.abs(held.u - (h + ROOM.pad)) < 1e-9 && Math.abs(held.v) < 1e-9, `held at the doorway: (${held.u}, ${held.v})`)
   me = front
   for (let i = 0; i < 200; i++) me = walk(room, me, toWorld(room, ROOM.hub, 0), { x: 0, z: 0 }, 0.05, true)
   assert.ok(insideRoom(room, me.x, me.z), 'walked in')
@@ -390,10 +406,10 @@ test('anyone let go inside a room walks out along the nearer aisle, the hub and 
       }
     }
   }
-  // Why the aisle: in the boardroom, from just behind the plinth on the room's axis, the straight line to the hub
+  // Why the aisle: in the twin studio, from just behind the plinth on the room's axis, the straight line to the hub
   // presses on its back face and stays there.
-  const boardroom = workplaces(1337).find((r) => r.kind === 'boardroom')!
-  const straight = walkLegs(boardroom, toWorld(boardroom, 1, 0.2), [{ at: toWorld(boardroom, ROOM.hub, 0), arrive: 0.6 }], 1.1, 0.05, 90)
+  const studio = workplaces(1337).find((r) => r.kind === 'twinStudio')!
+  const straight = walkLegs(studio, toWorld(studio, 1, 0.2), [{ at: toWorld(studio, ROOM.hub, 0), arrive: 0.6 }], 1.1, 0.05, 90)
   assert.equal(straight.t, Infinity, 'the straight line to the hub stalls behind the plinth')
 })
 
@@ -978,7 +994,7 @@ const flips = (f: Followed, frames: number) => f.talking.slice(-frames).reduce((
 const pathIn = (room: Workplace, pts: readonly (readonly [number, number])[]): XZ[] => pts.map(([u, v]) => toWorld(room, u, v))
 
 test('real Rapier: the operator stands on an AGV dock (it autosteps the 0.3 m) and rests in a table\'s corner inside its 0.30 m band', async () => {
-  const room = workplaces(1337).find((r) => r.kind === 'warehouse')!, board = workplaces(1337).find((r) => r.kind === 'boardroom')!
+  const room = workplaces(1337).find((r) => r.kind === 'warehouse')!, board = workplaces(1337).find((r) => r.kind === 'twinStudio')!
   const physics = await Physics.create([...room.shell, ...room.furniture, ...board.shell, ...board.furniture].map((b) => b.box), { lamps: [], trees: [], signals: [] })
   const walkTo = (a: Avatar, goal: XZ, seconds: number) => {
     for (let t = 0; t < seconds; t += 1 / 60) {
@@ -1002,8 +1018,8 @@ test('a recruit in tow reaches the operator who stops on an AGV dock or in a pie
   const rooms = workplaces(1337), grid = cityGrid(generateBuildings(1337).map((b) => b.box)), field = fieldFor(grid)
   for (const [kind, pts] of [
     ['warehouse', [[11, 0], [6, 8], [-5, 8], [-5, 9.97]]],
-    ['boardroom', [[11, 0], [5, 3], [-0.5, 2.05], [-1.765, 2.05]]],
-    ['boardroom', [[11, 0], [5, 3], [-0.5, 2.05], [-1.748, 2.05]]],
+    ['twinStudio', [[11, 0], [5, 3], [-0.5, 2.05], [-1.765, 2.05]]],
+    ['twinStudio', [[11, 0], [5, 3], [-0.5, 2.05], [-1.748, 2.05]]],
   ] as const) {
     const room = rooms.find((r) => r.kind === kind)!
     for (const dt of [1 / 30, 1 / 60, 1 / 120]) {
@@ -1029,7 +1045,7 @@ test('a recruit in tow follows the operator into a dead end and round the end of
 
 test('a recruit on a piece\'s face is never held on it by a line the containment refuses: the operator leaning on the next face', () => {
   const rooms = workplaces(1337), grid = cityGrid(generateBuildings(1337).map((b) => b.box)), field = fieldFor(grid)
-  const room = rooms.find((r) => r.kind === 'boardroom')!
+  const room = rooms.find((r) => r.kind === 'twinStudio')!
   // Walking there with the recruit behind, and standing there with the recruit coming from the table's far side.
   for (const [op, from] of [[walkPath(pathIn(room, [[-1.7, 9], [-1.68, 0.57]]), 2), [-2.8, 11.5]], [toWorld(room, -1.68, 0.57), [-2.85, 10.65]]] as const) {
     const f = follow(grid, field, rooms, toWorld(room, from[0], from[1]), op, { limit: 20 })
@@ -1105,18 +1121,18 @@ test('a recruit the corner way brings to a piece\'s corner goes on from it: from
   const cases = [
     [1337, 'roboticsLab', [1.175, 5.234], [6.476, 11.967], 1 / 30, 1.29],
     [1337, 'warehouse', [-0.66, 11.369], [2.474, 4.542], 1 / 30, 1.344],
-    [1337, 'clinic', [-3.809, -5.303], [3.043, -10.247], 1 / 60, 1.201],
+    [1337, 'gaitLab', [-3.809, -5.303], [3.043, -10.247], 1 / 60, 1.201],
     [2026, 'roboticsLab', [4.788, 7.24], [5.394, 1.133], 1 / 30, 1.328],
     [2026, 'warehouse', [2.037, 9.089], [11.193, 6.486], 1 / 30, 1.498],
     [2026, 'warehouse', [-0.235, 11.058], [0.951, 1.265], 1 / 30, 1.365],
     [42, 'roboticsLab', [5.287, 10.718], [5.108, 0.048], 1 / 30, 1.192],
-    [42, 'legalChambers', [1.125, -7.72], [7.006, -5.341], 1 / 60, 1.34],
-    [42, 'telemetryCommand', [-1.622, -8.107], [-3.948, -3.243], 1 / 30, 1.208],
-    [7, 'boardroom', [3.869, -1.476], [-1.684, 6.21], 1 / 60, 1.431],
-    [2026, 'telemetryCommand', [-7.477, 5.177], [-9.493, 8.13], 1 / 30, 1.347],
-    [42, 'telemetryCommand', [-2.399, -11.08], [5.895, -6.355], 1 / 30, 1.382],
-    [7, 'legalChambers', [-3.415, -5.262], [-0.962, -11.131], 1 / 30, 1.45],
-    [7, 'legalChambers', [-11.01, -5.466], [-3.601, -3.007], 1 / 30, 1.35],
+    [42, 'clearingFloor', [1.125, -7.72], [7.006, -5.341], 1 / 60, 1.34],
+    [42, 'controlTower', [-1.622, -8.107], [-3.948, -3.243], 1 / 30, 1.208],
+    [7, 'twinStudio', [3.869, -1.476], [-1.684, 6.21], 1 / 60, 1.431],
+    [2026, 'controlTower', [-7.477, 5.177], [-9.493, 8.13], 1 / 30, 1.347],
+    [42, 'controlTower', [-2.399, -11.08], [5.895, -6.355], 1 / 30, 1.382],
+    [7, 'clearingFloor', [-3.415, -5.262], [-0.962, -11.131], 1 / 30, 1.45],
+    [7, 'clearingFloor', [-11.01, -5.466], [-3.601, -3.007], 1 / 30, 1.35],
   ] as const
   const worlds = new Map<number, { rooms: Workplace[]; grid: ReturnType<typeof cityGrid>; field: (at: XZ) => Float32Array }>()
   const fails: string[] = []
@@ -1144,11 +1160,11 @@ test('the corner way\'s leg on is taken only where the recruit\'s own line to th
     [1337, 'roboticsLab', [-6.711, 1.762], [-6.722, 7.278], 1 / 60, 1.304, false],
     [1337, 'roboticsLab', [-2.7, 3], [-2.76, 7.045], 1 / 30, 1.2, true],
     [1337, 'roboticsLab', [1.3, 3], [1.24, 7.045], 1 / 60, 1.2, true],
-    [1337, 'clinic', [-6.784, 7.437], [-6.759, 4.973], 1 / 30, 1.485, true],
-    [1337, 'clinic', [-2.7, 3], [-2.76, 6.955], 1 / 144, 1.1, true],
-    [2026, 'legalChambers', [1.3, 3], [1.24, 6.955], 1 / 120, 1.2, false],
-    [1337, 'legalChambers', [-2.704, 11.2], [-2.759, 5.144], 1 / 60, 1.203, true],
-    [1337, 'legalChambers', [0.8648755, -1.9634573], [0.6677385, 7.0357282], 1 / 30, 1.1072969, false],
+    [1337, 'gaitLab', [-6.784, 7.437], [-6.759, 4.973], 1 / 30, 1.485, true],
+    [1337, 'gaitLab', [-2.7, 3], [-2.76, 6.955], 1 / 144, 1.1, true],
+    [2026, 'clearingFloor', [1.3, 3], [1.24, 6.955], 1 / 120, 1.2, false],
+    [1337, 'clearingFloor', [-2.704, 11.2], [-2.759, 5.144], 1 / 60, 1.203, true],
+    [1337, 'clearingFloor', [0.8648755, -1.9634573], [0.6677385, 7.0357282], 1 / 30, 1.1072969, false],
   ] as const
   const worlds = new Map<number, { rooms: Workplace[]; grid: ReturnType<typeof cityGrid>; field: (at: XZ) => Float32Array }>()
   const fails: string[] = []
@@ -1281,12 +1297,12 @@ test('a recruit in tow is never led into a gap\'s mouth on a line the containmen
 })
 
 test('a recruit in tow comes to an operator in the nook between a piece\'s end and the glass, where the spot off the piece level with them is past the floor\'s reach', async () => {
-  // The legal chambers' long piece stands 0.2 m off the back glass; the operator's capsule rests 0.32 m off both.
+  // The clearing floor's long piece (the ledger vault) stands 0.2 m off the back glass; the operator's capsule rests 0.32 m off both.
   const fails: string[] = []
   let runs = 0
   for (const seed of [1337, 42]) {
     const rooms = workplaces(seed), grid = cityGrid(generateBuildings(seed).map((b) => b.box)), field = fieldFor(grid)
-    const room = rooms.find((r) => r.kind === 'legalChambers')!
+    const room = rooms.find((r) => r.kind === 'clearingFloor')!
     for (const s of [1, -1]) {
       for (const d of [0.05, 0.25]) {
         const op = await avatarPath(room, [[11, 0], [11, 4.6 * s], [-9, 6.5 * s], [-12.6, 6.5 * s], [-12.6, (4 + d) * s]], 2, 40)
@@ -1446,7 +1462,7 @@ test('the commute: the workplace corner is on the doorway street, on the room\'s
   }
 })
 
-test('the uniform: six slots of a, b, furniture and stations as vec4s, zero where a slot is empty, all zero with no rooms', () => {
+test('the uniform: sixteen slots of a, b, furniture and stations as vec4s, zero where a slot is empty, all zero with no rooms', () => {
   const rooms = workplaces(42)
   const f = packRooms(rooms)
   assert.equal(f.length, ROOMS_FLOATS)
@@ -1464,6 +1480,103 @@ test('the uniform: six slots of a, b, furniture and stations as vec4s, zero wher
   assert.ok(packRooms([]).every((v) => v === 0))
   assert.ok(packRooms(rooms.slice(0, 2)).subarray(2 * ROOM_FLOATS).every((v) => v === 0))
   assert.throws(() => packRooms([...rooms, rooms[0]]), RangeError)
+})
+
+test('the sixteen kinds: the ids in the order other threads dispatch by, the six first rooms under their new ids with their furniture and stations unchanged', () => {
+  assert.deepEqual([...WORKPLACE_KINDS], [
+    'roboticsLab', 'warehouse', 'serverVault', 'metroOps', 'controlTower', 'kitchen', 'microFab', 'twinStudio',
+    'fleetBay', 'greenhouse', 'acousticsLab', 'responseCenter', 'clearingFloor', 'gaitLab', 'microgrid', 'consoleDeck',
+  ])
+  assert.equal(ROOM.slots, WORKPLACE_KINDS.length)
+  assert.equal(ROOM.slots * ROOM.stations, 128)
+  // WORK.deal stays 29: coprime with the 128 stations (odd against a power of two), as it was with 48.
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
+  assert.equal(gcd(WORK.deal, ROOM.slots * ROOM.stations), 1)
+  // The six first rooms' geometry, pinned piece by piece in the room's frame (local boxes and stations), so a rename
+  // never moves a desk the crowd-mirror tests above walk by its numbers.
+  const local = (r: Workplace) => ({
+    furniture: r.furniture.map(({ box: [x0, y0, z0, x1, y1, z1], style }) => {
+      const a = toLocal(r, x0, z0), b = toLocal(r, x1, z1)
+      return [+Math.min(a.u, b.u).toFixed(3), +Math.min(a.v, b.v).toFixed(3), +Math.max(a.u, b.u).toFixed(3), +Math.max(a.v, b.v).toFixed(3), y0, y1, style]
+    }),
+    stations: r.stations.map((s) => [s.u, s.v, s.task]),
+  })
+  const rooms = Object.fromEntries(workplacesAt(WORKPLACE_KINDS.map((kind) => ({ kind, k: 0, m: 0, side: 0 as const }))).map((r) => [r.kind, local(r)]))
+  // The warehouse: four racks, the conveyor, four AGV docks (the operator steps onto one in the Rapier test above).
+  assert.deepEqual(rooms.warehouse.furniture, [
+    [-10.4, -10.4, -7.6, -5.6, 0, 3.8, 6], [-6.4, -10.4, -3.6, -5.6, 0, 3.8, 6], [-2.4, -10.4, 0.4, -5.6, 0, 3.8, 6], [1.6, -10.4, 4.4, -5.6, 0, 3.8, 6],
+    [-10, 5.6, 4, 6.4, 0, 0.8, 3],
+    [-9.6, 9.4, -8.4, 10.6, 0, 0.3, 5], [-5.6, 9.4, -4.4, 10.6, 0, 0.3, 5], [-1.6, 9.4, -0.4, 10.6, 0, 0.3, 5], [2.4, 9.4, 3.6, 10.6, 0, 0.3, 5],
+  ])
+  // The twin studio (the boardroom): the table and the plinth, the stations at v = ±3.
+  assert.deepEqual(rooms.twinStudio.furniture, [[-10, -1.8, -2, 1.8, 0, 0.75, 8], [2, -0.8, 3.6, 0.8, 0, 1, 3]])
+  assert.deepEqual(rooms.twinStudio.stations, [[-9, -3, 'collaborating'], [-6.5, -3, 'collaborating'], [-4, -3, 'collaborating'], [-1.5, -3, 'collaborating'], [-9, 3, 'collaborating'], [-6.5, 3, 'collaborating'], [-4, 3, 'collaborating'], [-1.5, 3, 'collaborating']])
+  // The clearing floor (the legal chambers): the vault 0.2 m off the back glass, the terminals and the desks.
+  assert.deepEqual(rooms.clearingFloor.furniture.slice(4, 5), [[-12.3, -4, -9.5, 4, 0, 2.6, 6]])
+  assert.equal(rooms.clearingFloor.furniture.length, 9)
+  // The gait lab (the clinic): two capture volumes, four desks, the dispensers on the back wall.
+  assert.deepEqual(rooms.gaitLab.furniture.slice(0, 2), [[-9.5, -9.4, -6.5, -5.6, 0, 2.2, 5], [-3.5, -9.4, -0.5, -5.6, 0, 2.2, 5]])
+  assert.deepEqual(rooms.gaitLab.furniture.at(-1), [-12.3, -3, -11.7, 3, 0, 2.2, 3])
+  // The control tower (telemetry command): thirteen pieces, the wall display 0.6 m off the floor.
+  assert.equal(rooms.controlTower.furniture.length, 13)
+  assert.deepEqual(rooms.controlTower.furniture.at(-1), [-12.3, -8, -11.7, 8, 0.6, 3.2, 3])
+  // The robotics lab: fourteen pieces, the rack along the side and the terminals on the back wall.
+  assert.equal(rooms.roboticsLab.furniture.length, 14)
+  assert.deepEqual(rooms.roboticsLab.furniture.slice(12), [[-11, 9.6, 5, 10.4, 0, 2.2, 9], [-12.3, -4, -11.7, 4, 0, 2, 3]])
+  for (const kind of ['roboticsLab', 'warehouse', 'controlTower', 'clearingFloor', 'gaitLab'] as const) {
+    assert.deepEqual(rooms[kind].stations.map((s) => [s[0], s[1]]), [[-9, -4.6], [-5, -4.6], [-1, -4.6], [3, -4.6], [-9, 4.6], [-5, 4.6], [-1, 4.6], [3, 4.6]], kind)
+  }
+  // Every display name is 14A: fictional, unarmed, and names no real place.
+  for (const r of workplaces(1337)) assert.doesNotMatch(r.name, /\b(gun|rifle|pistol|weapon|combat|Toronto|Ontario)\b/i, r.name)
+})
+
+test('the flat tables: a row per kind slot in kind order, kind −1 and zeros where a world has no such room, the door yaw pointing into the room, the stations in the crowd\'s slot order', () => {
+  assert.deepEqual(WORKPLACE_TABLE, { stride: 8, fields: ['kind', 'x', 'y', 'z', 'doorX', 'doorZ', 'doorYaw', 'stations'] })
+  assert.deepEqual(STATION_TABLE, { stride: 4, fields: ['x', 'y', 'z', 'yaw'], perRoom: ROOM.stations })
+  assert.ok(Object.isFrozen(WORKPLACE_TABLE) && Object.isFrozen(WORKPLACE_TABLE.fields) && Object.isFrozen(STATION_TABLE))
+  for (const seed of SEEDS) {
+    const rooms = workplaces(seed)
+    const t = workplaceTable(rooms), s = stationTable(rooms)
+    assert.equal(t.length, ROOM.slots * WORKPLACE_TABLE.stride)
+    assert.equal(s.length, ROOM.slots * ROOM.stations * STATION_TABLE.stride)
+    rooms.forEach((room, i) => {
+      assert.equal(WORKPLACE_KINDS[i], room.kind, 'the city\'s rooms are in kind order')
+      const o = i * 8
+      assert.deepEqual([...t.subarray(o, o + 6)], [i, room.cx, 0, room.cz, room.door.x, room.door.z].map(Math.fround))
+      assert.equal(t[o + 7], ROOM.stations)
+      // The yaw points from the doorway into the room: a step along (sin yaw, cos yaw) from the door lands inside.
+      const yaw = t[o + 6], d = doorDir(room.side)
+      assert.ok(Math.abs(Math.sin(yaw) + d.x) < 1e-6 && Math.abs(Math.cos(yaw) + d.z) < 1e-6, `${room.kind}: yaw ${yaw}`)
+      assert.ok(insideRoom(room, room.door.x + Math.sin(yaw) * 3, room.door.z + Math.cos(yaw) * 3))
+      room.stations.forEach((st, k) => {
+        const p = (i * ROOM.stations + k) * 4
+        assert.deepEqual([...s.subarray(p, p + 4)], [st.x, 0, st.z, st.yaw].map(Math.fround), `${room.kind} station ${k}`)
+        // The crowd's station slot for this row is the same number (workerSlot deals room × ROOM.stations + station).
+        assert.equal(i * ROOM.stations + k, p / 4)
+      })
+    })
+  }
+  // A region with two rooms: their slots filled by kind, every other slot empty (kind −1, the rest zero).
+  const two = workplacesAt([{ kind: 'kitchen', k: 61, m: 57, side: 2 }, { kind: 'roboticsLab', k: 58, m: 60, side: 1 }])
+  const t = workplaceTable(two), s = stationTable(two)
+  const kitchen = WORKPLACE_KINDS.indexOf('kitchen')
+  assert.equal(t[kitchen * 8], kitchen)
+  assert.equal(t[0], 0)
+  for (let i = 0; i < ROOM.slots; i++) {
+    if (i === 0 || i === kitchen) continue
+    assert.equal(t[i * 8], -1, `slot ${i} empty`)
+    assert.ok(t.subarray(i * 8 + 1, i * 8 + 8).every((v) => v === 0))
+    assert.ok(s.subarray(i * ROOM.stations * 4, (i + 1) * ROOM.stations * 4).every((v) => v === 0))
+  }
+  assert.ok(s.subarray(kitchen * ROOM.stations * 4, (kitchen + 1) * ROOM.stations * 4).some((v) => v !== 0))
+  // No rooms at all: every slot empty. A caller's buffer is filled whole; a short one is refused.
+  assert.ok(workplaceTable([]).every((v, i) => (i % 8 === 0 ? v === -1 : v === 0)))
+  assert.ok(stationTable([]).every((v) => v === 0))
+  const out = new Float32Array(ROOM.slots * 8).fill(7)
+  assert.equal(workplaceTable(two, out), out)
+  assert.equal(out[(kitchen + 1) * 8 + 3], 0, 'filled whole')
+  assert.throws(() => workplaceTable(two, new Float32Array(8)), RangeError)
+  assert.throws(() => stationTable(two, new Float32Array(8)), RangeError)
 })
 
 test('the workday\'s dice: a share of the crowd that gives each station about WORK.perStation people, spread over every slot; on shift WORK.shift of every WORK.cycle', () => {
