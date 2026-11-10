@@ -29,6 +29,7 @@ import type { HarnessReport, harnesses } from '../harness.ts'
 import type { LookChange } from '../../03_Spawn_Agents/look.ts'
 import type { Swarm } from '../../08_Swarm/orchestrator.ts'
 import type { NoirTables } from './noirscript/index.ts'
+import type { Team } from '../../06_Make_Decisions/dispatch.ts'
 
 export type {
   HalDevice, RobotRow, LawText, ActBy, ActEnd, ActEvent, ActsBridge, AskResult, ExecResult, GatedAsk, GatedRun, GatedSay, GateTether, MindStatus, PendingAct, Piece,
@@ -499,6 +500,8 @@ export interface TerminalBridge {
   access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
+  /** The team Sloane dispatched for a goal (08_Swarm/team.ts); absent until the host has built its team runner (the terminal then says so). */
+  lanes?: LanesBridge
   /** The operator's progression; absent in the console shell (it is kept by the city) and on an older host. */
   progress?: ProgressBridge
 }
@@ -550,6 +553,24 @@ export interface GoalPlan {
   readonly root: string
   readonly steps: readonly { readonly label: string; readonly state: 'done' | 'later' | 'failed'; readonly detail?: string }[]
   readonly notes: readonly string[]
+  /** One line a lane of the team the goal dispatched (its tag, its desk, what it reads), when it dispatched one. */
+  readonly team?: readonly string[]
+}
+
+/**
+ * The team runner (08_Swarm/team.ts) as the console reads it: the lanes Sloane's planner opened for a goal, one
+ * isolated NoirScript lane a sub-agent, their fault ledger, and the way to close them. `dispatch` is the `goal`
+ * command's: the planner's team opened as the card would open it.
+ */
+export interface LanesBridge {
+  /** The team, a table of its lanes (tag, state, word, steps, reading), the bodies asked over and the latest notes; one line without a team. */
+  status(): string[]
+  /** The fault ledger, every isolated lane in order; with `verify` the chain is recomputed and its verdict added. */
+  ledger(verify: boolean): string[]
+  /** Closes every lane; the people asked over stay. */
+  stop(): string
+  /** Opens the team's lanes; `missing` names the desks this map has no room for. */
+  dispatch(team: Team): { lanes: number; dropped: number; missing?: readonly string[] }
 }
 
 /**
@@ -663,6 +684,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     memory: { status: down, ledger: down, forget: down },
     look: { show: down, set: down },
     model: { pick: down, forget: down, load: down, unload: down, gpu: down, log: down },
+    lanes: { status: down, ledger: down, stop: down, dispatch: down },
     robot: { list: down, relay: down, relayOff: down, relayStatus: down, spawn: down, urdf: down, demo: down, mode: down, set: down, arm: down, disarm: down, calibrate: down, fit: down, shape: down, cellKind: down, cell: down, remove: down },
   }
 }

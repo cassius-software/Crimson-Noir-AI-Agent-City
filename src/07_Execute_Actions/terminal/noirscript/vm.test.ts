@@ -15,7 +15,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ELITE_LIMITS, EMPTY_TABLES, LIMITS, NoirSession, f32Text } from './index.ts'
+import { ELITE_LIMITS, EMPTY_TABLES, LANE_LIMITS, LIMITS, MAX_OPS_PER_TICK, NoirSession, f32Text } from './index.ts'
 
 const fresh = (): NoirSession => new NoirSession()
 /** Runs one line and returns what it printed, failing the test on any error. */
@@ -436,6 +436,38 @@ test('the memory cap: a huge array is "memory exhausted", at compile time when i
   assert.deepEqual(deep.defined, ['r'])
   assert.deepEqual(say(t, 'print(r(10));'), ['55'])
   assert.deepEqual(say(t, 'print(3);'), ['3'])
+})
+
+test('a bound that ends a run is named in the result\'s fault: gas, bounds, memory, depth or output; a plain error and a clean run carry none', () => {
+  const s = fresh()
+  assert.equal(s.run('loop { }', null, { ...LIMITS, steps: 300 }).fault, 'gas')
+  assert.equal(s.run('let big = [1; 70]; let mut i = 0; loop { let c = big; i += c[0]; }', null, { ...LIMITS, steps: 300 }).fault, 'gas', 'a move the budget cannot cover')
+  assert.equal(s.run('let a = [1; 4]; print(a[7]);').fault, 'bounds')
+  assert.equal(s.run('print(crowd.x[0]);').fault, 'bounds', 'an empty column')
+  assert.equal(s.run('fn d(n: i32) -> i32 { d(n + 1) } print(d(0));', null, { ...LIMITS, depth: 8 }).fault, 'depth')
+  assert.equal(s.run('loop { print("0123456789"); }', null, { ...LIMITS, out: 50 }).fault, 'output')
+  assert.equal(s.run('let huge = [0; 1048576];').fault, 'memory', 'a global that does not fit: refused at compile time, a memory fault still')
+  assert.equal(s.run('fn r(n: i32) -> i32 { let a = [n; 1024]; if n == 0 { a[0] } else { r(n - 1) + a[1] } } print(r(1000));').fault, 'memory', 'frames that do not fit')
+  const zero = s.run('print(1 / 0);')
+  assert.equal(zero.error, 'division by zero')
+  assert.ok(!('fault' in zero), 'a plain error carries no fault key')
+  const typed = s.run('let x: i32 = 1.5;')
+  assert.ok(typed.error !== undefined && !('fault' in typed), 'a type error carries none')
+  const locked = s.run('tune("x", 1.0);', { tables: () => EMPTY_TABLES, locked: 'no' })
+  assert.equal(locked.error, 'no')
+  assert.ok(!('fault' in locked), 'a refused host write carries none')
+  const fine = s.run('print(2);')
+  assert.ok(!('fault' in fine) && !('error' in fine))
+  // The lane limits: a tick's gas, a short output, a quarter-megabyte arena, a shallow stack; frozen.
+  assert.equal(MAX_OPS_PER_TICK, 4096)
+  assert.deepEqual(LANE_LIMITS, { steps: 4096, out: 256, cells: 65_536, depth: 32 })
+  assert.ok(Object.isFrozen(LANE_LIMITS))
+  const lane = new NoirSession(LANE_LIMITS)
+  const spin = lane.run('loop { }')
+  assert.deepEqual([spin.error, spin.steps, spin.fault], ['step budget exhausted (4096)', 4096, 'gas'])
+  assert.deepEqual(say(lane, 'let mut n = 0; for i in 0..100 { n += i; } print(n);'), ['4950'], 'a small program fits a tick')
+  assert.equal(lane.run('fn d(n: i32) -> i32 { d(n + 1) } print(d(0));').fault, 'depth', 'thirty-two frames')
+  assert.equal(lane.run('let a = [0; 60000];').fault, 'memory', 'the arena holds the city\'s columns and little else')
 })
 
 test('ELITE_LIMITS raise every bound, as a session\'s limits or for one line; a bigger arena stays', () => {

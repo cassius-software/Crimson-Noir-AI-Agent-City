@@ -918,11 +918,25 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
 - **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
-  crowded", "it feels laggy"). Sloane asks up to five short "why" questions with quick replies, then shows a
-  brief: the steps it can apply now (clock, quality, sound) are done at once, the rest are laid out as a
-  plan, and "Copy brief" gives an engineer a note naming the modules each step would touch. This engine
-  (`06_Make_Decisions/intent.ts`) is deterministic and offline: no language model, no network, and no
-  console syntax is ever shown.
+  crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
+  Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
+  now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
+  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
+  control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
+  goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
+  scouts (the twin studio and the control tower) that read the city and report, so no goal is a dead end; a goal
+  about something the city already has (the shops, the workplaces, the homes, the wardrobe) is answered with where to find it,
+  and nobody is sent; a desk this map has no room for asks nobody over and its lanes read the streets around
+  where you started; the rest is laid out as a plan, the lanes'
+  readings show under the brief as they run, and "Copy brief" gives an engineer a note naming the modules each
+  step would touch. For each desk one person within earshot with its skill is asked over (as `recruit` asks),
+  and sent in only once you stand within 9 m of that desk's door: the tether is never loosened. The planner
+  (`06_Make_Decisions/intent.ts`, `06_Make_Decisions/dispatch.ts`) is deterministic and offline: no language
+  model decides anything, no network, and no console syntax is ever shown. A local model may say the one
+  sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
+  model kept in this page; never with the provider set to scripted), screened like the onboarding's rewording
+  and with every number kept; the planner's sentence stands until it answers and whenever it does not.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -955,7 +969,7 @@ shows it (there is no city to walk).
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
   180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed business-casual wardrobe; the four laws, the
-  twelve checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
+  fifteen checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
   it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
 - **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
@@ -1002,7 +1016,7 @@ shows it (there is no city to walk).
   The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
   console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
   the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
-  by rank and title, the gate's twelve checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
+  by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
   standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
   memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
   lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
@@ -1312,14 +1326,16 @@ anywhere in the product.
   model is asked through the operator tier (whichever provider answers: the Claude gateway, a model server on this
   machine, the model file kept in this page, or the script; the swarm asks the same way, one step at a time), its
   answer may end with one `ACTION:` line from the fixed catalogue, the line is proposed to you, and once you allow it
-  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its twelve checks
+  it runs once under the proposer's tether. The gate stands at the three moments on that road, and its fifteen checks
   are ranked under four laws, the Zeroth Law above the kernel's three: **Zeroth, protect the city.** The page's
   outbound primitives are held to this machine, as the host vouches (the air gap `main.tsx` installed is still in
   place); the model is on this machine or there is none; the words pass the 14A screen; the effect is a line of the
-  catalogue. **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
+  catalogue; a sub-agent lane's program took at most its gas for the tick and stayed inside its own arena (see
+  Capability lanes below). **First.** The Ring-0 audit has not panicked (a halted realm takes no action); the verb reaches no
   facade leaf that moves a body, drives a car or weakens the kernel (a table of what every verb reaches, proved
   exact by running every verb over a recording facade). **Second.** The operator tier is unlocked; a person allowed
-  it, at the console, on the card or through a host (the gateway never allows). **Third.** The proposer is still
+  it, at the console, on the card or through a host (the gateway never allows); a sub-agent's lane holds the capability
+  its effect needs (see below). **Third.** The proposer is still
   tethered, under the same recruitment; the hash-chained trail verifies; no other proposal waits. Every check is a
   rule over plain values, applied the same way every time, with no clock, no randomness and no I/O; the refusal
   names the highest law that refused in the kernel's words (`Second Law: the operator tier is locked`), and a
@@ -1329,6 +1345,30 @@ anywhere in the product.
   operator tier and every action: the gate fails closed. A model's rewording of Sloane's lines passes the same screen
   before it is spoken as the city's own (the onboarding voice asks the model for it outside the gate's ask check; a
   rewording changes nothing, and the provider's own loopback gate holds its address).
+- **Capability lanes and the lane panic** (`02_Define_The_Rules/capabilities.ts`, `ring0Panic.ts`). A sub-agent of a
+  dispatched plan runs in a lane with a 32-bit capability word, kept one word per lane in a typed array as the kernel
+  keeps its own fuse. Four bits can be granted: move (a rally the physics realm decides), workplace task (a station
+  indoors and the bounded program run there), vehicle teleop (a car's intent through the elite tier's write) and
+  sub-agent spawn (opening a lane under one's own, the root orchestrator's bit). Every other bit is forbidden for
+  good, and the top four name the doors of the host no lane is ever let through: the network (`fetch`,
+  `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
+  (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
+  `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
+  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
+  own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
+  tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
+  own arena each tick, however many rows the city has), 32 frames of stack. The gate
+  reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
+  out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
+  words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the
+  lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is hashed onto a
+  ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0 LANE 3]
+  isolated (gas): Zeroth Law: the lane ran its 4096-step budget out this tick; … audit 9f3a…`), and the frame goes
+  on: the other lanes run their next tick, and unlike the realm's kernel panic, which locks the page, a lane's panic
+  isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
+  the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
+  the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
+  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -1463,7 +1503,7 @@ while you type.
   `clear`, `history`, `echo [text]`, `uname [-asnrvmi]`, `whoami`, `version`, `boot [gui|tty|status]`,
   `map [city|lakefront|default|status]`, `rooms`, `r0 <words...>|r0 reset|r0 words`,
   `noir <source>|noir reset|noir words|noir asm <source>`, `agent [...]`, `sloane [...]`,
-  `goal <words...>`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
+  `goal <words...>`, `lanes [ledger [verify]|stop]`, `progress [table|train <skill>|reroll|reset [--yes]]`, `exit`.
 - `topic` reads the unified namespace: every reading of the city, published each HUD tick into an in-page topic
   bus (`05_Observe_Environment/namespace.ts`) in the ISA-95 shape
   `Enterprise/JCS/Site/AgentCity/Area/{District}/Line/{Subsystem}/Cell/{Entity}/{Tag}`, the Area being the district you
@@ -1552,8 +1592,15 @@ while you type.
   card stays); `sloane voice <name>` prefers a browser voice by name or a word of it; `sloane voices` lists the
   browser's offline voices; `sloane say <text...>` has Sloane say a line now (see Onboarding and the spatial HUD).
 - `goal <words...>` plans a goal as Sloane's card does (at most 160 characters): the steps it can take now (the
-  clock, the quality tier, the sound) are applied and printed `done`, the rest `later`, a step that failed `failed`
-  with why, and words nothing in the city maps to yet are named.
+  clock, the quality tier, the sound, a team dispatched) are applied and printed `done`, the rest `later`, a step
+  that failed `failed` with why, words nothing in the city maps to yet are named, and a dispatched team's lanes
+  are listed (tag, desk, what each reads).
+- `lanes` prints the team Sloane dispatched for the last goal (from the card or `goal`): one row a lane with its
+  tag, its state (`ready` or `isolated`), the capability word it holds, the steps its last tick took and its latest
+  reading (or the gate's sentence that isolated it); then the people asked over for each desk and what came of
+  them. `lanes ledger` prints the fault ledger (every isolated lane, hashed over the one before it) and `lanes
+  ledger verify` recomputes the chain; `lanes stop` closes every lane (the people asked over stay; `recruit
+  dismiss` lets them go). The console never opens a team by itself: `goal` and the card do.
 - `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
   points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
   `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
@@ -1746,7 +1793,7 @@ Ring-0 elite tier above it, below). While unlocked:
   reloading the page (`map`, `boot`) and spawning or altering anyone are not in the catalogue and cannot be proposed;
   a line that asks for them is refused by name, under the gate's Zeroth Law (`Zeroth Law: no city action called
   'teleport' (time, rain, light, quality, cars, crowd, sound, or none)`). `help` lists the command as `act [ok|no|log [verify]|list|gate]`; `act list` prints the catalogue,
-  `act gate` the Ring-0 action gate's twelve checks with their laws (see The ethical kernel), and the reads (`act`,
+  `act gate` the Ring-0 action gate's fifteen checks with their laws (see The ethical kernel), and the reads (`act`,
   `act log`, `act list`, `act gate`) work while locked. **The gate.** Before any of this, every ask passes the gate
   (the page contained as the host vouches and the model on this machine or none: `ask: Zeroth Law: …` otherwise;
   the lock, which `ask: locked` has refused already, is held again), every `ACTION:` line passes it as it is read,
@@ -3920,7 +3967,7 @@ reset and a real pad.
   `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
   `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
   in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
-  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, and freezes those properties, so an
+  `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, holds `window.open` to the same places, and freezes those properties, so an
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
   allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry

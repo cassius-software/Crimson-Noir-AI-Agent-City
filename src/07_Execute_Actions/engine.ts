@@ -553,6 +553,10 @@ export class Engine {
    * work in them; the console's `rooms` lists them; `workplaceTable` and `stationTable` hand them to a swarm.
    */
   private readonly rooms: readonly Workplace[]
+  /** Where player 1 started (the city's centre sidewalk, a region's downtown arterial): the team runner's point for a desk this map has no room for. */
+  private readonly startAt: { readonly x: number; readonly z: number }
+  /** The rooms as the team runner reads them (08_Swarm/team.ts TeamRoom), built on the first read and kept: the rooms never change while the engine lives. */
+  private roomDoors: readonly { kind: string; name: string; door: { x: number; z: number } }[] | null = null
   /** The rooms as the flat tables (interiors.ts workplaceTable, stationTable), built on the first read and kept: the rooms never change while the engine lives. */
   private roomTable: Float32Array | null = null
   private roomStations: Float32Array | null = null
@@ -813,11 +817,13 @@ export class Engine {
     hardware: HardwareClass; hints: DeviceHints
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
+    start: { x: number; z: number }
     homes: readonly PageHome[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
     this.places = p.places
     this.rooms = p.rooms
+    this.startAt = Object.freeze({ x: p.start.x, z: p.start.z })
     this.shops = p.shops
     this.homes = p.homes
     this.streets = p.streets
@@ -1177,7 +1183,7 @@ export class Engine {
       stillThere()
       const engine = new Engine({
         canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
-        quality: { governor, targets, applied, mask, live }, places, landmark, streets,
+        quality: { governor, targets, applied, mask, live }, places, landmark, streets, start: spawn,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
         // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
@@ -2820,6 +2826,20 @@ export class Engine {
     const k = this.sim.state.kernel
     return { ...k, audit: { ...k.audit, panic: k.audit.panic ?? this.lockReason } }
   }
+
+  /**
+   * The indoor workplaces of this map for the team runner (08_Swarm/team.ts): each kind as the map names it, its name,
+   * and its door front on this map's sidewalk lane (the city's CITY.lane, a region window's); none in a surveyed region.
+   */
+  get teamRooms(): readonly { kind: string; name: string; door: { x: number; z: number } }[] {
+    return (this.roomDoors ??= Object.freeze(this.rooms.map((r) => Object.freeze({ kind: r.kind, name: r.name, door: doorFront(r, this.streets?.lane ?? CITY.lane) }))))
+  }
+
+  /** Where a desk this map has no room for reads from (08_Swarm/team.ts TeamHost.centre): where player 1 started. */
+  get teamCentre(): { readonly x: number; readonly z: number } { return this.startAt }
+
+  /** Why the realm no longer stands (the Ring-0 audit's panic, else a halt's reason), or null while it does: the team runner's `panic`. */
+  get panicReason(): string | null { return this.sim.state.kernel.audit.panic ?? this.lockReason }
 
   snapshot(): SipocSnapshot {
     const [mean, p50, p95, p99] = this.clock.stats()

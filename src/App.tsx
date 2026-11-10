@@ -26,6 +26,7 @@ import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, hig
 import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
 import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
 import { Announcer } from './07_Execute_Actions/announcer.ts'
+import { TEAM_TICK_MS, TeamRunner } from './08_Swarm/team.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
@@ -77,7 +78,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { modelVoice, scriptedVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
@@ -93,6 +94,7 @@ import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
+import { teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -619,24 +621,33 @@ function qualityFor(step: PlanStep, b: Pick<TerminalBridge, 'quality'>): 'auto' 
 
 /**
  * The console's `goal` (terminal/bridge.ts GoalPlan): the goal planned as Sloane plans one (06_Make_Decisions/intent.ts),
- * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound).
+ * its immediate steps applied through the same knobs the Concierge uses (the clock, the quality tier, the sound) and
+ * its team, when it has one, opened through the same team runner (the bridge's `lanes`).
  */
-function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio'>): GoalPlan {
+function goalPlan(text: string, b: Pick<TerminalBridge, 'setClock' | 'quality' | 'audio' | 'lanes'>): GoalPlan {
   const brief = new FiveWhys(text).brief()
   const steps: { label: string; state: 'done' | 'later' | 'failed'; detail?: string }[] = []
+  let team: string[] | undefined
   for (const step of brief.plan) {
     if (!step.immediate) { steps.push({ label: step.label, state: 'later' }); continue }
     try {
       if (step.control === 'time' && typeof step.value === 'number') b.setClock(step.value)
       else if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) b.quality(qualityFor(step, b))
       else if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) b.audio(step.value)
+      else if (step.control === 'dispatch' && step.team && b.lanes) {
+        const d = b.lanes.dispatch(step.team)
+        team = teamRows(step.team)
+        const away = d.missing?.length ? `; not on this map: ${d.missing.join(', ')} (nobody asked over, those lanes read around where you started)` : ''
+        steps.push({ label: step.label, state: 'done', detail: `${d.lanes} ${d.lanes === 1 ? 'lane' : 'lanes'} open${away}` })
+        continue
+      }
       else { steps.push({ label: step.label, state: 'later' }); continue }
       steps.push({ label: step.label, state: 'done' })
     } catch (e) {
       steps.push({ label: step.label, state: 'failed', detail: e instanceof Error ? e.message : String(e) })
     }
   }
-  return { root: brief.root, steps, notes: brief.unmapped }
+  return { root: brief.root, steps, notes: brief.unmapped, ...(team ? { team } : {}) }
 }
 
 /**
@@ -736,6 +747,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
   }, [roster])
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
+  /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; it keeps the planner's sentence while the provider is scripted. */
+  const [sloane, setSloane] = useState<Voice | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
@@ -872,6 +885,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     if (step.control === 'time' && typeof step.value === 'number') { b.setClock(step.value); return true }
     if (step.control === 'quality' && (step.value === 'auto' || typeof step.value === 'number')) { b.quality(qualityFor(step, b)); return true }
     if (step.control === 'audio' && (step.value === 'on' || step.value === 'off' || typeof step.value === 'number')) { b.audio(step.value); return true }
+    // A team goes to the team runner (08_Swarm/team.ts) through the bridge, as the console's `goal` sends one.
+    if (step.control === 'dispatch' && step.team && b.lanes) { b.lanes.dispatch(step.team); return true }
     return false
   }, [bridge])
 
@@ -1016,6 +1031,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
+    /** The team runner (08_Swarm/team.ts): Sloane's dispatched sub-agents, stepped every TEAM_TICK_MS from the frame loop. */
+    let crew: TeamRunner | null = null
+    let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
     /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
@@ -1053,6 +1071,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       if (!engine || engine.halted) return
       try {
         engine.frame(now)
+        // The team's lanes read the city a few times a second, never per frame: their gas is per tick, and the HUD shows
+        // their readings on its own interval.
+        if (crew && now - lastTeam >= TEAM_TICK_MS) { lastTeam = now; crew.tick() }
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
@@ -1063,6 +1084,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
+          // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
+          if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
           if (recruiter && actRef.current) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, `Waiting for your OK: ${actRef.current.who} proposes: ${actRef.current.sentence}`)
@@ -1376,6 +1399,28 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
         e.onHome = openHome
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
+        // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
+        // vouch, the realm's standing, this map's workplaces, and the recruiter for the bodies (the same asks `recruit`
+        // makes). A lane the gate isolates toasts, console open or closed.
+        const host = e.recruitHost()
+        const team = new TeamRunner({
+          tables: () => engineBridge.soa?.tables() ?? null,
+          contained: () => airgapInstalled(globalThis),
+          panic: () => e.panicReason,
+          rooms: () => e.teamRooms,
+          centre: () => e.teamCentre,
+          operator: () => host.operator(),
+          recruits: () => r.recruits,
+          recruit: (skill) => r.recruit(skill),
+          rally: (agent, x, z) => r.rally(agent, x, z),
+          log: (line) => { console.error(line); e.toast('Lane isolated', line) },
+        })
+        crew = team
+        const lanes = team.console()
+        // Sloane's own words for a brief: the router's order (the local servers, then the model in this page), the
+        // planner's sentence on any failure; never with the provider the player set to scripted, asked at every sentence
+        // (the console's `ask provider` changes it while the city runs).
+        setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted'))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -1390,7 +1435,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
             on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
           }),
           access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
-          goal: (text: string) => goalPlan(text, engineBridge),
+          goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),
+          lanes,
           // The operator's level, credits and skills (progress.ts): the page's one keeper, which the console earns into.
           progress: progressBridge(pageProgress()),
           memory: memoryBridge(memory, r),
@@ -1480,9 +1526,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       link.sound = () => true
       setEngine(null)
       setBridge(null)
+      setSloane(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
+      crew?.dispose()
       router?.dispose()
       recruiter?.dispose()
       unModel()
@@ -1552,6 +1600,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           onGoalSent={onGoalSent}
           onSay={onSay}
           heard={heard}
+          reword={sloane}
+          lanes={hud.supplier.lanes ?? null}
           beside={walking && fw.card !== null}
           zoom={access.scale / 100}
           onOpen={setSloaneOpen}

@@ -59,7 +59,7 @@ test('V and the right stick\'s click are the mute (M is rain mode, L3 the run la
 })
 
 test('the HUD\'s pill: a button named by the device\'s state, fed every snapshot, shown while the device is open even with the HUD hidden', () => {
-  assert.match(APP, /s\.supplier\.voice = \{ phase: mic\.phase, detail: mic\.state\.detail, speaking: speaker\.speaking, path: mic\.path, words: recruiter !== null && recruiter\.mic\.state === 'listening' \}\n\s+if \(recruiter\) s\.supplier\.recruiting = hudLine\(/, 'written before the recruiter\'s line, every HUD interval')
+  assert.match(APP, /s\.supplier\.voice = \{ phase: mic\.phase, detail: mic\.state\.detail, speaking: speaker\.speaking, path: mic\.path, words: recruiter !== null && recruiter\.mic\.state === 'listening' \}\n(?:\s*\/\/[^\n]*\n)*\s*if \(crew\) \{ s\.supplier\.lanes = crew\.lines\(\); s\.supplier\.team = crew\.line\(\) \}\n\s+if \(recruiter\) s\.supplier\.recruiting = hudLine\(/, 'written before the recruiter\'s line, every HUD interval')
   assert.match(APP, /<Hud s=\{hud\}[^\n]* mic=\{mic\} onMic=\{onMic\}[^\n]*\/>/)
   assert.match(HUD, /const micNeeded = voice \? micOpen \|\| voice\.phase === 'opening' \|\| voice\.phase === 'blocked' \|\| voice\.phase === 'error' \|\| voice\.phase === 'unavailable' : false/)
   assert.match(HUD, /const micShown = voice && \(micOpen \|\| \(visible && \(!compact \|\| micNeeded\)\)\)\n\s+const micPill = micShown && <MicPill voice=\{voice\} mic=\{mic\} onMic=\{onMic\}/, 'always while open; at rest on a desktop; on a phone only opening, open or failed (the Menu is the switch there)')

@@ -34,7 +34,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  AccessBridge, ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus, ModelBridge,
+  AccessBridge, ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -115,6 +115,7 @@ const CORE = [
   { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; open as the city starts unless you muted it, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
   { name: 'access', usage: 'access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]', summary: 'accessibility: high contrast for every card, a colour-vision filter over the frame (protan, deutan, tritan), the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad layout, the screen reader\'s lines; kept between visits (?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= for one visit)' },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
+  { name: 'lanes', usage: 'lanes [ledger [verify]|stop]', summary: 'the team Sloane dispatched for a goal: each sub-agent\'s lane, its word, its reading or why it was isolated; ledger prints the fault chain; stop closes the lanes' },
   { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file or a workstation cell; their bodies in the physics realm as twins or leaders, every setpoint through the gate; fit takes the better of two actuator models, shape randomizes the body\'s domain by a seed (relay, spawn, cell, urdf, arm, calibrate, fit and shape are the operator\'s)' },
@@ -335,6 +336,8 @@ const ARGS: Record<string, readonly string[]> = {
   'ask connect': PROVIDER_ARGS,
   swarm: ['audit', 'guardrails', 'plan', 'roles', 'run', 'status', 'stop'],
   'swarm audit': ['verify'],
+  lanes: ['ledger', 'stop'],
+  'lanes ledger': ['verify'],
   act: ['gate', 'list', 'log', 'no', 'ok'],
   'act log': ['verify'],
   'ask effort': ['high', 'low', 'max', 'medium', 'none', 'xhigh'],
@@ -482,6 +485,12 @@ function accessOf(b: TerminalBridge): AccessBridge {
   const a = b.access
   if (!a) throw new Error('the accessibility settings are not available on this bridge')
   return a
+}
+
+function lanesOf(b: TerminalBridge): LanesBridge {
+  const l = b.lanes
+  if (!l) throw new Error('the lanes are not available on this bridge')
+  return l
 }
 
 const AGENT_FIELDS = ['pronouns', 'role', 'voice', 'look', 'name'] as const
@@ -803,17 +812,21 @@ const INVARIANT_LINES: readonly (readonly [string, string, string])[] = [
 /**
  * The Ring-0 action gate's checks, in rank order, with the law each stands under (commands.test.ts pins them to
  * 02_Define_The_Rules/ring0Gate.ts CHECKS, which this file must not import). Every ask, every proposal and every run
- * passes them before any state changes; the first failed check names the law in the refusal.
+ * passes the twelve that are not a lane's (GasWithin, MemoryWithin and LaneCapable are only a sub-agent lane's, which
+ * also passes Contained and RealmStanding) before any state changes; the first failed check names the law in the refusal.
  */
 const GATE_LINES: readonly (readonly [string, string, string])[] = [
   ['Contained', 'Zeroth Law', "the page's outbound primitives are held to this machine (airgap.ts), as the host vouches"],
   ['LoopbackOnly', 'Zeroth Law', 'the model the words come from is on this machine, or there is none (the script, a model in this page)'],
   ['Conduct14A', 'Zeroth Law', 'the words pass the 14A screen (conduct.ts); a prompt that fails it is not engaged with at all'],
   ['Catalogued', 'Zeroth Law', 'the effect is one line of the fixed catalogue (actions.ts): nothing else an answer says can change the city'],
+  ['GasWithin', 'Zeroth Law', "a sub-agent lane's program took at most its gas for the tick (noirscript MAX_OPS_PER_TICK, 4096 instructions): one that runs the budget out is isolated, not waited for"],
+  ['MemoryWithin', 'Zeroth Law', "a sub-agent lane's program stayed inside its own arena: an index past an array or a column, memory, call depth or output beyond its limits is a fault, not a crash"],
   ['RealmStanding', 'First Law', 'the Ring-0 audit (ring0.ts) has not panicked: a halted realm takes no action'],
   ['KineticFree', 'First Law', 'the verb reaches no leaf that moves a body, drives a car or weakens the kernel: a car is only parked, or handed back to a driver the Bouncer vets'],
   ['OperatorUnlocked', 'Second Law', 'the operator tier is unlocked'],
   ['PersonAllowed', 'Second Law', 'a person allowed it, at the console, on the card or through the host; the gateway never allows'],
+  ['LaneCapable', 'Second Law', "a sub-agent's lane holds the capability its effect needs (capabilities.ts): a bit it was never granted, or a door no lane is granted, is refused and the lane is isolated"],
   ['LeaseHeld', 'Third Law', "the proposer is still tethered to the operator (the capability gateway's lease holds)"],
   ['ProposerBound', 'Third Law', 'the gate binds the proposer, under the same recruitment, and nobody else'],
   ['ChainVerified', 'Third Law', 'the hash-chained trail verifies before anything runs'],
@@ -1260,11 +1273,33 @@ const HANDLERS: Record<Name, Handler> = {
     } catch (e) {
       return fail(`goal: ${message(e)}`)
     }
-    const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}`)))
+    // A step's detail is said whatever its state: a dispatch says how many lanes opened and which desks this map has no room for.
+    const lines: Line[] = plan.steps.map((st) => (st.state === 'failed' ? err(`  failed   ${st.label}${st.detail ? `: ${st.detail}` : ''}`) : out(`  ${st.state.padEnd(8)} ${st.label}${st.detail ? `: ${st.detail}` : ''}`)))
     for (const n of plan.notes) lines.push(sys(`  ${n}`))
+    for (const t of plan.team ?? []) lines.push(sys(`  ${t}`))
     if (!lines.length) lines.push(sys('  nothing in the city maps to that yet'))
     const done = plan.steps.some((st) => st.state === 'done')
     return { lines: [out(plan.root), ...lines, ...(!done && plan.steps.length ? [sys('  nothing could be done now: the rest needs the operator, or a restart')] : [])] }
+  },
+
+  /** The team Sloane dispatched (08_Swarm/team.ts): its lanes, the fault ledger (verified on request), or stop. */
+  lanes(args, b) {
+    if (args.length > 2) return fail(usage('lanes'))
+    const [sub, more] = args
+    let l: LanesBridge
+    try {
+      l = lanesOf(b)
+    } catch (e) {
+      return fail(`lanes: ${message(e)}`)
+    }
+    try {
+      if (sub === undefined) return { lines: l.status().map(out) }
+      if (sub === 'ledger' && (more === undefined || more === 'verify')) return { lines: l.ledger(more === 'verify').map(out) }
+      if (sub === 'stop' && more === undefined) return { lines: [out(l.stop())] }
+    } catch (e) {
+      return fail(`lanes: ${message(e)}`)
+    }
+    return fail(usage('lanes'))
   },
 
   progress(args, b) {
@@ -1803,9 +1838,9 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'gate') {
       return {
         lines: [
-          sys('Every ask, every proposal and every run passes these before any state changes; the first failed check names its law in the refusal:'),
+          sys('Every ask, every proposal and every run passes the twelve that are not a lane\'s, and every sub-agent lane\'s tick and effect passes Contained, GasWithin, MemoryWithin, RealmStanding and LaneCapable, before any state changes; the first failed check names its law in the refusal:'),
           ...GATE_LINES.map(([name, law, text]) => out(`  ${name.padEnd(18)}${law.padEnd(12)}${text}`)),
-          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, applied the same way every time; they are not a proof about a model.'),
+          sys('These are rules over what the host vouches, the endpoint, the words, the catalogue, the lock, the lease and the chain, and a lane\'s gas, arena and capability word, applied the same way every time; they are not a proof about a model.'),
         ],
       }
     }
