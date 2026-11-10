@@ -13,7 +13,9 @@
  * server has finished. And from the console, through the gateway, to a real server and back: Rejected never reaches
  * the server, an answer streams live, the tether breaking mid-answer cuts the request, the operator can stop it, and
  * a server that is not running is reported, not thrown. Ollama's list with each model's size and where a loaded model
- * sits (/api/ps) are read from this machine only, and a big model's first-piece wait may grow but never shrink.
+ * sits (/api/ps, with the context Ollama runs it at) are read from this machine only, and a big model's first-piece
+ * wait may grow but never shrink. A larger context reaches the generate format alone, with a quarter of it as the
+ * answer cap, and anything but a whole number from 8,192 to 32,768 sends today's body byte for byte.
  * What breaks if it is removed? A prompt could go off the machine, an answer keep streaming after the person who
  * could give it was left behind, or a stopped server crash the console, and nothing would say so.
  */
@@ -28,7 +30,7 @@ import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { TaskRouter, type SwarmSource } from '../08_Swarm/taskRouter.ts'
 import {
-  ANSWER_TOKENS, BASE_REALITY, BYTES_MAX, CONTEXT_TOKENS, CognitionError, chat, createLocalCompute, DEFAULT_API, DEFAULT_MODEL, DEFAULT_SERVER, generate, installedModels, installedSizes, loopbackServer,
+  ANSWER_TOKENS, BASE_REALITY, BYTES_MAX, CONTEXT_MAX, CONTEXT_TOKENS, CognitionError, chat, contextOf, createLocalCompute, DEFAULT_API, DEFAULT_MODEL, DEFAULT_SERVER, generate, installedModels, installedSizes, loopbackServer,
   placementOf, systemPrompt, type FetchLike,
 } from './localCompute.ts'
 
@@ -985,4 +987,54 @@ test('the system prompt ends with where each bound person stands and what just h
     '- 17:01 Aurel St & 3rd Ave: the player asked "hi" and you answered "hello"',
   ].join('\n'))
   assert.ok(p.startsWith(plain), 'the here and now comes last, so the cached prefix is untouched')
+})
+
+test('placementOf: Ollama\'s context_length as ctx when it is a whole number from 1 to 2^24; without one the placement is as it was', async () => {
+  const at = async (context_length: unknown) => placementOf(fakeFetch(() => json(200, { models: [{ name: 'qwen3-vl:4b', size: 5e9, size_vram: 5e9, context_length }] })).f, DEFAULT_SERVER, 'qwen3-vl:4b')
+  assert.deepEqual(await at(8192), { loaded: 5e9, gpu: 5e9, ctx: 8192 })
+  assert.deepEqual(await at(1), { loaded: 5e9, gpu: 5e9, ctx: 1 })
+  assert.deepEqual(await at(2 ** 24), { loaded: 5e9, gpu: 5e9, ctx: 2 ** 24 })
+  for (const odd of [0, -1, 1.5, '8192', 2 ** 24 + 1, 2 ** 53, Number.NaN, Infinity, null, undefined, true]) {
+    const p = await at(odd)
+    assert.deepEqual(p, { loaded: 5e9, gpu: 5e9 }, String(odd))
+    assert.equal(p !== null && 'ctx' in p, false, String(odd))
+  }
+})
+
+test('generate: a larger context asks for a quarter of it as the answer; anything but a whole number from 8,192 to 32,768 sends today\'s body byte for byte', async () => {
+  const body = async (context?: unknown): Promise<string> => {
+    const { f, calls } = fakeFetch(() => streamed(SAMPLE))
+    await generate(f, { server: DEFAULT_SERVER, model: 'm', system: 'S', prompt: 'P', ...(context !== undefined && { context: context as number }) }, () => {})
+    return String(calls[0].init?.body)
+  }
+  const today = await body()
+  assert.equal(today, '{"model":"m","system":"S","prompt":"P","stream":true,"think":false,"options":{"num_ctx":8192,"num_predict":2048}}')
+  for (const [ctx, want] of [[16384, [16384, 4096]], [12288, [12288, 3072]], [32768, [32768, 8192]], [8192, [8192, 2048]], [8193, [8193, 2048]]] as const) {
+    assert.deepEqual(JSON.parse(await body(ctx)).options, { num_ctx: want[0], num_predict: want[1] }, String(ctx))
+  }
+  for (const odd of [4096, 8191, 32769, 40000, 16384.5, Number.NaN, Infinity, -16384, '16384', null]) assert.equal(await body(odd), today, String(odd))
+  assert.equal(CONTEXT_MAX, 32768)
+  assert.equal(contextOf(undefined), CONTEXT_TOKENS)
+  assert.equal(contextOf(CONTEXT_MAX), CONTEXT_MAX)
+})
+
+test('contextFor reaches the generate format only: the chat body and the client without it are as they were', async () => {
+  const asked: string[] = []
+  const contextFor = (model: string): number => { asked.push(model); return 16384 }
+  const gen = fakeFetch(() => streamed(SAMPLE))
+  await createLocalCompute({ fetch: gen.f, contextFor }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  assert.deepEqual(JSON.parse(String(gen.calls[0].init?.body)).options, { num_ctx: 16384, num_predict: 4096 })
+  assert.deepEqual(asked, [DEFAULT_MODEL], 'asked for the model the answer sends')
+  // Without it: today's body.
+  const plain = fakeFetch(() => streamed(SAMPLE))
+  await createLocalCompute({ fetch: plain.f }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  assert.match(String(plain.calls[0].init?.body), /,"options":\{"num_ctx":8192,"num_predict":2048\}\}$/)
+  // The chat format: never asked, and the body carries today's answer cap and no context.
+  asked.length = 0
+  const c = fakeFetch(() => streamed(CHAT))
+  await createLocalCompute({ fetch: c.f, contextFor, defaults: { api: 'chat', model: 'm' } }).answer({ tethers: [], prompt: 'hi', signal: new AbortController().signal }, () => {})
+  const sentChat = JSON.parse(String(c.calls[0].init?.body)) as Record<string, unknown>
+  assert.equal(sentChat.max_tokens, ANSWER_TOKENS)
+  assert.equal('options' in sentChat, false)
+  assert.deepEqual(asked, [])
 })

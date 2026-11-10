@@ -9,16 +9,19 @@
  * the figure is never chosen while a smaller one is listed, today's pick included. No step up comes before a
  * measurement on the GPU, and the need uses the largest loaded-to-weights ratio measured, not the newest. What is kept
  * between visits is read back checked and bounded, and every sentence of the console's fit row is exact, ASCII and
- * free of the words the console never carries.
+ * free of the words the console never carries. Ollama's context grows only on a cut answer measured all on the GPU at
+ * the context Ollama said, fast enough and with room, once, to at most 32,768, each boundary one step either side; the
+ * answer cap is a quarter of it and never below 2,048; and the verdict on a larger context follows every branch.
  * What breaks if it is removed? Auto could give a big GPU's Ollama a model that cannot fit, grow on a guess, keep a
- * corrupt record, or say something on the fit row that is not what it did, and nothing would say so.
+ * corrupt record, ask Ollama for a context that does not fit, or say something on the fit row that is not what it
+ * did, and nothing would say so.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DEFAULT_MODEL, type Weighed } from './localCompute.ts'
+import { ANSWER_TOKENS, answerTokensFor, CONTEXT_MAX, CONTEXT_TOKENS, DEFAULT_MODEL, FIRST_PIECE_MS, type Placement, type Weighed } from './localCompute.ts'
 import {
-  budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, FAILS_KEPT, failed, DXGI_FLOOR_BYTES, figureFromAdapters, figureOf, fitLine, gbText, GIB, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
-  RESERVE_BYTES, SEEN_MAX, todaysPick, VRAM_MAX_GB, VRAM_USAGE, whereOf, type Figure, type FitInput, type Seen, type Where,
+  ANSWER_WAIT_S, budgetOf, choose, COLD_READ_BYTES_S, coldWaitMs, contextVerdict, FAILS_KEPT, failed, DXGI_FLOOR_BYTES, figureFromAdapters, figureOf, fitLine, gbText, GIB, grouped, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, readGb, remember,
+  RESERVE_BYTES, SEEN_MAX, todaysPick, VRAM_MAX_GB, VRAM_USAGE, whereOf, widen, WIDEN_FLOOR_BYTES, type Figure, type FitInput, type Seen, type Where, type Wide,
 } from './modelFit.ts'
 
 /** The words no console text may carry, spelled backwards here so this file carries none of them itself (features.test.ts). */
@@ -378,4 +381,140 @@ test('fitLine: every sentence, exactly', () => {
   // The word check itself catches what it is for.
   assert.match(`${[...'tih'].reverse().join('')} it`, WORDS)
   assert.doesNotMatch('within, thistle', WORDS, 'whole words only')
+})
+
+test('answerTokensFor: a quarter of the context, never below 2,048; 8,192 still gives exactly 2,048', () => {
+  assert.equal(CONTEXT_TOKENS, 8192, 'unchanged: the in-page rows import it')
+  assert.equal(ANSWER_TOKENS, 2048, 'unchanged: the in-page rows import it')
+  assert.equal(CONTEXT_MAX, 32768)
+  assert.equal(answerTokensFor(CONTEXT_TOKENS), ANSWER_TOKENS)
+  for (const [ctx, want] of [[8192, 2048], [8193, 2048], [8195, 2048], [12288, 3072], [12290, 3072], [16384, 4096], [32768, 8192], [4096, 2048], [0, 2048]] as const) {
+    assert.equal(answerTokensFor(ctx), want, String(ctx))
+  }
+})
+
+test('widen: a cut answer, counted and quick enough, on a model measured all on the GPU at the context Ollama said, with room, grows once to twice its context; each boundary one step either side', () => {
+  // 10 GB loaded at 8,192 for 8 GB of weights: doubling costs 2 GB; the figure of 24 leaves 22 GiB.
+  const placed: Placement = { loaded: 10e9, gpu: 10e9, ctx: 8192 }
+  const base = { reason: 'length', tokens: 2048, pace: 41.2, ctx: 8192, placed, weights: 8e9, figure: ASK(24), grown: false }
+  const at = (over: Partial<typeof base>): number | null => widen({ ...base, ...over })
+  assert.equal(at({}), 16384)
+  assert.equal(ANSWER_WAIT_S, FIRST_PIECE_MS / 1000)
+  assert.equal(ANSWER_WAIT_S, 300)
+  assert.equal(WIDEN_FLOOR_BYTES, GIB)
+  // Room: loaded plus what doubling costs (loaded less weights) at the budget grows; a byte over does not.
+  const B = budgetOf(ASK(24))
+  assert.equal(at({ placed: { loaded: 12 * GIB, gpu: 12 * GIB, ctx: 8192 }, weights: 2 * GIB }), 16384, '12 + 10 = 22 GiB: exactly at it')
+  assert.equal(at({ placed: { loaded: 12 * GIB, gpu: 12 * GIB, ctx: 8192 }, weights: 2 * GIB - 1 }), null, 'one byte over')
+  assert.equal(12 * GIB + (12 * GIB - 2 * GIB), B)
+  // What doubling costs is never taken below 1 GiB: loaded at or under its weights.
+  assert.equal(at({ placed: { loaded: 21 * GIB, gpu: 21 * GIB, ctx: 8192 }, weights: 21 * GIB }), 16384, '21 + 1 = 22 GiB')
+  assert.equal(at({ placed: { loaded: 21 * GIB + 1, gpu: 21 * GIB + 1, ctx: 8192 }, weights: 21 * GIB }), null, '1 byte beyond the weights still costs 1 GiB')
+  assert.equal(at({ placed: { loaded: 21 * GIB, gpu: 21 * GIB, ctx: 8192 }, weights: 25 * GIB }), 16384, 'loaded under its weights: the floor')
+  assert.equal(at({ placed: { loaded: 21 * GIB + 1, gpu: 21 * GIB + 1, ctx: 8192 }, weights: 25 * GIB }), null)
+  // All on the GPU: gpu equal to loaded grows; a byte short (split) does not, nor all on the processor.
+  assert.equal(at({ placed: { loaded: 10e9, gpu: 10e9, ctx: 8192 } }), 16384)
+  assert.equal(at({ placed: { loaded: 10e9, gpu: 10e9 - 1, ctx: 8192 } }), null)
+  assert.equal(at({ placed: { loaded: 10e9, gpu: 0, ctx: 8192 } }), null)
+  // The pace writes the larger answer cap (4,096) in at most 300 s: exactly that grows, a hair under does not.
+  const edge = answerTokensFor(16384) / ANSWER_WAIT_S
+  assert.equal(edge * ANSWER_WAIT_S, 4096)
+  assert.equal(at({ pace: edge }), 16384)
+  assert.equal(at({ pace: edge - 1e-9 }), null)
+  assert.equal(at({ pace: null }), null, 'no pace said')
+  // Counted over at least 32 tokens.
+  assert.equal(at({ tokens: PACE_TOKENS }), 16384)
+  assert.equal(at({ tokens: PACE_TOKENS - 1 }), null)
+  // Cut at its answer cap, and nothing else.
+  for (const reason of ['stop', 'scripted', '', 'refusal', 'LENGTH']) assert.equal(at({ reason }), null, reason)
+  // Ollama said it ran at the context sent (v0.10.0 and later, trained on at least that).
+  const { ctx: _, ...silent } = placed
+  for (const p of [silent, { ...placed, ctx: 0 }, { ...placed, ctx: 4096 }, { ...placed, ctx: 16384 }]) assert.equal(at({ placed: p }), null, JSON.stringify(p))
+  assert.equal(at({ placed: null }), null, 'nothing measured at that context this visit')
+  assert.equal(at({ weights: null }), null, 'weights not listed')
+  // Once a visit, whatever came of it.
+  assert.equal(at({ grown: true }), null)
+  // Never above 32,768.
+  assert.equal(at({ ctx: 16384, placed: { ...placed, ctx: 16384 } }), CONTEXT_MAX)
+  assert.equal(at({ ctx: 32768, placed: { ...placed, ctx: 32768 }, pace: 1000 }), null, 'fast enough and with room, but past 32,768')
+  // 8,192 for 32,768 at the same 300 s: 27.31 a second.
+  assert.equal(at({ ctx: 16384, placed: { ...placed, ctx: 16384 }, pace: 8192 / 300 }), 32768)
+  assert.equal(at({ ctx: 16384, placed: { ...placed, ctx: 16384 }, pace: 27.3 }), null)
+  // A smaller figure leaves less room.
+  assert.equal(at({ figure: ADDRESS(13.2) }), 16384, '12e9 fits 11.2 GiB')
+  assert.equal(at({ figure: ADDRESS(13.1) }), null, '12e9 does not fit 11.1 GiB')
+})
+
+test('contextVerdict: every branch of the first measured answer at a larger context', () => {
+  const gpu: Placement = { loaded: 6e9, gpu: 6e9, ctx: 16384 }
+  const v = (placed: Placement | null, o: { slow?: boolean; cold?: boolean } = {}) => contextVerdict({ placed, from: 8192, ctx: 16384, slow: o.slow ?? false, cold: o.cold ?? false })
+  assert.deepEqual(v(gpu), { kind: 'good' })
+  assert.deepEqual(v({ ...gpu, ctx: undefined }), { kind: 'good' }, 'no context_length: the placement decides')
+  assert.deepEqual(v(gpu, { slow: true }), { kind: 'back', why: 'slow' })
+  assert.deepEqual(v({ ...gpu, gpu: 6e9 - 1 }), { kind: 'back', why: 'split' })
+  assert.deepEqual(v({ ...gpu, gpu: 0 }), { kind: 'back', why: 'cpu' })
+  // Ollama ran it at its trained context, below the context sent: that, when above the one it grew from, else that one.
+  assert.deepEqual(v({ ...gpu, ctx: 12288 }), { kind: 'trained', trained: 12288, ctx: 12288 })
+  assert.deepEqual(v({ ...gpu, ctx: 16383 }), { kind: 'trained', trained: 16383, ctx: 16383 })
+  assert.deepEqual(v({ ...gpu, ctx: 8193 }), { kind: 'trained', trained: 8193, ctx: 8193 })
+  assert.deepEqual(v({ ...gpu, ctx: 8192 }), { kind: 'trained', trained: 8192, ctx: 8192 })
+  assert.deepEqual(v({ ...gpu, ctx: 4096 }), { kind: 'trained', trained: 4096, ctx: 8192 })
+  assert.deepEqual(v({ ...gpu, ctx: 12288, gpu: 0 }, { slow: true }), { kind: 'trained', trained: 12288, ctx: 12288 }, 'trained first; the next answer at it is measured')
+  // A first wait that ran out: split goes back; whole on the GPU or the processor may still be loading.
+  assert.deepEqual(v({ ...gpu, gpu: 3e9 }, { cold: true }), { kind: 'back', why: 'split' })
+  assert.equal(v(gpu, { cold: true }), null)
+  assert.equal(v({ ...gpu, gpu: 0 }, { cold: true }), null)
+  assert.equal(v({ ...gpu, ctx: 8192 }, { cold: true }), null, 'a runner still at the old context while the new one loads says nothing')
+  // Not loaded: no verdict.
+  assert.equal(v(null), null)
+  assert.equal(v(null, { cold: true }), null)
+})
+
+test('fitLine: the context clause, once something grew or was learned; with none the row is byte-identical', () => {
+  const BASE: FitInput = {
+    figure: ADDRESS(24), off: false, found: 'ollama', chat: false, theirs: null, choice: { name: 'qwen3:14b', step: 'usual', bytes: 9.3e9 },
+    usual: { name: 'qwen3:14b', bytes: 9.3e9 }, last: S('qwen3:14b', 9.3e9, 14e9, 14e9, { pace: 41 }), verdict: null, anyAside: false, grow: true, coldMs: 0,
+  }
+  const ROW = "24.0 GB given by the page's address (vram=); qwen3:14b measured 13.0 GB loaded, all on the GPU, 41.0 tokens a second; nothing bigger that Ollama lists fits by what was measured, so auto keeps qwen3:14b"
+  assert.equal(fitLine(BASE), ROW)
+  assert.equal(fitLine({ ...BASE, context: null }), ROW, 'nothing grew: byte-identical')
+  const W14 = (w: Wide) => ({ ...w, model: 'qwen3:14b' })
+  const table: [string, Wide, string][] = [
+    ['grown, not yet measured', { state: 'grown', from: 8192, ctx: 16384, tried: 16384 },
+      'an answer was cut at 2,048 tokens, so qwen3:14b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured'],
+    ['measured good', { state: 'good', from: 8192, ctx: 16384, tried: 16384, loaded: 15.8e9 },
+      'qwen3:14b runs at 16,384 tokens of context with answers of up to 4,096 (measured 14.7 GB loaded at that context, all on the GPU)'],
+    ['trained context learned', { state: 'grown', from: 8192, ctx: 12288, tried: 12288, trained: 12288 },
+      'qwen3:14b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072'],
+    ['trained context, measured good', { state: 'good', from: 8192, ctx: 12288, tried: 12288, trained: 12288, loaded: 14.9e9 },
+      'qwen3:14b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072 (measured 13.9 GB loaded at that context, all on the GPU)'],
+    ['trained on what it grew from', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'trained', trained: 8192 },
+      'qwen3:14b was trained on 8,192 tokens of context, so it stays at 8,192 for this visit'],
+    ['back: split', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'split' },
+      '16,384 tokens of context did not fit the GPU (some of it ran on the processor), so qwen3:14b stays at 8,192 for this visit'],
+    ['back: on the processor', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'cpu' },
+      '16,384 tokens of context did not fit the GPU (all of it ran on the processor), so qwen3:14b stays at 8,192 for this visit'],
+    ['back: slow', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'slow' },
+      '16,384 tokens of context was too slow here, so qwen3:14b stays at 8,192 for this visit'],
+    ['back: refused', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'load' },
+      '16,384 tokens of context would not load in Ollama, so qwen3:14b stays at 8,192 for this visit'],
+    ['back from the trained context', { state: 'back', from: 8192, ctx: 8192, tried: 12288, why: 'split', trained: 12288 },
+      '12,288 tokens of context did not fit the GPU (some of it ran on the processor), so qwen3:14b stays at 8,192 for this visit'],
+  ]
+  for (const [name, w, clause] of table) {
+    const got = fitLine({ ...BASE, context: W14(w) })
+    assert.equal(got, `${ROW}; ${clause}`, name)
+    assert.match(got ?? '', ASCII, name)
+    assert.doesNotMatch(got ?? '', WORDS, name)
+  }
+  // After the model clause and before the way back.
+  const tail = fitLine({ ...BASE, anyAside: true, context: W14({ state: 'grown', from: 8192, ctx: 16384, tried: 16384 }) })
+  assert.match(tail ?? '', /so auto keeps qwen3:14b; an answer was cut at 2,048 tokens, .*, which is measured; ask vram auto measures afresh$/)
+  // Rows that return before the model clause never carry it: the operator's model, the chat format, another provider.
+  const grown = W14({ state: 'good', from: 8192, ctx: 16384, tried: 16384, loaded: 15.8e9 })
+  for (const over of [{ theirs: 'qwen3:14b' }, { chat: true }, { found: 'inpage' }, { figure: null }] as Partial<FitInput>[]) {
+    assert.doesNotMatch(fitLine({ ...BASE, ...over, context: grown }) ?? '', /tokens of context/, JSON.stringify(over))
+  }
+  // Token counts in comma groups, whatever the locale.
+  for (const [n, want] of [[0, '0'], [123, '123'], [2048, '2,048'], [16384, '16,384'], [1234567, '1,234,567']] as const) assert.equal(grouped(n), want)
 })

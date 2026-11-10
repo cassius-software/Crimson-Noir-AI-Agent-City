@@ -8,8 +8,14 @@
  * figure is never chosen; a bigger step that is slow, split or will not load is dropped, at most once a visit; marks
  * kept across visits are undone by ask vram; a measurement that lands after a settings change is dropped; the
  * operator's own model is measured and never replaced; and every request stays on Ollama's own paths on this machine.
+ * Ollama's context and answer cap double once a visit after a cut answer on a settled model measured all on the GPU,
+ * with room; the first answer there is measured and goes back when split, slow, on the processor or refused (that ask
+ * answered once more at 8,192, once); the trained context Ollama reports is taken; Seen and the model chosen are the
+ * same as without growth; and without a figure, in the chat format, for the operator's model and under ask provider
+ * ollama every body is today's, byte for byte.
  * What breaks if it is removed? A change to the router could grow the model on a machine that gave no figure, keep a
- * model that does not fit, or ask something off this machine, and nothing in CI would say so.
+ * model that does not fit, ask Ollama for a context that does not fit, or ask something off this machine, and nothing
+ * in CI would say so.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -27,15 +33,21 @@ const json = (body: unknown, status = 200): Response => new Response(JSON.string
 /** A model Ollama lists: its name, its weight bytes (absent: none said) and, when Ollama says, what it does. */
 interface Listed { readonly name: string; readonly size?: number; readonly capabilities?: readonly string[] }
 /**
- * How /api/generate answers for a model: a done line with `tokens` written in `ns` nanoseconds (absent: no timing),
- * the first line `delayMs` late; a hang until the request is cut off; one piece and then nothing; one piece and then
- * Ollama's error line; or Ollama's 500.
+ * How /api/generate answers for a model: a done line with `tokens` written in `ns` nanoseconds (absent: no timing)
+ * and `reason` as its done_reason ('stop' unless said), the first line `delayMs` late, and Ollama's 500 for a context
+ * above `refuseAbove`; a hang until the request is cut off; one piece and then nothing; one piece and then Ollama's
+ * error line; or Ollama's 500.
  */
-type Writes = { readonly tokens?: number; readonly ns?: number; readonly delayMs?: number } | 'hang' | 'stall' | 'broke' | 500
-/** Where /api/ps says a model is loaded: its bytes in all and on the GPU. */
-interface Placed { readonly size: number; readonly vram: number }
-/** One request the page made: its address, how it was sent, and the model a body named. */
-interface Call { readonly url: string; readonly mode?: string; readonly model?: string }
+type Writes = { readonly tokens?: number; readonly ns?: number; readonly delayMs?: number; readonly reason?: string; readonly refuseAbove?: number } | 'hang' | 'stall' | 'broke' | 500
+/**
+ * Where /api/ps says a model is loaded: its bytes in all and on the GPU. With `kv` (bytes per 8,192 tokens of context)
+ * it also says the context the model was last asked for, capped at `trained`, as context_length, as Ollama v0.10.0
+ * and later do; its size grows by `kv` for each 8,192 tokens over 8,192, and `vram` is then what the GPU holds of it
+ * at most (so a size above it is split).
+ */
+interface Placed { readonly size: number; readonly vram: number; readonly kv?: number; readonly trained?: number }
+/** One request the page made: its address, how it was sent, the model a body named, and its body as sent. */
+interface Call { readonly url: string; readonly mode?: string; readonly model?: string; readonly body?: string }
 
 /**
  * A fake machine: Ollama on :11434 (its list with sizes and capabilities, /api/generate, /api/ps, /api/version, and
@@ -44,11 +56,13 @@ interface Call { readonly url: string; readonly mode?: string; readonly model?: 
  * the request is cut off); `down` takes Ollama away.
  */
 function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Record<string, Writes> }) {
-  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean; psFails: number; psHang: boolean } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false, psFails: 0, psHang: false }
+  const state: { models: Listed[]; ps: Record<string, Placed>; writes: Record<string, Writes>; hold: Promise<void> | null; down: boolean; psFails: number; psHang: boolean; ctx: Record<string, number> } = { models: o.models, ps: o.ps ?? {}, writes: o.writes ?? {}, hold: null, down: false, psFails: 0, psHang: false, ctx: {} }
   const calls: Call[] = []
-  const generate = (model: string, signal: AbortSignal | undefined): Promise<Response> | Response => {
+  const generate = (model: string, signal: AbortSignal | undefined, numCtx: number): Promise<Response> | Response => {
     const w = state.writes[model] ?? {}
-    if (w === 500) return json({ error: 'model requires more system memory (12.0 GiB) than is available (8.0 GiB)' }, 500)
+    if (w === 500 || (typeof w === 'object' && w.refuseAbove !== undefined && numCtx > w.refuseAbove)) return json({ error: 'model requires more system memory (12.0 GiB) than is available (8.0 GiB)' }, 500)
+    // Loaded at the context asked for (Ollama loads the model again for another one).
+    state.ctx[model] = numCtx
     if (w === 'hang') {
       return new Promise<Response>((_, reject) => {
         if (signal?.aborted) return reject(signal.reason)
@@ -61,7 +75,7 @@ function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Re
     const headers = { 'content-type': 'application/x-ndjson' }
     if (w === 'stall') return new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(ndjson(piece))) } }), { status: 200, headers })
     if (w === 'broke') return new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(ndjson(piece, { error: 'out of memory' }))); c.close() } }), { status: 200, headers })
-    const done = { done: true, done_reason: 'stop', eval_count: w.tokens ?? 3, ...(w.ns !== undefined && { eval_duration: w.ns }) }
+    const done = { done: true, done_reason: w.reason ?? 'stop', eval_count: w.tokens ?? 3, ...(w.ns !== undefined && { eval_duration: w.ns }) }
     const delay = w.delayMs ?? 0
     return new Response(new ReadableStream<Uint8Array>({
       start(c) {
@@ -80,8 +94,8 @@ function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Re
   }
   const f: FetchLike = async (url, init) => {
     const u = new URL(url)
-    const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string }) : null
-    calls.push({ url, ...(init?.mode !== undefined && { mode: init.mode }), ...(body?.model !== undefined && { model: body.model }) })
+    const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string; options?: { num_ctx?: number } }) : null
+    calls.push({ url, ...(init?.mode !== undefined && { mode: init.mode }), ...(body?.model !== undefined && { model: body.model }), ...(init?.body !== undefined && { body: String(init.body) }) })
     if (u.port !== '11434' || state.down) throw new TypeError('Failed to fetch')
     if (init?.mode === 'no-cors') return new Response(null, { status: 200 })
     const signal = init?.signal ?? undefined
@@ -102,9 +116,16 @@ function machine(o: { models: Listed[]; ps?: Record<string, Placed>; writes?: Re
         state.psFails--
         return json({ error: 'busy' }, 500)
       }
-      return json({ models: Object.entries(state.ps).map(([name, p]) => ({ name, model: name, size: p.size, size_vram: p.vram })) })
+      return json({
+        models: Object.entries(state.ps).map(([name, p]) => {
+          if (p.kv === undefined) return { name, model: name, size: p.size, size_vram: p.vram }
+          const ctx = Math.min(state.ctx[name] ?? 8192, p.trained ?? Infinity)
+          const size = p.size + Math.round(p.kv * (ctx - 8192) / 8192)
+          return { name, model: name, size, size_vram: Math.min(size, p.vram), context_length: ctx }
+        }),
+      })
     }
-    if (u.pathname === '/api/generate') return generate(body?.model ?? '', signal)
+    if (u.pathname === '/api/generate') return generate(body?.model ?? '', signal, body?.options?.num_ctx ?? 0)
     if (u.pathname === '/v1/models') return json({ data: state.models.map((m) => ({ id: m.name })) })
     if (u.pathname === '/v1/chat/completions') {
       return new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(sse({ choices: [{ delta: { content: 'chat says hi' } }] }, { choices: [{ delta: {}, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n')); c.close() } }), { status: 200, headers: { 'content-type': 'text/event-stream' } })
@@ -885,4 +906,326 @@ test("the operator's model named without its tag (ask model qwen3) is measured a
   assert.equal(await ask(r), 'qwen3 says hi')
   await measured(m, 1)
   assert.match(r.settings().fit ?? '', /^24\.0 GB given by the page's address \(vram=\); the model is yours \(ask model chose it\): auto sizes only a model it chose \(ask model auto hands it back\); qwen3 measured 5\.6 GB loaded, all on the GPU, 2\.0 tokens a second/)
+})
+
+// ---------------------------------------------------------------- the context and the answer cap (R1-R7)
+
+/** The context and answer cap each /api/generate body asked for, as `num_ctx/num_predict`, in order. */
+const bodies = (m: Fake): string[] => m.calls.filter((c) => c.url.endsWith('/api/generate')).map((c) => {
+  const o = (JSON.parse(c.body ?? '{}') as { options?: { num_ctx?: number; num_predict?: number } }).options
+  return `${o?.num_ctx}/${o?.num_predict}`
+})
+/** How every generate body has ended since before slice 4: today's context and answer cap, byte for byte. */
+const TODAY = ',"options":{"num_ctx":8192,"num_predict":2048}}'
+/** An answer cut at its answer cap: 2,048 tokens in 50 s (41.0 a second, room for 4,096 in 100 s). */
+const CUT = { tokens: 2048, ns: 50e9, reason: 'length' } as const
+/** The same answer, finished. */
+const WHOLE = { tokens: 2048, ns: 50e9 } as const
+/** One model on a 24 GB figure: 5 GB loaded at 8,192 tokens, 1 GB more for each 8,192 more, all of it on the GPU. */
+const ONE = (writes: Writes = CUT, placed: Partial<Placed> = {}): Fake => machine({ models: [L('gemma3:1b', 1e9), L(DEFAULT_MODEL, 3.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 20e9, kv: 1e9, ...placed } }, writes: { [DEFAULT_MODEL]: writes } })
+const ROW = "24.0 GB given by the page's address (vram=); qwen3-vl:4b measured 4.7 GB loaded, all on the GPU, 41.0 tokens a second; nothing bigger that Ollama lists fits by what was measured, so auto keeps qwen3-vl:4b"
+
+test('a cut answer on a model measured all on the GPU doubles its context and answer cap once this visit; the first answer there is measured; Seen and the model stay as they were', async () => {
+  const m = ONE()
+  const store = memory()
+  const r = make(m, { vram: '24', store })
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 1)
+  const seen = fitOf(store)?.seen
+  assert.deepEqual(seen, [{ server: DEFAULT_SERVER, model: DEFAULT_MODEL, weights: 3.3e9, loaded: 5e9, gpu: 5e9, pace: 40.96, fails: 0 }])
+  assert.equal(r.settings().fit, `${ROW}; an answer was cut at 2,048 tokens, so qwen3-vl:4b gets 16,384 tokens of context and answers of up to 4,096 from its next answer, which is measured`)
+  // The next answer asks for twice the context and four times its quarter, and is measured there (its own key).
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await measured(m, 2)
+  assert.equal(r.settings().fit, `${ROW}; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 (measured 5.6 GB loaded at that context, all on the GPU)`)
+  // Cut again: once a visit, so it stays, and a model measured there is not asked again.
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096'])
+  assert.equal(looks(m), 2, 'one /api/ps for the first answer, one for the first at the larger context')
+  assert.deepEqual(sent(m), [DEFAULT_MODEL, DEFAULT_MODEL, DEFAULT_MODEL], 'the model never moved')
+  assert.deepEqual(fitOf(store)?.seen, seen, 'only a measurement at 8,192 is kept: Seen is as it was')
+  assert.ok(!('wide' in (fitOf(store) ?? {})), 'nothing of the context is kept between visits')
+  // A new visit on the same store starts at 8,192 again.
+  const next = ONE(WHOLE)
+  const n = make(next, { vram: '24', store })
+  await ask(n)
+  await ask(n)
+  assert.deepEqual(bodies(next), ['8192/2048', '8192/2048'])
+})
+
+test('the gate: no figure, the chat format, the operator\'s model and ask provider ollama send today\'s bodies byte for byte, and ask Ollama nothing more than a finished answer would', async () => {
+  /** The requests a run made, the bodies as sent. */
+  const trail = (m: Fake): string[] => m.calls.map((c) => `${c.url} ${c.body ?? ''}`)
+  const runs: [string, (r: MindRouter) => Promise<void>, { vram?: string }][] = [
+    ['no figure', async (r) => { for (let i = 0; i < 3; i++) await ask(r) }, {}],
+    ['the chat format', async (r) => { await r.installed(); r.setApi?.('chat'); for (let i = 0; i < 3; i++) await ask(r) }, { vram: '24' }],
+    ["the operator's model", async (r) => { await r.installed(); r.setModel(DEFAULT_MODEL); for (let i = 0; i < 3; i++) { await ask(r); await settle() } }, { vram: '24' }],
+    ['ask provider ollama', async (r) => { r.setProvider('ollama'); for (let i = 0; i < 3; i++) await ask(r) }, { vram: '24' }],
+  ]
+  for (const [what, run, o] of runs) {
+    const cut = ONE(CUT)
+    await run(make(cut, o))
+    await settle()
+    const whole = ONE(WHOLE)
+    await run(make(whole, o))
+    await settle()
+    assert.deepEqual(trail(cut), trail(whole), `${what}: the same requests, byte for byte, as answers that were not cut`)
+    const gen = cut.calls.filter((c) => c.url.endsWith('/api/generate'))
+    for (const c of gen) assert.ok(c.body?.endsWith(TODAY), `${what}: ${c.body?.slice(-60)}`)
+    for (const c of cut.calls.filter((x) => x.url.endsWith('/v1/chat/completions'))) assert.match(c.body ?? '', /"max_tokens":2048,/, what)
+  }
+  // A figure that goes away (the Windows app's reading, read at each ask): today's body at once, though it grew.
+  let reading: number | null = 24
+  const app = ONE(CUT)
+  const a = make(app, { appVram: () => reading })
+  await ask(a)
+  await measured(app, 1)
+  reading = null
+  await ask(a)
+  assert.deepEqual(bodies(app), ['8192/2048', '8192/2048'])
+  // No figure: no /api/ps at all.
+  const none = ONE(CUT)
+  const r = make(none)
+  for (let i = 0; i < 3; i++) await ask(r)
+  await settle()
+  assert.equal(looks(none), 0)
+  assert.deepEqual(bodies(none), ['8192/2048', '8192/2048', '8192/2048'])
+})
+
+test("grown, then the operator chooses the model: today's body while it is theirs; ask model auto gives the grown context back", async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  r.setModel(DEFAULT_MODEL)
+  await ask(r)
+  assert.match(r.settings().fit ?? '', /the model is yours \(ask model chose it\)/)
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/, 'no context clause for a model auto did not choose')
+  assert.equal(r.setModel('auto'), `auto: auto chooses the Ollama model again (${DEFAULT_MODEL} now)`)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '16384/4096'])
+})
+
+test('room: the bytes loaded plus what doubling costs must fit the figure less 2 GiB; exactly at it grows, one byte over does not', async () => {
+  const GIB = 2 ** 30
+  const room = async (weights: number): Promise<string[]> => {
+    // 12 GiB loaded for these weights: doubling costs 12 GiB less the weights, and the figure of 24 leaves 22 GiB.
+    const m = machine({ models: [L(DEFAULT_MODEL, weights)], ps: { [DEFAULT_MODEL]: { size: 12 * GIB, vram: 40 * GIB, kv: 1e9 } }, writes: { [DEFAULT_MODEL]: CUT } })
+    const r = make(m, { vram: '24' })
+    await ask(r)
+    await measured(m, 1)
+    await ask(r)
+    return bodies(m)
+  }
+  assert.deepEqual(await room(2 * GIB), ['8192/2048', '16384/4096'], '12 + 10 = 22 GiB: exactly at the budget')
+  assert.deepEqual(await room(2 * GIB - 1), ['8192/2048', '8192/2048'], 'one byte over')
+})
+
+test('a larger context that splits, runs slower than 5 tokens a second over 32, or that Ollama will not load goes back for the visit; the model is never set aside', async () => {
+  // Split: the GPU holds 5.5 GB of it, and it takes 6 GB at 16,384.
+  const m = ONE(CUT, { vram: 5.5e9 })
+  const store = memory()
+  const r = make(m, { vram: '24', store })
+  await ask(r)
+  await measured(m, 1)
+  const seen = fitOf(store)?.seen
+  await ask(r)
+  await measured(m, 2)
+  assert.equal(r.settings().fit, `${ROW}; 16,384 tokens of context did not fit the GPU (some of it ran on the processor), so qwen3-vl:4b stays at 8,192 for this visit`)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'not gemma3:1b: the model was not set aside')
+  await ask(r)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '8192/2048'], 'back, and not grown again this visit')
+  assert.deepEqual(fitOf(store)?.seen, seen, 'Seen untouched')
+  assert.doesNotMatch(r.settings().fit ?? '', /measures afresh/, 'nothing avoided')
+  // All on the processor at 16,384.
+  const cpu = ONE(CUT)
+  const c = make(cpu, { vram: '24' })
+  await ask(c)
+  await measured(cpu, 1)
+  cpu.state.ps[DEFAULT_MODEL] = { size: 5e9, vram: 0, kv: 1e9 }
+  await ask(c)
+  await measured(cpu, 2)
+  assert.match(c.settings().fit ?? '', /; 16,384 tokens of context did not fit the GPU \(all of it ran on the processor\), so qwen3-vl:4b stays at 8,192 for this visit$/)
+  // The pace at the larger context: 4.99 a second over 499 tokens goes back; 5.00 over 500 stays.
+  for (const [tokens, want] of [[499, /; 16,384 tokens of context was too slow here, so qwen3-vl:4b stays at 8,192 for this visit$/], [500, /; qwen3-vl:4b runs at 16,384 tokens of context with answers of up to 4,096 \(measured 5\.6 GB loaded at that context, all on the GPU\)$/]] as const) {
+    const p = ONE(CUT)
+    const x = make(p, { vram: '24' })
+    await ask(x)
+    await measured(p, 1)
+    p.state.writes[DEFAULT_MODEL] = { tokens, ns: 100e9 }
+    await ask(x)
+    await measured(p, 2)
+    assert.match(x.settings().fit ?? '', want, String(tokens))
+    await ask(x)
+    assert.equal(bodies(p).at(-1), tokens === 499 ? '8192/2048' : '16384/4096', String(tokens))
+  }
+})
+
+test('a larger context Ollama will not load: the same ask is answered once more at 8,192, the model stays, and that is the ask\'s one retry', async () => {
+  const m = ONE({ ...CUT, refuseAbove: 8192 })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'answered within the one ask')
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048'])
+  assert.deepEqual(sent(m), [DEFAULT_MODEL, DEFAULT_MODEL, DEFAULT_MODEL])
+  await settle()
+  assert.equal(r.settings().fit, `${ROW}; 16,384 tokens of context would not load in Ollama, so qwen3-vl:4b stays at 8,192 for this visit`)
+  // A model auto moved, which R8 would answer again with the next one down: the context's retry comes first, once,
+  // and its failure is the ask's (no R8 after it, and no look).
+  const models = (): Listed[] => [L('deepseek-r1:671b', 404e9), L('qwen3:235b', 142e9), L('qwen3:8b', 5.2e9)]
+  const moved = machine({ models: models(), ps: { 'qwen3:235b': { size: 150e9, vram: 400e9, kv: 8e9 } }, writes: { 'qwen3:235b': CUT } })
+  const x = make(moved, { vram: '318.5' })
+  assert.equal(await ask(x), 'qwen3:235b says hi')
+  await measured(moved, 1)
+  moved.state.writes['qwen3:235b'] = 500
+  const before = moved.calls.length
+  await assert.rejects(ask(x), (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.deepEqual(moved.calls.slice(before).map((c) => `${new URL(c.url).pathname} ${c.model ?? ''}`.trim()), ['/api/generate qwen3:235b', '/api/generate qwen3:235b'], 'two answers in the ask, at 16,384 then 8,192: no R8, no look')
+  assert.deepEqual(bodies(moved), ['8192/2048', '16384/4096', '8192/2048'])
+  // Back at 8,192, the next ask is R8's as before: the moved model is set aside and the next one down answers.
+  assert.equal(await ask(x), 'qwen3:8b says hi')
+  assert.deepEqual(sent(moved), ['qwen3:235b', 'qwen3:235b', 'qwen3:235b', 'qwen3:235b', 'qwen3:8b'])
+})
+
+test('Ollama runs it at its trained context: 12,288 is used (answers of up to 3,072) and measured; 8,192 goes back; neither grows again', async () => {
+  const m = ONE(CUT, { trained: 12288 })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  await ask(r)
+  await measured(m, 2)
+  assert.equal(r.settings().fit, `${ROW}; qwen3-vl:4b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072`)
+  await ask(r)
+  await measured(m, 3)
+  assert.equal(r.settings().fit, `${ROW}; qwen3-vl:4b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072 (measured 5.1 GB loaded at that context, all on the GPU)`)
+  await ask(r)
+  await settle()
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '12288/3072', '12288/3072'])
+  assert.equal(looks(m), 3)
+  // Trained on 8,192 (as Llama 3 was): back, and the row says why.
+  const t = ONE(CUT, { trained: 8192 })
+  const x = make(t, { vram: '24' })
+  await ask(x)
+  await measured(t, 1)
+  await ask(x)
+  await measured(t, 2)
+  await ask(x)
+  assert.deepEqual(bodies(t), ['8192/2048', '16384/4096', '8192/2048'])
+  assert.equal(x.settings().fit, `${ROW}; qwen3-vl:4b was trained on 8,192 tokens of context, so it stays at 8,192 for this visit`)
+})
+
+test('nothing grows without a measured context_length, on a model split at 8,192, on an answer not cut, or on one too slow for the larger answer', async () => {
+  const cases: [string, Fake][] = [
+    ['an Ollama that does not say context_length', machine({ models: [L(DEFAULT_MODEL, 3.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 5e9 } }, writes: { [DEFAULT_MODEL]: CUT } })],
+    ['split at 8,192', ONE(CUT, { vram: 4e9 })],
+    ['not cut', ONE(WHOLE)],
+    // 2,048 tokens in 160 s: 12.8 a second, under the 13.65 that writes 4,096 in 300 s.
+    ['too slow for 4,096', ONE({ tokens: 2048, ns: 160e9, reason: 'length' })],
+  ]
+  for (const [what, m] of cases) {
+    const r = make(m, { vram: '24' })
+    for (let i = 0; i < 3; i++) { await ask(r); await settle() }
+    assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048'], what)
+    assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/, what)
+  }
+})
+
+test('the step up is decided by measurements at 8,192 alone: the same models and the same Seen with the context grown as without', async () => {
+  // Visit one at 15 GB: the 14b's need by the 4b's ratio (14.1e9) does not fit 13 GiB, so the 4b settles and grows; at
+  // 16,384 it takes 8 GB. Visit two at 18 GB: by the ratio measured at 8,192 the 14b fits 16 GiB, and is chosen.
+  const run = async (writes: Writes): Promise<{ sent: (string | undefined)[]; bodies: string[]; seen: unknown }> => {
+    const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9), L('qwen3:14b', 9.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 40e9, kv: 3e9 }, 'qwen3:14b': { size: 14e9, vram: 40e9 } }, writes: { [DEFAULT_MODEL]: writes, 'qwen3:14b': WHOLE } })
+    const store = memory()
+    const one = make(m, { vram: '15', store })
+    for (let i = 0; i < 3; i++) { await ask(one); await settle() }
+    const two = make(m, { vram: '18', store })
+    for (let i = 0; i < 2; i++) { await ask(two); await settle() }
+    return { sent: sent(m), bodies: bodies(m), seen: fitOf(store)?.seen }
+  }
+  const grown = await run(CUT)
+  const plain = await run(WHOLE)
+  assert.deepEqual(grown.bodies, ['8192/2048', '16384/4096', '16384/4096', '8192/2048', '8192/2048'], 'it grew in visit one')
+  assert.deepEqual(plain.bodies, ['8192/2048', '8192/2048', '8192/2048', '8192/2048', '8192/2048'])
+  assert.deepEqual(grown.sent, [DEFAULT_MODEL, DEFAULT_MODEL, DEFAULT_MODEL, 'qwen3:14b', 'qwen3:14b'])
+  assert.deepEqual(grown.sent, plain.sent)
+  assert.deepEqual(grown.seen, plain.seen)
+})
+
+test('ask vram forgets a grown context with what was measured: the next answer is at 8,192 and measured afresh', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  await ask(r)
+  await measured(m, 2)
+  assert.match(r.settings().fit ?? '', /runs at 16,384 tokens of context/)
+  r.setVram('24')
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+  await ask(r)
+  await measured(m, 3)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '16384/4096'], 'grown again once measured: ask vram starts the visit over')
+})
+
+test('a settings change between the cut and the decision means no growth', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24', lookMs: 5000 })
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((done) => { release = done })
+  await ask(r)
+  await until(() => looks(m) === 1)
+  r.setApi?.('generate')
+  release()
+  m.state.hold = null
+  await settle()
+  await ask(r)
+  assert.equal(bodies(m)[1], '8192/2048')
+})
+
+test('a first wait that runs out at the larger context: whole on the GPU is no verdict; nothing loaded twice goes back; split goes back at once', async () => {
+  // Small enough that the first waits stay the client's 50 ms; a figure of 3.1 GB leaves 1.1 GiB, room for 1 GiB more.
+  const small = (): Fake => machine({ models: [L(DEFAULT_MODEL, 4e6)], ps: { [DEFAULT_MODEL]: { size: 5e6, vram: 1e9, kv: 1e6 } }, writes: { [DEFAULT_MODEL]: CUT } })
+  const m = small()
+  const r = make(m, { vram: '3.1' })
+  await ask(r)
+  await measured(m, 1)
+  m.state.writes[DEFAULT_MODEL] = 'hang'
+  await assert.rejects(ask(r), timedOut)
+  await measured(m, 2)
+  assert.match(r.settings().fit ?? '', /gets 16,384 tokens of context/, 'whole on the GPU: still loading, no verdict')
+  delete m.state.ps[DEFAULT_MODEL]
+  await assert.rejects(ask(r), timedOut)
+  await measured(m, 3)
+  await assert.rejects(ask(r), timedOut)
+  await measured(m, 4)
+  assert.match(r.settings().fit ?? '', /; 16,384 tokens of context would not load in Ollama, so qwen3-vl:4b stays at 8,192 for this visit$/)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '16384/4096', '16384/4096'])
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  assert.equal(bodies(m).at(-1), '8192/2048')
+  // Split when the first wait ran out: back at once.
+  const s = small()
+  const x = make(s, { vram: '3.1' })
+  await ask(x)
+  await measured(s, 1)
+  s.state.writes[DEFAULT_MODEL] = 'hang'
+  s.state.ps[DEFAULT_MODEL] = { size: 5e6, vram: 5.5e6, kv: 1e6 }
+  await assert.rejects(ask(x), timedOut)
+  await measured(s, 2)
+  assert.match(x.settings().fit ?? '', /; 16,384 tokens of context did not fit the GPU \(some of it ran on the processor\), so qwen3-vl:4b stays at 8,192 for this visit$/)
+})
+
+test('the model is settled first: a cut answer whose measurement steps up to a bigger model grows nothing, and the model it left is at 8,192 when it comes back', async () => {
+  const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9), L('qwen3:14b', 9.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 40e9, kv: 1e9 }, 'qwen3:14b': { size: 14e9, vram: 14e9 } }, writes: { [DEFAULT_MODEL]: CUT, 'qwen3:14b': SLOW } })
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  assert.equal(r.settings().model, 'qwen3:14b', 'stepped up on that measurement')
+  await ask(r)
+  await measured(m, 2)
+  assert.equal(await ask(r), `${DEFAULT_MODEL} says hi`, 'the 14b was too slow: back to the 4b')
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048'])
 })

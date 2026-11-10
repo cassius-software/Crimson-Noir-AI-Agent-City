@@ -14,10 +14,16 @@
  * that some of it sits on the GPU; then the largest listed model whose need, its weights times the largest
  * loaded-to-weights ratio measured on this server, fits the figure less RESERVE_BYTES. A measured model that was too
  * slow (a bigger one), split and slow (one no bigger), or split when its first wait ran out, is set aside (failed).
+ * The same measurement also lets Ollama's context grow, for this visit only: after an answer cut at its answer cap, on
+ * a model measured all on the GPU at the context it was sent (Ollama's own context_length), fast enough to write the
+ * longer answer within FIRST_PIECE_MS, with room under the figure less RESERVE_BYTES, the context doubles once (widen,
+ * at most CONTEXT_MAX) and the answer cap with it (answerTokensFor); the first answer at the larger context is measured,
+ * and one split, slow, on the processor or refused goes back for the rest of the visit (contextVerdict). A context
+ * verdict never sets a model aside, and only measurements at CONTEXT_TOKENS are kept as Seen, so choose is unchanged.
  * Every number marked a starting value is a guess the MANUAL names as one; none is from a real big GPU. Everything here
  * is a pure function of what it is given: the router (router.ts) asks the server and keeps what was measured.
  */
-import { BYTES_MAX, DEFAULT_MODEL, localText, loopbackServer, type Weighed } from './localCompute.ts'
+import { answerTokensFor, BYTES_MAX, CONTEXT_MAX, DEFAULT_MODEL, FIRST_PIECE_MS, localText, loopbackServer, type Placement, type Weighed } from './localCompute.ts'
 
 export const GIB = 2 ** 30
 /** Starting value: llama.cpp --fit keeps 1 GiB per device; 1 GiB more for the city's own WebGPU. */
@@ -190,6 +196,65 @@ export function readFit(raw: unknown): FitKept | undefined {
   return { vram, seen, ...(usual !== undefined && { usual }) }
 }
 
+/** Starting value: the longest a longer answer may take at the pace measured, seconds (FIRST_PIECE_MS, the first wait). */
+export const ANSWER_WAIT_S = FIRST_PIECE_MS / 1000
+/** Starting value: the least a doubled context is taken to cost, bytes (about one 8B model's cache at 8,192 tokens). */
+export const WIDEN_FLOOR_BYTES = GIB
+
+/**
+ * The larger context a model's next answers get (twice `ctx`), or null (R4). Only when the answer was cut at its answer
+ * cap (reason 'length'); it reported at least PACE_TOKENS tokens and a pace at which the larger answer cap takes at most
+ * ANSWER_WAIT_S; the newest measurement of the model at `ctx` this visit (`placed`) was all on the GPU and Ollama said
+ * it ran at `ctx` (so its trained context is not below it); the bytes loaded there plus what doubling costs (what was
+ * loaded beyond the weights, at least WIDEN_FLOOR_BYTES) fit the figure less RESERVE_BYTES; the larger context is at
+ * most CONTEXT_MAX; and the model has not grown this visit (`grown`: grown once, whatever came of it).
+ */
+export function widen(i: { reason: string; tokens: number; pace: number | null; ctx: number; placed: Placement | null; weights: number | null; figure: Figure; grown: boolean }): number | null {
+  const n = i.ctx * 2
+  if (i.grown || n > CONTEXT_MAX || i.reason !== 'length') return null
+  if (i.tokens < PACE_TOKENS || i.pace === null || !(i.pace * ANSWER_WAIT_S >= answerTokensFor(n))) return null
+  const p = i.placed
+  if (p === null || p.ctx !== i.ctx || p.gpu < p.loaded || i.weights === null) return null
+  return p.loaded + Math.max(p.loaded - i.weights, WIDEN_FLOOR_BYTES) <= budgetOf(i.figure) ? n : null
+}
+
+/** Why a larger context went back to the one it grew from: split, all on the processor, too slow, or refused by Ollama. */
+export type Back = 'split' | 'cpu' | 'slow' | 'load'
+/**
+ * What the first measured answer at a grown context `ctx` (grown from `from`) says (R5): good (keep it); trained (Ollama
+ * ran it at its trained context, `placed.ctx`, below `ctx`: `ctx` becomes that when it is above `from`, else `from`, and
+ * nothing grows again); or back to `from` and why. Null when it says nothing: not loaded, or a first wait that ran out
+ * (the model may still be loading) with the model not split.
+ */
+export type ContextVerdict = { readonly kind: 'good' } | { readonly kind: 'trained'; readonly trained: number; readonly ctx: number } | { readonly kind: 'back'; readonly why: Exclude<Back, 'load'> }
+export function contextVerdict(i: { placed: Placement | null; from: number; ctx: number; slow: boolean; cold: boolean }): ContextVerdict | null {
+  const p = i.placed
+  if (p === null) return null
+  const where = whereOf(p)
+  if (i.cold) return where === 'split' ? { kind: 'back', why: 'split' } : null
+  if (p.ctx !== undefined && p.ctx < i.ctx) return { kind: 'trained', trained: p.ctx, ctx: p.ctx > i.from ? p.ctx : i.from }
+  if (where !== 'gpu') return { kind: 'back', why: where }
+  return i.slow ? { kind: 'back', why: 'slow' } : { kind: 'good' }
+}
+
+/**
+ * What became of a model's context this visit (the router keeps one per server and model it grew): grown (sent at
+ * `ctx`, not yet measured there), good (measured all on the GPU at `ctx`, `loaded` bytes), or back (at `from` again,
+ * `why`, after `tried`). `trained` is the trained context Ollama reported, when below the context sent.
+ */
+export interface Wide {
+  readonly state: 'grown' | 'good' | 'back'
+  readonly from: number
+  readonly ctx: number
+  readonly tried: number
+  readonly trained?: number
+  readonly loaded?: number
+  readonly why?: Back | 'trained'
+}
+
+/** A whole number with comma groups, as the console writes token counts (16,384); ASCII whatever the locale. */
+export const grouped = (n: number): string => String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+
 /** Bytes as the page's other sizes show them: GB of 2^30 bytes, one decimal. */
 export const gbText = (bytes: number): string => `${(bytes / GIB).toFixed(1)} GB`
 
@@ -200,6 +265,23 @@ export interface FitInput {
   readonly choice: Choice | null; readonly usual: { readonly name: string; readonly bytes: number | null } | null
   readonly last: Seen | null; readonly verdict: 'big' | 'slow' | null; readonly anyAside: boolean; readonly grow: boolean
   readonly coldMs: number   // the chosen model's first-piece wait when longer than the usual one; 0 otherwise
+  /** What became of the context of the model auto answers with this visit; null (or absent) while nothing grew. */
+  readonly context?: (Wide & { readonly model: string }) | null
+}
+
+/** The fit row's clause on the context of the model auto answers with (R4, R5), once it grew. */
+function contextLine(w: Wide & { readonly model: string }): string {
+  const n = grouped
+  const at = (ctx: number): string => `${n(ctx)} tokens of context`
+  const measuredAt = w.loaded !== undefined ? ` (measured ${gbText(w.loaded)} loaded at that context, all on the GPU)` : ''
+  if (w.state === 'back') {
+    if (w.why === 'trained') return `${w.model} was trained on ${at(w.trained ?? w.from)}, so it stays at ${n(w.from)} for this visit`
+    const why = w.why === 'split' ? 'did not fit the GPU (some of it ran on the processor)' : w.why === 'cpu' ? 'did not fit the GPU (all of it ran on the processor)' : w.why === 'slow' ? 'was too slow here' : 'would not load in Ollama'
+    return `${at(w.tried)} ${why}, so ${w.model} stays at ${n(w.from)} for this visit`
+  }
+  if (w.trained !== undefined) return `${w.model} was trained on ${at(w.trained)}, so it runs at that with answers of up to ${n(answerTokensFor(w.ctx))}${measuredAt}`
+  if (w.state === 'good') return `${w.model} runs at ${at(w.ctx)} with answers of up to ${n(answerTokensFor(w.ctx))}${measuredAt}`
+  return `an answer was cut at ${n(answerTokensFor(w.from))} tokens, so ${w.model} gets ${at(w.ctx)} and answers of up to ${n(answerTokensFor(w.ctx))} from its next answer, which is measured`
 }
 
 /** A measurement in words: how much was loaded, where, how fast, and what it says. */
@@ -213,7 +295,8 @@ function measured(last: Seen, verdict: 'big' | 'slow' | null): string {
 
 /**
  * The console's fit row (ask, under auto): the figure and where it came from, what was measured, which model auto
- * answers with and why, and the way back. Undefined with no figure (but off at the console, which says so). ASCII.
+ * answers with and why, what became of its context once it grew, and the way back. Undefined with no figure (but off
+ * at the console, which says so). ASCII.
  */
 export function fitLine(i: FitInput): string | undefined {
   if (i.off) return "off at the console (ask vram 0): auto keeps its usual model (ask vram auto hands sizing back to the page's address or the Windows app)"
@@ -243,6 +326,7 @@ export function fitLine(i: FitInput): string | undefined {
     parts.push(`auto answers with ${c.name}, the largest that fits by what was measured (${gbText(c.bytes ?? 0)} of weights, about ${gbText(c.need ?? 0)} loaded by that measure${cold}; ask model <name> keeps another)`)
   } else if (c.step === 'down') parts.push(`auto answers with ${c.name}, the largest smaller one Ollama lists (ask model <name> keeps another)`)
   else parts.push(`Ollama lists nothing smaller that fits, so auto keeps ${i.usual?.name ?? c.name}`)
+  if (i.context) parts.push(contextLine(i.context))
   if (c?.step === 'down' || c?.step === 'stuck' || i.anyAside) parts.push(f.from === 'ask' ? `ask vram ${f.gb} measures afresh` : 'ask vram auto measures afresh')
   return parts.join('; ')
 }
