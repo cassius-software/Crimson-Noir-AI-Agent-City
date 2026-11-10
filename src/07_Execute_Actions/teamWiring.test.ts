@@ -49,7 +49,7 @@ test('App: the team runner over the page\'s own parts, ticked from the frame loo
   assert.match(src, /tables: \(\) => engineBridge\.soa\?\.tables\(\) \?\? null/, 'the bridge\'s one reader of the columns')
   assert.match(src, /contained: \(\) => airgapInstalled\(globalThis\)/, 'the air gap vouches, or the gate fails closed')
   assert.match(src, /panic: \(\) => e\.panicReason/)
-  assert.match(src, /rooms: \(\) => e\.workplaces/)
+  assert.match(src, /rooms: \(\) => e\.teamRooms/)
   assert.match(src, /recruit: \(skill\) => r\.recruit\(skill\)/, 'the same ask recruit makes')
   assert.match(src, /rally: \(agent, x, z\) => r\.rally\(agent, x, z\)/)
   assert.match(src, /log: \(line\) => \{ console\.error\(line\); e\.toast\('Lane isolated', line\) \}/)
@@ -87,7 +87,7 @@ test('the Concierge rewords through a Voice and shows the team: no Mind, no .ans
 
 test('the engine hands the team runner its rooms with their door fronts on this map\'s lane, and the realm\'s standing; the runner imports no engine, renderer or React', () => {
   const engine = read('07_Execute_Actions/engine.ts')
-  assert.match(engine, /get workplaces\(\): readonly \{ kind: string; name: string; door: \{ x: number; z: number \} \}\[\]/)
+  assert.match(engine, /get teamRooms\(\): readonly \{ kind: string; name: string; door: \{ x: number; z: number \} \}\[\]/)
   assert.match(engine, /door: doorFront\(r, this\.streets\?\.lane \?\? CITY\.lane\)/)
   assert.match(engine, /get panicReason\(\): string \| null \{ return this\.sim\.state\.kernel\.audit\.panic \?\? this\.lockReason \}/)
   const team = read('08_Swarm/team.ts')

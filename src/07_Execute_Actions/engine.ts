@@ -47,7 +47,6 @@ import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { doorFront, drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
-import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
@@ -1545,6 +1544,11 @@ export class Engine {
     return this.landmarkAt
   }
 
+  /** The map's indoor workplaces (interiors.ts), read-only: the first walk's indoor stage reads where they are; empty in a surveyed region. */
+  workplaces(): readonly Workplace[] {
+    return this.rooms
+  }
+
   /** Where pedestrian `agent` stands in the newest reading (a recruit's measured place), else where the player's body is. */
   private standingOf(agent: number): { x: number; z: number; isPlayer: boolean } {
     const st = this.sim.state
@@ -2587,7 +2591,7 @@ export class Engine {
    * The indoor workplaces of this map for the team runner (08_Swarm/team.ts): each kind as the map names it, its name,
    * and its door front on this map's sidewalk lane (the city's CITY.lane, a region window's); none in a surveyed region.
    */
-  get workplaces(): readonly { kind: string; name: string; door: { x: number; z: number } }[] {
+  get teamRooms(): readonly { kind: string; name: string; door: { x: number; z: number } }[] {
     return (this.roomDoors ??= Object.freeze(this.rooms.map((r) => Object.freeze({ kind: r.kind, name: r.name, door: doorFront(r, this.streets?.lane ?? CITY.lane) }))))
   }
 

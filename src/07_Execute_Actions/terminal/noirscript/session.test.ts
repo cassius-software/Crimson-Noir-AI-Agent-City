@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import * as api from './index.ts'
-import type { NoirHost, NoirLimits, NoirResult, NoirTables, NoirWrites } from './index.ts'
+import type { NoirExam, NoirHost, NoirLimits, NoirResult, NoirTables, NoirWrites } from './index.ts'
 import { EMPTY_TABLES, INTRINSIC_NAMES, KEYWORDS, LIMITS, NoirSession, TYPE_NAMES, f32Text } from './index.ts'
 import { MAX_CELLS, MAX_DEPTH, saneLimits } from './vm.ts'
 
@@ -61,7 +61,7 @@ test('index.ts exports exactly the public API of the specification, frozen where
   assert.deepEqual([...TYPE_NAMES], ['i32', 'u32', 'f32', 'bool', 'void', 'f32x4', 'i32x4', 'u32x4', 'u32x8', 'col'])
   for (const name of ['min', 'max', 'abs', 'clamp', 'sqrt', 'floor', 'ceil', 'trunc', 'select', 'mask', 'popcount', 'clz', 'ctz', 'rotl', 'rotr', 'morton2', 'demorton2x', 'demorton2y',
     'f32x4', 'i32x4', 'u32x4', 'u32x8', 'splat_f32x4', 'splat_i32x4', 'splat_u32x4', 'splat_u32x8', 'vlt', 'vle', 'vgt', 'vge', 'veq', 'vne', 'hsum', 'hmin', 'hmax', 'any', 'all',
-    'load_f32x4', 'load_i32x4', 'load_u32x4', 'load_u32x8', 'tune', 'intent', 'cull', 'steer', 'print', 'println']) {
+    'load_f32x4', 'load_i32x4', 'load_u32x4', 'load_u32x8', 'tune', 'intent', 'cull', 'steer', 'verify_ring0', 'spawn_subagents', 'unlock_city', 'print', 'println']) {
     assert.ok(INTRINSIC_NAMES.includes(name), name)
   }
   assert.equal(new Set(INTRINSIC_NAMES).size, INTRINSIC_NAMES.length, 'no intrinsic twice')
@@ -192,6 +192,46 @@ test('write intrinsics fail with the host\'s locked message without write, call 
   assert.deepEqual(say(s, 'print(3);'), ['3'], 'the session is usable after a host failure')
   assert.deepEqual(say(s, 'print(tune("a\\tb", 1.0));', live.host), ['2'])
   assert.deepEqual(live.calls[live.calls.length - 1], ['tune', 'a\tb', 1], 'the string reaches the host with its escapes decoded')
+})
+
+test('exam intrinsics fail with the host\'s noExam message without exam, call through with it in lane types, turn a throw into the error, and run the exit program as three lines on one session', () => {
+  const s = fresh()
+  assert.equal(err(s, 'print(verify_ring0());'), 'no first walk here', 'no host at all')
+  assert.equal(err(s, 'print(verify_ring0());', null), 'no first walk here')
+  assert.equal(err(s, 'print(verify_ring0());', fake().host), 'no first walk here', 'a host with writes but no exam')
+  assert.equal(err(s, 'print(spawn_subagents(24, "sim2real_workplaces"));', { tables: () => EMPTY_TABLES, noExam: 'the walk is off' }), 'the walk is off', 'host.noExam overrides the message')
+  assert.equal(err(s, 'print(1); print(unlock_city(1u, 1)); print(2);', { tables: () => EMPTY_TABLES, noExam: '' }), '', 'an empty message is still the failure')
+  for (const exam of [null, 1, 'x', true]) assert.equal(s.run('print(verify_ring0());', { tables: () => EMPTY_TABLES, exam: exam as unknown as NoirExam }).error, 'no first walk here', String(exam))
+  assert.ok(s.asm('let seal = verify_ring0(); let swarm = spawn_subagents(24, "sim2real_workplaces"); unlock_city(seal, swarm);').out.length > 5, 'they type-check and compile without a host')
+  // Call-through, in lane types: verify_ring0 -> u32, spawn_subagents(i32, str) -> i32, unlock_city(u32, i32) -> bool.
+  const calls: unknown[][] = []
+  const exam: NoirExam = {
+    verifyRing0: () => { calls.push(['verify']); return 0xdeadbeef },
+    spawnSubagents: (n, role) => { calls.push(['spawn', n, role]); return Math.min(n, 3) },
+    unlockCity: (seal, swarm) => { calls.push(['unlock', seal, swarm]); return seal === 0xdeadbeef && swarm >= 1 },
+  }
+  const host: NoirHost = { tables: () => EMPTY_TABLES, exam }
+  assert.deepEqual(say(s, 'let seal = verify_ring0();', host), [])
+  assert.deepEqual(say(s, 'let swarm = spawn_subagents(24, "sim2real_workplaces");', host), [])
+  assert.deepEqual(say(s, 'print(seal, swarm);', host), ['3735928559 3'], 'the seal is a u32 global, the swarm an i32 one, kept between lines')
+  assert.deepEqual(say(s, 'unlock_city(seal, swarm);', host), [], 'the last line is a call standing alone as a statement')
+  assert.deepEqual(say(s, 'print(unlock_city(seal, swarm), unlock_city(1u, swarm), unlock_city(seal, 0));', host), ['true false false'])
+  assert.deepEqual(calls, [['verify'], ['spawn', 24, 'sim2real_workplaces'], ['unlock', 0xdeadbeef, 3], ['unlock', 0xdeadbeef, 3], ['unlock', 1, 3], ['unlock', 0xdeadbeef, 0]])
+  assert.match(err(s, 'print(spawn_subagents(2.0, "x"));', host), /spawn_subagents: no form takes \(f32, str\)/)
+  assert.match(err(s, 'let k = 1; print(unlock_city(k, 1));', host), /unlock_city: no form takes \(i32, i32\)/)
+  assert.match(err(s, 'print(verify_ring0(1));', host), /verify_ring0: no form takes/)
+  // A throw is the run's error (the output so far kept), a plain thrown value too, and the session is usable after.
+  const boom: NoirHost = { tables: () => EMPTY_TABLES, exam: { ...exam, spawnSubagents: () => { throw new Error("spawn_subagents: unknown role 'nope'") } } }
+  const r = s.run('print(1); print(spawn_subagents(1, "nope")); print(2);', boom)
+  assert.deepEqual(r.out, ['1'])
+  assert.equal(r.error, "spawn_subagents: unknown role 'nope'")
+  assert.equal(err(s, 'print(verify_ring0());', { tables: () => EMPTY_TABLES, exam: { ...exam, verifyRing0: () => { throw 'plain text' } } }), 'plain text')
+  // What a door answers is coerced to its lane: a seal that is not a number is 0, a count is truncated, an unlock is truthiness.
+  const odd: NoirHost = { tables: () => EMPTY_TABLES, exam: { verifyRing0: () => Number.NaN, spawnSubagents: () => 2.9, unlockCity: () => 1 as unknown as boolean } }
+  assert.deepEqual(say(s, 'print(verify_ring0(), spawn_subagents(1, "r"), unlock_city(0u, 0));', odd), ['0 2 true'])
+  assert.deepEqual(say(s, 'print(3);'), ['3'], 'the session is usable after a host failure')
+  // The exam is no write surface: with an exam and no write, a write intrinsic is still locked.
+  assert.equal(err(s, 'print(tune("k", 1.0));', host), 'elite tier locked')
 })
 
 test('a host\'s columns that do not fit the arena fail the run with "memory exhausted", and the next run works', () => {

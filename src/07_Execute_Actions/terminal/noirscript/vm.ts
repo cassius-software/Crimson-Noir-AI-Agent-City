@@ -84,8 +84,22 @@ export interface NoirWrites {
   steer(feature: string, value: number): number
 }
 
-/** `locked`: the message a write intrinsic fails with when `write` is absent (default "elite tier locked"). */
-export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; readonly locked?: string }
+/**
+ * The first walk's exam (the host composes it over the walk, the kernel and the recruiter; absent in the console
+ * shell and when the walk is off): the three doors its exit program opens. Each may throw: the message becomes the
+ * run's error. `verifyRing0` is a seal over the kernel's live state (0 when any check fails); `spawnSubagents` asks up
+ * to `n` people over for `role` and answers with how many were asked; `unlockCity` opens the city for a live seal and
+ * a swarm of one or more.
+ */
+export interface NoirExam {
+  verifyRing0(): number
+  spawnSubagents(n: number, role: string): number
+  unlockCity(seal: number, swarm: number): boolean
+}
+
+/** `locked`: the message a write intrinsic fails with when `write` is absent (default "elite tier locked"); `noExam`:
+ *  the message an exam intrinsic fails with when `exam` is absent (default "no first walk here"). */
+export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; readonly locked?: string; readonly exam?: NoirExam; readonly noExam?: string }
 
 export interface NoirLimits { readonly steps: number; readonly out: number; readonly cells: number; readonly depth: number }
 
@@ -102,6 +116,7 @@ export const MAX_OPS_PER_TICK = 4096
 export const LANE_LIMITS: NoirLimits = Object.freeze({ steps: MAX_OPS_PER_TICK, out: 256, cells: 65_536, depth: 32 })
 
 export const DEFAULT_LOCKED = 'elite tier locked'
+export const DEFAULT_NO_EXAM = 'no first walk here'
 
 /** The most cells any limits may ask for: 64 MiB, four times the elite tier's. */
 export const MAX_CELLS = 16_777_216
@@ -216,6 +231,8 @@ export const Op = Object.freeze({
   ANY: 107, ALL: 108, //   L
   TUNE: 109, INTENT: 110, CULL: 111, STEER: 112,
   PRINT: 113, //           n t1..tn     the n values → ; one output line
+  // The first walk's exam (NoirExam): the seal → u32; n role → i32 asked; seal swarm → bool.
+  VERIFY_RING0: 114, SPAWN_SUBAGENTS: 115, UNLOCK_CITY: 116,
 } as const)
 
 export type Opcode = (typeof Op)[keyof typeof Op]
@@ -230,7 +247,7 @@ export const OP_NAMES: readonly string[] = Object.freeze((() => {
 /** Inline operand count per opcode; -1 means the first operand is a count of further operands (PRINT). */
 export const OPERANDS: Int8Array = (() => {
   const counts = new Int8Array(OP_NAMES.length).fill(1)
-  const zero: Opcode[] = [Op.COL_LEN, Op.NOT_BOOL, Op.MASK, Op.POPCNT, Op.CLZ, Op.CTZ, Op.ROTL, Op.ROTR, Op.MORTON2, Op.DEMORTON2X, Op.DEMORTON2Y, Op.TUNE, Op.INTENT, Op.CULL, Op.STEER]
+  const zero: Opcode[] = [Op.COL_LEN, Op.NOT_BOOL, Op.MASK, Op.POPCNT, Op.CLZ, Op.CTZ, Op.ROTL, Op.ROTR, Op.MORTON2, Op.DEMORTON2X, Op.DEMORTON2Y, Op.TUNE, Op.INTENT, Op.CULL, Op.STEER, Op.VERIFY_RING0, Op.SPAWN_SUBAGENTS, Op.UNLOCK_CITY]
   const two: Opcode[] = [Op.LOAD_LOCAL, Op.STORE_LOCAL, Op.LOAD_GLOBAL, Op.STORE_GLOBAL, Op.FILL, Op.QCOL, Op.QACC]
   const three: Opcode[] = [Op.INDEX, Op.FILL_LOCAL, Op.FILL_GLOBAL, Op.QNEXT]
   const four: Opcode[] = [Op.LOAD_LOCAL_ELEM, Op.STORE_LOCAL_ELEM, Op.LOAD_GLOBAL_ELEM, Op.STORE_GLOBAL_ELEM]
@@ -287,6 +304,8 @@ export interface RunInput {
   readonly tables: NoirTables
   readonly write: NoirWrites | undefined
   readonly locked: string
+  readonly exam: NoirExam | undefined
+  readonly noExam: string
   readonly limits: NoirLimits
 }
 
@@ -394,6 +413,15 @@ export function execute(input: RunInput): RunOutput {
   let sp = 0
   const hostCall = <R>(call: () => R): R => {
     if (write === undefined) fail(input.locked)
+    try {
+      return call()
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const exam = input.exam
+  const examCall = <R>(call: () => R): R => {
+    if (exam === undefined) fail(input.noExam)
     try {
       return call()
     } catch (e) {
@@ -726,6 +754,27 @@ export function execute(input: RunInput): RunOutput {
           const v = f32[sp - 1]!
           const r = hostCall(() => write!.steer(feature, v))
           f32[sp - 2] = Number(r)
+          sp--
+          break
+        }
+        case Op.VERIFY_RING0: {
+          const r = examCall(() => exam!.verifyRing0())
+          u32[sp++] = Number(r) >>> 0
+          break
+        }
+        case Op.SPAWN_SUBAGENTS: {
+          const n = i32[sp - 2]!
+          const role = strs[i32[sp - 1]!] ?? ''
+          const r = examCall(() => exam!.spawnSubagents(n, role))
+          i32[sp - 2] = Number(r) | 0
+          sp--
+          break
+        }
+        case Op.UNLOCK_CITY: {
+          const seal = u32[sp - 2]!
+          const swarm = i32[sp - 1]!
+          const r = examCall(() => exam!.unlockCity(seal, swarm))
+          i32[sp - 2] = r ? 1 : 0
           sp--
           break
         }

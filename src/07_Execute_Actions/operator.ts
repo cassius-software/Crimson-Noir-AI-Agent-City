@@ -22,7 +22,10 @@
  * behind them, and the engine has no contract to implement.
  */
 import { DISENGAGED, disengaged, screen } from '../02_Define_The_Rules/conduct.ts'
-import { admitAsk, sentence as lawSentence, type Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
+import { CHECKS, admitAsk, sentence as lawSentence, type Vouched } from '../02_Define_The_Rules/ring0Gate.ts'
+
+/** The gate's fifteen checks by name, in its order (ring0Gate.ts CHECKS), for a reader that may not hold the gate itself (the first walk's seal). */
+export const GATE_CHECK_NAMES: readonly string[] = Object.freeze(CHECKS.map((c) => c.name))
 import type { CrowdStats } from '../03_Spawn_Agents/crowdCompute.ts'
 import type { KernelStats, QualityState, SipocSnapshot } from '../05_Observe_Environment/telemetry.ts'
 import type { EliteWrites, OperatorBridge } from './terminal/bridge.ts'
