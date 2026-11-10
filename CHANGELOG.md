@@ -61,11 +61,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Normals follow the shape by the cylinder's rule, so a flare is lit as one. A wide leg, a palazzo, a flare or the
   culottes widen the leg, a taper or a slim cut narrows it, a midi lengthens the skirt to 0.36 m, an A-line or a
   flared skirt widens toward the hem, a pencil or a tulip narrows it, and the high waist raises it. Every cut skirt
-  follows the legs as well as the trunk (`humanoid.ts` skirtFollow): its front moves with the leg swung forward, its
-  back with the one swung back and its sides with the leg on their own side, fully from the knee-level ring down, and
-  a midi's hem below the knee hangs from the shin, so the legs stay inside it at a walk (no cloth is simulated; the
-  midi pencil's narrow hem still lets a knee show by up to 3 cm at the far end of a stride). Under a coat no skirt
-  widens.
+  follows the legs as well as the trunk (`humanoid.ts` skirtPose): its front moves with the leg that carries it
+  furthest forward, its back with the one that carries it furthest back, handed over smoothly, and its sides with the
+  leg on their own side, fully from the knee-level ring down, and a midi's hem below the knee hangs from the shin, so
+  the legs stay inside it at a walk (no cloth is simulated; the midi pencil's narrow hem still lets a bent knee show
+  by up to 2 cm at the far end of a stride). Under a coat no skirt widens, and the part the coat covers follows no
+  leg.
   The cut reaches the vertex stage in `morphB.w` (the cut, plus 16 under a coat), so no new buffer is bound. The
   fragment stage paints the rest from the rest position: the crease, pleats, turn-ups, a satin side stripe, a piped
   seam, the cropped and culottes hems above a bare or socked ankle (a prosthetic leg shows its finish there; below the
@@ -1335,17 +1336,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   about 6 to 18 cm through the front of every cut. A worker leaning sideways at a desk, or a body pushed from the side, let
   the shin through the hem's side by up to 6.5 cm. A midi's hem, bound to the thigh's lever, rose 18 to 19 cm and
   tilted 60 to 64 degrees from vertical mid-stride. Now every cut but the straight one (0, the skirt as it always
-  was) follows the legs fully from the knee-level ring down. The sides follow the leg on their own side, and a midi's
-  hem below the knee hangs from the shin. Each cut's follow is about the least that keeps the legs inside. In the same
-  model, at a walk, the legs stay within 1 cm of every cut but the midi pencil (within 3 cm). Bent 0.14 to 0.25 rad to
-  either side, forward or back, the legs stay within 1.5 cm. A hem's front never tilts further than the thigh swung
-  under it. `humanoid.test.ts` checks all three on every cut, at a neutral, a slumped and a long-legged body. The
-  Customizer's side view now blends a skirt's rings to the leg that carries them as the shader does. It had drawn the
-  hem up to 6 cm from the street body at a slumped or an upright posture.
+  was) follows the legs fully from the knee-level ring down. The front goes with the leg that carries it furthest
+  forward and the back with the one that carries it furthest back, handed over across 10 cm of the difference, so the
+  hem never jumps from one leg to the other as the stride crosses over. The sides follow the leg on their own side. A
+  midi's hem below the knee hangs from the shin, bent by 0.6 of the knee's bend, so the calf never kicks the hem's
+  back inside out. Under a coat, the part the coat covers follows no leg, so a worker leaning at a desk never pushes
+  the skirt out through the coat. Each cut's follow is about the least that keeps the legs inside. In the same model,
+  measured where each leg vertex stands, on a neutral, a slumped, a long-legged and a short body at a walk, the legs
+  stay within 1 cm of every cut but the midi pencil (within 2 cm), no hem point moves more than 4.5 cm in a 60 Hz
+  frame, and no skirt triangle turns inside out. Bent 0.14 to 0.25 rad to either side, forward or back, the legs stay
+  within half a centimetre. Under a coat at a desk lean the skirt stays inside the coat. A hem's front never tilts
+  further than the thigh swung under it. `humanoid.test.ts` checks all of it on every cut. The Customizer's side view
+  now poses a skirt's rings as the shader does. It had drawn the hem up to 6 cm from the street body at a slumped or
+  an upright posture.
 - **The skirt and the coat left a gap in their own shadows.** three's shadow pass draws a front-sided material's back
   faces alone, so an open shell's wall nearer the sun stayed out of the shadow map. The crowd's material now draws
-  both faces into it (`shadowSide`); the closed tubes are deeper than the cascades' bias, so their lit faces do not
-  shadow themselves.
+  both faces into it (`shadowSide`).
 - **A worker at a desk leaned toward the last push, not the desk.** The desk lean bends the body about the push's
   direction less the heading, and nothing set the push's direction at a desk. A worker who was never pushed leaned 0.06 to
   0.14 rad (the nod) to the side or backward, depending on which way the desk faced. At work the direction is now the heading (`crowd.wgsl`), so every worker leans toward the desk.

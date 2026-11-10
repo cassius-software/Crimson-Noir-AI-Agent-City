@@ -104,8 +104,8 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   // humanoid.ts garmentPoint: a trouser leg (slot BOTTOM on a leg bone) about the leg's axis, or the skirt (slot
   // BOTTOM on the trunk with the trunk for its second bone too) about the trunk's, reshaped by the lower cut; the
   // normal by the cylinder's rule, its derivatives by central differences. code = the cut (0..15) + 16 under a coat
-  // (crowd.ts morphB.w). Column 2 is how much of a skirt a leg carries and whether by the shin (humanoid.ts
-  // skirtFollow; bodyVertex picks the leg).
+  // (crowd.ts morphB.w). Column 2 is how much of a skirt the legs carry and whether by the shin (humanoid.ts
+  // skirtFollow; bodyVertex shares it between the legs).
   let c = u32(code + 0.5);
   let cut = c & 15u;
   let bone0 = u32(rig.x + 0.5);
@@ -136,9 +136,11 @@ fn bodyGarment(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, code: f32) -> mat3x3
   let mr = nr * yy;
   let mt = nt * fr * yy / k;
   let my = n.y * fr - nr * fy;
-  // The skirt follows the legs from just under its top, fully from the knee-level ring down; below the knee's rest
-  // height a midi's hem hangs from the shin (p0.w is the length).
-  let follow = select(0.0, p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), skirt);
+  // The skirt follows the legs from just under its top, fully from the knee-level ring down, but not where a coat
+  // covers it (reshaped to LOWER.underCoat or higher: it stays with the coat); below the knee's rest height a midi's
+  // hem hangs from the shin (p0.w is the length).
+  let covered = coat && o.y >= ${f(LOWER.underCoat)};
+  let follow = select(0.0, p1.w * bodyRamp(${f(LOWER.followFrom)}, ${f(LOWER.followTo)}, v.y), skirt && !covered);
   let shin = select(0.0, 1.0, v.y < ${f(LOWER.waist)} - (${f(LOWER.waist)} - ${f(LANDMARK.knee)}) / p0.w);
   return mat3x3f(vec3f(ax + dx * k, o.y, v.z * k), normalize(vec3f(mr * cs - mt * sn, my, mr * sn + mt * cs)), vec3f(follow, shin, 0.0));
 }
@@ -415,21 +417,26 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   }
   let b0 = bodyBone(bone0, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
   var b = b0;
-  // A skirt hangs from a leg as well as the trunk, as much as the cut says (bodyGarment, humanoid.ts skirtFollow):
-  // the front from the leg swung forward (the smaller hip angle), the back from the one swung back, so the hem spreads
-  // with the stride over the leading knee and the trailing calf instead of parting between them; the sides from the
-  // leg on their own side, so a lean to one side carries them with it. The thigh, or the shin below a midi's knee.
   let follow = lower[2].x;
-  let leftLeads = legL.x < legR.x;
-  let leading = select(${BONE.THIGH_R}u, ${BONE.THIGH_L}u, leftLeads);
-  let trailing = select(${BONE.THIGH_L}u, ${BONE.THIGH_R}u, leftLeads);
-  let beside = select(${BONE.THIGH_L}u, ${BONE.THIGH_R}u, v.x >= 0.0);
-  let carrier = select(select(beside, trailing, v.z <= ${f(-LOWER.followSide)}), leading, v.z >= ${f(LOWER.followSide)});
-  let boneB = select(bone1, carrier + u32(lower[2].y), follow > 0.0);
-  let weightB = select(weight, 1.0 - follow, follow > 0.0);
-  if (boneB != bone0 && weightB < 1.0) {
-    let b1 = bodyBone(boneB, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
-    b = b0 * weightB + b1 * (1.0 - weightB);
+  if (follow > 0.0) {
+    // A skirt hangs from the legs as well as the trunk, as much as the cut says (bodyGarment, humanoid.ts skirtPose):
+    // the front from the leg that carries it furthest forward, the back from the one that carries it furthest back,
+    // handed over across LOWER.followEase of the difference so the hem never jumps from one shin to the other, and
+    // the sides from the leg on their own side, so a lean carries them with it. The thigh, or the shin below a midi's
+    // knee, its knee bent by LOWER.followKnee of the leg's own, so the calf does not kick the hem's back over the
+    // ring above it.
+    let bentL = vec4f(legL.x, legL.y * ${f(LOWER.followKnee)}, legL.zw);
+    let bentR = vec4f(legR.x, legR.y * ${f(LOWER.followKnee)}, legR.zw);
+    let byShin = u32(lower[2].y);
+    let onL = bodyBone(${BONE.THIGH_L}u + byShin, rest, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    let onR = bodyBone(${BONE.THIGH_R}u + byShin, rest, bentL, bentR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    let ahead = onL[0].z - onR[0].z;
+    let ownSide = select(1.0, 0.0, v.x >= 0.0);
+    let byLeft = select(select(ownSide, bodyRamp(${f(LOWER.followEase)}, ${f(-LOWER.followEase)}, ahead), v.z <= ${f(-LOWER.followSide)}), bodyRamp(${f(-LOWER.followEase)}, ${f(LOWER.followEase)}, ahead), v.z >= ${f(LOWER.followSide)});
+    b = b0 * (1.0 - follow) + (onL * byLeft + onR * (1.0 - byLeft)) * follow;
+  } else if (bone1 != bone0 && weight < 1.0) {
+    let b1 = bodyBone(bone1, rest, legL, legR, armL, armR, trunk, pivA, pivB, pivX, k, look.y);
+    b = b0 * weight + b1 * (1.0 - weight);
   }
   b = bodyRotAxis(b, vec3f(0.0), k, pose.x);
   // The stature's scales (the normal takes their reciprocals), the pelvis' rise, the heading, the place.

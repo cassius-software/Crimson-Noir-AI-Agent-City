@@ -633,8 +633,8 @@ export class CrowdView {
     const m = new MeshStandardNodeMaterial()
     // The shadow map takes both faces. The skirt and the coat are open shells, and three's shadow pass draws a front-sided
     // material's back faces alone (Renderer: _shadowSide), so a shell's wall nearer the sun stayed out of the map and
-    // its shadow had a gap; the closed tubes are deeper than the cascades' bias, so their lit faces do not shadow
-    // themselves.
+    // its shadow had a gap. The lit faces of the closed tubes are drawn too; the cascades' depth and normal bias keep
+    // them from shadowing themselves.
     m.shadowSide = DoubleSide
     // One pose, built twice: for the eye (which folds away the body it looks out of) and for the shadow map.
     const posed = (eye: boolean) => Fn((builder: NodeBuilder) => {
