@@ -115,7 +115,10 @@
  *   opens the furnishing view, 4 its Rest tab, which offers +1 for one kind of furniture beside a Rest button at least
  *   48 px tall that the panel describes; Enter rests (a hero point, a new round, word 40 of the record), a real click
  *   on Rest is refused while the rest lasts and changes nothing, the HUD's chip ends with "prepared +1", the console's
- *   next check line and `progress` say so, and after a reload all of it is still there;
+ *   next check line and `progress` say so, and after a reload all of it is still there; then, with a workstation placed
+ *   and an agent named by hand, 5 opens the Staff tab, the workstation's row in its list puts the cursor on the
+ *   workstation and Enter posts the agent there (saved, listed by engine.homeSeats, drawn; the row and the agent's
+ *   button say so), every staff button at least 48 px tall, and after a reload the agent still stands there;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -2609,14 +2612,18 @@ const SCENARIOS = {
   /**
    * A rest at home (HomeCard.tsx's Rest tab, progress.ts restOffer and restTake) in the Brownstone, by keyboard and by
    * a real mouse. The loft is claimed first (free: it puts the record in this browser), then the record gets level 3
-   * and 6,000 credits by hand, sealed again as progression.ts sealOf does, and the page reloaded; the Brownstone's
-   * deed and a bookcase are bought through the shopkeeper, and the Brownstone's layout written with that bookcase
+   * and 7,500 credits by hand, sealed again as progression.ts sealOf does, and the page reloaded; the Brownstone's
+   * deed, a bookcase and an agent workstation are bought through the shopkeeper, and the Brownstone's layout written with that bookcase
    * standing where its show home had one (the layout is read once at mount, so reloaded again). In the Brownstone B
    * opens the furnishing view and 4 its Rest tab: +1 for one kind of furniture, and a Rest button for a finger that
    * the panel describes. Enter rests: a hero point, a new round, word 40 of the record at 30 checks of +1. A real click
    * on Rest while it lasts is refused and changes nothing. The HUD's chip ends with "prepared +1" (and says so to a
    * screen reader), the console's next check carries the +1 and `progress` counts 29 more checks, and after a reload
-   * the record, the chip and `progress` still do. Copied from furnish rather than shared, so its checks stay put.
+   * the record, the chip and `progress` still do. Then staff at home (HomeCard.tsx's Staff tab, staffStore.ts): the
+   * workstation is written into the layout and an agent onto the roster by hand before that reload (the rest's checks
+   * after it do not depend on comfort); walked in again, 5 opens the Staff tab, the workstation's row in its list puts
+   * the cursor on the workstation and Enter posts the agent there, saved in this browser, listed by engine.homeSeats
+   * and drawn, with the row and the agent's button saying so, and after one more reload the agent still stands there. Copied from furnish rather than shared, so its checks stay put.
    */
   async rest(chrome, origin) {
     const p = await open(chrome)
@@ -2642,7 +2649,7 @@ const SCENARIOS = {
     try {
       await p.goto(`${origin}/?${LIGHT}&seed=1337`)
       await p.booted()
-      // The loft claimed (free), so the record is in this browser; then level 3 and 6,000 credits, sealed again, reloaded.
+      // The loft claimed (free), so the record is in this browser; then level 3 and 7,500 credits, sealed again, reloaded.
       const claimed = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(224); return k.owns(224) })()`)
       check(claimed, 'rest: the loft is claimed, so the record is kept in this browser')
       await p.eval(`(() => {
@@ -2650,7 +2657,7 @@ const SCENARIOS = {
         const data = JSON.parse(localStorage.getItem(key))
         const w = data.words
         w[14] = 3
-        w[16] = 6000
+        w[16] = 7500
         let h = 0x811c9dc5
         for (let i = 0; i < w.length; i++) {
           if (i === 63) continue
@@ -2664,9 +2671,10 @@ const SCENARIOS = {
         localStorage.setItem(key, JSON.stringify(data))
       })()`)
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
-      // The Brownstone (4,000) and a bookcase (1,100), then its layout with the bookcase standing; reloaded once more.
-      const bought = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(225); k.buy(164); return { home: k.owns(225), bookcase: k.owns(164), level: k.purse.level(), credits: k.purse.credits() } })()`)
-      check(bought.home && bought.bookcase && bought.level === 3 && bought.credits === 900, 'rest: level 3, the Brownstone and a bookcase bought, 900 credits left', JSON.stringify(bought))
+      // The Brownstone (4,000), a bookcase (1,100) and an agent workstation (1,500), then its layout with only the bookcase
+      // standing, so the Rest tab counts one kind of furniture; reloaded once more.
+      const bought = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(225); k.buy(164); k.buy(168); return { home: k.owns(225), bookcase: k.owns(164), workstation: k.owns(168), level: k.purse.level(), credits: k.purse.credits() } })()`)
+      check(bought.home && bought.bookcase && bought.workstation && bought.level === 3 && bought.credits === 900, 'rest: level 3, the Brownstone, a bookcase and a workstation bought, 900 credits left', JSON.stringify(bought))
       await p.eval(`localStorage.setItem('civic-simulation:home:v1', JSON.stringify({ v: 1, homes: [null, [1, 1, [[164, 2, 16, 0]]], null, null, null, null, null] }))`)
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
       const inside = await walkIn()
@@ -2735,6 +2743,10 @@ const SCENARIOS = {
       p.saveTranscript('rest')
       p.health('rest')
 
+      // For the staff steps after it: the workstation stands in the layout and Mara is on the roster (both read once at
+      // mount, so written before this reload). 'even' is the voice validateIdentity falls back to (roster.ts).
+      await p.eval(`localStorage.setItem('civic-simulation:home:v1', JSON.stringify({ v: 1, homes: [null, [1, 1, [[164, 2, 16, 0], [168, 10, 20, 0]]], null, null, null, null, null] }))`)
+      await p.eval(`localStorage.setItem('civic-simulation:roster:v1', JSON.stringify({ v: 1, agents: [{ name: 'Mara', pronouns: 'she/her', role: '', voice: 'even', look: null, agent: null }] }))`)
       // Reloaded: the record, the chip and progress still have it.
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
       const kept = await words()
@@ -2748,6 +2760,43 @@ const SCENARIOS = {
       const errs2 = (await p.snap()).errors
       check(errs2.length === 0, 'rest: after a reload the engine recorded no error', errs2.join(' | ').slice(0, 300))
       p.health('rest reloaded')
+
+      // Staff: 5 opens the Staff tab (pressed until it reads as open, as 4 is above); the workstation's row in the list
+      // puts the cursor on its cell (10, 20), as a tap or a screen reader would, and Enter posts Mara there.
+      check(await walkIn(), 'rest: staff: the avatar walks into the Brownstone again')
+      await p.tap('KeyB', 'b', 66)
+      await p.waitFor(`!!${at(card)}`, 10_000).catch(() => {})
+      let staff = false
+      for (let i = 0; i < 5 && !staff; i++) {
+        await p.tap('Digit5', '5', 53)
+        staff = await p.waitFor(`!!${at(`${card} [data-staff]`)}`, 4_000).then(() => true, () => false)
+      }
+      const row = `${card} [data-action="station"][data-seat="10,20"]`
+      await p.waitFor(`!!${at(row)}`, 4_000).catch(() => {})
+      await p.eval(`${at(row)}?.click()`)
+      await p.waitFor(`${at(`${card} [data-cursor]`)}?.dataset.cursor === '10,20'`, 4_000).catch(() => {})
+      const cur = await p.eval(`${at(`${card} [data-cursor]`)}?.dataset.cursor ?? ''`)
+      await p.tap('Enter', 'Enter', 13)
+      const posted = await p.waitFor(`/^Mara is at workstation 1 now/.test(${at(`${card} [data-reason]`)}?.textContent ?? '')`, 10_000).then(() => true, () => false)
+      const staffed = await p.eval(`(() => {
+        const seats = window.__SIM__.engine.homeSeats, s = seats.find((x) => x.kind === 'homeSeat:1:10:20')
+        const b = ${at(`${card} [data-action="place"]`)}, h = b?.getBoundingClientRect().height ?? 0
+        const rows = [...document.querySelectorAll('${card} [data-action="agent"], ${card} [data-action="station"]')].map((x) => x.getBoundingClientRect().height)
+        return { cursor: ${JSON.stringify(cur)}, stored: localStorage.getItem('civic-simulation:staff:v1'), occupant: s?.occupant ?? null, present: !!s?.present, visible: window.__SIM__.engine.staffView.group.visible,
+          row: ${at(row)}?.textContent ?? '', agent: ${at(`${card} [data-action="agent"]`)}?.getAttribute('aria-label') ?? '',
+          button: b?.textContent ?? '', tall: h >= 48 && rows.length >= 2 && rows.every((x) => x >= 48), reason: ${at(`${card} [data-reason]`)}?.textContent ?? '' } })()`)
+      check(staff && cur === '10,20' && posted && staffed.stored === '{"v":1,"posts":[["Mara",1,10,20]]}' && staffed.occupant === 'Mara' && staffed.present && staffed.visible,
+        'rest: staff: 5 opens the Staff tab, the workstation\'s row puts the cursor on it and Enter posts Mara at workstation 1, saved, listed by homeSeats and drawn', JSON.stringify({ staff, ...staffed }))
+      check(staffed.row === 'Workstation 1 · Mara' && staffed.agent === 'Mara: Workstation 1', 'rest: staff: the row says who stands there, and Mara\'s button says where she is', JSON.stringify(staffed))
+      check(staffed.button === 'Post' && staffed.tall, 'rest: staff: the primary button reads Post, and every staff button is at least 48 px tall', JSON.stringify(staffed))
+      await p.shot('rest-staff')
+      await p.tap('Escape', 'Escape', 27)
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const back = await p.waitFor(`window.__SIM__.engine.homeSeats.some((s) => s.kind === 'homeSeat:1:10:20' && s.occupant === 'Mara' && s.present) && window.__SIM__.engine.staffView.group.visible`, 20_000).then(() => true, () => false)
+      check(back, 'rest: staff: after a reload Mara still stands at workstation 1', back ? '' : JSON.stringify(await p.eval(`window.__SIM__.engine.homeSeats.map((s) => [s.kind, s.occupant, s.present])`)))
+      const errs3 = (await p.snap()).errors
+      check(errs3.length === 0, 'rest: staff: the engine recorded no error', errs3.join(' | ').slice(0, 300))
+      p.health('rest staff')
     } finally { await p.b.close() }
   },
 
