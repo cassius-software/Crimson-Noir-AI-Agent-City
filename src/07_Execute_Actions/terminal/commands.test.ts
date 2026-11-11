@@ -24,7 +24,7 @@ import {
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type HardwareReport, type LookBridge, type LookChange,
   type MemoryBridge, type ModelBridge, type NetBridge, type NetReport, type OperatorBridge, type PendingAct, type Piece, type PingBridge, type PingPick, type PingPoint, type RecordBridge,
-  type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type FeaturesBridge, type EliteBridge,
+  type RecruitBridge, type Ring0Stats, type RobotConsole, type RobotRow, type SayResult, type TerminalBridge, type TopicBridge, type AgentBridge, type ConciergeBridge, type MicBridge, type AccessBridge, type FeaturesBridge, type EliteBridge,
 } from './bridge.ts'
 import { SKILLS } from '../../03_Spawn_Agents/skills.ts'
 import { LOOK_BODIES, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_GARMENTS, LOOK_LOWER_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, lookOptions } from '../../03_Spawn_Agents/look.ts'
@@ -52,7 +52,7 @@ const LAWS = [
 ] as const
 
 const CORE_NAMES = [
-  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'goal', 'lanes', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
+  'help', 'stats', 'laws', 'kernel', 'topic', 'feature', 'quality', 'hardware', 'time', 'audio', 'ghost', 'rain', 'xr', 'render', 'captions', 'haptics', 'ping', 'look', 'agent', 'sloane', 'mic', 'access', 'goal', 'lanes', 'progress', 'hal', 'robot', 'recruit', 'memory', 'clear', 'history', 'echo',
   'uname', 'whoami', 'version', 'boot', 'map', 'rooms', 'r0', 'noir', 'tutorial', 'exit',
 ]
 const OPERATOR_NAMES = ['operator', 'ring0', 'run', 'ask', 'swarm', 'act', 'say', 'api', 'get', 'set', 'harness', 'record', 'net', 'sim']
@@ -3066,6 +3066,44 @@ test('agent, sloane and goal: the roster, the concierge\'s voice and a goal in p
   assert.deepEqual(await said.pending, [{ kind: 'sys', text: "sloane: said by the browser's own offline voice" }])
   assert.deepEqual(texts(run('sloane say', t, [])), ['usage: sloane say <text...>'])
   assert.deepEqual(conciergeCalls, ['on false', 'voice Microsoft Zira', 'say Hello there, friend.'])
+  // The microphone: the pill's lines, the switch (on resolves once the browser has answered), and a host without one.
+  const micCalls: boolean[] = []
+  const mic: MicBridge = {
+    status: () => ['mic       off', 'pill      Mic off  (V, R3, the pill or the Menu mute and unmute; mic on|off here)'],
+    on: (on) => { micCalls.push(on); return on ? Promise.resolve('listening · on-device detector in an audio worklet') : 'muted' },
+  }
+  const withMic = { ...t, mic }
+  assert.deepEqual(texts(run('mic', withMic, [])), ['mic       off', 'pill      Mic off  (V, R3, the pill or the Menu mute and unmute; mic on|off here)'])
+  const opened = run('mic on', withMic, [])
+  assert.deepEqual(opened.lines, [])
+  assert.deepEqual(await opened.pending, [{ kind: 'sys', text: 'mic: listening · on-device detector in an audio worklet' }])
+  assert.deepEqual(texts(run('mic off', withMic, [])), ['mic: muted'])
+  assert.deepEqual(micCalls, [true, false])
+  assert.deepEqual(texts(run('mic loud', withMic, [])), ["mic: invalid argument 'loud'", 'usage: mic [on|off]'])
+  assert.deepEqual(texts(run('mic on off', withMic, [])), ['usage: mic [on|off]'])
+  assert.deepEqual(texts(run('mic', t, [])), ['mic: the microphone is not available on this bridge'])
+  // Accessibility: the lines, a field set (the field's line back as sys), a bad value (the error, then usage, nothing
+  // written), the defaults back, a field without a value, and a host without the settings.
+  const accessCalls: string[] = []
+  const access: AccessBridge = {
+    status: () => ['contrast  auto', 'vision    none'],
+    set: (field, value) => { accessCalls.push(`${field}=${value}`); return value === 'loud' ? { error: `access: ${field} is one of auto, high, normal` } : { line: `${field}  ${value}` } },
+    reset: () => { accessCalls.push('reset'); return 'access: the defaults' },
+  }
+  const withAccess = { ...t, access }
+  const ACCESS_USAGE = 'usage: access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]'
+  assert.deepEqual(texts(run('access', withAccess, [])), ['contrast  auto', 'vision    none'])
+  assert.deepEqual(run('access contrast high', withAccess, []).lines, [{ kind: 'sys', text: 'access: contrast  high' }])
+  assert.deepEqual(texts(run('access contrast loud', withAccess, [])), ['access: contrast is one of auto, high, normal', ACCESS_USAGE])
+  assert.deepEqual(run('access reset', withAccess, []).lines, [{ kind: 'sys', text: 'access: the defaults' }])
+  assert.deepEqual(texts(run('access contrast', withAccess, [])), [ACCESS_USAGE])
+  assert.deepEqual(texts(run('access reset now', withAccess, [])), [ACCESS_USAGE])
+  assert.deepEqual(texts(run('access text 150 please', withAccess, [])), [ACCESS_USAGE])
+  assert.deepEqual(accessCalls, ['contrast=high', 'contrast=loud', 'reset'])
+  assert.deepEqual(texts(run('access', t, [])), ['access: the accessibility settings are not available on this bridge'])
+  assert.deepEqual(complete('access '), ['access announce', 'access captions', 'access contrast', 'access dwell', 'access pad', 'access reset', 'access scan', 'access text', 'access vision'])
+  assert.deepEqual(complete('access pad '), ['access pad both', 'access pad left', 'access pad right'])
+  assert.deepEqual(complete('access vision '), ['access vision deutan', 'access vision none', 'access vision protan', 'access vision tritan'])
   const g = run('goal make it night and less crowded', t, [])
   assert.deepEqual(goals, ['make it night and less crowded'])
   assert.deepEqual(g.lines, [

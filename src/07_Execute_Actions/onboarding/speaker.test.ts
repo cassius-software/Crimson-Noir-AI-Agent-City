@@ -89,8 +89,10 @@ test('the settings: on by default with no voice preferred; kept under one key; a
 })
 
 /** A fake provider: the operator's voice and the soundscape at the player's head. */
-function fakeProvider(o: { voice?: string | null; fail?: boolean } = {}) {
+function fakeProvider(o: { voice?: string | null; fail?: boolean; holdDecode?: boolean } = {}) {
   const said: string[] = []
+  /** With holdDecode, each decode waits here until the test settles it. */
+  const decodes: { done: (ok: boolean) => void }[] = []
   const played: string[] = []
   let stops = 0
   let finish: (() => void) | null = null
@@ -108,14 +110,16 @@ function fakeProvider(o: { voice?: string | null; fail?: boolean } = {}) {
     },
   }
   const out = {
-    decode: (bytes: ArrayBuffer): Promise<SpeechClip> => Promise.resolve({ seconds: bytes.byteLength / 8 }),
+    decode: (bytes: ArrayBuffer): Promise<SpeechClip> => !o.holdDecode
+      ? Promise.resolve({ seconds: bytes.byteLength / 8 })
+      : new Promise<SpeechClip>((resolve, reject) => { decodes.push({ done: (ok) => (ok ? resolve({ seconds: bytes.byteLength / 8 }) : reject(new Error('the soundscape refused to decode'))) }) }),
     play: (_clip: SpeechClip, text: string): Utterance => {
       played.push(text)
       const ended = new Promise<void>((resolve) => { finish = resolve })
       return Object.freeze({ ended, stop: () => { stops++; finish?.() } })
     },
   }
-  return { voice, out, said, played, get stops() { return stops }, end: () => finish?.() }
+  return { voice, out, said, played, decodes, get stops() { return stops }, end: () => finish?.() }
 }
 
 test('speak: the provider at the player\'s head when it has a voice; a failing provider falls back to the browser; no voice chosen, the browser; sound off, nothing; a new line cuts the last; an abort cuts', async () => {
@@ -266,6 +270,134 @@ test('preview: the card\'s Hear button; a profile shapes the browser\'s voice, a
   sound = false
   assert.equal(await s.preview('Quiet.', 'deep'), 'silent')
   assert.equal(synth.spoken.length, 1)
+})
+
+test('speaking: on from the first sound of a line to its end, once across a cut to the next line, off after an abort; told to onSpeaking at each edge', async () => {
+  const f = fakeSynth()
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, store: memoryStore() })
+  const told: boolean[] = []
+  const stopTelling = sp.onSpeaking((on) => { told.push(on) })
+  assert.equal(sp.speaking, false)
+  const p1 = sp.speak('One.')
+  assert.equal(sp.speaking, true, 'speaking as soon as the line is handed to the voice')
+  assert.deepEqual(told, [true])
+  const p2 = sp.speak('Two.')
+  assert.equal(await p1, 'browser')
+  assert.equal(sp.speaking, true, 'the cut line ending does not end the next')
+  assert.deepEqual(told, [true], 'one edge across the cut')
+  f.end()
+  assert.equal(await p2, 'browser')
+  assert.equal(sp.speaking, false)
+  assert.deepEqual(told, [true, false])
+  const ctl = new AbortController()
+  const p3 = sp.speak('Three.', ctl.signal)
+  ctl.abort()
+  await p3
+  assert.deepEqual(told, [true, false, true, false])
+  assert.equal(await sp.speak('   '), 'silent')
+  assert.deepEqual(told, [true, false, true, false], 'nothing said: nothing told')
+  const off = new ConciergeSpeaker({ env: f.env, sound: () => false, store: memoryStore() })
+  off.onSpeaking((on) => { told.push(on) })
+  assert.equal(await off.speak('Quiet.'), 'silent')
+  assert.equal(told.length, 4, 'the silent tier is never speaking')
+  const pv = sp.preview('As Nova.', 'even')
+  assert.equal(sp.speaking, true, 'a preview is speech too')
+  f.end()
+  assert.equal(await pv, 'browser')
+  assert.deepEqual(told, [true, false, true, false, true, false])
+  stopTelling()
+  const p4 = sp.speak('Four.')
+  f.end()
+  await p4
+  assert.deepEqual(told, [true, false, true, false, true, false], 'untold after the way to stop is taken')
+})
+
+test('onLine: told at each line\'s first sound, a line that cuts the one still playing included (no edge of speaking there), and a preview\'s; not for a silent line', async () => {
+  const f = fakeSynth()
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, store: memoryStore() })
+  const heard: string[] = []
+  sp.onSpeaking((on) => { heard.push(on ? 'on' : 'off') })
+  const stop = sp.onLine(() => { heard.push('line') })
+  const p1 = sp.speak('One.')
+  assert.deepEqual(heard, ['on', 'line'], 'the edge first, then the line')
+  const p2 = sp.speak('Two.')
+  await p1
+  assert.deepEqual(heard, ['on', 'line', 'line'], 'the cut: a new line, no new edge')
+  f.end()
+  await p2
+  assert.equal(await sp.speak('  '), 'silent')
+  const pv = sp.preview('As Nova.', 'even')
+  f.end()
+  await pv
+  assert.deepEqual(heard, ['on', 'line', 'line', 'off', 'on', 'line', 'off'])
+  stop()
+  const p3 = sp.speak('Three.')
+  f.end()
+  await p3
+  assert.deepEqual(heard.slice(-2), ['on', 'off'], 'untold after the way to stop is taken')
+})
+
+test('speaking starts at the first sound, not when the line is asked for: a provider line while it is synthesised and decoded is not yet speech; one that fails over to the browser starts when the browser speaks', async () => {
+  const f = fakeSynth()
+  const p = fakeProvider()
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, source: () => ({ voice: p.voice, out: p.out }), store: memoryStore() })
+  const told: boolean[] = []
+  sp.onSpeaking((on) => { told.push(on) })
+  const line = sp.speak('From the provider.')
+  assert.deepEqual([sp.speaking, told], [false, []], 'synthesising: nothing is heard yet')
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(p.played, ['From the provider.'])
+  assert.deepEqual([sp.speaking, told], [true, [true]], 'the clip played: speaking')
+  p.end()
+  assert.equal(await line, 'provider')
+  assert.deepEqual(told, [true, false])
+  const failing = fakeProvider({ fail: true })
+  const sp2 = new ConciergeSpeaker({ env: f.env, sound: () => true, source: () => ({ voice: failing.voice, out: failing.out }), store: memoryStore() })
+  const told2: boolean[] = []
+  sp2.onSpeaking((on) => { told2.push(on) })
+  const fallback = sp2.speak('Through the browser.')
+  assert.deepEqual(told2, [], 'the provider failing: nothing heard')
+  await new Promise((r) => setTimeout(r, 0))
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual([sp2.speaking, told2], [true, [true]], 'the browser speaking it: speaking from here')
+  f.end()
+  assert.equal(await fallback, 'browser')
+  assert.deepEqual(told2, [true, false])
+  const cutEarly = sp.speak('Never heard.')
+  sp.stop()
+  assert.equal(await cutEarly, 'silent')
+  assert.deepEqual(told, [true, false], 'a provider line cut before its first sound was never speech')
+})
+
+test('a provider line being decoded is not yet speech: it starts when the clip plays, or, the decode refused, when the browser speaks it', async () => {
+  const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) }
+  const f = fakeSynth()
+  const p = fakeProvider({ holdDecode: true })
+  const sp = new ConciergeSpeaker({ env: f.env, sound: () => true, source: () => ({ voice: p.voice, out: p.out }), store: memoryStore() })
+  const told: boolean[] = []
+  sp.onSpeaking((on) => { told.push(on) })
+  const line = sp.speak('Decoded first.')
+  await tick()
+  assert.deepEqual([p.said, p.decodes.length, p.played], [['Decoded first.'], 1, []], 'synthesised, now decoding')
+  assert.deepEqual([sp.speaking, told], [false, []], 'decoding: nothing is heard yet')
+  p.decodes[0].done(true)
+  await tick()
+  assert.deepEqual([p.played, sp.speaking, told], [['Decoded first.'], true, [true]], 'the clip played: speaking from here')
+  p.end()
+  assert.equal(await line, 'provider')
+  // The decode refused: the browser says it, and speaking starts only then.
+  const spoken = f.spoken.length
+  const refused = sp.speak('Decoded never.')
+  await tick()
+  assert.deepEqual([p.decodes.length, sp.speaking, told], [2, false, [true, false]], 'decoding again: not speaking')
+  p.decodes[1].done(false)
+  await tick()
+  assert.deepEqual([p.played.length, f.spoken.length - spoken, f.spoken.at(-1)?.text], [1, 1, 'Decoded never.'], 'the browser speaks it, the provider never played it')
+  assert.deepEqual([sp.speaking, told], [true, [true, false, true]], 'speaking from the browser\'s first sound')
+  f.end()
+  assert.equal(await refused, 'browser')
+  assert.deepEqual(told, [true, false, true, false])
 })
 
 test('the console bridge: status names the switch, the tier and the voice; on and off; a voice by name; the list; a line said now', async () => {

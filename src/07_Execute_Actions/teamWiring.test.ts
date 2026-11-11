@@ -58,7 +58,7 @@ test('App: the team runner over the page\'s own parts, ticked from the frame loo
   assert.match(src, /if \(crew\) \{ s\.supplier\.lanes = crew\.lines\(\); s\.supplier\.team = crew\.line\(\) \}\n\s*if \(recruiter\) s\.supplier\.recruiting = hudLine\(/, 'the snapshot carries the lanes and the one line; the pinned activity line stays byte-identical')
   const hud = read('07_Execute_Actions/Hud.tsx')
   assert.match(hud, /const team = s\.supplier\.team \?\? ''/)
-  assert.match(hud, /\[rc\?\.listening \? 'MIC · on-device' : '', rc\?\.line \?\? '', team\]\.filter\(Boolean\)\.join\(' · '\)/, 'the MIC chip reads the team line after the activity line')
+  assert.match(hud, /\[dotted \? 'MIC · on-device' : '', rc\?\.line \?\? '', team\]\.filter\(Boolean\)\.join\(' · '\)/, 'the MIC chip reads the team line after the activity line (the MIC dot only without the host\'s microphone pill)')
   assert.match(src, /const lanes = team\.console\(\)/)
   assert.match(src, /goal: \(text: string\) => goalPlan\(text, \{ \.\.\.engineBridge, lanes \}\),\n\s*lanes,/, 'the console\'s goal and lanes share the one runner')
   assert.match(src, /if \(step\.control === 'dispatch' && step\.team && b\.lanes\) \{ b\.lanes\.dispatch\(step\.team\); return true \}/, 'the card dispatches through the bridge')

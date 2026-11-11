@@ -19,6 +19,7 @@
  * What breaks if it is removed? The player loses location, time, speed, signals and control hints.
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { isOpen, phaseWord, pillLabel, pillWord, type MicMeter } from '../04_Connect_Hardware/microphone.ts'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { drawShops, shops, type Shop } from '../01_Initialize_World/storefronts.ts'
@@ -109,7 +110,7 @@ const CALM = mediaStore('(prefers-reduced-motion: reduce)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, onBrowse, homes = null, onHome }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13, onBrowse, homes = null, onHome }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -117,6 +118,14 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   terminalOpen?: boolean
   /** A region's minimap layer (engine.mapLayer): drawn instead of the procedural city's grid. */
   mapLayer?: MapLayer | null
+  /** The microphone's meter (04_Connect_Hardware/microphone.ts), read at frame rate while the pill shows the device open; null without one. */
+  mic?: MicMeter | null
+  /** The pill's press: open the microphone, or mute it (the same switch as V, the right stick's click and the touch Menu). */
+  onMic?: () => void
+  /** High contrast in force (07_Execute_Actions/access.ts highContrast; index.css flattens the panels): the meter draws white. */
+  highContrast?: boolean
+  /** The caption strip's font size, CSS px (access.ts CAPTION_PX). */
+  captionPx?: number
   /** Open the catalogue of the shop the avatar stands in (the chip's tap; E and B go through the engine). */
   onBrowse?: (index: number) => void
   /** The world's homes (engine.homes), for the procedural city's minimap; a region's map layer draws its own. */
@@ -215,14 +224,28 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
-  // Recruitment: an open microphone is never without its indicator (it outlives the H key, like REC), and who
-  // is coming over, and the Active swarm's skills; then the team Sloane dispatched, in one line (08_Swarm/team.ts).
+  // The microphone's pill (microphone.ts): its state, a live meter while it is open, and the switch. While the HUD is
+  // hidden it shows only with the device open: the browser's own indicator is never on without it (like REC).
+  const voice = s.supplier.voice
+  const micOpen = voice ? isOpen(voice.phase) : false
+  // On a phone it shows only while the device is open, opening or could not open (the Menu's Microphone item is the
+  // switch there), and not as a row of the panels' column but as a badge on the minimap's corner (MicBadge): with the
+  // microphone open from the start it is up all the time, and a row under the readout pushed the panels into Sloane's
+  // chip on the smallest screens at the wheel (the browser smoke's phone layouts, 320 x 568).
+  const micNeeded = voice ? micOpen || voice.phase === 'opening' || voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable' : false
+  const micShown = voice && (micOpen || (visible && (!compact || micNeeded)))
+  const micPill = micShown && <MicPill voice={voice} mic={mic} onMic={onMic} contrast={highContrast} panel={panel} muted={muted} dark={dark} />
+  const micBadge = micShown && visible && compact && <MicBadge voice={voice} onMic={onMic} panel={panel} />
+  // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team Sloane dispatched,
+  // in one line (08_Swarm/team.ts). Without a host microphone (an older host, no pill) the chip also carries the MIC
+  // dot, so an open microphone is never without its indicator (it outlives the H key, like REC).
   const rc = s.supplier.recruiting
+  const dotted = Boolean(rc?.listening) && !voice
   const team = s.supplier.team ?? ''
-  const micChip = ((rc && (rc.listening || rc.line)) || team) && (
+  const micChip = ((rc && (dotted || rc.line)) || team) && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums ${panel}`} data-hint="mic">
-      {rc?.listening && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
-      <span className="truncate">{[rc?.listening ? 'MIC · on-device' : '', rc?.line ?? '', team].filter(Boolean).join(' · ')}</span>
+      {dotted && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
+      <span className="truncate">{[dotted ? 'MIC · on-device' : '', rc?.line ?? '', team].filter(Boolean).join(' · ')}</span>
     </div>
   )
 
@@ -230,7 +253,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // speech with its words. An accessibility surface, so it outlives the H key like the MIC and REC chips.
   const captions = c.captions
   const captionStrip = captions && captions.length > 0 && (
-    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 text-[13px] font-medium ${panel}`} data-hint="captions">
+    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 font-medium ${panel}`} style={{ fontSize: `${captionPx}px` }} data-hint="captions">
       {captions.map((line, i) => (
         <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
       ))}
@@ -301,7 +324,12 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   return (
-    <div className="pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
+    <div className="ui-zoom pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
+      {/* The screen reader's line (announcer.ts): always in the page, so a reader follows it from the first word. */}
+      <span className="sr-only" role="status" aria-live="polite" data-announce>{c.announce ?? ''}</span>
+      {/* The microphone's state for a reader: here, not in the pill, which a phone or a hidden HUD leaves unmounted while
+          the device is shut, so "muted" is heard wherever the switch was pressed (the Menu, V, R3). */}
+      <span className="sr-only" role="status" aria-live="polite" data-mic-told>{voice ? micTold(voice.phase) : ''}</span>
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">
@@ -318,6 +346,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               </div>
             </div>
             {recChip}
+            {micPill}
             {micChip}
             {ghostChip}
             {renderChip}
@@ -463,11 +492,15 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               {progressChip}
               {stacked && <div className="flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
             </div>
-            {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
+            {!stacked && !short && <div className="mt-[max(0px,calc(var(--chip-bottom,0px)_-_var(--hud-bottom,0px)_/_var(--ui-zoom,1)))] flex w-68 max-w-full flex-col gap-2">{toasts}</div>}
           </div>
 
           <div className="absolute top-0 right-0 flex flex-col items-end gap-2" data-hud="minimap">
-            <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} homes={homes} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
+            {/* The microphone's badge stands in the minimap's lower-left corner, inside its box, so it moves nothing. */}
+            <div className="relative">
+              <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} homes={homes} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
+              {micBadge && <div className="absolute bottom-0 left-0">{micBadge}</div>}
+            </div>
             {driving && !short && speedChip}
           </div>
 
@@ -489,10 +522,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
 
       {visible && pingChip}
 
-      {!visible && (recChip || rc?.listening || captionStrip) && (
+      {!visible && (recChip || micPill || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex max-w-full flex-col items-start gap-2">
             {recChip}
+            {micPill}
             {rc?.listening && micChip}
           </div>
           {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
@@ -506,6 +540,98 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       )}
     </div>
   )
+}
+
+/**
+ * The microphone's pill (04_Connect_Hardware/microphone.ts): a button with the state's word and colour, a live meter
+ * of the room while the device is open, and an accessible name that says the state, what a press does and the key.
+ * The meter is drawn at frame rate from the microphone's own ring of levels, outside React; the word comes with the
+ * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), not of
+ * every onset of speech nor of Sloane speaking: those are the meter's news.
+ */
+function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
+  voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; contrast: boolean; panel: string; muted: string; dark: boolean
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const open = isOpen(voice.phase)
+  useEffect(() => {
+    const el = canvas.current
+    if (!el || !mic || !open) return
+    const ctx = el.getContext('2d')
+    if (!ctx) return
+    let raf = 0
+    const draw = () => {
+      const w = el.width, h = el.height, n = mic.levels.length, bar = w / n
+      ctx.clearRect(0, 0, w, h)
+      ctx.fillStyle = contrast ? '#fff' : dark ? 'rgba(255,255,255,0.85)' : 'rgba(15,23,42,0.8)'
+      for (let i = 0; i < n; i++) {
+        // The square root lifts a quiet room into view; a full level fills the height.
+        const v = mic.levels[(mic.head + i) % n]
+        const bh = Math.max(1, Math.min(h, Math.sqrt(v > 0 ? v : 0) * h))
+        ctx.fillRect(i * bar, (h - bh) / 2, Math.max(1, bar - 1), bh)
+      }
+      raf = requestAnimationFrame(draw)
+    }
+    raf = requestAnimationFrame(draw)
+    return () => cancelAnimationFrame(raf)
+  }, [mic, open, dark, contrast])
+  const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
+  return (
+    <button
+      type="button"
+      onClick={onMic}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-pressed={open}
+      title={voice.detail || undefined}
+      className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
+      data-hint="voice"
+      data-mic={voice.phase}
+    >
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
+      <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
+      {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
+      {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
+    </button>
+  )
+}
+
+/**
+ * The microphone's pill on a phone (and in any compact window): a round badge, 28 px, on the minimap's lower-left
+ * corner, so it takes no row of the panels' column. A microphone glyph, struck through when the device could not open,
+ * and the pill's coloured dot at its shoulder (green while it hears speech, amber while Sloane speaks, blue while it
+ * listens, red when it could not open); no meter. A tap does what the pill's does, and its accessible name is the pill's.
+ */
+function MicBadge({ voice, onMic, panel }: {
+  voice: NonNullable<SipocSnapshot['supplier']['voice']>; onMic?: () => void; panel: string
+}) {
+  const open = isOpen(voice.phase)
+  const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : 'bg-slate-400'
+  return (
+    <button
+      type="button"
+      onClick={onMic}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-pressed={open}
+      title={voice.detail || undefined}
+      className={`pointer-events-auto relative flex h-7 w-7 cursor-pointer items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
+      data-hint="voice"
+      data-mic={voice.phase}
+    >
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+        <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" />
+        <path d="M3 8a5 5 0 0 0 10 0M8 13v1.75" />
+        {failed && <path d="M2.5 2.5l11 11" />}
+      </svg>
+      <span className={`absolute top-0 right-0 h-2 w-2 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
+    </button>
+  )
+}
+
+/** The reader's line for the microphone: the state without speech onsets (speech reads as listening) or Sloane's turns. */
+function micTold(phase: NonNullable<SipocSnapshot['supplier']['voice']>['phase']): string {
+  return `Microphone ${phaseWord(phase === 'speech' ? 'listening' : phase).replace(/^Mic /, '').toLowerCase()}`
 }
 
 /** What a ping landed on: 'a spot', 'person 12', 'car 3', 'pole 7'. */
@@ -543,6 +669,7 @@ function Signal({ label, light }: { label: string; light: Light }) {
     <span className="flex items-center gap-1.5">
       <span className={`h-2.5 w-2.5 rounded-full ${LIGHT_COLOR[light]}`} />
       {label}
+      <span className="sr-only">{` ${light}`}</span>
     </span>
   )
 }

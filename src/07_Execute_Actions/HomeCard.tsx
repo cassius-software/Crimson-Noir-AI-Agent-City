@@ -759,7 +759,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
   }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 flex items-end justify-end p-4 font-sans text-[13px] antialiased sm:items-center">
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-30 flex items-end justify-end p-4 font-sans text-[13px] antialiased sm:items-center">
       <aside
         ref={cardRef}
         tabIndex={-1}

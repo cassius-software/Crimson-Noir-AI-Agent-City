@@ -334,6 +334,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
             key={p.name}
             type="button"
             onClick={() => onChange(p.look)}
+            aria-pressed={formatLookCode(p.look) === code6}
             className={`rounded-full border px-2.5 py-1 text-[12px] capitalize ${formatLookCode(p.look) === code6 ? t.pillOn : t.pill}`}
           >
             {p.name}
@@ -631,7 +632,7 @@ function AgentEditor({ id, roster, onAgentLook, onHear, onForget, t }: { id: Age
       {refused && <p className={`mt-2 text-[11px] ${t.muted}`} role="alert">{refused}</p>}
       <div className={`mt-3 flex flex-wrap items-center gap-2 border-t pt-3 ${t.rule}`}>
         <span className={label}>Look</span>
-        <button type="button" onClick={() => wear(null)} className={`rounded-full border px-2.5 py-0.5 text-[12px] ${id.look === null ? t.pillOn : t.pill}`} data-action="agent-hash">As the city dresses them</button>
+        <button type="button" onClick={() => wear(null)} aria-pressed={id.look === null} className={`rounded-full border px-2.5 py-0.5 text-[12px] ${id.look === null ? t.pillOn : t.pill}`} data-action="agent-hash">As the city dresses them</button>
         <button type="button" onClick={onForget} className={`ml-auto rounded-full border px-2.5 py-0.5 text-[12px] ${t.pill}`} data-action="agent-forget">Forget {id.name}</button>
       </div>
       <LookEditor worn={worn} seed={seed} onChange={wear} t={t} />
@@ -689,7 +690,7 @@ export function Customizer({ visible, look, seed, onChange, onClose, dark = fals
   }
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4 font-sans text-[13px] antialiased">
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-30 flex items-center justify-center p-4 font-sans text-[13px] antialiased">
       <aside
         ref={cardRef}
         tabIndex={-1}

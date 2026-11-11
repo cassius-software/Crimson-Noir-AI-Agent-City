@@ -494,6 +494,10 @@ export interface TerminalBridge {
   agent?: AgentBridge
   /** Absent until the host has a concierge that can speak (the terminal then says so). */
   concierge?: ConciergeBridge
+  /** Absent until the host holds the microphone (04_Connect_Hardware/microphone.ts; the terminal then says so). */
+  mic?: MicBridge
+  /** Absent in the console shell: the page's accessibility settings (07_Execute_Actions/access.ts). */
+  access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
   /** The team Sloane dispatched for a goal (08_Swarm/team.ts); absent until the host has built its team runner (the terminal then says so). */
@@ -586,6 +590,27 @@ export interface AgentBridge {
   forget(name: string): string
   /** The twelve voice profiles, one line each. */
   voices(): string[]
+}
+
+/**
+ * The microphone (04_Connect_Hardware/microphone.ts): the state the HUD's pill shows, and the switch. `on(true)` opens
+ * the device (the browser asks its permission; called synchronously inside the Enter keydown, the user activation)
+ * and resolves to the outcome; `on(false)` releases it. The audio never leaves the page.
+ */
+export interface MicBridge {
+  status(): string[]
+  on(on: boolean): string | Promise<string>
+}
+
+/**
+ * The page's accessibility settings (07_Execute_Actions/access.ts): high contrast, the colour-vision filter, the text
+ * scale and the caption size, kept between visits. `set` takes the console's field and value words and returns the
+ * field's line, or the error (nothing written); `reset` restores the defaults.
+ */
+export interface AccessBridge {
+  status(): string[]
+  set(field: string, value: string): { line: string } | { error: string }
+  reset(): string
 }
 
 /** Sloane's spoken voice (onboarding/speaker.ts): the switch, the browser voice preferred, the tier a line takes, a line said now. */

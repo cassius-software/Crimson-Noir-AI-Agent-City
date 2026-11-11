@@ -227,7 +227,7 @@ test('in split screen the card reads only the player\'s pads: another seat\'s A 
   const app = read('../App.tsx').replace(/\s+/g, ' ')
   assert.ok(app.includes('const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])'))
   assert.ok(app.includes('padFrom={playerOnePad}'))
-  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\)\)/)
+  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\), pageHand\(\)\)/)
 })
 
 test('the furnishing view says the plan\'s words for every verdict, and each furniture line has a short name with its own initial', () => {
