@@ -602,3 +602,5 @@ const fn = (name: string): ReturnType<typeof wgslFn> => {
 
 /** The near body's tattoo: tattoo(skin, rest, bone, slot, w7, w8, seed, px) → (colour, coverage). */
 export const tattoo = fn('tattoo')
+/** The street's zones for a person: tatZones(seed) → the set (bit z for zone z, 0 for none); both bodies read it for the sleeves. */
+export const tattooZones = fn('tatZones')

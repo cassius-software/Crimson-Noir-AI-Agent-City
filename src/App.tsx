@@ -105,7 +105,7 @@ import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
-import { teamRows } from './06_Make_Decisions/dispatch.ts'
+import { swarmTeam, teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -1211,7 +1211,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
-    /** The team runner (08_Swarm/team.ts): Sloane's dispatched sub-agents, stepped every TEAM_TICK_MS from the frame loop. */
+    /** The team runner (08_Swarm/team.ts): the sub-agents Sloane or the first walk's swarm set to work, stepped every TEAM_TICK_MS from the frame loop. */
     let crew: TeamRunner | null = null
     let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
@@ -1264,7 +1264,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
-          // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
+          // The team at work (08_Swarm/team.ts; Sloane's, or the first walk's swarm): its lanes for the Concierge, its one line for the MIC chip.
           if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).
@@ -1632,14 +1632,23 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
           // The first walk's exam, behind NoirScript's verify_ring0 / spawn_subagents / unlock_city: it reads the
-          // kernel (the laws, the host's vouch for the air gap, the audit standing), asks people over through the
-          // recruiter's own lane, and tells the walk; it has no write surface of its own.
+          // kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through the
+          // page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
+          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its own.
           exam: createExam({
             contained: () => airgapInstalled(globalThis),
             standing: () => lockedRef.current === null,
             laws: () => engineBridge.laws(),
             checks: () => GATE_CHECK_NAMES,
-            ask: (skill) => r.tryAsk(skill),
+            swarm: (n, role) => {
+              // One tick at once, so the count is of lanes still running after their first reading, not of lanes opened.
+              const replaced = team.views().length
+              const plan = swarmTeam(n, `spawn_subagents(${n}, "${role}")`)
+              const d = team.dispatch(plan)
+              team.tick()
+              const running = team.views().filter((v) => v.state === 'ready').length
+              return { running, opened: d.lanes, desks: plan.kinds.length, replaced, missing: d.missing }
+            },
             nonce: crypto.getRandomValues(new Uint32Array(1))[0] ?? 1,
             stage: () => walkRef.current.stage,
             on: () => walk,

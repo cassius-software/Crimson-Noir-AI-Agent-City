@@ -21,8 +21,8 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
 import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, LOOK_V3_SLOTS, LOOK_V4_SLOTS, LOOK_WORDS, lookFromSeed, packFace, packFigure, packLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
-import { tattoo } from '../03_Spawn_Agents/crowdTattoo.ts'
-import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
+import { tattoo, tattooZones } from '../03_Spawn_Agents/crowdTattoo.ts'
+import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_FRAMES, TATTOO_SLEEVE, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -226,17 +226,21 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const worn = select\(raisedWaist, waistBand, select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)\)/, 'under shirt sleeves the whole slot is the shirt\'s, but where high-waisted trousers rise over it')
 })
 
-test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome word 7, or the street\'s draw under its flag, before the facial hair, declared once with the shared values; the studio\'s inks are lit where the ink shows; a genome word the varying does not carry is refused', () => {
+test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome words 7 and 8, or the street\'s draw under its flag, before the facial hair, declared once with the shared values; the studio\'s inks are lit where the ink shows; a genome word the varying does not carry is refused', () => {
   const crowd = read('../03_Spawn_Agents/crowd.ts')
   const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
-  const inked = 'const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, slot, select(custom, genome.w, uint(0x80000000)), uint(0), vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null'
-  assert.ok(fragment.includes(inked), 'the near body\'s alone: the skin as worn, the rest point, the bone, the slot, word 7 or the street flag, no word 8 yet, the seed, the pixel\'s width')
+  const inked = 'const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, skinSlot, select(custom, genome.w, uint(0x80000000)), word8, vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null'
+  assert.ok(fragment.includes(inked), 'the near body\'s alone: the skin as worn, the rest point, the bone, the slot (the skin\'s under a rolled sleeve), word 7 or the street flag, word 8, the seed, the pixel\'s width')
+  // Word 8 is past the flat varying: a chosen look's is read from crowd.figure, the person's third quad's first word
+  // (look.ts packGenome: quad 0 the old words, quad 1 words 4 to 7, quad 2 words 8 to 11); the street's is zero.
+  assert.ok(fragment.includes('const word8 = select(custom, b.figure.element(uint(vSeed.add(0.5)).mul(uint(FIGURE_QUADS)).add(uint(2))).x, uint(0))'))
+  assert.equal(FIGURE_QUADS, 4)
   assert.ok(fragment.includes('facialPaint(inked ? inked.xyz : wornSkin, greyed, facialHair, rig, slot, near)'), 'the beard paints over the ink')
   before(fragment, inked, 'const skinShown = select(kippah, headCloth, facialPaint(inked ? inked.xyz : wornSkin', 'inked before the skin is shown')
   assert.ok(fragment.includes('wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown,'), 'declared once with the shared values, or every branch calls it again (and where it shows, which both lit inks read)')
   // Where a chosen look's ink shows: on the skin, where nothing covers it, declared before the shared list.
   assert.ok(fragment.includes('const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))'), 'facialPaint\'s full beard\'s cover')
-  assert.ok(fragment.includes('const inkShown = inked ? (select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null'), 'a chosen look\'s ink, on the skin, where nothing covers it')
+  assert.ok(fragment.includes('const inkShown = inked ? (select(custom.and(skinSlot.greaterThan(SLOT.SKIN - 0.5)).and(skinSlot.lessThan(SLOT.SKIN + 0.5)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null'), 'a chosen look\'s ink, on the skin (a bared forearm\'s too), where nothing covers it')
   before(fragment, 'const inkShown = inked ?', 'const shared = [', 'declared with the colour')
   assert.match(crowd, /^type V4 = Node<'vec4'>$/m)
   // wornSkin itself stays bare: the hose, the lips and the skin-matched prosthetic read it, not the ink.
@@ -262,6 +266,40 @@ test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome word 7,
     // The dissolve gives every body an emissive; only the near one's carries the ink's glow.
     assert.equal(inks(m.emissiveNode), mesh.name.endsWith('lod0'), `${mesh.name}: the luminescent glow on the near body alone`)
   }
+})
+
+test('crowd.ts: rolled sleeves (the look\'s, or a passer-by\'s whose designs reach a forearm; never under a coat) bare the forearm below the roll as skin on both bodies: its slot, marks, tattoos, a prosthetic\'s finish and roughness; a turned band of the cloth above it', () => {
+  const crowd = read('../03_Spawn_Agents/crowd.ts')
+  const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
+  // The look's sleeves, or the street's rule (look.ts lookFromSeed rolls them for a forearm's design: tattoo.test.ts
+  // holds the two equal), and a coat keeps them down; the layer is read ahead of the skin for it.
+  const rolled = 'const rolledUp = select(custom, gene(LOOK_FIELD.sleeves).equal(uint(SLEEVES.rolled)), tattooZones(vSeed).bitAnd(uint(TATTOO_SLEEVE.zones)).notEqual(uint(0)))\n      .and(layer.notEqual(uint(LAYER.coat)))'
+  assert.ok(fragment.includes(rolled))
+  before(fragment, 'const layer = wfield(\'layer\')', rolled, 'the layer first')
+  assert.ok(fragment.includes('const sleeveUp = rolledUp.and(onArm).and(slot.lessThan(SLOT.TOP + 0.5))'), 'the top\'s slot on an arm')
+  assert.ok(fragment.includes('const bareArm = sleeveUp.and(positionGeometry.y.lessThan(TATTOO_SLEEVE.roll))'))
+  assert.ok(fragment.includes('const skinSlot = select(bareArm, float(SLOT.SKIN), slot).toVar() as unknown as F1'))
+  before(fragment, 'const skinSlot = ', 'const marked = skinMarks(', 'before the skin is marked')
+  // Every paint of the skin reads the skin's slot there: the marks, the ink, the colour and the roughness picked by slot.
+  assert.match(fragment, /const marked = skinMarks\(toned, vitiligo, freckles, rig, vec3\([^\n]*\), skinSlot, near\)/)
+  assert.ok(fragment.includes('color = select(skinSlot.lessThan(s + 0.5), slots[s], color)') && fragment.includes('roughness = select(skinSlot.lessThan(s + 0.5), float(rough[s]), roughness)'))
+  assert.ok(!/select\(slot\.lessThan\(s \+ 0\.5\)/.test(fragment), 'no pick by the bare slot is left')
+  assert.ok(fragment.includes('const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt))).and(bareArm.not())'), 'no cloth\'s sheen on the bared skin')
+  assert.ok(fragment.includes(': []), skinSlot, wornSkin, '), 'declared with the shared values, before the skin and any branch read it')
+  // A prosthetic arm takes the bared forearm on its own side (the person's left is +x), and its socket goes under the roll.
+  assert.ok(fragment.includes('const armSide = (hand: number, side: typeof bareArm) => slotIs(SLOT.SKIN).and(boneIs(hand)).or(bareArm.and(side))'))
+  assert.ok(fragment.includes('const armHere = armSide(BONE.HAND_R, positionGeometry.x.greaterThan(0)).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms))\n      .or(armSide(BONE.HAND_L, positionGeometry.x.lessThan(0)).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms)))'))
+  assert.ok(fragment.includes('const socketY = select(armHere, select(rolledUp, float(TATTOO_SLEEVE.roll - 0.01), float(0.905)), float(0.446))'))
+  // The turned band: a factor on the top's colour, so the cloth is written out once.
+  assert.ok(fragment.includes('const rollShade = select(sleeveUp.and(rest.y.lessThan(foldTop)), mix(float(1.12), float(0.5), thin(rest.y.sub(foldTop).abs(), 0.004)), float(1))'))
+  assert.match(fragment, /const worn = select\(raisedWaist, waistBand, select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)\)\.mul\(rollShade\)/)
+  // The roll sits on the forearm's top ring, above the forearms' squares, with its band under 1.12 m.
+  assert.deepEqual({ ...TATTOO_SLEEVE }, { roll: 1.1, fold: 0.02, zones: 0b110000 })
+  for (const z of [4, 5]) assert.ok(TATTOO_FRAMES[z].centreY + TATTOO_FRAMES[z].half < TATTOO_SLEEVE.roll, TATTOO_ZONES[z].slot)
+  // Built: both bodies' colour reaches the street's zones (the far body too, so the arms do not change as a person comes close).
+  const code = (tattooZones as unknown as { code: string }).code
+  const view = new CrowdView(16)
+  for (const mesh of view.meshes) assert.ok([...reach(materialOf(mesh).colorNode)].some((n) => (n as { code?: unknown }).code === code), `${mesh.name}: the street's sleeves`)
 })
 
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {
@@ -395,12 +433,15 @@ test('the card\'s Tattoos section: headed where the left hand\'s row was, the zo
   assert.equal(TATTOO_FAMILIES.length, 8)
   assert.ok(TATTOO_BY_FAMILY.every((ids) => ids.length === 8), 'at most eight zones, nine families with none and eight designs: never sixty-five pills')
   // The labels: each zone's pill is its slotLabel, the person's own side.
-  for (const z of TATTOO_ZONES.slice(0, 4)) assert.ok(card.includes(`case '${z.slot}': return '${z.label}'`), z.slot)
+  for (const z of TATTOO_ZONES.slice(0, 6)) assert.ok(card.includes(`case '${z.slot}': return '${z.label}'`), z.slot)
   assert.ok(card.includes("case 'tattooInk': return 'Ink'"))
-  // The captions promise what this wardrobe shows, no more: the hands, the neck and the nape, no forearms or legs yet.
-  assert.ok(section.includes("Shown on you in the city and in a shop's mirror."))
-  assert.doesNotMatch(card, /forearm|calves|calf|ankle|rolled sleeves|bare legs/i)
-  assert.ok(card.includes('shoe styles, the watch, the pin and tattoos show in the city, not in this outline.'))
+  assert.ok(card.includes("case 'sleeves': return 'Sleeves'"))
+  // A coat keeps its sleeves down, so the sleeves' row is gone under one (look.ts tattooCover says the same in words).
+  assert.ok(card.includes("if (slot === 'sleeves' && worn.layer === LAYER.coat) return null"))
+  // The captions promise what this wardrobe shows, no more: the hands, the neck, the nape and the forearms, no legs yet.
+  assert.ok(section.includes("Shown on you in the city and in a shop's mirror. Forearms need rolled sleeves."))
+  assert.doesNotMatch(card, /calves|calf|ankle|bare legs/i)
+  assert.ok(card.includes('shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.'))
 })
 
 test('lookStore: its own key, a look within the wardrobe round-trips as a v5 record, a v4 record (thirty-two slots) reads as it is, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {

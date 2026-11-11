@@ -5,9 +5,10 @@
  * Why does this file exist? It pins the first walk's exam over a fake host: the seal (0 unless the page is contained,
  * the realm standing and the four laws and fifteen checks all there; a nonzero hash salted by the page's nonce
  * otherwise, so no two page loads share one and a guess never matches); `verify_ring0` saying what it sealed and
- * telling the walk; `spawn_subagents` asking the role's skills over one by one through the recruiter's lane until the
- * first refusal, answering with how many were asked (never the number wished for), capped, and naming an unknown
- * role; `unlock_city` opening the city only for this session's live seal and a swarm of one or more, refusing with a
+ * telling the walk; `spawn_subagents` setting its swarm to work through the host's team runner from wherever the
+ * player stands (nothing opened while the realm does not hold), answering with the lanes still running after their
+ * first tick (never the number wished for, never an isolated lane), capped at the runner's cap, saying what it
+ * replaced and which desks this map has no room for, and naming an unknown role; `unlock_city` opening the city only for this session's live seal and a swarm of one or more, refusing with a
  * reason otherwise, and answering "already yours" after the pass; every door shut while the walk is off; the report
  * read once; the status line; the program the one in 09_Cognition/firstWalk.ts; every line plain and 14A.
  * What breaks if it is removed? A typed guess could open the city, a swarm could be pretended, or a line could
@@ -18,18 +19,21 @@ import { test } from 'node:test'
 import { screen } from '../../02_Define_The_Rules/conduct.ts'
 import { CHECKS } from '../../02_Define_The_Rules/ring0Gate.ts'
 import { PROGRAM, type Stage } from '../../09_Cognition/firstWalk.ts'
-import { EXAM_ROLES, SPAWN_MAX, createExam, fnv1a, sealOf, sealWhy, type ExamHost } from './exam.ts'
+import { TEAM_MAX } from '../../06_Make_Decisions/dispatch.ts'
+import { EXAM_ROLES, SPAWN_MAX, createExam, fnv1a, heldWhy, sealOf, sealWhy, type ExamHost } from './exam.ts'
 
 const LAWS = [{ id: 0, title: 'Protect humanity' }, { id: 1, title: 'Never harm' }, { id: 2, title: 'Obey' }, { id: 3, title: 'Preserve itself' }]
 const CHECK_NAMES = CHECKS.map((c) => c.name)
 
-interface Rig { host: ExamHost; notes: string[]; asks: string[]; refuseFrom: { n: number }; stage: { s: Stage | null }; flags: { contained: boolean; standing: boolean; on: boolean } }
+/** The fake runner's answer: how many of the lanes it opens are isolated at once, the team it replaces, the desks this map has no room for. */
+interface Runner { isolate: number; replaced: number; missing: number }
+interface Rig { host: ExamHost; notes: string[]; swarms: { n: number; role: string }[]; runner: Runner; stage: { s: Stage | null }; flags: { contained: boolean; standing: boolean; on: boolean } }
 
-/** A host where everything holds, one person asked over per call until `refuseFrom.n` asks have been made. */
+/** A host where everything holds and a team runner that opens what it is asked for (up to its cap), `runner` saying what else it reports. */
 function rig(over: Partial<ExamHost> = {}): Rig & { exam: ReturnType<typeof createExam> } {
   const notes: string[] = []
-  const asks: string[] = []
-  const refuseFrom = { n: Number.POSITIVE_INFINITY }
+  const swarms: { n: number; role: string }[] = []
+  const runner: Runner = { isolate: 0, replaced: 0, missing: 0 }
   const stage: { s: Stage | null } = { s: 'exam' }
   const flags = { contained: true, standing: true, on: true }
   const host: ExamHost = {
@@ -38,17 +42,19 @@ function rig(over: Partial<ExamHost> = {}): Rig & { exam: ReturnType<typeof crea
     laws: () => LAWS,
     checks: () => CHECK_NAMES,
     nonce: 0x1234abcd,
-    ask: (skill) => {
-      asks.push(skill)
-      if (asks.length > refuseFrom.n) return { sent: false, agent: -1, message: `${skill}: nobody within 5 m on this side of the street knows ${skill}` }
-      return { sent: true, agent: 10 + asks.length, message: `${skill}: asking agent ${10 + asks.length} over (2.0 m)` }
+    swarm: (n, role) => {
+      swarms.push({ n, role })
+      // As the runner: the desks are the first n of the sixteen, and those this map has no room for are among them.
+      const opened = Math.min(n, TEAM_MAX)
+      const desks = Math.min(opened, 16)
+      return { running: Math.max(0, opened - runner.isolate), opened, desks, replaced: runner.replaced, missing: Array.from({ length: Math.min(runner.missing, desks) }, (_, i) => `desk ${i}`) }
     },
     stage: () => stage.s,
     on: () => flags.on,
     note: (e) => { notes.push(e) },
     ...over,
   }
-  return { host, notes, asks, refuseFrom, stage, flags, exam: createExam(host) }
+  return { host, notes, swarms, runner, stage, flags, exam: createExam(host) }
 }
 
 const parts = (nonce = 0x1234abcd) => ({ contained: true, standing: true, laws: LAWS, checks: CHECK_NAMES, nonce })
@@ -90,32 +96,60 @@ test('verify_ring0: the live seal, what it sealed in one line, and the walk told
   assert.deepEqual(r.notes, ['seal'], 'a seal of 0 tells the walk nothing')
 })
 
-test('spawn_subagents: the role\'s skills asked over in turn through the recruiter\'s lane until the first refusal; how many were asked, never how many were wished for', () => {
+test('spawn_subagents: the swarm set to work through the team runner from wherever the player stands; the lanes still running, never how many were wished for', () => {
   const r = rig()
-  r.refuseFrom.n = 3
-  assert.equal(r.exam.spawnSubagents(24, 'sim2real_workplaces'), 3)
-  assert.deepEqual(r.asks, ['Robotics', 'Rust', 'Python', 'Data'], 'the fourth ask was refused and the loop stopped there')
-  assert.deepEqual(r.exam.report(), ['spawn_subagents: 3 of 24 asked over for sim2real_workplaces (Robotics, Rust, Python); they answer as they arrive (recruit status); the rest: Data: nobody within 5 m on this side of the street knows Data'])
+  assert.equal(r.exam.spawnSubagents(24, 'sim2real_workplaces'), 24)
+  assert.deepEqual(r.swarms, [{ n: 24, role: 'sim2real_workplaces' }], 'one call to the runner, for the whole swarm')
+  assert.deepEqual(r.exam.report(), ['spawn_subagents: 24 of 24 sub-agents at work for sim2real_workplaces, one lane each across 16 workplaces; anyone within earshot with a desk’s skill is asked over too while you are on foot (lanes shows them)'])
   assert.deepEqual(r.notes, ['swarm'])
-  // Nobody at all: 0, the refusal, and the walk not told.
-  const none = rig()
-  none.refuseFrom.n = 0
-  assert.equal(none.exam.spawnSubagents(24, 'sim2real_workplaces'), 0)
-  assert.deepEqual(none.exam.report(), ['spawn_subagents: 0 of 24 asked over for sim2real_workplaces: Robotics: nobody within 5 m on this side of the street knows Robotics'])
-  assert.deepEqual(none.notes, [])
-  // Everyone: the role's skills cycle; the count is capped.
+  // Isolated at once: only the running lanes count; all isolated is 0, said so, and the walk not told.
+  const some = rig()
+  some.runner.isolate = 5
+  assert.equal(some.exam.spawnSubagents(24, 'sim2real_workplaces'), 19)
+  assert.match(some.exam.report()[0]!, /^spawn_subagents: 19 of 24 sub-agents at work for sim2real_workplaces, one lane each across 16 workplaces; 5 isolated at once \(lanes ledger says why\);/)
+  const dead = rig()
+  dead.runner.isolate = 99
+  assert.equal(dead.exam.spawnSubagents(24, 'sim2real_workplaces'), 0)
+  assert.deepEqual(dead.exam.report(), ['spawn_subagents: 0 of 24 set to work for sim2real_workplaces: 24 opened and every one isolated at once (lanes ledger says why)'])
+  assert.deepEqual(dead.notes, [])
+  // What it replaced, and the desks this map has no room for: some (a map with fewer rooms), or all of them (a surveyed
+  // region), where nobody is asked over and the line says so rather than promising people.
+  const more = rig()
+  more.runner.replaced = 2
+  more.runner.missing = 1
+  assert.equal(more.exam.spawnSubagents(3, 'sim2real_workplaces'), 3)
+  assert.deepEqual(more.exam.report(), ['spawn_subagents: 3 of 3 sub-agents at work for sim2real_workplaces, one lane each across 2 workplaces; it replaces the team of 2 that was at work; this map has no room for one desk, whose lanes read around where you started; anyone within earshot with a desk’s skill is asked over too while you are on foot (lanes shows them)'])
+  more.runner.missing = 99
+  assert.equal(more.exam.spawnSubagents(24, 'sim2real_workplaces'), 24)
+  assert.deepEqual(more.exam.report(), ['spawn_subagents: 24 of 24 sub-agents at work for sim2real_workplaces, reading the city around where you started (this map has no workplaces, so nobody is asked over); it replaces the team of 2 that was at work (lanes shows them)'])
+  const single = rig()
+  single.exam.spawnSubagents(1, 'sim2real_workplaces')
+  assert.match(single.exam.report()[0]!, /^spawn_subagents: 1 of 1 sub-agents at work for sim2real_workplaces, one lane each across 1 workplace; /)
+  // The cap is the runner's: asked for more, the runner is asked for its cap and the line says so.
+  assert.equal(SPAWN_MAX, TEAM_MAX, 'the exam never asks the runner for more than it opens')
   const all = rig()
   assert.equal(all.exam.spawnSubagents(1000, 'sim2real_workplaces'), SPAWN_MAX)
-  assert.equal(all.asks.length, SPAWN_MAX)
-  assert.deepEqual(all.asks.slice(0, 9), [...EXAM_ROLES.sim2real_workplaces!, 'Robotics'])
-  assert.match(all.exam.report()[0]!, new RegExp(`^spawn_subagents: ${SPAWN_MAX} of ${SPAWN_MAX} asked over`))
+  assert.deepEqual(all.swarms, [{ n: SPAWN_MAX, role: 'sim2real_workplaces' }])
+  assert.match(all.exam.report()[0]!, new RegExp(`^spawn_subagents: ${SPAWN_MAX} of 1000 sub-agents at work for sim2real_workplaces, one lane each across 16 workplaces; a team holds at most ${SPAWN_MAX};`))
+  assert.equal(all.exam.spawnSubagents(2.9, 'sim2real_workplaces'), 2, 'a fraction is the whole sub-agents in it')
+  // The realm not holding: nothing opened (the gate would isolate every lane), the reason said, the walk not told.
+  for (const [flag, why] of [['contained', heldWhy({ contained: false, standing: true })], ['standing', heldWhy({ contained: true, standing: false })]] as const) {
+    const held = rig()
+    held.flags[flag] = false
+    assert.equal(held.exam.spawnSubagents(24, 'sim2real_workplaces'), 0)
+    assert.deepEqual(held.swarms, [], 'the runner is never asked')
+    assert.deepEqual(held.exam.report(), [`spawn_subagents: 0 of 24 set to work for sim2real_workplaces: ${why}; nothing was opened`])
+    assert.deepEqual(held.notes, [])
+  }
   // No swarm asked for, and an unknown role.
   const zero = rig()
   assert.equal(zero.exam.spawnSubagents(0, 'sim2real_workplaces'), 0)
   assert.equal(zero.exam.spawnSubagents(-5, 'sim2real_workplaces'), 0)
   assert.equal(zero.exam.spawnSubagents(Number.NaN, 'sim2real_workplaces'), 0)
-  assert.deepEqual(zero.asks, [])
-  assert.deepEqual(zero.exam.report(), ['spawn_subagents: nobody asked for (0 is not a swarm)', 'spawn_subagents: nobody asked for (-5 is not a swarm)', 'spawn_subagents: nobody asked for (NaN is not a swarm)'])
+  assert.equal(zero.exam.spawnSubagents(0.5, 'sim2real_workplaces'), 0)
+  assert.deepEqual(zero.swarms, [])
+  assert.deepEqual(zero.exam.report(), ['spawn_subagents: nobody asked for (0 is not a swarm)', 'spawn_subagents: nobody asked for (-5 is not a swarm)', 'spawn_subagents: nobody asked for (NaN is not a swarm)', 'spawn_subagents: nobody asked for (0.5 is not a swarm)'])
+  assert.deepEqual(EXAM_ROLES, ['sim2real_workplaces'])
   assert.throws(() => zero.exam.spawnSubagents(1, 'builders'), /^Error: spawn_subagents: unknown role 'builders': sim2real_workplaces$/)
   assert.deepEqual(zero.notes, [])
 })
@@ -131,8 +165,8 @@ test('unlock_city: this session\'s live seal and a swarm of one or more open the
   assert.deepEqual(r.exam.report(), [
     'unlock_city: refused, that is not this session’s seal: verify_ring0() gives it',
     'unlock_city: refused, that is not this session’s seal: verify_ring0() gives it',
-    'unlock_city: refused, a swarm of 0: nobody came over; stand on the sidewalk near people and run spawn_subagents again',
-    'unlock_city: refused, a swarm of 0: nobody came over; stand on the sidewalk near people and run spawn_subagents again',
+    'unlock_city: refused, a swarm of 0: no sub-agent is at work; run spawn_subagents again (lanes says why)',
+    'unlock_city: refused, a swarm of 0: no sub-agent is at work; run spawn_subagents again (lanes says why)',
   ])
   assert.deepEqual(r.notes, ['seal'], 'no refusal tells the walk anything')
   // The page stops being contained between the seal and the unlock: the seal no longer holds.
@@ -161,7 +195,7 @@ test('the walk off this visit: every door is shut with one message; status says 
   assert.throws(() => r.exam.verifyRing0(), off)
   assert.throws(() => r.exam.spawnSubagents(24, 'sim2real_workplaces'), off)
   assert.throws(() => r.exam.unlockCity(1, 1), off)
-  assert.deepEqual(r.asks, [])
+  assert.deepEqual(r.swarms, [])
   assert.deepEqual(r.notes, [])
   assert.deepEqual(r.exam.report(), [])
   assert.equal(r.exam.status(), 'tutorial: the first walk is off this visit (?tutorial=1 starts it)')
@@ -185,8 +219,10 @@ test('status names the stage of seven; program is the one exit program; every li
   const lines: string[] = []
   const say = (x: Rig & { exam: ReturnType<typeof createExam> }) => { lines.push(...x.exam.report()) }
   const a = rig(); a.exam.verifyRing0(); say(a); a.flags.standing = false; a.exam.verifyRing0(); say(a); a.flags.standing = true; a.flags.contained = false; a.exam.verifyRing0(); say(a)
-  const b = rig(); b.refuseFrom.n = 2; b.exam.spawnSubagents(5, 'sim2real_workplaces'); say(b); b.exam.spawnSubagents(0, 'sim2real_workplaces'); say(b)
-  const c = rig(); c.refuseFrom.n = 0; c.exam.spawnSubagents(5, 'sim2real_workplaces'); say(c)
+  const b = rig(); b.exam.spawnSubagents(24, 'sim2real_workplaces'); say(b); b.exam.spawnSubagents(0, 'sim2real_workplaces'); say(b); b.exam.spawnSubagents(1000, 'sim2real_workplaces'); say(b)
+  const c = rig(); c.runner.isolate = 99; c.exam.spawnSubagents(5, 'sim2real_workplaces'); say(c)
+  const c2 = rig(); c2.runner.isolate = 2; c2.runner.replaced = 24; c2.runner.missing = 2; c2.exam.spawnSubagents(24, 'sim2real_workplaces'); c2.runner.missing = 16; c2.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c2)
+  const c3 = rig(); c3.flags.contained = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); c3.flags.contained = true; c3.flags.standing = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c3)
   const d = rig(); const s = d.exam.verifyRing0(); d.exam.unlockCity(0, 1); d.exam.unlockCity(s, 0); d.exam.unlockCity(s, 1); d.stage.s = null; d.exam.unlockCity(s, 1); say(d)
   const e = rig(); e.exam.verifyRing0(); e.flags.standing = false; e.exam.unlockCity(1, 1); say(e)
   for (const st of ['move', 'exam', null] as const) { r.stage.s = st; lines.push(r.exam.status()) }

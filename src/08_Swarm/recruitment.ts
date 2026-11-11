@@ -237,7 +237,7 @@ export class Recruiter extends EventTarget {
   /**
    * The same ask, answered at once: whether a request went to the physics worker (the page's checks passed and someone
    * within earshot knows `skill`), and who, or why not. The worker's answer arrives through the recruiter's events as
-   * for `recruit`. For a caller that cannot wait (the first walk's exam, inside a NoirScript run).
+   * for `recruit`. For a caller that cannot wait (a synchronous host, such as a NoirScript run).
    */
   tryAsk(skill: string): { sent: boolean; agent: number; message: string } {
     const s = skillNamed(typeof skill === 'string' ? skill : '')

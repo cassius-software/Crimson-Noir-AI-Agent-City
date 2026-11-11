@@ -339,7 +339,7 @@ export interface SoaBridge {
 }
 
 /**
- * The first walk's exam (onboarding/exam.ts, composed by the host over the walk, the kernel and the recruiter): the
+ * The first walk's exam (onboarding/exam.ts, composed by the host over the walk, the kernel and the team runner): the
  * three doors NoirScript's exit program opens (the shape of noirscript's NoirExam, which the console hands the VM;
  * tsc holds the two together), the lines each door said since last read (the console prints them after the run), the
  * stage the visitor is on, and the program itself. Absent in the console shell.
@@ -347,7 +347,7 @@ export interface SoaBridge {
 export interface ExamBridge {
   /** A u32 seal over the live kernel; 0 when it does not hold. */
   verifyRing0(): number
-  /** How many were asked over for the role, never how many were wished for. */
+  /** How many sub-agents are running for the role (team lanes still open after their first tick), never how many were wished for. */
   spawnSubagents(n: number, role: string): number
   /** Whether the city opened: this session's live seal and a swarm of one or more. */
   unlockCity(seal: number, swarm: number): boolean
@@ -505,7 +505,7 @@ export interface TerminalBridge {
   access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
-  /** The team Sloane dispatched for a goal (08_Swarm/team.ts); absent until the host has built its team runner (the terminal then says so). */
+  /** The team at work (08_Swarm/team.ts): Sloane's for a goal, or the first walk's swarm; absent until the host has built its team runner (the terminal then says so). */
   lanes?: LanesBridge
   /** The operator's progression; absent in the console shell (it is kept by the city) and on an older host. */
   progress?: ProgressBridge
@@ -563,8 +563,9 @@ export interface GoalPlan {
 }
 
 /**
- * The team runner (08_Swarm/team.ts) as the console reads it: the lanes Sloane's planner opened for a goal, one
- * isolated NoirScript lane a sub-agent, their fault ledger, and the way to close them. `dispatch` is the `goal`
+ * The team runner (08_Swarm/team.ts) as the console reads it: the lanes Sloane's planner opened for a goal (or the
+ * first walk's spawn_subagents for its swarm), one isolated NoirScript lane a sub-agent, their fault ledger, and the
+ * way to close them. `dispatch` is the `goal`
  * command's: the planner's team opened as the card would open it.
  */
 export interface LanesBridge {

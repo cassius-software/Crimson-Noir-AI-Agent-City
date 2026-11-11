@@ -230,11 +230,11 @@ export interface SipocSnapshot {
      */
     voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean }
     /**
-     * The team Sloane dispatched for a goal (08_Swarm/team.ts), added by the host: one row a lane, with its tag, its
+     * The team at work (08_Swarm/team.ts; Sloane's for a goal, or the first walk's swarm), added by the host: one row a lane, with its tag, its
      * desk, whether it runs or was isolated, and its latest reading.
      */
     lanes?: readonly { tag: string; role: string; state: 'ready' | 'isolated'; reading: string | null }[]
-    /** The team in one line for the MIC chip ("Team 24 · metro 8, warehouse 8, robotics 8 · 2 coming over"); '' without one. */
+    /** The team in one line for the MIC chip ("Team 24 · metro 8, warehouse 8, robotics 8 · 2 coming over", or "Team 24 · 16 workplaces" past team.ts LINE_DESKS desks); '' without one. */
     team?: string
   }
   input: { mode: 'foot' | 'vehicle'; nearVehicle: boolean }

@@ -85,11 +85,11 @@ export interface NoirWrites {
 }
 
 /**
- * The first walk's exam (the host composes it over the walk, the kernel and the recruiter; absent in the console
+ * The first walk's exam (the host composes it over the walk, the kernel and the team runner; absent in the console
  * shell and when the walk is off): the three doors its exit program opens. Each may throw: the message becomes the
- * run's error. `verifyRing0` is a seal over the kernel's live state (0 when any check fails); `spawnSubagents` asks up
- * to `n` people over for `role` and answers with how many were asked; `unlockCity` opens the city for a live seal and
- * a swarm of one or more.
+ * run's error. `verifyRing0` is a seal over the kernel's live state (0 when any check fails); `spawnSubagents` sets up
+ * to `n` sub-agents to work for `role` as team lanes and answers with how many are running; `unlockCity` opens the
+ * city for a live seal and a swarm of one or more.
  */
 export interface NoirExam {
   verifyRing0(): number

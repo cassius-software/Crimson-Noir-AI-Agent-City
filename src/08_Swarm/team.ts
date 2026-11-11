@@ -33,6 +33,8 @@ export const NOTES_MAX = 8
 export const RALLY_RETRY_TICKS = 8
 /** Ticks someone may be missing from the recruiter's list before they count as gone (the list is the worker's truth). */
 export const GONE_TICKS = 2
+/** Desks the HUD's one line names one by one; a team at more (the first walk's swarm, at all sixteen) is counted in workplaces, so the MIC chip stays a chip. */
+export const LINE_DESKS = 4
 
 /** A workplace as the runner needs it: its kind (as the map names it), its name, and its door front on the sidewalk. */
 export interface TeamRoom { readonly kind: string; readonly name: string; readonly door: { readonly x: number; readonly z: number } }
@@ -264,13 +266,15 @@ export class TeamRunner {
     return this.views().map((v) => Object.freeze({ tag: v.tag, role: v.role, state: v.state, reading: v.value }))
   }
 
-  /** One line for the HUD: "Team 24 · telemetry 8, warehouse 8, robotics 8 · 1 isolated · 2 coming over"; '' without a team. */
+  /** One line for the HUD: "Team 24 · telemetry 8, warehouse 8, robotics 8 · 1 isolated · 2 coming over" ("Team 24 · 16 workplaces · ..." past LINE_DESKS desks); '' without a team. */
   line(): string {
     const team = this.#team
     const runner = this.#runner
     if (!team || !runner) return ''
     const views = runner.views()
-    const perDesk = team.kinds.map((k) => `${deskOf(k).short} ${views.filter((v) => team.lanes[v.lane]!.kind === k).length}`)
+    const perDesk = team.kinds.length > LINE_DESKS
+      ? [`${team.kinds.length} workplaces`]
+      : team.kinds.map((k) => `${deskOf(k).short} ${views.filter((v) => team.lanes[v.lane]!.kind === k).length}`)
     const isolated = views.filter((v) => v.state === 'isolated').length
     const coming = this.#bodies.filter((b) => b.state === 'coming' || b.state === 'sending').length
     const seated = this.#bodies.filter((b) => b.state === 'rallied').length
