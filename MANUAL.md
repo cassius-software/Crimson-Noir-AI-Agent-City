@@ -394,7 +394,8 @@ record (the progression engine's, kept in this browser), so the console's `progr
   Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
   its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin; the ink studio's two
   inks (gold leaf and luminescent, each setting the wardrobe's tattoo Ink alone). Trying an ink on a look with no
-  tattoo puts the olive branch on your left hand for the mirror, so the ink has something to colour; buying it sets
+  tattoo showing puts the olive branch on your left hand for the mirror (or on the first zone nothing covers: past a
+  prosthetic arm, the cup or a turtleneck), so the ink has something to colour; buying it sets
   the ink alone (`storeCatalog.ts` `previewItem`). Lines that need slots the wardrobe does not have yet (the studio's
   twelve forearm designs, the umbrella, headphones) are listed as on order and go on sale when the wardrobe's update
   adds those slots. Four of the studio's designs carry names that say what each draws (the braided rope band, the

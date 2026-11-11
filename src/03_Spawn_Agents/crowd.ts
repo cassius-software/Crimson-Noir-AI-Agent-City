@@ -1346,15 +1346,22 @@ export class CrowdView {
       color = select(slot.lessThan(s + 0.5), slots[s], color)
       roughness = select(slot.lessThan(s + 0.5), float(rough[s]), roughness)
     }
+    // Where a chosen look's ink shows, for the lit inks below (the street never wears them): the skin's slot, not under
+    // the turtleneck's knit, the watch, a prosthetic hand, or a full or long beard (facialPaint's cover from 1.548 up,
+    // in front of z -0.03). Declared with the colour (shared, below): read first inside the gold leaf's branch, three
+    // wrote the beard's test there alone, and the luminescent glow's branch read it unset, so the glow shone through a
+    // beard.
+    const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))
+    const inkShown = inked ? (select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null
     // three writes each branch of a select out on its own (ConditionalNode isolates them), so a value two slots read,
     // first reached inside one branch, was written again in every other branch that read it, and the rain-mode and
     // dissolve wraps read the colour a second time: the fragment stage grew past its budget (shadowShaders.test.ts).
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
-    // the skin, its ink (the tattoo call, which every branch that reads it would otherwise call again) and the hair as
-    // painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays for its marks under
-    // its own branches.
+    // the skin, its ink (the tattoo call, which every branch that reads it would otherwise call again, and where the ink
+    // shows) and the hair as painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays
+    // for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, ...(inked ? [inked] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
@@ -1368,14 +1375,11 @@ export class CrowdView {
     m.roughnessNode = select(chrome, float(0.22), select(limbShown.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
     m.metalnessNode = select(chrome, float(0.85), float(0))
     // The studio's two inks are lit (the street never wears them, so only a chosen look's can be): gold leaf has a
-    // metal's sheen and luminescent a faint glow of its own colour, each as far as the ink covers, and the glow goes
-    // as the body goes to code. Only where the ink shows: the skin's slot, not under the turtleneck's knit, the watch,
-    // a prosthetic hand, or a full or long beard (facialPaint's cover from 1.548 up, in front of z -0.03). Here, after
-    // the sheen and before the rain mode's and the dissolve's wraps, which dim and add to an emissive already set.
-    if (inked) {
+    // metal's sheen and luminescent a faint glow of its own colour, each as far as the ink covers where it shows
+    // (inkShown, above), and the glow goes as the body goes to code. Here, after the sheen and before the rain mode's
+    // and the dissolve's wraps, which dim and add to an emissive already set.
+    if (inkShown) {
       const inkNo = gene(LOOK_FIELD.tattooInk)
-      const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))
-      const inkShown = select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0))
       const gold = select(inkNo.equal(uint(TATTOO_INK.goldLeaf)), inkShown, float(0))
       m.roughnessNode = mix(m.roughnessNode as F1, float(0.32), gold)
       m.metalnessNode = mix(m.metalnessNode as F1, float(0.7), gold)

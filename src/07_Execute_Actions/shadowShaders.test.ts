@@ -266,7 +266,16 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
       assert.ok(s.vertex.length > 0 && s.fragment.length > 0, `${name}: both stages built`)
       assert.ok(s.vertex.length <= STAGE_BUDGET, `${name}: vertex stage ${s.vertex.length} characters, budget ${STAGE_BUDGET}`)
       assert.ok(s.fragment.length <= STAGE_BUDGET, `${name}: fragment stage ${s.fragment.length} characters, budget ${STAGE_BUDGET}`)
-      if (pass === 'main' && NEAR_BODY.test(draw)) assert.ok(s.fragment.length <= NEAR_TARGET, `${name}: the near body's fragment stage is ${s.fragment.length} characters, target ${NEAR_TARGET}`)
+      if (pass === 'main' && NEAR_BODY.test(draw)) {
+        assert.ok(s.fragment.length <= NEAR_TARGET, `${name}: the near body's fragment stage is ${s.fragment.length} characters, target ${NEAR_TARGET}`)
+        // Where a chosen look's ink shows (crowd.ts inkShown, its beard's cover from 1.548 up in front of z -0.03): written
+        // once, at the top of the stage, so the gold leaf's branch and the luminescent glow's read it set. First reached
+        // inside the gold leaf's branch, it was written there alone and the glow read the beard's test unset.
+        const gates = [...s.fragment.matchAll(/\.y > 1\.548 \) \) && \( \w+\.z > -0\.03 \)/g)]
+        assert.equal(gates.length, 1, `${name}: the inks' cover is written once`)
+        const head = s.fragment.slice(s.fragment.indexOf('fn main('), gates[0].index)
+        assert.equal((head.match(/\{/g)?.length ?? 0) - (head.match(/\}/g)?.length ?? 0), 1, `${name}: the inks' cover is written at the top of the stage, under no branch`)
+      }
       assert.equal(surfaceCalls(s.vertex), 0, `${name}: the vertex stage never calls the rain-mode surface`)
       const surface = surfaceCalls(s.fragment)
       assert.ok(surface <= 1, `${name}: the rain-mode surface is called ${surface} times; a material takes rain mode once`)

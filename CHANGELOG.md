@@ -38,15 +38,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   or a turtleneck covers), and the console `look tattooHand compass rose`, `look tattooHand 10`, `look tattooNape
   none` and `look tattooInk gold leaf`, with Tab completing the names (`commands.test.ts` pins the lists to the
   wardrobe's). A tattooed look's code is fifty-six symbols. The ink studio's gold-leaf and luminescent inks (lines 64
-  and 65) go on sale; trying one on a look with no design borrows the olive branch on the left hand for the mirror
-  alone, and buying sets the ink alone (`storeCatalog.ts` `previewItem`); the studio's mirror circles at 1.4 m
+  and 65) go on sale; trying one on a look with no design showing borrows the olive branch for the mirror alone,
+  on the left hand or the first zone nothing covers, and buying sets the ink alone (`storeCatalog.ts` `previewItem`); the studio's mirror circles at 1.4 m
   instead of 2.6 m (`storefronts.ts` `SHOP_ORBIT`, inside the shop's clear circle); four of its forearm lines are
   renamed for what they draw (Braided rope band, Scalloped arc band, Compass rose, Euler's identity circle; their ids
   and bits are unchanged), and all twelve stay on order until the forearm has its slot. The shader budget holds
-  (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 187,571
-  characters (the pantsuit's 187,214), under the 225,000 target the test now asserts for every near body; the far
+  (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 183,728
+  characters (the pantsuit's 183,551), under the 225,000 target the test now asserts for every near body; the far
   fragments (at most 139,888), the vertex stages (at most 54,921) and the shadow fragment (1,101) are as after the
-  hash change below. `dist/index.html` grows by 31,494 bytes, from 12,005,697 to 12,037,191; the limit in
+  hash change below. `dist/index.html` grows by 31,608 bytes, from 12,005,697 to 12,037,305; the limit in
   `tools/verify/page_dist.mjs` is unchanged. Unverified: no GPU's WGSL compiler has built the tattoo code yet (the WGSL
   host runs it as JavaScript and three builds it in Node); the browser screenshots of the studio's mirror are still to be
   taken.
@@ -1567,7 +1567,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   bottom and the top cloth are declared once in the fragment stage, and the turned cuff multiplies its cloth by a
   factor instead of selecting a second copy of it, pixel for pixel the same. Measured in `shadowShaders.test.ts`, the
   worst near main fragment stage goes from 221,913 characters (the pantsuit's) to 172,390 (the suit's) and the worst
-  far one from 173,039 to 139,888, and no vertex stage is over 54,921; the tattoos above spend 15,181 of the near
+  far one from 173,039 to 139,888, and no vertex stage is over 54,921; the tattoos above spend 11,338 of the near
   stage's saving. The turtleneck under a jacket or a coat now knits up the neck to the chin ring (below y 1.578 on the
   head bone), where it used to stop at the collar line and leave the neck bare; `look.test.ts` pins the gate, and
   `shadowShaders.test.ts` now holds every near body's main fragment stage to 225,000 characters.

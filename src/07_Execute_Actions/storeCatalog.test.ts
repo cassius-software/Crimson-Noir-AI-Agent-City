@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
-import { LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, validateLook } from '../03_Spawn_Agents/look.ts'
+import { CUT, LAYER, LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, tattooCover, validateLook, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { TATTOO_INK, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
@@ -205,7 +205,7 @@ test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in c
   }
 })
 
-test('the try-on: an ink on a look with no design borrows the olive branch on the left hand for the mirror; with a design, or any other line, it is wearItem\'s look; buying still wears the ink alone', () => {
+test('the try-on: an ink on a look with no design showing borrows the olive branch for the mirror, on the left hand or the first zone nothing covers; with a design showing, or any other line, it is wearItem\'s look; buying still wears the ink alone', () => {
   assert.deepEqual({ ...PREVIEW_TATTOO }, { slot: 'tattooHand', design: 1 })
   assert.equal(WARDROBE.tattoo[PREVIEW_TATTOO.design], 'olive branch')
   assert.equal(TATTOO_ZONES.find((z) => z.slot === PREVIEW_TATTOO.slot)?.label, 'Left hand')
@@ -216,14 +216,30 @@ test('the try-on: an ink on a look with no design borrows the olive branch on th
       // No design on any zone the wardrobe has (the presets wear none): the mirror shows the ink on the olive branch.
       assert.deepEqual(previewItem(p.look, line), { ...p.look, tattooInk: ink, tattooHand: 1 }, `${line.name} on the ${p.name}`)
       assert.ok(validateLook(previewItem(p.look, line)!))
-      // A design anywhere, on any of the four zones: nothing is borrowed.
+      // A design on any of the four zones that nothing covers: nothing is borrowed. One the cup covers (the camel
+      // blazer's right hand) shows nothing, so the olive branch is lent to the left hand as well.
       for (const z of TATTOO_ZONES.filter((zone) => (LOOK_SLOTS as readonly string[]).includes(zone.slot))) {
         const inked = validateLook({ ...p.look, [z.slot]: 30 })!
-        assert.deepEqual(previewItem(inked, line), wearItem(inked, line), `${line.name} over a design on the ${z.label}`)
-        assert.deepEqual(previewItem(inked, line), { ...inked, tattooInk: ink })
+        if (tattooCover(inked, z.slot as LookSlot) === null) {
+          assert.deepEqual(previewItem(inked, line), wearItem(inked, line), `${line.name} over a design on the ${z.label}`)
+          assert.deepEqual(previewItem(inked, line), { ...inked, tattooInk: ink })
+        } else {
+          assert.deepEqual(previewItem(inked, line), { ...inked, tattooInk: ink, tattooHand: 1 }, `${line.name} over a covered design on the ${z.label}`)
+        }
       }
     }
   }
+  // The olive branch goes where nothing covers it: past a prosthetic left arm to the right hand, past both arms to the
+  // neck, past both arms and a turtleneck under a jacket to the nape; a design under the limb alone borrows too.
+  const gold = itemById(64)!
+  const bare = validateLook({ ...LOOK_PRESETS[0].look, cup: 0 })!
+  const lent = (look: object) => previewItem(validateLook({ ...bare, ...look })!, gold)
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.leftArm }), { ...bare, prosthetic: PROSTHETIC.leftArm, tattooInk: 3, tattooHandR: 1 })
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.bothArms }), { ...bare, prosthetic: PROSTHETIC.bothArms, tattooInk: 3, tattooNeck: 1 })
+  const knit = { prosthetic: PROSTHETIC.bothArms, cut: CUT.turtleneck, layer: LAYER.coat }
+  assert.deepEqual(lent(knit), validateLook({ ...bare, ...knit, tattooInk: 3, tattooNape: 1 }))
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.leftArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.leftArm, tattooHand: 30, tattooInk: 3, tattooHandR: 1 })
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.rightArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.rightArm, tattooHand: 30, tattooInk: 3 })
   // Every other line on sale previews as it is worn, and a line on order previews as nothing.
   for (const i of CATALOGUE.filter((line) => !isInkLine(line))) {
     for (const p of LOOK_PRESETS) assert.deepEqual(previewItem(p.look, i), wearItem(p.look, i), `${i.name} on the ${p.name}`)

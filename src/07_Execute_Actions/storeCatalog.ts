@@ -20,7 +20,7 @@
  * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
  * What breaks if it is removed? The shops have nothing to sell and nothing decides whether a purchase may happen.
  */
-import { LOOK_SLOTS, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { LOOK_SLOTS, tattooCover, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import type { ShopKind } from '../01_Initialize_World/storefronts.ts'
 import { MAX_LEVEL, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
@@ -181,7 +181,10 @@ export function wearItem(look: Look, i: StoreItem): Look | null {
   return out
 }
 
-/** The design an ink borrows in the mirror when the look has none: the first, the olive branch, on the left hand. */
+/**
+ * The design an ink borrows in the mirror when the look shows none: the first, the olive branch, on the left hand, or
+ * on the first zone after it that nothing covers (a prosthetic arm, the cup, the turtleneck: look.ts tattooCover).
+ */
 export const PREVIEW_TATTOO = Object.freeze({ slot: 'tattooHand', design: TATTOO_MOTIFS[0].id } as const)
 
 /** Whether line `i` sells an ink: it sets the tattoos' one ink (look.ts WARDROBE.tattooInk). */
@@ -189,14 +192,16 @@ export const isInkLine = (i: StoreItem): boolean => i.wear !== null && Object.ha
 
 /**
  * What the shop's mirror shows while line `i` is tried on: `look` wearing it (wearItem, so null where wearItem is),
- * except that an ink tried on a look with no design on any zone the wardrobe has would colour nothing, so the mirror
- * also borrows PREVIEW_TATTOO to show it on. Only the try-on borrows: buying wears wearItem's look, the ink alone.
+ * except that an ink tried on a look with no design showing (none on any zone the wardrobe has, or each one covered)
+ * would colour nothing, so the mirror also borrows PREVIEW_TATTOO's design for the first zone nothing covers. Only the
+ * try-on borrows: buying wears wearItem's look, the ink alone.
  */
 export function previewItem(look: Look, i: StoreItem): Look | null {
   const worn = wearItem(look, i)
   if (!worn || !isInkLine(i)) return worn
-  const inked = TATTOO_ZONES.some((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot) && worn[z.slot as LookSlot] > 0)
-  return inked ? worn : withLookSlot(worn, PREVIEW_TATTOO.slot, PREVIEW_TATTOO.design)
+  const zones = TATTOO_ZONES.map((z) => z.slot as LookSlot).filter((z) => (LOOK_SLOTS as readonly string[]).includes(z) && tattooCover(worn, z) === null)
+  if (zones.some((z) => worn[z] > 0)) return worn
+  return withLookSlot(worn, zones.includes(PREVIEW_TATTOO.slot) ? PREVIEW_TATTOO.slot : zones[0] ?? PREVIEW_TATTOO.slot, PREVIEW_TATTOO.design)
 }
 
 /**
