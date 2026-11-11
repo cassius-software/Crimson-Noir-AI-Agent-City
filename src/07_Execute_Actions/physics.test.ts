@@ -12,7 +12,8 @@
  * - the city's world holds a hundred tiles in place of 4,599 colliders.
  * It also holds a home's slot of furniture (setHome, enableHome): new boxes are built off, a box sent again keeps its
  * very collider as it was (a piece that stayed put stays solid through an edit), the others go, and an empty set takes
- * the slot's body away.
+ * the slot's body away. And a sky floor (properties.ts) holds the real avatar: it lands at the arrival, never passes
+ * the clear glass at a run, and slides along it.
  * What breaks if it is removed? The packing could drop, move or resize a pole, or make one solid, and nothing would say.
  */
 import assert from 'node:assert/strict'
@@ -20,6 +21,10 @@ import { test } from 'node:test'
 import { CITY, POLES, generateCity, streetFurniture, type Box, type Furniture } from '../01_Initialize_World/city.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
 import { FURNITURE_TILE, GROUND_COLLIDERS, Physics, RAPIER } from './physics.ts'
+import { toLocal, toWorld } from '../01_Initialize_World/interiors.ts'
+import { SKY_FLOOR, cityHomes } from '../01_Initialize_World/properties.ts'
+import { Avatar } from './player.ts'
+import { PERSON } from './simProtocol.ts'
 
 const SEED = 11
 const NONE: Furniture = { lamps: [], trees: [], signals: [] }
@@ -241,4 +246,51 @@ test("a home's slot: new boxes are built off, a box sent again keeps its very co
   p.enableHome(0, true)
   assert.deepEqual(p.setHome(1, [[9, 0, 9, 9, 1, 10]]), [], 'nothing sound: nothing left')
   assert.deepEqual({ colliders: p.world.colliders.len(), bodies: p.world.bodies.len() }, { colliders, bodies })
+})
+
+test('a sky floor holds the avatar: it lands at the arrival, stays inside the clear glass at a run, and slides along it', async () => {
+  const physics = await Physics.create(generateCity(1337), NONE)
+  const dt = 1 / 60, centre = PERSON.halfHeight + PERSON.radius
+  const homes = cityHomes(1337).filter((h) => h.sky)
+  assert.equal(homes.length, 2, 'the Penthouse and the Sky-Mansion')
+  for (const home of homes) {
+    const F = home.sky!.y, at = `${home.kind}`
+    const a = new Avatar(physics, home.cx, home.cz)
+    const feet = () => a.state().y - centre
+    // The room frame's axes in the city: u toward the doorway, v across.
+    const o = toWorld(home, 0, 0), pu = toWorld(home, 1, 0), pv = toWorld(home, 0, 1)
+    const vel = (du: number, dv: number) => ({ x: du * (pu.x - o.x) + dv * (pv.x - o.x), z: du * (pu.z - o.z) + dv * (pv.z - o.z) })
+    const put = (u: number, v: number) => {
+      const p = toWorld(home, u, v)
+      a.teleport(p.x, p.z, F + centre + 0.05)
+      for (let i = 0; i < 30; i++) physics.step(dt, (h) => a.move(0, 0, h))
+    }
+    // Landing at the arrival: the feet on the floor (the controller's 2 cm skin), grounded.
+    put(6.224, 0)
+    assert.ok(Math.abs(feet() - F) < 0.03 && a.state().grounded, `${at}: feet ${feet().toFixed(3)} at ${F}`)
+    // At a run into the glass in eight directions, 6 s each: never past its inner face less the radius, never below the floor.
+    const limit = SKY_FLOOR.inner - PERSON.radius
+    for (let k = 0; k < 8; k++) {
+      put(0, 0)
+      const w = vel(4 * Math.cos((k * Math.PI) / 4), 4 * Math.sin((k * Math.PI) / 4))
+      let most = 0
+      for (let t = 0; t < 6; t += dt) {
+        physics.step(dt, (h) => a.move(w.x, w.z, h))
+        const l = toLocal(home, a.x, a.z)
+        most = Math.max(most, Math.abs(l.u), Math.abs(l.v))
+        assert.ok(feet() > F - 0.03, `${at} direction ${k}: fell to ${feet().toFixed(3)}`)
+      }
+      assert.ok(most <= limit + 1e-3, `${at} direction ${k}: ${most.toFixed(4)} m from the centre, past ${limit}`)
+      assert.ok(most > limit - 0.1, `${at} direction ${k}: reached the glass (${most.toFixed(3)} m)`)
+    }
+    // At 45 degrees into a face, 2 m/s along it and 2 m/s into it, for 4 s: it slides the whole 8 m, nothing snags.
+    put(-6, 7)
+    const w = vel(2, 2)
+    for (let t = 0; t < 4; t += dt) physics.step(dt, (h) => a.move(w.x, w.z, h))
+    const end = toLocal(home, a.x, a.z)
+    assert.ok(end.u - -6 >= 7.5, `${at}: slid ${(end.u + 6).toFixed(2)} m along the glass`)
+    assert.ok(Math.abs(end.v - limit) < 0.05, `${at}: pressed to the glass (v ${end.v.toFixed(3)})`)
+    physics.world.removeCollider(a.collider, false)
+    physics.world.removeRigidBody(a.body)
+  }
 })

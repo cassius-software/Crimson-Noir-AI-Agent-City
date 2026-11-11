@@ -31,7 +31,7 @@ import { BAYS } from './parking.ts'
 import { SimCore, type StepInput } from './simCore.ts'
 import { createSimHost } from './simHost.ts'
 import { bridgeBytes, PhysicsBridge, SLOT } from './sharedBridge.ts'
-import { POSE, RUN, TRACK_KINDS, TRACK_POSE, WALK, type FromWorker, type SimInit } from './simProtocol.ts'
+import { PERSON, POSE, RUN, TRACK_KINDS, TRACK_POSE, WALK, type FromWorker, type SimInit } from './simProtocol.ts'
 import { auditCraft } from '../02_Define_The_Rules/ring0.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { TrackFleet } from './trackFleet.ts'
@@ -1457,7 +1457,7 @@ test("'home' is refused in a network room, for a home this world lacks and when 
   refused({ c: 'home', index: 5, boxes: good }, /^home: refused in a network room/, 'in a room, even a sound set')
   step({ cmds: [{ c: 'room', on: false }] })
   refused({ c: 'home', boxes: good }, /^home: no home undefined in this world$/, 'no index')
-  refused({ c: 'home', index: 7, boxes: good }, /no home 7 in this world/, 'an eighth home')
+  refused({ c: 'home', index: 9, boxes: good }, /no home 9 in this world/, 'a tenth room (7 and 8 are the sky floors)')
   refused({ c: 'home', index: -1, boxes: good }, /no home -1 in this world/, 'before the first')
   refused({ c: 'home', index: 2.5, boxes: good }, /no home 2\.5 in this world/, 'between two')
   refused({ c: 'home', index: '5', boxes: good }, /no home 5 in this world/, 'a string')
@@ -1476,6 +1476,74 @@ test("'home' is refused in a network room, for a home this world lacks and when 
   s = step({ cmds: [{ c: 'home', index: 5, boxes: good }] })
   assert.equal(s.rejected, rejected)
   assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: before.colliders + 1, bodies: before.bodies + 1 })
+  // A region has no sky floor: room 7 is refused there, counted, nothing built.
+  const { region, streets } = windowedRegion()
+  const r = await SimCore.create({ seed: 5, cars: 0, agents: AGENTS, boxes: [], furniture: NO_FURNITURE, spawn: { x: 2200, z: 2200 }, debug: false, region, streets }, null)
+  const rs = r.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [{ c: 'home', index: 7, boxes: good }] }, new Float32Array(0))
+  assert.equal(rs.rejected, 1, 'no sky floor in a region')
+  const why = rs.events.find((x) => x.e === 'rejected')
+  assert.match(why?.e === 'rejected' ? why.reason : '', /no home 7 in this world/)
+})
+
+test('a sound set on a sky frame builds at the floor\'s height, and turns solid only once nobody stands in it there', async () => {
+  const pent = cityHomes(11)[3]
+  assert.ok(pent.sky, 'seed 11\'s Penthouse has its sky floor')
+  const y = pent.sky!.y
+  // The world holds the sky floor's own boxes alone: the tower below it (the floor), the band and the slab above.
+  const sim = await SimCore.create({ seed: 11, cars: 0, agents: AGENTS, boxes: pent.sky!.boxes.map((b) => b.box), furniture: NO_FURNITURE, spawn: OPEN, debug: false }, null)
+  const step = (o: Partial<StepInput> = {}) => sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [], ...o }, new Float32Array(0))
+  const arrive = toWorld(pent, 6.224, 0)
+  let s = step({ cmds: [{ c: 'teleport', x: arrive.x, z: arrive.z, y: y + PERSON.halfHeight + PERSON.radius + 0.05 }] })
+  for (let i = 0; i < 60; i++) s = step()
+  assert.ok(Math.abs(s.avatar.feetY - y) < 0.03, `standing on the sky floor: feet ${s.avatar.feetY.toFixed(3)} at ${y}`)
+  const base = { colliders: s.physics.colliders, bodies: s.physics.bodies }
+  // At the hall's height the realm refuses it for room 7 (it must start on the sky floor), and builds nothing.
+  s = step({ cmds: [{ c: 'home', index: 7, boxes: solid(pent, 2, -1, 4, 1) }] })
+  assert.equal(s.rejected, 1)
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, base)
+  // On the arrival it is refused too: the way in is kept clear.
+  s = step({ cmds: [{ c: 'home', index: 7, boxes: solid(pent, 5.5, -0.5, 7, 0.5, y, y + 0.85) }] })
+  assert.equal(s.rejected, 2)
+  const why = s.events.find((x) => x.e === 'rejected')
+  assert.match(why?.e === 'rejected' ? why.reason : '', /keep off the arrival/)
+  // Off the arrival, at the floor's height, over the avatar: built, off; they walk on through it toward the far windows.
+  const mid = toWorld(pent, 1, 0)
+  s = step({ cmds: [{ c: 'teleport', x: mid.x, z: mid.z, y: y + PERSON.halfHeight + PERSON.radius + 0.05 }] })
+  for (let i = 0; i < 30; i++) s = step()
+  const over = solid(pent, 0.5, -0.5, 1.5, 0.5, y, y + 0.85)
+  s = step({ cmds: [{ c: 'home', index: 7, boxes: over }] })
+  assert.equal(s.rejected, 2, 'taken')
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 1, bodies: base.bodies + 1 })
+  for (let i = 0; i < 45; i++) s = step({ foot: along(pent, -1, 0) })
+  assert.ok(roomOf(pent, s.avatar).u < 0.5 - PRESSED - 0.5, `walked out through it: u ${roomOf(pent, s.avatar).u.toFixed(2)}`)
+  // Clear of it now, it turns solid: walking back, they stop at its face, on the sky floor.
+  for (let i = 0; i < 90; i++) s = step({ foot: along(pent, 1, 0) })
+  assert.ok(Math.abs(roomOf(pent, s.avatar).u - (0.5 - PRESSED)) < 0.02, `stopped at its back face: u ${roomOf(pent, s.avatar).u.toFixed(3)}`)
+  assert.ok(Math.abs(s.avatar.feetY - y) < 0.03, 'still on the floor')
+  // A piece of the hall below (room 3) never waits on someone standing 190 m over it: the heights do not overlap.
+  const below = solid(pent, -2, -1, -1, 1)
+  s = step({ cmds: [{ c: 'home', index: 3, boxes: below }] })
+  assert.equal(s.rejected, 2)
+  assert.deepEqual({ colliders: s.physics.colliders, bodies: s.physics.bodies }, { colliders: base.colliders + 2, bodies: base.bodies + 2 })
+})
+
+test('the crowd step hides your figure above ALOFT and shows it below', async () => {
+  const pent = cityHomes(11)[3], y = pent.sky!.y
+  const crowd = new FakeCrowd()
+  const sim = await SimCore.create({ seed: 11, cars: 0, agents: AGENTS, boxes: pent.sky!.boxes.map((b) => b.box), furniture: NO_FURNITURE, spawn: OPEN, debug: false }, async () => crowd)
+  const step = (o: Partial<StepInput> = {}) => sim.step({ dt: H, foot: { x: 0, z: 0, heading: 0 }, drive: IDLE, cmds: [], ...o }, new Float32Array(0))
+  let s = step()
+  assert.equal(crowd.steps.at(-1)!.player.visible, true, 'on the ground: drawn')
+  const arrive = toWorld(pent, 6.224, 0)
+  step({ cmds: [{ c: 'teleport', x: arrive.x, z: arrive.z, y: y + PERSON.halfHeight + PERSON.radius + 0.05 }] })
+  for (let i = 0; i < 30; i++) s = step()
+  assert.ok(s.avatar.feetY > 20, `up the tower: feet ${s.avatar.feetY.toFixed(1)} m`)
+  assert.equal(crowd.steps.at(-1)!.player.visible, false, 'up on the sky floor: hidden, or it would stand in the hall below')
+  // Down again (the realm's default height): drawn again.
+  step({ cmds: [{ c: 'teleport', x: OPEN.x, z: OPEN.z }] })
+  for (let i = 0; i < 10; i++) s = step()
+  assert.ok(s.avatar.feetY < 1)
+  assert.equal(crowd.steps.at(-1)!.player.visible, true)
 })
 
 test('a sound set stops a walking avatar; a new set replaces the old one whole (the collider count with it), and an empty one clears it', async () => {

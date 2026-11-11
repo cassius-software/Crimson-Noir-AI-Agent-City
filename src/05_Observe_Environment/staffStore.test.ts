@@ -19,7 +19,7 @@ import { test } from 'node:test'
 import { ROSTER_MAX, Roster } from '../08_Swarm/roster.ts'
 import type { ProfileStore } from './profile.ts'
 import {
-  NO_STAFF, RAW_MAX, STAFF_KEY, STAFF_MAX, STAFF_VERSION, carry, clearStaff, loadStaff, postAt, postOf, postTo, saveStaff, standDownAt, type StaffRecord,
+  NO_STAFF, RAW_MAX, STAFF_KEY, STAFF_MAX, STAFF_SKY_VERSION, STAFF_VERSION, carry, clearStaff, loadStaff, postAt, postOf, postTo, saveStaff, standDownAt, type StaffRecord,
 } from './staffStore.ts'
 
 function memory(): ProfileStore & { map: Map<string, string>; sets: number } {
@@ -113,7 +113,7 @@ test('a post moves an agent, frees the workstation\'s agent and lets go of names
 })
 
 test('a newer build\'s record reads as nobody posted and is never written over; every change keeps that it was', () => {
-  for (const v of [2, 1.5, 99]) {
+  for (const v of [3, 1.5, 2.5, 99]) {
     const store = holding(stored([['Mara', 1, 10, 20], ['Theo', 2, 4, 20]], v))
     const raw = store.map.get(STAFF_KEY)
     const rec = loadStaff(store)
@@ -132,6 +132,35 @@ test('a newer build\'s record reads as nobody posted and is never written over; 
   // This build's own records are not newer.
   assert.equal(NO_STAFF.newer, false)
   assert.equal(postTo(NO_STAFF, 'Mara', 1, 10, 20, ['Mara']).newer, false)
+})
+
+test('a post upstairs saves version 2; hall posts save version 1 byte for byte; version 3 reads as newer and is never overwritten', () => {
+  assert.equal(STAFF_SKY_VERSION, 2)
+  const store = memory()
+  const roster = ['Mara', 'Theo']
+  const halls = postTo(NO_STAFF, 'Mara', 1, 10, 20, roster)
+  assert.equal(saveStaff(halls, store), true)
+  assert.equal(store.map.get(STAFF_KEY), '{"v":1,"posts":[["Mara",1,10,20]]}', 'every post in a hall: version 1, as an older build writes it')
+  // A post on a sky floor (room 7 or 8): version 2, which reads back every room.
+  const up = postTo(halls, 'Theo', 8, 14, 12, roster)
+  assert.equal(saveStaff(up, store), true)
+  assert.equal(store.map.get(STAFF_KEY), '{"v":2,"posts":[["Mara",1,10,20],["Theo",8,14,12]]}')
+  assert.deepEqual(names(loadStaff(store)), ['Mara@1:10,20', 'Theo@8:14,12'])
+  assert.equal(loadStaff(store).newer, false, 'this build\'s own')
+  // Stood down again: back to version 1, byte for byte.
+  assert.equal(saveStaff(standDownAt(up, 8, 14, 12), store), true)
+  assert.equal(store.map.get(STAFF_KEY), '{"v":1,"posts":[["Mara",1,10,20]]}')
+  // Version 1 names halls only; version 2 rooms up to 8, never 9.
+  assert.deepEqual(names(loadStaff(holding(stored([['Mara', 7, 10, 20], ['Theo', 2, 4, 20]], 1)))), ['Theo@2:4,20'])
+  assert.deepEqual(names(loadStaff(holding(stored([['Mara', 7, 10, 20], ['Ivy', 9, 4, 20], ['Theo', 2, 4, 20]], 2)))), ['Mara@7:10,20', 'Theo@2:4,20'])
+  // Version 3: a newer build's, nobody posted, never written over.
+  const newer = holding(stored([['Mara', 8, 10, 20]], 3))
+  const raw = newer.map.get(STAFF_KEY)
+  const rec = loadStaff(newer)
+  assert.deepEqual(rec, { posts: [], newer: true })
+  assert.equal(saveStaff(postTo(rec, 'Theo', 7, 14, 12, roster), newer), false)
+  assert.equal(newer.sets, 0)
+  assert.equal(newer.map.get(STAFF_KEY), raw)
 })
 
 test('carry follows a rename in place and lets a forgotten agent\'s post go; a hire, an add, a change of case or no change gives null', () => {

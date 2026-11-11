@@ -18,7 +18,8 @@
  * checked against this realm's own readings of the crowd (earshot, the sidewalk, the skill), the person is asked
  * over through the crowd's summon slots, becomes Active (tethered: following the operator) on arrival, and is released
  * when the operator walks off, drives off or dismisses them. A home's furniture is solid here too: the page sends each
- * home's boxes ('home'), checked against that home's room frame (properties.ts checkHomeBoxes); a new piece stays off
+ * room's boxes ('home': the halls by property index, then the city's two sky floors, 7 and 8, at their floors'
+ * height), checked against that room's frame (properties.ts checkHomeBoxes); a new piece stays off
  * while anyone on foot stands by it, a piece sent again where it was stays as it was, and every piece is gone from the
  * world for as long as a network room lasts. Nothing it returns is a reference into it. It
  * imports no DOM, no worker API and no GPU code, so the node tests drive it directly with a stand-in sensor.
@@ -37,7 +38,7 @@ import { Sanctuary, type Nudge } from './sanctuary.ts'
 import { Fleet, type Person, type Vehicle } from './vehicles.ts'
 import { exitPoint, HELD_CARS, type GlassRoom } from './carRig.ts'
 import { shops, shopsAt } from '../01_Initialize_World/storefronts.ts'
-import { checkHomeBoxes, cityHomes, homeFrames, type HomeFrame } from '../01_Initialize_World/properties.ts'
+import { checkHomeBoxes, cityHomes, homeFrames, skyFrames, type HomeFrame } from '../01_Initialize_World/properties.ts'
 import { TrackFleet } from './trackFleet.ts'
 import { RagdollRealm } from './ragdollRealm.ts'
 import { JointRealm } from './jointRealm.ts'
@@ -97,6 +98,8 @@ const LOT_PAD = 0.4
  * set waits while anyone on foot stands within their radius and this of one of its boxes.
  */
 const HOME_CLEAR = 0.05
+/** Feet higher than this (m: a sky floor's) hide player 1's own figure in the crowd, which draws it on the ground. */
+const ALOFT = 20
 const IDLE_FOOT: FootControls = Object.freeze({ x: 0, z: 0, heading: NaN })
 const IDLE_DRIVE: DriveControls = Object.freeze({ steer: 0, fwd: 0, back: 0, handbrake: false })
 
@@ -244,7 +247,7 @@ export class SimCore {
   readonly #held: Vehicle[] = []
   /** Player 1 took a door this step (a network room hears one a step). */
   #doored = false
-  /** The homes' room frames by property index (properties.ts homeFrames): the city's seven, a generated region's, or none. */
+  /** The rooms' frames (properties.ts homeFrames, then skyFrames for rooms 7 and 8): the city's nine, a generated region's halls, or none. */
   readonly #homeFrames: readonly (HomeFrame | null)[]
   /** Per home: the solid boxes the page last set (the 'home' command), city boxes, or null for none. */
   readonly #homeSets: (readonly Box[] | null)[]
@@ -258,8 +261,9 @@ export class SimCore {
     // surveyed region); a car driven into one leaves its driver clear of the glass and the fixtures as a workplace does.
     this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]
     // The homes' frames the furniture is checked against: the city's from its seed, a generated region's from the lots it
-    // was handed (none in a surveyed region). No home is glass: no car fits between a home's planters.
-    this.#homeFrames = Object.freeze(o.region ? homeFrames(o.streets && o.homes?.length ? o.homes : []) : homeFrames(cityHomes(o.seed)))
+    // was handed (none in a surveyed region), then the city's two sky floors (none in a region). No home is glass: no car
+    // fits between a home's planters.
+    this.#homeFrames = Object.freeze((o.region ? homeFrames(o.streets && o.homes?.length ? o.homes : []) : homeFrames(cityHomes(o.seed))).concat(skyFrames(o.region ? [] : cityHomes(o.seed))))
     this.#homeSets = this.#homeFrames.map(() => null)
     this.#homeOff = this.#homeFrames.map(() => [])
     this.#debug = o.debug === true
@@ -1226,9 +1230,11 @@ export class SimCore {
     // Someone asked over routes round the buildings by the flow field towards the operator: solved again (on the
     // crowd's own device) each time the operator stands in another cell; nobody asked over, no field is asked for.
     if (this.#recruits.length > 0 && this.#driving[0] === null) crowd.routeTo?.(a.x, a.z)
+    // Player 1's own figure is drawn on the ground: up on a sky floor it would stand in the hall below, so it is hidden.
+    const feet = a.body.translation(this.#pos).y - a.person.halfHeight - a.person.radius
     crowd.step({
       seq, dt, time: this.#simTime,
-      player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null },
+      player: { x: a.x, z: a.z, heading: this.#bodyHeading[0], speed: this.#driving[0] ? 0 : a.speed, visible: this.#driving[0] === null && feet <= ALOFT },
       cars: this.#fleet.crowdStates(),
       summons: this.#summons,
       matrixMode: this.#matrixMode,

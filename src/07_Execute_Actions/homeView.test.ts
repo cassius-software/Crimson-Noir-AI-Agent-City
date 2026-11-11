@@ -6,7 +6,9 @@
  * home shows its default floor and walls until its owner picks others, owned or not; an owned home shows the pieces of
  * its saved layout whose line is owned and that fit, and a home on sale its show home; a network room shows the
  * finishes only; the draft's ghost shows only where the piece fits, over a cursor marker lit or dark to match; seven
- * densely furnished homes and a draft stay inside the HomeFurniture mesh's 512 boxes, the capacity world.ts gives it;
+ * densely furnished homes, two densely furnished sky floors and a draft stay inside the HomeFurniture mesh's 640 boxes,
+ * the capacity world.ts gives it; a sky floor is drawn after the halls at its own height, and the ride's refusals come
+ * in their order;
  * each home's solids are its pieces' colliders turned into the city through the room frame, for every way a doorway can
  * face, and every one passes the realm's own check (properties.ts checkHomeBoxes); the draft camera stays in the room
  * under the slab, looks at the cursor, and is held inside the shallow micro-loft. It also builds the world under Node
@@ -32,15 +34,15 @@ import { CITY, CITY_CENTER, LAKE, STYLE, inLot, type Building } from '../01_Init
 import { ROOM, doorFront, toLocal, toWorld, type Side } from '../01_Initialize_World/interiors.ts'
 import { ZONE, generateLakefront } from '../01_Initialize_World/lakefront.ts'
 import { packOf } from '../01_Initialize_World/lakefrontPack.ts'
-import { PROPERTY_KINDS, checkHomeBoxes, cityHomes, homeAt, homeFrames, homesAt, type Home } from '../01_Initialize_World/properties.ts'
+import { PROPERTY_KINDS, checkHomeBoxes, cityHomes, homeAt, homeFrames, homesAt, skyFrames, type Home } from '../01_Initialize_World/properties.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { streetGridOf } from '../01_Initialize_World/region/streets.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
-import { CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre } from '../02_Define_The_Rules/homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, ROOM_COUNT, SKY_HOMES, backEdge, cellCentre, planOf, skyRoom } from '../02_Define_The_Rules/homeGrid.ts'
 import {
-  DEFAULT_FINISH, FINISHES, FLOORS, GLASS, HOME_STAGING, OVERLAY, SHAPES, SHAPE_IDS, WALLS, canPlace, floorOverlay, footprint, renderBoxes,
+  DEFAULT_FINISH, FINISHES, FLOORS, GLASS, HOME_STAGING, OVERLAY, SHAPES, SHAPE_IDS, SKY_STAGING, WALLS, canPlace, finishDefault, floorOverlay, footprint, renderBoxes,
   solidBox, wallPanels, type Piece, type RoomBox,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
@@ -50,7 +52,7 @@ import type { TeamRoom } from '../08_Swarm/team.ts'
 import { itemById } from './storeCatalog.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import {
-  CITY_LINES, CURSOR, EYE, FINISH_STYLE, HOME_BOXES, furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, staffFigures, worldBoxOf, type Draft,
+  CITY_LINES, CURSOR, EYE, FINISH_STYLE, HOME_BOXES, floorRefusal, furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, staffFigures, worldBoxOf, type Draft,
   type HomeSeat, type StaffPost,
 } from './homeView.ts'
 
@@ -86,17 +88,19 @@ const near = (a: readonly number[], b: readonly number[], what: string, eps = 1e
 }
 
 /**
- * A dense layout for home `home`, every line owned: the lines with the most boxes first, each placed wherever canPlace
- * says 'ok' (rows from the back, columns from the −v wall, every turn), up to HOME_PIECES pieces.
+ * A dense layout for room `home` (a hall, or a sky floor), every line owned: the lines with the most boxes first, each
+ * placed wherever canPlace says 'ok' (rows from the back, columns from the −v side of its plan, every turn), up to
+ * HOME_PIECES pieces.
  */
 function dense(home: number): Piece[] {
   const order = [...SHAPE_IDS].sort((a, b) => SHAPES[b].boxes.length - SHAPES[a].boxes.length || a - b)
   const placed: Piece[] = []
+  const plan = planOf(home)!
   for (const id of order) {
     for (let n = 0; n < SHAPES[id].cap && placed.length < HOME_PIECES; n++) {
       let put = false
-      for (let r = GRID - DEPTH[home]; r < GRID && !put; r++) {
-        for (let c = 0; c < GRID && !put; c++) {
+      for (let r = plan.r0; r <= plan.r1 && !put; r++) {
+        for (let c = plan.c0; c <= plan.c1 && !put; c++) {
           for (let rot = 0; rot < 4 && !put; rot++) {
             const p = { id, c, r, rot }
             if (canPlace(home, placed, p) === 'ok') { placed.push(p); put = true }
@@ -108,7 +112,8 @@ function dense(home: number): Piece[] {
   }
   return placed
 }
-const DENSE: readonly Piece[][] = DEPTH.map((_d, i) => dense(i))
+/** The seven halls' dense layouts, then the two sky floors'. */
+const DENSE: readonly Piece[][] = Array.from({ length: ROOM_COUNT }, (_d, i) => dense(i))
 
 /** A record holding `layouts` (null for a home left as it was), the dense layouts by default. */
 const recordOf = (layouts: readonly (readonly Piece[] | null)[], floor = 0, wall = 0): HomeRecord =>
@@ -129,31 +134,41 @@ test('the boxes list fits the world\'s HomeFurniture mesh, whose transforms fit 
   assert.equal(HOME_BOXES, HOME_INSTANCES)
   assert.ok(HOME_INSTANCES <= 1024, 'past 1,024 three r186 reads the transforms as instanced attributes: another shader')
   assert.ok(HOME_INSTANCES * 64 <= 65536, 'WebGPU\'s default uniform binding size')
-  // The most any home can draw: a floor, five panels and sixteen pieces of at most four boxes; then the draft.
+  // The most any home can draw: a floor, five panels and sixteen pieces of at most four boxes; a sky floor the same but
+  // the panels (its walls are its windows); then the draft.
   const most = Math.max(...SHAPE_IDS.map((id) => SHAPES[id].boxes.length))
   assert.ok(most <= 4)
   const panels = Math.max(...WALLS.map((_w, i) => wallPanels(0, i).length))
   assert.equal(panels, 5)
-  assert.ok(PROPERTY_KINDS.length * (1 + panels + HOME_PIECES * most) + most + 1 <= HOME_BOXES, '7 × 70 + 5 = 495')
+  for (const room of [7, 8]) assert.equal(Math.max(...WALLS.map((_w, i) => wallPanels(room, i).length)), 0, `room ${room}: no panels`)
+  assert.ok(PROPERTY_KINDS.length * (1 + panels + HOME_PIECES * most) + SKY_HOMES.length * (1 + HOME_PIECES * most) + most + 1 <= HOME_BOXES, '7 × 70 + 2 × 65 + 5 = 625')
 })
 
 test('every home shows its default floor and walls until its owner picks others, owned or not, and in a network room', () => {
   const fresh = freshHomes()
   for (const [deeds, room] of [[0, false], [ALL_DEEDS, false], [0, true], [ALL_DEEDS, true]] as const) {
     const list = homeInstances(CITY_HOMES, fresh, deeds, ALL_LINES, { room, base: 0, draft: null })
+    // The seven halls at the street's ground, then the two sky floors at their floors' height.
+    const rooms = [...CITY_HOMES.map((h) => ({ h, n: h.home, y: 0 })), ...CITY_HOMES.flatMap((h) => (h.sky ? [{ h, n: skyRoom(h.home), y: h.sky.y }] : []))]
+    assert.deepEqual(rooms.map((x) => x.n), [0, 1, 2, 3, 4, 5, 6, 7, 8])
     let at = 0
-    for (const h of CITY_HOMES) {
-      const d = DEFAULT_FINISH[h.home]
+    for (const { h, n, y } of rooms) {
+      const d = finishDefault(n)!
+      if (n < DEPTH.length) assert.equal(d, DEFAULT_FINISH[n])
       const floor = list[at++]
-      assert.deepEqual(floor.box, worldBoxOf(h, floorOverlay(h.home, 0)), `home ${h.home}: the overlay first`)
-      assert.equal(floor.style, FINISH_STYLE[FLOORS[d.floor].style!], `home ${h.home}: its default floor`)
-      const panels = wallPanels(h.home, d.wall)
+      assert.deepEqual(floor.box, worldBoxOf(h, floorOverlay(n, y)), `room ${n}: the overlay first`)
+      assert.equal(floor.style, FINISH_STYLE[FLOORS[d.floor].style!], `room ${n}: its default floor`)
+      const panels = wallPanels(n, d.wall)
       for (const p of panels) {
         const b = list[at++]
         assert.deepEqual(b.box, worldBoxOf(h, p))
-        assert.equal(b.style, FINISH_STYLE[WALLS[d.wall].style!], `home ${h.home}: its default walls`)
+        assert.equal(b.style, FINISH_STYLE[WALLS[d.wall].style!], `room ${n}: its default walls`)
       }
-      if (!room) at += homePlaced(h.home, fresh, deeds, ALL_LINES).flatMap(renderBoxes).length
+      if (room) continue
+      // The pieces, each at the room's floor (a sky floor's raised by its height).
+      for (const part of homePlaced(n, fresh, deeds, ALL_LINES).flatMap(renderBoxes)) {
+        assert.deepEqual(list[at++].box, worldBoxOf(h, [part.box[0], part.box[1], part.box[2], part.box[3], part.box[4] + y, part.box[5] + y]), `room ${n}: a piece`)
+      }
     }
     assert.equal(at, list.length, 'nothing else')
   }
@@ -161,7 +176,12 @@ test('every home shows its default floor and walls until its owner picks others,
   const shown = (r: HomeRecord, home: number) => homeInstances([CITY_HOMES[home]], r, 0, 0, { room: true, base: 0, draft: null })
   assert.deepEqual(shown(fresh, 1).map((b) => b.style), [STYLE.deck, ...Array(5).fill(STYLE.masonry)])
   assert.deepEqual(shown(fresh, 2).map((b) => b.style), [STYLE.deck, ...Array(5).fill(STYLE.deck)])
-  for (const i of [0, 3, 4, 5, 6]) assert.deepEqual(shown(fresh, i).map((b) => b.style), [STYLE.concrete], `home ${i}: concrete, and glass has no panels`)
+  for (const i of [0, 4, 5]) assert.deepEqual(shown(fresh, i).map((b) => b.style), [STYLE.concrete], `home ${i}: concrete, and glass has no panels`)
+  // The tower homes: the hall's concrete, then the sky floor's own default (oak at the Penthouse, limestone at the
+  // Sky-Mansion), its glass no panels; its own finish (room 7's entry) replaces it, the walls glass whatever is chosen.
+  assert.deepEqual(shown(fresh, 3).map((b) => b.style), [STYLE.concrete, STYLE.deck])
+  assert.deepEqual(shown(fresh, 6).map((b) => b.style), [STYLE.concrete, STYLE.trim])
+  assert.deepEqual(shown(withHome(fresh, 7, layoutOf(2, 5, [])), 3).map((b) => b.style), [STYLE.concrete, STYLE.trim])
   // An owner's own finishes replace them: limestone underfoot and blackened steel on the walls.
   const mine = withHome(fresh, 1, layoutOf(2, 5, []))
   assert.deepEqual(shown(mine, 1).map((b) => b.style), [STYLE.trim, ...Array(5).fill(STYLE.rail)])
@@ -219,12 +239,13 @@ test('in a network room only the finishes are drawn: no piece, no show home, no 
   const draft: Draft = { home: CITY_HOMES[0].home, cursor: { c: 14, r: 24 }, piece: { id: 164, c: 14, r: 24, rot: 0 }, ok: true, view: 0 }
   for (const deeds of [0, ALL_DEEDS, 0b101]) {
     const list = homeInstances(CITY_HOMES, record, deeds, ALL_LINES, { room: true, base: 0, draft })
-    assert.equal(list.length, CITY_HOMES.length * 6, 'each home a floor and five panels')
+    assert.equal(list.length, CITY_HOMES.length * 6 + SKY_HOMES.length, 'each home a floor and five panels, each sky floor a floor')
     assert.ok(list.every((b) => b.style === STYLE.deck || b.style === STYLE.trim), 'oak floors, limestone walls')
   }
 })
 
-test('seven densely furnished homes and a draft stay within the mesh\'s 512 boxes; more homes than that are cut at 512', () => {
+test('seven densely furnished homes, two densely furnished sky floors and a draft stay within the mesh\'s 640 boxes; more homes than that are cut at 640', () => {
+  assert.equal(DENSE.length, ROOM_COUNT)
   for (const [i, l] of DENSE.entries()) {
     assert.equal(l.length, HOME_PIECES, `home ${i}: the dense layout holds the most a home holds`)
     assert.deepEqual(homePlaced(i, recordOf(DENSE), ALL_DEEDS, ALL_LINES), l, `home ${i}: all of it fits as saved`)
@@ -238,7 +259,8 @@ test('seven densely furnished homes and a draft stay within the mesh\'s 512 boxe
   const list = homeInstances(CITY_HOMES, record, ALL_DEEDS, ALL_LINES, { room: false, base: 0, draft })
   // (Lifting a piece can open a pocket a later piece of the saved order then closes: fitLayout keeps that one aside.)
   const pieces = lifted.reduce((n, _l, i) => n + homePlaced(i, record, ALL_DEEDS, ALL_LINES).flatMap(renderBoxes).length, 0)
-  assert.equal(list.length, CITY_HOMES.length * 6 + pieces + SHAPES[160].boxes.length + 1)
+  assert.equal(list.length, CITY_HOMES.length * 6 + SKY_HOMES.length + pieces + SHAPES[160].boxes.length + 1)
+  assert.ok(pieces > PROPERTY_KINDS.length * HOME_PIECES, `${pieces} boxes of pieces: the sky floors' among them`)
   assert.ok(list.length <= HOME_BOXES, `${list.length} boxes`)
   // A list of homes past what any map holds is still cut to the mesh's capacity.
   const many = homeInstances([...CITY_HOMES, ...CITY_HOMES, ...CITY_HOMES], record, ALL_DEEDS, ALL_LINES, { room: false, base: 0, draft })
@@ -246,7 +268,8 @@ test('seven densely furnished homes and a draft stay within the mesh\'s 512 boxe
 })
 
 test('the draft: the ghost of the piece in hand at the cursor only where it fits, over a marker lit when it fits and dark when not', () => {
-  const h = CITY_HOMES[3]
+  // The Penthouse's hall alone (its sky floor is drawn after it: the sky floors' own test below).
+  const h: Home = { ...CITY_HOMES[3], sky: null }
   const fresh = freshHomes()
   const owned = 1 << h.home
   const base = homeInstances([h], fresh, owned, ALL_LINES, { room: false, base: 0, draft: null })
@@ -435,7 +458,7 @@ test('the world: one HomeFurniture mesh in the buildings\' material, empty and v
   assert.equal(homes.count, 3)
   world.setHomes([])
   assert.equal(homes.count, 0)
-  assert.throws(() => world.setHomes(Array.from({ length: HOME_INSTANCES + 1 }, () => list[0])), /at most 512/)
+  assert.throws(() => world.setHomes(Array.from({ length: HOME_INSTANCES + 1 }, () => list[0])), /at most 640/)
 })
 
 test('the city\'s ground under the homes is cut into SURFACE_PIECE cells, as a region\'s is, so a floor finish millimetres over it keeps its depth', () => {
@@ -529,4 +552,73 @@ test('staffFigures draws only the agents who stand at their workstation now, in 
   assert.equal(figures.length, 1, 'Theo is out with the player, and nothing stands where Ines was posted')
   assert.deepEqual(figures[0], { ...seats[1].at, body: 2, ink: 0x7c3aed, scale: 1.05 })
   assert.deepEqual(staffFigures(homeSeats(PAGE_HOMES, record, 1 << 1, bit(168), posts, { room: true, base: 0 }), posts), [], 'none in a network room')
+})
+
+test('floorRefusal: stopped, no floor, shared room, at the wheel, not in the home, in that order', () => {
+  const go = { stopped: false, floor: true, shared: false, up: true, driving: false, inside: true }
+  assert.equal(floorRefusal(go), null, 'everything in order: it may go')
+  assert.equal(floorRefusal({ ...go, up: false }), null)
+  const all = { stopped: true, floor: false, shared: true, up: true, driving: true, inside: false }
+  // Each reason in turn, with every later one also true: the first that applies is the one said.
+  assert.equal(floorRefusal(all), 'The city has stopped')
+  assert.equal(floorRefusal({ ...all, stopped: false }), 'This home has no sky floor in this map')
+  assert.equal(floorRefusal({ ...all, stopped: false, floor: true }), 'Going up waits until you leave the shared room: it replays your walk and would put you back')
+  assert.equal(floorRefusal({ ...all, stopped: false, floor: true, up: false }), 'Going down waits until you leave the shared room: it replays your walk and would put you back')
+  assert.equal(floorRefusal({ ...all, stopped: false, floor: true, shared: false }), 'Step out of the car first')
+  assert.equal(floorRefusal({ ...all, stopped: false, floor: true, shared: false, driving: false }), 'Walk into the home first')
+  // Each alone.
+  assert.equal(floorRefusal({ ...go, inside: false }), 'Walk into the home first')
+  assert.equal(floorRefusal({ ...go, driving: true }), 'Step out of the car first')
+  assert.equal(floorRefusal({ ...go, floor: false }), 'This home has no sky floor in this map')
+  for (const words of ['The city has stopped', 'This home has no sky floor in this map', 'Going up waits until you leave the shared room: it replays your walk and would put you back', 'Step out of the car first', 'Walk into the home first']) {
+    assert.ok(screen(words).admissible, words)
+    assert.equal(forbiddenWordIn(words), null, words)
+  }
+})
+
+test('homeSeats: a workstation upstairs is named for the sky floor and stands at its height', () => {
+  const pent = PAGE_HOMES[3]
+  assert.ok(pent.sky, 'the Penthouse has its sky floor in the city')
+  const record = withHome(freshHomes(), 7, layoutOf(1, 0, [P(168, 10, 10), P(168, 16, 10)], []))
+  const seats = homeSeats(PAGE_HOMES, record, 1 << 3, ALL_LINES, [post('Mara', 7, 16, 10)], { room: false, base: 0 })
+  assert.deepEqual(seats.map((s) => [s.home, s.seat, s.c, s.r, s.occupant]), [[7, 1, 10, 10, null], [7, 2, 16, 10, 'Mara']])
+  const [a, b] = seats
+  assert.equal(b.kind, 'homeSeat:7:16:10')
+  assert.equal(b.name, `${pent.name} · sky floor, workstation 2`)
+  assert.equal(b.at.y, pent.sky!.y + OVERLAY.y1, 'on the sky floor\'s overlay')
+  assert.ok(Math.abs(b.at.x - pent.cx) < 8 && Math.abs(b.at.z - pent.cz) < 8, 'inside the clear glass')
+  assert.deepEqual(b.door, pent.arrival, 'the doorstep is the hall\'s')
+  assert.equal(a.at.y, b.at.y)
+  // A post in the hall at the same cell is not the sky floor's; the deed unowned, none.
+  assert.equal(homeSeats(PAGE_HOMES, record, 1 << 3, ALL_LINES, [post('Mara', 3, 16, 10)], { room: false, base: 0 })[1].occupant, null)
+  assert.deepEqual(homeSeats(PAGE_HOMES, record, 1 << 6, ALL_LINES, [], { room: false, base: 0 }), [])
+  // The sky floors' show homes: no workstation, and both stage piece by piece.
+  for (const staged of SKY_STAGING) assert.equal(staged.filter((p) => p.id === 168).length, 0)
+})
+
+test('a sky floor\'s draft and solids: the ghost and the marker at its height, inside its plan; the solids raised and taken by its frame', () => {
+  const pent = CITY_HOMES[3], y = pent.sky!.y
+  const owned = 1 << 3
+  const sofa: Piece = { id: 163, c: 13, r: 9, rot: 0 }
+  assert.equal(canPlace(7, [], sofa), 'ok')
+  const list = homeInstances([pent], freshHomes(), owned, ALL_LINES, { room: false, base: 0, draft: { home: 7, cursor: { c: 13, r: 9 }, piece: sofa, ok: true, view: 0 } })
+  // The hall's floor, the sky floor's, the ghost, the marker.
+  const ghost = renderBoxes(sofa)
+  assert.equal(list.length, 2 + ghost.length + 1)
+  assert.deepEqual(list[1].box, worldBoxOf(pent, floorOverlay(7, y)))
+  ghost.forEach((part, i) => assert.deepEqual(list[2 + i].box, worldBoxOf(pent, [part.box[0], part.box[1], part.box[2], part.box[3], part.box[4] + y, part.box[5] + y])))
+  const marker = list[list.length - 1]
+  assert.equal(marker.style, STYLE.lit)
+  assert.ok(Math.abs(marker.box[1] - (y + OVERLAY.y1 + CURSOR.gap)) < EPS)
+  // A cursor at the plan's edge with nothing in hand: the marker stops at the plan's edge.
+  const edge = homeInstances([pent], freshHomes(), owned, ALL_LINES, { room: false, base: 0, draft: { home: 7, cursor: { c: 6, r: 6 }, piece: null, ok: true, view: 2 } })
+  const m = roomOf(pent, edge[edge.length - 1].box)
+  assert.ok(m[0] >= backEdge(7) && m[1] >= -GRID_HALF + 6 * CELL, JSON.stringify(m))
+  // The solids: raised by the floor's height, every one taken by the sky frame.
+  const frame = skyFrames(CITY_HOMES)[0]!
+  assert.equal(frame.home, 7)
+  const flat = homeSolids(pent, DENSE[7], y)
+  assert.equal(flat.length, DENSE[7].length * 6)
+  assert.equal(checkHomeBoxes(frame, flat).length, DENSE[7].length)
+  assert.throws(() => checkHomeBoxes(frame, homeSolids(pent, DENSE[7])), /start on the floor/, 'at the street\'s height they are refused')
 })

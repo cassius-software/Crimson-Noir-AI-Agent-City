@@ -48,11 +48,11 @@ import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics } from '../0
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
-import { doorDir, doorFront, drawRooms, stationTable, toLocal, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
+import { doorDir, doorFront, drawRooms, stationTable, toLocal, toWorld, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
-import { inMask } from '../02_Define_The_Rules/homeGrid.ts'
+import { deedOf, inMask, ROOM_COUNT, skyRoom } from '../02_Define_The_Rules/homeGrid.ts'
 import { cellAt, cellsNear, SHAPE_IDS } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, HOME_COUNT, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
@@ -88,7 +88,7 @@ import {
 } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { itemById } from './storeCatalog.ts'
-import { furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, staffFigures, type Draft, type HomeSeat, type StaffPost } from './homeView.ts'
+import { floorRefusal, furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, roomName, staffFigures, type Draft, type FloorWhere, type HomeSeat, type StaffPost } from './homeView.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
@@ -354,6 +354,8 @@ function pageHome(h: Home, address: string, lane: number): PageHome {
 const PICK_FLOOR = 0.05
 /** How far past a person's radius someone standing in a home keeps a new piece off them (blockedCells), m. */
 const STAND_CLEAR = 0.05
+/** Where the ride puts the avatar, u in the room frame (v 0): a sky floor's arrival's centre going up, and the hall's apron going down, m. */
+const RIDE = Object.freeze({ up: 6.224, down: 10.892 })
 /** Every deed's bit (one per home) and every furniture line's bit (one per line), for the masks setFurnishings takes. */
 const DEED_BITS = (1 << HOME_COUNT) - 1
 const LINE_BITS = (1 << SHAPE_IDS.length) - 1
@@ -604,9 +606,9 @@ export class Engine {
    * doorstep card), and Go home takes the avatar to one.
    */
   readonly homes: readonly PageHome[]
-  /** The home the avatar stood in on foot at the last frame (its property index), or −1. */
+  /** The room the avatar stood in on foot at the last frame (a hall's property index, or a sky floor's 7 or 8: homeRoomAt), or −1. */
   private homeHere = -1
-  /** The home whose doorstep card is open (its property index), or null: while it is open the avatar is held still. */
+  /** The room whose doorstep card is open (as homeHere), or null: while it is open the avatar is held still. */
   private homeCard: number | null = null
   /**
    * One more frame's drop after a doorstep card closes: the pad's press that closed it (padNav.ts clicks Done or ×
@@ -631,14 +633,14 @@ export class Engine {
   private seatsFrom: readonly unknown[] = []
   private seats: readonly HomeSeat[] = Object.freeze([])
   /**
-   * Per property index, the solids last sent to the realm ('home') as text: '' for none (the realm starts with no set),
-   * null when the realm's copy is not known. A network room refuses the command, even one queued just before the room
-   * began, so joining forgets them all and leaving sends every home afresh.
+   * Per room (the halls by property index, then the sky floors), the solids last sent to the realm ('home') as text: ''
+   * for none (the realm starts with no set), null when the realm's copy is not known. A network room refuses the
+   * command, even one queued just before the room began, so joining forgets them all and leaving sends every room afresh.
    */
-  private readonly homeSent: (string | null)[] = Array.from({ length: HOME_COUNT }, () => '')
+  private readonly homeSent: (string | null)[] = Array.from({ length: ROOM_COUNT }, () => '')
   /** The floor the homes stand on, m: the street's in the city (0), the paved floors' in a region (SURFACE.sidewalk). */
   private readonly homeBase: number
-  /** The home being furnished (its property index), or null: the card's furnishing view, the draft camera and pickCell. */
+  /** The room being furnished (as homeHere), or null: the card's furnishing view, the draft camera and pickCell. */
   private furnishHome: number | null = null
   /**
    * The look when furnishing began, held every frame while it lasts and given back when it ends: the card's right stick
@@ -1838,14 +1840,35 @@ export class Engine {
   openHome(interact = false): boolean {
     const st = this.sim.state
     if (this.halted || this.disposed || !this.onHome || st.driving >= 0 || this.rig.headset) return false
-    const h = homeAt(this.homes, st.avatar.x, st.avatar.z)
+    const h = this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z)
     if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false
     this.onHome(h)
     return true
   }
 
   /**
-   * The doorstep card of home `home` (its property index) open, or null for none. While one is open the avatar is held
+   * The room whose home the avatar stands in, (x, z) with the feet at `feetY`: the hall's property index, or its sky
+   * floor's room (7 or 8) once the feet are over half the floor's height (nothing in a hall stands that high, and a
+   * floor is at least 60 m up); −1 outside every home.
+   */
+  private homeRoomAt(x: number, feetY: number, z: number): number {
+    const home = homeAt(this.homes, x, z)
+    const sky = this.homes.find((h) => h.home === home)?.sky
+    return sky && feetY > sky.y / 2 ? skyRoom(home) : home
+  }
+
+  /** The home room `room` is in, when this map has that room (a sky floor only where its home has one). */
+  private homeOfRoom(room: number): PageHome | undefined {
+    return this.homes.find((h) => h.home === deedOf(room) && (room === h.home || h.sky !== null))
+  }
+
+  /** The floor room `room` stands on, m: a sky floor's height, else `hall` (the homes' floor: homeBase). */
+  private roomBase(room: number, hall = this.homeBase): number {
+    return room === deedOf(room) ? hall : this.homeOfRoom(room)?.sky?.y ?? hall
+  }
+
+  /**
+   * The doorstep card of room `home` (a hall's property index, or a sky floor's 7 or 8) open, or null for none. While one is open the avatar is held
    * still: each frame drops every queued action after the poll and zeroes the walk (a pad's edges queue and its stick
    * walks even while the host suspends the game's input). Returns whether it took: only while the avatar stands in that
    * home, on foot, out of a headset (the card would not show there), in a city that runs; closing always takes.
@@ -1861,17 +1884,17 @@ export class Engine {
       return true
     }
     const st = this.sim.state
-    if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }
+    if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) !== home) { this.homeCard = null; return false }
     this.homeCard = home
     if (furnish && this.furnishHome === null && this.furnishRefusal(home) === null) this.beginFurnish(home)
     return true
   }
 
   /**
-   * Why furnishing home `home` (its property index) is refused now, in the words the card shows, or null when it is
-   * allowed. Refused in a network room (its authority replays the player's walk against the city's own boxes and knows
-   * nothing of the furniture), in a headset (the plan is drawn on the page), at the wheel, outside that home, and for a
-   * home whose deed the player does not own (setFurnishings' deeds).
+   * Why furnishing room `home` (a hall's property index, or a sky floor's 7 or 8) is refused now, in the words the card
+   * shows, or null when it is allowed. Refused in a network room (its authority replays the player's walk against the
+   * city's own boxes and knows nothing of the furniture), in a headset (the plan is drawn on the page), at the wheel,
+   * outside that room, and for a room whose deed the player does not own (setFurnishings' deeds).
    */
   furnishRefusal(home: number): string | null {
     const st = this.sim.state
@@ -1879,8 +1902,8 @@ export class Engine {
     if (this.netRoom) return 'Furnishing waits until you leave the shared room: it replays your walk and does not know your furniture'
     if (this.rig.headset) return 'Furnishing waits until the headset is off: the plan is drawn on the page'
     if (st.driving >= 0) return 'Furnishing waits until you step out of the car'
-    if (homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) return 'Furnishing happens inside the home: walk in first'
-    if (((this.homeDeeds >>> home) & 1) !== 1) return 'Only the owner furnishes a home: buy or claim the deed first'
+    if (this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) !== home) return 'Furnishing happens inside the home: walk in first'
+    if (((this.homeDeeds >>> deedOf(home)) & 1) !== 1) return 'Only the owner furnishes a home: buy or claim the deed first'
     return null
   }
 
@@ -1943,6 +1966,40 @@ export class Engine {
     return { line: `${h.address}, ${wayTo(x, z, h.door.x, h.door.z)}`, why: this.netRoom ? 'not in a shared room: walk there' : null }
   }
 
+  /**
+   * The sky floor of room `room`'s home for the card (homeView.ts FloorWhere): whether the ride from `room` goes up (from
+   * the hall) or down, how far up the floor is, and why the ride cannot go now (floorRefusal); null when that home has
+   * no sky floor in this map (a region, or a home without one).
+   */
+  floorWhere(room: number): FloorWhere | null {
+    const h = this.homeOfRoom(skyRoom(deedOf(room)))
+    if (!h?.sky) return null
+    const st = this.sim.state, up = room === h.home
+    const why = floorRefusal({ stopped: this.halted || this.disposed, floor: true, shared: this.netRoom, up, driving: st.driving >= 0, inside: this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) === room })
+    return { up, metres: Math.round(h.sky.y), why }
+  }
+
+  /**
+   * The ride between a home's hall and its sky floor, from room `room`: up to the sky floor's arrival, its feet on the
+   * floor, or down onto the hall's apron inside the doorway, looking into the room either way. Refused for floorWhere's
+   * reasons (a network room replays only the steps it saw and would put the player back). The card is closed first
+   * (furnishing ends and the look comes back), then the realm's teleport (which leaves a car first), the look and a
+   * toast. Returns whether it went.
+   */
+  goFloor(room: number): boolean {
+    const f = this.floorWhere(room), h = this.homeOfRoom(skyRoom(deedOf(room)))
+    if (!f || f.why !== null || !h?.sky) return false
+    this.setHomeCard(null)
+    const at = toWorld(h, f.up ? RIDE.up : RIDE.down, 0)
+    this.sim.send(f.up ? { c: 'teleport', x: at.x, z: at.z, y: h.sky.y + PERSON.halfHeight + PERSON.radius + 0.05 } : { c: 'teleport', x: at.x, z: at.z })
+    const d = doorDir(h.side)
+    this.input.yaw = Math.atan2(d.x, d.z)
+    this.input.pitch = 0
+    if (f.up) this.toast('Sky floor', `${h.name}, ${f.metres} m up. The card takes you down.`)
+    else this.toast('Home', `${h.name}, inside the doorway.`)
+    return true
+  }
+
   /** Enter the nearest car, or leave the current one on the driver's (left) side (decided in the physics realm). */
   interact(): void {
     this.sim.send({ c: 'interact' })
@@ -1989,33 +2046,33 @@ export class Engine {
   }
 
   /**
-   * The cells of home `home`'s floor plan someone stands on or near (canPlace's `blocked`, homeLayout.ts cellsNear):
-   * every local avatar on foot inside that home, out to a person's radius and STAND_CLEAR more. None for a home that is
+   * The cells of room `home`'s floor plan someone stands on or near (canPlace's `blocked`, homeLayout.ts cellsNear):
+   * every local avatar on foot inside that room, out to a person's radius and STAND_CLEAR more. None for a room that is
    * not in this map.
    */
   blockedCells(home: number): Uint8Array {
-    const h = this.homes.find((x) => x.home === home)
+    const h = this.homeOfRoom(home)
     const st = this.sim.state
     const people: { u: number; v: number }[] = []
     if (h) {
       for (let k = 0; k < st.avatars.length; k++) {
         const a = st.avatars[k]
-        if ((st.drivings[k] ?? -1) < 0 && homeAt(this.homes, a.x, a.z) === home) people.push(toLocal(h, a.x, a.z))
+        if ((st.drivings[k] ?? -1) < 0 && this.homeRoomAt(a.x, a.feetY, a.z) === home) people.push(toLocal(h, a.x, a.z))
       }
     }
     return cellsNear(people, PERSON.radius + STAND_CLEAR)
   }
 
   /**
-   * The cell of the home being furnished under a point of the page (clientX, clientY, CSS pixels, as a pointer event
+   * The cell of the room being furnished under a point of the page (clientX, clientY, CSS pixels, as a pointer event
    * gives them), or null: not furnishing, the draft camera not drawn yet, off player 1's view, a ray that never comes
-   * down to the floor, or a cell outside the home's floor plan. The point is taken back through the draft camera as it
-   * was last drawn (present() keeps a copy), met with the plane PICK_FLOOR over the home's floor and turned into the
-   * room frame.
+   * down to the floor, or a cell outside the room's floor plan. The point is taken back through the draft camera as it
+   * was last drawn (present() keeps a copy), met with the plane PICK_FLOOR over the room's floor (a sky floor's high up)
+   * and turned into the room frame.
    */
   pickCell(clientX: number, clientY: number): { c: number; r: number } | null {
     const home = this.furnishHome, cam = this.pickCam
-    const h = home === null ? undefined : this.homes.find((x) => x.home === home)
+    const h = home === null ? undefined : this.homeOfRoom(home)
     if (home === null || !h || !cam || this.pickHome !== home || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null
     // Player 1's view: the whole canvas alone (its rect is only cut again for a split screen), else its own rect.
     const b = this.canvas.getBoundingClientRect(), cw = this.canvas.clientWidth, ch = this.canvas.clientHeight
@@ -2028,7 +2085,7 @@ export class Engine {
     // The eye, and a point of the ray at a depth inside the frustum (which way the depth buffer runs does not matter).
     const eye = cam.getWorldPosition(this.pickEye)
     const d = this.pickAt.set((px / view.width) * 2 - 1, 1 - (py / view.height) * 2, 0.5).unproject(cam).sub(eye)
-    const y = this.homeBase + PICK_FLOOR
+    const y = this.roomBase(home) + PICK_FLOOR
     if (!(d.y < 0 && eye.y > y)) return null
     const t = (y - eye.y) / d.y
     const at = toLocal(h, eye.x + d.x * t, eye.z + d.z * t)
@@ -2036,12 +2093,12 @@ export class Engine {
     return cell && inMask(home, cell.c, cell.r) ? cell : null
   }
 
-  /** The draft camera while a home is being furnished: homeView.ts furnishEye on the draft's cursor from its side; else null. */
+  /** The draft camera while a room is being furnished: homeView.ts furnishEye on the draft's cursor from its side; else null. */
   private furnishView(): ReturnType<typeof furnishEye> | null {
     const d = this.draft, home = this.furnishHome
     if (home === null || !d || d.home !== home) return null
-    const h = this.homes.find((x) => x.home === home)
-    return h ? furnishEye(h, d.cursor, d.view) : null
+    const h = this.homeOfRoom(home)
+    return h ? furnishEye(h, d.cursor, d.view, home) : null
   }
 
   /**
@@ -2070,18 +2127,21 @@ export class Engine {
   }
 
   /**
-   * Each home's solids (homeView.ts homeSolids of the pieces drawn: homePlaced) to the realm as the 'home' command,
-   * only when they differ from what was last sent, so at most one command per home. Never in a network room, whose
-   * realm refuses the command (every home is sent again once it is left), and never once the city has stopped.
+   * Each room's solids (homeView.ts homeSolids of the pieces drawn: homePlaced, a sky floor's at its height) to the
+   * realm as the 'home' command, only when they differ from what was last sent, so at most one command per room; a room
+   * this map does not have is skipped. Never in a network room, whose realm refuses the command (every room is sent
+   * again once it is left), and never once the city has stopped.
    */
   private sendHomes(): void {
     if (this.netRoom || this.halted || this.disposed) return
-    for (const h of this.homes) {
-      const boxes = homeSolids(h, homePlaced(h.home, this.homeRecord, this.homeDeeds, this.homeLines))
+    for (let room = 0; room < ROOM_COUNT; room++) {
+      const h = this.homeOfRoom(room)
+      if (!h) continue
+      const boxes = homeSolids(h, homePlaced(room, this.homeRecord, this.homeDeeds, this.homeLines), this.roomBase(room, 0))
       const key = boxes.join(' ')
-      if (this.homeSent[h.home] === key) continue
-      this.homeSent[h.home] = key
-      this.sim.send({ c: 'home', index: h.home, boxes })
+      if (this.homeSent[room] === key) continue
+      this.homeSent[room] = key
+      this.sim.send({ c: 'home', index: room, boxes })
     }
   }
 
@@ -2567,7 +2627,7 @@ export class Engine {
     else if (show) show.angle += SHOP.orbit.rate * dt
     // Which home the avatar stands in on foot; out of the home with its card open (a teleport, the console's moves),
     // the hold ends here and the host puts the card away at its next look.
-    this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
+    this.homeHere = driving >= 0 ? -1 : this.homeRoomAt(av.x, av.feetY, av.z)
     if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null
     // Furnishing ends with its card, and as soon as it is refused (a network room, a headset, the deed gone).
     if (this.furnishHome !== null && (this.homeCard !== this.furnishHome || this.furnishRefusal(this.furnishHome) !== null)) this.endFurnish()
@@ -3099,10 +3159,13 @@ export class Engine {
     return { drawnNear: this.crowd.stats.drawnNear, drawnFar: this.crowd.stats.drawnFar, nudges: w.nudges, waiting: w.waiting, crossing: w.crossing, retreating: w.retreating, working: w.working }
   }
 
-  /** Home `home` (its property index) as the snapshot shows it: its kind, its deed's name, whether it is owned, and whether its card is open. */
-  private homeView(home: number): NonNullable<SipocSnapshot['customer']['home']> {
-    const h = this.homes.find((x) => x.home === home)
-    return { index: home, kind: h?.kind ?? '', name: h?.name ?? '', owned: ((this.ownedHomes >>> home) & 1) === 1, card: this.homeCard === home }
+  /**
+   * Room `room` as the snapshot shows it: its home's property index, the room itself, its kind, its name (the deed's,
+   * " · sky floor" upstairs), whether the deed is owned, and whether its card is open.
+   */
+  private homeView(room: number): NonNullable<SipocSnapshot['customer']['home']> {
+    const index = deedOf(room), h = this.homes.find((x) => x.home === index)
+    return { index, room, kind: h?.kind ?? '', name: h ? roomName(h.name, room) : '', owned: ((this.ownedHomes >>> index) & 1) === 1, card: this.homeCard === room }
   }
 
   private kernelStats(): KernelStats {

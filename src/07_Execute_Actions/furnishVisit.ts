@@ -10,19 +10,21 @@
  * repeats on the plan's timer, and Enter places after a mouse click on a button. Its fourth tab is a rest at home: Place
  * there asks the host to rest (RestHooks), which says what it gave, and edits nothing. Its fifth, Staff, posts one of
  * the player's own agents at the workstation under the cursor through the host (StaffHooks), or stands them down; that
- * is no furniture edit and not on Undo.
+ * is no furniture edit and not on Undo. A home with a sky floor in this map has a sixth, Tower: Place there rides between
+ * the hall and the sky floor through the host (FurnishHooks.tower), and edits nothing. A visit is to a room: a hall, or
+ * a sky floor (rooms 7 and 8), whose plan, arrival and windows the words follow.
  * Every committed edit (a piece placed, picked up, moved, removed, a finish, Clear, Undo) goes to the host as the whole
  * record (homeStore.ts withHome and layoutOf: the placed pieces first, then those not placed here). A piece picked up
  * leaves the home until it is placed again; Undo, switching line or closing the card puts it back at its place in the
  * saved order, so the home is drawn as it was before. Undo takes back 20 edits.
  * What breaks if it is removed? The card has nothing to furnish with: no cursor, no piece in hand, no edit, no Undo.
  */
-import { CELL, DEPTH, GRID, GRID_HALF } from '../02_Define_The_Rules/homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF, planOf, type Plan } from '../02_Define_The_Rules/homeGrid.ts'
 import {
   FLOORS, SHAPE_IDS, WALLS, canPlace, cellIndex, fitLayout, pieceCells, shapeOf, stationOf, stationsIn, type Piece, type Verdict,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { finishOf, layoutOf, withHome, type HomeLayout, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import type { Draft } from './homeView.ts'
+import type { Draft, FloorWhere } from './homeView.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE, itemById } from './storeCatalog.ts'
 
@@ -43,6 +45,11 @@ export interface FurnishHooks {
   rest?: RestHooks
   /** Staffing the workstations through the host (App); absent, the Staff tab says it is not offered. */
   staff?: StaffHooks
+  /**
+   * The ride between a home's hall and its sky floor (App over engine.ts floorWhere and goFloor): where the floor is
+   * from room `room` (null: no sky floor in this map), and the ride, answering null when it went or the sentence why not.
+   */
+  tower?: { where(room: number): FloorWhere | null; ride(room: number): string | null }
 }
 
 /**
@@ -69,14 +76,18 @@ export interface StaffHooks {
   standDown(home: number, c: number, r: number): string | null
 }
 
-/** The furnishing view's tabs, in order: 1 to 5 on the keyboard, the pad's triggers step through them. */
+/** The furnishing view's tabs, in order: 1 to 5 on the keyboard, the pad's triggers step through them (and Tower, below). */
 export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'] as const)
+/** The sixth tab, Tower, where the home has a sky floor in this map (6 on the keyboard): Place there rides up or down. */
+export const TOWER_TAB = 5
 /** The Rest tab: Place there rests (RestHooks) instead of placing. */
 export const REST_TAB = 3
 /** The Staff tab: Place there posts the agent chosen at the workstation under the cursor, Remove stands them down. */
 export const STAFF_TAB = 4
 const NO_AGENTS = "No agents of your own yet: name one in the wardrobe's Agents tab, or type agent new and a name in the console"
 const NOT_STAFFED = 'Staffing is not offered here'
+/** What the Walls tab says on a sky floor, whose walls are its clear glass. */
+export const SKY_WALLS = "The sky floor's walls are its windows: there is nothing to finish here"
 
 /** How many committed edits Undo can take back in one visit. */
 export const UNDO_STEPS = 20
@@ -87,15 +98,15 @@ export const UNDO_STEPS = 20
  */
 export const STICK = Object.freeze({ dead: 0.5, first: 300, repeat: 120, turn: 0.15 })
 
-/** What canPlace's verdicts say under the plan (N: the line's cap in one home). */
+/** What canPlace's verdicts say under the plan (N: the line's cap in one room). */
 const VERDICT_WORDS: Readonly<Record<Verdict, string>> = Object.freeze({
   ok: 'Fits',
   outside: 'Outside the room',
   overlap: 'Something is already there',
   doorway: 'Keeps the doorway clear',
   wall: 'Goes against a wall',
-  copies: 'N of these is the most for one home',
-  full: '16 pieces is the most a home holds',
+  copies: 'N of these is the most for one room',
+  full: '16 pieces is the most a room holds',
   you: 'You are standing there',
   sealed: 'Would cut off part of the room',
   seat: 'Would block a workstation\'s seat',
@@ -116,10 +127,15 @@ const SHORT: Readonly<Record<number, string>> = Object.freeze({
 })
 
 export const nameOf = (id: number): string => SHORT[id] ?? itemById(id)?.name ?? `line ${id}`
-export const verdictWords = (v: Verdict, id: number): string => VERDICT_WORDS[v].replace(/^N\b/, String(shapeOf(id)?.cap ?? ''))
+/** The doorway verdict on a sky floor, whose kept block is the arrival. */
+const SKY_DOORWAY = 'Keeps the arrival clear'
+export const verdictWords = (v: Verdict, id: number, room = 0): string => (v === 'doorway' && room >= DEPTH.length ? SKY_DOORWAY : VERDICT_WORDS[v].replace(/^N\b/, String(shapeOf(id)?.cap ?? '')))
 export const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x))
-/** Where the cursor is, in words: columns from the left as seen from the doorway, rows from the home's back wall, from 1. */
-export const placeWords = (home: number, at: { c: number; r: number }): string => `column ${at.c + 1}, row ${at.r - (GRID - DEPTH[home]) + 1}`
+/** Where the cursor is, in words: columns from the room's left as seen from the doorway, rows from its back (wall or glass), from 1. */
+export const placeWords = (home: number, at: { c: number; r: number }): string => {
+  const p = planOf(home)!
+  return `column ${at.c - p.c0 + 1}, row ${at.r - p.r0 + 1}`
+}
 
 /** One thing the keys, the pad, a pointer or a button asks of the furnishing view. */
 export type Act =
@@ -164,8 +180,11 @@ function cellsKey(cells: ArrayLike<number>): string {
  * is the one it last committed (or was handed), so two edits in one frame build on each other.
  */
 export class Visit {
+  /** The room visited: a hall's property index, or a sky floor's 7 or 8. */
   readonly home: number
-  /** The home's first row (its back wall's): the cursor stays in rows first to GRID − 1. */
+  /** The room's floor plan (homeGrid.ts planOf): the cursor stays inside it. */
+  readonly plan: Plan
+  /** The room's first row (its back wall's): the cursor stays in rows first to the plan's last. */
   readonly first: number
   io: VisitIo
   tab = 0
@@ -196,18 +215,23 @@ export class Visit {
 
   constructor(home: number, record: HomeRecord, io: VisitIo) {
     this.home = home
-    this.first = GRID - DEPTH[home]
+    this.plan = planOf(home)!
+    this.first = this.plan.r0
     this.io = io
     this.record = record
     // In hand at first: the first line owned that has room left here, else the first owned, else nothing.
     const placed = this.fit().placed
     const mine = SHAPE_IDS.filter((id) => this.owns(id))
     this.sel = mine.find((id) => placed.filter((p) => p.id === id).length < (shapeOf(id)?.cap ?? 0)) ?? mine[0] ?? null
-    this.cursor = { c: GRID / 2 - 1, r: this.first + Math.floor(DEPTH[home] / 2) - 1 }
+    this.cursor = { c: GRID / 2 - 1, r: this.first + Math.floor((this.plan.r1 - this.first + 1) / 2) - 1 }
     this.blocked = io.hooks.blocked(home)
     this.blockedKey = cellsKey(this.blocked)
   }
 
+  /** How many tabs this visit has: six where the home has a sky floor in this map (Tower), else five. */
+  get tabCount(): number {
+    return this.io.hooks.tower?.where(this.home) ? TABS.length + 1 : TABS.length
+  }
   /** Whether the player owns line `id`: the shopkeeper's word, read afresh. */
   owns(id: number): boolean {
     return this.io.keeper.owns(id)
@@ -272,7 +296,7 @@ export class Visit {
   }
 
   moveTo(c: number, r: number): void {
-    const at = { c: clamp(c, 0, GRID - 1), r: clamp(r, this.first, GRID - 1) }
+    const at = { c: clamp(c, this.plan.c0, this.plan.c1), r: clamp(r, this.first, this.plan.r1) }
     if (at.c === this.cursor.c && at.r === this.cursor.r) return
     this.cursor = at
     this.quiet()
@@ -315,11 +339,16 @@ export class Visit {
     }
     const under = this.lifted ? null : this.pieceAt(fit.placed, this.cursor.c, this.cursor.r)
     if (under) { this.pickUp(under); return }
-    this.say(hand && verdict ? verdictWords(verdict, hand.id) : 'Nothing here to pick up: choose a piece in the strip')
+    this.say(hand && verdict ? verdictWords(verdict, hand.id, this.home) : 'Nothing here to pick up: choose a piece in the strip')
   }
   /** Rest here (the Rest tab's Place): the host rests and says what it gave, or why not; nothing in the home changes. */
   rest(): void {
     this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')
+  }
+  /** Ride up or down (the Tower tab's Place): the host rides, closing the card, or says why not; nothing in the home changes. */
+  ride(): void {
+    const why = this.io.hooks.tower ? this.io.hooks.tower.ride(this.home) : 'This home has no sky floor in this map'
+    if (why) this.say(why)
   }
   /** The workstations standing here (pieces with a station), in reading order: back row first, then left to right. */
   stations(fit = this.fit()): Piece[] {
@@ -449,6 +478,7 @@ export class Visit {
   /** The next or previous piece (the lines owned, in catalogue order; all nine while none is), or finish in its tab. */
   cycle(d: 1 | -1): void {
     if (this.tab === STAFF_TAB) { this.pickAgent(d); return }
+    if (this.tab === 2 && this.home >= DEPTH.length) { this.say(SKY_WALLS); return }
     const f = finishOf(this.record, this.home)
     if (this.tab === 1) { this.setFinish((f.floor + d + FLOORS.length) % FLOORS.length, undefined); return }
     if (this.tab === 2) { this.setFinish(undefined, (f.wall + d + WALLS.length) % WALLS.length); return }
@@ -484,7 +514,8 @@ export class Visit {
     this.quiet()
   }
   toTab(i: number): void {
-    this.tab = (i + TABS.length) % TABS.length
+    const n = this.tabCount
+    this.tab = (i + n) % n
     this.quiet()
   }
   /**
@@ -520,7 +551,7 @@ export class Visit {
   run(a: Act): void {
     if (typeof a === 'string') {
       switch (a) {
-        case 'place': if (this.tab === REST_TAB) this.rest(); else this.place(); return
+        case 'place': if (this.tab === REST_TAB) this.rest(); else if (this.tab === TOWER_TAB) this.ride(); else this.place(); return
         case 'rotate': this.rotate(); return
         case 'remove': this.remove(); return
         case 'undo': this.undo(); return

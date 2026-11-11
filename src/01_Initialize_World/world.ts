@@ -21,12 +21,12 @@ import {
   time, uniform, vec3,
 } from 'three/tsl'
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js'
-import { buildingMaterial, groundMaterial, waterMaterial, type RealLight } from './materials.ts'
+import { SKY_CEILINGS, buildingMaterial, groundMaterial, waterMaterial, type RealLight } from './materials.ts'
 import { clusterCityLights, LAMP, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
 import { clampTaps, createSun } from './sunShadow.ts'
 import type { SunLight } from 'three/addons/lights/SunLight.js'
 import { workplaces, type Workplace } from './interiors.ts'
-import { CITY_CENTER, LAKE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
+import { CITY, CITY_CENTER, LAKE, STYLE, generateBuildings, streetFurniture, type Box, type Building, type Furniture } from './city.ts'
 import { FbmSet } from './fbmTexture.ts'
 import { sunAt, type SunState } from './solar.ts'
 import { SURFACE_PIECE, regionMeshes, type RegionLayout, type RegionScene } from './region/regionWorld.ts'
@@ -261,12 +261,13 @@ export interface World {
 
 /**
  * The most boxes the homes' mesh (HomeFurniture) draws: seven homes of a floor, five wall panels and sixteen pieces of
- * up to four boxes (490), and the furnishing draft's ghost and cursor (5), with room to spare. The instances' transforms
+ * up to four boxes (490), the two sky floors' floors and pieces (130, no panels), and the furnishing draft's ghost and
+ * cursor (5), with room to spare. The instances' transforms
  * then fit one uniform buffer under WebGPU's default binding size (64 KiB, 64 bytes each), which is the path three r186
  * picks from the attribute's capacity, not from how many are drawn (Instance.js): past 1,024 it would read them as
  * instanced attributes instead, a different vertex shader from the one the shader tests build (shadowShaders.test.ts).
  */
-export const HOME_INSTANCES = 512
+export const HOME_INSTANCES = 640
 
 /**
  * How much of the world's fixed cost a boot builds: chosen once (engine.ts, from the device profile) before anything
@@ -458,6 +459,15 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
   const boxes = plan.map((b) => b.box)
+  // The sky floors' ceilings (materials.ts SKY_CEILINGS): each lot whose clear panes stand round a sky floor, at the
+  // panes' top, which is the slab's underside; far below for none (a region has none).
+  const skies = new Map<number, Vector3>()
+  for (const { box: [x0, , z0, x1, y1, z1], style } of plan) {
+    if (style !== STYLE.clear) continue
+    const k = Math.floor((x0 + x1) / 2 / CITY.pitch), m = Math.floor((z0 + z1) / 2 / CITY.pitch)
+    skies.set(k * 1e4 + m, new Vector3((k + 0.5) * CITY.pitch, y1, (m + 0.5) * CITY.pitch))
+  }
+  SKY_CEILINGS.forEach((u, i) => u.value.copy([...skies.values()][i] ?? new Vector3(0, -1e9, 0)))
   // A region's street furniture stands along its street window (region/streets.ts), where its people walk; a surveyed
   // region without one has none.
   const furniture: Furniture = region ? (region.streets ? windowFurniture(region.streets, seed) : { lamps: [], trees: [], signals: [] }) : streetFurniture(seed)
@@ -528,6 +538,9 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const order = boxes.map((_, i) => i)
   const centre = boxes.map(([x0, , z0, x1, , z1]) => [(x0 + x1) / 2, (z0 + z1) / 2])
   const sortedAt = { x: Infinity, z: Infinity }
+  // A sky floor's clear panes (STYLE.clear) collide but are never drawn: the view shows through them. Only the drawn
+  // boxes keep an instance slot, so the mesh draws order.length of them.
+  order.splice(0, order.length, ...order.filter((i) => plan[i].style !== STYLE.clear))
   // One InstancedMesh is one draw, so three cannot depth-sort it. Re-ordering instances front to back
   // lets early-z reject hidden facades before their procedural fragment shading runs.
   const sortBuildings = (x: number, z: number) => {
@@ -544,6 +557,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     styles.needsUpdate = true
   }
   sortBuildings(CITY_CENTER, CITY_CENTER)
+  buildings.count = order.length
   buildings.computeBoundingSphere()
   buildings.castShadow = true
   buildings.receiveShadow = true

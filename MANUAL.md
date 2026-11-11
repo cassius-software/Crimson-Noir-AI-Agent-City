@@ -416,7 +416,9 @@ home has one deed, sold at Lintel & Lumen Design House:
   Estate** (level 17, 1,100,000 credits) at its eastern end, both facing the lake.
 - **Crown Spire Sky-Mansion** (level 20, 4,500,000 credits) at the foot of the tallest headquarters tower no one else
   has, and **Crimson Tower Penthouse** (level 10, 75,000 credits) at the foot of another tower near the centre, at
-  least two lots away. For now each is the residence at its tower's foot; the card says the sky floor opens later.
+  least two lots away. In the city each also has a sky floor up its tower (the card says how far up). Inside the
+  home, the card's **Go up** takes you there, visitor or owner, and **Go down** brings you back inside the doorway.
+  The ride waits outside a network room and out of a car.
 
 Each home is a glass room built like a shop, with the ceiling slab in the building's own finish. The grander the home,
 the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft is 9.3 m deep and the two grandest
@@ -424,11 +426,17 @@ the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft
 fits. Anyone can walk into any home, in either map and in a network room. The minimap draws a home on sale in violet
 and one you own in gold.
 
+A sky floor is a 15.6 m square room with clear glass on all four sides, which you see through and cannot walk
+through, under the tower's own slab. You furnish it like the home below, with its own 16 pieces and caps, its own
+floor finish, Rest and Staff. Its walls are its windows, so the Walls tab has nothing to finish. A deed you do not own
+shows a staged floor.
+
 Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
 workplaces and shops have taken theirs, hollowed the same way. The seven nearest free lots to your start are chosen
 first, and among them the grander homes get the better-built ones (if a podium that carries a tower is among them, the
-grandest home there takes it), so a home's name does not promise a view of the lake or a tower there; a window with
-too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
+grandest home there takes it), so a home's name does not promise a view of the lake or a tower there, and no home there
+has a sky floor; a window with too few lots has fewer homes, and the surveyed region has none. A region home's card
+names the streets it stands on.
 
 On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Furnish** and the
 name of a home you own. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
@@ -464,14 +472,15 @@ shared room: it replays your walk and does not know your furniture"), and restin
 keeps applying there. The card switches to furnishing by itself once you leave the room. Walking out of the home or
 putting on a headset closes the card.
 
-- **Five tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
-  holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
-  hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
-  ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
-  house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
+- **Five tabs, six in a home with a sky floor.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk,
+  the six-screen console, the holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the
+  grand piano, the hydroponic green wall and the agent workstation. A line you own says how many stand in this room out
+  of its cap ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the
+  design house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
-  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below). **Staff** posts your own
-  agents at the agent workstations standing here (below).
+  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below). **Staff** posts your own agents
+  at the agent workstations standing here (below). **Tower** says how far up the sky floor is and rides there or back
+  (Enter, Space, the pad's south button or the button).
 - **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
   many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
   (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new

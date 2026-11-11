@@ -326,10 +326,11 @@ export interface SipocSnapshot {
     shop?: { index: number; kind: string; name: string; showroom: boolean }
     /**
      * The home the avatar stands in on foot (01_Initialize_World/properties.ts): its property index (0 to 6, its deed is
-     * line 224 + index), its kind, its deed's name, whether the player owns it, and whether its doorstep card is open
-     * now. Absent outside every home.
+     * line 224 + index), the room (the index in the hall, 7 or 8 on a sky floor: 02_Define_The_Rules/homeGrid.ts), its
+     * kind, the room's name (the deed's, with " · sky floor" upstairs), whether the player owns it, and whether its
+     * doorstep card is open now. Absent outside every home.
      */
-    home?: { index: number; kind: string; name: string; owned: boolean; card: boolean }
+    home?: { index: number; room: number; kind: string; name: string; owned: boolean; card: boolean }
     /** The homes the player owns, one bit per property index (bit i: deed 224 + i), as the page's shopkeeper says. */
     ownedHomes?: number
     /** The name the user gave the Concierge ('' until they do). */
