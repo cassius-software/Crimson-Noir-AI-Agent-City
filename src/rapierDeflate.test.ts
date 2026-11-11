@@ -8,7 +8,7 @@
  * initialisation is found and replaced, what it waits for is the inflater the page carries, run in Node it gives back
  * the package's own module byte for byte, the packed copy is under half the size, and a module the build does not
  * recognise (no initialisation, two, or bytes that are not WebAssembly) stops the build rather than ship a page whose
- * physics cannot start. Once built, dist/index.html carries the inflater and no plain copy of the module.
+ * physics cannot start. The packed bytes are the same on every machine (the flake rebuilds the page and compares it). Once built, dist/index.html carries the inflater and no plain copy of the module.
  * What breaks if it is removed? A Rapier upgrade that moved its initialisation, or a change to the inflater, could ship
  * a page that never starts its physics worker, with nothing but the browser smoke to notice, minutes later.
  */
@@ -19,6 +19,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
+import { deflateSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { INFLATE_HELPER, RAPIER_MODULE, deflateRapier } from '../vite.config.ts'
 
 const require = createRequire(import.meta.url)
@@ -51,6 +52,22 @@ test('the installed Rapier: its one initialisation now waits for the inflater, a
   assert.equal(out.code.slice(0, at), SOURCE.slice(0, at))
   const tail = SOURCE.slice(SOURCE.indexOf('").buffer})', at) + '").buffer'.length)
   assert.ok(out.code.includes(tail.slice(0, 2000)))
+})
+
+/**
+ * The installed module and what the build packs it to, as the flake's Node 24 and CI's Node 22 both packed it. zlib's
+ * output varied between them (the flake's build differed from npm's at the packed bytes), which is why the build uses
+ * fflate's deflater; a Rapier upgrade changes the first hash, and then only the second check below stands down.
+ */
+const PINNED = { module: '2935a533335952cf160de69186d03e8b3ad2895b65d20df1b74d197a7498bd6f', packed: 'b8340fcf7441b52f3c1384d4e37e6b822b453d9ab381011d0924f54cc188b75a' }
+
+test('the packed bytes are fflate\'s, the same on every machine (the flake compares its page with npm\'s byte for byte)', () => {
+  const out = deflateRapier(SOURCE)
+  const packed = /\(yield __cnInflate\("([A-Za-z0-9+/=]+)",/.exec(out.code)![1]
+  const raw = original()
+  assert.equal(packed, Buffer.from(deflateSync(raw, { level: 9 })).toString('base64'))
+  assert.equal(deflateRapier(SOURCE).code, out.code, 'two builds give the same module')
+  if (sha256(raw) === PINNED.module) assert.equal(sha256(Buffer.from(packed, 'base64')), PINNED.packed)
 })
 
 test('run in Node, the inflater gives back the package\'s module byte for byte, and refuses a wrong size', async () => {

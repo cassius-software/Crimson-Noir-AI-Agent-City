@@ -4184,7 +4184,7 @@ reset and a real pad.
   model's runtime (wllama's WebAssembly build of llama.cpp, 8.8 MB, committed gzipped as
   `third_party/wllama/3.8.1/wllama.wasm.gz` and embedded as base64, about 3.2 MB, with wllama's JavaScript) beside
   the surveyed region's 3.4 MB. The physics engine's own WebAssembly (Rapier's, 3.3 MB) is stored deflated, about
-  1.5 MB as base64 where it was 4.4 MB, and its worker inflates it as the engine starts (`vite.config.ts`
+  1.6 MB as base64 where it was 4.4 MB, and its worker inflates it as the engine starts (`vite.config.ts`
   `deflateRapier`, the browser's own DecompressionStream), which brought the file down to about 12 MB.
   `tools/verify/page_dist.mjs` (after every build in CI) fails unless `dist/` holds exactly `index.html`, no larger
   than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The page carries
