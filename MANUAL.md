@@ -519,7 +519,7 @@ The map is becoming a real metropolitan region with fictional names: its streets
 are surveyed, and every name is invented. Real fictional cities work the same way. The first piece is a
 pilot region of 12.1 × 7.8 km: the downtown waterfront, its harbour and islands, 49,620 buildings, 11,141 street runs.
 Every build carries it: `dist/index.html` holds the compiled pack (`world/pilot.region.json.gz`, 2.5 MB, as base64,
-about 3.4 MB of the file's 14 MB), so the one file plays the region from a disk or a stick with no network and nothing
+about 3.4 MB of the file's 12 MB), so the one file plays the region from a disk or a stick with no network and nothing
 beside it. The page inflates the pack itself (the browser's own gzip stream); nothing is fetched.
 
 - `?region=on` walks the surveyed region in any build. The default build opens on the procedural city, where the
@@ -4163,7 +4163,7 @@ bar and no reload of their own, so the page carries its own way out.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
   starting…" with the step it is on (asking for the graphics device, building the city, starting the physics,
   preparing the shaders, which is the long step on a phone, drawing the first frame, waiting for the crowd) and
-  Restart and Open the console, and the boot goes on. The page's script (about 14 MB) now stands at the end of the
+  Restart and Open the console, and the boot goes on. The page's script (about 12 MB) now stands at the end of the
   page, so on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
   installed copy opens offline.
 - **Firefox and other browsers on Android** have no WebGPU: the card's first button, **Open in Chrome**, hands the
@@ -4200,7 +4200,9 @@ reset and a real pad.
 - **File size.** `dist/index.html` is about 14 MB, about 3.7 MB more than before, since it carries the in-page
   model's runtime (wllama's WebAssembly build of llama.cpp, 8.8 MB, committed gzipped as
   `third_party/wllama/3.8.1/wllama.wasm.gz` and embedded as base64, about 3.2 MB, with wllama's JavaScript) beside
-  the surveyed region's 3.4 MB.
+  the surveyed region's 3.4 MB. The physics engine's own WebAssembly (Rapier's, 3.3 MB) is stored deflated, about
+  1.6 MB as base64 where it was 4.4 MB, and its worker inflates it as the engine starts (`vite.config.ts`
+  `deflateRapier`, the browser's own DecompressionStream), which brought the file down to about 12 MB.
   `tools/verify/page_dist.mjs` (after every build in CI) fails unless `dist/` holds exactly `index.html`, no larger
   than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The page carries
   no model and never will: a model is the operator's own file, kept in their browser. The build checks the embedded

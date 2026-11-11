@@ -18,9 +18,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, inflateRawSync } from 'node:zlib'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { deflateSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { defineConfig, type Plugin } from 'vite'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 import { BRAND, MONOLITH_SVG } from './src/brand.ts'
@@ -341,7 +342,7 @@ function isolation(): Plugin {
 
 /**
  * The page's module script, moved from <head> to the end of <body>. Vite puts the entry in <head>, and once
- * viteSingleFile has inlined it there it is about 14 MB of text before the body: a browser paints nothing of the body
+ * viteSingleFile has inlined it there it is about 12 MB of text before the body: a browser paints nothing of the body
  * until all of it has arrived, so a first visit on a phone over a slow connection is a blank page for as long as the
  * download takes (it read as a load that never ends). At the end of the body the splash is on screen while it
  * downloads, and the boot watchdog (in <head>) has long been running. Nothing else changes: an inline module script
@@ -355,6 +356,55 @@ export function moduleAfterBody(html: string): string {
   const body = html.lastIndexOf('</body>')
   if (end < '</script>'.length || body < end) return html
   return html.slice(0, open) + html.slice(end, body) + html.slice(open, end) + '\n  ' + html.slice(body)
+}
+
+/**
+ * The physics engine's module (Rapier's compatibility build, which the physics worker bundles): it carries its
+ * WebAssembly as 4.4 MB of plain base64, about a third of the page. Deflated before it is encoded, the same module is
+ * about 1.6 MB, so the build stores it that way and the worker inflates it when Rapier initialises (the browser's own
+ * DecompressionStream, as wllamaRuntime.ts already uses for the model runtime; every browser at the page's WebGPU
+ * floor has it). Nothing else about the engine changes: the bytes it compiles are the package's, checked here.
+ * The deflater is fflate's (plain JavaScript, shipped with three), not Node's zlib: zlib's output depends on how the
+ * library was built, and the flake rebuilds the page and compares it with npm's byte for byte (nix.yml), so the
+ * packed bytes must be the same on every machine.
+ */
+export const RAPIER_MODULE = /[\\/]@dimforge[\\/]rapier3d-simd-compat[\\/]dist[\\/]rapier\.mjs$/
+/** The package's own initialisation: inside its async generator, the module's bytes decoded from base64. */
+const RAPIER_INIT = /(function\*\(\)\{yield [\w$]+\(\{module_or_path:)[\w$]+\.toByteArray\("([A-Za-z0-9+/=]+)"\)\.buffer(\}\))/
+/** Inflates a module the build deflated, and refuses one whose size is not the size it was packed from. */
+export const INFLATE_HELPER = 'function __cnInflate(b64,bytes){const s=atob(b64),u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);'
+  + 'return new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()'
+  + '.then((b)=>{if(b.byteLength!==bytes)throw new Error("the physics module inflated to "+b.byteLength+" bytes, not "+bytes);return b})}'
+
+/**
+ * Rapier's module with its WebAssembly deflated: the base64 it decodes is replaced by a deflated copy, and the call
+ * waits for the inflated bytes (a `yield` inside the package's own generator, which its async wrapper awaits). Throws
+ * when the module does not have the one initialisation it expects, or the bytes are not WebAssembly or do not survive
+ * the round trip, so an upgrade that moves it fails the build instead of shipping a page that cannot start.
+ */
+export function deflateRapier(code: string): { code: string; bytes: number; packed: number } {
+  const found = code.match(new RegExp(RAPIER_INIT.source, 'g')) ?? []
+  if (found.length !== 1) throw new Error(`Rapier's module has ${found.length} inline WebAssembly initialisations, not the one the build deflates (vite.config.ts RAPIER_INIT)`)
+  const m = RAPIER_INIT.exec(code)!
+  const raw = Buffer.from(m[2], 'base64')
+  if (raw.subarray(0, 4).toString('latin1') !== '\0asm') throw new Error("Rapier's inline module is not WebAssembly")
+  const deflated = Buffer.from(deflateSync(raw, { level: 9 }))
+  if (!inflateRawSync(deflated).equals(raw)) throw new Error("Rapier's module did not survive deflating")
+  const packed = deflated.toString('base64')
+  const call = `${m[1]}(yield __cnInflate(${JSON.stringify(packed)},${raw.length}))${m[3]}`
+  return { code: `${code.slice(0, m.index)}${call}${code.slice(m.index + m[0].length)}\n${INFLATE_HELPER}\n`, bytes: raw.length, packed: packed.length }
+}
+
+/** Build only, in the page's bundle and in each worker's: Rapier's module, deflated. */
+function rapierDeflate(): Plugin {
+  return {
+    name: 'rapier-deflate',
+    apply: 'build',
+    transform(code, id) {
+      if (!RAPIER_MODULE.test(id.split('?')[0])) return null
+      return { code: deflateRapier(code).code, map: null }
+    },
+  }
 }
 
 /** Build only, after viteSingleFile has inlined the scripts (its generateBundle runs first: same order, earlier). */
@@ -372,7 +422,7 @@ function moduleLast(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), viteSingleFile(), moduleLast(), isolation()],
-  worker: { plugins: () => [workerNotices()] },
+  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), rapierDeflate(), viteSingleFile(), moduleLast(), isolation()],
+  worker: { plugins: () => [workerNotices(), rapierDeflate()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))
