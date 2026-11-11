@@ -134,10 +134,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra and Peak, lite, the console alone, the model in the page, city actions, and Lakefront Metro
+      - name: The build, then the city in Chrome as a desktop, an iPhone, a file, at Ultra and Peak, lite, the console alone, the model in the page, city actions, and Lakefront Metro; then every crowd kernel compiled
         env:
           BROWSER_SHOTS: ${{ runner.temp }}/browser
-        run: sh tools/selfheal/checks.sh page-build page-browser
+        run: sh tools/selfheal/checks.sh page-build page-browser page-kernels
       - uses: actions/upload-artifact@v4
         if: always()
         with:

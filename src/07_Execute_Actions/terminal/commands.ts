@@ -531,7 +531,7 @@ export function formatHardware(h: HardwareReport): string[] {
     row('class', `${h.class}  profile ${p.lite ? 'lite' : p.mobile ? 'phone' : p.gpuClass}  start ${t.start} ${t.startLabel}  tiers ${t.min}..${t.max}`),
     row('adapter', adapter),
     row('limits', `bind ${bytes(l.maxStorageBufferBindingSize)}  buffer ${bytes(l.maxBufferSize)}  workgroup ${count(l.maxComputeWorkgroupSizeX)} wide  ${count(l.maxComputeInvocationsPerWorkgroup)} invocations`),
-    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)`),
+    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)${h.lanes.kernel === 'narrow' ? '  narrow crowd workgroups (this GPU refused the full kernel at 128)' : h.lanes.kernel === 'lite' ? '  light crowd kernel (this GPU refused the full one)' : ''}`),
     row('frames', frames),
     row('machine', `${threads}  ${memory}  ${h.host === 'native' ? 'native shell' : 'browser tab'}`),
   ]

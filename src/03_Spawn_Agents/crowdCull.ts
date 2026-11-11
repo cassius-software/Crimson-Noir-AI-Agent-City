@@ -16,9 +16,10 @@
  * What breaks if it is removed? The pedestrians are simulated but never drawn.
  */
 import {
-  CULL_EASE, CULL_PASSES, CULL_READBACK_SIZE, crowdShader, packCullParams, PARAMS_SIZE, PASS_BINDINGS, sanitizeCull, VARIANTS,
+  CROWD_WORKGROUP, CULL_EASE, CULL_PASSES, CULL_READBACK_SIZE, crowdShader, packCullParams, PARAMS_SIZE, PASS_BINDINGS, sanitizeCull, VARIANTS,
   type CullInput, type CullSettings, type PassName, type SharedBuffers,
 } from './crowdCompute.ts'
+import { compilePasses, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
 
 interface Staging { buffer: GPUBuffer; busy: boolean; frame: number }
 
@@ -60,7 +61,7 @@ export class CrowdCull {
   private readonly pinnedRows = new Float32Array(MAX_HIDDEN * 4)
   private timing: { set: GPUQuerySet; resolve: GPUBuffer; read: GPUBuffer; busy: boolean } | null = null
 
-  private constructor(device: GPUDevice, shared: SharedBuffers, drawTemplate: Uint32Array<ArrayBuffer>, agentCount: number, settings: CullSettings) {
+  private constructor(device: GPUDevice, shared: SharedBuffers, drawTemplate: Uint32Array<ArrayBuffer>, agentCount: number, settings: CullSettings, compiled: CompiledPasses<PassName>) {
     this.device = device
     this.agentCount = agentCount
     this.shared = shared
@@ -74,9 +75,8 @@ export class CrowdCull {
       })
     }
     const resources: Record<number, GPUBuffer> = { 0: this.params, 1: shared.pos, 10: shared.drawArgs, 11: shared.drawLists, 13: shared.look }
-    const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount) })
     for (const name of CULL_PASSES) {
-      const pipeline = device.createComputePipeline({ label: `crowd.${name}`, layout: 'auto', compute: { module, entryPoint: name } })
+      const pipeline = compiled.pipelines.get(name)!
       const group = device.createBindGroup({
         label: `crowd.${name}`,
         layout: pipeline.getBindGroupLayout(0),
@@ -86,12 +86,20 @@ export class CrowdCull {
     }
   }
 
-  /** Builds the cull pipeline and surfaces WGSL compile errors instead of failing silently later. */
+  /**
+   * Compiles the cull pass (gpuPipelines.ts compilePasses: the browser's own words for a refusal, and whether WebGPU's
+   * validation or the GPU's own compiler refused it) and builds the bind group under every error scope, so a refusal
+   * fails the boot with its cause instead of a cull that draws nobody.
+   */
   static async create(device: GPUDevice, shared: SharedBuffers, drawTemplate: Uint32Array<ArrayBuffer>, agentCount: number, settings: CullSettings): Promise<CrowdCull> {
-    device.pushErrorScope('validation')
-    const crowd = new CrowdCull(device, shared, drawTemplate, agentCount, settings)
-    const error = await device.popErrorScope()
-    if (error) throw new Error(`crowd.wgsl cull pipeline validation failed: ${error.message}`)
+    let compiled: CompiledPasses<PassName>
+    try {
+      compiled = await compilePasses(device, 'crowd.wgsl', crowdShader(agentCount), CULL_PASSES)
+    } catch (e) {
+      throw new Error(`crowd.wgsl cull pipeline ${e instanceof ShaderRefusedError && e.reason === 'internal' ? 'compilation' : 'validation'} failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    const { value: crowd, errors } = await withErrorScopes(device, () => new CrowdCull(device, shared, drawTemplate, agentCount, settings, compiled))
+    if (errors.length) throw new Error(`crowd.wgsl cull pipeline validation failed: ${scopedMessage(errors)}`)
     return crowd
   }
 
@@ -230,7 +238,7 @@ export class CrowdCull {
       const p = this.pipelines.get('cull')!
       pass.setPipeline(p.pipeline)
       pass.setBindGroup(0, p.group)
-      pass.dispatchWorkgroups(Math.ceil(this.agentCount / 128))
+      pass.dispatchWorkgroups(Math.ceil(this.agentCount / CROWD_WORKGROUP.full))
     }
     pass.end()
     if (timing) {

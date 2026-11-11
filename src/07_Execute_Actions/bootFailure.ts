@@ -24,7 +24,7 @@ import type { GpuProbe } from '../01_Initialize_World/gpuDevice.ts'
 
 /** Every class of failure the card has words for. */
 export type FailureKind =
-  | 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'worker-gpu' | 'wasm' | 'shader' | 'gpu-reset' | 'stalled'
+  | 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'worker-gpu' | 'wasm' | 'shader' | 'compiler' | 'gpu-reset' | 'stalled'
   | 'realm-fault' | 'frame' | 'other'
 
 /** What the card shows: a plain headline, the steps for this device, the WebGPU line or null, the raw message. */
@@ -85,6 +85,9 @@ const KNOWN: readonly [RegExp, FailureKind][] = [
   [/refused a WebGPU device/, 'device'],
   [/sensing failed to start: no reading from the GPU/, 'stalled'],
   [/GPU device lost|device was lost/i, 'gpu-reset'],
+  // The GPU's own shader compiler refused a kernel WebGPU had accepted (gpuPipelines.ts: an internal error, with the
+  // driver's words): not the browser's doing, so not the browser's words.
+  [/pipeline compilation failed|refused by the GPU's own compiler/, 'compiler'],
   [/pipeline validation failed|failed WebGPU validation/, 'shader'],
   [/^(?:SYSTEM LOCKED: )?Physics realm fault/, 'realm-fault'],
 ]
@@ -387,6 +390,14 @@ function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' |
         env.native ? 'Update WebView2 and the graphics driver, then restart the app.'
           : env.standalone ? 'Update the browser this app was installed from, then open the app again.'
             : 'Update the browser; a current Chrome or Edge, or Safari 26, runs the city.',
+      ])
+    case 'compiler':
+      return w('This device’s graphics driver couldn’t build the crowd', [
+        'The browser’s WebGPU accepted the crowd’s shader, but the GPU’s own compiler refused to build it; its words are in the details, with the kernel it refused.',
+        phone
+          ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the ${p.os === 'ios' ? device : 'phone'}’s system software (the graphics driver comes with it), ${again}.`
+          : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
+        'The city also tried narrower workgroups and its lighter crowd kernel; the details say whether those were refused as well.',
       ])
     case 'gpu-reset':
       return w('The graphics device was reset', [

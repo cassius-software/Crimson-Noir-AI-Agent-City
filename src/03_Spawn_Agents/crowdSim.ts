@@ -14,10 +14,11 @@
  * What breaks if it is removed? Nobody walks, and the Ring-0 Bouncer is blind to pedestrians.
  */
 import {
-  crowdShader, decodeHazard, FLOW_BINDING, geometryOf, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, MAX_CARS, packSimParams, PARAMS_SIZE,
+  CROWD_KERNELS, CROWD_WORKGROUP, crowdShader, decodeHazard, FLOW_BINDING, geometryOf, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, MAX_CARS, packSimParams, PARAMS_SIZE,
   PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, SIM_READ_HAZARDS, SIM_READ_RENDER, simReadbackSize, STATS_FLAGS, STATS_SIZE,
-  type PassName,
+  type CrowdKernel, type PassName,
 } from './crowdCompute.ts'
+import { compilePasses, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
 import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from './crowdSensor.ts'
 import { OperatorTrail } from './skills.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
@@ -35,12 +36,24 @@ export const CROWD_SUBSTEP = 0.05
 interface Staging { buffer: GPUBuffer; busy: boolean; frame: number; seq: number; time: number; sent: number }
 
 const now = (): number => (typeof performance === 'undefined' ? Date.now() : performance.now())
+const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+/** The module's label by kernel: what a refusal names (gpuPipelines.ts ShaderRefusedError) and what the pipelines' labels stem from. */
+const KERNEL_LABEL: Readonly<Record<CrowdKernel, string>> = Object.freeze({ full: 'crowd.wgsl', narrow: 'crowd.wgsl (narrow workgroups)', lite: 'crowd.wgsl (light kernel)' })
+/** The kernels in words, for the console and the card. */
+const KERNEL_WORDS: Readonly<Record<CrowdKernel, string>> = Object.freeze({ full: 'the full kernel', narrow: 'the full kernel at narrow workgroups', lite: 'the light kernel' })
 
 export class CrowdSim implements CrowdSensor {
   readonly agentCount: number
+  /**
+   * The kernel this crowd runs (crowdCompute.ts CrowdKernel): 'full'; 'narrow' or 'lite' where this GPU's own shader
+   * compiler refused the full simulate pass and a kernel further down the ladder compiled in its place (create).
+   */
+  readonly kernel: CrowdKernel
   /** Wall time from a step's dispatch to its readback, ms (EMA): how old the freshest reading is when it lands. */
   lagMs = 0
   readonly #device: GPUDevice
+  /** Workgroups a dispatch of an agent pass takes: the crowd over the kernel's workgroup width. */
+  readonly #groups: number
   readonly #params: GPUBuffer
   readonly #statsBuffer: GPUBuffer
   readonly #hazardBuffer: GPUBuffer
@@ -85,9 +98,11 @@ export class CrowdSim implements CrowdSensor {
   /** The operator's way on foot (skills.ts OperatorTrail), from the avatar every step: what a recruit follows across a room. */
   readonly #trail = new OperatorTrail()
 
-  private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null, rooms: readonly Workplace[] | null) {
+  private constructor(device: GPUDevice, agentCount: number, grid: FlowGrid | null, streets: StreetGrid | null, rooms: readonly Workplace[] | null, compiled: CompiledPasses<PassName>, kernel: CrowdKernel) {
     this.#device = device
     this.agentCount = agentCount
+    this.kernel = kernel
+    this.#groups = Math.ceil(agentCount / CROWD_WORKGROUP[kernel])
     this.#grid = grid
     this.#streets = streets ? packStreets(streets) : undefined
     this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms) : undefined
@@ -127,10 +142,8 @@ export class CrowdSim implements CrowdSensor {
       7: gridCount, 8: gridSlots, 9: this.#statsBuffer, 12: this.#hazardBuffer,
     }
     const flowView = this.#flowTexture.createView({ label: 'crowd.flow' })
-    const placement = grid ? { originX: grid.originX, originZ: grid.originZ, cell: grid.cell } : undefined
-    const module = device.createShaderModule({ label: 'crowd.wgsl', code: crowdShader(agentCount, placement, streets ? geometryOf(streets) : undefined) })
     for (const name of SIM_PASSES) {
-      const pipeline = device.createComputePipeline({ label: `crowd.${name}`, layout: 'auto', compute: { module, entryPoint: name } })
+      const pipeline = compiled.pipelines.get(name)!
       const group = device.createBindGroup({
         label: `crowd.${name}`,
         layout: pipeline.getBindGroupLayout(0),
@@ -144,21 +157,54 @@ export class CrowdSim implements CrowdSensor {
   }
 
   /**
-   * Builds the pipelines (surfacing WGSL errors) and places every pedestrian. With a flow grid, the field's solver
-   * too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device, else the CPU's, the same field. With
-   * a street window (streets.ts: a generated region's), the shader is compiled for the window's corner and street
-   * widths and the window's segments are what the people walk; without one, the procedural city's. With `rooms` (the
-   * indoor workplaces, interiors.ts: the city's, or a generated region's on lots of its window), one person in
-   * WORK.oneIn has a station in one and commutes to it; over a window, by the route table to each room.
+   * Compiles the passes (gpuPipelines.ts compilePasses: the browser's own words for a refusal, the module's compiler
+   * messages with them), builds the buffers and places every pedestrian. A pass WebGPU's validation refuses is the
+   * WGSL's fault, or a browser's, and fails the crowd with those words. A pass this GPU's own shader compiler refuses
+   * (an internal error: the driver would not build the full simulate kernel, as some phones' will not) is tried again
+   * down the ladder of kernels (crowdCompute.ts CROWD_KERNELS): the same module at half the workgroup, then the light
+   * kernel (crowdWayLite.wgsl): the same sensing, containment and contact, a simpler way for someone asked over;
+   * `kernel` says which runs. Every rung refused, the crowd fails with all the refusals.
+   * With a flow grid, the field's solver too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device,
+   * else the CPU's, the same field. With a street window (streets.ts: a generated region's), the shader is compiled
+   * for the window's corner and street widths and the window's segments are what the people walk; without one, the
+   * procedural city's. With `rooms` (the indoor workplaces, interiors.ts: the city's, or a generated region's on lots
+   * of its window), one person in WORK.oneIn has a station in one and commutes to it; over a window, by the route
+   * table to each room.
    */
   static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null, rooms: readonly Workplace[] | null = null): Promise<CrowdSim> {
     const [lo, hi] = AGENTS_RANGE
     if (!(Number.isInteger(agentCount) && agentCount >= lo && agentCount <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${agentCount}`)
-    device.pushErrorScope('validation')
-    const crowd = new CrowdSim(device, agentCount, grid, streets, rooms)
-    crowd.#spawn()
-    const error = await device.popErrorScope()
-    if (error) throw new Error(`crowd.wgsl pipeline validation failed: ${error.message}`)
+    const placement = grid ? { originX: grid.originX, originZ: grid.originZ, cell: grid.cell } : undefined
+    const geometry = streets ? geometryOf(streets) : undefined
+    const compile = (kernel: CrowdKernel) => compilePasses(device, KERNEL_LABEL[kernel], crowdShader(agentCount, placement, geometry, kernel), SIM_PASSES)
+    let compiled: CompiledPasses<PassName> | null = null
+    let kernel: CrowdKernel = 'full'
+    const refused: string[] = []
+    for (const rung of CROWD_KERNELS) {
+      try {
+        compiled = await compile(rung)
+        kernel = rung
+        break
+      } catch (e) {
+        // WebGPU's own refusal (validation: the WGSL, or the browser) is the same on every rung: it ends here, with its words.
+        if (!(e instanceof ShaderRefusedError) || e.reason !== 'internal') throw new Error(`crowd.wgsl pipeline validation failed: ${messageOf(e)}`)
+        refused.push(`${KERNEL_WORDS[rung]} (${e.message})`)
+      }
+    }
+    if (!compiled) throw new Error(`crowd.wgsl pipeline compilation failed: the GPU's own compiler refused ${refused.join(', ')}`)
+    if (refused.length) console.warn(`[crowd] the GPU's own compiler refused ${refused.join(' and ')}; ${KERNEL_WORDS[kernel]} runs`)
+    // The buffers, the bind groups and the spawn under every error scope: a buffer refused for memory or a bind group
+    // refused by validation is a failure with its own words, not a first step that dispatches nothing.
+    const { value: crowd, errors } = await withErrorScopes(device, () => {
+      const c = new CrowdSim(device, agentCount, grid, streets, rooms, compiled, kernel)
+      c.#spawn()
+      return c
+    })
+    if (errors.length) {
+      throw new Error(errors.every((e) => e.filter === 'validation')
+        ? `crowd.wgsl pipeline validation failed: ${scopedMessage(errors)}`
+        : `crowd.wgsl could not be set up on this GPU: ${scopedMessage(errors)}`)
+    }
     if (grid) {
       try {
         crowd.#solver = await FlowFieldGpu.create(device, grid, crowd.#flowTexture)
@@ -232,7 +278,7 @@ export class CrowdSim implements CrowdSensor {
     this.#device.queue.writeBuffer(this.#params, 0, this.#paramBytes)
     const enc = this.#device.createCommandEncoder({ label: 'crowd.spawn' })
     const pass = enc.beginComputePass()
-    this.#dispatch(pass, 'spawn', Math.ceil(this.agentCount / 128))
+    this.#dispatch(pass, 'spawn', this.#groups)
     pass.end()
     this.#device.queue.submit([enc.finish()])
   }
@@ -261,8 +307,8 @@ export class CrowdSim implements CrowdSensor {
       const enc = this.#device.createCommandEncoder({ label: 'crowd.step' })
       const pass = enc.beginComputePass({ label: 'crowd' })
       this.#dispatch(pass, 'clearGrid', Math.ceil(GRID_CELLS / 256))
-      this.#dispatch(pass, 'binAgents', Math.ceil(this.agentCount / 128))
-      this.#dispatch(pass, 'simulate', Math.ceil(this.agentCount / 128))
+      this.#dispatch(pass, 'binAgents', this.#groups)
+      this.#dispatch(pass, 'simulate', this.#groups)
       pass.end()
       if (sub < k) queue.submit([enc.finish()])
       // simulate senses each pedestrian where it stood when the substep began (it moves them after), so the

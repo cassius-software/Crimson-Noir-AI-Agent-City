@@ -303,6 +303,7 @@ interface Group { layout: Layout; entries: Entry[] }
  * buffers (and counts into `changed`), `direction` is directions() into the bound texture. Maps resolve on flush().
  */
 function mockDevice(grid: FlowGrid, opts: { validationError?: string } = {}) {
+  const scopes: string[] = []
   const log: string[] = []
   const buffers: MockBuffer[] = []
   const textures: MockTexture[] = []
@@ -398,8 +399,13 @@ function mockDevice(grid: FlowGrid, opts: { validationError?: string } = {}) {
         finish: () => ({ ops }),
       }
     },
-    pushErrorScope: () => {},
-    popErrorScope: async () => (opts.validationError ? { message: opts.validationError } : null),
+    // One scope per filter, as the API keeps them: the validation error lands in the validation scope alone.
+    pushErrorScope: (filter: string) => { scopes.push(filter) },
+    popErrorScope: async () => {
+      const filter = scopes.pop()
+      assert.ok(filter, 'popErrorScope with no scope pushed')
+      return filter === 'validation' && opts.validationError ? { message: opts.validationError } : null
+    },
     flush: async () => {
       while (maps.length) maps.shift()!()
       await new Promise((r) => setImmediate(r))

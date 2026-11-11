@@ -43,6 +43,8 @@ interface Snapshot {
 export class CrowdHost implements CrowdSensor {
   readonly agentCount: number
   readonly lagMs = 0
+  /** The CPU runs the full kernel: the JavaScript has no compiler to refuse it. */
+  readonly kernel = 'full' as const
   readonly #module: HostModule
   readonly #params: HostBuffer
   readonly #pos: HostBuffer

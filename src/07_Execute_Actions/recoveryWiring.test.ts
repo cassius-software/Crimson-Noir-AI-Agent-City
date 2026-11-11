@@ -148,8 +148,10 @@ test('the boot veil: the \'Still starting\' line after 20 s of visible time, a h
 
 test('the \'Still starting\' line names the step: every step Engine.create reports, in order, and App\'s own around it', () => {
   const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
-  const order = ['gpu', 'world', 'physics', 'shaders', 'frame'].map((st) => create.indexOf(`onStage('${st}')`))
+  const order = ['gpu', 'world', 'physics', 'shaders', 'frame'].map((st) => create.indexOf(`onStage('${st}'`))
   assert.ok(order.every((i) => i > 0), `each step reported: ${order}`)
+  // The world step carries the adapter's line: the card names the GPU when the boot fails before the engine stands.
+  assert.ok(create.includes("onStage('world', gpu.adapterInfo)"), 'the adapter with the world step')
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'in the order the boot takes them')
   assert.ok(create.indexOf("onStage('gpu')") < create.indexOf('createRenderer('), 'the device step before the device is asked for')
   assert.ok(create.indexOf("onStage('shaders')") < create.indexOf('compileAsync('), 'the shaders before they compile')

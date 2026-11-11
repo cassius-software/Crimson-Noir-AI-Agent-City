@@ -101,6 +101,12 @@ export interface CrowdSensor {
   /** Why the sensor stopped working for good (device lost), or null. */
   readonly lost: string | null
   /**
+   * The crowd kernel this sensor runs (crowdCompute.ts CrowdKernel): 'full'; 'narrow' or 'lite' where the GPU's own
+   * shader compiler refused the full simulate pass and the sensor runs a kernel further down the ladder (crowdSim.ts).
+   * Absent: the full one.
+   */
+  readonly kernel?: 'full' | 'narrow' | 'lite'
+  /**
    * Puts pedestrian `agent` at (x, z) facing `heading`, standing, before the next step (a ragdoll handed back where its
    * rig stood: ragdollRealm.ts). Absent from a sensor that cannot be written.
    */
