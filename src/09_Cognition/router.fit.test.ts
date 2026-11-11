@@ -1339,6 +1339,22 @@ test('a settings change while the larger context is refused or fails partway: no
   p.state.writes[DEFAULT_MODEL] = CUT
   assert.equal(await ask(x), `${DEFAULT_MODEL} says hi`)
   assert.deepEqual(bodies(p), ['8192/2048', '16384/4096', '8192/2048'])
+  // ask vram while the larger context is refused: it already forgot the grown context, so the refusal is the answer.
+  const q = ONE()
+  const y = make(q, { vram: '24' })
+  await ask(y)
+  await measured(q, 1)
+  q.state.writes[DEFAULT_MODEL] = { ...CUT, refuseAbove: 8192 }
+  const three = latch()
+  q.state.holds = [three.held]
+  const refused = ask(y)
+  await until(() => bodies(q).length === 2)
+  y.setVram('24')
+  three.open()
+  await assert.rejects(refused, (e: unknown) => e instanceof CognitionError && e.code === 'server')
+  assert.doesNotMatch(y.settings().fit ?? '', /tokens of context/)
+  assert.equal(await ask(y), `${DEFAULT_MODEL} says hi`)
+  assert.deepEqual(bodies(q), ['8192/2048', '16384/4096', '8192/2048'])
 })
 
 test('a moved model whose larger context Ollama refuses after a settings change is not set aside: no answer from the next model down, and its next answer at 8,192', async () => {

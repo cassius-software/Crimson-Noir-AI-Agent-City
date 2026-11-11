@@ -225,20 +225,22 @@ export function widen(i: { reason: string; tokens: number; pace: number | null; 
  */
 export type Back = 'split' | 'cpu' | 'slow' | 'load' | 'partway'
 /**
- * What the first measured answer at a grown context `ctx` (grown from `from`) says (R5): good (keep it); trained (Ollama
- * ran it at its trained context, `placed.ctx`, below `ctx`: `ctx` becomes that when it is above `from`, else `from`, and
- * nothing grows again); or back to `from` and why. Null when it says nothing: not loaded, or a first wait that ran out
- * (the model may still be loading) with the model not split.
+ * What the first measured answer at a grown context `ctx` (grown from `from`) says (R5): back to `from` and why when
+ * the model is split or all on the processor (Ollama plans a model's place before it loads it, so this holds for a
+ * first wait that ran out too) or the answer was slow; else trained (Ollama ran it all on the GPU at its trained
+ * context, `placed.ctx`, below `ctx`: `ctx` becomes that when it is above `from`, else `from`, and nothing grows again);
+ * else good (keep it). Null when it says nothing: not loaded, or a first wait that ran out with the model all on the
+ * GPU (it may still be loading, or the runner listed may be the one at the old context).
  */
 export type ContextVerdict = { readonly kind: 'good' } | { readonly kind: 'trained'; readonly trained: number; readonly ctx: number } | { readonly kind: 'back'; readonly why: Exclude<Back, 'load' | 'partway'> }
 export function contextVerdict(i: { placed: Placement | null; from: number; ctx: number; slow: boolean; cold: boolean }): ContextVerdict | null {
   const p = i.placed
   if (p === null) return null
   const where = whereOf(p)
-  if (i.cold) return where === 'split' ? { kind: 'back', why: 'split' } : null
-  if (p.ctx !== undefined && p.ctx < i.ctx) return { kind: 'trained', trained: p.ctx, ctx: p.ctx > i.from ? p.ctx : i.from }
   if (where !== 'gpu') return { kind: 'back', why: where }
-  return i.slow ? { kind: 'back', why: 'slow' } : { kind: 'good' }
+  if (i.cold) return null
+  if (i.slow) return { kind: 'back', why: 'slow' }
+  return p.ctx !== undefined && p.ctx < i.ctx ? { kind: 'trained', trained: p.ctx, ctx: p.ctx > i.from ? p.ctx : i.from } : { kind: 'good' }
 }
 
 /**

@@ -2259,8 +2259,9 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     A new context makes Ollama load the model again (read from Ollama's source, not timed). The first answer at the
     larger context is measured, with one more `GET /api/ps`:
     - all on the GPU and not slower than 5 tokens a second (over at least 32): it stays;
-    - split, all on the processor, slower than that, or split when its first wait runs out: back to 8,192 for the rest
-      of the visit; nothing loaded after two first waits ran out there: back too (nothing loaded after answers that
+    - split, all on the processor, or slower than that: back to 8,192 for the rest of the visit, also when its first
+      wait runs out split or on the processor (Ollama plans where a model goes before it loads it; read from its
+      source, not timed); nothing loaded after two first waits ran out there: back too (nothing loaded after answers that
       came says nothing, however often);
     - refused by Ollama before any of it arrives: back, and the same ask is answered once more at 8,192. That is the
       ask's one retry: the moved model's retry above and a new look do not follow it. A settings change while that
@@ -2275,8 +2276,9 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     - Ollama not answering, or refusing this page, at the larger context is not the context's failure: it stays, and
       the ask looks again as before;
     - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
-      uses that one when it is above 8,192 (12,288 gives answers of up to 3,072, measured at its next answer, with two
-      first waits of its own), else stays at 8,192, and either way it does not grow again.
+      uses that one when it is above 8,192 and the model ran there all on the GPU and not slow (12,288 gives answers
+      of up to 3,072, measured at its next answer, with two first waits of its own), else stays at 8,192, and either
+      way it does not grow again. Split, on the processor or slow there sends it back as above.
 
     None of this counts toward the two visits, and only measurements at 8,192 are kept, so the step up is decided as
     without it. A context's failure never sets a model aside by itself, so a moved model that will not load at the
@@ -2287,8 +2289,9 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     model at another context was under way, or ended, since the measured one was sent (Ollama may have loaded the
     model again for it) a measurement at all, at 8,192 or above. That is any answer the router sent to Ollama,
     measured or not: one sent before the figure arrived, under `ask provider ollama`, or in the chat format (which
-    sends no context, so Ollama chooses its own); an answer to another model does not count. Only asks sent at once
-    through the router can do this, since the console sends one at a time. Nothing of the context is kept between
+    sends no context, so Ollama chooses its own); an answer to another model does not count. Two answers in flight at
+    once can do this: the console sends one ask at a time, but Sloane's rewording of a goal goes through the same
+    router while an ask runs. Nothing of the context is kept between
     visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192 of answer; with one
     doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud

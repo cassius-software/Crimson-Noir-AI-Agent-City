@@ -459,11 +459,16 @@ test('contextVerdict: every branch of the first measured answer at a larger cont
   assert.deepEqual(v({ ...gpu, ctx: 8193 }), { kind: 'trained', trained: 8193, ctx: 8193 })
   assert.deepEqual(v({ ...gpu, ctx: 8192 }), { kind: 'trained', trained: 8192, ctx: 8192 })
   assert.deepEqual(v({ ...gpu, ctx: 4096 }), { kind: 'trained', trained: 4096, ctx: 8192 })
-  assert.deepEqual(v({ ...gpu, ctx: 12288, gpu: 0 }, { slow: true }), { kind: 'trained', trained: 12288, ctx: 12288 }, 'trained first; the next answer at it is measured')
-  // A first wait that ran out: split goes back; whole on the GPU or the processor may still be loading.
+  // Run at its trained context but split, on the processor or slow there: back, since that is the context it would run at.
+  assert.deepEqual(v({ ...gpu, ctx: 12288, gpu: 0 }, { slow: true }), { kind: 'back', why: 'cpu' })
+  assert.deepEqual(v({ ...gpu, ctx: 12288, gpu: 3e9 }), { kind: 'back', why: 'split' })
+  assert.deepEqual(v({ ...gpu, ctx: 12288 }, { slow: true }), { kind: 'back', why: 'slow' })
+  // A first wait that ran out: split or on the processor goes back (Ollama plans the place before it loads); whole on
+  // the GPU may still be loading.
   assert.deepEqual(v({ ...gpu, gpu: 3e9 }, { cold: true }), { kind: 'back', why: 'split' })
+  assert.deepEqual(v({ ...gpu, gpu: 0 }, { cold: true }), { kind: 'back', why: 'cpu' })
   assert.equal(v(gpu, { cold: true }), null)
-  assert.equal(v({ ...gpu, gpu: 0 }, { cold: true }), null)
+  assert.equal(v({ ...gpu, ctx: 12288 }, { cold: true }), null, 'trained or not, nothing is learned while it may be loading')
   assert.equal(v({ ...gpu, ctx: 8192 }, { cold: true }), null, 'a runner still at the old context while the new one loads says nothing')
   // Not loaded: no verdict.
   assert.equal(v(null), null)

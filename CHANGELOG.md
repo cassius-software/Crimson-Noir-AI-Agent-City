@@ -1459,8 +1459,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   answer arrived goes back to 8,192 for the visit and does not grow again (a refusal or a failure goes back whatever
   setting changed meanwhile; a refusal of an ask's first answer before any of it arrives answers that ask once more
   at 8,192, its one retry, unless a setting changed or a stop came with it; a failure partway is not answered again,
-  since its text was shown), and a smaller context Ollama reports (the one it was trained on) is used when above
-  8,192. The moved model's retry and the answer after a new look, when at a larger context, are measured and go back
+  since its text was shown; a first wait that runs out with the model split or on the processor goes back too),
+  and a smaller context Ollama reports (the one it was trained on), with the model all on the GPU and not slow
+  there, is used when above 8,192. The moved model's retry and the answer after a new look, when at a larger context, are measured and go back
   the same way, with no answer after them; Ollama not answering there leaves the context. Each answer's context is
   worked out once, as it is sent, and its body, its measurement and what counts as an answer at that context all
   take that one; an answer that ends after the figure has gone is not measured. It never sets a model aside by
@@ -1470,8 +1471,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   measurement; nothing of it is kept between visits, and `ask vram` starts it over. The `fit` row gains a clause
   once a context grew. Without a figure, in the chat format, for the operator's own model and under
   `ask provider ollama`, every request is today's, byte for byte. The quarter, 32,768 at most, one doubling a visit,
-  the 1 GB least cost and the 5 minutes are starting values. CI proves it in Node against a fake Ollama; its
-  boundaries were mutation-checked by hand (CI runs no mutation check). No real GPU or real Ollama ran it.
+  the 1 GB least cost and the 5 minutes are starting values. CI proves it in Node against a fake Ollama; no
+  real GPU or real Ollama ran it.
 
 ### Removed
 
