@@ -374,8 +374,8 @@ On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad'
 chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
 opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
 to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. The ink studio's mirror
-comes in closer, to 1.4 m instead of 2.6 m, lower and aimed a little higher, so a tattoo on a hand, the neck or the
-nape is about twice as many pixels across (`storefronts.ts` `SHOP_ORBIT`). In a network room the
+comes in closer, to 1.4 m instead of 2.6 m, lower and aimed a little higher, so a tattoo on a hand, a forearm, the
+neck or the nape is about twice as many pixels across (`storefronts.ts` `SHOP_ORBIT`). In a network room the
 card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
 back. Every line lists
 its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
@@ -392,13 +392,15 @@ record (the progression engine's, kept in this browser), so the console's `progr
   eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
   carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
   Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
-  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin; the ink studio's two
-  inks (gold leaf and luminescent, each setting the wardrobe's tattoo Ink alone). Trying an ink on a look with no
+  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin; the ink studio's
+  twelve forearm designs (each the wardrobe's design of the same name on the **Left forearm**, worn with the sleeves
+  rolled so it shows) and its two inks (gold leaf and luminescent, each setting the wardrobe's tattoo Ink alone). A
+  design a look would hide says so under its name: "A coat keeps its sleeves down", or "Covered by the limb" for a
+  prosthetic left arm (`storeCatalog.ts` `coverHint`). Trying an ink on a look with no
   tattoo showing puts the olive branch on your left hand for the mirror (or on the first zone nothing covers: past a
   prosthetic arm, the cup or a turtleneck), so the ink has something to colour; buying it sets
-  the ink alone (`storeCatalog.ts` `previewItem`). Lines that need slots the wardrobe does not have yet (the studio's
-  twelve forearm designs, the umbrella, headphones) are listed as on order and go on sale when the wardrobe's update
-  adds those slots. Four of the studio's designs carry names that say what each draws (the braided rope band, the
+  the ink alone (`storeCatalog.ts` `previewItem`). Lines that need slots the wardrobe does not have yet (the umbrella,
+  headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. Four of the studio's designs carry names that say what each draws (the braided rope band, the
   scalloped arc band, the compass rose and Euler's identity circle); their ids and the bits a purchase sets are as
   they were. The design house's seven property
   deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
@@ -1178,11 +1180,16 @@ shows it (there is no city to walk).
   the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
   by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
   standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
-  memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
-  lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
-  most eight at a time; the one role today is `sim2real_workplaces`, which asks for Robotics, Rust, Python, Data,
-  Testing, Design, TypeScript and Security in turn), and answers with how many were actually asked, never the number
-  wished for: stand on a sidewalk near people, or it answers 0 and says so. `unlock_city(seal, swarm)` opens the city
+  memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for the role through
+  the same team runner Sloane's goals use: one lane each, a small NoirScript program at one of the sixteen workplaces,
+  dealt round the desks in order (twenty-four are two at each of the first eight and one at each of the rest), under
+  the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
+  anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
+  answers with how many lanes are still running after their first tick, never the number wished for, says which team
+  it replaced, and opens nothing while the page is not contained or the realm is halted. On a map without workplaces
+  (a surveyed region) its lanes read the city around where you started and nobody is asked over. The swarm stays at
+  work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads "Team 24 · 16
+  workplaces". `unlock_city(seal, swarm)` opens the city
   for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
   pass answers that the city is already yours. After each line the console prints what the doors said. In the console
   shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
@@ -1229,20 +1236,20 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  fifty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the thirty-eight dress slots (skin, age,
+  fifty-seven slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the forty-one dress slots (skin, age,
   undertone, vitiligo, freckles, hair style, curl, hair colour, headwear, headwear colour, facial hair, hearing
   devices, prosthetic, prosthetic finish, layer, cut, top, top weave, trim, bottom cut, bottom, bottom weave, shirt,
-  shoe style, shoes, tie, scarf, lapel pin, eyewear, frames, watch, bag, cup, and the tattoos on the left hand, the
-  right hand, the neck and the nape with their one ink), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
+  shoe style, shoes, tie, scarf, lapel pin, eyewear, frames, watch, bag, cup, the tattoos on the left hand, the
+  right hand, the neck and the nape with their one ink, the sleeves, and the tattoos on the left and right forearms), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
   in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
-  within its body's options (the genome's later slots, vitiligo, freckles, the accessory word's four and the tattoo
-  word's five among them, may be left out and read as none). A
+  within its body's options (the genome's later slots, vitiligo, freckles, the accessory word's four, the tattoo
+  word's five, the sleeves and the forearms among them, may be left out and read as none). A
   look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
@@ -1366,14 +1373,18 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   other than black, and about one in thirty-five a silver bar or a flower on the lapel (never the rank pin): the
   tourbillon and the rank pin are the watch shop's. At the console: `look footwear wingtip`, `look watch smartwatch`,
   `look frames tortoiseshell`, `look lapelPin silver bar`.
-- **Tattoos.** A design on the **Left hand**, the **Right hand**, the **Neck** and the **Nape** (the person's own
-  sides), and one **Ink** for all of them, the genome's word 7. There are sixty-four designs in eight families of
+- **Tattoos.** A design on the **Left hand**, the **Right hand**, the **Neck**, the **Nape** (the genome's word 7),
+  the **Left forearm** and the **Right forearm** (word 8; the person's own sides), and one **Ink** for all of them. There are sixty-four designs in eight families of
   eight (`03_Spawn_Agents/tattoo.ts`): flowers, stars and rays, circles and orbits, shapes, bands, spirals, sprigs and
   pictures (a paper plane, a sailboat, a lighthouse, gulls in flight and others). Each is a plain drawing named for
   what it shows, never a people's, a faith's or a clan's sign. A design is one drawing, two or three stacked, or a
   band round the wrist or the neck. The near body's fragment stage draws it from the skin's rest position
   (`crowdTattoo.ts`, its WGSL written from those tables), so it moves with every pose, and on the skin alone: a
-  sleeve, a collar, a scarf or the hair is never inked. The far crowd and the shadow pass draw none, and a design
+  sleeve, a collar, a scarf or the hair is never inked. A forearm's design shows only with the sleeves rolled: the
+  **Sleeves** row (full or rolled; not shown under a coat, which keeps its sleeves down) rolls the top's sleeves, and
+  the shirt's under a jacket, to just below the elbow (1.10 m when standing), the forearm below them bare skin with
+  its own marks, its tattoos and, on a prosthetic arm's side, the limb's finish, under a turned band of the sleeve's
+  cloth. Both the near and the far crowd draw the rolled sleeves. The far crowd and the shadow pass draw none, and a design
   fades out as its wearer walks away. On the card the tattoos are one section instead of a row per slot: **Zone**
   (a dot on a zone that holds a design, and a note where something covers it in the city: a prosthetic arm on that
   side, the cup in the right hand, a turtleneck under a jacket or a coat on the neck), **Design family** (none clears
@@ -1386,13 +1397,15 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   far enough to reach 3:1, and no further. One passer-by in five carries a tattoo, drawn from their seed as the rest
   of their look is (`look.ts` `streetTattoos`, the shader's own draw): one zone or two, each a design after the
   studio's twelve, in one ink, about seven carriers in ten black, one in seven grey wash, one in fourteen indigo, then
-  brick red, forest green and white. About one passer-by in ten shows theirs, on a hand, the neck or the nape; the
-  rest are inked on a forearm, the calf or the ankle, which sleeves, trousers and hose cover. A prosthetic arm hides its
-  side's hand; the watch covers a band design where it passes the left wrist; a turtleneck under a jacket or a coat
+  brick red, forest green and white. About one passer-by in ten shows theirs on a hand, the neck or the nape; three
+  carriers in eight are inked on a forearm and roll their sleeves to show it unless they wear a coat (about six
+  passers-by in a hundred: `lookFromSeed` and the shader agree on every one of 20,000); the rest are inked on the calf
+  and the ankle, which trousers and hose cover. A prosthetic arm hides its side's hand and forearm; the watch covers a band design where it passes the left wrist; a turtleneck under a jacket or a coat
   covers the neck and the nape's lower half; a full or long beard is drawn over the neck; a scarf, a hijab, long hair
   and the cup in the right hand cover what lies under them. At the console: `look tattooHand compass rose`, `look
   tattooHand 10` (numbers count none as 1, so 10 is the ninth design, the compass rose), `look tattooNape none`,
-  `look tattooInk gold leaf`; Tab after `look tattooHand com` offers comet and compass rose.
+  `look tattooInk gold leaf`, `look sleeves rolled`, `look tattooForearm circuit trace`; Tab after `look tattooHand
+  com` offers comet and compass rose.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -1408,10 +1421,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   weave, the bottom's and the outer layer's cut; word 6, the accessory word, holds the shoe's style, the frames, the
   watch and the lapel pin in its low fifteen bits; word 7, the tattoo word, holds a design (one of sixty-four, or
   none) on each hand, the neck and the nape and their ink in its low thirty-one bits, its top bit the shader's street
-  flag that no look may set; words 8 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  flag that no look may set; word 8 holds the two forearms' designs in its low fourteen bits (the sleeves are two bits
+  of word 5); words 9 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin, cloth and accessory words through one flat varying, and the vertex stage never reads the accessory word. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin, cloth and accessory words through one flat varying (and word 8, a chosen look's forearms, from `crowd.figure`
+  itself), and the vertex stage never reads the accessory word. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -1789,7 +1804,7 @@ while you type.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
   `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `footwear`, `shoes`,
   `tie`, `scarf`, `lapelPin`, `eyewear`, `frames`, `watch`, `bag`, `cup`, `tattooHand`, `tattooHandR`, `tattooNeck`,
-  `tattooNape`, `tattooInk`; a height takes a step or metres, `look height 1.80`; a tattoo zone a design's name, which
+  `tattooNape`, `tattooInk`, `sleeves`, `tattooForearm`, `tattooForearmR`; a height takes a step or metres, `look height 1.80`; a tattoo zone a design's name, which
   Tab completes, `look tattooHand compass rose`, or `none`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
@@ -1813,12 +1828,14 @@ while you type.
   clock, the quality tier, the sound, a team dispatched) are applied and printed `done`, the rest `later`, a step
   that failed `failed` with why, words nothing in the city maps to yet are named, and a dispatched team's lanes
   are listed (tag, desk, what each reads).
-- `lanes` prints the team Sloane dispatched for the last goal (from the card or `goal`): one row a lane with its
+- `lanes` prints the team at work, the one Sloane dispatched for the last goal (from the card or `goal`) or the first
+  walk's swarm: one row a lane with its
   tag, its state (`ready` or `isolated`), the capability word it holds, the steps its last tick took and its latest
   reading (or the gate's sentence that isolated it); then the people asked over for each desk and what came of
   them. `lanes ledger` prints the fault ledger (every isolated lane, hashed over the one before it) and `lanes
   ledger verify` recomputes the chain; `lanes stop` closes every lane (the people asked over stay; `recruit
-  dismiss` lets them go). The console never opens a team by itself: `goal` and the card do.
+  dismiss` lets them go). The console never opens a team by itself: `goal`, the card and the first walk's
+  `spawn_subagents` do, and each new team replaces the one before it.
 - `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
   points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
   `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;

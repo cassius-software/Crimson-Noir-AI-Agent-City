@@ -215,6 +215,13 @@ export function teamOf(scan: WorkScan, goal: string): Team {
 /** The team for a goal in plain words: the desks it names, or the scouts. Never null. */
 export const teamFor = (goal: string): Team => teamOf(scanWork(plainWords(goal)), goal)
 
+/**
+ * The first walk's swarm (onboarding/exam.ts spawn_subagents): `n` sub-agents dealt round all sixteen desks in slot
+ * order, so twenty-four are two at each of the first eight desks and one at each of the rest, from wherever the
+ * player stands. The goal is the program line that asked, for the team's own record.
+ */
+export const swarmTeam = (n: number, goal: string): Team => teamOf({ kinds: DESK_IDS, count: Math.max(1, Math.floor(n)), at: 0, spans: [] }, goal)
+
 /** The desks in a sentence: "metro operations, the warehouse and the robotics lab". */
 export function teamNames(team: Team): string {
   const names = team.kinds.map((k) => deskOf(k).title)

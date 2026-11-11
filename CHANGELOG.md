@@ -32,6 +32,31 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `chat.test.ts` and new cases in `intent.test.ts` cover it; the conversation's quality and speed with a real model
   are not verified in CI.
 
+- **Rolled sleeves and tattoos on the forearms.** The look genome's cloth word gains the sleeves (word 5, bits 16 and
+  17: full, as before, or rolled) and word 8 becomes the second tattoo word: a design (0 for none, or one of
+  sixty-four) on the left and the right forearm at seven bits each, its other bits spare and refused. Option 0 of each
+  is as before, so every earlier look keeps its code; a look with a forearm's design has a sixty-two symbol code.
+  Rolled sleeves are paint over the sleeve's own geometry (`src/03_Spawn_Agents/crowd.ts`): below the roll line (1.10
+  m standing, the forearm's top ring, `tattoo.ts` `TATTOO_SLEEVE`) the top's fragments on an arm take the skin's slot
+  for the colour, the skin's marks, the tattoos, a prosthetic arm's finish and the skin's roughness, and above it a
+  2 cm band of the sleeve's cloth reads as turned back under a fold line. A coat keeps its sleeves down. The near and
+  the far body both draw the rolled sleeves, so a person's arms do not change as they come close; only the near body
+  inks them, reading a chosen look's word 8 from `crowd.figure` (no varying is added). A passer-by whose drawn designs
+  reach a forearm rolls their sleeves unless they wear a coat, in the shader (`crowdTattoo.ts` `tatZones` against the
+  forearms' zones) and in `lookFromSeed` alike: `tattoo.test.ts` finds the two agree on all of 20,000 seeds, 1,274 of
+  them rolled. The card shows six tattoo zones and a Sleeves row (not under a coat); the console takes `look sleeves
+  rolled` and `look tattooForearm circuit trace`. The ink studio's twelve designs (lines 48 to 59) go on sale, each
+  wearing its design on the left forearm with the sleeves rolled, so what is bought is what the mirror showed; a
+  design the look would hide says so on its row ("A coat keeps its sleeves down", "Covered by the limb";
+  `storeCatalog.ts` `coverHint`). The shader budget holds: the worst near main fragment stage is 185,605 characters
+  (was 183,728) and the worst far one 142,122 (was 139,888). `dist/index.html` grows by 1,991 bytes, from 12,000,653 to
+  12,002,644; the limit in `tools/verify/page_dist.mjs` is unchanged. Eighteen pictures of the ink studio's mirror on
+  the software WebGPU adapter (SwiftShader) show the rolled sleeves in a jacket and in shirt sleeves, four inks on the
+  forearms, the halo on the deepest skin, sleeves down and a coat hiding the designs, a prosthetic left arm taking its
+  bared forearm, and vitiligo going on up the bared skin. Five more, taken by pressing the studio card's own buttons,
+  show the twelve designs on sale, the coat's hint on every row, and Try on rolling the sleeves for the mirror.
+  Unverified: no hardware GPU has compiled or drawn it yet.
+
 - **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
   (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
   hand, the neck and the nape at seven bits each, and one ink at three; bit 31 is the shader's street flag, which no
@@ -1833,6 +1858,21 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   yet loaded every brief began a load and killed it at 4 s. The rewording now asks nothing while that model is still to
   be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
   planner's sentence stands meanwhile.
+
+- **The first walk's way out works from wherever you stand.** `spawn_subagents` asked only people within 5 m, and its
+  loop stopped at the first skill nobody near knew (Robotics), so the exit program answered a swarm of 0 and
+  `unlock_city` refused. The walk's own workplace stage leaves the visitor inside a room, where nobody can be asked
+  over at all, so on the accessible path the uncloseable walk could not be finished (seen on the live copy). Now the
+  exam sets its swarm to work through the same team runner Sloane's goals use (`onboarding/exam.ts`, `App.tsx`,
+  `dispatch.ts` `swarmTeam`): one lane a sub-agent, dealt round all sixteen workplaces' desks, opened from anywhere,
+  with anyone within earshot who has a desk's skill asked over by the runner. It answers with the lanes still running
+  after their first tick, says which team it replaced, caps at the runner's 32, and opens nothing while the page is not
+  contained or the realm is halted; on a map without workplaces (a surveyed region) it says the lanes read around
+  where you started and that nobody is asked over. The swarm stays at work after the city opens (`lanes`, `lanes
+  stop`), and the MIC chip counts a team at more than four desks in workplaces ("Team 24 · 16 workplaces") rather
+  than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from
+  where the workplace stage leaves the visitor, checks that nobody within earshot could be asked over there, and reads
+  the swarm back with `lanes`.
 
 - **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
   an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid

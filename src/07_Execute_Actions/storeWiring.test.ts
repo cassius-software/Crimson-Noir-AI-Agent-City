@@ -48,6 +48,9 @@ test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is
   // with wearItem, through the keeper, so what is bought is the line alone.
   assert.ok(card.includes('const next = previewItem(look, item) if (next) onTry(item.id, next)'), 'the try-on is the preview')
   assert.ok(card.includes('const next = keeper.wear(item.id, look)'), 'a bought line is worn as the keeper wears it')
+  // A design the look hides (a coat keeps its sleeves down) says so under its name (storeCatalog.ts coverHint).
+  assert.ok(card.includes('const hint = coverHint(look, item)'))
+  assert.ok(card.includes('{hint && <div className={`text-[11px] leading-snug ${t.muted}`} data-hint>{hint[0].toUpperCase() + hint.slice(1)}</div>}'))
   // A region's shops: picked after its workplaces, never on one of their lots, hollowed with them, the same lots to the worker.
   before(src, 'const lots = pack && layout && streets ? regionWorkplaceLots(', 'const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []', 'the workplaces first')
   assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots, homeLots)'))

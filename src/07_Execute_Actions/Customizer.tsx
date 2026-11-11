@@ -116,6 +116,9 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'tattooNeck': return 'Neck'
     case 'tattooNape': return 'Nape'
     case 'tattooInk': return 'Ink'
+    case 'tattooForearm': return 'Left forearm'
+    case 'tattooForearmR': return 'Right forearm'
+    case 'sleeves': return 'Sleeves'
   }
 }
 
@@ -255,7 +258,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch, the pin and tattoos show in the city, not in this outline.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
       </p>
     </div>
   )
@@ -314,7 +317,7 @@ function Face({ look, t }: { look: Look; t: Theme }) {
 
 // --- The tattoos -------------------------------------------------------------------------------------------------
 
-/** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck and the nape). */
+/** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck, the nape and the forearms). */
 const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => ({ ...z, slot: z.slot as LookSlot }))
 /** The slots the Tattoos section shows (the zones and the ink), never as rows of their own. */
 const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)
@@ -339,7 +342,7 @@ function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, 
     <div className={`mb-2 mt-3 border-t pt-3 ${t.rule}`} role="group" aria-label="Tattoos" data-row="tattoos">
       <div className="mb-2 flex items-baseline gap-3">
         <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Tattoos</div>
-        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${t.muted}`}>Shown on you in the city and in a shop's mirror.</p>
+        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${t.muted}`}>Shown on you in the city and in a shop's mirror. Forearms need rolled sleeves.</p>
       </div>
       <div className="mb-2 flex items-start gap-3" data-row="tattoo-zone">
         <div className={label}>Zone</div>
@@ -502,6 +505,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim' || slot === 'lapelPin')) return null
           // The frames are the glasses' finish: without glasses there is nothing to finish.
           if (slot === 'frames' && worn.eyewear === 0) return null
+          // A coat keeps its sleeves down (its own piece covers the arm), so under a coat there are no sleeves to roll.
+          if (slot === 'sleeves' && worn.layer === LAYER.coat) return null
           // The tattoos are one section, headed where the first zone's row would be: the zones and the ink have no rows of their own.
           if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />
           if (isTattooSlot(slot)) return null

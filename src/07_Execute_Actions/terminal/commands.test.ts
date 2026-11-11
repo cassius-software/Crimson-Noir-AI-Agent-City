@@ -2250,31 +2250,35 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
-test('look tattoos: the four zones complete the designs by name and the ink its eight, the lists are the wardrobe\'s; a design, a 1-based number, none and an ink reach the host as typed', () => {
+test('look tattoos: the six zones complete the designs by name, the ink its eight and the sleeves full or rolled, the lists are the wardrobe\'s; a design, a 1-based number, none, an ink and the sleeves reach the host as typed', () => {
   // The lists the console offers are the wardrobe's own (look.ts and tattoo.ts, which the console must not import).
   assert.deepEqual([...LOOK_TATTOO_ARGS], [...WARDROBE.tattoo].sort(), 'none and the sixty-four designs by their names')
   assert.deepEqual([...LOOK_INK_ARGS], [...WARDROBE.tattooInk].sort(), 'the eight inks by their names')
   assert.equal(LOOK_TATTOO_ARGS.length, 65)
-  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const) {
+  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooForearm', 'tattooForearmR'] as const) {
     assert.deepEqual(complete(`look ${slot} `), [...WARDROBE.tattoo].sort().map((n) => `look ${slot} ${n}`), slot)
     assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the card's options`)
   }
   assert.deepEqual(complete('look tattooInk '), lookOptions(0, 'tattooInk').map((o) => `look tattooInk ${o.name}`).sort())
+  assert.deepEqual(complete('look sleeves '), ['look sleeves full', 'look sleeves rolled'])
+  assert.deepEqual(complete('look sleeves '), lookOptions(0, 'sleeves').map((o) => `look sleeves ${o.name}`).sort(), 'sleeves: the card\'s options')
   // The manual's examples: a name is completed whole, so both designs that start "com" are offered.
   assert.deepEqual(complete('look tattooHand com'), ['look tattooHand comet', 'look tattooHand compass rose'])
   assert.deepEqual(complete('look tattooInk g'), ['look tattooInk gold leaf', 'look tattooInk grey wash'])
   assert.deepEqual(complete('look tattooNape n'), ['look tattooNape nautilus shell', 'look tattooNape nested diamonds', 'look tattooNape nested triangles', 'look tattooNape none'])
-  assert.deepEqual(complete('look t'), ['look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
+  assert.deepEqual(complete('look t'), ['look tattooForearm', 'look tattooForearmR', 'look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
   // Past a space typed inside a name, nothing more is offered (the words before the last are no key of the table).
   assert.deepEqual(complete('look tattooHand compass r'), [])
   const b = fake()
-  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor']) run(l, b, [])
+  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor', 'look sleeves rolled', 'look tattooForearm circuit trace']) run(l, b, [])
   assert.deepEqual(b.look.changes, [
     { kind: 'slot', slot: 'tattooHand', value: 'compass rose' },
     { kind: 'slot', slot: 'tattooHand', value: '10' },
     { kind: 'slot', slot: 'tattooNape', value: 'none' },
     { kind: 'slot', slot: 'tattooInk', value: 'gold leaf' },
     { kind: 'slot', slot: 'tattooHandR', value: 'anchor' },
+    { kind: 'slot', slot: 'sleeves', value: 'rolled' },
+    { kind: 'slot', slot: 'tattooForearm', value: 'circuit trace' },
   ])
   assert.deepEqual(texts(run('look tattooNeck', b, [])), ['usage: look tattooNeck <n|name>'])
   // The help's summary names them.
@@ -3185,7 +3189,7 @@ test('lanes: the team runner through the bridge (status, the ledger verified on 
   assert.deepEqual(texts(run('lanes ledger verify', t, [])), ['ledger: 0 records', '  chain verified'])
   assert.deepEqual(texts(run('lanes stop', t, [])), ['released: 2 lanes closed'])
   for (const l of ['lanes go', 'lanes ledger now', 'lanes stop all', 'lanes ledger verify twice']) assert.deepEqual(texts(run(l, t, [])), ['usage: lanes [ledger [verify]|stop]'], l)
-  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the console never dispatches by itself: goal does')
+  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the lanes command never dispatches: goal, the card and the walk\'s spawn_subagents do')
   const broken = { ...t, lanes: { ...t.lanes, status: () => { throw new Error('the realm halted') } } }
   assert.deepEqual(texts(run('lanes', broken, [])), ['lanes: the realm halted'])
   assert.deepEqual(complete('lanes '), ['lanes ledger', 'lanes stop'])
@@ -3375,7 +3379,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   const e = fake()
   e.exam = {
     verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing'); return 0xc0ffee },
-    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} asked over for ${role}`); return 2 },
+    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} sub-agents at work for ${role}`); return 2 },
     unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
     report: () => said.splice(0),
     status: () => 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)',
@@ -3384,7 +3388,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
   const session = replSession()
   assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing' }])
-  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 asked over for sim2real_workplaces' }])
+  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 sub-agents at work for sim2real_workplaces' }])
   assert.deepEqual(run(`noir ${PROGRAM[2]}`, e, [], session).lines, [{ kind: 'sys', text: 'unlock_city: the city is yours' }])
   assert.deepEqual(run('noir print(seal, swarm);', e, [], session).lines, [{ kind: 'out', text: '12648430 2' }])
   assert.deepEqual(doors, [['verify'], ['spawn', 24, 'sim2real_workplaces'], ['unlock', 0xc0ffee, 2]])

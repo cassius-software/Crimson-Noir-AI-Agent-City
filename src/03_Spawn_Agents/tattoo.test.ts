@@ -21,9 +21,9 @@ import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { crowdHash } from './crowdBody.ts'
 import { TATTOO_INCLUDES, TATTOO_INSET, TATTOO_WGSL } from './crowdTattoo.ts'
 import { BONE, BONES, SLOT, SLOTS, humanoidMesh } from './humanoid.ts'
-import { LOOK_FIELD, LOOK_HASH, LOOK_PALETTE, LOOK_STREET_FLAG, shaderHash, streetTattoos } from './look.ts'
+import { LAYER, LOOK_FIELD, LOOK_HASH, LOOK_PALETTE, LOOK_STREET_FLAG, SLEEVES, lookFromSeed, shaderHash, streetTattoos } from './look.ts'
 import {
-  TATTOO_FRAMES, TATTOO_HALO, TATTOO_HEAD_SPLIT, TATTOO_INK, TATTOO_INKS, TATTOO_MOTIFS, TATTOO_SHOP_INKS, TATTOO_STUDIO_LINES, TATTOO_TILE, TATTOO_ZONES,
+  TATTOO_FRAMES, TATTOO_HALO, TATTOO_HEAD_SPLIT, TATTOO_INK, TATTOO_INKS, TATTOO_MOTIFS, TATTOO_SHOP_INKS, TATTOO_SLEEVE, TATTOO_STUDIO_LINES, TATTOO_TILE, TATTOO_ZONES,
   inkLine, tattooContrast, tattooLuminance, type TattooFrame, type TattooRgb,
 } from './tattoo.ts'
 import { compileWgsl } from './wgslHost.ts'
@@ -156,6 +156,20 @@ test('the street\'s draw: tatStreet is look.ts streetTattoos for every agent bel
   // The street flag is word 7's bit 31, which no worn look sets (look.ts LOOK_STREET_FLAG).
   assert.deepEqual({ ...LOOK_STREET_FLAG }, { word: 7, bit: 31 })
   assert.ok(TATTOO_WGSL.includes('if((w7>>31u)==0u){'), 'the shader reads the flag there')
+})
+
+test('the street\'s sleeves: the shader rolls them for a passer-by whose designs reach a forearm (tatZones against TATTOO_SLEEVE.zones) unless a coat keeps them down, as look.ts lookFromSeed does, for every agent below 20,000', () => {
+  let rolled = 0
+  for (let s = 0; s < 20_000; s++) {
+    const look = lookFromSeed(s)
+    const gpu = ((host.call('tatZones', s) as number) & TATTOO_SLEEVE.zones) !== 0 && look.layer !== LAYER.coat
+    if (gpu !== (look.sleeves === SLEEVES.rolled)) assert.fail(`agent ${s}: the shader ${gpu ? 'rolls' : 'keeps down'} the sleeves, lookFromSeed ${look.sleeves}`)
+    assert.equal(look.sleeves === SLEEVES.rolled, look.tattooForearm + look.tattooForearmR > 0 && look.layer !== LAYER.coat)
+    if (gpu) rolled++
+  }
+  // About six passers-by in a hundred: three of the eight street sets reach a forearm (the left, the right, both) of
+  // the one in five who carry ink, less those in a coat.
+  assert.ok(rolled > 1100 && rolled < 1500, `rolled ${rolled}`)
 })
 
 const cross = (u: V3, v: V3): V3 => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
@@ -321,7 +335,7 @@ test('the frames against the bodies\' rest rings (humanoid.ts, all four bodies):
     assert.ok(TATTOO_FRAMES[2].centreY + TATTOO_FRAMES[2].half < TATTOO_HEAD_SPLIT.neckTop, 'the neck\'s square below the chin ring')
     // The forearm's between the cuff (the forearm's lowest ring) and the roll line (1.10, its highest).
     const forearm = ringsOf((i) => boneOf(i) === BONE.FOREARM_R)
-    assert.deepEqual([forearm[0], forearm[forearm.length - 1]], [0.935, 1.1], `body ${v}: the cuff and the roll line`)
+    assert.deepEqual([forearm[0], forearm[forearm.length - 1]], [0.935, TATTOO_SLEEVE.roll], `body ${v}: the cuff and the roll line`)
     for (const z of [4, 5]) assert.ok(TATTOO_FRAMES[z].centreY - TATTOO_FRAMES[z].half > forearm[0] && TATTOO_FRAMES[z].centreY + TATTOO_FRAMES[z].half < forearm[forearm.length - 1])
     // The ankle's above the shoe's top.
     const shoe = Math.max(...ringsOf((i) => slotOf(i) === SLOT.SHOES))
@@ -404,8 +418,8 @@ test('TATTOO_INCLUDES: every tatX( and crowdHash( call in each function is an in
     for (const inc of TATTOO_INCLUDES[name] ?? []) assert.ok(parts.has(inc) || inc === 'crowdHash', `${name} includes ${inc}, which is no function`)
   }
   assert.deepEqual([...reach('tattoo')].sort(), ['crowdHash', 'tatLeaf', 'tatPoly', 'tatSeg', 'tatShape', 'tatStreet', 'tatZones'])
-  // The module ships through crowd.ts's near body alone.
-  assert.match(CROWD, /^import \{ tattoo \} from '\.\/crowdTattoo\.ts'$/m)
+  // The module ships through crowd.ts: the tattoo on the near body, the street's zones on both (the sleeves).
+  assert.match(CROWD, /^import \{ tattoo, tattooZones \} from '\.\/crowdTattoo\.ts'$/m)
 })
 
 /** Words WGSL reserves (the WGSL specification's list): no name the module declares may be one. */
