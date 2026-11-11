@@ -990,7 +990,7 @@ test('the cuts: sixteen, the notch lapel first, none named for a people; the str
   assert.ok(CROWD.includes("select(cutIs(CUT.wrap), float(1).sub(upV).mul(-0.06), float(0)))"), 'the V\'s centre')
   assert.ok(CROWD.includes('select(closed, float(0), float(GARMENT.lapel))))))'), 'the lapel\'s width')
   // The garment's marks: a column of buttons and the stitched lines, a turtleneck's knit up the neck.
-  assert.ok(CROWD.includes('const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk)'))
+  assert.ok(CROWD.includes('const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk.or(boneIs(BONE.HEAD).and(rest.y.lessThan(1.578))))'), 'the knit on the trunk\'s skin and up the neck below the chin ring')
   assert.ok(CROWD.includes('select(turtleNeck, knitShirt, select(watchHere, watchColour, select(armHere, limbColour, skinShown)))'))
   // The hashed crowd's cut is the colours' 34 and 35, the same links lookFromSeed draws it from.
   assert.deepEqual([LOOK_HASHED_COLOUR.cut, LOOK_HASHED_COLOUR.cutPick], [34, 35])

@@ -1320,8 +1320,9 @@ export class CrowdView {
     const white = vec3(0.88, 0.86, 0.84)
     const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
-    // The turtleneck's knit up the neck (the trunk's skin), under a jacket or a coat.
-    const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk)
+    // The turtleneck's knit up the neck (the trunk's skin and the neck's: bone HEAD below the chin ring, humanoid.ts
+    // SKULL's first ring at 1.575), under a jacket or a coat.
+    const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk.or(boneIs(BONE.HEAD).and(rest.y.lessThan(1.578))))
     // The shoe's style over its colour (the plain shoe as it was).
     shoes = footwearPaint(shoeCloth, footwear, hose, footprint, near)
     const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(watchHere, watchColour, select(armHere, limbColour, skinShown))), hairShown, bottomShown, shoes, accent, prop, select(booted, bootColour, select(legHere, limbColour, legwear)), frame, white, iris, lip, scarf, fabric, device]

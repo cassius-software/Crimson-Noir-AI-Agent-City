@@ -72,6 +72,18 @@ const SEED = 1337
 const STAGE_BUDGET = 256 * 1024
 
 /**
+ * The most WGSL the near crowd body's main fragment stage may be, in characters: a target of its own, inside
+ * STAGE_BUDGET. That stage is the page's longest, the whole wardrobe's paint (221,913 at its worst before the crowd's
+ * hash was written once and its cloths declared once, about 172 thousand after), and every wardrobe slice adds to it,
+ * so the room a slice leaves the next is held here rather than found at the budget, where no pipeline is left to
+ * spare.
+ */
+const NEAR_TARGET = 225_000
+
+/** The near bodies of the crowd (crowd.ts names each mesh People.<body>.lod<level>; level 0 is the near one). */
+const NEAR_BODY = /^People\..+\.lod0$/
+
+/**
  * The bindings WebGPU promises a stage on every adapter (maxUniformBuffersPerShaderStage, maxStorageBuffersPerShaderStage,
  * maxSampledTexturesPerShaderStage, maxSamplersPerShaderStage): three lays the pipeline out from the bindings a stage
  * declares, and a layout past one of them never builds, whatever the device.
@@ -254,6 +266,7 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
       assert.ok(s.vertex.length > 0 && s.fragment.length > 0, `${name}: both stages built`)
       assert.ok(s.vertex.length <= STAGE_BUDGET, `${name}: vertex stage ${s.vertex.length} characters, budget ${STAGE_BUDGET}`)
       assert.ok(s.fragment.length <= STAGE_BUDGET, `${name}: fragment stage ${s.fragment.length} characters, budget ${STAGE_BUDGET}`)
+      if (pass === 'main' && NEAR_BODY.test(draw)) assert.ok(s.fragment.length <= NEAR_TARGET, `${name}: the near body's fragment stage is ${s.fragment.length} characters, target ${NEAR_TARGET}`)
       assert.equal(surfaceCalls(s.vertex), 0, `${name}: the vertex stage never calls the rain-mode surface`)
       const surface = surfaceCalls(s.fragment)
       assert.ok(surface <= 1, `${name}: the rain-mode surface is called ${surface} times; a material takes rain mode once`)
@@ -325,6 +338,8 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   assert.ok(mains.has('HomeFurniture') && !shadowed.has('HomeFurniture'), 'city: HomeFurniture is drawn and casts no shadow')
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
+  // The near bodies' main fragments were built, so each was held to NEAR_TARGET on the way (buildScene's check).
+  assert.equal([...mains].filter((n) => NEAR_BODY.test(n)).length, crowd.meshes.length / 2, 'city: every near body of the crowd was built for the main pass')
   // Its shadow pass draws the pose and the dissolve's shadow mask, nothing of the paint: three multiplies the shadow's
   // alpha by the colour's, which once wrote every weave and cut into the shadow map's fragment stage (about 138
   // thousand characters, run for every texel a body covers; the browser job outran its half hour).
