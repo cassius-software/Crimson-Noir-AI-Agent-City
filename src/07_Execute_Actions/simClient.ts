@@ -16,7 +16,7 @@
  */
 import PhysicsWorker from './physics.worker.ts?worker&inline'
 import { trackWorker } from './longTasks.ts'
-import { coded, MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimFailureCode, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
+import { coded, MAX_PLAYERS, POSE, type DriveControls, type FootControls, type FromWorker, type PlayerControls, type SimCommand, type SimCrowdKernel, type SimFailureCode, type SimInit, type SimMeta, type StepState } from './simProtocol.ts'
 import { canShareMemory, packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBridge.ts'
 import { JointBuffer } from './jointBridge.ts'
 
@@ -29,6 +29,16 @@ export interface StepInput {
   drive: DriveControls
   /** Players 1..3 (index k − 1 for player k); absent or short means idle players. */
   players?: PlayerControls[]
+}
+
+/** What a boot may hear of, and say to, the worker it waits for (SimClient.create). */
+export interface SimBootHooks {
+  /** The crowd's kernel ladder moved while the world was built (simProtocol.ts SimCrowdKernel). */
+  ladder?(step: SimCrowdKernel): void
+  /** The worker's world stands: the crowd is built and its first reading is in. Before the first state. */
+  ready?(meta: SimMeta): void
+  /** Aborted by a boot that failed elsewhere: the worker is stopped where it is and the promise rejects. */
+  signal?: AbortSignal
 }
 
 export class SimClient {
@@ -78,23 +88,41 @@ export class SimClient {
   /**
    * Builds the world in a new worker and resolves once its first state has arrived. `share`: whether the bridge may
    * be a SharedArrayBuffer (by default, whether this page is cross-origin isolated: sharedBridge.ts canShareMemory).
+   * `hooks`: what the boot hears while the world is built, and its way to give the worker up (SimBootHooks): a boot
+   * that failed elsewhere (the page's own device lost) does not leave a worker building a world under its card.
    */
-  static create(init: Omit<SimInit, 't'>, share: boolean = canShareMemory()): Promise<SimClient> {
+  static create(init: Omit<SimInit, 't'>, share: boolean = canShareMemory(), hooks: SimBootHooks = {}): Promise<SimClient> {
     const worker = new PhysicsWorker({ name: 'physics' })
     const untrack = trackWorker()
     return new Promise((resolve, reject) => {
       let meta: SimMeta | null = null
       let bridge: PhysicsBridge | null = null
       let joints: JointBuffer | null = null
+      // Settled once: a worker given up after it failed, or after its client stood, is not stopped or counted twice.
+      let settled = false
       // The worker's class of the failure (no WebGPU in the worker, no WebAssembly) stays on the error for the card.
-      const fail = (why: string, code?: SimFailureCode) => { worker.terminate(); untrack(); reject(code ? coded(code, why) : new Error(why)) }
+      const fail = (why: string, code?: SimFailureCode) => {
+        if (settled) return
+        settled = true
+        worker.terminate()
+        untrack()
+        reject(code ? coded(code, why) : new Error(why))
+      }
+      const abandon = (): void => fail('the boot was given up before the physics worker was ready')
+      if (hooks.signal?.aborted) abandon()
+      else hooks.signal?.addEventListener('abort', abandon, { once: true })
+      // A listener that throws must not stop the boot it is told about.
+      const tell = (hook: () => void): void => { try { hook() } catch (err) { console.error(err) } }
       worker.onerror = (e) => { e.preventDefault(); fail(`physics worker failed to start: ${e.message || 'unknown error'}`) }
       worker.onmessage = (e: MessageEvent<FromWorker>) => {
+        if (settled) return
         const m = e.data
+        if (m.t === 'crowdKernel') return tell(() => hooks.ladder?.(m))
         if (m.t === 'error') return fail(m.message, m.code)
         if (m.t === 'panic') return fail(m.reason)
         if (m.t === 'ready') {
           meta = m.meta
+          tell(() => hooks.ready?.(m.meta))
           // The bridge is laid out from the world the worker built; shared memory goes over once, before the first step.
           bridge = PhysicsBridge.create({ vehicles: meta.count, avatars: meta.players, agents: meta.agents }, share)
           if (bridge.shared) worker.postMessage({ t: 'bridge', buffer: bridge.buffer })
@@ -104,9 +132,13 @@ export class SimClient {
           worker.postMessage({ t: 'step', id: 0, dt: 0, foot: { x: 0, z: 0, heading: 0 }, drive: idle, cmds: [] })
           return
         }
-        if (m.t === 'state' && meta && bridge && joints) resolve(new SimClient(worker, untrack, meta, m, bridge, joints))
+        if (m.t === 'state' && meta && bridge && joints) {
+          settled = true
+          hooks.signal?.removeEventListener('abort', abandon)
+          resolve(new SimClient(worker, untrack, meta, m, bridge, joints))
+        }
       }
-      worker.postMessage({ t: 'init', ...init } satisfies SimInit)
+      if (!settled) worker.postMessage({ t: 'init', ...init } satisfies SimInit)
     })
   }
 

@@ -85,6 +85,23 @@ export interface CrowdReadout {
   heading?: Float32Array
 }
 
+
+/** The crowd kernels' names, in the order a worker tries them (crowdCompute.ts CROWD_WORKGROUP says what each is). */
+export type CrowdKernel = 'full' | 'narrow' | 'lite'
+export const CROWD_KERNELS: readonly CrowdKernel[] = Object.freeze(['full', 'narrow', 'lite'])
+/** The kernels in words, for the console and the card. */
+export const KERNEL_WORDS: Readonly<Record<CrowdKernel, string>> = Object.freeze({ full: 'the full kernel', narrow: 'the full kernel at narrow workgroups', lite: 'the light kernel' })
+
+/** The next rung down the ladder from `kernel`, or null from the last. */
+export function kernelBelow(kernel: CrowdKernel): CrowdKernel | null {
+  return CROWD_KERNELS[CROWD_KERNELS.indexOf(kernel) + 1] ?? null
+}
+
+/** A value that is one of the kernels' names (a message's field, an address's word), or null. */
+export function crowdKernelOf(value: unknown): CrowdKernel | null {
+  return CROWD_KERNELS.includes(value as CrowdKernel) ? (value as CrowdKernel) : null
+}
+
 /** The GPU pedestrian sensor as SimCore sees it. */
 export interface CrowdSensor {
   readonly agentCount: number
@@ -105,7 +122,7 @@ export interface CrowdSensor {
    * shader compiler refused the full simulate pass and the sensor runs a kernel further down the ladder (crowdSim.ts).
    * Absent: the full one.
    */
-  readonly kernel?: 'full' | 'narrow' | 'lite'
+  readonly kernel?: CrowdKernel
   /**
    * Puts pedestrian `agent` at (x, z) facing `heading`, standing, before the next step (a ragdoll handed back where its
    * rig stood: ragdollRealm.ts). Absent from a sensor that cannot be written.

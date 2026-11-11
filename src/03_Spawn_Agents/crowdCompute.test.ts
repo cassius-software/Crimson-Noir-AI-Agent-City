@@ -52,7 +52,7 @@ const {
 } = await import('./crowdCompute.ts')
 const { STREET_VEC4S, cityStreetGrid, packStreets } = await import('../01_Initialize_World/region/streets.ts')
 const { ROUTE_LINES, ROUTE_ROOM_VEC4S, ROUTE_VEC4S, packRoutes } = await import('../01_Initialize_World/region/workplaces.ts')
-const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
+const { CROWD_SUBSTEP, CrowdSim, KernelLostError } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
 const { AGENTS_RANGE, MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
 
@@ -984,6 +984,85 @@ test('a GPU whose own compiler refuses the full simulate pass gets the narrow ke
     await assert.rejects(CrowdSim.create(d5 as unknown as GPUDevice, AGENTS), { message: 'crowd.wgsl pipeline validation failed: [BindGroup "crowd.simulate"] binding 14 is not a texture' })
     assert.equal(warned.length, 0, 'a failure does not warn; only a rung that runs')
     assert.equal(kindOf(new Error('crowd.wgsl could not be set up on this GPU: out-of-memory: no memory'), { secure: true }), 'other', 'a scope refusal is not the compiler\'s')
+  } finally {
+    console.warn = warn
+  }
+})
+
+test('a device lost under a kernel ends the ladder there, naming the kernel: no rung is asked of a dead device; the ladder starts where it is told and tells each step', async () => {
+  const GONE = 'A valid external Instance reference no longer exists.'
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    // The browser's GPU process dies as the full kernel compiles (measured in Chromium: the device's `lost` settles, the
+    // pending pipeline rejects as *internal* in the loss's words, and every later pipeline at once). Before, that read
+    // as three refusals in a few milliseconds and the card blamed the compiler for kernels it never saw.
+    const dead = new MockDevice()
+    dead.refuse = (entry) => {
+      if (entry !== 'simulate') return null
+      dead.lose('unknown', GONE)
+      return { reason: 'internal', message: GONE }
+    }
+    const steps: string[] = []
+    const e1 = await CrowdSim.create(dead as unknown as GPUDevice, AGENTS, null, null, null, { note: (rung, step) => steps.push(`${rung} ${step}`) }).then(() => null, (e: Error) => e)
+    assert.ok(e1 instanceof KernelLostError, 'a loss, not a refusal')
+    assert.equal(e1.rung, 'full')
+    assert.equal(e1.message, `crowd.wgsl: GPU device lost (unknown) while compiling crowd.wgsl: ${GONE}`)
+    assert.equal(e1.loss.reason, 'unknown')
+    assert.deepEqual(dead.modules.map(kernelOf), ['full'], 'no rung below is compiled on the dead device')
+    assert.deepEqual(steps, ['full trying'], 'told before the compile, and nothing after: the page hears of the loss from the failure')
+    assert.equal(kindOf(e1, { secure: true }), 'gpu-reset', 'uncoded, its words are a reset\'s (the worker codes it kernel-lost)')
+
+    // The ladder starts where it is told (what the page remembers of this GPU), and a refusal on the way is kept in the loss.
+    const d2 = new MockDevice()
+    d2.refuse = (entry, code) => {
+      if (entry !== 'simulate') return null
+      if (kernelOf(code) === 'narrow') return { reason: 'internal', message: 'CreateComputePipelines failed with VK_ERROR_UNKNOWN' }
+      d2.lose('unknown', GONE)
+      return { reason: 'internal', message: GONE }
+    }
+    steps.length = 0
+    const e2 = await CrowdSim.create(d2 as unknown as GPUDevice, AGENTS, null, null, null, { from: 'narrow', note: (rung, step) => steps.push(`${rung} ${step}`) }).then(() => null, (e: Error) => e)
+    assert.ok(e2 instanceof KernelLostError)
+    assert.equal(e2.rung, 'lite')
+    assert.deepEqual(d2.modules.map(kernelOf), ['narrow', 'lite'], 'the full kernel is not asked for')
+    assert.deepEqual(steps, ['narrow trying', 'narrow refused', 'lite trying'])
+    assert.equal(e2.message, `crowd.wgsl: GPU device lost (unknown) while compiling crowd.wgsl (light kernel): ${GONE} (before that this GPU refused the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN))`)
+
+    // Started at the light kernel on a GPU that builds it: it runs, told as 'trying' then 'running', nothing else compiled.
+    const d3 = new MockDevice()
+    steps.length = 0
+    const lite = await CrowdSim.create(d3 as unknown as GPUDevice, AGENTS, null, null, null, { from: 'lite', note: (rung, step) => steps.push(`${rung} ${step}`) })
+    assert.equal(lite.kernel, 'lite')
+    assert.deepEqual(d3.modules.map(kernelOf), ['lite'])
+    assert.deepEqual(steps, ['lite trying', 'lite running'])
+    // The whole ladder told: refused, refused, running.
+    const d4 = refusing('full', 'narrow')
+    steps.length = 0
+    // A refusal is told with the browser's own words (the page keeps a refusal unless they name memory); no other step has any.
+    const said: string[] = []
+    await CrowdSim.create(d4 as unknown as GPUDevice, AGENTS, null, null, null, { note: (rung, step, words) => { steps.push(`${rung} ${step}`); if (words !== undefined) said.push(`${rung} ${step}: ${words}`) } })
+    assert.deepEqual(steps, ['full trying', 'full refused', 'narrow trying', 'narrow refused', 'lite trying', 'lite running'])
+    assert.equal(said.length, 2)
+    assert.match(said[0], /^full refused: crowd\.wgsl simulate: refused by the GPU's own compiler \(internal error\): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED \(full\)/)
+    assert.match(said[1], /^narrow refused: crowd\.wgsl \(narrow workgroups\) simulate: .*VK_ERROR_INITIALIZATION_FAILED \(narrow\)/)
+
+    // The device goes after the passes compiled, as the buffers and bind groups are made: the popped scopes reject
+    // ("Instance dropped in popErrorScope", the line a phone's card showed), and the loss names the kernel it was under.
+    const d5 = new MockDevice()
+    const pop = d5.popErrorScope.bind(d5)
+    d5.popErrorScope = () => { void pop(); d5.lose('unknown', GONE); return Promise.reject(Object.assign(new Error('Instance dropped in popErrorScope'), { name: 'OperationError' })) }
+    const e5 = await CrowdSim.create(d5 as unknown as GPUDevice, AGENTS, null, null, null, { from: 'narrow' }).then(() => null, (e: Error) => e)
+    assert.ok(e5 instanceof KernelLostError)
+    assert.equal(e5.rung, 'narrow')
+    assert.equal(e5.message, `crowd.wgsl: GPU device lost (unknown) while setting up the full kernel at narrow workgroups: ${GONE}`)
+    // A device that only says it is lost (its scopes pop empty, as the specification has it) is the same loss.
+    const d6 = new MockDevice()
+    const quiet = d6.popErrorScope.bind(d6)
+    d6.popErrorScope = () => { d6.lose('unknown', 'driver reset'); return quiet() }
+    const e6 = await CrowdSim.create(d6 as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
+    assert.ok(e6 instanceof KernelLostError)
+    assert.equal(e6.message, 'crowd.wgsl: GPU device lost (unknown) while setting up the full kernel: driver reset')
   } finally {
     console.warn = warn
   }

@@ -47,7 +47,7 @@ import { MAX_ROBOTS } from '../04_Connect_Hardware/jointState.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { streetCapacity, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { windowNetwork } from '../01_Initialize_World/region/transit.ts'
-import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
+import { AGENTS_RANGE, MAX_CARS, PEDESTRIAN_MAX_SPEED, type CrowdKernel, type CrowdSensor, type Summon } from '../03_Spawn_Agents/crowdSensor.ts'
 import {
   ACTIVITY, APPROACH_SECONDS, AUDIBLE_RADIUS, eligible, findRecruit, RALLY_RANGE, RECRUIT_SLOTS, RECRUITING_PLAYER, RELEASE_DISTANCE, skillNamed, skillsOf, whyNot, whyNotRally,
   type Skill,
@@ -112,8 +112,26 @@ const REGION_SLAB_MARGIN = 200
  * Builds the realm's GPU pedestrian sensor (the worker passes crowdSim.ts on its own device; tests pass stand-ins), over
  * the flow field's grid of this world (06_Make_Decisions/flowField.ts: the city's buildings and streets, or a region's
  * walls and the boxes it holds), which the sensor solves routes on, and with the world's indoor workplaces (null for none).
+ * `from`: the first crowd kernel to ask the GPU for (SimInit.crowdKernel), undefined for the full one.
  */
-export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null, rooms: readonly Workplace[] | null) => Promise<CrowdSensor>
+export type CrowdFactory = (agents: number, grid: FlowGrid, streets: StreetGrid | null, rooms: readonly Workplace[] | null, from?: CrowdKernel) => Promise<CrowdSensor>
+
+/**
+ * The crowd's GPU device was lost between the crowd's build and its first reading: the first dispatch of its kernel
+ * (a driver that builds a pipeline lazily fails here, not at the compile). `kernel`: the one that was running.
+ * `destroyed`: the device was destroyed on purpose (crowdSim.ts keeps the browser's reason in its words), which is
+ * nobody's loss.
+ */
+export class SensingLostError extends Error {
+  readonly kernel: CrowdKernel
+  readonly destroyed: boolean
+  constructor(kernel: CrowdKernel, lost: string) {
+    super(`pedestrian sensing failed to start: ${lost}`)
+    this.name = 'SensingLostError'
+    this.kernel = kernel
+    this.destroyed = /^GPU device lost \(destroyed\)/.test(lost)
+  }
+}
 
 /** One step's input after the host has checked its shape (every number is still clamped here). */
 export interface StepInput {
@@ -358,7 +376,7 @@ export class SimCore {
     const rooms = o.region
       ? (o.streets && o.workplaces?.length ? workplacesAt(o.workplaces) : null)
       : workplaces(Math.floor(finite(o.seed)) >>> 0)
-    const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null, rooms) : null
+    const crowd = makeCrowd ? await makeCrowd(agents, grid, o.region ? (o.streets ?? null) : null, rooms, o.crowdKernel) : null
     physics.streamAt(spawn.x, spawn.z)
     for (const p of spawns) physics.streamAt(p.x, p.z)
     const core = new SimCore(physics, { ...o, cars, agents, seed: Math.floor(finite(o.seed)) >>> 0, spawn, spawns }, crowd, rooms ?? [])
@@ -369,7 +387,7 @@ export class SimCore {
       let primed = 0
       let last = now()
       while (crowd.readout === null) {
-        if (crowd.lost) throw new Error(`pedestrian sensing failed to start: ${crowd.lost}`)
+        if (crowd.lost) throw new SensingLostError(crowd.kernel ?? 'full', crowd.lost)
         if (primed > CROWD_PRIME_MS) throw new Error('pedestrian sensing failed to start: no reading from the GPU')
         await new Promise((r) => setTimeout(r, 1))
         const t = now()

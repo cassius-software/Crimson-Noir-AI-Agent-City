@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
 import { BRAND } from './brand.ts'
+import { BUILD_META } from './07_Execute_Actions/bootFailure.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
@@ -26,8 +27,9 @@ const web = (await import(PWA)) as {
   ICONS: readonly { name: string; from: string; size: number }[]
   CACHED: readonly string[]
   HEAD: string
+  BUILD_META: string
   manifest(): { name: string; short_name: string; start_url: string; scope: string; display: string; icons: { src: string; sizes: string; type: string }[] }
-  webPage(html: string): string
+  webPage(html: string, build?: string): string
   worker(cache: string): string
 }
 
@@ -57,6 +59,19 @@ test('the web page keeps the whole policy and adds only manifest-src \'self\'; t
   assert.match(web.HEAD, /<link rel="apple-touch-icon" href="apple-touch-icon.png" \/>/)
   // The registration waits for a secure page served over http(s): a file opened from disk registers nothing.
   assert.match(web.HEAD, /window\.isSecureContext && \/\^https\?:\$\/\.test\(location\.protocol\)/)
+})
+
+test('the published page says which build it is: one meta, first among the head lines, the name the recovery card reads', () => {
+  const page = web.webPage(SOURCE, '0123456789ab')
+  const meta = '<meta name="agent-city-build" content="0123456789ab" />'
+  assert.equal(page.split(meta).length, 2, 'once')
+  assert.ok(page.indexOf(meta) < page.indexOf(web.HEAD) && page.indexOf(meta) < 2048, 'before the other head lines, in the page\'s first bytes')
+  assert.equal(page.split(web.HEAD).length, 2, 'the head lines as they were')
+  assert.equal(page.replace(`${meta}\n    `, ''), web.webPage(SOURCE), 'nothing else differs')
+  assert.equal(web.BUILD_META, BUILD_META, 'tools/web/pwa.mjs and bootFailure.ts name the one meta')
+  assert.doesNotMatch(web.webPage(SOURCE), /<meta name="agent-city-build"/, 'no build word, no meta')
+  for (const bad of ['0123', '0123456789AB', '0123456789abc', '"><script>']) assert.throws(() => web.webPage(SOURCE, bad), /twelve hex digits/, bad)
+  assert.throws(() => web.webPage(page, 'ba9876543210'), /already carries a build meta/)
 })
 
 test('a page that is not the one the builder knows fails instead of publishing', () => {

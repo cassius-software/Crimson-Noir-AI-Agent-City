@@ -16,7 +16,7 @@ import { cityStreetGrid, packStreets, spawnSegment, STREET_VEC4S, type StreetGri
 import crowdSource from './crowd.wgsl?raw'
 import crowdWay from './crowdWay.wgsl?raw'
 import crowdWayLite from './crowdWayLite.wgsl?raw'
-import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
+import { MAX_CARS, type CrowdKernel, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE, TRAIL, type OperatorTrail } from './skills.ts'
 import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
 import { FLOW } from '../06_Make_Decisions/flowField.ts'
@@ -288,12 +288,26 @@ export function geometryOf(streets: StreetGrid): StreetGeometry {
  *   kernel this size than a workgroup of 128 asks for (a phone GPU's, where a workgroup must fit one core);
  * - 'lite': crowdWayLite.wgsl in the way file's place, the routing the straight line (round the first piece in its
  *   way by a corner), 64 a workgroup.
- * Everything else, the First-Law sensing above all, is the same crowd.wgsl in all three.
+ * Everything else, the First-Law sensing above all, is the same crowd.wgsl in all three. The names themselves live in
+ * crowdSensor.ts (CrowdKernel, CROWD_KERNELS), which the realm's host reads without loading a shader.
  */
-export type CrowdKernel = 'full' | 'narrow' | 'lite'
-export const CROWD_KERNELS: readonly CrowdKernel[] = Object.freeze(['full', 'narrow', 'lite'])
+export { CROWD_KERNELS, crowdKernelOf, KERNEL_WORDS, kernelBelow, type CrowdKernel } from './crowdSensor.ts'
 /** Invocations a workgroup of the agent passes (binAgents, spawn, simulate, cull), by kernel: the `AGENT_WG` the header declares. */
 export const CROWD_WORKGROUP: Readonly<Record<CrowdKernel, number>> = Object.freeze({ full: 128, narrow: 64, lite: 64 })
+
+/**
+ * The kernels' own fingerprint: FNV-1a over the three source files and the workgroup widths, as eight hex digits.
+ * What a GPU was seen to do with these kernels (crowdKernelMemory.ts) is kept under it, so a build whose kernels
+ * changed asks every GPU afresh.
+ */
+export function kernelSourcesKey(): string {
+  let h = 0x811c9dc5
+  for (const text of [JSON.stringify(CROWD_WORKGROUP), crowdSource, crowdWay, crowdWayLite]) {
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+    h = Math.imul(h ^ 0xff, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
 
 /**
  * The complete WGSL module: shared constants from the CPU (the flow grid's placement, the street geometry and the

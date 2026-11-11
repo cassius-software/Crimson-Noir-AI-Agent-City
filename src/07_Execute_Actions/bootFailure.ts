@@ -11,9 +11,11 @@
  * iPhone (no 'Safari/' token) or on Android ('; wv)'), Chrome, Firefox or Edge, Linux, the installed home-screen app
  * (display-mode standalone, or fullscreen on Android, which has no address bar to edit and no other browser to switch to) and the
  * Windows app (Tauri). The 'needs WebGPU' line appears only where WebGPU itself is what is missing. It also holds the
- * guard for the one automatic restart after a graphics reset in the background (autoReload) and the gate before a
- * first visit's onboarding (firstScreen). Pure: pageEnv() is the only reader of the browser, and the tests hand in
- * their own.
+ * guard for the one automatic restart after a graphics reset in the background (autoReload), the gate before a
+ * first visit's onboarding (firstScreen), and the times the page saw the browser's GPU process go (the browser
+ * counts them too, and after two in two minutes hands the page no GPU for a while: gpuPaused). Pure, but for four
+ * guarded readers of the browser the tests replace or leave out: pageEnv, pageBuild, and the loss times' own store
+ * (recentGpuLosses, noteGpuLoss).
  * What breaks if it is removed? Every failure falls back to one raw message under a line that blames WebGPU, and the
  * lock screen blames a broken invariant for a routine GPU reset.
  */
@@ -21,11 +23,12 @@ import { BRAND } from '../brand.ts'
 import type { BootStage } from './engine.ts'
 import { nativeHost } from '../05_Observe_Environment/governor.ts'
 import type { GpuProbe } from '../01_Initialize_World/gpuDevice.ts'
+import { crowdKernelOf, type CrowdKernel } from '../03_Spawn_Agents/crowdSensor.ts'
 
 /** Every class of failure the card has words for. */
 export type FailureKind =
-  | 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'worker-gpu' | 'wasm' | 'shader' | 'compiler' | 'gpu-reset' | 'stalled'
-  | 'realm-fault' | 'frame' | 'other'
+  | 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'worker-gpu' | 'wasm' | 'shader' | 'compiler' | 'gpu-reset' | 'kernel-lost' | 'kernel-none'
+  | 'gpu-paused' | 'stalled' | 'realm-fault' | 'frame' | 'other'
 
 /** What the card shows: a plain headline, the steps for this device, the WebGPU line or null, the raw message. */
 export interface Failure {
@@ -36,6 +39,12 @@ export interface Failure {
   detail: string
   /** A browser that can run the city, one tap away (openInChrome): the card's first button. */
   openIn?: { label: string; href: string } | null
+  /**
+   * Where Restart goes instead of loading the same address again: the page with the lighter crowd kernel asked for
+   * (kernelAddress), after a kernel took the GPU down; or, once no kernel is left and the browser holds that, the
+   * page without the kernel's word (kernelFreeAddress). Absent or null: Restart reloads the page as it is.
+   */
+  restartHref?: string | null
 }
 
 /** What the words depend on, read once from the page (pageEnv) or handed in by a test. */
@@ -73,7 +82,7 @@ export const WEBGPU_LINE = `${BRAND.name} needs WebGPU: a current Chrome, Edge o
 /** Which iPhones iOS 26 runs on: the ones that can have Safari 26. */
 const IOS26 = 'iOS 26 runs on iPhone 11, iPhone SE (2nd generation) and newer'
 
-const CODES: readonly FailureKind[] = ['insecure', 'no-api', 'no-adapter', 'compat-only', 'device', 'worker-gpu', 'wasm', 'shader', 'compiler', 'gpu-reset', 'stalled']
+const CODES: readonly FailureKind[] = ['insecure', 'no-api', 'no-adapter', 'compat-only', 'device', 'worker-gpu', 'wasm', 'shader', 'compiler', 'gpu-reset', 'kernel-lost', 'kernel-none', 'gpu-paused', 'stalled']
 
 /** The messages the page has shown, matched when an error carries no code (first match wins). */
 const KNOWN: readonly [RegExp, FailureKind][] = [
@@ -84,7 +93,9 @@ const KNOWN: readonly [RegExp, FailureKind][] = [
   [/compatibility adapter/, 'compat-only'],
   [/refused a WebGPU device/, 'device'],
   [/sensing failed to start: no reading from the GPU/, 'stalled'],
-  [/GPU device lost|device was lost/i, 'gpu-reset'],
+  // The browser's words for work that died with its GPU process (Chrome: a scope popped, a pipeline pending): the same
+  // reset, whoever was holding the device.
+  [/GPU device lost|device was lost|Instance dropped|external Instance reference no longer exists/i, 'gpu-reset'],
   // The GPU's own shader compiler refused a kernel WebGPU had accepted (gpuPipelines.ts: an internal error, with the
   // driver's words): not the browser's doing, so not the browser's words.
   [/pipeline compilation failed|refused by the GPU's own compiler/, 'compiler'],
@@ -160,7 +171,48 @@ export function classify(error: unknown, env: Env): Failure {
   const kind = kindOf(error, env)
   const message = messageOf(error).trim()
   const p = platformOf(env.ua, env.touchPoints, env.standalone)
-  return { ...words(kind, env, p), kind, detail: message || 'No message was given.', openIn: kind === 'no-api' ? openInChrome(env, p) : null }
+  const lighter = kind === 'kernel-lost' && typeof error === 'object' && error !== null ? crowdKernelOf((error as { lighter?: unknown }).lighter) : null
+  // No kernel left: whether the browser holds the record that leaves the GPU alone (crowdKernelMemory.ts
+  // KernelNoneError.kept). Held, Restart goes to the address without ?kernel= (the word that asked for a kernel, by
+  // hand or by the page's own restart), where the hold stops the start before any GPU is asked for.
+  const kept = kind !== 'kernel-none' || !(typeof error === 'object' && error !== null && (error as { kept?: unknown }).kept === false)
+  return {
+    ...words(kind, env, p, kept), kind, detail: message || 'No message was given.', openIn: kind === 'no-api' ? openInChrome(env, p) : null,
+    restartHref: lighter ? kernelAddress(env.href ?? '', lighter) : kind === 'kernel-none' && kept ? kernelFreeAddress(env.href ?? '') : null,
+  }
+}
+
+/**
+ * Pure. The page's address with the crowd kernel asked for (?kernel=): where a start after a kernel took the GPU down
+ * goes, by the card's Restart or by itself (App.tsx), so the lighter kernel is asked for even where the browser kept
+ * no record. Null for an address that cannot carry it (none, or not one a URL parses).
+ */
+export function kernelAddress(href: string, kernel: CrowdKernel): string | null {
+  if (!href) return null
+  try {
+    const url = new URL(href)
+    url.searchParams.set('kernel', kernel)
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pure. The page's address without the crowd kernel's word: where Restart goes once no kernel is left and the browser
+ * holds the record that says so, so a restart is stopped by the hold instead of asking the GPU for the kernel the
+ * address names. Null where the address has no such word (Restart then loads the page as it is) or cannot be parsed.
+ */
+export function kernelFreeAddress(href: string): string | null {
+  if (!href) return null
+  try {
+    const url = new URL(href)
+    if (!url.searchParams.has('kernel')) return null
+    url.searchParams.delete('kernel')
+    return url.toString()
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -205,9 +257,55 @@ export function explainHalt(reason: string, env: Env): Failure {
   return { ...words(kind, env, platformOf(env.ua, env.touchPoints, env.standalone)), kind, detail: reason.trim() || 'No message was given.' }
 }
 
-/** The small copyable line under the card: the build, the adapter, the user agent. */
-export function detailsLine(adapter: string, ua: string): string {
-  return `${BRAND.name} ${BRAND.version} · ${adapter || 'adapter unknown'} · ${ua || 'user agent unknown'}`
+/** The name of the meta the web copy's head carries (tools/web/pwa.mjs BUILD_META): which published build this page is. */
+export const BUILD_META = 'agent-city-build'
+
+/**
+ * The published build this page is, where it says (the web copy: twelve hex digits of the page's hash, the same that
+ * name its offline cache), '' anywhere else (a file, the Windows app, a local preview). Guarded: no document, no word.
+ */
+export function pageBuild(): string {
+  try {
+    const word = typeof document === 'undefined' ? null : document.querySelector(`meta[name="${BUILD_META}"]`)?.getAttribute('content')
+    return word && /^[0-9a-f]{6,64}$/.test(word) ? word : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * The small copyable line under the card: the build (with the web copy's own build word, so a screenshot says which
+ * published build a phone was running: its offline copy can be a build behind), the adapter, the user agent, and
+ * what the browser says of the device itself where it does (deviceHints).
+ */
+export function detailsLine(adapter: string, ua: string, build = '', hints = ''): string {
+  return `${BRAND.name} ${BRAND.version}${build ? ` (web build ${build})` : ''} · ${adapter || 'adapter unknown'} · ${ua || 'user agent unknown'}${hints ? ` · ${hints}` : ''}`
+}
+
+/** The part of navigator.userAgentData read here (Chrome and Edge have it; Safari and Firefox do not). */
+export interface UaData { getHighEntropyValues?(hints: string[]): Promise<Record<string, unknown>> }
+
+/**
+ * What the browser says of the device beyond its user agent: the system and its real version, the model, the
+ * browser's full version. Chrome on Android writes 'Android 10; K' and a version of zeroes into every user agent,
+ * whatever the phone, so a details line with only that names neither the phone nor its Android. For the card's
+ * details, where the player may copy it into a bug report: it stays on the page like everything else. '' where the
+ * browser has no such API, refuses, or throws.
+ */
+export async function deviceHints(data: UaData | null | undefined): Promise<string> {
+  if (!data || typeof data.getHighEntropyValues !== 'function') return ''
+  try {
+    const v = await data.getHighEntropyValues(['platform', 'platformVersion', 'model', 'fullVersionList'])
+    const word = (x: unknown): string => (typeof x === 'string' ? x.replace(/[^\x20-\x7e]/g, '').trim().slice(0, 60) : '')
+    const brands = (Array.isArray(v.fullVersionList) ? v.fullVersionList : [])
+      .map((b: unknown) => (b && typeof b === 'object' ? { brand: word((b as { brand?: unknown }).brand), version: word((b as { version?: unknown }).version) } : { brand: '', version: '' }))
+      .filter((b) => b.brand && b.version && !/not.{0,3}a.{0,3}brand/i.test(b.brand))
+    // The browser's own name where it gives one (Google Chrome, Microsoft Edge), else the engine's.
+    const browser = brands.find((b) => b.brand !== 'Chromium') ?? brands[0]
+    return [[word(v.platform), word(v.platformVersion)].filter(Boolean).join(' '), word(v.model), browser ? `${browser.brand} ${browser.version}` : ''].filter(Boolean).join(' · ')
+  } catch {
+    return ''
+  }
 }
 
 /** The browser's own scheme for its internal pages (edge:// in Edge, chrome:// in Chrome and the browsers built on it). */
@@ -227,7 +325,7 @@ function iosLockdown(standalone: boolean): string {
 /** Lockdown Mode on a Mac: per site in Safari's own settings for the website, or the switch in System Settings. */
 const MAC_LOCKDOWN = 'Lockdown Mode turns it off in Safari: choose Safari > Settings for This Website and untick Enable Lockdown Mode, or turn it off in System Settings > Privacy & Security > Lockdown Mode.'
 
-function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' | 'detail'> {
+function words(kind: FailureKind, env: Env, p: Platform, kept = true): Omit<Failure, 'kind' | 'detail'> {
   const phone = p.os === 'ios' || p.os === 'android'
   const device = p.ipad ? 'iPad' : 'iPhone'
   const iosUpdate = p.ipad
@@ -402,6 +500,32 @@ function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' |
             : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
         'For the crowd’s simulate pass the city also tried narrower workgroups and its lighter kernel; the details name each refusal.',
       ])
+    case 'kernel-lost':
+      // Said as what the page saw, not as the driver's fault for certain: the browser's own watchdog, or the system
+      // short of memory, end the GPU process the same way. The details carry the kernel and how long it took.
+      return w('The browser’s graphics stopped while building the crowd', [
+        phone
+          ? `The ${p.os === 'ios' ? device : 'phone'}’s GPU dropped out of the browser while the crowd’s kernel was being built, most often in the graphics driver’s compiler; the details name the kernel and how long it took.`
+          : 'The GPU dropped out of the browser while the crowd’s kernel was being built: most often the graphics driver’s compiler, sometimes the browser’s own GPU process; the details name the kernel and how long it took.',
+        'Restart: the city starts with a lighter kernel for the crowd, which asks less of the driver.',
+      ])
+    case 'kernel-none':
+      return w('The crowd keeps stopping this device’s graphics', [
+        'The GPU dropped out of the browser each time one of the crowd’s kernels was built, the lightest included; the details name them.',
+        p.os === 'ios'
+          ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
+          : phone
+            ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
+            : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
+        kept
+          ? 'The city leaves this GPU alone for a while before it asks again (the details say how long): each try stops the browser’s graphics in every tab. The console needs no GPU and still opens.'
+          : 'This browser keeps no note for this page, so Restart asks this GPU again, and each try stops the browser’s graphics in every tab. The console needs no GPU and still opens.',
+      ])
+    case 'gpu-paused':
+      return w('The browser has paused graphics for this page', [
+        'The GPU was lost twice within two minutes, and after that the browser hands this page no GPU for a while: until two minutes after the first loss.',
+        'Wait two minutes, then restart. Restarting sooner changes nothing.',
+      ])
     case 'gpu-reset':
       return w('The graphics device was reset', [
         phone ? `The ${p.os === 'ios' ? device : 'phone'} reset its GPU or took its memory back, often while the app was in the background.`
@@ -455,6 +579,110 @@ export function autoReload(o: { lastMs: number | null; nowMs: number; hiddenAtLo
   return o.lastMs === null || !Number.isFinite(o.lastMs) || o.nowMs - o.lastMs >= AUTO_RELOAD_GAP_MS
 }
 
+/** Where the times the page saw the browser's GPU process go are kept: localStorage, as the process serves every tab of the site. */
+export const GPU_LOSSES_KEY = 'civic-simulation:gpu-losses:v1'
+/**
+ * Chrome's own rule, measured in Chromium 153 (its kBlockedDomainExpirationPeriod): a site whose GPU process went
+ * twice within two minutes is handed no adapter, on the page or in a worker, until two minutes after the first
+ * loss. A reload the page makes does not lift it; the browser's own reload button lifts it for the page but not for
+ * the page's worker. So the only honest advice is to wait.
+ */
+export const GPU_PAUSE_MS = 120_000
+/** Asked a little longer than the browser holds it, ms: its clock started before the page heard of the loss. */
+const GPU_PAUSE_MARGIN_MS = 5_000
+/**
+ * The window the browser counts GPU process crashes over, ms: Chrome forgives one per five minutes, and at three
+ * gives GPU graphics up for the session (on a phone with nothing to fall back to, it ends itself).
+ */
+export const GPU_CRASH_WINDOW_MS = 300_000
+
+/** Pure. The loss times in `raw` still inside GPU_CRASH_WINDOW_MS at `nowMs`, oldest first, the last four at most. */
+export function parseGpuLosses(raw: string | null, nowMs: number): number[] {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 256) return []
+  let data: unknown
+  try { data = JSON.parse(raw) } catch { return [] }
+  if (!Array.isArray(data)) return []
+  return data.filter((t): t is number => typeof t === 'number' && Number.isFinite(t) && nowMs - t >= 0 && nowMs - t < GPU_CRASH_WINDOW_MS).sort((a, b) => a - b).slice(-4)
+}
+
+/**
+ * Losses noted within this of each other are one: the browser's GPU process going takes every tab of the site at once,
+ * and each tab notes it. Two real losses cannot be this close (a new GPU process and a new start lie between them).
+ */
+export const GPU_LOSS_SAME_MS = 2000
+
+/** Pure. `raw` with one more loss at `nowMs`, as the store keeps it; unchanged in count where the newest one kept is the same loss. */
+export function withGpuLoss(raw: string | null, nowMs: number): string {
+  const kept = parseGpuLosses(raw, nowMs)
+  const newest = kept.at(-1)
+  return JSON.stringify(newest !== undefined && nowMs - newest < GPU_LOSS_SAME_MS ? kept : [...kept, nowMs].slice(-4))
+}
+
+/** Pure. Whether the browser is withholding the GPU from this site at `nowMs`: two of `losses` inside GPU_PAUSE_MS. */
+export function gpuPaused(losses: readonly number[], nowMs: number): boolean {
+  return losses.filter((t) => nowMs - t >= 0 && nowMs - t < GPU_PAUSE_MS + GPU_PAUSE_MARGIN_MS).length >= 2
+}
+
+/** The loss times this site's pages have noted, still inside the browser's window; none where storage is refused. */
+export function recentGpuLosses(nowMs: number = Date.now()): number[] {
+  try {
+    return parseGpuLosses(localStorage.getItem(GPU_LOSSES_KEY), nowMs)
+  } catch {
+    return []
+  }
+}
+
+/** Notes that the browser's GPU process went, now. Never throws. */
+export function noteGpuLoss(nowMs: number = Date.now()): void {
+  try {
+    localStorage.setItem(GPU_LOSSES_KEY, withGpuLoss(localStorage.getItem(GPU_LOSSES_KEY), nowMs))
+  } catch {
+    // No storage for this page: the count is the browser's alone.
+  }
+}
+
+/**
+ * Where the page's own restart on a lighter crowd kernel (App.tsx) leaves a note for the page it becomes: this tab's
+ * session storage, so it is found after the navigation and by no other tab.
+ */
+export const KERNEL_RESTART_KEY = 'civic-simulation:kernel-restart:v1'
+/** How long that note counts, ms: the restarted page takes up from it, and a second restart of the tab within it is refused. */
+export const KERNEL_RESTART_GAP_MS = 120_000
+
+/**
+ * What the restarting page hands the page it becomes: when it went, and what a first visit held only in the page's
+ * own memory (the onboarding's outcome: Sloane's mentoring, the hour and the sound the visitor chose), which a
+ * navigation would otherwise drop on exactly the visitors whose first start failed.
+ */
+export interface KernelRestartNote { at: number; mentored: boolean; startHour: number; audio: boolean }
+
+/** Pure. The note in `raw` while it counts (written within KERNEL_RESTART_GAP_MS before `nowMs`); null for anything else. */
+export function parseKernelRestart(raw: string | null, nowMs: number): KernelRestartNote | null {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 512) return null
+  let data: unknown
+  try { data = JSON.parse(raw) } catch { return null }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const n = data as Partial<Record<keyof KernelRestartNote, unknown>>
+  if (typeof n.at !== 'number' || !Number.isFinite(n.at) || typeof n.mentored !== 'boolean' || typeof n.audio !== 'boolean') return null
+  if (typeof n.startHour !== 'number' || !Number.isFinite(n.startHour) || n.startHour < 0 || n.startHour > 24) return null
+  const age = nowMs - n.at
+  return age >= 0 && age < KERNEL_RESTART_GAP_MS ? { at: n.at, mentored: n.mentored, startHour: n.startHour, audio: n.audio } : null
+}
+
+/**
+ * Pure. The address the page's own restart on a lighter kernel goes to: kernelAddress, less a word that would put
+ * the whole onboarding in front of the visitor again (?onboarding=1 asks for it on every load; the restart is not a
+ * new visit). Null where the address cannot carry the kernel.
+ */
+export function kernelRestartAddress(href: string, kernel: CrowdKernel): string | null {
+  const address = kernelAddress(href, kernel)
+  if (!address) return null
+  const url = new URL(address)
+  const again = url.searchParams.get('onboarding')
+  if (again === '1' || again === 'on') url.searchParams.delete('onboarding')
+  return url.toString()
+}
+
 /**
  * Pure. What a page with no `?boot=tty` shows first: the onboarding only for a first visit whose browser can run the
  * city (the quick probe: a secure page, navigator.gpu, a core adapter), the recovery card when it cannot, the splash
@@ -470,7 +698,7 @@ export function firstScreen(o: { onboard: boolean; probe: GpuProbe | null }): 'c
  * What the boot veil's 'Still starting' line says the city is doing (engine.ts BootStage, and App's own steps around
  * it): the shaders are the long step on a phone, and a line that names the step tells a slow phone from a stopped boot.
  */
-export const BOOT_STAGE: Readonly<Record<BootStage | 'probe' | 'map' | 'crowd', string>> = Object.freeze({
+export const BOOT_STAGE: Readonly<Record<BootStage | 'probe' | 'map' | 'crowd' | 'lighter', string>> = Object.freeze({
   probe: 'checking this browser’s graphics',
   map: 'loading the map',
   gpu: 'asking for the graphics device',
@@ -479,4 +707,6 @@ export const BOOT_STAGE: Readonly<Record<BootStage | 'probe' | 'map' | 'crowd', 
   shaders: 'preparing the shaders (the long step on a phone)',
   frame: 'drawing the first frame',
   crowd: 'waiting for the crowd',
+  // The page's own restart after a crowd kernel took the GPU down (App.tsx): it waits for the GPU to come back first.
+  lighter: 'starting again with a lighter crowd',
 })

@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { acquireDevice, adapterLine, deviceFeatures, probeGpu, THREE_FEATURES, WebGPUUnavailableError, type GpuEntry } from './gpuDevice.ts'
+import { acquireDevice, adapterLine, deviceFeatures, GPU_BACK_EVERY_MS, GPU_BACK_FOR_MS, gpuBack, probeGpu, THREE_FEATURES, WebGPUUnavailableError, type GpuEntry } from './gpuDevice.ts'
 
 // three's constants module is plain JavaScript; a computed specifier keeps the page's typecheck off it.
 const CONSTANTS: string = 'three/src/renderers/webgpu/utils/WebGPUConstants.js'
@@ -77,6 +77,8 @@ test('every failure has its own code', async () => {
   assert.equal(await codeOf(acquireDevice(fakeGpu({ core: false }).gpu, true)), 'no-adapter')
   assert.equal(await codeOf(acquireDevice(fakeGpu({ core: false, compat: true }).gpu, true)), 'compat-only')
   assert.equal(await codeOf(acquireDevice(fakeGpu({ core: true, refuse: 'GPU process is busy' }).gpu, true)), 'device')
+  // Chrome's words for a request whose GPU process went meanwhile: a reset, not a GPU that refuses devices.
+  assert.equal(await codeOf(acquireDevice(fakeGpu({ core: true, refuse: 'A valid external Instance reference no longer exists.' }).gpu, true)), 'gpu-reset')
   assert.equal(await codeOf(acquireDevice(fakeGpu({ core: true, lost: { reason: 'unknown', message: 'GPU process crashed' } }).gpu, true)), 'gpu-reset')
 })
 
@@ -152,4 +154,47 @@ test('a headset possible: the adapter is asked for as xrCompatible first, and pl
   const none = fakeGpu({ core: false })
   assert.equal(await codeOf(acquireDevice(none.gpu, true, '', true)), 'no-adapter')
   assert.deepEqual(none.asked.adapter.map((o) => (o as { xrCompatible?: boolean; featureLevel?: string }).xrCompatible ?? (o as { featureLevel?: string }).featureLevel ?? 'plain'), [true, 'plain', 'compatibility'])
+})
+
+test('gpuBack: asks until the browser hands out a live device again, every half second for twelve at most; the device asked for is destroyed', async () => {
+  assert.equal(GPU_BACK_EVERY_MS, 500)
+  assert.equal(GPU_BACK_FOR_MS, 12_000)
+  const slept: number[] = []
+  const sleep = async (ms: number): Promise<void> => { slept.push(ms) }
+  // Whole at once: nothing is waited for, and the device is let go.
+  let destroyed = 0
+  const live = (): GPUDevice => ({ lost: new Promise<never>(() => {}), destroy() { destroyed++ } }) as unknown as GPUDevice
+  const dead = (): GPUDevice => ({ lost: Promise.resolve({ reason: 'unknown', message: 'A valid external Instance reference no longer exists.' }), destroy() { destroyed++ } }) as unknown as GPUDevice
+  const whole: GpuEntry = { requestAdapter: async () => ({ requestDevice: async () => live() }) as unknown as GPUAdapter }
+  assert.equal(await gpuBack(whole, { sleep }), true)
+  assert.deepEqual(slept, [])
+  assert.equal(destroyed, 1)
+  // A browser between GPU processes: the request rejected, then no adapter, then a device born lost, then a whole one.
+  let n = 0
+  const asked: unknown[] = []
+  const coming: GpuEntry = {
+    requestAdapter: async (opts) => {
+      asked.push(opts)
+      n++
+      if (n === 1) throw new DOMException('GPU process is gone', 'OperationError')
+      if (n === 2) return null
+      return { requestDevice: async () => (n === 3 ? dead() : live()) } as unknown as GPUAdapter
+    },
+  }
+  destroyed = 0
+  assert.equal(await gpuBack(coming, { sleep }), true)
+  assert.deepEqual(slept, [500, 500, 500])
+  assert.equal(n, 4)
+  assert.equal(destroyed, 2, 'the lost device and the whole one')
+  assert.deepEqual(asked[0], { powerPreference: 'high-performance' })
+  // Never back: it gives up after the budget, having asked once more at the end.
+  slept.length = 0
+  let never = 0
+  const gone: GpuEntry = { requestAdapter: async () => { never++; return null } }
+  assert.equal(await gpuBack(gone, { sleep }), false)
+  assert.equal(slept.length, 24)
+  assert.equal(never, 25)
+  assert.equal(await gpuBack(gone, { sleep, everyMs: 100, forMs: 250 }), false)
+  // No WebGPU at all: nothing to wait for.
+  assert.equal(await gpuBack(undefined, { sleep }), false)
 })

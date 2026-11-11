@@ -17,6 +17,7 @@ import { packAgents, packAvatars, packVehicles, PhysicsBridge } from './sharedBr
 import { JointBuffer } from './jointBridge.ts'
 import type { RegionGround } from './physics.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
+import { CROWD_KERNELS, crowdKernelOf } from '../03_Spawn_Agents/crowdSensor.ts'
 import { WINDOW_BLOCKS, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { MAX_CRAFT_BOXES } from '../01_Initialize_World/region/transit.ts'
 import type { Box } from '../01_Initialize_World/city.ts'
@@ -281,9 +282,16 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: homes })
           return
         }
+        // The first crowd kernel the page asks for (what it remembers of this GPU, crowdKernelMemory.ts): a kernel's name or nothing.
+        const crowdKernel = init.crowdKernel === undefined || init.crowdKernel === null ? undefined : crowdKernelOf(init.crowdKernel)
+        if (crowdKernel === null) {
+          post({ t: 'error', message: `init: crowdKernel must be one of ${CROWD_KERNELS.join(', ')}` })
+          return
+        }
         core = await create({
           seed: init.seed, cars: init.cars, agents: init.agents, boxes: init.boxes, furniture: init.furniture, spawn: init.spawn, spawns, debug: init.debug === true, region,
           streets: region ? streets : null, workplaces, craftBoxes, shops, homes, tracks: init.tracks === true, ragdoll: init.ragdoll === true, craft: init.craft !== false,
+          ...(crowdKernel && { crowdKernel }),
         })
         for (let i = 0; i < refusedEarly; i++) core.noteRejected('message before init')
         post({ t: 'ready', meta: core.meta })

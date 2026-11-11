@@ -233,7 +233,7 @@ test('the world: the homes\' finishes and furniture in one HomeFurniture mesh in
   assert.ok(build.includes(`if (!region || plan.length > 0) scene.add(${mesh})`), 'in the scene whenever the buildings are')
   before(build, 'if (!region || plan.length > 0) scene.add(buildings)', `scene.add(${mesh})`, 'after the buildings')
   assert.match(build, /return \{[^}]*\bsetHomes\b[^}]*\}/, 'the setter on the world')
-  before(flat(read('./engine.ts')), 'const world = buildWorld(', 'await gpu.renderer.compileAsync(world.scene, world.camera)', 'built before the boot compiles')
+  before(flat(read('./engine.ts')), 'const world = buildWorld(', 'await alive(gpu.renderer.compileAsync(world.scene, world.camera))', 'built before the boot compiles')
   // A sky floor's clear panes collide (the plan holds them) but take no instance slot: the mesh draws the rest.
   assert.ok(build.includes('order.splice(0, order.length, ...order.filter((i) => plan[i].style !== STYLE.clear))'), 'the clear panes left out of the drawn order')
   before(build, 'const order = boxes.map((_, i) => i)', 'order.splice(0, order.length, ...order.filter(', 'out of the order the boxes give')

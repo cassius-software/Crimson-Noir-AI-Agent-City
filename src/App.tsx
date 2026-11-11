@@ -57,8 +57,10 @@ import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
 import { LockScreen, RecoveryCard } from './07_Execute_Actions/RecoveryCard.tsx'
 import { ActCard } from './07_Execute_Actions/ActCard.tsx'
 import { usePadNav } from './07_Execute_Actions/padNav.ts'
-import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, pageEnv } from './07_Execute_Actions/bootFailure.ts'
-import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
+import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstScreen, FRAME_FAULT, haltClass, KERNEL_RESTART_KEY, kernelRestartAddress, pageEnv, parseKernelRestart, recentGpuLosses, type KernelRestartNote } from './07_Execute_Actions/bootFailure.ts'
+import { GPU_BACK_FOR_MS, gpuBack, probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
+import { crowdKernelOf } from './03_Spawn_Agents/crowdSensor.ts'
+import { KernelResetError } from './03_Spawn_Agents/crowdKernelMemory.ts'
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
@@ -115,6 +117,46 @@ const HUD_INTERVAL_MS = 100
  * transient throw costs a frame, not the session; a throw on every frame is a stopped city with a card, not a frozen one.
  */
 const FRAME_FAULTS = 30
+/** How long the veil waits for the page's own restart on a lighter crowd kernel before the card comes up after all, ms. */
+const KERNEL_RESTART_GRACE_MS = 8000
+
+/** This tab's note of its own restart on a lighter crowd kernel, while it counts (bootFailure.ts); null without one. */
+function kernelRestartNote(): KernelRestartNote | null {
+  try {
+    return parseKernelRestart(sessionStorage.getItem(KERNEL_RESTART_KEY), Date.now())
+  } catch {
+    return null
+  }
+}
+
+/** Takes ?kernel= off the address without loading anything (the page's own restart put it there). Never throws. */
+function dropKernelWord(): void {
+  try {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('kernel')) return
+    url.searchParams.delete('kernel')
+    window.history.replaceState(window.history.state, '', url.toString())
+  } catch {
+    // An address the browser will not rewrite in place (some file: pages): the word stays, harmlessly.
+  }
+}
+
+/**
+ * Leaves the note for the page this one is about to become. False where this tab already restarted itself within the
+ * note's time: a second restart so soon would be a loop (a host that dropped the kernel from the address), and the
+ * card is shown instead. False too where the note cannot be read back (no session storage for this page): a page
+ * that can keep nothing cannot count its restarts or the GPU's losses, so there the card's own Restart, which goes
+ * to the lighter kernel, is the one way on.
+ */
+function noteKernelRestart(note: Omit<KernelRestartNote, 'at'>): boolean {
+  if (kernelRestartNote()) return false
+  try {
+    sessionStorage.setItem(KERNEL_RESTART_KEY, JSON.stringify({ ...note, at: Date.now() } satisfies KernelRestartNote))
+  } catch {
+    // No session storage for this page.
+  }
+  return kernelRestartNote() !== null
+}
 /** Where the cognition router's settings (the provider, each provider's server and model, the network key) are kept between visits. */
 const COGNITION_KEY = 'civic-simulation:cognition:v2'
 /** Where the local speech server's settings (its server, voice, model, auto) are kept between visits. */
@@ -523,6 +565,9 @@ function readOptions(): Options {
     // it from nvidia-smi or the amdgpu driver; ask vram at the console beats it, and it beats the Windows app's reading;
     // absent (and with no reading), auto keeps its usual model.
     vram: q.get('vram'),
+    // The first crowd kernel asked of the worker's GPU (?kernel=full|narrow|lite): it beats what the page remembers of
+    // this GPU (crowdKernelMemory.ts), and the page's own restart after a kernel took the GPU down carries it.
+    kernel: crowdKernelOf(q.get('kernel')?.toLowerCase()) ?? undefined,
   }
 }
 
@@ -618,6 +663,11 @@ function App() {
   // The first walk (onboarding/firstWalkStore.ts): on until its exit program has unlocked the city once, unless the URL says otherwise.
   const [walk] = useState(() => needsFirstWalk(new URLSearchParams(window.location.search), loadFirstWalk()))
   const [outcome, setOutcome] = useState<Outcome | null>(null)
+  // The page restarted itself a moment ago on a lighter crowd kernel (GuiShell's failed boot): what the visitor had
+  // only in the page's memory then (a first visit's onboarding outcome) is taken up from the note it left. Decided
+  // once, as the page loads, and only while the address still carries the kernel the restart asked for: a later
+  // reload by hand (the word is taken out once the city stands) is a visit of its own.
+  const [resumed] = useState(() => (options.kernel ? kernelRestartNote() : null))
   const [voice] = useState(onboardingVoice)
   // Sloane's spoken voice, one for the onboarding and the city (the link is filled in once the engine is up).
   const [link] = useState<SpeakerLink>(() => ({ sound: () => true, source: null }))
@@ -643,10 +693,12 @@ function App() {
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
   const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
-  const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
+  const shellOptions = outcome?.options ? { ...options, ...outcome.options } : resumed ? { ...options, startHour: resumed.startHour, audio: resumed.audio } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
+  // The same visitor, after the page's own restart on a lighter crowd kernel.
+  const watched = mentored || (outcome === null && resumed?.mentored === true)
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={watched} restarted={resumed !== null} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
 }
 
 /**
@@ -700,8 +752,8 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The most "Walk for me" keeps walking for, wall-clock ms (the stage's three metres end it long before on any ordinary frame). */
 const SHOW_WALK_MS = 60_000
 
-function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {
-  options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
+function GuiShell({ options, plan, mentored, restarted = false, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {
+  options: Options; plan: MapPlan; mentored: boolean; restarted?: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
   access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void; adapterHint?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -886,6 +938,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   // Concierge as nudges, and a prompt sent to someone in the city is reported to it from the mind below (noteRef,
   // built once with the engine).
   const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone && !walking, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
+  // The engine's failure handler's view of the mentor's choice (a restart for a lighter crowd carries it across).
+  const mentoredRef = useRef(mentored)
+  useEffect(() => { mentoredRef.current = mentored }, [mentored])
+  // Whether this page is the one a restart for a lighter crowd made (decided as the page loaded, App): it never changes.
+  const restartedRef = useRef(restarted)
   const noteRef = useRef<(e: MentorEvent) => void>(noteMentor)
   useEffect(() => { noteRef.current = noteMentor }, [noteMentor])
   const onGoal = useCallback(() => noteRef.current('goal'), [])
@@ -1256,6 +1313,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
         onStage('crowd')
         engine = e
         engineRef.current = e
+        // The page's own restart put ?kernel= in the address (the failed boot below); the page's record of this GPU now
+        // says the same, so the word comes off again: a link copied from here would hold another device to this kernel.
+        if (e.kernelKept && restartedRef.current) dropKernelWord()
         // Recruitment: voice (on-device) and the console, over the engine's narrow host. A halt closes the microphone.
         const r = new Recruiter(e.recruitHost())
         recruiter = r
@@ -1637,6 +1697,31 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
         raf = requestAnimationFrame(loop)
       },
       (err: unknown) => {
+        // A crowd kernel took the GPU down as the worker built it (crowdKernelMemory.ts): the page starts again by itself,
+        // once, with the lighter kernel in its address. Once: a start whose kernel came from the address never restarts
+        // itself (KernelResetError.auto), whatever the browser's storage keeps, and a tab that restarted itself a moment
+        // ago does not do so again (noteKernelRestart: a host that dropped the kernel from the address). Nor does a page
+        // that already lost the GPU once in the last five minutes before this loss: the restart could be the browser's
+        // third crash in its window, at which Chrome gives GPU graphics up, and after two in two minutes it would be
+        // handed no GPU anyway (bootFailure.ts gpuPaused). It goes once the browser hands out a GPU again (gpuBack: a
+        // new GPU process takes a moment), or after GPU_BACK_FOR_MS regardless. The veil stays up meanwhile; should the
+        // browser not go, the card comes after all, and its Restart goes to the same address.
+        const lighter = !cancelled && err instanceof KernelResetError && err.auto ? kernelRestartAddress(window.location.href, err.lighter) : null
+        if (lighter && recentGpuLosses().length < 2 && noteKernelRestart({ mentored: mentoredRef.current, startHour: options.startHour, audio: options.audio })) {
+          console.warn(`[crowd] ${err instanceof Error ? err.message : String(err)} Starting again with the lighter kernel.`)
+          setStage(BOOT_STAGE.lighter)
+          let card = 0
+          let going = true
+          unwatch = () => { going = false; window.clearTimeout(card) }
+          const go = (): void => {
+            if (!going) return
+            going = false
+            card = window.setTimeout(() => { if (!cancelled) setError({ cause: err }) }, KERNEL_RESTART_GRACE_MS)
+            window.location.replace(lighter)
+          }
+          void Promise.race([gpuBack(navigator.gpu), new Promise((resolve) => window.setTimeout(resolve, GPU_BACK_FOR_MS + KERNEL_RESTART_GRACE_MS))]).then(go, go)
+          return
+        }
         setError({ cause: err })
         // The phone took the GPU back while the city loaded in the background: restart once the player is back.
         if (!cancelled && err instanceof WebGPUUnavailableError && err.code === 'gpu-reset' && err.background) unwatch = reloadWhenVisible(true)
