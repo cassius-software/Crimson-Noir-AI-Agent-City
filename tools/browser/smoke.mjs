@@ -750,34 +750,20 @@ async function tether(p, skill, tries = 6) {
 }
 
 /**
- * Puts the operator down on a sidewalk beside the nearest person who knows `skill` (the first half of `tether`,
- * without the recruit), so an ask within earshot can be sent: the first walk's exam asks people over through the
- * recruiter, under the recruiter's own checks (on foot, off the road, within AUDIBLE_RADIUS, the person idle).
+ * Who could be asked over from where the operator stands: everyone the recruiter's own check (skills.ts eligible: on
+ * the sidewalk, within AUDIBLE_RADIUS, a sidewalk path to the operator) admits for any skill they have, read from one
+ * fresh frame of the crowd. The first walk's exam must not need anyone here.
  */
-async function besideSomeone(p, skill) {
+async function earshot(p) {
   const seen = await p.eval(`new Promise((resolve) => { const h = window.__SIM__.engine.recruitHost(); const off = h.onState((s) => {
     const f = s.crowdFrame; if (!f || f.length < 4 * h.agents) return; off()
     const xz = new Array(2 * h.agents); for (let k = 0; k < h.agents; k++) { xz[2 * k] = f[4 * k]; xz[2 * k + 1] = f[4 * k + 2] }
     resolve({ xz, me: h.operator() }) }) })`)
-  if (!seen.me) return { ok: false, note: 'the operator is not on foot' }
+  if (!seen.me) return { me: null, near: [] }
   const xz = Float32Array.from(seen.xz)
-  let best = null
-  for (let k = 1; 2 * k + 1 < xz.length; k++) {
-    const x = xz[2 * k], z = xz[2 * k + 1]
-    if (!skillsOf(k).includes(skill) || !Number.isFinite(x) || onRoad(x, z)) continue
-    const d = Math.hypot(x - seen.me.x, z - seen.me.z)
-    if (best && d >= best.d) continue
-    for (const [ox, oz] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
-      const at = { x: x + ox, z: z + oz }
-      if (!onRoad(at.x, at.z) && eligible(xz, k, at, skill) >= 0) { best = { k, at, d }; break }
-    }
-  }
-  if (!best) return { ok: false, note: `nobody with ${skill} on a sidewalk` }
-  await p.eval(`window.__SIM__.teleport(${best.at.x}, ${best.at.z})`)
-  await p.frames(3)
-  // The recruiter's copy of the crowd is refreshed every 250 ms (recruitment.ts COPY_INTERVAL_MS).
-  await new Promise((r) => setTimeout(r, 400))
-  return { ok: true, note: `agent ${best.k}, ${best.d.toFixed(0)} m away` }
+  const near = []
+  for (let k = 1; 2 * k + 1 < xz.length; k++) if (skillsOf(k).some((skill) => eligible(xz, k, seen.me, skill) >= 0)) near.push(k)
+  return { me: seen.me, near }
 }
 
 /**
@@ -1927,8 +1913,9 @@ const SCENARIOS = {
    * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
    * stage's action (walk, plan a goal, a car's door, a workplace's doorway, the wardrobe card, `laws`) and the page's
    * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
-   * where the exam seals the live kernel, asks people over through the recruiter (so the visitor is first put down on a
-   * sidewalk beside someone who knows Robotics) and unlocks the city; the card goes and the pass is kept.
+   * where the exam seals the live kernel, sets twenty-four sub-agents to work through the team runner from where the
+   * workplace stage left the visitor (inside a room, where nobody within earshot can be asked over) and unlocks the
+   * city; the card goes and the pass is kept.
    */
   async walk(chrome, origin) {
     const p = await open(chrome)
@@ -2004,11 +1991,12 @@ const SCENARIOS = {
       check((await stage()) === 'ring0', 'walk: stage 6 is Ring-0', `stage ${await stage()}`)
       const b6 = await show()
       check(await past('ring0', 30_000), `walk: "${b6}" runs laws and the stage passes`, `stage ${await stage()}`)
-      // 7 The way out: beside someone on a sidewalk first (spawn_subagents asks through the recruiter, within earshot),
-      // then the three line buttons and Run, each line's doors reported by the console.
+      // 7 The way out, from where the workplace stage left the visitor: inside a room, where the recruiter can ask nobody
+      // over (the spot a swarm of people within earshot left a visitor shut in), then the three line buttons and Run,
+      // each line's doors reported by the console.
       check((await stage()) === 'exam', 'walk: stage 7 is the exit program', `stage ${await stage()}`)
-      const by = await besideSomeone(p, 'Robotics')
-      check(by.ok, 'walk: the visitor is put down on a sidewalk beside someone who knows Robotics', by.note)
+      const ear = await earshot(p)
+      check(ear.me !== null && ear.near.length === 0, 'walk: where the workplace stage left the visitor, nobody within earshot can be asked over', ear.me ? `at ${ear.me.x.toFixed(1)}, ${ear.me.z.toFixed(1)}: ${ear.near.length ? `agents ${ear.near.join(', ')}` : 'nobody'}` : 'not on foot')
       const lines = await p.eval(`[...document.querySelectorAll('[data-walk-line-button]')].length`)
       check(lines === 3 && await p.eval(`!!document.querySelector('[data-walk-run]')`), 'walk: the last card has three line buttons and Run', `${lines} lines`)
       await p.shot('walk-exam')
@@ -2022,14 +2010,18 @@ const SCENARIOS = {
       }
       const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 15 checks, contained, realm standing/)
       check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
-      const l2 = await line(2, /spawn_subagents: \d+ of 24 asked over for sim2real_workplaces/)
-      check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 asks people over through the recruiter (at least one)', lastLine(l2.t))
+      const l2 = await line(2, /spawn_subagents: \d+ of 24 (?:sub-agents at work|set to work) for sim2real_workplaces/)
+      check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 sets the swarm to work through the team runner with nobody near (at least one lane running)', lastLine(l2.t))
       const l3 = await line(3, /unlock_city: /)
       check(/unlock_city: the city is yours/.test(l3.t ?? ''), 'walk: line 3 unlocks the city', lastLine(l3.t))
       const gone = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
       const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
       check(gone && kept?.v === 1 && kept?.passed === true, 'walk: the card goes and the pass is kept for the next visit', JSON.stringify(kept))
       await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      // The swarm stays at work once the city is open: the console's lanes reads the team the exit program dispatched.
+      const lanesOut = await p.command('lanes', /team: |lanes: /)
+      const running = Number(/team: Send 24 sub-agents to the robotics lab, [^\n]* \((\d+) running, \d+ isolated/.exec(lanesOut ?? '')?.[1] ?? 0)
+      check(running >= 1, 'walk: lanes shows the twenty-four sub-agents at the sixteen workplaces, still running after the city opens', (lanesOut ?? '').split('\n').find((l) => /team: |lanes: /.test(l))?.trim().slice(0, 240) ?? 'nothing printed')
       const status = await p.command('tutorial status', /tutorial: /)
       check(/^tutorial: the first walk is passed: the city is yours$/.test(lastLine(status)), 'walk: tutorial status says the walk is passed', lastLine(status))
       await p.shot('walk')

@@ -6,9 +6,11 @@
  * page already has and nothing more. `verify_ring0` is a seal: a 32-bit FNV-1a hash of what holds right now (the four
  * laws by rank and title, the gate's fifteen checks by name, the host's vouch that the page is contained, the Ring-0
  * audit standing) salted with a number drawn once per page load, so the seal is 0 when any of it fails and a number
- * typed from memory never matches. `spawn_subagents` asks up to n people over for a role through the recruiter's own
- * lane (the same page checks and realm answers as `recruit <skill>`: on foot, off the road, within earshot, at most
- * RECRUIT_SLOTS at a time) and answers with how many were asked, never with the number wished for. `unlock_city`
+ * typed from memory never matches. `spawn_subagents` sets n sub-agents to work for a role through Sloane's team runner
+ * (08_Swarm/team.ts): one lane each, a small NoirScript program at one of the sixteen workplaces, opened from wherever
+ * the player stands, under the lane limits and the Ring-0 gate, with anyone within earshot who has a desk's skill
+ * asked over as the runner finds them. It answers with how many lanes are running after their first tick, never with
+ * the number wished for, and opens nothing while the page is not contained or the realm is halted. `unlock_city`
  * opens the city for a seal that matches the live one and a swarm of one or more, by telling the walk, which keeps the
  * pass; it writes to nothing else. Every door leaves one plain line the console prints after the run, so the visitor
  * reads why the city stayed shut. Nothing here bypasses the Ring-0 gate or the elite tier: the exam has no write
@@ -28,8 +30,12 @@ export interface ExamHost {
   laws(): readonly { readonly id: number; readonly title: string }[]
   /** The gate's checks by name, in its order (operator.ts GATE_CHECK_NAMES; the gate itself stays with its three keepers). */
   checks(): readonly string[]
-  /** The recruiter's instant ask (08_Swarm/recruitment.ts Recruiter.tryAsk). */
-  ask(skill: string): { sent: boolean; agent: number; message: string }
+  /**
+   * Sets `n` sub-agents to work for the role through the page's one team runner (App.tsx: dispatch.ts swarmTeam, then
+   * TeamRunner.dispatch and one tick), replacing any team at work. Called only while the page is contained and the
+   * realm stands, with 1 <= n <= SPAWN_MAX.
+   */
+  swarm(n: number, role: string): ExamSwarm
   /** A number drawn once per page load (crypto.getRandomValues), so a seal never outlives the page. */
   nonce: number
   /** The stage the walk is on: null when the walk is off or passed. */
@@ -40,13 +46,25 @@ export interface ExamHost {
   note(e: 'seal' | 'swarm' | 'unlock'): void
 }
 
-/** The roles the exit program may name, and the skills asked for in turn under each. */
-export const EXAM_ROLES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  sim2real_workplaces: Object.freeze(['Robotics', 'Rust', 'Python', 'Data', 'Testing', 'Design', 'TypeScript', 'Security']),
-})
+/** What a swarm opened, as the team runner counts it after the lanes' first tick. */
+export interface ExamSwarm {
+  /** Lanes still running after their first tick: the swarm. */
+  readonly running: number
+  /** Lanes opened, running or isolated. */
+  readonly opened: number
+  /** The workplaces they were dealt round (all sixteen from sixteen sub-agents up; fewer reach the first desks only). */
+  readonly desks: number
+  /** The lanes of the team this one replaced (0 when none was at work). */
+  readonly replaced: number
+  /** The desks this map has no room for (their lanes read around where the player started, and nobody is asked over for them). */
+  readonly missing: readonly string[]
+}
 
-/** The most sub-agents one call asks for (the realm holds far fewer at a time; the rest is refused by the realm, not pretended). */
-export const SPAWN_MAX = 64
+/** The roles the exit program may name: the sub-agents go to the workplaces' desks (06_Make_Decisions/dispatch.ts). */
+export const EXAM_ROLES: readonly string[] = Object.freeze(['sim2real_workplaces'])
+
+/** The most sub-agents one call sets to work: the team runner's cap (06_Make_Decisions/dispatch.ts TEAM_MAX; a test pins the two equal). */
+export const SPAWN_MAX = 32
 
 /** FNV-1a over a string, 32 bits (the seal's hash; 0 is reserved for "does not hold"). */
 export function fnv1a(text: string): number {
@@ -81,10 +99,17 @@ export function sealOf(p: SealParts): number {
   return h === 0 ? 1 : h
 }
 
-/** Why a seal is 0, in one clause. */
-export function sealWhy(p: Pick<SealParts, 'contained' | 'standing' | 'laws' | 'checks'>): string | null {
+/** Why the realm does not hold (the page uncontained, or the audit panicked), in one clause; null while it holds. */
+export function heldWhy(p: Pick<SealParts, 'contained' | 'standing'>): string | null {
   if (!p.contained) return 'the page is not contained (the host has not vouched for the air gap)'
   if (!p.standing) return 'the Ring-0 audit has panicked: the realm is halted'
+  return null
+}
+
+/** Why a seal is 0, in one clause. */
+export function sealWhy(p: Pick<SealParts, 'contained' | 'standing' | 'laws' | 'checks'>): string | null {
+  const held = heldWhy(p)
+  if (held !== null) return held
   if (p.laws.length !== 4) return `${p.laws.length} laws where four are expected`
   if (p.checks.length !== 15) return `${p.checks.length} checks where fifteen are expected`
   return null
@@ -115,26 +140,34 @@ export function createExam(host: ExamHost): ExamBridge {
     },
     spawnSubagents(n: number, role: string): number {
       if (!host.on()) off()
-      const skills = EXAM_ROLES[role]
-      if (skills === undefined) throw new Error(`spawn_subagents: unknown role '${role}': ${Object.keys(EXAM_ROLES).join(', ')}`)
-      const want = Number.isFinite(n) ? Math.min(SPAWN_MAX, Math.floor(n)) : 0
+      if (!EXAM_ROLES.includes(role)) throw new Error(`spawn_subagents: unknown role '${role}': ${EXAM_ROLES.join(', ')}`)
+      const want = Number.isFinite(n) ? Math.floor(n) : 0
       if (want <= 0) {
         say(`spawn_subagents: nobody asked for (${n} is not a swarm)`)
         return 0
       }
-      let asked = 0
-      let why = ''
-      for (let i = 0; i < want; i++) {
-        const r = host.ask(skills[i % skills.length]!)
-        if (!r.sent) { why = r.message; break }
-        asked++
+      // The gate would isolate every lane at once: nothing is opened, and the seal says the same.
+      const held = heldWhy({ contained: host.contained(), standing: host.standing() })
+      if (held !== null) {
+        say(`spawn_subagents: 0 of ${want} set to work for ${role}: ${held}; nothing was opened`)
+        return 0
       }
-      if (asked === 0) say(`spawn_subagents: 0 of ${want} asked over for ${role}: ${why}`)
-      else {
-        say(`spawn_subagents: ${asked} of ${want} asked over for ${role} (${skills.slice(0, Math.min(asked, skills.length)).join(', ')}); they answer as they arrive (recruit status)${why ? `; the rest: ${why}` : ''}`)
-        host.note('swarm')
+      const r = host.swarm(Math.min(want, SPAWN_MAX), role)
+      const running = Math.max(0, Math.floor(r.running))
+      const isolated = Math.max(0, r.opened - running)
+      const also = [
+        ...(want > SPAWN_MAX ? [`a team holds at most ${SPAWN_MAX}`] : []),
+        ...(isolated ? [`${isolated} isolated at once (lanes ledger says why)`] : []),
+        ...(r.replaced ? [`it replaces the team of ${r.replaced} that was at work`] : []),
+        ...(r.missing.length ? [`this map has no room for ${r.missing.length === 1 ? 'one desk' : `${r.missing.length} desks`}, whose lanes read around where you started`] : []),
+      ]
+      if (running === 0) {
+        say(`spawn_subagents: 0 of ${want} set to work for ${role}: ${r.opened} opened and every one isolated at once (lanes ledger says why)`)
+        return 0
       }
-      return asked
+      say(`spawn_subagents: ${running} of ${want} sub-agents at work for ${role}, one lane each across ${r.desks} ${r.desks === 1 ? 'workplace' : 'workplaces'}${also.length ? `; ${also.join('; ')}` : ''}; anyone within earshot with a desk's skill is asked over too (lanes shows them)`)
+      host.note('swarm')
+      return running
     },
     unlockCity(seal: number, swarm: number): boolean {
       if (!host.on()) off()
@@ -148,7 +181,7 @@ export function createExam(host: ExamHost): ExamBridge {
         return false
       }
       if (!(swarm >= 1)) {
-        say('unlock_city: refused, a swarm of 0: nobody came over; stand on the sidewalk near people and run spawn_subagents again')
+        say('unlock_city: refused, a swarm of 0: no sub-agent is at work; run spawn_subagents again (lanes says why)')
         return false
       }
       host.note('unlock')

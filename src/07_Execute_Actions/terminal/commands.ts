@@ -1596,8 +1596,8 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     const writes = eliteWritesOf(b)
-    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the recruiter's own
-    // lane, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
+    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the page's one team
+    // runner, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
     const exam = b.exam
     const host: NoirHost = {
       tables: () => tables, locked: NOIR_LOCKED, noExam: NOIR_NO_EXAM,

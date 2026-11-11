@@ -98,7 +98,7 @@ import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
 import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
-import { teamRows } from './06_Make_Decisions/dispatch.ts'
+import { swarmTeam, teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
@@ -1494,14 +1494,23 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
           // The first walk's exam, behind NoirScript's verify_ring0 / spawn_subagents / unlock_city: it reads the
-          // kernel (the laws, the host's vouch for the air gap, the audit standing), asks people over through the
-          // recruiter's own lane, and tells the walk; it has no write surface of its own.
+          // kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through the
+          // page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
+          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its own.
           exam: createExam({
             contained: () => airgapInstalled(globalThis),
             standing: () => lockedRef.current === null,
             laws: () => engineBridge.laws(),
             checks: () => GATE_CHECK_NAMES,
-            ask: (skill) => r.tryAsk(skill),
+            swarm: (n, role) => {
+              // One tick at once, so the count is of lanes still running after their first reading, not of lanes opened.
+              const replaced = team.views().length
+              const plan = swarmTeam(n, `spawn_subagents(${n}, "${role}")`)
+              const d = team.dispatch(plan)
+              team.tick()
+              const running = team.views().filter((v) => v.state === 'ready').length
+              return { running, opened: d.lanes, desks: plan.kinds.length, replaced, missing: d.missing }
+            },
             nonce: crypto.getRandomValues(new Uint32Array(1))[0] ?? 1,
             stage: () => walkRef.current.stage,
             on: () => walk,
