@@ -147,8 +147,8 @@ On each client machine:
      `Cross-Origin-Embedder-Policy: require-corp` (what `npm run preview` sends), so the page is cross-origin
      isolated and shares its physics memory bridge with the worker (docs/zero-copy-bridge.md); the page loads
      nothing cross-origin, so the headers cost it nothing. The same headers let a model the operator keeps in the
-     page (`ask provider inpage`) run on more than one thread. The page is about 14 MB now, about 3.7 MB more, since
-     it carries that model's runtime; serving it does not change: still one file and the same two headers, and a
+     page (`ask provider inpage`) run on more than one thread. The page is about 12 MB now: it carries that model's runtime,
+     and the physics engine's module rides deflated; serving it does not change: still one file and the same two headers, and a
      model file never passes through the server (it is copied from the operator's disk into their browser).
    - **A Crimson Noir OS runtime:** read the token without leaving it in the shell's history, then run the bridge:
      ```sh

@@ -111,6 +111,11 @@
  *   real mouse click on View, Enter still reaches the card (it picks up the sofa under the cursor) and never presses
  *   View again, and Z puts the sofa back; Done closes the view, the layout is saved in this browser, and after a
  *   reload both pieces are still solid and placed;
+ * - rest: a rest at home in the Brownstone (level 3, a bookcase standing there, given by hand and reloaded): B inside
+ *   opens the furnishing view, 4 its Rest tab, which offers +1 for one kind of furniture beside a Rest button at least
+ *   48 px tall that the panel describes; Enter rests (a hero point, a new round, word 40 of the record), a real click
+ *   on Rest is refused while the rest lasts and changes nothing, the HUD's chip ends with "prepared +1", the console's
+ *   next check line and `progress` say so, and after a reload all of it is still there;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -126,7 +131,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -2593,6 +2598,151 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
       await p.waitFor(`!${at('aside[data-home]')}`, 10_000).catch(() => {})
       p.health('furnish reloaded')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * A rest at home (HomeCard.tsx's Rest tab, progress.ts restOffer and restTake) in the Brownstone, by keyboard and by
+   * a real mouse. The loft is claimed first (free: it puts the record in this browser), then the record gets level 3
+   * and 6,000 credits by hand, sealed again as progression.ts sealOf does, and the page reloaded; the Brownstone's
+   * deed and a bookcase are bought through the shopkeeper, and the Brownstone's layout written with that bookcase
+   * standing where its show home had one (the layout is read once at mount, so reloaded again). In the Brownstone B
+   * opens the furnishing view and 4 its Rest tab: +1 for one kind of furniture, and a Rest button for a finger that
+   * the panel describes. Enter rests: a hero point, a new round, word 40 of the record at 30 checks of +1. A real click
+   * on Rest while it lasts is refused and changes nothing. The HUD's chip ends with "prepared +1" (and says so to a
+   * screen reader), the console's next check carries the +1 and `progress` counts 29 more checks, and after a reload
+   * the record, the chip and `progress` still do. Copied from furnish rather than shared, so its checks stay put.
+   */
+  async rest(chrome, origin) {
+    const p = await open(chrome)
+    const at = (sel) => `document.querySelector(${JSON.stringify(sel)})`
+    const card = 'aside[data-home="1"][data-furnish]'
+    const words = () => p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:progress:v1')).words } catch { return [] } })()`)
+    const chipText = () => p.eval(`${at('[data-hint="progress"] .truncate')}?.textContent ?? ''`)
+    const chipLabel = () => p.eval(`${at('[data-hint="progress"] .sr-only')}?.textContent ?? ''`)
+    // Go home, then W walks in (the canvas clicked first, as a person would).
+    const walkIn = async () => {
+      await p.eval('window.__SIM__.engine.goHome(1)')
+      const a = (await p.eval('window.__SIM__.homes()'))[1].arrival
+      await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${a.x}, v.z - ${a.z}) < 0.6 })()`, 30_000).catch(() => {})
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.key('keyDown', 'KeyW', 'w', 87)
+      const inside = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 1`, 30_000).then(() => true, () => false)
+      await p.frames(6)
+      await p.key('keyUp', 'KeyW', 'w', 87)
+      await p.frames(10)
+      return inside
+    }
+    try {
+      await p.goto(`${origin}/?${LIGHT}&seed=1337`)
+      await p.booted()
+      // The loft claimed (free), so the record is in this browser; then level 3 and 6,000 credits, sealed again, reloaded.
+      const claimed = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(224); return k.owns(224) })()`)
+      check(claimed, 'rest: the loft is claimed, so the record is kept in this browser')
+      await p.eval(`(() => {
+        const key = 'civic-simulation:progress:v1'
+        const data = JSON.parse(localStorage.getItem(key))
+        const w = data.words
+        w[14] = 3
+        w[16] = 6000
+        let h = 0x811c9dc5
+        for (let i = 0; i < w.length; i++) {
+          if (i === 63) continue
+          const v = w[i] >>> 0
+          h = Math.imul(h ^ (v & 0xff), 0x01000193)
+          h = Math.imul(h ^ ((v >>> 8) & 0xff), 0x01000193)
+          h = Math.imul(h ^ ((v >>> 16) & 0xff), 0x01000193)
+          h = Math.imul(h ^ (v >>> 24), 0x01000193)
+        }
+        w[63] = h | 0
+        localStorage.setItem(key, JSON.stringify(data))
+      })()`)
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      // The Brownstone (4,000) and a bookcase (1,100), then its layout with the bookcase standing; reloaded once more.
+      const bought = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(225); k.buy(164); return { home: k.owns(225), bookcase: k.owns(164), level: k.purse.level(), credits: k.purse.credits() } })()`)
+      check(bought.home && bought.bookcase && bought.level === 3 && bought.credits === 900, 'rest: level 3, the Brownstone and a bookcase bought, 900 credits left', JSON.stringify(bought))
+      await p.eval(`localStorage.setItem('civic-simulation:home:v1', JSON.stringify({ v: 1, homes: [null, [1, 1, [[164, 2, 16, 0]]], null, null, null, null, null] }))`)
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const inside = await walkIn()
+      check(inside, 'rest: the avatar walks into the Brownstone')
+
+      // B opens the furnishing view; 4 its Rest tab: +1 for the one kind of furniture standing here.
+      await p.tap('KeyB', 'b', 66)
+      const opened = await p.waitFor(`!!${at(card)}`, 10_000).then(() => true, () => false)
+      // The view's key listener is attached after it first draws, which on a slow software adapter can be a few frames
+      // later; 4 again is harmless (it only chooses the Rest tab), so press until the tab reads as open.
+      let tab = false
+      let presses = 0
+      for (; presses < 5 && !tab; presses++) {
+        await p.tap('Digit4', '4', 52)
+        tab = await p.waitFor(`!!${at(`${card} [data-rest]`)}`, 4_000).then(() => true, () => false)
+      }
+      // What the key went to is in the detail too (the focused element and the tab the view reads), should it fail.
+      const offer = await p.eval(`(() => { const b = ${at(`${card} [data-action="rest"]`)}; const panel = ${at(`${card} [data-rest]`)}; const r = b?.getBoundingClientRect()
+        const by = b ? document.getElementById(b.getAttribute('aria-describedby') ?? '') : null
+        const f = document.activeElement, focus = f ? [f.tagName, f.getAttribute('aria-label') ?? f.getAttribute('name') ?? f.id ?? ''].join(' ') : ''
+        const tabs = [...document.querySelectorAll('${card} [role="tab"]')].map((t) => t.getAttribute('aria-selected') === 'true' ? '*' + t.textContent : t.textContent).join(',')
+        return { text: panel?.textContent ?? '', button: b?.textContent ?? '', height: r ? r.height : 0, described: !!by && by === panel, place: !!${at(`${card} [data-action="place"]`)},
+          opened: ${opened}, presses: ${presses}, focus, tabs } })()`)
+      check(opened && tab && /a hero point, a new round, and \+1 to every check for the next 30 checks/.test(offer.text) && /1 kind of furniture stands here/.test(offer.text), 'rest: B opens the furnishing view and 4 its Rest tab, offering +1 for the one kind of furniture standing here', JSON.stringify(offer))
+      check(offer.button === 'Rest' && offer.height >= 48 && offer.described && !offer.place, 'rest: the Rest tab\'s button reads Rest, stands at least 48 px tall in Place\'s spot, and the panel describes it', JSON.stringify(offer))
+
+      // Enter rests: a hero point, a new round, and +1 on the next 30 checks, in the record.
+      const before = await words()
+      await p.tap('Enter', 'Enter', 13)
+      const rested = await p.waitFor(`/^Rested: /.test(${at(`${card} [data-reason]`)}?.textContent ?? '')`, 10_000).then(() => true, () => false)
+      const said = await p.eval(`${at(`${card} [data-reason]`)}?.textContent ?? ''`)
+      const after = await words()
+      check(rested && new RegExp(`^Rested: hero ${before[17] + 1} of 3, a new round, and \\+1 to every check for the next 30 checks`).test(said) && before[17] === 1, 'rest: Enter rests, and the reason line says what it gave', said)
+      check(after[40] === 121 && after[17] === 2 && (before[40] ?? 0) === 0, 'rest: the record keeps the rest (word 40: 30 checks of +1) and the hero point', `word 40 ${before[40]} -> ${after[40]}, hero ${before[17]} -> ${after[17]}`)
+      await p.shot('rest')
+
+      // A real click on Rest while the rest lasts: refused in words, nothing changed.
+      const rect = await p.eval(`(() => { const r = ${at(`${card} [data-action="rest"]`)}?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null })()`)
+      if (rect) {
+        await p.mouse('mousePressed', rect.x, rect.y, 1)
+        await p.mouse('mouseReleased', rect.x, rect.y)
+      }
+      const refused = await p.waitFor(`/^You are prepared: \\+1 to every check for 30 more checks/.test(${at(`${card} [data-reason]`)}?.textContent ?? '')`, 10_000).then(() => true, () => false)
+      const still = await words()
+      check(!!rect && refused && still[40] === 121 && still[17] === 2, 'rest: a click on Rest while it lasts is refused, and changes nothing', `${await p.eval(`${at(`${card} [data-reason]`)}?.textContent ?? ''`)}; word 40 ${still[40]}, hero ${still[17]}`)
+
+      // Esc: the HUD's chip ends with "prepared +1", and says so to a screen reader.
+      await p.tap('Escape', 'Escape', 27)
+      await p.waitFor(`!${at('aside[data-home]')}`, 10_000).catch(() => {})
+      const chip = await p.waitFor(`(() => { const t = ${at('[data-hint="progress"] .truncate')}?.textContent ?? ''; return / · prepared \\+1$/.test(t) && t })()`, 10_000).catch(() => '')
+      const label = await chipLabel()
+      check(/ · prepared \+1$/.test(chip || '') && /prepared: 1 added to every check/.test(label), 'rest: the HUD\'s chip ends with prepared +1, and its label says so', `${chip || await chipText()} | ${label}`)
+
+      // The console: the next check carries the +1, and progress counts what is left.
+      check(await p.openConsole(), 'rest: the tilde key opens the console')
+      const line = await p.command('time 12', /Optics and cinema: \d+ \+\d+ \+1 prepared = \d+ vs DC \d+/)
+      check(!!line, 'rest: the next check line shows the +1 prepared', line?.split('\n').find((l) => /Optics/.test(l)) ?? 'no check line')
+      const status = await p.command('progress', /prepared: \+1 to every check for 29 more checks/)
+      check(!!status, 'rest: progress says +1 for 29 more checks', status?.split('\n').find((l) => /^\s*prepared:/.test(l)) ?? 'no line')
+      const used = await words()
+      check(used[40] === 117, 'rest: one of the 30 checks used (word 40: 29 checks of +1)', `word 40 ${used[40]}`)
+      await p.tap('Escape', 'Escape', 27)
+      await p.waitFor(`!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).catch(() => {})
+      const errs = (await p.snap()).errors
+      check(errs.length === 0, 'rest: the engine recorded no error', errs.join(' | ').slice(0, 300))
+      p.saveTranscript('rest')
+      p.health('rest')
+
+      // Reloaded: the record, the chip and progress still have it.
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const kept = await words()
+      const chip2 = await p.waitFor(`(() => { const t = ${at('[data-hint="progress"] .truncate')}?.textContent ?? ''; return / · prepared \\+1$/.test(t) && t })()`, 20_000).catch(() => '')
+      check(kept[40] === 117 && / · prepared \+1$/.test(chip2 || ''), 'rest: after a reload the record keeps the rest and the chip still ends with prepared +1', `word 40 ${kept[40]}; ${chip2 || await chipText()}`)
+      check(await p.openConsole(), 'rest: after a reload the console opens')
+      const status2 = await p.command('progress', /prepared: \+1 to every check for 29 more checks/)
+      check(!!status2, 'rest: after a reload progress still says +1 for 29 more checks', status2?.split('\n').find((l) => /^\s*prepared:/.test(l)) ?? 'no line')
+      await p.tap('Escape', 'Escape', 27)
+      p.saveTranscript('rest')
+      const errs2 = (await p.snap()).errors
+      check(errs2.length === 0, 'rest: after a reload the engine recorded no error', errs2.join(' | ').slice(0, 300))
+      p.health('rest reloaded')
     } finally { await p.b.close() }
   },
 

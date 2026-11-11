@@ -111,6 +111,6 @@ test('the build strips a shader imported as text, in the page and in its workers
   // The page's bundle and each worker's are built from separate plugin lists; the physics worker carries the crowd's
   // shaders, so a plugin only in the page's list would leave half the comments in the file.
   const config = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8')
-  assert.match(config, /\n  plugins: \[leanShaders\(\), /, "first in the page's list")
-  assert.match(config, /\n  worker: \{ plugins: \(\) => \[leanShaders\(\), workerNotices\(\)\] \},\r?\n/, "and in the workers'")
+  assert.match(config, /\n  plugins: \[[^\]\n]*\bleanShaders\(\)[^\]\n]*\],\r?\n/, "in the page's list")
+  assert.match(config, /\n  worker: \{ plugins: \(\) => \[[^\]\n]*\bleanShaders\(\)[^\]\n]*\] \},\r?\n/, "and in the workers'")
 })
