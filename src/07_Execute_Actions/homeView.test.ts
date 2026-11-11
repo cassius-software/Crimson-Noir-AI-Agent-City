@@ -13,7 +13,10 @@
  * (three's WGSL builder needs no device) and draws a home's boxes into its HomeFurniture mesh, checks that the city's
  * ground under the homes is cut in SURFACE_PIECE cells (as two triangles it won the depth test against the floor
  * finish over it on the software adapter), checks the two furnishing styles are named for the material and that no
- * region plan box uses them, and screens the taglines.
+ * region plan box uses them, and screens the taglines. The homes' workstations (homeSeats, what engine.ts lists for the
+ * team runner) are listed in reading order only in owned homes and never in a network room, with rows that are a
+ * TeamRoom, a doorstep that can be walked to, a standing point inside the lot facing the screen, and kinds no desk of
+ * the dispatcher knows; and staffFigures draws only the agents who stand there now, in their dress.
  * What breaks if it is removed? A home could draw the street floor, a piece of a line not owned, a show home over the
  * owner's own layout, furniture in a network room that does not know it, more boxes than the mesh holds, or solids
  * the realm refuses, and only a browser would show it.
@@ -25,11 +28,11 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { WebGPURenderer, type BufferGeometry, type InstancedMesh, type Mesh } from 'three/webgpu'
 import { forbiddenWordIn } from '../01_Initialize_World/assets/cc0.ts'
-import { CITY_CENTER, LAKE, STYLE, type Building } from '../01_Initialize_World/city.ts'
-import { ROOM, toLocal, toWorld, type Side } from '../01_Initialize_World/interiors.ts'
+import { CITY, CITY_CENTER, LAKE, STYLE, inLot, type Building } from '../01_Initialize_World/city.ts'
+import { ROOM, doorFront, toLocal, toWorld, type Side } from '../01_Initialize_World/interiors.ts'
 import { ZONE, generateLakefront } from '../01_Initialize_World/lakefront.ts'
 import { packOf } from '../01_Initialize_World/lakefrontPack.ts'
-import { PROPERTY_KINDS, checkHomeBoxes, cityHomes, homeFrames, homesAt, type Home } from '../01_Initialize_World/properties.ts'
+import { PROPERTY_KINDS, checkHomeBoxes, cityHomes, homeAt, homeFrames, homesAt, type Home } from '../01_Initialize_World/properties.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { streetGridOf } from '../01_Initialize_World/region/streets.ts'
@@ -41,9 +44,14 @@ import {
   solidBox, wallPanels, type Piece, type RoomBox,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
+import { onRoad } from '../03_Spawn_Agents/skills.ts'
+import { deskAt } from '../06_Make_Decisions/dispatch.ts'
+import type { TeamRoom } from '../08_Swarm/team.ts'
+import { itemById } from './storeCatalog.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import {
-  CITY_LINES, CURSOR, EYE, FINISH_STYLE, HOME_BOXES, furnishEye, homeInstances, homePlaced, homeSolids, worldBoxOf, type Draft,
+  CITY_LINES, CURSOR, EYE, FINISH_STYLE, HOME_BOXES, furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, staffFigures, worldBoxOf, type Draft,
+  type HomeSeat, type StaffPost,
 } from './homeView.ts'
 
 // Vite's `?raw` import, for Node (shadowShaders.test.ts's hook): world.ts and regionWorld.ts reach WGSL that way.
@@ -458,4 +466,67 @@ test('the city\'s ground under the homes is cut into SURFACE_PIECE cells, as a r
     const [x0, , z0, x1, , z1] = homeInstances([h], freshHomes(), 0, 0, { room: true, base: 0, draft: null })[0].box
     assert.ok(x0 > bb.min.x && x1 < bb.max.x && z0 > bb.min.z && z1 < bb.max.z, `home ${h.home} on the ground`)
   }
+})
+
+/** The city's homes as the engine knows them: each with its deed's name and its arrival on the sidewalk lane. */
+const PAGE_HOMES = CITY_HOMES.map((h) => ({ ...h, name: itemById(224 + h.home)?.name ?? h.kind, arrival: doorFront(h, CITY.lane) }))
+const P = (id: number, c: number, r: number, rot = 0): Piece => ({ id, c, r, rot })
+const post = (name: string, home: number, c: number, r: number, present = true): StaffPost => ({ name, home, c, r, present, body: 2, ink: 0x7c3aed, scale: 1.05 })
+
+test('homeSeats lists the workstations of owned homes in reading order, each row a TeamRoom with a doorstep, a standing point and who is posted', () => {
+  const record = withHome(freshHomes(), 1, layoutOf(1, 1, [P(164, 2, 16), P(168, 10, 20), P(168, 4, 20)], []))
+  const seats = homeSeats(PAGE_HOMES, record, 1 << 1, bit(164) | bit(168), [post('Mara', 1, 10, 20)], { room: false, base: 0 })
+  assert.deepEqual(seats.map((s) => [s.seat, s.c, s.r, s.occupant, s.present]), [[1, 4, 20, null, false], [2, 10, 20, 'Mara', true]])
+  const [a, b] = seats
+  assert.equal(b.kind, 'homeSeat:1:10:20')
+  assert.equal(b.name, `${PAGE_HOMES[1].name}, workstation 2`)
+  assert.deepEqual(b.door, PAGE_HOMES[1].arrival, 'the home\'s arrival on the sidewalk')
+  assert.equal(b.home, 1)
+  // Where the agent stands: inside the lot of this home, on the floor overlay, facing the screen (probed: x 175.721, z 136.11).
+  assert.ok(Math.abs(b.at.x - 175.721) < 1e-6 && Math.abs(b.at.z - 136.11) < 1e-6, JSON.stringify(b.at))
+  assert.equal(b.at.y, OVERLAY.y1)
+  assert.ok(inLot(b.at.x, b.at.z) && homeAt(PAGE_HOMES, b.at.x, b.at.z) === 1)
+  const back = toWorld(PAGE_HOMES[1], -GRID_HALF + 20.5 * CELL, -GRID_HALF + 11 * CELL)
+  assert.ok(Math.abs(Math.atan2(back.x - b.at.x, back.z - b.at.z) - b.at.yaw) < 1e-9, 'facing the desk row')
+  assert.equal(a.at.x, b.at.x, 'the two stand in one row')
+  // Read-only all the way down, and structurally the team runner's room.
+  for (const x of [seats, a, b, b.door, b.at]) assert.ok(Object.isFrozen(x))
+  const rooms: readonly TeamRoom[] = seats
+  assert.equal(rooms.length, 2)
+  // A region's floor lifts the standing point with the homes.
+  assert.equal(homeSeats(PAGE_HOMES, record, 1 << 1, bit(164) | bit(168), [], { room: false, base: 0.12 })[0].at.y, 0.12 + OVERLAY.y1)
+})
+
+test('homeSeats is empty in a network room, skips homes not owned and lines not owned, and never lists a show home', () => {
+  const record = withHome(freshHomes(), 1, layoutOf(1, 1, [P(168, 10, 20)], []))
+  assert.deepEqual(homeSeats(PAGE_HOMES, record, 1 << 1, bit(168), [post('Mara', 1, 10, 20)], { room: true, base: 0 }), [], 'none in a network room')
+  assert.deepEqual(homeSeats(PAGE_HOMES, record, 0, bit(168), [], { room: false, base: 0 }), [], 'not owned')
+  assert.deepEqual(homeSeats(PAGE_HOMES, record, 1 << 1, 0, [], { room: false, base: 0 }), [], 'the line not owned: it does not stand')
+  // The sky-mansion's show home has two workstations; unowned, it lists none.
+  assert.equal(HOME_STAGING[6].filter((p) => p.id === 168).length, 2)
+  assert.deepEqual(homeSeats(PAGE_HOMES, freshHomes(), 0, ALL_LINES, [], { room: false, base: 0 }), [])
+  assert.equal(homeSeats(PAGE_HOMES, freshHomes(), 1 << 6, ALL_LINES, [], { room: false, base: 0 }).length, 0, 'owned, its own (empty) layout')
+})
+
+test('every seat\'s kind is unknown to the dispatcher, every doorstep can be walked to, and every standing point is inside its lot', () => {
+  const layouts = PAGE_HOMES.map((h) => [P(168, 4, GRID - DEPTH[h.home]), P(168, 10, GRID - DEPTH[h.home] + 4, 2)])
+  let record: HomeRecord = freshHomes()
+  for (const h of PAGE_HOMES) record = withHome(record, h.home, layoutOf(0, 0, layouts[h.home], []))
+  const seats: readonly HomeSeat[] = homeSeats(PAGE_HOMES, record, ALL_DEEDS, ALL_LINES, [], { room: false, base: 0 })
+  assert.equal(seats.length, 14, 'two in each of the seven homes')
+  for (const s of seats) {
+    assert.equal(deskAt(s.kind), null, s.kind)
+    assert.ok(!inLot(s.door.x, s.door.z) && !onRoad(s.door.x, s.door.z), `${s.name}: the doorstep is on the sidewalk`)
+    assert.ok(inLot(s.at.x, s.at.z) && homeAt(PAGE_HOMES, s.at.x, s.at.z) === s.home, `${s.name}: standing inside its own lot`)
+  }
+})
+
+test('staffFigures draws only the agents who stand at their workstation now, in their body, colour and height', () => {
+  const record = withHome(freshHomes(), 1, layoutOf(1, 1, [P(168, 10, 20), P(168, 4, 20)], []))
+  const posts = [post('Mara', 1, 10, 20), post('Theo', 1, 4, 20, false), post('Ines', 1, 16, 20)]
+  const seats = homeSeats(PAGE_HOMES, record, 1 << 1, bit(168), posts, { room: false, base: 0 })
+  const figures = staffFigures(seats, posts)
+  assert.equal(figures.length, 1, 'Theo is out with the player, and nothing stands where Ines was posted')
+  assert.deepEqual(figures[0], { ...seats[1].at, body: 2, ink: 0x7c3aed, scale: 1.05 })
+  assert.deepEqual(staffFigures(homeSeats(PAGE_HOMES, record, 1 << 1, bit(168), posts, { room: true, base: 0 }), posts), [], 'none in a network room')
 })

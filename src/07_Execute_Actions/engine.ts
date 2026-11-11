@@ -88,12 +88,13 @@ import {
 } from '../05_Observe_Environment/governor.ts'
 import { CAR_TUNE_RANGE, chassisBox, clampTuning, kindOf, type CarTuning } from './car.ts'
 import { itemById } from './storeCatalog.ts'
-import { furnishEye, homeInstances, homePlaced, homeSolids, type Draft } from './homeView.ts'
+import { furnishEye, homeInstances, homePlaced, homeSeats, homeSolids, staffFigures, type Draft, type HomeSeat, type StaffPost } from './homeView.ts'
 import { FleetView } from './fleetView.ts'
 import { CraftView } from './craftView.ts'
 import { buildTrackNetwork } from '../06_Make_Decisions/tracks.ts'
 import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
+import { STAFF_VIEW, StaffView } from './staffView.ts'
 import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
 import { XrMapper } from '../04_Connect_Hardware/xrInput.ts'
 import { xrSystemOf } from '../04_Connect_Hardware/xrSystem.ts'
@@ -622,6 +623,13 @@ export class Engine {
   private homeRecord: HomeRecord = freshHomes()
   private homeDeeds = 0
   private homeLines = 0
+  /** The player's own agents posted at the homes' workstations (setStaff), as the page draws and homeSeats lists them. */
+  private homeStaff: readonly StaffPost[] = Object.freeze([])
+  /** The posted agents drawn at their workstations (staffView.ts): the page's alone, never in the realm or the crowd. */
+  private readonly staffView = new StaffView()
+  /** homeSeats as last built, and what it was built from (by identity), so a read between changes costs nothing. */
+  private seatsFrom: readonly unknown[] = []
+  private seats: readonly HomeSeat[] = Object.freeze([])
   /**
    * Per property index, the solids last sent to the realm ('home') as text: '' for none (the realm starts with no set),
    * null when the realm's copy is not known. A network room refuses the command, even one queued just before the room
@@ -914,6 +922,7 @@ export class Engine {
     this.crowdRigs = p.crowdRigs
     this.ghost = p.ghost
     this.netView = p.netView
+    p.world.scene.add(this.staffView.group)
     this.poles = new PoleIndex(p.world.furniture)
     const f = p.world.furniture
     this.dissolve = new DissolveSet({ lamps: f.lamps.length, trees: f.trees.length, signals: f.signals.length, cars: p.sim.meta.suv.length, people: p.options.agents })
@@ -1966,6 +1975,18 @@ export class Engine {
   }
 
   /**
+   * The player's own agents posted at the homes' workstations (App over staffStore.ts and the roster): each post's home,
+   * workstation cell, whether they stand there now (not while hired) and how they are dressed. The page alone draws
+   * them (staffView.ts) and homeSeats lists them; the realm never hears of them, so nothing is sent. The same posts
+   * again (a roster edit that touches none) keep the list as it was, so homeSeats stays the same array.
+   */
+  setStaff(posts: readonly StaffPost[]): void {
+    if (JSON.stringify(posts.slice(0, STAFF_VIEW.max)) === JSON.stringify(this.homeStaff)) return
+    this.homeStaff = Object.freeze(posts.slice(0, STAFF_VIEW.max))
+    this.redrawHomes()
+  }
+
+  /**
    * The cells of home `home`'s floor plan someone stands on or near (canPlace's `blocked`, homeLayout.ts cellsNear):
    * every local avatar on foot inside that home, out to a person's radius and STAND_CLEAR more. None for a home that is
    * not in this map.
@@ -2030,6 +2051,20 @@ export class Engine {
     if (this.disposed) return
     const d = this.draft, draft = d && this.furnishHome !== null && d.home === this.furnishHome ? d : null
     this.world.setHomes(homeInstances(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, { room: this.netRoom, base: this.homeBase, draft }))
+    this.staffView.set(staffFigures(this.seatList(), this.homeStaff))
+  }
+
+  /**
+   * The workstations homeSeats lists, built again only when the furnishing, the owned deeds, the owned lines, the posts
+   * or the room changed (by identity); the owner's draft moving while furnishing changes none of them.
+   */
+  private seatList(): readonly HomeSeat[] {
+    const from = [this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, this.netRoom]
+    if (from.some((v, i) => v !== this.seatsFrom[i])) {
+      this.seatsFrom = from
+      this.seats = homeSeats(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, { room: this.netRoom, base: this.homeBase })
+    }
+    return this.seats
   }
 
   /**
@@ -3084,6 +3119,17 @@ export class Engine {
   /** Where a desk this map has no room for reads from (08_Swarm/team.ts TeamHost.centre): where player 1 started. */
   get teamCentre(): { readonly x: number; readonly z: number } { return this.startAt }
 
+  /**
+   * Every workstation (line 168) standing in a home the player owns, read-only (homeView.ts HomeSeat): kind, name and
+   * door fit the team runner's rooms (08_Swarm/team.ts TeamRoom), door being the home's arrival on the sidewalk lane;
+   * then the home, the workstation's number and cell, where its agent stands (inside the lot) and who is posted there.
+   * None in a network room or once the city has stopped. The same frozen list until the furnishing, the owned deeds,
+   * the owned lines, the posts or the room change, so a reader can compare by identity.
+   */
+  get homeSeats(): readonly HomeSeat[] {
+    return this.halted || this.disposed ? Object.freeze([]) : this.seatList()
+  }
+
   /** Why the realm no longer stands (the Ring-0 audit's panic, else a halt's reason), or null while it does: the team runner's `panic`. */
   get panicReason(): string | null { return this.sim.state.kernel.audit.panic ?? this.lockReason }
 
@@ -3658,6 +3704,7 @@ export class Engine {
     this.audio.dispose()
     for (let k = 1; k < this.views.length; k++) this.views[k].audio.dispose()
     this.netView.dispose()
+    this.staffView.dispose()
     this.craftView?.dispose()
     // Input.dispose() also disposes the hardware bus, which resets trigger effects and closes ports.
     this.input.dispose()

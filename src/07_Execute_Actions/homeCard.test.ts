@@ -16,7 +16,10 @@
  * card's deed rows have Visit or Go home, off with the reason as the title, an address line, a purchase line that says
  * where the home stands, and a warning when a deed leaves too little for any furniture; its furniture says where it
  * goes. The furnishing view's fourth tab, Rest, shows the host's words and rests with its own button, and every
- * sentence a rest at home can say passes the same screen.
+ * sentence a rest at home can say passes the same screen. Its fifth, Staff, shows the player's own agents as a strip
+ * of 48 px buttons, each with where the agent is under the name, and the workstations here as a list of 48 px buttons
+ * that move the cursor, turns Place and Remove into Post and Stand down, keeps the store and the roster out of the
+ * card, and every sentence staffing can say passes the same screen.
  * What breaks if it is removed? A tagline could fail the screen or name a real place, the card could buy around the
  * gate or swallow the HUD's key, the furnishing view could lose a control or an edit, and the deed rows could lose the
  * way to the home without anyone noticing.
@@ -31,6 +34,10 @@ import { itemById } from './storeCatalog.ts'
 import { PAD, padEdges, padStep, padsFor } from './padNav.ts'
 import { createProgress, restOffer, restTake } from './progress.ts'
 import { AT, seal } from '../02_Define_The_Rules/progression.ts'
+import { GRID, DEPTH } from '../02_Define_The_Rules/homeGrid.ts'
+import { freshHomes, layoutOf, withHome } from '../05_Observe_Environment/homeStore.ts'
+import { STAFF_TAB, Visit, type StaffAgent, type StaffHooks } from './furnishVisit.ts'
+import type { Shopkeeper } from './shopkeeper.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const flat = (s: string) => s.replace(/\s+/g, ' ')
@@ -142,11 +149,11 @@ test('the card buys the deed through the shopkeeper\'s gate, offers Claim for th
   for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
     assert.ok(src.includes(mark), `missing ${mark}`)
   }
-  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 14
-  // (Rest among them, in Place's spot in the Rest tab).
+  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 16
+  // (Rest among them, in Place's spot in the Rest tab, and the Staff tab's agent and workstation buttons).
   assert.ok(src.includes("const BUTTON = 'min-h-12 "))
   const buttons = buttonsIn(src)
-  assert.equal(buttons.length, 17, 'every button tag, read whole')
+  assert.equal(buttons.length, 19, 'every button tag, read whole')
   for (const b of buttons) assert.ok(b.includes('${BUTTON}') && b.includes('data-touch'), b)
   // Imports point down: no wardrobe and no properties module in the card, and of the saved homes only the pure record
   // helpers: the host loads and saves the record (App.tsx), the card hands it each edit.
@@ -271,7 +278,7 @@ test('the furnishing view takes only its own keys, in the capture phase: never H
     KeyA: '{ move: [-n, 0] }', KeyD: '{ move: [n, 0] }',
     Enter: "'place'", NumpadEnter: "'place'", Space: "'place'", KeyR: "'rotate'",
     Delete: "'remove'", Backspace: "'remove'", KeyX: "'remove'", KeyQ: "'prev'", KeyE: "'next'",
-    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', Digit4: '{ tab: 3 }', KeyC: "'view'",
+    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', Digit4: '{ tab: 3 }', Digit5: '{ tab: 4 }', KeyC: "'view'",
   })
   for (const never of ['KeyH', 'Backquote', 'Escape', 'KeyB']) assert.ok(!acts.has(never), `${never} is never the furnishing view's`)
   // The listener: captured, skipping a field being typed in, stopping only a key it handles; held, only moves repeat.
@@ -398,7 +405,7 @@ test('the host keeps the homes\' record, saves every edit and hands it to the en
 test('the Rest tab: the panel shows the host\'s words (hooks.rest.offer), never computed in the card; there the toolbar\'s primary button is Rest (BUTTON, TARGET, Enter, aria-describedby the panel) while Place keeps its own button; the finishes show only in Floor and Walls; the tabs wrap; the deed view says resting waits with furnishing', () => {
   const src = flat(card)
   const visit = flat(visitSrc)
-  assert.ok(visit.includes("export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest'] as const)"))
+  assert.ok(visit.includes("export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'] as const)"))
   assert.ok(visit.includes('export const REST_TAB = 3'))
   assert.ok(visit.includes("case 'place': if (this.tab === REST_TAB) this.rest(); else this.place(); return"), 'Enter, Space, A and the button rest in the Rest tab')
   assert.ok(visit.includes("this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')"))
@@ -417,17 +424,17 @@ test('the Rest tab: the panel shows the host\'s words (hooks.rest.offer), never 
   }
   assert.ok(toolbar.includes('{visit.tab === REST_TAB ? ( <button'), 'Rest only in the Rest tab, Place everywhere else')
   assert.ok(toolbar.includes('data-action="rest" data-touch>Rest</button> ) : ( <button'))
-  assert.ok(toolbar.includes("aria-label={visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'}"))
-  assert.ok(toolbar.includes("aria-label={visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'}"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Previous agent (Q)' : visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'}"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Next agent (E)' : visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'}"))
   // The finishes only in Floor and Walls, and the arrows move the cursor in the Rest tab as in Furniture.
   assert.ok(src.includes('{(visit.tab === 1 || visit.tab === 2) && ( <div className="mt-3 grid grid-cols-2"'))
   assert.ok(!src.includes('visit.tab !== 0'))
   assert.ok(src.includes('const finish = tab === 1 || tab === 2'))
-  // Four tabs wrap on a narrow phone.
-  assert.ok(src.includes('<div role="tablist" aria-label="Furnish or rest" className="mt-2 flex flex-wrap" style={GAP}>'))
+  // Five tabs wrap on a narrow phone.
+  assert.ok(src.includes('<div role="tablist" aria-label="Furnish, rest or staff" className="mt-2 flex flex-wrap" style={GAP}>'))
   // The deed view in a network room: resting waits with furnishing.
   assert.ok(src.includes('{owned && refusal && furnish?.rest && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-rest-wait>Resting here waits for the same reason.</p>}'))
-  for (const words of ['Resting is not offered here', "Enter, Space, the pad's south button or Rest below rests here.", 'Resting here waits for the same reason.', 'Rest here (Enter)', 'Furnish or rest']) clean('the Rest tab', words)
+  for (const words of ['Resting is not offered here', "Enter, Space, the pad's south button or Rest below rests here.", 'Resting here waits for the same reason.', 'Rest here (Enter)', 'Furnish, rest or staff']) clean('the Rest tab', words)
 })
 
 test('every sentence a rest at home can say passes the card\'s screen', () => {
@@ -450,4 +457,150 @@ test('every sentence a rest at home can say passes the card\'s screen', () => {
   }
   assert.ok(said.size >= 20, `${said.size} sentences`)
   for (const text of said) clean('a rest at home', text)
+})
+
+test('the Staff tab: a strip of the player\'s agents with where each is, and a list of the workstations here that moves the cursor, 48 px with text labels; Post and Stand down in Place\'s and Remove\'s buttons; the plan\'s label counts the staffed; the store and the roster stay out of the card', () => {
+  const src = flat(card)
+  const visit = flat(visitSrc)
+  assert.ok(visit.includes('export const STAFF_TAB = 4'))
+  assert.ok(src.includes('const staffTab = visit.tab === STAFF_TAB, seat = staffTab ? visit.station(fit) : null'))
+  assert.ok(src.includes('|| (staffTab ? visit.staffLine() : hand && verdict ?'), 'the reason line is the visit\'s in the Staff tab')
+  // The panel: the strip of agents (a group of buttons, the chosen one pressed, the name and where the agent is shown
+  // and in the label), the list of workstations, and the hint.
+  assert.ok(src.includes('const staffId = `home-staff-${home}`'))
+  assert.ok(src.includes('{staffTab && ( <div id={staffId} className="mt-3" data-staff>'))
+  assert.ok(src.includes('<div role="group" className="flex overflow-x-auto pb-1" style={GAP} aria-label="Your agents" data-agents>'))
+  assert.ok(src.includes('{visit.staffAgents().map((a) => { const at = visit.whereIs(a)'), 'where each agent is, in the visit\'s words')
+  const agent = buttonsIn(src).find((b) => b.includes('data-action="agent"'))
+  assert.ok(agent, 'an agent button')
+  for (const part of ['onClick={() => visit.run({ agent: a.name })}', 'aria-pressed={inHandName === a.name}', 'aria-label={`${a.name}: ${at}`}', '${BUTTON}', 'data-name={a.name}', 'data-touch']) {
+    assert.ok(agent.includes(part), `the agent button: ${part}`)
+  }
+  assert.ok(src.includes('data-touch > <span className="block font-semibold">{a.name}</span> <span className="block text-[12px]" data-where>{at}</span> </button>'),
+    'its text label is the name over where the agent is (data-where), as its aria-label says')
+  // The list: one button per workstation here in reading order, a tap moving the cursor onto it (a second posts, as any
+  // press on the cursor's cell), the one under the cursor pressed.
+  assert.ok(src.includes('<div role="group" className="mt-2 grid grid-cols-2" style={GAP} aria-label="Workstations here" data-stations> {visit.stations(fit).map((p, i) => { const who = visit.who(p)?.name ?? \'Nobody\''))
+  const station = buttonsIn(src).find((b) => b.includes('data-action="station"'))
+  assert.ok(station, 'a workstation button')
+  for (const part of [
+    'onClick={() => visit.run({ press: { c: p.c, r: p.r } })}', 'aria-pressed={seat?.n === i + 1}', 'aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}',
+    'data-seat={`${p.c},${p.r}`}', '${BUTTON}', 'data-touch',
+    // A 24-letter name (roster.ts NAME_MAX) wraps inside its half of the row instead of spilling past the card's edge.
+    '${BUTTON} min-w-0 break-words border',
+  ]) {
+    assert.ok(station.includes(part), `the workstation button: ${part}`)
+  }
+  assert.ok(src.includes('data-touch > Workstation {i + 1} · {who} </button>'), 'its text label is its number and who stands there')
+  // The toolbar: Post and Stand down are Place's and Remove's own buttons (the data-action list is unchanged), named for their keys.
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const place = buttonsIn(toolbar).find((b) => b.includes('data-action="place"'))!
+  assert.ok(place.includes("aria-label={staffTab ? (inHandName ? `Post ${inHandName} at the workstation under the cursor (Enter)` : 'Post (Enter)') : hand"))
+  assert.ok(place.includes('aria-describedby={staffTab ? staffId : undefined}'))
+  assert.ok(toolbar.includes("data-action=\"place\" data-touch>{staffTab ? 'Post' : 'Place'}</button>"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Stand down the agent at this workstation (Delete)' : 'Remove the piece (Delete)'}"))
+  assert.ok(toolbar.includes("data-action=\"remove\" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>"))
+  // The plan: each posted agent's disc and initial, and the cursor round the workstation under it; its label counts the
+  // workstations staffed in the Staff tab.
+  assert.ok(src.includes('staff: visit.staffMarks(), seat: seat?.p ?? null'))
+  assert.ok(src.includes('the cursor at ${where}${staffTab ? `; ${visit.staffMarks().length} of ${visit.stations(fit).length} workstations staffed` : \'\'}`}'))
+  assert.ok(src.includes('const f = (o.hand && footprint(o.hand)) ?? (o.seat && footprint(o.seat)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }'))
+  assert.ok(src.includes('staff: \'#7c3aed\','))
+  // An agent out with the player is a faded disc, so the plan never shows someone the room shows empty; the alpha is
+  // put back before the piece in hand is drawn.
+  const marks = src.slice(src.indexOf('for (const m of o.staff) {'), src.indexOf('// The piece in hand'))
+  assert.ok(marks.length > 0, 'the marks come before the piece in hand')
+  assert.ok(marks.includes('ctx.globalAlpha = m.out ? 0.45 : 1 ctx.fillStyle = PLAN.staff'))
+  assert.ok(marks.includes('} ctx.globalAlpha = 1'), 'and back to full after the marks')
+  // The card and the visit never reach the store or the roster: the host's hooks answer for them.
+  assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(src), 'nothing of the store or the roster in the card')
+  assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(visit), 'nor in the visit')
+  assert.ok(!/loadStaff|saveStaff|localStorage/.test(src + visit), 'neither reads nor writes the browser\'s store')
+  const words = [
+    'Your agents', 'Workstations here', 'Workstation', 'Nobody', ' workstations staffed', 'Previous agent (Q)', 'Next agent (E)', 'Post', ' at the workstation under the cursor (Enter)', 'Post (Enter)',
+    'Stand down the agent at this workstation (Delete)', 'Stand down',
+    'Choose an agent, move the cursor onto a workstation and press Post. They stand at it between visits, and step away while they are out with you.', 'Furnish, rest or staff', 'Staff',
+    'Free', ' · out with you', 'Workstation moved or put away', 'Workstations turn in the Furniture tab', ' (moved from ',
+  ]
+  for (const w of words) {
+    assert.ok(card.includes(w) || visitSrc.includes(w), `the card says ${w}`)
+    clean('the Staff tab', w)
+  }
+  // No desk in the player's words, and nothing a posted agent does not do.
+  for (const w of [...words, ...stringsIn(visitSrc, 'const NO_AGENTS = ', '\n')]) assert.doesNotMatch(w, /\bdesks?\b|\bsit|\bseated\b|\bworks\b|\bearn|\bassigned\b|\blane\b|\bteam\b/i, w)
+})
+
+test('every sentence staffing can say passes the card\'s screen', () => {
+  const keeper = { owns: () => true, buy: () => ({ verdict: 0, message: '' }) } as unknown as Shopkeeper
+  const said = new Set<string>()
+  const names = ['Mara', 'Theo', 'Ines', 'Abcdefghijklmnopqrstuvwx']
+  for (let home = 0; home < 7; home++) {
+    const first = GRID - DEPTH[home]
+    const record = withHome(freshHomes(), home, layoutOf(0, 0, [{ id: 168, c: 4, r: first, rot: 0 }, { id: 168, c: 10, r: first, rot: 2 }], []))
+    for (const mode of ['ok', 'away', 'refused', 'none', 'bare'] as const) {
+      const posts = new Map<string, { home: number; c: number; r: number }>()
+      // Away: one agent posted in the next home, one where no workstation stands now.
+      if (mode === 'away') { posts.set('Ines', { home: (home + 1) % 7, c: 4, r: 20 }); posts.set('Theo', { home, c: 20, r: first + 3 }) }
+      const hooks: StaffHooks = {
+        agents: (): StaffAgent[] => (mode === 'none' ? [] : names.map((name, i) => ({ name, out: i % 2 === 1, post: posts.get(name) ?? null }))),
+        homeName: (h) => itemById(224 + h)?.name ?? 'another home',
+        post: (h, c, r, name) => { if (mode === 'refused') return 'Furnishing happens inside the home: walk in first'; for (const [n, p] of posts) if (p.c === c && p.r === r) posts.delete(n); posts.set(name, { home: h, c, r }); return null },
+        standDown: (_h, c, r) => { for (const [n, p] of posts) if (p.c === c && p.r === r) posts.delete(n); return null },
+      }
+      const v = new Visit(home, mode === 'bare' ? freshHomes() : record, {
+        keeper, onRecord: () => {}, onClose: () => {}, changed: () => {},
+        hooks: { refusal: () => null, begin: () => {}, setDraft: () => {}, blocked: () => new Uint8Array(GRID * GRID), pickCell: () => null, canvas: () => null, staff: hooks },
+      })
+      v.run({ tab: STAFF_TAB })
+      const note = () => { said.add(v.staffLine()); if (v.said) said.add(v.said); for (const a of v.staffAgents()) said.add(v.whereIs(a)) }
+      for (const [c, r] of [[4, first], [11, first + 1], [20, first + 3]]) {
+        v.moveTo(c, r)
+        note()
+        for (const name of names) {
+          v.run({ agent: name })
+          v.run('place')
+          note()
+          v.run('place')
+          note()
+        }
+        v.run('remove')
+        note()
+        v.run('remove')
+        note()
+        v.run('rotate')
+        note()
+      }
+      // One agent moved from the first workstation to the second.
+      v.moveTo(4, first)
+      v.run({ agent: names[0] })
+      v.run('place')
+      v.moveTo(11, first + 1)
+      v.run('place')
+      note()
+      // Q and E off a workstation, then a staffed workstation picked up in the Furniture tab (who waits for it).
+      v.moveTo(20, first + 3)
+      for (const d of ['next', 'prev'] as const) { v.run(d); note() }
+      v.run({ tab: 0 })
+      v.moveTo(10, first)
+      v.run('place')
+      note()
+      v.run('undo')
+    }
+  }
+  // The host's own refusals (App.tsx), with each name.
+  const app = read('../App.tsx')
+  const newer = 'Staff was saved by a newer version of the city: reload the page to post or stand down'
+  assert.ok(app.includes("'No workstation stands there now'") && app.includes('`No agent called ${name} on your roster`') && app.includes(`'${newer}'`))
+  said.add('No workstation stands there now')
+  said.add(newer)
+  for (const name of names) said.add(`No agent called ${name} on your roster`)
+  for (const kind of [
+    /\(moved from workstation \d\)/, /\(moved from [A-Z]/, /^Workstation moved or put away/, / · out with you$/, /^Free$/, /^Workstations turn in the Furniture tab$/,
+    /^Workstation picked up: .*; [A-Z]\w+ waits until it is back in its place$/, /^Nothing to staff at .*: move onto a workstation to post [A-Z]/,
+    /^No workstation stands here yet: place one in the Furniture tab to post [A-Z]/,
+  ]) {
+    assert.ok([...said].some((t) => kind.test(t)), `among them: ${kind}`)
+  }
+  assert.ok(said.size >= 20, `${said.size} sentences`)
+  for (const text of said) clean('staffing', text)
 })

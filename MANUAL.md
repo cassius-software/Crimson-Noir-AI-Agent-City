@@ -464,13 +464,14 @@ shared room: it replays your walk and does not know your furniture"), and restin
 keeps applying there. The card switches to furnishing by itself once you leave the room. Walking out of the home or
 putting on a headset closes the card.
 
-- **Four tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
+- **Five tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
   holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
   hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
   ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
   house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
-  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below).
+  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below). **Staff** posts your own
+  agents at the agent workstations standing here (below).
 - **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
   many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
   (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new
@@ -483,6 +484,33 @@ putting on a headset closes the card.
   bonus runs its 30 checks too. Every check counts, at the console or in the city; a refused check and a hero point's
   reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
   where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
+- **Staff.** The Staff tab posts your own agents (the wardrobe card's Agents tab) at the agent workstations standing
+  in this home. It shows your agents as a row of buttons, the chosen one pressed, each with where that agent is under
+  the name: Free, Workstation 2 (one here), another home's name, or Workstation moved or put away, and "· out with
+  you" while hired. Under them, **Workstations here** lists this home's workstations, numbered in reading order (back row
+  first, then left to right), each with who stands at it ("Workstation 1 · Mara", or "· Nobody"); a screen reader
+  also hears its column and row. Choose an agent (Q / E, the pad's shoulders, or a tap) and move the cursor onto a
+  workstation, or tap its row in the list; the line under the plan says which workstation it is, who stands at it,
+  and what Post would do (off a workstation, which agent is chosen). Then press Enter, Space, the pad's south button
+  or **Post** (or tap the workstation or its row again). From then on they stand at that workstation, in their body
+  and their top's colour, at their height, facing its screen, in every visit, until you stand them down (Delete,
+  Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet disc and
+  their initial, faded while they are out with you, and in this tab a screen reader hears how many of the
+  workstations here are staffed.
+  Workstations turn in the Furniture tab (Rotate says so here). Posting and standing down work exactly where
+  furnishing does.
+  - Posting an agent who is posted elsewhere moves them, and the line says from where ("Mara is at workstation 2 now
+    (moved from workstation 1)", or from another home's name). Posting at a staffed workstation frees whoever stood
+    there.
+  - An agent you have hired steps away from the workstation while they are out with you, and is back once you part.
+  - A posted agent is only drawn. They are not a body in the city (you can walk through them), do not walk, earn
+    nothing and do no work. Staffing changes no check, no rest and no credit.
+  - Who stands where is saved in this browser by the agent's name (`civic-simulation:staff:v1`). A post is kept while
+    its workstation is moved or put away or the deed is not yours, and the agent is back when a workstation stands in
+    that place again; picking up a staffed workstation in the Furniture tab says who waits for it. Renaming an agent
+    keeps their post; forgetting an agent lets their post go, so a new agent given that name starts free. If a newer
+    version of the city saved who stands where, this page shows nobody posted and never writes over it: Post and
+    Stand down ask you to reload the page. Staffing is not on Undo; Stand down undoes a post.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -507,18 +535,21 @@ putting on a headset closes the card.
   as **Not placed here** with **Clear**, and comes back when it fits again.
 - **Show homes.** A home on sale is furnished as a show home, solid like any other. It empties when the deed is
   bought: the new owner starts with a bare room in the home's own finishes.
-- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid: the room replays the
-  walk it saw and knows nothing of the furniture.
+- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid, and nobody stands at
+  a workstation: the room replays the walk it saw and knows nothing of the furniture.
 
 | Furnishing | Keyboard | Mouse | Pad | Touch |
 |---|---|---|---|---|
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
 | Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
+| Post an agent (Staff tab) | Enter or Space | Post, click the workstation under the cursor, or click its row twice | south (A) | Post, or tap the workstation or its row twice |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
+| Stand down (Staff tab) | Delete, Backspace or X | Stand down, or right click | west (X) | Stand down |
 | Previous / next piece | Q / E | click in the strip | left / right shoulder | ◀ ▶, or tap in the strip |
-| Tabs | 1 / 2 / 3 / 4 | the tab | left / right trigger | the tab |
+| Previous / next agent (Staff tab) | Q / E | click the agent | left / right shoulder | ◀ ▶, or tap the agent |
+| Tabs | 1 / 2 / 3 / 4 / 5 | the tab | left / right trigger | the tab |
 | Choose a finish (Floor or Walls) | ← → or Q / E | the swatch | left / right shoulder | the swatch |
 | Undo | Z or Ctrl+Z | Undo | View | Undo |
 | Turn the camera | C | View | right stick left / right | View |
@@ -1352,7 +1383,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   `agent hire <name> [<skill>]` in the console asks someone nearby with that skill over as them, dresses that pedestrian in the
   agent's look, and from then on their prompts are told who they are ("You go by Nova (she/her), a quant analyst.")
   and `say` speaks them in their provider voice. A hire lasts while that person stays with you: one who leaves or is
-  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. The roster itself is kept
+  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. An agent can also be posted
+  at an agent workstation in a home you own (Furnishing, Staff tab): they stand there between visits and step away
+  while hired. The roster itself is kept
   in this browser only (key `civic-simulation:roster:v1`); every stored record is validated on the way in. Forget
   removes an agent from the roster and dresses their pedestrian as the city does; it does not break the tether
   (`recruit dismiss` does).

@@ -20,11 +20,11 @@
  * drawn nor solid, the show homes would be empty, and the furnishing card would have no draft to show.
  */
 import { STYLE, type Box, type Building } from '../01_Initialize_World/city.ts'
-import { toWorld, type Side } from '../01_Initialize_World/interiors.ts'
+import { acrossDir, doorDir, toWorld, type Side } from '../01_Initialize_World/interiors.ts'
 import type { Home } from '../01_Initialize_World/properties.ts'
 import { CELL, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre } from '../02_Define_The_Rules/homeGrid.ts'
 import {
-  FLOORS, FURNITURE_BASE, GLASS, HOME_STAGING, OVERLAY, WALLS, fitLayout, floorOverlay, footprint, renderBoxes, solidBox, wallPanels,
+  FLOORS, FURNITURE_BASE, GLASS, HOME_STAGING, OVERLAY, WALLS, fitLayout, floorOverlay, footprint, renderBoxes, solidBox, stationOf, stationsIn, wallPanels,
   type Finish, type Piece, type RoomBox,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { finishOf, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
@@ -98,6 +98,73 @@ export function worldBoxOf(frame: Frame, b: RoomBox): Box {
 export function homePlaced(home: number, record: HomeRecord, deedMask: number, lineMask: number): readonly Piece[] {
   if (!has(deedMask, home)) return HOME_STAGING[home] ?? []
   return fitLayout(home, record[home]?.pieces ?? [], (id) => has(lineMask, id - FURNITURE_BASE)).placed
+}
+
+/** One post as the engine keeps it (App over staffStore.ts and the roster): where, whether they stand there now, and how they are dressed. */
+export interface StaffPost {
+  readonly name: string; readonly home: number; readonly c: number; readonly r: number
+  /** False while the agent is hired (out with the player): kept, listed, not drawn. */
+  readonly present: boolean
+  /** Body variant 0..3 (look.ts LOOK_BODIES), top colour 0xRRGGBB (lookSwatch 'top'), height factor (heightScale). */
+  readonly body: number; readonly ink: number; readonly scale: number
+}
+
+/**
+ * One workstation of an owned home, read-only (engine.ts homeSeats). kind, name and door fit 08_Swarm/team.ts
+ * TeamRoom: kind is `homeSeat:<home>:<c>:<r>`, stable while that workstation stands at that cell; door is the home's arrival on the sidewalk lane, never inside the lot; `at` is where a posted agent stands,
+ * inside the lot, at the floor's overlay height, with the yaw that faces the screen. seat numbers the home's
+ * workstations from 1 in reading order (back row first, then left to right).
+ */
+export interface HomeSeat {
+  readonly kind: string
+  readonly name: string
+  readonly door: { readonly x: number; readonly z: number }
+  readonly home: number
+  readonly seat: number
+  readonly c: number
+  readonly r: number
+  readonly at: { readonly x: number; readonly y: number; readonly z: number; readonly yaw: number }
+  readonly occupant: string | null
+  readonly present: boolean
+}
+
+/**
+ * Every workstation the homes draw (homePlaced) in each home whose deed is owned, with who is posted at it; none in a
+ * network room, whose realm keeps every piece off. A show home's pieces are never listed (its deed is not owned).
+ */
+export function homeSeats(
+  homes: readonly (Home & { readonly name: string; readonly arrival: { readonly x: number; readonly z: number } })[],
+  record: HomeRecord, deedMask: number, lineMask: number, posts: readonly StaffPost[], o: { room: boolean; base: number },
+): readonly HomeSeat[] {
+  const out: HomeSeat[] = []
+  for (const h of o.room ? [] : homes) {
+    if (!has(deedMask, h.home)) continue
+    const d = doorDir(h.side), a = acrossDir(h.side)
+    stationsIn(homePlaced(h.home, record, deedMask, lineMask)).forEach((p, i) => {
+      const s = stationOf(p)!, w = toWorld(h, s.u, s.v)
+      const post = posts.find((x) => x.home === h.home && x.c === p.c && x.r === p.r)
+      out.push(Object.freeze({
+        kind: `homeSeat:${h.home}:${p.c}:${p.r}`, name: `${h.name}, workstation ${i + 1}`, door: Object.freeze({ ...h.arrival }),
+        home: h.home, seat: i + 1, c: p.c, r: p.r,
+        at: Object.freeze({ x: w.x, y: o.base + OVERLAY.y1, z: w.z, yaw: Math.atan2(s.fu * d.x + s.fv * a.x, s.fu * d.z + s.fv * a.z) }),
+        occupant: post?.name ?? null, present: post?.present ?? false,
+      }))
+    })
+  }
+  return Object.freeze(out)
+}
+
+/** One figure staffView.ts draws: feet at (x, y, z), facing (sin yaw, cos yaw), body variant, top colour, height factor. */
+export interface StaffFigure { readonly x: number; readonly y: number; readonly z: number; readonly yaw: number; readonly body: number; readonly ink: number; readonly scale: number }
+
+/** The figures staffView.ts draws: one per seat whose posted agent stands there now, in their dress. */
+export function staffFigures(seats: readonly HomeSeat[], posts: readonly StaffPost[]): StaffFigure[] {
+  const out: StaffFigure[] = []
+  for (const s of seats) {
+    const p = s.present && posts.find((x) => x.home === s.home && x.c === s.c && x.r === s.r)
+    if (p) out.push({ ...s.at, body: p.body, ink: p.ink, scale: p.scale })
+  }
+  return out
 }
 
 /**

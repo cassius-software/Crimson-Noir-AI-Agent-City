@@ -69,9 +69,10 @@ import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
 import { homePlaced } from './07_Execute_Actions/homeView.ts'
 import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
-import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import { carry, loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
+import { loadProfile, seedFromName, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { changeLook, describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -207,6 +208,17 @@ function ownedLines(keeper: Shopkeeper): number {
  */
 function restInputs(home: number, record: HomeRecord, keeper: Shopkeeper): { level: number; kinds: number } {
   return { level: itemById(DEED_BASE + home)?.level ?? 0, kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper))) }
+}
+
+/**
+ * Why workstation (c, r) of home `home` cannot be staffed now: the engine's furnishing gate, a record a newer build saved
+ * (staffStore.ts never writes over it), or no workstation standing there as the engine lists them (engine.homeSeats);
+ * null when it can.
+ */
+function staffRefusal(engine: Engine, home: number, c: number, r: number, rec: StaffRecord): string | null {
+  return engine.furnishRefusal(home)
+    ?? (rec.newer ? 'Staff was saved by a newer version of the city: reload the page to post or stand down' : null)
+    ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')
 }
 
 /**
@@ -792,6 +804,30 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   // deeds are owned (bit i: home i) is kept as state too, so an owner's card asks the engine for its furnishing view.
   const [homes, setHomes] = useState<HomeRecord>(loadHomes)
   const homesRef = useRef<HomeRecord>(homes)
+  // Who of the player's own agents stands at which workstation (staffStore.ts), read once at mount; postsRef is the
+  // furnishing hooks' view of it, and every change is saved in this browser at once.
+  const [posts, setPosts] = useState<StaffRecord>(loadStaff)
+  const postsRef = useRef<StaffRecord>(posts)
+  const commitStaff = useCallback((next: StaffRecord): null => { postsRef.current = next; setPosts(next); saveStaff(next); return null }, [])
+  // A rename keeps the agent's post and a forget lets it go (staffStore.ts carry); a hire or a new agent changes nothing.
+  const namesRef = useRef(agents.map((a) => a.name))
+  useEffect(() => {
+    const after = agents.map((a) => a.name), next = carry(postsRef.current, namesRef.current, after)
+    namesRef.current = after
+    if (next) commitStaff(next)
+  }, [agents, commitStaff])
+  // The posts the engine draws and lists: only names on the roster (a post whose name is not, say one another tab
+  // renamed, is drawn by nobody until the next post lets it go), each in the agent's body and top's colour (their
+  // seed's look while they have none) at their height, standing there unless hired now. The engine keeps its list when
+  // nothing in it changed.
+  useEffect(() => {
+    engine?.setStaff(posts.posts.flatMap((p) => {
+      const id = roster.get(p.name)
+      if (!id) return []
+      const look = id.look ?? lookFromSeed(seedFromName(id.name))
+      return [{ ...p, name: id.name, present: id.agent === null, body: look.body, ink: lookSwatch(look, 'top') ?? 0x3f4652, scale: heightScale(look) }]
+    }))
+  }, [engine, posts, agents, roster])
   const [ownedDeeds, setOwnedDeeds] = useState(() => ownedHomes(keeper))
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
@@ -928,6 +964,18 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       offer: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return restOffer(pageProgress(), r.level, r.kinds) },
       take: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return engine.furnishRefusal(home) ?? restTake(pageProgress(), r.level, r.kinds) },
     },
+    // Staffing the workstations: the roster's names and where each is posted, a home's name, and a post or stand-down
+    // saved in this browser (staffStore.ts) only where the engine allows furnishing and the workstation still stands,
+    // and a post only for a name on the roster.
+    staff: {
+      agents: () => roster.list().map((a) => ({ name: a.name, out: a.agent !== null, post: postOf(postsRef.current, a.name) })),
+      homeName: (home: number) => engine.homes.find((h) => h.home === home)?.name ?? 'another home',
+      post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r, postsRef.current)
+        ?? (roster.get(name) ? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))) : `No agent called ${name} on your roster`),
+      standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r, postsRef.current) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
+    },
+    // roster (made once with the shell) and commitStaff (no deps) never change, so the hooks stay keyed on these two.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   } : null), [engine, keeper])
   // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
   // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
