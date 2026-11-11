@@ -9,7 +9,8 @@
  * turn among them); the apron is never used; and 2,000 seeded runs of placing, removing and fitting never use the
  * apron, never cut off a workstation's seat, and never refuse a removal. Someone standing inside a piece that is not
  * yet solid is never ringed in (400 more seeded runs take the piece away and find them a way out), and people standing
- * by only ever add refusals. The seven show homes fit their own homes. No
+ * by only ever add refusals. The seven show homes fit their own homes, and comfortOf counts the kinds of furniture
+ * standing in a home (a rest at home's comfort). No
  * two boxes of a home (the shell, the fill block, the planters, the floor overlay, the wall panels and a full layout)
  * share a face in the same plane facing the same way, in every home, facing every way; and every name passes the 14A
  * screen.
@@ -30,7 +31,7 @@ import { createRng } from './degrees.ts'
 import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre, inApron, inMask } from './homeGrid.ts'
 import {
   CEILING, COVER, DEFAULT_FINISH, DOORWAY, FINISHES, FLOORS, FURNITURE_BASE, GLASS, HOME_STAGING, OVERLAY, PANEL, PIECE_INSET, PIECE_TOP, SHAPES, SHAPE_IDS,
-  SOLID_FROM, SOLID_MAX, VERDICTS, WALLS, canPlace, cellAt, cellIndex, cellsNear, fitLayout, floorOverlay, footprint, pieceCells, reach, renderBoxes,
+  SOLID_FROM, SOLID_MAX, VERDICTS, WALLS, canPlace, cellAt, cellIndex, cellsNear, comfortOf, fitLayout, floorOverlay, footprint, pieceCells, reach, renderBoxes,
   rotateBox, shapeOf, solidBox, solidOf, wallPanels, type Piece, type Rect, type RoomBox, type Verdict,
 } from './homeLayout.ts'
 
@@ -414,6 +415,17 @@ test('fitLayout keeps what is not owned or does not fit, in order, and places th
   // Someone standing where a piece goes stores it, when the engine asks.
   const sofaCells = cellsNear([cellCentre(3, 24)], 0.3)
   assert.deepEqual(fitLayout(home, [saved[0]], null, sofaCells), { placed: [], stored: [saved[0]] })
+})
+
+test('comfortOf counts the different furniture lines standing in a home: copies once, nothing that is not a line; the show homes hold 3, 4, 3, 4, 3, 5 and 5', () => {
+  assert.deepEqual(HOME_STAGING.map(comfortOf), [3, 4, 3, 4, 3, 5, 5])
+  const top = first(0)
+  assert.equal(comfortOf([P(164, 4, top), P(164, 25, top), P(164, 8, top)]), 1, 'three bookcases are one kind')
+  assert.equal(comfortOf([]), 0)
+  assert.equal(comfortOf([P(999, 4, top)]), 0, 'not a furniture line')
+  assert.equal(comfortOf([P(999, 4, top), P(163, 2, 24), P(160, 14, 21)]), 2)
+  // What stands, not what is saved: a layout fitted with only the bookcase owned has one kind.
+  assert.equal(comfortOf(fitLayout(0, HOME_STAGING[0], (id) => id === 164).placed), 1)
 })
 
 test('2,000 seeded runs of placing, removing and fitting keep the apron free, every seat reachable, and every removal allowed', () => {

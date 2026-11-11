@@ -49,6 +49,7 @@ the indices the plan gave them, so a reader of the plan finds them where it said
 | 36 | Checks in the current cycle |
 | 37-38 | Credits earned and spent, all time |
 | 39 | Layout (1) |
+| 40 | A rest at home: its item bonus (bits 0-1) and the checks it lasts yet (bits 2-7); 0 for none |
 | 63 | Seal (FNV-1a of every other word) |
 | 64-127 | 2,048 unlock bits |
 
@@ -123,6 +124,26 @@ spending one to make a critical success certain; that was left out for Player Co
 **Resolve.** The product's own pool: up to 5 plus CON (1 to 10), one more with each level and each overdrive. In
 this slice it is shown and kept; what spends it comes with the slices that need it.
 
+**Rest at home.** In a home the operator owns, the home card's Rest tab rests (`homeRest`): a hero point (never past
+three), a new round, and an item bonus on the next 30 checks (`REST_CHECKS`). The bonus is the lower of the deed's
+step on the item-level ladder of an item's bonus to a skill (+1 from item level 3, +2 from 9, +3 from 17, applied to
+the deed's level) and the home's comfort, the different furniture lines standing there now (`comfortOf` over what
+the engine draws: +1 from 1 kind, +2 from 3, +3 from 5, this product's own steps). So the Micro-Loft (level 1) rests
+with no bonus, the Brownstone and the Timber Loft give up to +1, the Penthouse and the Villa up to +2, and the Estate
+and the Sky-Mansion up to +3; a bought home starts bare, and 1, 3 and 5 kinds cost at least 1,100, 4,200 and 9,400
+credits. The bonus is added to the modifier after the die is rolled, so the dice stream is unchanged and only the
+total and the degree move; a hero point's reroll keeps it and uses none of the 30. Every check while it lasts uses
+one: the console's, the city's deeds and the recruiter's events alike; a refused earn does not. Of bonuses of one
+type only the highest applies, so a later item bonus joins it through the higher of the two, never a sum, and a rest
+is allowed when none lasts or when this home gives more than the one that does. A rest that gave no bonus runs its 30
+checks too, so the loft never gives hero points on demand: at most one per 30 checks from resting, plus at most three
+upgrades, all under the cap of three. The rest is kept in word 40 (`(checks << 2) | bonus`), which every record
+written before it holds as 0 under the same seal, so the layout did not change; an older build ignores the word and
+saves it back, and the rest carries on. A new session leaves it; `progress reset --yes` ends it. It is offered exactly
+where furnishing is (`furnishRefusal`): in a network room it waits, and a rest already taken keeps applying to checks
+made there. Each check line shows it (`12 +5 +1 prepared = 18`), the HUD chip ends with `prepared +1` while it adds to
+checks, and `progress` says how much and for how many more checks.
+
 **XP.** 1,000 a level; what is left over rolls into the next. At level 20 the XP stops at 999.
 
 ## The city's checks and the cues
@@ -190,7 +211,7 @@ p.record[16]                                     // credits, read-only by conven
   |---|---|---|
   | `look` | 0-511 and 768-1023 | the customizer (wardrobe, dyes, body art) |
   | `look` | 512-767 | the retail storefronts |
-  | `property` | 0-63 (the seven homes and offices are 0-6) | the properties |
+  | `property` | 0-63 (the seven homes are 0-6) | the properties |
   | `furniture` | 0-511 | the furnishing of the properties |
 - **Arguments.** `buy(space, index, levelReq, price)`: `levelReq` a whole number from 1 to 20, `price` a whole number
   of credits from 0 to 2,000,000,000 (0 is a free unlock).
@@ -218,6 +239,14 @@ controller's rumble and the phone's vibration. The terminal app (`tty`) has no c
 - **Drop tokens** and any real money: credits are earned in the city and spent in the city, nothing else.
 - **The plan's conditioning vocabulary** stays out of the product's text; a check says what it paid and nothing
   more.
+- **From the pasted rest-at-home spec:** a rest at the start or the end of a session (a session
+  starts when the page mounts, before the city exists, the avatar always spawns on a sidewalk, and a page has no
+  reliable moment when a session ends; a reward at a session's end is also a reason to come back on a timer, which
+  "Pace" above rules out); a passive rest on walking in (it would give a hero point for crossing a doorway after every
+  reload, and be invisible to anyone who missed a toast); a bonus counted in minutes (a clock would run while the
+  page is hidden and break "the same record always rolls the same next check", so the bonus lasts 30 checks); and the
+  spec's status-effect wording (the product says "Rest" for the action and "prepared" for the bonus; `NOTICE.md`
+  carries the attribution).
 
 ## Next
 

@@ -8,7 +8,7 @@
  * nothing, and one on a piece removes that piece; the left stick moves once, again after 300 ms and then every 120 ms,
  * and a diagonal held with the stick's own noise moves no faster; Enter and Space press a button reached with Tab, and
  * place over one a mouse left focused (homeCard.test.ts holds the card to wiring these, and the browser smoke test
- * clicks View with a real mouse and presses Enter).
+ * clicks View with a real mouse and presses Enter); and in the Rest tab Place rests through the host and edits nothing.
  * What breaks if it is removed? Closing the card could leave a different layout from the one the owner had, a right
  * click on a wall could remove some other piece, a diagonal could race the cursor across the room, and Enter after a
  * click could press Remove again instead of placing, with nothing to say so but a person furnishing.
@@ -18,14 +18,14 @@ import { test } from 'node:test'
 import { DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
 import { canPlace, fitLayout, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import { FocusOrigin, STICK, Visit, stickStep, type FurnishHooks, type StickState } from './furnishVisit.ts'
+import { FocusOrigin, REST_TAB, STICK, TABS, Visit, stickStep, type FurnishHooks, type RestHooks, type StickState } from './furnishVisit.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE } from './storeCatalog.ts'
 
 const BOOKCASE = 164, SOFA = 163, TABLE = 162
 
-/** A visit to home `home` over `record`, with the lines in `owned` owned; what it hands the host is kept in `sent`. */
-function visitOf(home: number, record: HomeRecord, owned: Iterable<number>) {
+/** A visit to home `home` over `record`, with the lines in `owned` owned (and the host's rest, if any); what it hands the host is kept in `sent`. */
+function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest?: RestHooks) {
   const lines = new Set(owned)
   const sent: HomeRecord[] = []
   const drafts: unknown[] = []
@@ -35,7 +35,7 @@ function visitOf(home: number, record: HomeRecord, owned: Iterable<number>) {
   } as unknown as Shopkeeper
   const hooks: FurnishHooks = {
     refusal: () => null, begin: () => {}, setDraft: (d) => { drafts.push(d) }, blocked: () => new Uint8Array(GRID * GRID),
-    pickCell: () => null, canvas: () => null,
+    pickCell: () => null, canvas: () => null, rest,
   }
   const v = new Visit(home, record, { keeper, onRecord: (r) => sent.push(r), hooks, onClose: () => {}, changed: () => {} })
   const owns = (id: number) => lines.has(id)
@@ -217,4 +217,44 @@ test('Enter and Space press a button reached with Tab, and stay Place over a but
   o.key('Tab')
   o.focusIn(done)
   assert.equal(o.byKeys(done), true, 'Tab during a press')
+})
+
+test('the Rest tab: { tab: 3 } and tabPrev from Furniture reach it; Place there asks hooks.rest.take with the home and says its words, committing no edit; with no rest hook it says resting is not offered; in the Furniture tab Place still places', () => {
+  assert.deepEqual([...TABS], ['Furniture', 'Floor', 'Walls', 'Rest'])
+  assert.equal(REST_TAB, 3)
+  const home = 1
+  const asked: number[] = []
+  const rest: RestHooks = {
+    offer: () => ({ why: null, lines: ['Rest here'] }),
+    take: (h) => { asked.push(h); return `Rested at ${h}` },
+  }
+  const { v, sent, drawn } = visitOf(home, freshHomes(), [BOOKCASE], rest)
+  assert.equal(v.tab, 0)
+  v.run('tabPrev')
+  assert.equal(v.tab, REST_TAB, 'the triggers wrap round to it')
+  v.run({ tab: 0 })
+  v.run({ tab: 3 })
+  assert.equal(v.tab, REST_TAB)
+  const cursor = { ...v.cursor }
+  v.run('place')
+  assert.deepEqual(asked, [home], 'the host is asked once, for this home')
+  assert.equal(v.said, `Rested at ${home}`, 'and the reason line says its words')
+  assert.equal(sent.length, 0, 'no edit committed')
+  assert.equal(v.undoSteps.length, 0, 'nothing for Undo')
+  assert.deepEqual(v.cursor, cursor)
+  assert.equal(v.lifted, null)
+  v.run('tabNext')
+  assert.equal(v.tab, 0, 'and on round to Furniture')
+  // In the Furniture tab Place places the bookcase in hand, and never asks the host to rest.
+  v.moveTo(4, GRID - DEPTH[home])
+  v.run('place')
+  assert.deepEqual(asked, [home])
+  assert.equal(sent.length, 1)
+  assert.equal(drawn().placed.length, 1)
+  // With no rest hook the tab says so, and still edits nothing.
+  const bare = visitOf(home, freshHomes(), [BOOKCASE])
+  bare.v.run({ tab: REST_TAB })
+  bare.v.run('place')
+  assert.equal(bare.v.said, 'Resting is not offered here')
+  assert.equal(bare.sent.length, 0)
 })

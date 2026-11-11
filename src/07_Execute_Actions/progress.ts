@@ -10,17 +10,18 @@
  * earn a check, in which skill, which of the recruiter's events earn one (someone arriving, a spoken request
  * understood), and writes the words: the console's `progress` text and the HUD's progress chip, finished here so the
  * HUD imports nothing of the keeper. The wardrobe and the properties buy through `buy`, which debits the credits and
- * sets the unlock in the same record and the same save.
+ * sets the unlock in the same record and the same save. It keeps a rest at home (the home card's Rest), and its words.
  * What breaks if it is removed? Nothing earns XP or credits, `progress` and the HUD have nothing to show, and nothing
  * can be bought.
  */
 import { CRIT_FAILURE, CRIT_SUCCESS, FAILURE, RANKS, SUCCESS } from '../02_Define_The_Rules/degrees.ts'
 import {
-  ACTIONS_PER_ROUND, AT, ATTRIBUTE_SHORT, ATTRIBUTES, BREADTH_Q8, CYCLE_CHECKS, DC_BY_LEVEL, EASY, GUARD_AFTER, HERO_MAX, LEVEL_TREASURE,
-  MAX_LEVEL, OPERATOR_SKILLS, PURCHASE, REWARD, ROUND_MS, SKILL_ATTRIBUTE, SKILL_COUNT, SKILL_DOES, SKILL_REST_MS, SKILL_TITLE, TASK_PAYOUT,
-  XP_PER_LEVEL, actionsLeft, attempt, buy as buyIn, canBuy as canBuyIn, dcOf, modifierOf, newRecord, newRound, owns as ownsIn, popcount,
-  reactionLeft, reroll as rerollIn, resolveCap, skillIndex, spend as spendIn, spendAction, spendResolve as spendResolveIn, startSession,
-  train as trainIn, whyNoIncrease, wordsOf, type Check, type OperatorSkill, type ProgressRecord, type PurchaseResult, type UnlockSpace,
+  ACTIONS_PER_ROUND, AT, ATTRIBUTE_SHORT, ATTRIBUTES, BREADTH_Q8, COMFORT_STEPS, CYCLE_CHECKS, DC_BY_LEVEL, EASY, GUARD_AFTER, HERO_MAX,
+  ITEM_BONUS_LEVELS, LEVEL_TREASURE, MAX_LEVEL, OPERATOR_SKILLS, PURCHASE, REST_CHECKS, REWARD, ROUND_MS, SKILL_ATTRIBUTE, SKILL_COUNT, SKILL_DOES,
+  SKILL_REST_MS, SKILL_TITLE, TASK_PAYOUT, XP_PER_LEVEL, actionsLeft, attempt, buy as buyIn, canBuy as canBuyIn, dcOf, homeRest as homeRestIn,
+  itemBonusOf, modifierOf, newRecord, newRound, owns as ownsIn, popcount, preparedLeft, reactionLeft, reroll as rerollIn, resolveCap, restBonus,
+  skillIndex, spend as spendIn, spendAction, spendResolve as spendResolveIn, startSession, train as trainIn, whyNoIncrease, whyNoRest, wordsOf,
+  type Check, type OperatorSkill, type ProgressRecord, type PurchaseResult, type UnlockSpace,
 } from '../02_Define_The_Rules/progression.ts'
 import { loadProgress, saveProgress } from '../05_Observe_Environment/progressStore.ts'
 import type { ProfileStore } from '../05_Observe_Environment/profile.ts'
@@ -59,6 +60,11 @@ export interface Progress {
   spend(price: number): boolean
   /** Spends resolve; false when there is not that much. */
   spendResolve(n: number): boolean
+  /**
+   * A rest at home with item bonus `bonus` (progression.ts homeRest): saved and told, the round clock started again
+   * with the full round. Throws why not; the hero points it gave.
+   */
+  restAtHome(bonus: number): number
   /** The last check made (or rerolled), or null. */
   last(): Check | null
   /** How long until `skill` earns again, ms (0 when it may now). */
@@ -158,6 +164,12 @@ export function createProgress(opts: ProgressOptions = {}): Progress {
       const ok = spendResolveIn(record, n)
       if (ok) changed(null)
       return ok
+    },
+    restAtHome(bonus: number): number {
+      const n = homeRestIn(record, bonus)
+      roundStart = now()
+      changed(null)
+      return n
     },
     last: (): Check | null => last,
     restFor: (s: number): number => Math.max(0, SKILL_REST_MS - (now() - rested[index(s)])),
@@ -263,6 +275,10 @@ export const grouped = (n: number): string => String(Math.trunc(n)).replace(/\B(
 const signed = (n: number): string => (n < 0 ? `-${-n}` : `+${n}`)
 const times = (q8: number): string => `x${(q8 / 256).toFixed(2).replace(/0$/, '')}`
 const DEGREE_WORD: readonly string[] = ['critical failure', 'failure', 'success', 'critical success']
+/** A rest's steps as words: '+1 from <the first, named>, +2 from 9, +3 from 17'. */
+const ladder = (steps: readonly number[], first: (n: number) => string): string =>
+  steps.map((n, i) => `+${i + 1} from ${i === 0 ? first(n) : n}`).join(', ')
+const kindsOf = (n: number): string => `${n} kind${n === 1 ? '' : 's'}`
 
 /** The round's actions as pips: filled for each left, hollow for each spent, and the reaction's mark while it is left. */
 export function pips(rec: ProgressRecord): string {
@@ -275,7 +291,7 @@ export function checkLines(c: Check, heroLeft = 0): string[] {
   const dice = c.rolls.length > 1 ? `${c.rolls.join(' and ')}, kept ${c.natural}` : String(c.natural)
   const pay = [c.xp ? `+${c.xp} XP` : '', c.credits ? `+${grouped(c.credits)} credits` : '', c.hero ? `+${c.hero} hero point` : ''].filter(Boolean).join(', ')
   const lines = [
-    `${SKILL_TITLE[c.skill]}${c.reroll ? ' (hero point reroll)' : ''}: ${dice} ${signed(c.modifier)} = ${c.total} vs DC ${c.dc}, ${DEGREE_WORD[c.degree]}` +
+    `${SKILL_TITLE[c.skill]}${c.reroll ? ' (hero point reroll)' : ''}: ${dice} ${signed(c.modifier - c.item)}${c.item ? ` +${c.item} prepared` : ''} = ${c.total} vs DC ${c.dc}, ${DEGREE_WORD[c.degree]}` +
       `${pay ? ` · ${pay}` : c.reroll ? ' · nothing more than the first roll paid' : ''}${c.breadth > 1 && (c.xp || c.credits) ? ` (${c.breadth} skills this cycle, ${times(c.breadthQ8)})` : ''}`,
   ]
   if (c.guarded) lines.push(`  ${GUARD_AFTER} misses in a row, so this check rolled twice and kept the higher die`)
@@ -306,6 +322,12 @@ export function statusLines(p: Progress): string[] {
     ...skills,
     `  cycle: ${used} of ${SKILL_COUNT} skills (${times(BREADTH_Q8[used])}), ${rec[AT.cycle]} of ${CYCLE_CHECKS} checks · next check DC ${dcOf(rec)} (easy) · a success pays ${grouped(TASK_PAYOUT[level])} credits`,
   ]
+  const left = preparedLeft(rec), prep = itemBonusOf(rec)
+  if (left > 0) {
+    const more = `${left} more check${left === 1 ? '' : 's'}`
+    lines.push(prep > 0 ? `  prepared: +${prep} to every check for ${more} (a rest at home)`
+      : `  rested at home: another rest after ${more}, or in a home that adds to checks`)
+  }
   const increases = rec[AT.increases]
   if (increases > 0) {
     const can = OPERATOR_SKILLS.filter((_, s) => whyNoIncrease(rec, s) === null)
@@ -331,7 +353,71 @@ export function tableLines(): string[] {
     `  degrees: ${[CRIT_FAILURE, FAILURE, SUCCESS, CRIT_SUCCESS].map(deg).join(' · ')}`,
     `  breadth: ${BREADTH_Q8.slice(1).map((q, i) => `${i + 1} ${times(q)}`).join(' · ')} (skills used in a cycle of ${CYCLE_CHECKS} checks; XP and credits alike)`,
     `  ${ACTIONS_PER_ROUND} actions and a reaction every ${ROUND_MS / 1000} s; each skill earns again after ${SKILL_REST_MS / 1000} s; after ${GUARD_AFTER} misses in a row the next check rolls twice`,
+    `  rest at a home you own (its card's Rest tab): a hero point, a new round, and on the next ${REST_CHECKS} checks the lower of the home's bonus` +
+      ` (${ladder(ITEM_BONUS_LEVELS, (n) => `a level ${n} deed`)}) and its comfort's (${ladder(COMFORT_STEPS, (n) => `${kindsOf(n)} of furniture standing there`)})`,
   ]
+}
+
+// ---------------------------------------------------------------------------------------------------
+// A rest at home: the home card's words
+
+/** What a rest at a home would give now, in finished words for the card: the bonus, why not (null when it may), and the lines. */
+export interface RestOffer {
+  readonly bonus: number
+  readonly why: string | null
+  readonly lines: readonly string[]
+}
+
+/** The first sentence of a rest's offer: what it gives here, or why not now. */
+function offerLine(p: Progress, bonus: number, cap: number, why: string | null): string {
+  const rec = p.record
+  const left = preparedLeft(rec), running = itemBonusOf(rec)
+  if (why !== null) {
+    const more = `${left} more check${left === 1 ? '' : 's'}`
+    return running > 0 ? `You are prepared: +${running} to every check for ${more}. Rest again after ${left === 1 ? 'it' : 'them'}, or in a home that adds more.`
+      : `You have rested: rest again after ${more}, or in a home that adds to checks.`
+  }
+  const full = rec[AT.hero] >= HERO_MAX
+  const heroFull = full ? ` Your hero points are full (${rec[AT.hero]} of ${HERO_MAX}).` : ''
+  if (bonus > 0) {
+    const instead = left > 0 && running > 0 ? `, in place of your +${running}` : ''
+    return `Rest here: ${full ? '' : 'a hero point, '}a new round, and +${bonus} to every check for the next ${REST_CHECKS} checks${instead}.${heroFull}`
+  }
+  const none = cap === 0 ? `A home adds to checks from a level ${ITEM_BONUS_LEVELS[0]} deed.` : 'No bonus on checks yet: furniture standing here adds one.'
+  return `Rest here: ${full ? 'a new round' : 'a hero point and a new round'}. ${none}${heroFull}`
+}
+
+/**
+ * A rest at a home whose deed is level `deedLevel` with `kinds` kinds of furniture standing in it (homeLayout.ts
+ * comfortOf), as the home card shows it: the bonus it gives (progression.ts restBonus), why it cannot be taken now
+ * (whyNoRest, null when it can), and the lines: what it gives here or why not, then, where the home can add to checks
+ * at all, its comfort and the most it allows.
+ */
+export function restOffer(p: Progress, deedLevel: number, kinds: number): RestOffer {
+  const bonus = restBonus(deedLevel, kinds)
+  const cap = restBonus(deedLevel, COMFORT_STEPS[COMFORT_STEPS.length - 1])
+  const why = whyNoRest(p.record, bonus)
+  const lines = [offerLine(p, bonus, cap, why)]
+  if (cap > 0) {
+    const k = Number.isFinite(kinds) ? Math.max(0, Math.floor(kinds)) : 0
+    const stand = k === 0 ? 'no furniture stands here yet' : `${kindsOf(k)} of furniture stand${k === 1 ? 's' : ''} here`
+    lines.push(`Comfort: ${stand}. Furniture adds ${ladder(COMFORT_STEPS, kindsOf).replace(/, (?=[^,]*$)/, ' and ')}; this home allows up to +${cap}.`)
+  }
+  return Object.freeze({ bonus, why, lines: Object.freeze(lines) })
+}
+
+/**
+ * The rest itself, through the keeper (restAtHome), at a home of `deedLevel` with `kinds` kinds of furniture: the
+ * sentence that says what it gave, or, refused, the offer's own sentence for why not.
+ */
+export function restTake(p: Progress, deedLevel: number, kinds: number): string {
+  const offer = restOffer(p, deedLevel, kinds)
+  if (offer.why !== null) return offer.lines[0]
+  const n = p.restAtHome(offer.bonus)
+  const hero = p.record[AT.hero]
+  const bonus = offer.bonus > 0 ? `+${offer.bonus} to every check for the next ${REST_CHECKS} checks` : ''
+  if (n > 0) return bonus ? `Rested: hero ${hero} of ${HERO_MAX}, a new round, and ${bonus}.` : `Rested: hero ${hero} of ${HERO_MAX} and a new round.`
+  return bonus ? `Rested: a new round, and ${bonus} (hero points already ${hero} of ${HERO_MAX}).` : `Rested: a new round (hero points already ${hero} of ${HERO_MAX}).`
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -378,14 +464,15 @@ interface HudMemo {
   readonly out: HudProgress
 }
 const memos = new WeakMap<Progress, HudMemo>()
-/** The record words the chip shows: level, XP, credits, hero points, the round. */
-const SHOWN = [AT.level, AT.xp, AT.credits, AT.hero, AT.actions] as const
+/** The record words the chip shows: level, XP, credits, hero points, the round, a rest at home. */
+const SHOWN = [AT.level, AT.xp, AT.credits, AT.hero, AT.actions, AT.prepared] as const
 
 /**
  * The HUD's progress chip as finished strings: the standing ('Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 ·
- * ◆◆◇ ↺'), the same in full words for a screen reader, and the fresh check (`cue`, made within HUD_CUE_MS of `now`):
- * which degree, in which skill, and what it paid. Runs the round clock first, so the pips refill on their own. Returns
- * the same object while nothing it shows has changed, so calling it at the HUD's cadence costs a few comparisons.
+ * ◆◆◇ ↺', then ' · prepared +2' while a rest at home adds to checks), the same in full words for a screen reader,
+ * and the fresh check (`cue`, made within HUD_CUE_MS of `now`): which degree, in which skill, and what it paid. Runs
+ * the round clock first, so the pips refill on their own. Returns the same object while nothing it shows has changed,
+ * so calling it at the HUD's cadence costs a few comparisons.
  */
 export function hudProgress(p: Progress, cue: ProgressCue | null, now: number): HudProgress {
   p.round()
@@ -401,6 +488,7 @@ export function hudProgress(p: Progress, cue: ProgressCue | null, now: number): 
   const hero = rec[AT.hero]
   const left = actionsLeft(rec)
   const round = pips(rec)
+  const prep = itemBonusOf(rec)
   const xp = top ? 'top level' : `${grouped(rec[AT.xp])} of ${grouped(XP_PER_LEVEL)} XP`
   const said = [
     `Level ${level}`,
@@ -409,6 +497,7 @@ export function hudProgress(p: Progress, cue: ProgressCue | null, now: number): 
     counted(hero, 'hero point'),
     `${left} of ${ACTIONS_PER_ROUND} actions left this round`,
     `reaction ${reactionLeft(rec) ? 'ready' : 'spent'}`,
+    ...(prep > 0 ? [`prepared: ${prep} added to every check`] : []),
   ].join(', ')
   let cueText = ''
   let delta = ''
@@ -423,7 +512,7 @@ export function hudProgress(p: Progress, cue: ProgressCue | null, now: number): 
     label = `${said}. ${cueText}${paid ? `: ${paid}` : ''}`
   }
   const out: HudProgress = Object.freeze({
-    text: `Level ${level} · ${xp} · ${counted(rec[AT.credits], 'credit')} · hero ${hero} · ${round}`,
+    text: `Level ${level} · ${xp} · ${counted(rec[AT.credits], 'credit')} · hero ${hero} · ${round}${prep ? ` · prepared +${prep}` : ''}`,
     label,
     pips: round,
     cue: fresh ? (cue.degree >= CRIT_SUCCESS ? 'critical' : 'success') : null,

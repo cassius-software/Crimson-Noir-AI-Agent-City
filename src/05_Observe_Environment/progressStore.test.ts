@@ -6,11 +6,12 @@
  * for word; nothing stored, no storage and storage that throws all read as a new operator and never throw; and every
  * stored value that is not a whole, sealed, in-range record of this layout is refused, moved aside under its own key
  * (so it is not lost without a trace) and reported with its reason. A record that fails validation is never written.
+ * A rest at home is kept in a word every earlier record holds as 0, so those load unchanged, with no rest.
  * What breaks if it is removed? A damaged or hand-edited entry could become the operator, or a save could be lost silently.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { AT, RECORD_WORDS, newRecord, seal } from '../02_Define_The_Rules/progression.ts'
+import { AT, RECORD_WORDS, homeRest, itemBonusOf, newRecord, preparedLeft, seal } from '../02_Define_The_Rules/progression.ts'
 import { PROGRESS_KEY, PROGRESS_RECORD_VERSION, PROGRESS_SET_ASIDE_KEY, clearProgress, loadProgress, saveProgress } from './progressStore.ts'
 import type { ProfileStore } from './profile.ts'
 
@@ -92,4 +93,42 @@ test('clear forgets the record', () => {
   saveProgress(newRecord(5), s)
   clearProgress(s)
   assert.equal(s.map.has(PROGRESS_KEY), false)
+})
+
+test('a record from before the rest at home loads unchanged and unprepared; a prepared one round-trips; one whose rest is out of range is set aside with its reason', () => {
+  // A record an earlier build wrote: every word but the rest's as now, and that one 0 under the same seal.
+  const old = newRecord(11)
+  old[AT.credits] = 4321
+  seal(old)
+  const words = Array.from(old)
+  assert.equal(words[AT.prepared], 0)
+  const s = memory()
+  s.map.set(PROGRESS_KEY, JSON.stringify({ v: 1, words }))
+  const back = loadProgress(s)
+  assert.ok(back.record)
+  assert.deepEqual(Array.from(back.record), words, 'word for word')
+  assert.deepEqual([preparedLeft(back.record), itemBonusOf(back.record)], [0, 0], 'no rest')
+  // Prepared: saved and read back with its bonus and its checks.
+  const r = newRecord(12)
+  homeRest(r, 2)
+  assert.ok(saveProgress(r, s))
+  const raw = JSON.parse(s.map.get(PROGRESS_KEY)!) as { words: number[] }
+  assert.equal(raw.words[AT.prepared], (30 << 2) | 2)
+  const again = loadProgress(s)
+  assert.ok(again.record)
+  assert.deepEqual(Array.from(again.record), Array.from(r))
+  assert.deepEqual([preparedLeft(again.record), itemBonusOf(again.record)], [30, 2])
+  // A bonus with no checks left is no rest the rules write: refused, set aside, and said.
+  const bad = newRecord(13)
+  bad[AT.prepared] = 2
+  seal(bad)
+  const t = memory()
+  const badRaw = JSON.stringify({ v: 1, words: Array.from(bad) })
+  t.map.set(PROGRESS_KEY, badRaw)
+  const refused = loadProgress(t)
+  assert.equal(refused.record, null)
+  assert.match('why' in refused ? refused.why ?? '' : '', /the rest at home out of range/)
+  assert.equal(t.map.has(PROGRESS_KEY), false)
+  assert.equal(t.map.get(PROGRESS_SET_ASIDE_KEY), badRaw)
+  assert.equal(saveProgress(bad, t), false, 'and never written')
 })
