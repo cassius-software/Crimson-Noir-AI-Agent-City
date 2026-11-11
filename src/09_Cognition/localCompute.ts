@@ -516,7 +516,7 @@ function capAfter(e: unknown): number {
   const room = e.window - e.input
   if (room > ANSWER_TOKENS) throw e
   if (room < ANSWER_MIN_TOKENS) {
-    throw new CognitionError('server', `the prompt (${e.input} tokens) leaves no room for an answer in the model's window of ${e.window} tokens: ask with fewer people bound or a shorter question, or start the server with a larger window`)
+    throw new CognitionError('server', `the prompt (${e.input} tokens) leaves no room for an answer in the model's window of ${e.window} tokens: ask with fewer people tethered or a shorter question, or start the server with a larger window`)
   }
   return room - 1
 }

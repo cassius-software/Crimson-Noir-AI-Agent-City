@@ -1178,7 +1178,7 @@ test('chat: the retry cap runs from 2,047 down to one under ANSWER_MIN_TOKENS: 2
     try {
       const e = await chatTo(under.url)
       assert.ok(e instanceof CognitionError, name)
-      assert.deepEqual([e.code, e.message], ['server', "the prompt (3841 tokens) leaves no room for an answer in the model's window of 4096 tokens: ask with fewer people bound or a shorter question, or start the server with a larger window"], name)
+      assert.deepEqual([e.code, e.message], ['server', "the prompt (3841 tokens) leaves no room for an answer in the model's window of 4096 tokens: ask with fewer people tethered or a shorter question, or start the server with a larger window"], name)
       assert.equal(under.seen.length, 1, name)
     } finally {
       await under.close()
