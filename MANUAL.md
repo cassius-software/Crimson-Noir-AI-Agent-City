@@ -1026,9 +1026,14 @@ has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) t
 shows it (there is no city to walk).
 
 - **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
-  stick and the buttons on a phone, and at the foot of the screen while the console is open. On a wide screen from
-  960 px across, Sloane's own open card (her name question, a goal) stands to its left rather than under it; in a
-  narrower window the walk's card steps aside while hers is open and comes back when she settles into her chip. It names the stage (1 of
+  stick and the buttons and under her chip on a phone held upright, between the stick and the buttons on a phone held
+  sideways (above the captions and a shop's chip at the foot), and at the foot of the screen while the console is
+  open. On a wide screen from 960 px across, Sloane's own open card (her name question, a goal) stands to its left
+  rather than under it; anywhere else the walk's card steps aside while hers is open and comes back when she settles
+  into her chip. Sideways, where the band between the thumbs is too short for it (large text, or the foot's chips
+  taking the room), her chip moves up to the top row and the card stands under it over the HUD's header and readout;
+  it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
+  lines) and comes back when you get out. It names the stage (1 of
   7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,

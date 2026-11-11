@@ -13,7 +13,9 @@
  * taps alone. It stands clear of the HUD, the touch controls and Sloane's own card: on a wide screen under the
  * readout on the right, with Sloane's open card moved left of it (Concierge.tsx WIDE_BESIDE) from 60 rem across and,
  * in a narrower wide window, stepping aside while her card is open; on a compact or touch screen in the band above
- * the stick and the buttons; with the console open, at the foot of the screen under it.
+ * the stick and the buttons and below her chip, stepping aside while her card is open (hers takes the same band); on
+ * a phone held sideways between the thumbs, above the HUD's chips at the foot, and away while the visitor is at the
+ * wheel there (the car's buttons fill the band); with the console open, at the foot of the screen under it.
  * What breaks if it is removed? The walk has no face: Sloane's lines are heard but never seen, and a visitor without
  * a keyboard or a mouse has no way through it.
  */
@@ -24,13 +26,24 @@ import { CONCIERGE_NAME } from './script.ts'
 
 /** Where the card stands (full class strings, so Tailwind sees them). The card is inside the text size's zoom
  *  (index.css `.ui-zoom`), like the HUD it keeps clear of: the HUD's wide readout is 18 rem wide and about 14 rem tall
- *  under a 1.25 rem frame; the compact frame is 0.75 rem with the minimap row 8.75 rem tall. What is not zoomed is
- *  divided by --ui-zoom: the window's height (dvh), the touch buttons' top edge (--touch-top, window pixels;
- *  TouchControls.tsx) and the stick's zone (11.5 rem of the unzoomed touch layer), and the console's 45 dvh. */
+ *  under a 1.25 rem frame; the compact frame is 0.75 rem with the minimap row 8.75 rem tall, and Sloane's chip under
+ *  the minimap ends at --chip-bottom (Concierge.tsx; zoomed lengths already), lower at the wheel. What is not zoomed is
+ *  divided by --ui-zoom: the window's height (dvh), the touch buttons' top edge and left edge (--touch-top,
+ *  --touch-left, window pixels; TouchControls.tsx), the stick's zone (11.5 rem of the unzoomed touch layer, 12.5 rem
+ *  with its gaps), the top of the HUD's chips at the foot (--hud-foot, Hud.tsx) and the console's 45 dvh. Sideways,
+ *  the band between the thumbs starts 10.5 rem down, clear of the header, the readout and Sloane's chip, and ends
+ *  above the HUD's chips at the foot. Where that band is short of 8 rem (a large text size, a short screen, captions
+ *  or a shop's chip at the foot), Sloane's chip moves up to the top row and the card rises over the HUD's header and
+ *  readout, which take no taps, to stand under it (--chip-bottom): the two read the same band through the same step
+ *  (Concierge.tsx CHIP_TOP.walk), its foot latched at its highest (--hud-foot-peak, footPeak.ts) so captions coming
+ *  and going cannot flip it. Either way it ends left of the minimap's column (7 rem wide under a 0.75 rem frame),
+ *  and its foot comes down over the HUD's chips rather than let it grow up over the chip once what is left is less
+ *  than its own padding and border (1.875 rem). */
 const AT = {
   wide: 'right-[max(1.25rem,env(safe-area-inset-right))] top-[calc(max(1.25rem,env(safe-area-inset-top))+16rem)] w-[20rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-top))_-_16rem_-_7.5rem)]',
-  compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
-  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_-_1rem)]',
+  compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_8.75rem),calc(var(--chip-bottom,0px)_+_0.5rem))_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
+  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_8.75rem),calc(var(--chip-bottom,0px)_+_0.5rem))_-_max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_-_1rem)]',
+  between: 'left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] bottom-[max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem))))]',
   console: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-[28rem] max-h-[calc(calc(55dvh_/_var(--ui-zoom,1))_-_4rem)]',
 } as const
 
@@ -49,6 +62,8 @@ function mediaStore(query: string) {
   }
 }
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
+/** A short screen held sideways (Concierge.tsx's short layout in landscape): no room above the thumbs, so the card stands between them. */
+const SIDEWAYS = mediaStore('(orientation: landscape) and (max-height: 499px)')
 /**
  * SMALL at the text size's zoom: the window, measured in the zoom's pixels, is a small screen's. The wide place under
  * the HUD's readout is 24.75 rem down a window of zoomed rem, so at 200 % a laptop's 800 or 864 px leave the card a
@@ -84,22 +99,33 @@ export interface FirstWalkCardProps {
   onRun(): void
   /** Sloane's spoken voice: called once with each new line. */
   onSay?(text: string): void
-  /** Sloane's own card is open (Concierge onOpen): in a wide window under 60 rem across, too narrow for the two side by side, this card steps aside until hers closes. */
+  /** Sloane's own card is open (Concierge onOpen): anywhere but a wide window from 60 rem across, where the two stand side by side, this card steps aside until hers closes. */
   crowded?: boolean
+  /** At the wheel (the HUD's input mode): on a phone held sideways the car's buttons fill the band between the thumbs, and the card steps aside. */
+  driving?: boolean
   /** The text size's zoom (access.ts scale / 100): the 60 rem are zoomed rem (Concierge.tsx besideRoom). */
   zoom?: number
 }
 
-export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false, zoom = 1 }: FirstWalkCardProps): JSX.Element | null {
+export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false, driving = false, zoom = 1 }: FirstWalkCardProps): JSX.Element | null {
   const compact = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
+  const sideways = useSyncExternalStore(SIDEWAYS.subscribe, SIDEWAYS.matches, SIDEWAYS.server)
   const tight = squeezedAt(zoom)
   const squeezed = useSyncExternalStore(tight.subscribe, tight.matches, tight.server)
   // Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query, at the same zoom).
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
-  /** On screen: shown, and not stepping aside for Sloane's open card in a wide window too narrow for both (a window
-   *  small only at the zoom is still a wide one to her card, which stands in its centre: this one steps aside there). */
-  const shown = visible && !(crowded && !termOpen && !overlay && !compact && !roomy)
+  /** Between the thumbs of a phone held sideways (the console's place wins while it is open). */
+  const between = overlay && sideways && !termOpen
+  /** Side by side with Sloane's open card: only in the wide place, with the room for both. Anywhere else her card
+   *  takes the band this one stands in (a phone's, a small window's, the centre of a window small only at the zoom). */
+  const besideHers = !overlay && !compact && !squeezed && roomy
+  /** Heard: up, and not stepping aside for Sloane's open card where the two cannot stand apart (her card is speaking). */
+  const heard = visible && !(crowded && !termOpen && !besideHers)
+  /** On screen: heard, and not at the wheel between a sideways phone's thumbs, where the car's buttons leave no band. It
+   *  is back once the visitor is on foot; meanwhile Sloane still says each line (the stage the car finished hands over
+   *  to the next one at the wheel, and its ask is heard there). */
+  const shown = heard && !(between && driving)
   /** How many of the whys are unfolded (reset with the stage). */
   const [whys, setWhys] = useState(0)
   const [stage, setStage] = useState(card.stage)
@@ -109,17 +135,18 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   const said = useRef(-1)
   useEffect(() => {
     if (!beat || beat.id === said.current) return
-    // A line that comes while the card is away waits for it, except a hint: that came while the visitor was busy in
-    // another card (the wardrobe, a shop's, a home's, Sloane's own), and closing that card has often done what it asks,
-    // so it is let go unspoken rather than said a moment before the next stage's line cuts it off.
-    if (!shown) { if (beat.kind === 'hint') said.current = beat.id; return }
+    // A line that comes while the card is away (not heard) waits for it, except a hint: that came while the visitor was
+    // busy in another card (the wardrobe, a shop's, a home's, Sloane's own), and closing that card has often done what it
+    // asks, so it is let go unspoken rather than said a moment before the next stage's line cuts it off. At the wheel
+    // between a sideways phone's thumbs the card is off screen but still heard, so its lines are spoken there.
+    if (!heard) { if (beat.kind === 'hint') said.current = beat.id; return }
     said.current = beat.id
     sayRef.current?.(beat.text)
-  }, [beat, shown])
+  }, [beat, heard])
   if (!shown) return null
 
   const line = beat && beat.stage === card.stage ? beat.text : card.ask
-  const at = termOpen ? AT.console : overlay ? AT.touch : compact || squeezed ? AT.compact : AT.wide
+  const at = termOpen ? AT.console : between ? AT.between : overlay ? AT.touch : compact || squeezed ? AT.compact : AT.wide
   const exitStage = card.stage === 'exam'
   return (
     // The text size's zoom (index.css .ui-zoom) on a layer of its own over the whole screen, which lets the city's
