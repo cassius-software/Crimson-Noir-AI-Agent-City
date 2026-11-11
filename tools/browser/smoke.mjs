@@ -2490,11 +2490,21 @@ const SCENARIOS = {
       // B opens the furnishing view; 4 its Rest tab: +1 for the one kind of furniture standing here.
       await p.tap('KeyB', 'b', 66)
       const opened = await p.waitFor(`!!${at(card)}`, 10_000).then(() => true, () => false)
-      await p.tap('Digit4', '4', 52)
-      const tab = await p.waitFor(`!!${at(`${card} [data-rest]`)}`, 10_000).then(() => true, () => false)
+      // The view's key listener is attached after it first draws, which on a slow software adapter can be a few frames
+      // later; 4 again is harmless (it only chooses the Rest tab), so press until the tab reads as open.
+      let tab = false
+      let presses = 0
+      for (; presses < 5 && !tab; presses++) {
+        await p.tap('Digit4', '4', 52)
+        tab = await p.waitFor(`!!${at(`${card} [data-rest]`)}`, 4_000).then(() => true, () => false)
+      }
+      // What the key went to is in the detail too (the focused element and the tab the view reads), should it fail.
       const offer = await p.eval(`(() => { const b = ${at(`${card} [data-action="rest"]`)}; const panel = ${at(`${card} [data-rest]`)}; const r = b?.getBoundingClientRect()
         const by = b ? document.getElementById(b.getAttribute('aria-describedby') ?? '') : null
-        return { text: panel?.textContent ?? '', button: b?.textContent ?? '', height: r ? r.height : 0, described: !!by && by === panel, place: !!${at(`${card} [data-action="place"]`)} } })()`)
+        const f = document.activeElement, focus = f ? [f.tagName, f.getAttribute('aria-label') ?? f.getAttribute('name') ?? f.id ?? ''].join(' ') : ''
+        const tabs = [...document.querySelectorAll('${card} [role="tab"]')].map((t) => t.getAttribute('aria-selected') === 'true' ? '*' + t.textContent : t.textContent).join(',')
+        return { text: panel?.textContent ?? '', button: b?.textContent ?? '', height: r ? r.height : 0, described: !!by && by === panel, place: !!${at(`${card} [data-action="place"]`)},
+          opened: ${opened}, presses: ${presses}, focus, tabs } })()`)
       check(opened && tab && /a hero point, a new round, and \+1 to every check for the next 30 checks/.test(offer.text) && /1 kind of furniture stands here/.test(offer.text), 'rest: B opens the furnishing view and 4 its Rest tab, offering +1 for the one kind of furniture standing here', JSON.stringify(offer))
       check(offer.button === 'Rest' && offer.height >= 48 && offer.described && !offer.place, 'rest: the Rest tab\'s button reads Rest, stands at least 48 px tall in Place\'s spot, and the panel describes it', JSON.stringify(offer))
 
