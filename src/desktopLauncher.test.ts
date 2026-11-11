@@ -304,6 +304,41 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
   for (const proof of ['plain.pkgs.ollama-vulkan.drvPath', 'cpu.pkgs.ollama-cpu.drvPath', 'cuda.config.hardware.graphics.enable', '(env igpu).OLLAMA_IGPU_ENABLE == "1"', '(env ownDefault).OLLAMA_HOST == "0.0.0.0:11434"', '!(builtins.tryEval cuda.config.services.ollama.package.drvPath).success', '(env theirs).OLLAMA_ORIGINS == "https://b.example"', 'lib.length (ours theirs) == 3']) assert.ok(flakeChecks.includes(proof), `nix flake check proves ${proof}`)
 })
 
+test('CI boots the Ollama option in a NixOS VM, in a job of its own outside nix flake check, and fails without KVM', () => {
+  const flake = read('flake.nix')
+  assert.match(flake, /^ {6}vmTests = forAll \(/m, 'an output of its own')
+  assert.match(flake, /import \.\/tools\/nix\/ollama-test\.nix \{ module = self\.nixosModules\.default; \}/, 'the flake\'s own module, not a copy')
+  const checks = flake.slice(flake.indexOf('      checks = forAll ('))
+  assert.ok(flake.indexOf('vmTests = forAll') < flake.indexOf('      checks = forAll ('))
+  for (const never of ['ollama-test', 'runNixOSTest', 'vmTests']) assert.ok(!checks.includes(never), `checks holds no ${never}: nix flake check runs without KVM`)
+
+  const vm = read('tools/nix/ollama-test.nix')
+  assert.equal(headers.licenseOf('tools/nix/ollama-test.nix'), 'mit')
+  assert.match(vm, /^\{ module \}:$/m)
+  assert.match(vm, /imports = \[ module \];/)
+  assert.match(vm, /acceleration = "cpu";/, 'the runner has no GPU, and the binary cache has the CPU build')
+  assert.match(vm, /qemu\.forceAccel = true;/, 'no KVM is an error, never software emulation')
+  assert.ok(vm.includes(`LAUNCHER = "http://127.0.0.1:${launcher.PORT}"`), 'the launcher\'s own origin')
+  for (const proof of ['machine.wait_for_unit("ollama.service")', 'assert listeners == ["127.0.0.1:11434"]', 'machine.succeed("ss -Htlnp").splitlines() if f"pid={pid}," in line', 'assert own == ["127.0.0.1:11434"]', 'assert tags == {"models": []}', 'for origin in (LAUNCHER, EXTRA):', 'assert got == ("200", origin)', 'assert got == ("403", None)', 'assert f"OLLAMA_ORIGINS={EXTRA}" in env']) assert.ok(vm.includes(proof), `the VM test checks ${proof}`)
+
+  const jobs = read('.github/workflows/nix.yml').split(/^jobs:$/m)[1] ?? ''
+  const [flakeJob = '', vmJob = ''] = jobs.split(/^ {2}vm:$/m)
+  assert.ok(vmJob, 'the VM runs in a job of its own')
+  assert.match(flakeJob, /nix flake check/)
+  assert.doesNotMatch(flakeJob, /kvm/i, 'nix flake check\'s job needs no KVM')
+  assert.match(vmJob, /timeout-minutes: \d+/)
+  assert.match(vmJob, /if \[ ! -c \/dev\/kvm \]; then\n\s+echo "::error::[^"\n]+"\n\s+exit 1/, 'no KVM fails, saying so')
+  assert.ok(vmJob.includes('KERNEL=="kvm", GROUP="kvm", MODE="0666"'), 'the udev rule opens /dev/kvm to Nix\'s build users')
+  assert.match(vmJob, /udevadm trigger --name-match=kvm/)
+  assert.match(vmJob, /extra-system-features = kvm nixos-test/)
+  // The check's own text and the steps' names, not the first '/dev/kvm', which the steps' comments also hold.
+  const kvmStep = vmJob.indexOf('- name: KVM for Nix\'s build users')
+  const kvmCheck = vmJob.indexOf('if [ ! -c /dev/kvm ]')
+  const nixStep = vmJob.indexOf('- name: Nix, with its daemon')
+  assert.ok(kvmStep !== -1 && kvmStep < kvmCheck && kvmCheck < nixStep && nixStep < vmJob.indexOf('install-nix'), 'KVM is checked, in its own step, before Nix is installed')
+  assert.match(vmJob, /run: nix build -L --no-link \.#vmTests\.x86_64-linux\.ollama$/m)
+})
+
 test('Nix leaves nothing the repository\'s walkers, the page build or git would pick up', () => {
   const ignore = read('.gitignore').split('\n').map((l) => l.trim())
   // Tailwind scans what git does not ignore: an unignored result link would put the store's class names in the page.

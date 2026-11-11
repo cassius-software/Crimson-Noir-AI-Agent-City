@@ -7,8 +7,9 @@
 # builds the page from source (tools/nix/page.nix), serves it on http://127.0.0.1:4180 and opens it in Chromium with
 # WebGPU on Vulkan (tools/nix/app.nix, tools/web/launch.mjs). nixosModules.default installs it built from the system's
 # own nixpkgs, so its Chromium can load the system's GPU driver, and turns on what a NixOS desktop needs
-# (tools/nix/module.nix). Another Linux with Nix runs it too, but Nix's Chromium cannot load that system's GPU driver:
-# there CHROME names the distribution's own browser (MANUAL.md, On NixOS). `nix develop` gives the tools a contributor
+# (tools/nix/module.nix); vmTests boots that module's Ollama option in a NixOS VM (tools/nix/ollama-test.nix). Another
+# Linux with Nix runs it too, but Nix's Chromium cannot load that system's GPU driver: there CHROME names the
+# distribution's own browser (MANUAL.md, On NixOS). `nix develop` gives the tools a contributor
 # runs (Node, Chromium for the browser smoke, rustup for the native crates, Python's z3 for `npm run verify -- smt`).
 # nixpkgs comes from the NixOS 26.05 channel's tarball, pinned in flake.lock. Flakes are still an experimental Nix
 # feature: a stock NixOS needs nix.settings.experimental-features = [ "nix-command" "flakes" ], or
@@ -69,6 +70,17 @@
       );
 
       nixosModules.default = ./tools/nix/module.nix;
+
+      # The module's Ollama option booted in a NixOS VM on the CPU build (tools/nix/ollama-test.nix). Not in checks: it
+      # needs KVM and `nix flake check` must not (that command warns it does not know this output and leaves it alone).
+      # CI's nix workflow builds the x86-64 one in a job of its own: nix build -L .#vmTests.x86_64-linux.ollama
+      vmTests = forAll (
+        _: pkgs: {
+          ollama = pkgs.testers.runNixOSTest (
+            import ./tools/nix/ollama-test.nix { module = self.nixosModules.default; }
+          );
+        }
+      );
 
       checks = forAll (
         system: pkgs: {
