@@ -317,6 +317,7 @@ export class SimCore {
       players,
       rigSlots: this.#realm ? RIG_SLOTS : 0,
       rooms: crowd ? rooms.length : 0,
+      crowdKernel: crowd ? crowd.kernel ?? 'full' : 'none',
     })
     Object.freeze(this)
   }
