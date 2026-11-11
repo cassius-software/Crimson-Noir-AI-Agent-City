@@ -662,20 +662,44 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         {staffTab && (
           <div id={staffId} className="mt-3" data-staff>
             <div role="group" className="flex overflow-x-auto pb-1" style={GAP} aria-label="Your agents" data-agents>
-              {visit.staffAgents().map((a) => (
-                <button
-                  key={a.name}
-                  type="button"
-                  onClick={() => visit.run({ agent: a.name })}
-                  aria-pressed={inHandName === a.name}
-                  aria-label={`${a.name}: ${a.post ? 'posted' : 'free'}${a.out ? ', out with you' : ''}`}
-                  className={`${BUTTON} shrink-0 border px-3 ${inHandName === a.name ? t.pillOn : t.pill}`}
-                  data-action="agent"
-                  data-touch
-                >
-                  {a.name}
-                </button>
-              ))}
+              {visit.staffAgents().map((a) => {
+                const at = visit.whereIs(a)
+                return (
+                  <button
+                    key={a.name}
+                    type="button"
+                    onClick={() => visit.run({ agent: a.name })}
+                    aria-pressed={inHandName === a.name}
+                    aria-label={`${a.name}: ${at}`}
+                    className={`${BUTTON} shrink-0 border px-3 text-left leading-tight ${inHandName === a.name ? t.pillOn : t.pill}`}
+                    data-action="agent"
+                    data-touch
+                  >
+                    <span className="block font-semibold">{a.name}</span>
+                    <span className="block text-[12px]">{at}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div role="group" className="mt-2 grid grid-cols-2" style={GAP} aria-label="Workstations here" data-stations>
+              {visit.stations(fit).map((p, i) => {
+                const who = visit.who(p)?.name ?? 'Nobody'
+                return (
+                  <button
+                    key={`${p.c},${p.r}`}
+                    type="button"
+                    onClick={() => visit.run({ press: { c: p.c, r: p.r } })}
+                    aria-pressed={seat?.n === i + 1}
+                    aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}
+                    className={`${BUTTON} border px-3 text-left leading-tight ${seat?.n === i + 1 ? t.pillOn : t.pill}`}
+                    data-action="station"
+                    data-seat={`${p.c},${p.r}`}
+                    data-touch
+                  >
+                    Workstation {i + 1} · {who}
+                  </button>
+                )
+              })}
             </div>
             <p className={`mt-2 text-[12px] leading-snug ${t.muted}`}>Posted agents stand there between visits, and step away while out with you.</p>
           </div>
@@ -693,7 +717,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         <canvas
           ref={planRef}
           role="img"
-          aria-label={`Floor plan: the back wall at the top, the doorway at the bottom; ${fit.placed.length} of ${HOME_PIECES} pieces placed; the cursor at ${where}`}
+          aria-label={`Floor plan: the back wall at the top, the doorway at the bottom; ${fit.placed.length} of ${HOME_PIECES} pieces placed; the cursor at ${where}${staffTab ? `; ${visit.staffMarks().length} of ${visit.stations(fit).length} workstations staffed` : ''}`}
           className="mx-auto mt-3 block touch-none select-none"
           style={{ width: GRID * cell, height: DEPTH[home] * cell + DOOR_BAND }}
           data-plan

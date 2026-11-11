@@ -274,6 +274,7 @@ function staffOf(names: readonly string[], out: readonly string[] = []) {
   let refuse: string | null = null
   const hooks: StaffHooks = {
     agents: (): StaffAgent[] => names.map((name) => ({ name, out: out.includes(name), post: posts.get(name) ?? null })),
+    homeName: (home) => `Deed ${home}`,
     post: (home, c, r, name) => {
       calls.push(['post', home, c, r, name])
       if (refuse) return refuse
@@ -326,7 +327,7 @@ test('the Staff tab: { tab: 4 } and tabPrev from Furniture reach it; Place posts
   assert.deepEqual(v.staffMarks().map((m) => m.initial), ['T', 'M'], 'both marked on the plan')
 })
 
-test('Q and E choose the agent, { agent } chooses by name; Remove stands down; Rotate turns nothing in the Staff tab', () => {
+test('Q and E choose the agent, { agent } chooses by name; Remove stands down; Rotate says workstations turn in the Furniture tab and turns nothing', () => {
   const { v, staff, home } = staffedHome(['Mara', 'Theo', 'Ines'])
   v.run({ tab: STAFF_TAB })
   assert.equal(v.inHand(), 'Mara')
@@ -342,7 +343,8 @@ test('Q and E choose the agent, { agent } chooses by name; Remove stands down; R
   assert.equal(staff.posts.get('Theo')?.c, 10)
   const rot = v.rot
   v.run('rotate')
-  assert.equal(v.rot, rot, 'workstations turn in the Furniture tab')
+  assert.equal(v.rot, rot, 'nothing turns')
+  assert.equal(v.said, 'Workstations turn in the Furniture tab')
   v.run('remove')
   assert.deepEqual(staff.calls.at(-1), ['standDown', home, 10, 20])
   assert.equal(v.said, 'Theo left workstation 2')
@@ -439,4 +441,55 @@ test('staffMarks puts each posted agent\'s initial at the workstation\'s station
   v.moveTo(10, 20)
   v.run('place')
   assert.deepEqual(v.staffMarks(), [{ x: 11, y: 21.5, initial: 'M' }], 'the edge between the two seat cells, in the middle of the seat row')
+})
+
+test('the strip says where each agent is: Free, Workstation N here, another home\'s name, Workstation moved or put away, and out with you while hired', () => {
+  const { v, staff } = staffedHome(['Mara', 'Theo', 'Ines', 'Noor'], ['Theo'])
+  v.run({ tab: STAFF_TAB })
+  const where = () => Object.fromEntries(v.staffAgents().map((a) => [a.name, v.whereIs(a)]))
+  assert.deepEqual(where(), { Mara: 'Free', Theo: 'Free · out with you', Ines: 'Free', Noor: 'Free' })
+  v.moveTo(10, 20)
+  v.run('place')
+  v.moveTo(4, 20)
+  v.run({ agent: 'Theo' })
+  v.run('place')
+  staff.posts.set('Ines', { home: 3, c: 4, r: 20 })
+  staff.posts.set('Noor', { home: 1, c: 20, r: 24 })
+  assert.deepEqual(where(), { Mara: 'Workstation 2', Theo: 'Workstation 1 · out with you', Ines: 'Deed 3', Noor: 'Workstation moved or put away' })
+})
+
+test('a post that moves an agent says from where: another workstation here or another home; a post whose workstation is gone says nothing of it', () => {
+  const { v, staff } = staffedHome(['Mara', 'Theo'], ['Theo'])
+  v.run({ tab: STAFF_TAB })
+  v.moveTo(10, 20)
+  v.run('place')
+  assert.equal(v.said, 'Mara is at workstation 2 now')
+  v.moveTo(4, 20)
+  v.run({ agent: 'Mara' })
+  v.run('place')
+  assert.equal(v.said, 'Mara is at workstation 1 now (moved from workstation 2)')
+  v.run({ agent: 'Theo' })
+  staff.posts.set('Theo', { home: 5, c: 8, r: 18 })
+  v.run('place')
+  assert.equal(v.said, 'Theo is at workstation 1 now (moved from Deed 5); Mara is free; out with you until you part')
+  staff.posts.set('Mara', { home: 1, c: 20, r: 24 })
+  v.moveTo(10, 20)
+  v.run({ agent: 'Mara' })
+  v.run('place')
+  assert.equal(v.said, 'Mara is at workstation 2 now', 'no workstation stands where she was posted')
+})
+
+test('a tap on a workstation\'s row ({ press } at its own cell) moves the cursor onto it, and a second tap posts', () => {
+  const { v, staff, home } = staffedHome(['Mara'])
+  v.run({ tab: STAFF_TAB })
+  const [first, second] = v.stations()
+  v.run({ press: { c: second.c, r: second.r } })
+  assert.deepEqual(v.cursor, { c: 10, r: 20 })
+  assert.equal(v.station()?.n, 2)
+  assert.equal(staff.calls.length, 0, 'the first tap only moves the cursor')
+  assert.equal(v.said, '')
+  v.run({ press: { c: second.c, r: second.r } })
+  assert.deepEqual(staff.calls, [['post', home, 10, 20, 'Mara']])
+  v.run({ press: { c: first.c, r: first.r } })
+  assert.equal(v.staffLine(), 'Workstation 1 at column 5, row 5: free; Post puts Mara here')
 })

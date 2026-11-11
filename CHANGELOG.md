@@ -17,11 +17,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 - **Staff at home.** The furnishing view's fifth tab, Staff, posts your own agents (the roster's names) at the agent
   workstations standing in a home you own. Each stands at the workstation's seat facing its screen, in their own
-  look, in every visit until stood down, and steps away while hired. They are drawn by the page alone: no collider,
-  never in the crowd or the physics realm, nothing in a network room. Nothing is earned and no work is done. Saved in
-  this browser under `civic-simulation:staff:v1`. `engine.homeSeats` lists each owned home's workstations, read-only:
-  kind, name, the home's doorstep, the standing point and who is posted. Covered by unit tests and the `rest` smoke
-  scenario, whose headless browser run is CI's.
+  look, in every visit until stood down, and steps away while hired. The tab shows each agent with where they are
+  posted, and lists the home's workstations in reading order with who stands at each (a tap on a row moves the
+  cursor there); a post that moves an agent from another workstation or home says from where. They are drawn by the
+  page alone: no collider, never in the crowd or the physics realm, nothing in a network room. Nothing is earned and
+  no work is done. Saved in this browser under `civic-simulation:staff:v1`. `engine.homeSeats` lists each owned
+  home's workstations, read-only: kind, name, the home's doorstep, the standing point and who is posted. Covered by
+  unit tests and the `rest` smoke scenario, whose headless browser run is CI's.
 - **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
   checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
   Kept in progression record word 40 with no layout change; refused in a network room with furnishing; the chip,

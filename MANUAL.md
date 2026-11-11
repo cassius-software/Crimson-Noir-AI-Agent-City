@@ -485,14 +485,21 @@ putting on a headset closes the card.
   reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
   where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
 - **Staff.** The Staff tab posts your own agents (the wardrobe card's Agents tab) at the agent workstations standing
-  in this home. It shows your agents as a row of buttons, the chosen one pressed; a screen reader also hears whether
-  each is posted or free, and out with you while hired. Choose an agent (Q / E, the pad's shoulders, or a tap) and
-  move the cursor onto a workstation; the line under the plan says which workstation it is (numbered in reading
-  order, back row first), who stands at it, and what Post would do. Then press Enter, Space, the pad's south button or
-  **Post**. From then on they stand at that workstation, in their own look, facing its screen, in every visit, until
-  you stand them down (Delete, Backspace, X, the pad's west button or **Stand down**). The plan marks each posted
-  agent with a violet disc and their initial.
-  - Posting an agent who is posted elsewhere moves them. Posting at a staffed workstation frees whoever stood there.
+  in this home. It shows your agents as a row of buttons, the chosen one pressed, each with where that agent is under
+  the name: Free, Workstation 2 (one here), another home's name, or Workstation moved or put away, and "· out with
+  you" while hired. Under them, **Workstations here** lists this home's workstations, numbered in reading order (back row
+  first, then left to right), each with who stands at it ("Workstation 1 · Mara", or "· Nobody"); a screen reader
+  also hears its column and row. Choose an agent (Q / E, the pad's shoulders, or a tap) and move the cursor onto a
+  workstation, or tap its row in the list; the line under the plan says which workstation it is, who stands at it,
+  and what Post would do. Then press Enter, Space, the pad's south button or **Post** (or tap the row again). From
+  then on they stand at that workstation, in their own look, facing its screen, in every visit, until you stand them
+  down (Delete, Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet
+  disc and their initial, and in this tab a screen reader hears how many of the workstations here are staffed.
+  Workstations turn in the Furniture tab (Rotate says so here). Posting and standing down work exactly where
+  furnishing does.
+  - Posting an agent who is posted elsewhere moves them, and the line says from where ("Mara is at workstation 2 now
+    (moved from workstation 1)", or from another home's name). Posting at a staffed workstation frees whoever stood
+    there.
   - An agent you have hired steps away from the workstation while they are out with you, and is back once you part.
   - A posted agent is only drawn. They are not a body in the city (you can walk through them), do not walk, earn
     nothing and do no work. Staffing changes no check, no rest and no credit.
@@ -532,7 +539,7 @@ putting on a headset closes the card.
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
 | Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
-| Post an agent (Staff tab) | Enter or Space | Post, or left click on the cursor's cell | south (A) | Post, or tap the workstation twice |
+| Post an agent (Staff tab) | Enter or Space | Post, left click on the cursor's cell, or click the workstation's row twice | south (A) | Post, or tap the workstation or its row twice |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
 | Stand down (Staff tab) | Delete, Backspace or X | Stand down, or right click | west (X) | Stand down |

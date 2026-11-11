@@ -7,8 +7,8 @@
  * draws the posts (staffView.ts) and lists the workstations (homeSeats) after the homes' own draw, and tells the realm
  * nothing; it never reaches the store, the roster, the team runner, the dispatcher or the recruiter. App keeps the
  * posts in this browser, hands the engine only names on the roster, and posts or stands down only where the engine
- * allows furnishing; nobody is moved (no rally, no tether, no recruiter, no operator). The dispatcher, the team runner
- * and the lanes know nothing of it.
+ * allows furnishing and lists the workstation, and posts only a name on the roster; nobody is moved (no rally, no
+ * tether, no recruiter, no operator). The dispatcher, the team runner and the lanes know nothing of it.
  * What breaks if it is removed? A post could reach the physics realm or the crowd, a stored name the roster never
  * screened could reach the engine, or staffing could start moving the hired pedestrian around, unnoticed.
  */
@@ -59,7 +59,7 @@ test('the engine draws the posts and lists the workstations after the homes\' ow
   assert.ok(imports.includes('./staffView.ts'))
 })
 
-test('App keeps the posts in this browser, hands the engine only names on the roster, and posts or stands down only where the engine allows furnishing; nobody is moved', () => {
+test('App keeps the posts in this browser, hands the engine only names on the roster, and posts or stands down only where the engine allows furnishing and a workstation stands, and posts only a name on the roster; nobody is moved', () => {
   const app = flat(read('../App.tsx'))
   assert.ok(app.includes("import { loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'"))
   assert.ok(app.includes('const [posts, setPosts] = useState<StaffRecord>(loadStaff)'), 'read once at mount')
@@ -68,10 +68,15 @@ test('App keeps the posts in this browser, hands the engine only names on the ro
   assert.ok(effect.includes('const id = roster.get(p.name) if (!id) return []'), 'only names on the roster reach the engine')
   assert.ok(effect.includes('const look = id.look ?? lookFromSeed(seedFromName(id.name))'), 'in their look, their seed\'s while they have none')
   assert.ok(effect.includes('present: id.agent === null'), 'away while hired')
+  // The gate: the engine's furnishing refusal first, then a workstation the engine lists at that cell.
+  const gate = between(app, 'function staffRefusal(engine: Engine, home: number, c: number, r: number): string | null {', ' }')
+  assert.ok(gate.includes("return engine.furnishRefusal(home) ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')"))
   const hooks = between(app, ' const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {', '} : null), [engine, keeper])')
   const staff = between(hooks, 'staff: {', ' }, ')
-  assert.ok(staff.includes('post: (home: number, c: number, r: number, name: string) => engine.furnishRefusal(home) ?? commitStaff(postTo('))
-  assert.ok(staff.includes('standDown: (home: number, c: number, r: number) => engine.furnishRefusal(home) ?? commitStaff(standDownAt('))
+  assert.ok(staff.includes('homeName: (home: number) => engine.homes.find((h) => h.home === home)?.name ?? \'another home\''), 'a home by its deed\'s name')
+  assert.ok(staff.includes('post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r) ?? (roster.get(name) ? commitStaff(postTo('))
+  assert.ok(staff.includes(': `No agent called ${name} on your roster`),'), 'a name off the roster is refused, in words')
+  assert.ok(staff.includes('standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r) ?? commitStaff(standDownAt('))
   assert.doesNotMatch(staff, /rally|dismiss|recruit|roster\.(?:set|add|remove|bind)|operator|tether/, 'nobody is moved')
 })
 

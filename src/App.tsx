@@ -211,6 +211,14 @@ function restInputs(home: number, record: HomeRecord, keeper: Shopkeeper): { lev
 }
 
 /**
+ * Why workstation (c, r) of home `home` cannot be staffed now: the engine's furnishing gate, or no workstation standing
+ * there as the engine lists them (engine.homeSeats); null when it can.
+ */
+function staffRefusal(engine: Engine, home: number, c: number, r: number): string | null {
+  return engine.furnishRefusal(home) ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')
+}
+
+/**
  * The console's network knob over the engine's session controls (NetControls), with the session token kept on this
  * machine: a token given is saved and reused by a later `join` without one; `forget` drops it. Nothing else of the
  * session lives here: the engine joins, draws and leaves.
@@ -945,13 +953,15 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       offer: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return restOffer(pageProgress(), r.level, r.kinds) },
       take: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return engine.furnishRefusal(home) ?? restTake(pageProgress(), r.level, r.kinds) },
     },
-    // Staffing the workstations: the roster's names and where each is posted, and a post or stand-down saved in this
-    // browser (staffStore.ts) only where the engine allows furnishing (the card posts only at a workstation it sees
-    // standing, from the same record and lines the engine draws).
+    // Staffing the workstations: the roster's names and where each is posted, a home's name, and a post or stand-down
+    // saved in this browser (staffStore.ts) only where the engine allows furnishing and the workstation still stands,
+    // and a post only for a name on the roster.
     staff: {
       agents: () => roster.list().map((a) => ({ name: a.name, out: a.agent !== null, post: postOf(postsRef.current, a.name) })),
-      post: (home: number, c: number, r: number, name: string) => engine.furnishRefusal(home) ?? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))),
-      standDown: (home: number, c: number, r: number) => engine.furnishRefusal(home) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
+      homeName: (home: number) => engine.homes.find((h) => h.home === home)?.name ?? 'another home',
+      post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r)
+        ?? (roster.get(name) ? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))) : `No agent called ${name} on your roster`),
+      standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
     },
     // roster (made once with the shell) and commitStaff (no deps) never change, so the hooks stay keyed on these two.
     // eslint-disable-next-line react-hooks/exhaustive-deps

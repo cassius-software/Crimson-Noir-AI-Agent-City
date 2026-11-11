@@ -116,9 +116,9 @@
  *   48 px tall that the panel describes; Enter rests (a hero point, a new round, word 40 of the record), a real click
  *   on Rest is refused while the rest lasts and changes nothing, the HUD's chip ends with "prepared +1", the console's
  *   next check line and `progress` say so, and after a reload all of it is still there; then, with a workstation placed
- *   and an agent named by hand, 5 opens the Staff tab, the arrows put the cursor on the workstation and Enter posts the
- *   agent there (saved, listed by engine.homeSeats, drawn), every staff button at least 48 px tall, and after a reload
- *   the agent still stands there;
+ *   and an agent named by hand, 5 opens the Staff tab, the workstation's row in its list puts the cursor on the
+ *   workstation and Enter posts the agent there (saved, listed by engine.homeSeats, drawn; the row and the agent's
+ *   button say so), every staff button at least 48 px tall, and after a reload the agent still stands there;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -2616,9 +2616,9 @@ const SCENARIOS = {
    * screen reader), the console's next check carries the +1 and `progress` counts 29 more checks, and after a reload
    * the record, the chip and `progress` still do. Then staff at home (HomeCard.tsx's Staff tab, staffStore.ts): the
    * workstation is written into the layout and an agent onto the roster by hand before that reload (the rest's checks
-   * after it do not depend on comfort); walked in again, 5 opens the Staff tab, the arrows put the cursor on the
-   * workstation and Enter posts the agent there, saved in this browser, listed by engine.homeSeats and drawn, and after
-   * one more reload the agent still stands there. Copied from furnish rather than shared, so its checks stay put.
+   * after it do not depend on comfort); walked in again, 5 opens the Staff tab, the workstation's row in its list puts
+   * the cursor on the workstation and Enter posts the agent there, saved in this browser, listed by engine.homeSeats
+   * and drawn, with the row and the agent's button saying so, and after one more reload the agent still stands there. Copied from furnish rather than shared, so its checks stay put.
    */
   async rest(chrome, origin) {
     const p = await open(chrome)
@@ -2756,8 +2756,8 @@ const SCENARIOS = {
       check(errs2.length === 0, 'rest: after a reload the engine recorded no error', errs2.join(' | ').slice(0, 300))
       p.health('rest reloaded')
 
-      // Staff: 5 opens the Staff tab (pressed until it reads as open, as 4 is above); the arrows walk the cursor onto
-      // the workstation's cell (10, 20), as a keyboard player would, and Enter posts Mara there.
+      // Staff: 5 opens the Staff tab (pressed until it reads as open, as 4 is above); the workstation's row in the list
+      // puts the cursor on its cell (10, 20), as a tap or a screen reader would, and Enter posts Mara there.
       check(await walkIn(), 'rest: staff: the avatar walks into the Brownstone again')
       await p.tap('KeyB', 'b', 66)
       await p.waitFor(`!!${at(card)}`, 10_000).catch(() => {})
@@ -2766,25 +2766,23 @@ const SCENARIOS = {
         await p.tap('Digit5', '5', 53)
         staff = await p.waitFor(`!!${at(`${card} [data-staff]`)}`, 4_000).then(() => true, () => false)
       }
-      const cursorAt = () => p.eval(`${at(`${card} [data-cursor]`)}?.dataset.cursor ?? ''`)
-      let cur = await cursorAt()
-      for (let i = 0; i < 40 && cur && cur !== '10,20'; i++) {
-        const [c, r] = cur.split(',').map(Number)
-        const [code, vk] = c > 10 ? ['ArrowLeft', 37] : c < 10 ? ['ArrowRight', 39] : r > 20 ? ['ArrowUp', 38] : ['ArrowDown', 40]
-        await p.tap(code, code, vk)
-        await p.waitFor(`(${at(`${card} [data-cursor]`)}?.dataset.cursor ?? '') !== ${JSON.stringify(cur)}`, 4_000).catch(() => {})
-        cur = await cursorAt()
-      }
+      const row = `${card} [data-action="station"][data-seat="10,20"]`
+      await p.waitFor(`!!${at(row)}`, 4_000).catch(() => {})
+      await p.eval(`${at(row)}?.click()`)
+      await p.waitFor(`${at(`${card} [data-cursor]`)}?.dataset.cursor === '10,20'`, 4_000).catch(() => {})
+      const cur = await p.eval(`${at(`${card} [data-cursor]`)}?.dataset.cursor ?? ''`)
       await p.tap('Enter', 'Enter', 13)
       const posted = await p.waitFor(`/^Mara is at workstation 1 now/.test(${at(`${card} [data-reason]`)}?.textContent ?? '')`, 10_000).then(() => true, () => false)
       const staffed = await p.eval(`(() => {
         const seats = window.__SIM__.engine.homeSeats, s = seats.find((x) => x.kind === 'homeSeat:1:10:20')
         const b = ${at(`${card} [data-action="place"]`)}, h = b?.getBoundingClientRect().height ?? 0
-        const rows = [...document.querySelectorAll('${card} [data-action="agent"]')].map((x) => x.getBoundingClientRect().height)
+        const rows = [...document.querySelectorAll('${card} [data-action="agent"], ${card} [data-action="station"]')].map((x) => x.getBoundingClientRect().height)
         return { cursor: ${JSON.stringify(cur)}, stored: localStorage.getItem('civic-simulation:staff:v1'), occupant: s?.occupant ?? null, present: !!s?.present, visible: window.__SIM__.engine.staffView.group.visible,
-          button: b?.textContent ?? '', tall: h >= 48 && rows.length >= 1 && rows.every((x) => x >= 48), reason: ${at(`${card} [data-reason]`)}?.textContent ?? '' } })()`)
+          row: ${at(row)}?.textContent ?? '', agent: ${at(`${card} [data-action="agent"]`)}?.getAttribute('aria-label') ?? '',
+          button: b?.textContent ?? '', tall: h >= 48 && rows.length >= 2 && rows.every((x) => x >= 48), reason: ${at(`${card} [data-reason]`)}?.textContent ?? '' } })()`)
       check(staff && cur === '10,20' && posted && staffed.stored === '{"v":1,"posts":[["Mara",1,10,20]]}' && staffed.occupant === 'Mara' && staffed.present && staffed.visible,
-        'rest: staff: 5 opens the Staff tab, the arrows reach the workstation and Enter posts Mara at workstation 1, saved, listed by homeSeats and drawn', JSON.stringify({ staff, ...staffed }))
+        'rest: staff: 5 opens the Staff tab, the workstation\'s row puts the cursor on it and Enter posts Mara at workstation 1, saved, listed by homeSeats and drawn', JSON.stringify({ staff, ...staffed }))
+      check(staffed.row === 'Workstation 1 · Mara' && staffed.agent === 'Mara: Workstation 1', 'rest: staff: the row says who stands there, and Mara\'s button says where she is', JSON.stringify(staffed))
       check(staffed.button === 'Post' && staffed.tall, 'rest: staff: the primary button reads Post, and every staff button is at least 48 px tall', JSON.stringify(staffed))
       await p.shot('rest-staff')
       await p.tap('Escape', 'Escape', 27)

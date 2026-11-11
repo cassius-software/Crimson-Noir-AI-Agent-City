@@ -60,10 +60,11 @@ export interface StaffAgent { readonly name: string; readonly out: boolean; read
 
 /**
  * Staffing a home's workstations, as the host offers it (App over staffStore.ts, the roster and the engine): the
- * agents, and a post or a stand-down, each answering null when done or the sentence why not.
+ * agents, a home's name, and a post or a stand-down, each answering null when done or the sentence why not.
  */
 export interface StaffHooks {
   agents(): readonly StaffAgent[]
+  homeName(home: number): string
   post(home: number, c: number, r: number, name: string): string | null
   standDown(home: number, c: number, r: number): string | null
 }
@@ -342,6 +343,24 @@ export class Visit {
     const list = this.staffAgents()
     return list.find((a) => a.name === this.agent)?.name ?? list.find((a) => !a.post)?.name ?? list[0]?.name ?? null
   }
+  /**
+   * Where post `p` stands, in words, `w` being "Workstation" or "workstation": another home's name (hooks.staff), or
+   * workstation N here; null for none, and for one here whose workstation is moved or put away.
+   */
+  private postWords(p: StaffAgent['post'], w: string): string | null {
+    if (!p) return null
+    if (p.home !== this.home) return this.io.hooks.staff!.homeName(p.home)
+    const n = this.stations().findIndex((s) => s.c === p.c && s.r === p.r)
+    return n < 0 ? null : `${w} ${n + 1}`
+  }
+  /**
+   * Where agent `a` is, as the strip says under the name: Free, Workstation N, another home's name, or Workstation
+   * moved or put away; then " · out with you" while hired.
+   */
+  whereIs(a: StaffAgent): string {
+    const at = this.postWords(a.post, 'Workstation') ?? (a.post ? 'Workstation moved or put away' : 'Free')
+    return a.out ? `${at} · out with you` : at
+  }
   /** The next or previous agent (Q, E, the shoulders), or one by name (a tap in the strip). */
   pickAgent(d: 1 | -1 | string): void {
     const list = this.staffAgents()
@@ -360,7 +379,9 @@ export class Visit {
     if (!name) { this.say(NO_AGENTS); return }
     const me = this.staffAgents().find((a) => a.name === name)!, was = this.who(d.p)
     if (was?.name === name) { this.say(`${name} is already at workstation ${d.n}`); return }
-    this.say(this.io.hooks.staff!.post(this.home, d.p.c, d.p.r, name) ?? `${name} is at workstation ${d.n} now${was ? `; ${was.name} is free` : ''}${me.out ? '; out with you until you part' : ''}`)
+    const from = this.postWords(me.post, 'workstation')
+    this.say(this.io.hooks.staff!.post(this.home, d.p.c, d.p.r, name)
+      ?? `${name} is at workstation ${d.n} now${from ? ` (moved from ${from})` : ''}${was ? `; ${was.name} is free` : ''}${me.out ? '; out with you until you part' : ''}`)
   }
   /** Stand down whoever is at the workstation under the cursor (the Staff tab's Remove), through the host. */
   standDown(): void {
@@ -405,7 +426,7 @@ export class Visit {
     this.say(`${nameOf(under.id)} removed`)
   }
   rotate(): void {
-    if (this.tab === STAFF_TAB) return
+    if (this.tab === STAFF_TAB) { this.say('Workstations turn in the Furniture tab'); return }
     if (!this.hand()) { this.say('Nothing in hand to turn: choose a piece in the strip'); return }
     this.rot = (this.rot + 1) & 3
     this.quiet()
