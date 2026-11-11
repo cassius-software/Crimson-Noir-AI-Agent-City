@@ -2114,6 +2114,60 @@ test('the newest measurement at 8,192 decides: a cut answer after a split one ke
   assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
 })
 
+test('the newest measurement at 8,192 decides when answers overlap: a cut answer ending while a slow one is measured waits for that reading, and grows nothing once it says split', async () => {
+  const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 20e9, kv: 1e9 } }, writes: { [DEFAULT_MODEL]: WHOLE } })
+  const r = make(m, { vram: '24', lookMs: 5000 })
+  await ask(r)
+  await measured(m, 1)
+  // Two answers at 8,192 together: the first ends slow and its /api/ps is held; the second ends cut meanwhile.
+  const one = latch(); const two = latch()
+  m.state.holds = [one.held, two.held]
+  const slow = ask(r)
+  const cut = ask(r)
+  await until(() => bodies(m).length === 3)
+  let release = (): void => {}
+  m.state.hold = new Promise<void>((done) => { release = done })
+  m.state.writes[DEFAULT_MODEL] = SLOW
+  one.open()
+  await slow
+  await until(() => looks(m) === 2)
+  m.state.writes[DEFAULT_MODEL] = CUT
+  two.open()
+  await cut
+  // The slow one's reading lands: split, and kept, since Ollama lists nothing else.
+  m.state.ps[DEFAULT_MODEL] = { size: 5e9, vram: 4e9, kv: 1e9 }
+  release()
+  m.state.hold = null
+  await settle()
+  m.state.writes[DEFAULT_MODEL] = WHOLE
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '8192/2048', '8192/2048', '8192/2048'])
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/)
+})
+
+test('ask vram leaves the answers in flight: a reading at 8,192 taken while an answer at 16,384 sent before it is under way is not kept, and grows nothing', async () => {
+  const m = ONE()
+  const r = make(m, { vram: '24' })
+  await ask(r)
+  await measured(m, 1)
+  const { held, open } = latch()
+  m.state.holds = [held]
+  const wide = ask(r)
+  await until(() => bodies(m).length === 2)
+  r.setVram('24')
+  await ask(r)
+  await measured(m, 2)
+  assert.doesNotMatch(r.settings().fit ?? '', /tokens of context/, 'read while the answer at 16,384 was under way')
+  open()
+  await wide
+  await settle()
+  // Nothing at another context since: the next answer at 8,192 is measured, and grows.
+  await ask(r)
+  await measured(m, 3)
+  await ask(r)
+  assert.deepEqual(bodies(m), ['8192/2048', '16384/4096', '8192/2048', '8192/2048', '16384/4096'])
+})
+
 test('a model auto moved to grows by its own weights: the 14b, cut, gets 16,384 where the 4b\'s weights would leave no room', async () => {
   // Doubling the 14b costs what it loads beyond its weights: 14 + 4.7 GB fits 22 GiB; by the 4b's weights, 14 + 10.7 would not.
   const m = machine({ models: [L(DEFAULT_MODEL, 3.3e9), L('qwen3:14b', 9.3e9)], ps: { [DEFAULT_MODEL]: { size: 5e9, vram: 40e9, kv: 1e9 }, 'qwen3:14b': { size: 14e9, vram: 40e9, kv: 1e9 } }, writes: { [DEFAULT_MODEL]: WHOLE, 'qwen3:14b': CUT } })

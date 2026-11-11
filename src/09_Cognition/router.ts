@@ -616,20 +616,20 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const crossed = (s: Sent): boolean => [...(flights.get(keyOf(s.server, s.model)) ?? [])].some(([ctx, f]) => ctx !== s.ctx && (f.open > 0 || f.ended > s.at))
   /**
    * After an Ollama answer under auto with a figure, still in force as it ends (R3): one GET of /api/ps, detached and
-   * chained, when the answer was slow, ran out of time, or this server, model and context were not measured this visit;
-   * the next look or answer awaits it. Then, the context's growth is decided (R4), with no request of its own.
+   * chained, when the answer was slow, ran out of time, or this server, model and context were not measured this visit.
+   * Then, behind any measurement under way (the newest decides), the context's growth is decided (R4), with no request
+   * of its own. The next look or answer awaits both.
    */
   const after = (sent: Sent, a: Answer | null, timedOut: 'cold' | 'stall' | null): void => {
     if (sent.gen !== generation || figure() === null) return
     const counted = a !== null && a.pace !== undefined && a.tokens >= PACE_TOKENS
     const pace = a?.pace ?? (timedOut === 'stall' ? 0 : null)
     const slow = timedOut !== null || (counted && pace !== null && pace < PACE_FLOOR)
-    const k = measuredKey(sent)
     // Measured once a visit while quick; a measurement dropped or failed (nothing kept) is asked again after the next.
-    if (!slow && verified.has(k)) { widenAfter(sent, a); return }
+    const look = slow || !verified.has(measuredKey(sent))
     // Once measured, the model the next answer goes to (and what the row says) follows at once.
     const follow = (): void => { if (kept.provider === 'auto' && found === 'ollama' && unchosen()) { const n = listedHere()?.map((m) => m.name); if (n) repick(n) } }
-    const run = (measuring ?? Promise.resolve()).then(() => measure(sent, pace, slow, timedOut === 'cold')).then(follow).then(() => widenAfter(sent, a)).catch(() => {})
+    const run = (measuring ?? Promise.resolve()).then(() => (look ? measure(sent, pace, slow, timedOut === 'cold').then(follow) : undefined)).then(() => widenAfter(sent, a)).catch(() => {})
     measuring = run
     void run.finally(() => { if (measuring === run) measuring = null })
   }
@@ -641,7 +641,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const widenAfter = (sent: Sent, a: Answer | null): void => {
     const f = figure()
     if (a === null || sent.gen !== generation || f === null || !gate()) return
-    if (ollama.settings().server !== sent.server || ollamaModel() !== sent.model) return
+    if (ollamaModel() !== sent.model) return
     const k = keyOf(sent.server, sent.model)
     const n = widen({ reason: a.reason, tokens: a.tokens, pace: a.pace ?? null, ctx: sent.ctx, placed: placements.get(measuredKey(sent)) ?? null, weights: bytesOf(sent.model), figure: f, grown: wide.has(k) })
     if (n !== null) wide.set(k, { state: 'grown', from: sent.ctx, ctx: n, tried: n })

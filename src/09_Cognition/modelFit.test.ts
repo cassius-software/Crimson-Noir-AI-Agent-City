@@ -490,6 +490,8 @@ test('fitLine: the context clause, once something grew or was learned; with none
       'qwen3:14b was trained on 12,288 tokens of context, so it runs at that with answers of up to 3,072 (measured 13.9 GB loaded at that context, all on the GPU)'],
     ['trained on what it grew from', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'trained', trained: 8192 },
       'qwen3:14b was trained on 8,192 tokens of context, so it stays at 8,192 for this visit'],
+    ['trained below what it grew from', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'trained', trained: 4096 },
+      'qwen3:14b was trained on 4,096 tokens of context, so it stays at 8,192 for this visit'],
     ['back: split', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'split' },
       '16,384 tokens of context did not fit the GPU (some of it ran on the processor), so qwen3:14b stays at 8,192 for this visit'],
     ['back: on the processor', { state: 'back', from: 8192, ctx: 8192, tried: 16384, why: 'cpu' },

@@ -2248,8 +2248,9 @@ prints decimal GB, so its 142GB is 132.2 GB here.
     context once, to 16,384, with answers of up to a quarter of it (4,096), when all of these hold:
     - the answer counted at least 32 tokens at a pace that writes the longer answer within 5 minutes (about 13.7
       tokens a second for 4,096);
-    - the newest measurement of the model at 8,192 this visit was all on the GPU, and Ollama's `/api/ps` said it runs
-      at 8,192 (its `context_length`, which Ollama reports since v0.10.0, so an older Ollama never grows);
+    - the newest measurement of the model at 8,192 this visit (one still under way is waited for) was all on the GPU,
+      and Ollama's `/api/ps` said it runs at 8,192 (its `context_length`, which Ollama reports since v0.10.0, so an
+      older Ollama never grows);
     - what was loaded plus what doubling costs (what was loaded beyond the weights, at least 1 GB) fits the figure
       less 2 GB;
     - the model is still the one auto answers with after that measurement (a bigger model comes first), and it has
