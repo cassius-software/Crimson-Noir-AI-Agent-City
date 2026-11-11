@@ -15,6 +15,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Rolled sleeves and tattoos on the forearms.** The look genome's cloth word gains the sleeves (word 5, bits 16 and
+  17: full, as before, or rolled) and word 8 becomes the second tattoo word: a design (0 for none, or one of
+  sixty-four) on the left and the right forearm at seven bits each, its other bits spare and refused. Option 0 of each
+  is as before, so every earlier look keeps its code; a look with a forearm's design has a sixty-two symbol code.
+  Rolled sleeves are paint over the sleeve's own geometry (`src/03_Spawn_Agents/crowd.ts`): below the roll line (1.10
+  m standing, the forearm's top ring, `tattoo.ts` `TATTOO_SLEEVE`) the top's fragments on an arm take the skin's slot
+  for the colour, the skin's marks, the tattoos, a prosthetic arm's finish and the skin's roughness, and above it a
+  2 cm band of the sleeve's cloth reads as turned back under a fold line. A coat keeps its sleeves down. The near and
+  the far body both draw the rolled sleeves, so a person's arms do not change as they come close; only the near body
+  inks them, reading a chosen look's word 8 from `crowd.figure` (no varying is added). A passer-by whose drawn designs
+  reach a forearm rolls their sleeves unless they wear a coat, in the shader (`crowdTattoo.ts` `tatZones` against the
+  forearms' zones) and in `lookFromSeed` alike: `tattoo.test.ts` finds the two agree on all of 20,000 seeds, 1,274 of
+  them rolled. The card shows six tattoo zones and a Sleeves row (not under a coat); the console takes `look sleeves
+  rolled` and `look tattooForearm circuit trace`. The ink studio's twelve designs (lines 48 to 59) go on sale, each
+  wearing its design on the left forearm with the sleeves rolled, so what is bought is what the mirror showed; a
+  design the look would hide says so on its row ("A coat keeps its sleeves down", "Covered by the limb";
+  `storeCatalog.ts` `coverHint`). The shader budget holds: the worst near main fragment stage is 185,605 characters
+  (was 183,728) and the worst far one 142,122 (was 139,888). `dist/index.html` grows by 1,991 bytes, from 12,000,653 to
+  12,002,644; the limit in `tools/verify/page_dist.mjs` is unchanged. Eighteen pictures of the ink studio's mirror on
+  the software WebGPU adapter (SwiftShader) show the rolled sleeves in a jacket and in shirt sleeves, four inks on the
+  forearms, the halo on the deepest skin, sleeves down and a coat hiding the designs, a prosthetic left arm taking its
+  bared forearm, and vitiligo going on up the bared skin. Five more, taken by pressing the studio card's own buttons,
+  show the twelve designs on sale, the coat's hint on every row, and Try on rolling the sleeves for the mirror. Unverified: no hardware GPU has compiled or drawn it yet.
+
 - **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
   (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
   hand, the neck and the nape at seven bits each, and one ink at three; bit 31 is the shader's street flag, which no
