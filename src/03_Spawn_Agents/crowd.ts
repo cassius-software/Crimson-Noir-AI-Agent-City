@@ -980,8 +980,8 @@ export class CrowdView {
     const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25)).toVar() as unknown as V3
     const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age)).toVar() as unknown as V3
     top = select(custom, ownTop, top)
-    bottom = select(custom, ownBottom, bottom)
-    shirt = select(custom, ownShirt, shirt)
+    bottom = select(custom, ownBottom, bottom).toVar() as unknown as V3
+    shirt = select(custom, ownShirt, shirt).toVar() as unknown as V3
     shoes = select(custom, ownShoes, shoes)
     // The shoe's colour before its style is painted on it: a boot's shaft is this cloth too (below).
     const shoeCloth = shoes.toVar() as unknown as V3
@@ -1069,7 +1069,7 @@ export class CrowdView {
     const trimAt = wfield('trim')
     const scarfAt = wfield('scarf')
     const coat = at(PALETTE.coats, select(custom, field('top'), uint(h(3).mul(cloth(outfit.top).length - 0.001))))
-    const topCloth = select(layer.equal(uint(LAYER.coat)), coat, top)
+    const topCloth = select(layer.equal(uint(LAYER.coat)), coat, top).toVar() as unknown as V3
     const trimCloth = select(trimAt.equal(uint(0)), topCloth, at(PALETTE.trims, trimAt.sub(uint(1))))
     const scarf = at(PALETTE.scarves, select(scarfAt.equal(uint(0)), uint(0), scarfAt.sub(uint(1))))
     // The jacket's lines, cut from the rest position (humanoid.ts GARMENT) over the top's slot: on the trunk's front the
@@ -1278,7 +1278,8 @@ export class CrowdView {
       const lines = near ? pleatLines.max(turnLine).max(hemLine) : float(0)
       const lit = woven.mul(near ? crease.mul(0.35).add(1) : float(1))
       const cloth = mix(mix(lit, lit.mul(0.5), lines), bottom.mul(1.5).add(0.06).min(vec3(1)), piping)
-      const turnedCloth = select(turned.and(rest.y.lessThan(0.143)), cloth.mul(0.88), cloth)
+      // The turn-up's shade as a factor: a select between two colours wrote the whole cloth out in both branches.
+      const turnedCloth = cloth.mul(select(turned.and(rest.y.lessThan(0.143)), float(0.88), float(1)))
       stripe = lowIs(TROUSER_CUT.sideStripe).and(trousers).and(outside).and(rest.z.abs().lessThan(0.007))
       // The belt on the seat, and on the thighs' tops where they stand out of it at the hips (the suit's sits that low).
       const belt = lowIs(TROUSER_CUT.belted).and(waistShown).and(onTrunk.or(onLegBone)).and(rest.y.sub(JACKET_HEM[variant] - 0.018).abs().lessThan(0.016))
@@ -1335,9 +1336,10 @@ export class CrowdView {
     // first reached inside one branch, was written again in every other branch that read it, and the rain-mode and
     // dissolve wraps read the colour a second time: the fragment stage grew past its budget (shadowShaders.test.ts).
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
-    // the skin and the hair as painted, the colour. Each paint still pays for its marks under its own branches.
+    // the skin and the hair as painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays
+    // for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
