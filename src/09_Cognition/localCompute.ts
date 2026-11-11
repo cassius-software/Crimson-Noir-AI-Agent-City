@@ -50,8 +50,9 @@ export const CONTEXT_TOKENS = 8192
 /** The longest answer, thinking included, tokens. */
 export const ANSWER_TOKENS = 2048
 /**
- * Starting value: the shortest answer cap, tokens, the chat format asks for once more after a server refused a
- * prompt and ANSWER_TOKENS together as longer than its model's window (windowOf). Below it, the refusal is a sentence.
+ * Starting value: the least room, tokens, a server that refused a prompt and ANSWER_TOKENS together as longer than its
+ * model's window must say is left (its window less its count of the prompt, windowOf) for the chat format to ask once
+ * more, with one token under that room as the cap. With less, the refusal is a sentence.
  */
 export const ANSWER_MIN_TOKENS = 256
 /**
@@ -241,13 +242,16 @@ async function diagnose(fetchFn: FetchLike, server: string): Promise<CognitionEr
  * its count of the prompt I, tokens. SGLang (tokenizer_manager.py, `>=` up to 0.5.10.post1 and `>` from 0.5.11; a
  * 400 before a stream from 0.5.10, inside a 200 stream before; body `{ "object": "error", "message": "…" }`):
  * "Requested token count exceeds the model's maximum context length of W tokens. You requested a total of T tokens: I
- * tokens from the input messages and M tokens for the completion. …". vLLM 0.10.1 to 0.15 (serving_engine.py, later
- * engine/serving.py, `>`; from 0.16 the chat format is refused in other words with I cut short, and 0.32 lowers the
- * cap itself; body `{ "error": { "message": "…" } }`): "'max_tokens' or 'max_completion_tokens' is too large: M. This
- * model's maximum context length is W tokens and your request has I input tokens (M > W - I)."
+ * tokens from the input messages and M tokens for the completion. …". vLLM up to 0.10.0 (serving_engine.py, read
+ * back to 0.5.5, `>`; body `{ "object": "error", "message": "…" }`): "This model's maximum context length is W tokens.
+ * However, you requested T tokens (I in the messages, M in the completion). …". vLLM 0.10.1 to 0.15 (serving_engine.py,
+ * later engine/serving.py, `>`; from 0.16 the chat format is refused in other words with I cut short, and 0.32 lowers
+ * the cap itself; body `{ "error": { "message": "…" } }`): "'max_tokens' or 'max_completion_tokens' is too large: M.
+ * This model's maximum context length is W tokens and your request has I input tokens (M > W - I)."
  */
 const WINDOW_REFUSALS: readonly RegExp[] = [
   /^Requested token count exceeds the model's maximum context length of (\d+) tokens\. You requested a total of \d+ tokens: (\d+) tokens from the input messages and \d+ tokens for the completion\./,
+  /^This model's maximum context length is (\d+) tokens\. However, you requested \d+ tokens \((\d+) in the messages, \d+ in the completion\)\./,
   /^'max_tokens' or 'max_completion_tokens' is too large: \d+\. This model's maximum context length is (\d+) tokens and your request has (\d+) input tokens \(/,
 ]
 /** The window and the count of the prompt from a refusal's whole JSON body (WINDOW_REFUSALS), or null. */
@@ -489,8 +493,8 @@ export async function chat(fetchFn: FetchLike, req: AnswerRequest, onPiece: (p: 
     } catch (e) {
       const cap = capAfter(e)
       w.signal.throwIfAborted()
-      // Once, and its failure is the answer's: one that cannot reach the server is the server's failure, so the router's
-      // look (which answers again after 'offline' or 'refused') never follows it with another ask.
+      // Once, and its failure is the answer's: one that cannot reach the server or is refused this page (403) is the
+      // server's failure, so the router's look (which answers again after 'offline' or 'refused') never follows it.
       res = await send(cap).catch((x: unknown) => {
         throw x instanceof CognitionError && (x.code === 'offline' || x.code === 'refused') ? new CognitionError('server', x.message) : x
       })
@@ -503,18 +507,18 @@ export async function chat(fetchFn: FetchLike, req: AnswerRequest, onPiece: (p: 
 
 /**
  * After the chat format's first request failed: the cap to ask once more with when the server refused the prompt as
- * too long for its model's window (TooLong), one token under its window less its count of the prompt (SGLang up to
- * 0.5.10.post1 refuses a total equal to the window), at least ANSWER_MIN_TOKENS and below ANSWER_TOKENS. With less
- * room, one sentence says so; anything else is thrown as it came.
+ * too long for its model's window (TooLong), one token under the room it says is left, its window less its count of
+ * the prompt (SGLang up to 0.5.10.post1 refuses a total equal to the window), when that room is at least
+ * ANSWER_MIN_TOKENS and at most ANSWER_TOKENS. With less room, one sentence says so; anything else is thrown as it came.
  */
 function capAfter(e: unknown): number {
   if (!(e instanceof TooLong)) throw e
-  const cap = e.window - e.input - 1
-  if (cap >= ANSWER_TOKENS) throw e
-  if (cap < ANSWER_MIN_TOKENS) {
+  const room = e.window - e.input
+  if (room > ANSWER_TOKENS) throw e
+  if (room < ANSWER_MIN_TOKENS) {
     throw new CognitionError('server', `the prompt (${e.input} tokens) leaves no room for an answer in the model's window of ${e.window} tokens: ask with fewer people bound or a shorter question, or start the server with a larger window`)
   }
-  return cap
+  return room - 1
 }
 
 /** The chat format's server-sent events, read under its request's watch. */
