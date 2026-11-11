@@ -12,14 +12,14 @@
  * What breaks if it is removed? The player cannot move, look, drive or interact.
  */
 import { HalBus } from './hal.ts'
-import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type GenericLayout } from './gamepad.ts'
+import { createAnalog, isUsablePad, PAD_EDGE, PadLook, PadMapper, type Analog, type PadFamily, type PadHand, type GenericLayout } from './gamepad.ts'
 import type { XrMapper } from './xrInput.ts'
 import { KEYBOARD_SEAT, PadSeat, SEATS, SeatTable, type PlayerIntent, type Seat } from './seats.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'browse'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -39,6 +39,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyM: 'matrix',
   /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
   KeyQ: 'ping',
+  /** The microphone's mute and unmute (04_Connect_Hardware/microphone.ts); also a pad's right stick click (R3) and the HUD's pill. */
+  KeyV: 'mute',
   /** A shop's catalogue, standing in it (01_Initialize_World/storefronts.ts; E does it too when no car is in reach). */
   KeyB: 'browse',
 }
@@ -426,9 +428,12 @@ export class Input {
     this.queued.clear()
   }
 
-  /** Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK. */
+  /**
+   * Programmatic key press, used by the ?debug harness and the touch buttons; nothing while a card waits for the OK,
+   * except the microphone's mute, a privacy switch that is never held back (the Menu's Microphone item).
+   */
   press(action: Action): void {
-    if (this.shielded) return
+    if (this.shielded && action !== 'mute') return
     this.queued.add(action)
   }
 
@@ -453,8 +458,8 @@ export class Input {
 
   /**
    * A card waits for the operator's OK (its own buttons take the pad and the taps): the pad's edges read in poll() and
-   * the touch cluster's press() queue nothing until it lifts, so the south face button presses the card and never the
-   * car door. Keys, sticks, triggers, the mouse and the other seats are untouched (E or a walk-off still ends the
+   * the touch cluster's press() queue nothing until it lifts (but the microphone's mute), so the south face button
+   * presses the card and never the car door. Keys, sticks, triggers, the mouse and the other seats are untouched (E or a walk-off still ends the
    * proposal, in the gateway's words), and the mapper's held bits advance all the while, so no edge replays on lift.
    */
   shield(on: boolean): void {
@@ -466,6 +471,11 @@ export class Input {
    * lowest free seat among 1..n−1 first, then seat 0) and player 1 reads only the pad in seat 0; with one, every pad
    * merges into player 1 as before. Pads in seats that no longer exist stand up at once.
    */
+  /** The pad layout (gamepad.ts PadHand; 07_Execute_Actions/access.ts `pad`): both hands, or one stick and one side's buttons. The first seat's pad; a split screen's other seats keep both hands. */
+  setHand(hand: PadHand): void {
+    this.mapper.hand = hand
+  }
+
   setPlayers(n: number): void {
     this.seats.setPlayers(n)
     if (this.seats.players <= 1) this.seats.clear()
@@ -532,12 +542,15 @@ export class Input {
       edges = this.mapper.read(pads, this.pad)
     }
     edges |= this.readXr() // the headset's controllers: their held bits advance here too, their edges ride the pad's word
-    if (this.shielded) edges = 0 // a card waits for the operator's OK: its buttons have the pad (the held bits advanced above)
+    // A card waits for the operator's OK: its buttons have the pad (the held bits advanced above); the mute, a privacy
+    // switch on a stick click the card never reads, still goes through.
+    if (this.shielded) edges &= PAD_EDGE.mute
     if (edges & PAD_EDGE.interact) this.queued.add('interact')
     if (edges & PAD_EDGE.reset) this.queued.add('reset')
     if (edges & PAD_EDGE.timeForward) this.queued.add('timeForward')
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
+    if (edges & PAD_EDGE.mute) this.queued.add('mute')
     if (this.mapper.active) this.lastSource = 'gamepad'
 
     const xr = this.xr

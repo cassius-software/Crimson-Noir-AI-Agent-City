@@ -15,6 +15,70 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The microphone pill, an on-device voice detector and barge-in over Sloane.** A pill under the HUD's header
+  (`07_Execute_Actions/Hud.tsx` `MicPill`) reads the microphone's state (Mic off, Listening with a live meter of the
+  room, Hearing you, Speaking while Sloane talks over it, Muted, or why it could not open) and is a button: a press,
+  `V`, the right stick's click (R3) or the touch Menu's new Microphone item opens the microphone or mutes it, all
+  one action through the engine (`input.ts` `'mute'`, `gamepad.ts` `PAD_EDGE.mute`, `engine.ts` `onMute`), which
+  goes through even while an action card waits for the OK or a home's doorstep card holds the avatar. Mute
+  releases the device, so the browser's own indicator goes out with the pill's, and the device is never open
+  without the pill, which outlives `H` like REC (on a phone it is a 28 px badge on the minimap's lower-left corner, a
+  microphone glyph struck through when it could not open and the pill's dot, shown only while the device is open,
+  opening or could not open: the Menu's item is the switch there, and as a row of the panels' column, up from the
+  start, it pushed them into Sloane's chip at the wheel on a 320 × 568 phone). The
+  microphone opens as the city starts (`MIC_OPEN_BY_DEFAULT` in `04_Connect_Hardware/microphone.ts`, true on Julian's
+  word of 2026-11-07), so the browser asks its permission then; after that the visitor's own choice is kept (key
+  `civic-simulation:voice:v1`): one who left it on finds it on, one who muted it finds it muted, and a no at the
+  browser's prompt is kept like a mute, so the page does not ask again at every boot (a press asks again); a missing
+  device or an insecure page keeps nothing. Open, a voice activity
+  detector (`vad.ts`: energy over an adaptive floor, the zero-crossing rate and spectral flatness, per frame of about
+  11 ms, with onset and release counts) runs in an audio worklet where the browser has one and polled from the page
+  where it has not (each poll feeds the samples since the last by the context's clock), feeding the meter and the
+  pill. The crossings and the flatness are read over the band the frame carries (up to its last bin within 30 dB of
+  its mean power, read through a Hann window; the flatness below 16 kHz too), so hiss stays hiss where the
+  microphone's band ends before the context's: a 16 kHz headset heard in a 48 kHz context, a call codec's 7 kHz or
+  3.4 kHz edge, a 48 kHz capture in a 96 kHz context. Hiss whose band slopes away over more than about a tenth of its
+  width, and pink or brown noise, can still read as a voice. The frame follows the audio context's sample rate, which
+  is the output device's (`vadFrame`: 512 samples at 44.1 and 48 kHz, 1024 at 88.2 and 96 kHz, up to 8192 at 768 kHz),
+  so every time the detector counts below holds at 44.1 or 48 kHz or either doubled or halved (at 8, 16, 32, 64 and
+  128 kHz a frame is 8 ms and those times are three quarters as long; the 1.5 s after her line in which words are not
+  taken is the clock's);
+  speech starting while Sloane speaks cuts her line (`speaker.ts`
+  `onSpeaking`, `speaking`), with the browser's echo cancellation and a margin in the detector against her own
+  voice; the detector also learns how loud her voice comes back through the speakers over each line's first 1.5 s
+  and 0.43 s past the last steady sound in them (`speaking` starts when the clip plays or the browser speaks, not
+  while a provider voice is synthesised, decoded or failing over; an operating system's voice can still start late;
+  a line that cuts the one still playing starts its own learning, `onLine`), taking the steady level (the quietest
+  of five frames, so a click or a knock of up to 32 ms is not taken for her, while one that rings on in the room is,
+  like a cough), then holds her loudest word
+  through her pauses (it falls only after 1.5 s without her voice near it, and rises at most 1 % a frame) and wants a
+  voice 1.6 times that for about a quarter of a second before it cuts her; with none of her coming back (headphones)
+  the onset is short. Against simulated lines (syllables whose loudness swings by 3 to 4 dB, pauses between
+  sentences, a start up to 1.3 s late, a room's reverberation, half of them 3 dB louder at the end) her own line
+  never cut itself in 640 tries, nor in 320 more with a click or a murmur before her late voice. With nothing of her
+  coming back, a visitor cut in within a second every time (80 tries at two levels down to about 17 dB over the
+  room, 40 with a click in her first 1.5 s, and 480 with a knock of 12 to 31 ms there, wherever it fell across the
+  frames). Over her echo with no echo cancellation, a visitor 14 dB louder than her usual words cut in within a
+  second 33 times in 40, 12 dB louder 23 in 40, and 9.5 dB louder 10 in 40; the rest later or not at all. Swings of
+  6 dB between syllables still cut 23 lines in 320, and with half the lines rising 6 dB at the end instead of 3,
+  6 in 736 cut themselves, in the same simulation. Nobody cuts in during her line's first 1.5 s: a voice or a
+  lasting sound there (a cough) is learned as hers, and a visitor learned that way usually cannot cut in until they
+  have been quiet for a few seconds (the estimate holds 1.5 s, then halves every 1.5 s).
+  Where the browser promises on-device speech recognition (`08_Swarm/recruitment.ts`) it listens while the
+  microphone is open, `recruit listen` opens the pill's microphone too, and words that are not a recruitment
+  request reach Sloane (`Concierge.tsx` `heard`, `onboarding/heard.ts`: a line that names Sloane first opens the
+  goal dialogue, "Sloan" too; an open question takes the whole line), but none heard while she speaks or in the
+  1.5 s after (`heardNow`), so her own line is never taken for the visitor's; a line the visitor cut off leaves no
+  such pause, so the words they cut in with are kept. The console's `mic [on|off]` prints
+  and switches it. The screen reader hears the microphone's state through a live region in the HUD's root (not
+  every onset of speech), there on a phone and with the HUD hidden too, and the pill's accessible name says the
+  state, what a press does and the key. A mute that lands while the device is still opening stops the recogniser
+  as well, and changing an accessibility setting never restarts the city or the microphone. Firefox has no on-device recognition, so there the pill shows the
+  level and speech only; no audio leaves the page, nothing is recorded, and no speech model ships with the page
+  (no Whisper). Verified by Node tests against synthetic room, voice, syllable-shaped speech, click and hiss signals and fake browser objects
+  (`vad.test.ts`, `microphone.test.ts`, `voiceWiring.test.ts`); a real microphone, a phone's and Safari's permission
+  flow, and the barge-in's feel with a loudspeaker are unverified. The page grew 17.7 KB for it, past a budget main
+  was 7.5 KB under, so `tools/verify/page_dist.mjs` re-measures: 14,385,135 bytes plus 3%.
 - **Sloane always answers, and dispatches.** The dead end is gone: a goal is never answered with "that's not
   something I can do yet". `src/06_Make_Decisions/dispatch.ts` (new) is the deterministic team planner: a goal's
   work words name desks (sixteen, one per indoor workplace kind in slot order, the six first rooms found under either
@@ -794,6 +858,65 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (the way the browser smoke does, served from 127.0.0.1 with the isolation headers) and photographs it at any
   number of clock hours, head angles and places, the concierge's card skipped and the HUD hidden; it exits 1 when the
   page threw, logged a WebGPU error or a shader three could not build.
+
+- **Accessibility: high contrast, colour-vision filters, text size, caption size.** Four settings
+  (`07_Execute_Actions/access.ts`), kept between visits (`civic-simulation:access:v1`), set for one visit in the URL
+  (`?contrast=`, `?vision=`, `?ui=`, `?captions=large|huge`; a change of another setting keeps only that one, so
+  a URL's setting is not saved by it), read and written by the console's `access` and, the two
+  most wanted on a phone, by the touch Menu's High contrast and Text size items. High contrast (`auto` by default:
+  the operating system's `prefers-contrast: more`) is written onto the page's root (`data-contrast`) and flattens
+  every frosted-glass card (`index.css`, keyed on the blur utility so every card holds without knowing) to white on
+  black with solid borders and a thick focus ring, every light button inside one to black on white, the chosen one
+  of a set (a wardrobe pill, a pressed toggle) the other way round (a colour swatch keeps its colour and takes the
+  ring), and the status dots (a traffic signal's lights,
+  the recording and recruiting dots) keep their colours, brightened and ringed; the colour-vision filter is one more 3×3 at the end of the post
+  chain (`postfx.ts`, after the ghost composite), a daltonisation for a protan, deutan or tritan viewer (the Machado,
+  Oliveira and Fernandes 2009 simulation, the lost colour shifted into the channels the viewer sees) and the identity
+  otherwise, set through `Engine.setVision`, which keeps the post chain on at every tier while a filter is chosen
+  (where the page turned the chain off, under the lite profile, a split screen, `?post=0` or a headset, the
+  console's `access` says the filter is not drawn and why); the text size is a CSS zoom on every overlay's root (`--ui-zoom`,
+  `.ui-zoom`: the HUD, Sloane, the wardrobe, the action card, the way-out and lock screens, the onboarding, the shops'
+  card, the first walk's card, the touch Menu's sheet), never the canvas or the touch buttons, which are sized for thumbs (inside it, every
+  length measured in the window's pixels, such as the touch buttons' edges or where the Menu's sheet opens, is divided
+  by the zoom, so Sloane's card still clears the buttons at 200 %, and the Menu's sheet opens on the screen; a test
+  reads every component's syntax tree for a full-screen overlay outside the zoom, or a zoom inside another); the
+  caption strip has a size of its own. Checked in headless Chromium with a phone's touch layout: at 200 % the Menu's
+  sheet opens on the screen at 360 × 740, 375 × 667 and 390 × 844 and in landscape, and at 150 and 175 % on a
+  320 × 568 phone; there at 200 % Sloane's open card lies over the Menu button. The first walk's card (merged in from
+  main) takes the zoom on a layer of its own: the room for it beside Sloane's open card is 60 rem at that zoom
+  (`Concierge.tsx` `besideRoom`, 1,920 px at 200 %), and a window small at the zoom (`FirstWalk.tsx` `squeezedQuery`,
+  the compact query times the zoom) puts it at the foot of the screen, where at 200 % a 1,280 × 800 or 1,536 × 864
+  window gave it a strip 60 to 70 px tall under the zoomed readout (Chromium, before and after); high contrast
+  flattens the ink panels (`.noir-panel`: the onboarding's and the first walk's) like the frosted ones. Verified by Node tests of the arithmetic (every filter keeps every
+  grey and pulls the confused pair apart) and the settings, and by source pins over the page (`access.test.ts`,
+  `accessWiring.test.ts`); how the filter and the zoom look on a real display is unverified.
+
+- **The hands and the ears: dwell click, single-switch scanning, one-handed pad layouts, the screen reader's lines.**
+  Four more settings in `access.ts` (`access dwell|scan|pad|announce`, `?dwell= ?scan= ?pad= ?announce=`). The dwell
+  click (`04_Connect_Hardware/dwell.ts`) presses the control a pointer rests on for 0.6 s, its ring filling over
+  that time, once per rest (a control replaced in the same spot waits for the pointer to move), never a touch, a
+  real press or anything under pointer lock; single-switch scanning (`scanning.ts`) offers the page's controls one
+  at a time every 1.2 s, focused and ringed, and takes the Space bar as the switch ahead of the city (on a field
+  offered it takes the field; a control the browser will not focus as it is, a `role="button"` with no tabindex, is
+  lent tabindex -1 for its offer so the switch's key reaches it, and given back once the focus has left it (on its
+  blur, at the next offer, or when the focus lands anywhere, since a focus moved while the window is in the back fires
+  no blur), never if the page wrote that tabindex itself meanwhile (a roving tabindex's "-1" too, watched with a
+  MutationObserver); a field taken by the switch, focused any other way
+  or typed into holds the round until 6 s pass without a key, and a space typed there stays one); the pad mapper (`gamepad.ts` `PadHand`, `Input.setHand`)
+  gains a left-hand and a right-hand layout (one stick moves, and looks while its shoulder is held; that side's
+  pedals and buttons; select is the run latch, which holds until the stick has walked and come home, a glance
+  aside; start a ping, the stick's click the mute; on a pad without the standard mapping read by position with four
+  axes or one stick (or not placed yet), whose d-pad and centre buttons are not read, the left hand keeps its stick
+  and glance and opens doors with south, and the right hand reads with both hands unless the pad has four axes; a pad
+  read in kernel order keeps the one-hand layouts, its d-pad being the hat on axes 6 and 7, and with six axes (no hat)
+  the left hand opens doors with south and has no throttle or clock keys), and the action card, the way-out card and the lock
+  screen take the same hand (`padNav.ts`: start presses for the left hand and moves on for the right; the glance
+  shoulders never act there); and a live region on the HUD
+  (`announcer.ts`, `customer.announce`) tells a screen reader of the district walked into once held, a vehicle
+  beside you and what enters it, a seat taken or left, and every toast, oldest first, one line per 2.5 s with a
+  short queue. Verified by Node tests over
+  fake pages and pads (`dwell.test.ts`, `scanning.test.ts`, `announcer.test.ts`, `gamepad.test.ts`) and source pins
+  (`accessWiring.test.ts`); a real head mouse, switch interface or screen reader is unverified.
 
 - **The fallen wear their own bodies.** A pedestrian the realm promotes to a physical body (a shove, a kerb trip, a
   slip near the operator) is no longer hidden and replaced by grey capsules: the crowd's vertex stage hangs each of

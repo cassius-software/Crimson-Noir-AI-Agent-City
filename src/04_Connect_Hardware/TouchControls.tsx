@@ -8,7 +8,7 @@
  * foot, Brake, Handbrake and Reset while driving, and Ping (a mark where the head looks) in both modes. A Menu
  * button beside them opens what a keyboard reaches with one key and a phone has no key for: the Ring-0 console (and
  * through it `ask`, the agents and every setting), the model file kept in this page (the browser's file picker), the
- * clock an hour back or on, ghost view, rain mode, and hiding the HUD. Only its own controls take pointer events, so
+ * clock an hour back or on, ghost view, rain mode, the microphone, and hiding the HUD. Only its own controls take pointer events, so
  * the rest of the HUD stays click-through. After every layout it measures what it drew and judges it by the rule book
  * (touchLayout.ts: finger-sized, on the size ladder, clear of each other and of the system's swipe bands), and says
  * so in its `data-touch-layout` attribute, which the browser smoke test reads at every phone size.
@@ -94,6 +94,14 @@ export interface TouchMenuHost {
   /** Enters or leaves the headset (WebXR), inside the tap; absent where no immersive session can be asked for. */
   onHeadset?: () => void
   headset?: boolean
+  /** The microphone (microphone.ts) as the last snapshot reported it: open (true) or not, so its item reads On or Off. */
+  mic?: boolean
+  /** High contrast (07_Execute_Actions/access.ts) in force now, and its switch; without the switch there is no item. */
+  contrast?: boolean
+  onContrast?: () => void
+  /** The text size of every card, percent, and the step to the next size; without the step there is no item. */
+  textScale?: number
+  onTextScale?: () => void
 }
 
 interface Props { input: Input; driving: boolean; nearVehicle: boolean; menu?: TouchMenuHost }
@@ -401,32 +409,43 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     fn()
     if (close) onClose()
   }
-  const items: { label: string; on?: boolean; run: () => void; keep?: boolean }[] = [
+  // `id` keys an item whose label changes as it is pressed (the text size), so React keeps the same button, with its
+  // focus and the scan's place, instead of mounting a new one each press.
+  const items: { label: string; id?: string; on?: boolean; run: () => void; keep?: boolean }[] = [
     { label: 'Console', run: host.onConsole },
     ...(host.onModelFile ? [{ label: 'Model file', run: host.onModelFile }] : []),
     { label: 'Clock −1 h', run: () => input.press('timeBack'), keep: true },
     { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
     { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },
     { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
+    // The microphone: the same press as V and the right stick's click (the engine hands it to the host's switch).
+    { label: 'Microphone', on: host.mic === true, run: () => input.press('mute') },
     ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
+    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+    ...(host.onContrast ? [{ label: 'High contrast', on: host.contrast === true, run: host.onContrast }] : []),
+    ...(host.onTextScale ? [{ label: `Text size ${host.textScale ?? 100} %`, id: 'text-size', run: host.onTextScale, keep: true }] : []),
     { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
   ]
-  const beside = at.left - 12 - SHEET_W >= 8
+  // The sheet takes the text size like every card (its layer is in .ui-zoom: a list of words, unlike the thumb-sized
+  // buttons), so the window's pixels it is placed by are divided by the zoom, and it is that much wider.
+  const zoom = Math.max(1, (host.textScale ?? 100) / 100)
+  const beside = at.left - 12 - SHEET_W * zoom >= 8
+  const unzoom = (px: number): string => `calc(${px}px / var(--ui-zoom, 1))`
   const sheet: CSSProperties = beside
     ? {
-        right: Math.max(8, window.innerWidth - at.left + 12),
-        bottom: Math.max(8, window.innerHeight - at.bottom),
-        maxHeight: `calc(${Math.round(at.bottom)}px - max(12px, env(safe-area-inset-top, 0px)))`,
+        right: unzoom(Math.max(8, window.innerWidth - at.left + 12)),
+        bottom: unzoom(Math.max(8, window.innerHeight - at.bottom)),
+        maxHeight: `calc((${Math.round(at.bottom)}px - max(12px, env(safe-area-inset-top, 0px))) / var(--ui-zoom, 1))`,
       }
     : {
-        right: Math.max(8, window.innerWidth - at.right),
-        bottom: Math.max(8, window.innerHeight - at.top + 12),
-        maxHeight: `calc(${Math.round(at.top - 12)}px - max(12px, env(safe-area-inset-top, 0px)))`,
+        right: unzoom(Math.max(8, window.innerWidth - at.right)),
+        bottom: unzoom(Math.max(8, window.innerHeight - at.top + 12)),
+        maxHeight: `calc((${Math.round(at.top - 12)}px - max(12px, env(safe-area-inset-top, 0px))) / var(--ui-zoom, 1))`,
       }
   // Its own layer above the HUD cards and the Concierge (z-30), below the console: an open sheet must not hide under the
   // Concierge on a short landscape screen.
   return (
-    <div className="pointer-events-none absolute inset-0 z-40 select-none" style={ROOT_STYLE}>
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-40 select-none" style={ROOT_STYLE}>
       <div
         aria-hidden
         className={`${CONTROL} absolute inset-0`}
@@ -437,7 +456,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
       <div role="menu" aria-label="Menu" style={sheet} className={`pointer-events-auto absolute flex touch-pan-y flex-col gap-1.5 overflow-y-auto overscroll-contain rounded-2xl p-2 select-none ${GLASS}`}>
         {items.map((it) => (
           <button
-            key={it.label}
+            key={it.id ?? it.label}
             type="button"
             role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
             aria-checked={it.on}

@@ -12,16 +12,16 @@
  * Concierge's tips and its control list.
  *
  * Positions follow the W3C standard gamepad mapping the driver reads (gamepad.ts): interact = south
- * button, handbrake = east, reset = north, ping = right shoulder, run = left-stick click, throttle/brake =
- * right/left trigger, clock = d-pad left/right. Labels are position-true, so on the 'bayx' layout the south
- * button reads 'B'.
+ * button, handbrake = east, reset = north, ping = right shoulder, run = left-stick click, mic = right-stick click,
+ * throttle/brake = right/left trigger, clock = d-pad left/right. Labels are position-true, so on the 'bayx' layout
+ * the south button reads 'B'.
  */
 import type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 
 export type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 
 export type ControlAction =
-  | 'move' | 'look' | 'run' | 'interact' | 'handbrake' | 'reset' | 'throttle' | 'brake' | 'clock' | 'console' | 'hud' | 'ghost' | 'ping'
+  | 'move' | 'look' | 'run' | 'interact' | 'handbrake' | 'reset' | 'throttle' | 'brake' | 'clock' | 'console' | 'hud' | 'ghost' | 'ping' | 'mic'
 
 /**
  * A pad's layout: 'abxy' prints A B X Y at south, east, west, north; 'bayx' prints B A Y X there; 'numbered'
@@ -42,27 +42,27 @@ export interface Hint { action: ControlAction; glyph: string; kind: GlyphKind; l
 const GLYPHS = {
   keyboard: {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
-    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q',
+    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q', mic: 'V',
   },
   abxy: {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
   },
   bayx: {
     move: 'L', look: 'R', run: 'LS', interact: 'B', handbrake: 'A', reset: 'X',
-    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R',
+    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R', mic: 'RS',
   },
   numbered: {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1', mic: 'R3',
   },
   generic: {
     move: 'L', look: 'R', run: 'LS', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
   },
   touch: {
     move: 'Stick', look: 'Drag', run: 'Run', interact: 'Enter car', handbrake: 'Handbrake', reset: 'Reset',
-    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping',
+    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping', mic: 'Menu',
   },
 } as const satisfies Record<GlyphFamily, Record<ControlAction, string>>
 
@@ -106,12 +106,12 @@ type Row = readonly [ControlAction, string]
 
 const FOOT_ALL: readonly Row[] = [
   ['move', 'Walk'], ['look', 'Look around'], ['run', 'Run'], ['interact', 'Enter a car'], ['ping', 'Ping a spot or a person'],
-  ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'], ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
+  ['mic', 'Microphone on · mute'], ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'], ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
 ]
 const DRIVE_ALL: readonly Row[] = [
   ['move', 'Steer'], ['throttle', 'Accelerate'], ['brake', 'Brake · reverse'], ['handbrake', 'Handbrake'],
   ['reset', 'Right the car'], ['interact', 'Leave the car'], ['ping', 'Ping a spot or a person'], ['look', 'Look around'],
-  ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'], ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
+  ['mic', 'Microphone on · mute'], ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'], ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
 ]
 /** The Concierge's three tips. Interact is prompted in context near a car, so the keyboard gets the
  *  console instead; touch explains where its car button appears. */
@@ -145,7 +145,7 @@ export function modeGlyph(action: ControlAction, family: GlyphFamily, driving: b
 
 /** Touch's one row for everything its Menu holds: the four keyboard rows it stands for would push a landscape phone's
  *  card off the screen. */
-const TOUCH_MENU_LABEL = 'Clock, console, HUD, ghost view'
+const TOUCH_MENU_LABEL = 'Microphone, clock, console, HUD, ghost view'
 
 /**
  * Control hints for the current mode. 'tips' = the Concierge's three; 'all' = every control the family

@@ -118,6 +118,8 @@ test('edges fire once per press: A interact, Y reset, right shoulder ping, d-pad
   assert.equal(m.read([pad({ pressed: [PAD.r1] })], a), 0, 'held: no repeat')
   assert.equal(m.read([pad()], a), 0)
   assert.equal(m.read([pad({ pressed: [PAD.r1, PAD.south] })], a), PAD_EDGE.ping | PAD_EDGE.interact, 'pressed again, with another edge')
+  assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), PAD_EDGE.mute, 'right stick click: the microphone')
+  assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), 0, 'held: no repeat')
   assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
 })
 
@@ -192,6 +194,20 @@ test('the face button that wakes a pad without the standard mapping does nothing
   // A standard pad has no wake: a browser shows it from its first press, which acts as before.
   const s = new PadMapper()
   assert.equal(s.read([pad({ pressed: [PAD.south] })], a) & PAD_EDGE.interact, PAD_EDGE.interact)
+})
+
+test('the left hand on a pad in the kernel\'s order: a hat on axes 6 and 7 is its d-pad (down enters); with six axes there is none, so south opens a door', () => {
+  // The fourth review: the left hand had no door button at all on a six-axis pad read in the kernel's order.
+  for (const [axes, hat] of [[6, false], [8, true]] as const) {
+    const m = mapper(), a = createAnalog()
+    m.hand = 'left'
+    const kernel = (pressed: number[] = [], down = false) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes: [0, 0, -1, 0, 0, -1, 0, down ? 1 : 0].slice(0, axes), pressed })
+    for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) m.read([kernel()], a)
+    assert.equal(m.generic.layoutOf(1), 'evdev', `${axes} axes, triggers at rest: the kernel's order`)
+    assert.equal(m.read([kernel([PAD.south])], a) & PAD_EDGE.interact, hat ? 0 : PAD_EDGE.interact, `${axes} axes: south ${hat ? 'is the right side\'s' : 'opens a door (no d-pad)'}`)
+    m.read([kernel()], a)
+    assert.equal(m.read([kernel([], true)], a) & PAD_EDGE.interact, hat ? PAD_EDGE.interact : 0, `${axes} axes: ${hat ? 'the hat\'s down enters' : 'no hat to press'}`)
+  }
 })
 
 test('the Linux kernel\'s axis order (triggers resting at −1 on axes 2 and 5): sticks, triggers, d-pad and the remapped buttons', () => {
@@ -538,4 +554,102 @@ test('a DualSense Edge\'s paddles: the left one is a second L3 (run latch), the 
   assert.equal(m.read([pad()], a), 0)
   assert.equal(m.read([wide], a), PAD_EDGE.ping, 'buttons past the standard ones on a pad without paddles are not paddles')
   assert.equal(a.run, false)
+})
+
+test('one hand (PadHand): that stick moves, and looks while its shoulder is held; the pedals, the shared centre buttons and the side buttons follow; the other side is silent; both hands is as before', () => {
+  const m = new PadMapper(), a = createAnalog()
+  m.hand = 'left'
+  m.read([pad({ axes: [0.6, 0, 0, 0] })], a)
+  assert.ok(a.moveX > 0.5 && a.steer < -0.5 && a.lookX === 0, 'the left stick moves')
+  m.read([pad({ axes: [0.6, 0, 0, 0], pressed: [PAD.l1] })], a)
+  assert.ok(a.moveX === 0 && a.lookX > 0 && a.lookY === 0, 'held L1: the same stick looks')
+  m.read([pad({ axes: [0, 0, 0.6, 0] })], a)
+  assert.ok(a.moveX === 0 && a.lookX === 0, 'the right stick is nobody\'s')
+  m.read([pad({ pressed: [PAD.up], values: { [PAD.l2]: 0.8, [PAD.r2]: 1 } })], a)
+  assert.deepEqual([a.throttle, Math.round(a.brake * 100) / 100], [1, 0.79], 'up is the throttle, L2 the brake, R2 nothing')
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.down, PAD.left] })], a), PAD_EDGE.interact | PAD_EDGE.timeBack)
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.right, PAD.start, PAD.l3] })], a), PAD_EDGE.timeForward | PAD_EDGE.ping | PAD_EDGE.mute)
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.south, PAD.north, PAD.r1, PAD.r3, PAD.east, PAD.west] })], a), 0, 'the right side is silent')
+  assert.equal(a.handbrake, false)
+  m.read([], a)
+  m.read([pad({ pressed: [PAD.select], axes: [0, -0.5, 0, 0] })], a)
+  assert.equal(a.run, true, 'select latches the run')
+  m.read([pad({ axes: [0, -0.5, 0, 0] })], a)
+  assert.equal(a.run, true)
+  m.read([pad({})], a)
+  assert.equal(a.run, false, 'the stick home ends it')
+  // One hand presses select with the thumb off the stick: the latch holds through the centred frames until it walks.
+  m.read([pad({ pressed: [PAD.select] })], a)
+  assert.equal(a.run, true, 'select latched with the stick centred')
+  m.read([pad({})], a)
+  assert.equal(a.run, true, 'the thumb on its way back to the stick: still latched')
+  m.read([pad({ axes: [0, -0.8, 0, 0] })], a)
+  assert.equal(a.run, true, 'walking: running')
+  m.read([pad({ axes: [0.7, 0, 0, 0], pressed: [PAD.l1] })], a)
+  assert.equal(a.run, true, 'a glance (L1 held, the stick looking) leaves it')
+  m.read([pad({ axes: [0, -0.8, 0, 0] })], a)
+  assert.equal(a.run, true, 'walking on: still running')
+  m.read([pad({})], a)
+  assert.equal(a.run, false, 'walked, then home: it ends')
+  m.read([pad({ pressed: [PAD.select] })], a)
+  m.read([pad({})], a)
+  m.read([pad({ pressed: [PAD.select] })], a)
+  assert.equal(a.run, false, 'a second select clears it')
+  m.read([], a)
+
+  m.hand = 'right'
+  m.read([pad({ axes: [0, 0, 0, -0.6] })], a)
+  assert.ok(a.moveY > 0.5 && a.lookY === 0, 'the right stick moves')
+  m.read([pad({ axes: [0, 0, 0, -0.6], pressed: [PAD.r1] })], a)
+  assert.ok(a.moveY === 0 && a.lookY > 0, 'held R1: it looks')
+  m.read([pad({ axes: [0.6, 0, 0, 0] })], a)
+  assert.ok(a.moveX === 0 && a.lookX === 0, 'the left stick is nobody\'s')
+  m.read([pad({ pressed: [PAD.west, PAD.east], values: { [PAD.r2]: 0.5, [PAD.l2]: 1 } })], a)
+  assert.deepEqual([a.brake, Math.round(a.throttle * 100) / 100, a.handbrake], [1, 0.48, true], 'west is the brake, R2 the throttle, east the handbrake, L2 nothing')
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.south, PAD.north, PAD.start, PAD.r3] })], a), PAD_EDGE.interact | PAD_EDGE.reset | PAD_EDGE.ping | PAD_EDGE.mute)
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.down, PAD.left, PAD.right, PAD.l3, PAD.l1] })], a), 0, 'the left side is silent')
+
+  // A pad without the standard mapping: one hand only where its layout carries that hand's stick and buttons.
+  const fourAxis = (axes: number[], pressed: number[] = []) => pad({ id: 'USB Gamepad', index: 2, mapping: '', axes, pressed })
+  const stickOnly = (axes: number[], pressed: number[] = []) => pad({ id: 'Six axis pad', index: 3, mapping: '', axes, pressed })
+  m.read([], a)
+  m.read([fourAxis([0, 0, 0, 0])], a)
+  m.read([fourAxis([0, 0, 0, -0.7])], a)
+  assert.ok(a.moveY > 0.5, 'right hand, four axes: its stick (axes 2/3) moves')
+  m.read([fourAxis([0, 0, 0, 0])], a)
+  assert.equal(m.read([fourAxis([0, 0, 0, 0], [PAD.south])], a) & PAD_EDGE.interact, PAD_EDGE.interact, 'and south opens a door')
+  m.read([], a)
+  m.read([stickOnly([0, 0, 0, 0, 0, 0])], a)
+  m.read([stickOnly([0, -0.7, 0, 0, 0, 0])], a)
+  assert.ok(a.moveY > 0.5, 'right hand, a stick-only pad (nothing read on axes 2/3): both hands, so the left stick moves')
+  m.hand = 'left'
+  for (const generic of [fourAxis, (axes: number[], pressed: number[] = []) => stickOnly([...axes, 0, 0], pressed)]) {
+    m.read([], a)
+    m.read([generic([0, 0, 0, 0])], a)
+    assert.equal(m.read([generic([0, 0, 0, 0], [PAD.south])], a) & PAD_EDGE.interact, PAD_EDGE.interact, 'left hand, no d-pad copied: south opens a door')
+    m.read([generic([0.7, 0, 0, 0], [PAD.l1])], a)
+    assert.ok(a.lookX > 0.4 && a.moveX === 0, 'and the left stick still glances with L1 held')
+    m.read([generic([0.7, 0, 0, 0])], a)
+    assert.ok(a.moveX > 0.5 && a.lookX === 0, 'and walks without it')
+  }
+
+  m.hand = 'both'
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.start, PAD.select] })], a), 0, 'both hands: the centre buttons are unmapped again')
+  m.read([pad({ pressed: [PAD.l3] })], a)
+  assert.equal(a.run, true, 'both hands: L3 latches')
+  m.read([pad({})], a)
+  assert.equal(a.run, false, 'both hands: the next centred read ends it, as before (the thumb never left the stick)')
+  m.read([pad({ pressed: [PAD.l3], axes: [0, -0.8, 0, 0] })], a)
+  m.read([pad({ axes: [0, -0.8, 0, 0] })], a)
+  assert.equal(a.run, true)
+  m.read([pad({})], a)
+  assert.equal(a.run, false, 'both hands: the stick home ends it at once')
+  m.read([pad({ axes: [0.6, 0, 0, -0.6] })], a)
+  assert.ok(a.moveX > 0.5 && a.lookY > 0, 'two sticks again')
 })

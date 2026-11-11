@@ -71,6 +71,7 @@ at all (see Track B under Ring-0 console).
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
 | Ghost view | G | | Menu: Ghost view |
 | Rain mode | M | | Menu: Rain mode |
+| Microphone on · mute (the HUD's pill does the same) | V | right-stick click | Menu: Microphone |
 | Hide HUD | H | | Menu: Hide HUD |
 | Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
@@ -103,7 +104,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   under browser bars, on foot, driving and driving with a paired pad, that every control is on screen and clear of the
   others, the stick, the speedometer, Sloane's chip and her Controls card, that the chip is clear of the stick, the
   minimap and the HUD's panels and as wide as its buttons, that the HUD, with two of its messages raised at each size,
-  stays clear of the buttons and the stick, and that the Menu's sheet stays inside the screen. The overlay also judges
+  stays clear of the buttons and the stick, that the microphone's badge (up from the start) is clear of all of them,
+  and that the Menu's sheet stays inside the screen. The overlay also judges
   itself (`04_Connect_Hardware/touchLayout.ts`): after every layout it measures each control and checks that it is on
   screen, finger-sized (at least 48 px on its shorter side, Material's 48 dp and above Apple's 44 pt) and one of the
   eight sizes on its ladder (in px, or in rem when a phone's text scaling enlarges the root font, since the Menu and
@@ -180,6 +182,13 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?rigs=capsules` | Draws a fallen pedestrian's physical rig as grey capsules in place of their figure (default: their own body wears the rig) |
 | `?audio=0` | Start with the soundscape muted |
 | `?captions=0` | Start with the closed captions off (`captions on` turns them on; see Spatial audio) |
+| `?contrast=high`, `?contrast=normal` | High contrast for every card for this visit, or none even where the system asks for more (default `auto`: the operating system's own switch; see Accessibility under Onboarding and the spatial HUD) |
+| `?vision=protan`, `deutan`, `tritan` | A colour-vision filter over the finished frame for this visit (`none` turns a kept one off) |
+| `?ui=150` | The text size of every card for this visit: 100, 125, 150, 175 or 200 percent (another number goes to the nearest step) |
+| `?captions=large`, `?captions=huge` | The caption strip's size for this visit |
+| `?dwell=1`, `?scan=1` | The dwell click, or single-switch scanning, for this visit (`0` turns a kept one off; see Accessibility) |
+| `?pad=left`, `?pad=right` | A one-handed pad layout for this visit (`both` restores the two-handed one; see Accessibility) |
+| `?announce=0` | No screen-reader lines of the district, vehicles, seats and toasts for this visit (see Accessibility) |
 | `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
 | `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
@@ -882,7 +891,92 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   tier sounds like the operating system's own voices and no better; `sloane` in the console says which tier speaks.
 - **Pings and captions on the HUD.** The minimap rings every standing ping in its kind's colour, fading as it
   expires, and the newest shows as a chip over the world with what it asks, what it landed on and the distance (see
-  Pings and the rally). The chip goes with `H`; the caption strip and the MIC chip do not (see Spatial audio).
+  Pings and the rally). The chip goes with `H`; the caption strip and the microphone pill do not (see Spatial audio).
+- **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
+  reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
+  **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
+  `V`, the right stick's click or the touch Menu's Microphone item mutes the microphone or opens it again, even while an action card waits for your OK or a home's doorstep card holds you still. Mute releases the device, so the browser's own microphone indicator goes
+  out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone (and in
+  any compact window) the pill is a round badge on the minimap's lower-left corner instead (a microphone, struck
+  through when it could not open, and the pill's coloured dot; no meter), so it takes no row above Sloane's chip,
+  and it shows only while the microphone is open, opening or could not open: the Menu's Microphone item is the
+  switch there, and a tap on the badge does what the pill's does. The microphone opens
+  as the city starts (`MIC_OPEN_BY_DEFAULT` in `microphone.ts` is the one line, true), so on a first visit the
+  browser asks its permission then. After that your choice is kept (key `civic-simulation:voice:v1`): left on, it
+  opens again on the next visit; muted, it stays muted; and a no at the browser's prompt is kept like a mute, so the
+  page does not ask again every time it starts (press the pill to be asked again). A missing microphone or a page
+  that is not secure keeps nothing. Open, an on-device voice activity detector (energy over
+  the room's floor, zero crossings, spectral flatness, in an audio worklet where the browser has one and polled from
+  the page where it has not) drives the meter and the **Hearing you** state. It reads the crossings and the flatness
+  over the band your microphone actually carries, so the hiss of a headset that records at 16 kHz, or of a call
+  codec, is not taken for a voice; hiss that fades out gradually toward the top of the band, and deeper rushing
+  noise, can be; speech starting while Sloane speaks cuts
+  her line (barge-in), and the browser's echo cancellation plus a margin in the detector keep Sloane's own voice from
+  counting as yours; the detector also learns how loud her voice comes back through the speakers in the first moments
+  of each line (its first 1.5 s, counted from when her voice is played or spoken, not while a provider voice is still
+  being made, and afresh for a line that cuts the one before), holds her loudest word through her pauses, and wants
+  your voice about 1.6 times that for a quarter of a second before it cuts her. A click or a knock there is not taken
+  for her if it is over within about 30 ms; one that rings on in the room is. Nobody cuts in during her line's first
+  1.5 s: a voice there is taken for hers, and then it takes a few seconds of quiet before that voice can cut in.
+  (These times hold where the page's audio runs at 44.1 or 48 kHz, or either doubled or halved, up to 768 kHz; where
+  it runs at 8, 16 or 32 kHz, as it can while a Bluetooth headset is in call mode, or at 64 or 128 kHz, they are three
+  quarters as long.) With headphones, talking over her works after
+  that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
+  to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
+  microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
+  Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
+  open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
+  so her own line never becomes yours; when you cut her off, what you say is kept. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
+  level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
+  with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
+- **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
+  `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
+  another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
+  Menu's High contrast item, `?contrast=high`; `auto`, the default, follows the operating system's own contrast
+  switch) flattens every card (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the
+  shops' card, the onboarding's and the first walk's ink cards) to white on black with solid borders, no frosted glass and a thick yellow focus ring; light buttons turn black on white,
+  the chosen one of a set (a wardrobe pill, a pressed toggle) white on black with a thick ring, and the status dots
+  (a traffic signal's lights, the recording dot) keep their colours. A **colour-vision filter**
+  (`access vision protan|deutan|tritan`, `?vision=`) is the post chain's last matrix over the finished frame: a
+  daltonisation, the frame as the viewer would see it (after Machado, Oliveira and Fernandes 2009), the colour lost
+  found and shifted into the channels the viewer does see (reds toward blue for a protan or deutan viewer, blues toward
+  red for a tritan); view-only, off by default, and the greys are never tinted. While a filter is chosen the post chain
+  runs at every tier; where the page turned the chain off (the lite profile, a split screen, `?post=0`, a headset)
+  the filter is not drawn, and `access` says so and why. The **text size** (`access text
+  125|150|175|200`, the Menu's Text size item, `?ui=150`) enlarges every card (the first walk's too) and the touch
+  Menu's list, never the canvas or the touch buttons, which are sized for thumbs. With a larger text size the first
+  walk's card stands beside Sloane's open card only in a window that wide at that size (1,920 px at 200 %; it steps
+  aside while hers is open below that), and where the window is small at that size (under about 1,000 px tall at
+  200 %) it stands at the foot of the screen instead of under the HUD's readout. The **caption
+  size** (`access captions large|huge`, `?captions=large`) is the strip's own. `access` alone prints them, `access
+  reset` restores the defaults. Four more are for the hands and the ears. The **dwell click** (`access dwell on`,
+  `?dwell=1`; `04_Connect_Hardware/dwell.ts`): a pointer resting on a control for 0.6 s presses it (a ring fills over
+  the time; a text field takes the caret instead), once per rest; a touch, a real press and pointer lock never dwell.
+  **Single-switch scanning** (`access scan on`, `?scan=1`; `scanning.ts`): the page's controls are offered one at a
+  time every 1.2 s, in page order, the one offered focused and ringed (one that takes no focus as it is gets a
+  tabindex for its turn, taken back once the focus has left it, unless the page set that tabindex itself meanwhile),
+  and the Space bar presses it (a field offered takes the caret); Space is taken before the
+  city sees it. A field taken by the switch, clicked into, focused by a
+  card or the dwell, or typed into holds the round until 6 s pass without a key, and a space typed there stays a
+  space. A **one-handed pad layout**
+  (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
+  shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
+  and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
+  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
+  handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
+  clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
+  position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
+  read: no d-pad, no centre buttons), the left hand keeps its stick and glance and opens doors with the south button,
+  and the right hand reads with both hands unless the pad has four axes; a pad read in kernel order keeps the
+  one-handed layouts (its d-pad is the hat on axes 6 and 7; with six axes there is none, so the left hand opens doors
+  with the south button and has no throttle or clock keys). The action
+  card, the way-out card and the lock screen take the same hand: the left hand moves with the d-pad and presses with
+  start, the right hand moves on with start and presses with the south button; L1 and R1 stay a glance there. The **screen reader's lines** (`access announce off` turns
+  them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
+  has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
+  first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
+  own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
+  dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
   or button positions (South, East, North) for a pad it does not recognise. On phones it switches to touch
@@ -1464,7 +1558,9 @@ while you type.
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
   `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
-  `captions [on|off]`, `haptics [on|off]`, `ping [go|look|gather|wait|clear]`,
+  `captions [on|off]`, `haptics [on|off]`, `mic [on|off]`,
+  `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`,
+  `ping [go|look|gather|wait|clear]`,
   `look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]`, `hal [pair hid|serial|ble]`,
   `robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]`,
   `recruit [<skill>|rally <agent> [<x> <z>]|listen|stop|install|dismiss]`, `memory [<agent>|forget <agent>|forget all]`,
@@ -1522,6 +1618,15 @@ while you type.
   name none of it).
 - `captions [on|off]` turns the closed captions of every sound on or off (see Spatial audio); `?captions=0` starts
   them off.
+- `mic [on|off]` prints the microphone's state (its phase, the pill's word, which detector analyses the audio,
+  whether it opens at boot, and whether words are recognised on this device) or turns it on or off; `mic on` asks
+  the browser's permission inside the Enter keystroke, and `mic off` releases the device (see The microphone pill
+  under Onboarding and the spatial HUD).
+- `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`
+  prints the accessibility settings or sets one: high contrast for every card, the colour-vision filter over the
+  frame, the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad
+  layout and the screen reader's lines, kept between visits; `access reset` restores the defaults (see Accessibility
+  under Onboarding and the spatial HUD).
 - `haptics [on|off]` turns the controller's rumble and the phone's vibration on or off: the guardrails' feel at the
   wheel (the limiter's hum, the thump) and a check's tap (see The operator's progression). The triggers' resistance is
   force, not vibration, and stays. `haptics` alone says which; `?haptics=0` starts them off.
@@ -1911,8 +2016,11 @@ tethered to you, part of your swarm, until the tether breaks.
   nobody, nor does a request turned down ("I don't need a Rust developer", "we aren't hiring"), and a bare
   "go" is a verb. A later request in the same breath still counts ("never mind, recruit a designer").
   `recruit listen` reports what happened: listening, or why not (permission refused, no model, no
-  microphone), and a failure also shows on the HUD. A blue **MIC** chip shows whenever the microphone
-  is open, even with the HUD hidden. `recruit install` is refused while the microphone is open.
+  microphone), and a failure also shows on the HUD. The recogniser runs whenever the microphone pill is open
+  (see The microphone pill under Onboarding and the spatial HUD), and `recruit listen` opens the pill's
+  microphone too: the pill reads **Listening · words on-device** whenever the recogniser is open, even with the
+  HUD hidden, and muting the pill (`V`) stops the recogniser. `recruit install` is refused while the microphone
+  is open.
 - **Without a microphone.** `recruit rust` in the console, or `recruit("Rust")` in the browser's
   developer console, makes the same request. The call returns a promise with the outcome.
 - **Who can hear you.** Only people within 5 m (`AUDIBLE_RADIUS`), standing on the sidewalk, on your
@@ -3066,7 +3174,7 @@ HRTF-panned sources:
   the head: `[chime: Optics and cinema, critical success]`), speech with its words (`Pedestrian N
   (skill): …`, verbatim: what passed the 14A screen is what is read) and a peer's voice (captioned as a voice, not
   transcribed, since the page cannot transcribe a remote stream on-device) are all captioned. The strip sits
-  bottom-centre and outlives the `H` key, like the MIC chip. `captions off` or `?captions=0` turns it off.
+  bottom-centre and outlives the `H` key, like the microphone pill. `captions off` or `?captions=0` turns it off.
   `captions.test.ts` sweeps every string the module can produce through the same patterns as `compliance.test.ts`
   and the conduct screen. A sound without an event has no caption.
 - **Peer voices:** `attachPeer` places a `MediaStream` the network client hands in, under the peer's name, with

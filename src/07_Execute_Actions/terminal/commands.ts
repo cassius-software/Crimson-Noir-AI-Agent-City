@@ -34,7 +34,7 @@
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
-  ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MindStatus, ModelBridge,
+  AccessBridge, ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
@@ -112,6 +112,8 @@ const CORE = [
   { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
+  { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; open as the city starts unless you muted it, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
+  { name: 'access', usage: 'access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]', summary: 'accessibility: high contrast for every card, a colour-vision filter over the frame (protan, deutan, tritan), the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad layout, the screen reader\'s lines; kept between visits (?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= for one visit)' },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
   { name: 'lanes', usage: 'lanes [ledger [verify]|stop]', summary: 'the team Sloane dispatched for a goal: each sub-agent\'s lane, its word, its reading or why it was isolated; ledger prints the fault chain; stop closes the lanes' },
   { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
@@ -264,6 +266,16 @@ const ARGS: Record<string, readonly string[]> = {
   look: [...LOOK_ACTIONS, ...LOOK_SLOT_ARGS].sort(),
   agent: ['dismiss', 'forget', 'hire', 'new', 'voices'],
   sloane: ['off', 'on', 'say', 'voice', 'voices'],
+  mic: ['off', 'on'],
+  access: ['announce', 'captions', 'contrast', 'dwell', 'pad', 'reset', 'scan', 'text', 'vision'],
+  'access dwell': ['off', 'on'],
+  'access scan': ['off', 'on'],
+  'access pad': ['both', 'left', 'right'],
+  'access announce': ['off', 'on'],
+  'access contrast': ['auto', 'high', 'normal'],
+  'access vision': ['deutan', 'none', 'protan', 'tritan'],
+  'access text': ['100', '125', '150', '175', '200'],
+  'access captions': ['huge', 'large', 'normal'],
   'look body': LOOK_BODY_ARGS,
   'look hairStyle': [
     'afro', 'afro puff', 'bald', 'bob', 'box braids', 'braided bun', 'braided ponytail', 'braided updo', 'bun', 'bun with fade', 'buzz cut',
@@ -461,6 +473,18 @@ function conciergeOf(b: TerminalBridge): ConciergeBridge {
   const c = b.concierge
   if (!c) throw new Error('the concierge is not available on this bridge')
   return c
+}
+
+function micOf(b: TerminalBridge): MicBridge {
+  const m = b.mic
+  if (!m) throw new Error('the microphone is not available on this bridge')
+  return m
+}
+
+function accessOf(b: TerminalBridge): AccessBridge {
+  const a = b.access
+  if (!a) throw new Error('the accessibility settings are not available on this bridge')
+  return a
 }
 
 function lanesOf(b: TerminalBridge): LanesBridge {
@@ -1203,6 +1227,38 @@ const HANDLERS: Record<Name, Handler> = {
     if (!value) return fail('usage: sloane say <text...>')
     const pending = c.say(value).then((t) => [sys(`sloane: ${t}`)], (e: unknown) => [err(`sloane: ${message(e)}`)])
     return { lines: [], pending }
+  },
+
+  /** The microphone (04_Connect_Hardware/microphone.ts): the pill's state, or the switch (on asks the browser, inside this keydown). */
+  mic(args, b) {
+    if (args.length > 1) return fail(usage('mic'))
+    const a = args[0]
+    if (a !== undefined && a !== 'on' && a !== 'off') return fail(`mic: invalid argument '${a}'`, usage('mic'))
+    let m: MicBridge
+    try {
+      m = micOf(b)
+    } catch (e) {
+      return fail(`mic: ${message(e)}`)
+    }
+    if (a === undefined) return { lines: m.status().map(out) }
+    const r = m.on(a === 'on')
+    if (typeof r === 'string') return { lines: [out(`mic: ${r}`)] }
+    return { lines: [], pending: r.then((line) => [sys(`mic: ${line}`)], (e: unknown) => [err(`mic: ${message(e)}`)]) }
+  },
+
+  /** The page's accessibility settings (07_Execute_Actions/access.ts): the lines, one field set (its line back), or the defaults back. */
+  access(args, b) {
+    let a: AccessBridge
+    try {
+      a = accessOf(b)
+    } catch (e) {
+      return fail(`access: ${message(e)}`)
+    }
+    if (args.length === 0) return { lines: a.status().map(out) }
+    if (args[0] === 'reset') return args.length === 1 ? { lines: [sys(a.reset())] } : fail(usage('access'))
+    if (args.length !== 2) return fail(usage('access'))
+    const r = a.set(args[0], args[1])
+    return 'error' in r ? fail(r.error, usage('access')) : { lines: [sys(`access: ${r.line}`)] }
   },
 
   /** A goal in plain words: the host plans it as Sloane would (06_Make_Decisions/intent.ts) and applies what it can now. */

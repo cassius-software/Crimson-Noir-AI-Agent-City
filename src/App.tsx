@@ -17,12 +17,17 @@
  * with what the shopkeeper says is owned, which draws the homes and makes their furniture solid.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
-import { hudLine, recruitBridge, Recruiter } from './08_Swarm/recruitment.ts'
+import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
+import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
+import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
+import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
+import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
+import { Announcer } from './07_Execute_Actions/announcer.ts'
 import { TEAM_TICK_MS, TeamRunner } from './08_Swarm/team.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
@@ -79,6 +84,7 @@ import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboar
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
+import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { FirstWalkCard } from './07_Execute_Actions/onboarding/FirstWalk.tsx'
 import { createExam } from './07_Execute_Actions/onboarding/exam.ts'
@@ -90,7 +96,7 @@ import { MAX_WALK_MS } from './07_Execute_Actions/scriptedWalk.ts'
 import { cueOf, earnFromRecruiter, hudProgress, pageProgress, progressBridge, worthCue, type ProgressCue } from './07_Execute_Actions/progress.ts'
 import { SKILL_TITLE } from './02_Define_The_Rules/progression.ts'
 import { agentBridge, identityLine, Roster, voiceProfile } from './08_Swarm/roster.ts'
-import { SKILLS } from './03_Spawn_Agents/skills.ts'
+import { parseRequest, SKILLS } from './03_Spawn_Agents/skills.ts'
 import { FiveWhys } from './06_Make_Decisions/intent.ts'
 import { teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
@@ -531,9 +537,55 @@ function onboardingVoice(): Voice {
   return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
 }
 
+/** The operating system's own contrast switch (`prefers-contrast: more`), which the 'auto' contrast setting follows (access.ts). */
+const PREFERS_MORE = (() => {
+  let list: MediaQueryList | null = null
+  const media = () => (list ??= window.matchMedia('(prefers-contrast: more)'))
+  return {
+    subscribe(onChange: () => void) {
+      const m = media()
+      m.addEventListener('change', onChange)
+      return () => m.removeEventListener('change', onChange)
+    },
+    matches: () => media().matches,
+    server: () => false,
+  }
+})()
+
 function App() {
   // Read once: the boot track decides which shell mounts, so the hooks of each shell live in that shell.
   const [options] = useState(readOptions)
+  // Accessibility (07_Execute_Actions/access.ts): kept between visits, set for one visit in the URL, and written onto
+  // <html> (data-contrast, --ui-zoom) here, above every shell, so the onboarding, the console alone and the way-out
+  // card hold it too; 'auto' contrast follows the system's switch. What is kept and what is live are followed by hand:
+  // a change keeps only the fields it changes (keepAccess), so a setting the URL gave for one visit is not written down
+  // by a later switch of something else; a reset is kept whole.
+  const [start] = useState(() => { const kept = loadAccess(); return { kept, live: accessFromQuery(new URLSearchParams(window.location.search), kept) } })
+  const [access, setAccessState] = useState(start.live)
+  const keptRef = useRef(start.kept)
+  const liveRef = useRef(start.live)
+  const prefersMore = useSyncExternalStore(PREFERS_MORE.subscribe, PREFERS_MORE.matches, PREFERS_MORE.server)
+  const onAccess = useCallback((next: AccessSettings, whole?: boolean) => {
+    keptRef.current = whole === true ? next : keepAccess(keptRef.current, liveRef.current, next)
+    liveRef.current = next
+    setAccessState(next)
+    saveAccess(keptRef.current)
+  }, [])
+  useEffect(() => { applyAccess(access, prefersMore, document.documentElement) }, [access, prefersMore])
+  // The hands (access.ts dwell, scan): a pointer resting on a control presses it; the controls offered in turn, Space
+  // pressing the one offered. Here above every shell, so the onboarding and the console alone have them too.
+  useEffect(() => {
+    if (!access.dwell) return
+    const dwell = new DwellClicker(browserDwellEnv())
+    dwell.start()
+    return () => dwell.stop()
+  }, [access.dwell])
+  useEffect(() => {
+    if (!access.scan) return
+    const scan = new Scanner(browserScanEnv())
+    scan.start()
+    return () => scan.stop()
+  }, [access.scan])
   // A first visit (no saved onboarding, no profile) opens on the concierge's onboarding, which builds the metropolis in the
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
@@ -569,7 +621,7 @@ function App() {
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} />
 }
 
 /**
@@ -623,7 +675,10 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The most "Walk for me" keeps walking for, wall-clock ms (the stage's three metres end it long before on any ordinary frame). */
 const SHOW_WALK_MS = 60_000
 
-function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink }) {
+function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess }: {
+  options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
+  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
   const mainRef = useRef<HTMLElement>(null)
@@ -655,6 +710,42 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const [roster] = useState(() => new Roster())
   const [agents, setAgents] = useState(() => roster.list())
   useEffect(() => roster.onChange(() => setAgents(roster.list())), [roster])
+  // The microphone (04_Connect_Hardware/microphone.ts): opened as the city starts (MIC_OPEN_BY_DEFAULT, the one line)
+  // unless the visitor muted it or said no at the browser's prompt on an earlier visit; the pill, V, the right stick's
+  // click and the Menu's item mute and unmute it, the switch kept between visits; one per shell, disposed with it. The
+  // engine hands the presses here and never opens one itself.
+  const [mic] = useState(() => new Microphone())
+  const onMic = useCallback(() => { void mic.toggle() }, [mic])
+  // Closed, not disposed, on unmount: React's development double mount runs this cleanup and then the shell again with
+  // the same microphone, which must still open; close() drops any open still in flight and releases the device.
+  useEffect(() => () => { mic.close() }, [mic])
+  // Accessibility (access.ts): high contrast in force now; the settings behind refs for the console's bridge, which is
+  // built once with the engine; the colour-vision filter handed to the post chain as it changes.
+  const high = highContrast(access, prefersMore)
+  const accessRef = useRef(access)
+  const prefersRef = useRef(prefersMore)
+  useEffect(() => { accessRef.current = access; prefersRef.current = prefersMore }, [access, prefersMore])
+  useEffect(() => { engine?.setVision(access.vision) }, [engine, access.vision])
+  useEffect(() => { engine?.input.setHand(access.pad) }, [engine, access.pad])
+  // The screen reader's lines (announcer.ts), one per shell: it keeps what it has said.
+  const [announcer] = useState(() => new Announcer())
+  // Sloane's voice and the microphone: the detector allows for the page's own voice (the pill reads Speaking) and learns
+  // her echo at each line's start, a line that cuts the one still playing included; speech starting while Sloane
+  // speaks cuts the line (barge-in).
+  useEffect(() => {
+    const untell = speaker.onSpeaking((on) => mic.setSpeaking(on))
+    const unline = speaker.onLine(() => mic.newLine())
+    const barge = () => speaker.stop()
+    mic.addEventListener('barge', barge)
+    return () => {
+      untell()
+      unline()
+      mic.setSpeaking(false)
+      mic.removeEventListener('barge', barge)
+    }
+  }, [mic, speaker])
+  // Words the visitor said near the open microphone that were not a recruitment request: Sloane's (Concierge.tsx heard).
+  const [heard, setHeard] = useState<{ id: number; text: string } | null>(null)
   useEffect(() => {
     engine?.setIdentities((agent) => { const id = roster.byAgent(agent); return id ? identityLine(id) : null })
     return () => engine?.setIdentities(null)
@@ -964,16 +1055,29 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     }
     // Browsers only start audio from a user gesture; every gesture is a chance to (re)unlock it (every player's soundscape).
     const unlock = () => engineRef.current?.unlockAudio()
+    // The microphone's own context, opened at boot without a gesture (a kept switch), wakes on the first one too.
+    const wake = () => mic.resume()
     window.addEventListener('keydown', onKey)
-    for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.addEventListener(type, unlock, { capture: true })
+    for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) {
+      window.addEventListener(type, unlock, { capture: true })
+      window.addEventListener(type, wake, { capture: true })
+    }
     return () => {
       window.removeEventListener('keydown', onKey)
-      for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) window.removeEventListener(type, unlock, { capture: true })
+      for (const type of ['pointerdown', 'keydown', 'touchend', 'click'] as const) {
+        window.removeEventListener(type, unlock, { capture: true })
+        window.removeEventListener(type, wake, { capture: true })
+      }
     }
-  }, [])
+  }, [mic])
 
+  // What the city was booted with, pinned at mount: App renders again whenever an accessibility setting or the system's
+  // contrast switch changes, and hands down a fresh plan object each time, which must not tear the city down and build
+  // it again (a remap or a reboot reloads the page, so nothing is lost by reading these once).
+  const [boot] = useState(() => ({ options, plan }))
   useEffect(() => {
     const canvas = canvasRef.current
+    const { options, plan } = boot
     if (!canvas) return
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
@@ -983,6 +1087,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
     let unfollow: (() => void) | null = null
+    /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
+    let unlisten: (() => void) | null = null
     /** Stops the page's keeper cueing this city's checks (its one listener), and the recruiter's events earning. */
     let uncheck: (() => void) | null = null
     let unearn: (() => void) | null = null
@@ -1025,6 +1131,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           // The operator's progression chip: the keeper's own cache builds its strings only when what it shows changed
           // (a check, a purchase, the round's refill, the cue going stale), so this costs a few comparisons a tick.
           s.supplier.progress = hudProgress(pageProgress(), cue, now)
+          // The screen reader's line (announcer.ts): the district, a vehicle beside you, a seat taken or left, a toast.
+          if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
+          // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
+          s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
           // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
           if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
@@ -1155,6 +1265,51 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
         // plans it from its own copies (08_Swarm/ping.ts rallyPlan), the recruiter checks the page's copy, the physics
         // realm decides on its own readings; its answer is a toast either way.
         e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
+        // The microphone's presses (V, the right stick's click, the Menu's item) arrive through the engine as one action.
+        e.onMute = onMic
+        // The on-device recogniser (recruitment.ts) runs while the microphone is open, where the browser promises one
+        // (Firefox has none: the pill shows the level and speech only), and its microphone is never open without the
+        // pill: `recruit listen` opens the pill's microphone too, and a mute stops the recogniser. What it hears that
+        // is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal).
+        const words = (): boolean => { const R = speechEnv().Recognition; return R !== null && 'processLocally' in R.prototype }
+        let micWasOpen = false
+        const onMicChange = () => {
+          const open = mic.open
+          const st = r.mic.state
+          const live = st === 'listening' || st === 'starting'
+          // Settled closed (off, muted, blocked, failed) rather than still opening: the recogniser stops whatever the
+          // edge, so a mute pressed while the pill read Opening never leaves it listening behind a Muted pill.
+          if (!open && mic.phase !== 'opening') { micWasOpen = false; if (live) r.stop(); return }
+          if (open === micWasOpen) return
+          micWasOpen = open
+          if (open && !live && words()) void r.listen()
+        }
+        mic.addEventListener('change', onMicChange)
+        const onRecruiterMic = (ev: Event) => {
+          if ((ev as CustomEvent<{ state: string }>).detail.state === 'listening' && !mic.open && mic.phase !== 'opening') void mic.listen()
+        }
+        r.addEventListener('mic', onRecruiterMic)
+        let heardId = 0
+        // Sloane's own line coming back through the speakers is not the visitor's: nothing heard while she speaks, or
+        // within heard.ts HEARD_QUIET_MS of her last line, reaches her.
+        let quietAt = Number.NEGATIVE_INFINITY
+        // A line the visitor cut (a barge-in: the detector hears speech as she stops) leaves no quiet tail: what follows
+        // is theirs, the words they cut her off to say.
+        const unquiet = speaker.onSpeaking((on) => { if (!on && !mic.speech) quietAt = performance.now() })
+        const onHeard = (ev: Event) => {
+          const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
+          if (!heardNow(speaker.speaking, performance.now(), quietAt)) return
+          if (parseRequest(t) === null) setHeard({ id: ++heardId, text: t })
+        }
+        r.addEventListener('heard', onHeard)
+        unlisten = () => {
+          mic.removeEventListener('change', onMicChange)
+          r.removeEventListener('mic', onRecruiterMic)
+          r.removeEventListener('heard', onHeard)
+          unquiet()
+        }
+        // The microphone opens as the city starts: on a first visit (the one line), or as the visitor left it (on, not muted).
+        if (mic.opensAtBoot()) void mic.listen()
         // The operator's progression (progress.ts, the page's one keeper). The city's own deeds earn into it: the engine
         // says which (a boarding, the clock, ghost and rain keys), someone recruited arriving, a spoken request understood.
         // One listener cues every success, the console's and the city's alike: the chime and the tap (checkCue) at once,
@@ -1189,8 +1344,10 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           unfollow?.()
           uncheck?.()
           unearn?.()
+          unlisten?.()
           tasks.dispose()
           r.dispose()
+          mic.close()
           setLocked(reason)
           // A graphics reset in the background restarts once the player is back (once per two minutes at most).
           if (haltClass(reason) === 'gpu-reset') unwatch = reloadWhenVisible(document.hidden)
@@ -1322,6 +1479,13 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           recruit: recruitBridge(r),
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
+          mic: Object.freeze({
+            status: () => voiceStatus(mic, speaker.speaking, words()
+              ? r.mic.state === 'listening' ? 'on-device recognition listening (recruitment.ts): a skill asked for, or "Sloane, ..." for a goal' : 'on-device recognition available: it listens while the microphone is open'
+              : 'on-device recognition: none in this browser; the pill shows the level and speech only (recruit <skill> types a request)'),
+            on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
+          }),
+          access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
           goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),
           lanes,
           // The operator's level, credits and skills (progress.ts): the page's one keeper, which the console earns into.
@@ -1406,6 +1570,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       unwatch()
       window.removeEventListener('resize', onResize)
       engineRef.current = null
+      unlisten?.()
+      mic.close()
       speaker.stop()
       link.source = null
       link.sound = () => true
@@ -1423,7 +1589,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       if ((window as { recruit?: unknown }).recruit) delete (window as { recruit?: unknown }).recruit
       engine?.dispose()
     }
-  }, [options, plan, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome])
+  }, [boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome, mic, onMic, onAccess, announcer])
 
   // The open home's name and street address as the engine knows them (the city's grid, or a region's own streets).
   const opened = homeOpen !== null ? engine?.homes.find((h) => h.home === homeOpen) : undefined
@@ -1439,7 +1605,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} />
       {/* No touch controls under a home's doorstep card: the avatar is held still there, and the card takes the taps. */}
       {engine && hud && !termOpen && homeOpen === null && (
         <TouchControls
@@ -1457,6 +1623,12 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
             // The headset item only where a session can be asked for; the tap itself is the user activation.
             onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
             headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
+            mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
+            // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+            contrast: high,
+            onContrast: () => onAccess(toggleContrast(access, prefersMore)),
+            textScale: access.scale,
+            onTextScale: () => onAccess(cycleScale(access)),
           }}
         />
       )}
@@ -1478,9 +1650,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onGoal={onGoal}
           onGoalSent={onGoalSent}
           onSay={onSay}
+          heard={heard}
           reword={sloane}
           lanes={hud.supplier.lanes ?? null}
           beside={walking && fw.card !== null}
+          zoom={access.scale / 100}
           onOpen={setSloaneOpen}
         />
       )}
@@ -1500,6 +1674,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           onRun={runWalk}
           onSay={onSay}
           crowded={sloaneOpen}
+          zoom={access.scale / 100}
         />
       )}
       {hud && (
