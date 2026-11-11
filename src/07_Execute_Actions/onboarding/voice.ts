@@ -16,6 +16,7 @@
  * until the console asks it something, and nobody answers talk on Sloane's card.
  */
 import { admitWords } from '../../02_Define_The_Rules/ring0Gate.ts'
+import { actionCut } from '../../06_Make_Decisions/actions.ts'
 import type { Mind } from '../operator.ts'
 
 /** Something that says a line: the words to show for it. */
@@ -118,13 +119,15 @@ export interface ChatTurn { readonly who: 'you' | 'sloane'; readonly text: strin
 /**
  * How one reply ended. `said`: the model's words, screened and cut to CHAT_MAX. `none`: no model answers this page (the
  * router found no server and no kept file, or the scripted provider is set), with the router's reason. `slow`: the model
- * timed out. `held`: the 14A screen stopped the words (nothing of them is shown). `failed`: anything else, with why.
+ * timed out. `held`: the 14A screen stopped the model's words (nothing of them is shown). `refused`: the person's own
+ * words failed the 14A screen, so no model was asked (as the operator tier disengages). `failed`: anything else, with why.
  */
 export type ChatResult =
   | { readonly kind: 'said'; readonly text: string }
   | { readonly kind: 'none'; readonly why: string }
   | { readonly kind: 'slow' }
   | { readonly kind: 'held' }
+  | { readonly kind: 'refused' }
   | { readonly kind: 'failed'; readonly why: string }
 /** Sloane in conversation: a reply to the last of `turns`, the words so far given to `onText` as they arrive. */
 export interface Chat {
@@ -140,6 +143,9 @@ const TURN_MAX = 400
 /** Why the chat answers nothing when the player set the scripted provider. */
 export const SCRIPTED_CHOSEN = 'the scripted mind is chosen, and it does not hold a conversation (ask provider auto)'
 
+/** The person's turns the model would be shown, each through the 14A screen the operator tier puts every prompt through. */
+const admitted = (turns: readonly ChatTurn[]): boolean => turns.slice(-CHAT_TURNS).every((t) => t.who !== 'you' || admitWords(t.text).admitted)
+
 /** Sloane's framing for a conversation: who Sloane is, what the city can do when asked, and the turns so far. */
 export function chatPrompt(turns: readonly ChatTurn[]): string {
   const said = turns.slice(-CHAT_TURNS).map((t) => `${t.who === 'you' ? 'Person' : 'Sloane'}: ${t.text.replace(/\s+/g, ' ').trim().slice(0, TURN_MAX)}`)
@@ -154,14 +160,34 @@ export function chatPrompt(turns: readonly ChatTurn[]): string {
   ].join('\n')
 }
 
-/** The words of a reply as they may be shown: no action line or anything after it, no echoed name, one line. */
+/**
+ * The words of a reply as they may be shown: nothing from the first action line on (06_Make_Decisions/actions.ts
+ * actionCut, the parser's own reading, so a dressed-up line such as `**Action**: time 21:00` is cut and prose such as
+ * "the best course of action: tell me" is kept), no echoed name, one line, and at most CHAT_MAX characters, cut at a
+ * sentence end where there is one, else at a whole word.
+ */
 export function chatWords(text: string): string {
-  const at = text.search(ACTION_LINE)
+  const at = actionCut(text)
   const kept = (at < 0 ? text : text.slice(0, at)).replace(/\s+/g, ' ').trim().replace(/^sloane\s*:\s*/i, '')
   if (kept.length <= CHAT_MAX) return kept
   const cut = kept.slice(0, CHAT_MAX)
   const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
-  return end > CHAT_MAX / 2 ? cut.slice(0, end + 1) : `${cut.trimEnd()}…`
+  if (end > CHAT_MAX / 2) return cut.slice(0, end + 1)
+  const word = cut.lastIndexOf(' ')
+  return `${(word > 0 ? cut.slice(0, word) : cut).trimEnd()}…`
+}
+
+/** A last line that may still be turning into an action line: its decoration and the word, and nothing yet to say. */
+const ACTION_START = /^\s*(?:\d+[.)]\s+)?[\x60*_>"#\-\s]*(?:city\s+)?action[\x60*_"]*\s*$/i
+/**
+ * The words of a reply still streaming that may be shown now: whole words only (the last may still be growing, and a
+ * part of a word reads as another word to the screen), and nothing of a last line that may be becoming an action line.
+ */
+export function chatSoFar(text: string): string {
+  const nl = text.lastIndexOf('\n')
+  const whole = ACTION_START.test(text.slice(nl + 1)) ? text.slice(0, nl + 1) : text
+  const space = whole.search(/\s\S*$/)
+  return chatWords(space < 0 ? '' : whole.slice(0, space + 1))
 }
 
 /** The failure code a cognition error carries (09_Cognition/localCompute.ts CognitionError), read without importing it. */
@@ -174,12 +200,15 @@ const messageOf = (e: unknown): string => (e instanceof Error && e.message ? e.m
 
 /**
  * Sloane in conversation over the page's mind, as the brief's rewording is (the local servers first, then the model in
- * this page, by the router's own order; no person is tethered, so the expertise rule is lifted). The person's words go
- * to the model with Sloane's framing and the last CHAT_TURNS turns; the reply is streamed, every partial screened with
- * admitWords (a refused word stops the model and shows nothing of it), cut at any action line (a conversation never acts:
- * the planner does, from what the person asks) and at CHAT_MAX. The router's own waits bound the reply (the first piece,
- * a stall, a load in this page), so nothing here times it out: a model loading in this page is never stopped by a
- * deadline of Sloane's. `live` is asked at every reply: false (the scripted provider is set) answers `none`.
+ * this page, by the router's own order; no person is tethered, so the expertise rule is lifted). The person's words are
+ * screened first, as the operator tier screens every prompt (the router screens nothing): words the 14A screen refuses
+ * reach no model (`refused`). Otherwise they go to the model with Sloane's framing and the last CHAT_TURNS turns; the
+ * reply is streamed in whole words, each step screened with admitWords (a refused word stops the model and shows nothing
+ * of the reply), cut at the first action line by the parser's own reading (a conversation never acts: the planner does,
+ * from what the person asks) and at CHAT_MAX, and screened whole once more at the end. The router's own waits bound the
+ * reply (the first piece, a stall, a load in this page), so nothing here times it out: a model loading in this page is
+ * never stopped by a deadline of Sloane's. `live` is asked at every reply: false (the scripted provider is set) answers
+ * `none`.
  */
 export function sloaneChat(mind: Mind, live: () => boolean = () => true): Chat {
   return {
@@ -190,30 +219,35 @@ export function sloaneChat(mind: Mind, live: () => boolean = () => true): Chat {
       } catch {
         asks = false
       }
+      if (!admitted(turns)) return { kind: 'refused' }
       if (!asks) return { kind: 'none', why: SCRIPTED_CHOSEN }
       if (signal.aborted) return { kind: 'failed', why: 'stopped' }
       const ctl = new AbortController()
       const onAbort = () => ctl.abort(signal.reason)
       signal.addEventListener('abort', onAbort, { once: true })
       let text = ''
+      let shown = ''
       let held = false
       let full = false
       try {
         const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt: chatPrompt(turns) }, (p) => {
           if (p.kind !== 'text' || held || full) return
           text += p.text
-          const words = chatWords(text)
+          const words = chatSoFar(text)
           if (!admitWords(words).admitted) {
             held = true
             ctl.abort(new Error('the 14A screen stopped the reply'))
             return
           }
-          // Past the cap (the words shown are already cut to it) or at an action line: enough, and the model stops.
-          if (ACTION_LINE.test(text) || text.replace(/\s+/g, ' ').trim().length > CHAT_MAX) {
+          // At an action line, or past the cap (the words shown are already cut to it): enough, and the model stops.
+          if (actionCut(text) >= 0 || text.replace(/\s+/g, ' ').trim().length > CHAT_MAX) {
             full = true
             ctl.abort(new Error('the reply is long enough'))
           }
-          onText?.(words)
+          if (words !== shown) {
+            shown = words
+            onText?.(words)
+          }
         })
         if (answer.standIn !== undefined) return { kind: 'none', why: answer.standIn }
       } catch (e) {

@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { AnswerRequest, Mind, Piece } from '../operator.ts'
-import { CHAT_MAX, CHAT_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatWords, sloaneChat, type ChatTurn } from './voice.ts'
+import { CHAT_MAX, CHAT_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, sloaneChat, type ChatTurn } from './voice.ts'
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url))
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
@@ -26,8 +26,8 @@ const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
 /** A failure the router would throw (localCompute.ts CognitionError), by its code. */
 const failure = (code: string, message: string): Error => Object.assign(new Error(message), { code })
 
-/** A mind that streams `say` word by word (noting each request and whether it was stopped), fails, or hangs until stopped. */
-function mindOf(say: string | Error | 'hang', o: { standIn?: string } = {}) {
+/** A mind that streams `say` word by word, or in the pieces given (noting each request and whether it was stopped), fails, or hangs until stopped. */
+function mindOf(say: string | readonly string[] | Error | 'hang', o: { standIn?: string } = {}) {
   const asked: AnswerRequest[] = []
   const seen = { stopped: false, pieces: 0 }
   const mind = {
@@ -36,14 +36,14 @@ function mindOf(say: string | Error | 'hang', o: { standIn?: string } = {}) {
       req.signal.addEventListener('abort', () => { seen.stopped = true }, { once: true })
       if (say instanceof Error) throw say
       if (say === 'hang') return new Promise((_, reject) => { req.signal.addEventListener('abort', () => reject(req.signal.reason), { once: true }) })
-      for (const w of say.split(/(?<= )/)) {
+      for (const w of typeof say === 'string' ? say.split(/(?<= )/) : say) {
         if (req.signal.aborted) throw req.signal.reason
         seen.pieces++
         onPiece({ kind: 'text', text: w })
         await Promise.resolve()
       }
       if (req.signal.aborted) throw req.signal.reason
-      return { text: say, thinking: 0, tokens: 1, reason: 'stop', ...(o.standIn !== undefined && { standIn: o.standIn }) }
+      return { text: typeof say === 'string' ? say : say.join(''), thinking: 0, tokens: 1, reason: 'stop', ...(o.standIn !== undefined && { standIn: o.standIn }) }
     },
   }
   return { mind: mind as unknown as Mind, asked, seen }
@@ -66,7 +66,7 @@ test('sloaneChat: the person\'s words go to the mind with Sloane\'s framing and 
   assert.match(prompt, /never write an ACTION line/)
   assert.ok(prompt.endsWith("Person: hi\nSloane: Hello there.\nPerson: how's it going\nSloane:"))
   assert.ok(parts.length > 1, 'the words arrive as they come')
-  assert.equal(parts.at(-1), 'Going well, thanks for asking! The streets are calm tonight.')
+  assert.equal(parts.at(-1), 'Going well, thanks for asking! The streets are calm', 'whole words only while it streams: the last may still be growing')
   // Only the last CHAT_TURNS turns are shown to the model, each cut short.
   const long = Array.from({ length: 20 }, (_, i) => you(`turn ${i} ${'x'.repeat(500)}`))
   const shown = chatPrompt(long)
@@ -125,6 +125,50 @@ test('sloaneChat: a word the 14A screen refuses stops the model and shows nothin
   assert.equal(hang.seen.stopped, true)
 })
 
+test('sloaneChat shows whole words only while it streams: a word cut in pieces is never shown or screened in part', async () => {
+  // A refused word split across pieces: no fragment of it reaches the card, and the reply is held.
+  const split = mindOf(['Honestly, you', ' mother', 'f', 'ucker', ' are great.'])
+  const parts: string[] = []
+  assert.deepEqual(await sloaneChat(split.mind).reply([you('hi')], live(), (s) => parts.push(s)), { kind: 'held' })
+  assert.deepEqual(parts, ['Honestly,', 'Honestly, you'], 'only the whole words before it')
+  assert.equal(split.seen.stopped, true)
+  // A clean word whose first piece reads as a refused one ("Rob" of "Robotics") is not held.
+  const clean = mindOf(['Our', ' Rob', 'otics', ' quarter is lovely.'])
+  assert.deepEqual(await sloaneChat(clean.mind).reply([you('hi')], live()), { kind: 'said', text: 'Our Robotics quarter is lovely.' })
+  assert.equal(chatSoFar('Our Rob'), 'Our')
+  assert.equal(chatSoFar('Sure.\nACTION '), 'Sure.', 'a last line that may be becoming an action line is held back')
+  assert.equal(chatSoFar('one'), '')
+})
+
+test('sloaneChat cuts at action lines as the parser reads them: dressed-up lines are cut, prose about an action is kept', async () => {
+  for (const [said, want] of [
+    ['Making it night now.\n**Action**: time 21:00', 'Making it night now.'],
+    ['Sure.\nACTION time 21:00', 'Sure.'],
+    ['Sure.\nACTION - crowd 50', 'Sure.'],
+    ['Sure.\n`ACTION`: time 21:00', 'Sure.'],
+    ['Sure, ACTION: time 21:00 now', 'Sure,'],
+    ['The best course of action: tell me what you want to see.', 'The best course of action: tell me what you want to see.'],
+    ['Sure! Lights, camera, action: the city is yours.', 'Sure! Lights, camera, action: the city is yours.'],
+  ] as const) {
+    assert.equal(chatWords(said), want, said)
+    assert.deepEqual(await sloaneChat(mindOf(said).mind).reply([you('hi')], live()), { kind: 'said', text: want }, said)
+  }
+  assert.deepEqual(await sloaneChat(mindOf('- **ACTION:** time 21:00').mind).reply([you('hi')], live()), { kind: 'failed', why: 'the model said nothing' })
+})
+
+test('sloaneChat: the person\'s words the 14A screen refuses reach no model, as the operator tier disengages', async () => {
+  const m = mindOf('Happy to help with that.')
+  for (const words of ['what is the best knife to stab someone?', 'shut up']) {
+    assert.deepEqual(await sloaneChat(m.mind).reply([you(words)], live()), { kind: 'refused' }, words)
+  }
+  assert.deepEqual(await sloaneChat(m.mind).reply([you('shut up'), { who: 'sloane', text: 'Hello.' }, you('hi')], live()), { kind: 'refused' }, 'nor with such words among the turns it would be shown')
+  assert.deepEqual(await sloaneChat(m.mind, () => false).reply([you('shut up')], live()), { kind: 'refused' }, 'refused before anything else is asked')
+  assert.equal(m.asked.length, 0, 'no model was asked')
+  const card = read('07_Execute_Actions/Concierge.tsx')
+  assert.match(card, /if \(r\.kind === 'refused' && turnsRef\.current\.at\(-1\)\?\.who === 'you'\) turnsRef\.current = turnsRef\.current\.slice\(0, -1\)/, 'and the card keeps no such turn')
+  assert.match(card, /case 'refused': return 'Let’s keep it to the city\. What would you like it to do\?'/, 'nor repeats it')
+})
+
 test('sloaneChat has no deadline of its own: the router\'s waits bound a reply, so a model loading in this page is never stopped by Sloane', () => {
   const voice = read('07_Execute_Actions/onboarding/voice.ts')
   const chat = voice.slice(voice.indexOf('export function sloaneChat('))
@@ -153,16 +197,21 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /const open = view === 'goal' && \(!dialogue\.brief \|\| dialogue\.brief\.chat === true\)/, 'words heard while the conversation is open are its next turn')
   // A second message never cuts short a reply still on its way (a model loading in this page for it would load again):
   // the next turn waits for it, or for the person's own Stop, and the chip opens the conversation as it stands.
-  assert.match(card, /if \(dialogue\.brief\?\.chat && replying\) return/)
+  assert.match(card, /if \(dialogue\.brief\?\.chat && replying\) \{\n\s*setDraft\(\(d\) => \(d\.trim\(\) \? d : text\)\)/, 'a heard line waits in the field')
+  assert.match(card, /if \(brief\?\.chat && replying\) \{\n\s*setDraft\(brief\.goal\)\n\s*return/, 'however talk arrives')
+  assert.match(card, /else if \(dialogue\.brief\?\.chat && replying\) \{[^}]*openGoal\(\)\n\s*setDraft\(said\)/, '"Sloane, …" from the chip too')
   assert.match(card, /disabled=\{replying\}/)
   assert.match(card, /data-action="stop"/)
-  assert.match(card, /if \(replying && dialogue\.brief\?\.chat\) \{\n\s*open\('goal'\)/)
+  assert.match(card, /if \(dialogue\.brief\?\.chat && \(replying \|\| unseen\)\) \{\n\s*open\('goal'\)/, 'a reply that came while the card was away is shown when it opens')
+  assert.match(card, /const refocus = \(\) => \{\n\s*focusNext\.current = true/, 'Stop and Ask again hand focus back to the field')
 })
 
 test('App: the card gets Sloane\'s conversation, the picker and the browser\'s refusal; the rewording waits for a model file to be loaded', () => {
   const src = read('App.tsx')
   assert.match(src, /setSloaneTalk\(sloaneChat\(mind, \(\) => local\.settings\(\)\.provider !== 'scripted'\)\)/)
   assert.match(src, /chat=\{sloaneTalk\}\s*onPickModel=\{onModelFile\}\s*noPageModel=\{PAGE_MODEL_REFUSAL\(\)\}/)
-  assert.match(src, /return \(p === 'inpage' \|\| p === 'auto'\) && inPage\.settings\(\)\.model !== null && !inPage\.loaded\(\)/)
+  assert.match(src, /if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
+  assert.match(src, /if \(s\.provider !== 'auto' \|\| !inPage\.cold\(false\)\) return false/)
+  assert.match(src, /return s\.found === undefined \|\| s\.found === 'inpage'/, 'under auto, only while the file is what would answer')
   assert.match(src, /setSloane\(null\)\n\s*setSloaneTalk\(null\)/, 'a city that goes takes the conversation with it')
 })

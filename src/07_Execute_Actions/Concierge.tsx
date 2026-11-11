@@ -71,7 +71,7 @@ const TEAM_ROWS = 6
 
 /** How a reply in the conversation stands (onboarding/voice.ts ChatResult, `waiting` while it streams in, and `stopped`
  *  by the person's Stop). */
-type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'failed' | 'stopped'
+type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'refused' | 'failed' | 'stopped'
 /** The reply on the card: which ask it answers, how it stands, the words so far, and why it failed (a router's reason). */
 interface Talk { readonly id: number; readonly state: TalkState; readonly text: string; readonly why: string }
 /** Turns of the conversation kept for the visit (the model is shown the last of them, voice.ts CHAT_TURNS). */
@@ -80,8 +80,8 @@ const TALK_KEPT = 16
 const NO_MODEL_LINE = 'No language model is answering this page yet, so I can’t chat. I can still change the city for you: try “make it night”.'
 /** A model file small enough for a first visit, named in the hint beside the picker (it runs on a processor alone). */
 const SMALL_MODEL_HINT = 'A small model file runs right in this page: a .gguf such as Qwen2.5 0.5B Instruct at Q4_K_M, about 0.4 GB.'
-/** A page served from this computer, which a local model server answers by default. */
-const LOOPBACK_PAGE = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/
+/** A page Ollama answers by default (localhost, 127.0.0.1 and 0.0.0.0 on any port; not [::1]). */
+const LOOPBACK_PAGE = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?$/
 /** The card's line for a reply. */
 function talkLine(t: Talk | null): string {
   switch (t?.state) {
@@ -91,6 +91,8 @@ function talkLine(t: Talk | null): string {
     case 'none': return NO_MODEL_LINE
     case 'slow': return 'The model took too long to answer. Ask again, or try something shorter.'
     case 'held': return 'I won’t repeat what the model answered: it didn’t pass the city’s screen. Ask me something else.'
+    // The person's words failed the 14A screen: not engaged with, not repeated, not sent anywhere.
+    case 'refused': return 'Let’s keep it to the city. What would you like it to do?'
     case 'failed': return 'The model couldn’t answer this time. Ask again in a moment.'
     case 'stopped': return 'Stopped. Say something else, or ask again.'
   }
@@ -335,7 +337,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
       if (r.kind === 'said') {
         turnsRef.current = [...turnsRef.current, { who: 'sloane' as const, text: r.text }].slice(-TALK_KEPT)
         put({ state: 'said', text: r.text, why: '' })
-      } else put({ state: r.kind, text: '', why: r.kind === 'none' || r.kind === 'failed' ? r.why : '' })
+        return
+      }
+      // Words the screen refused are not kept as a turn: no later ask carries them.
+      if (r.kind === 'refused' && turnsRef.current.at(-1)?.who === 'you') turnsRef.current = turnsRef.current.slice(0, -1)
+      put({ state: r.kind, text: '', why: r.kind === 'none' || r.kind === 'failed' ? r.why : '' })
     }, (e: unknown) => put({ state: 'failed', text: '', why: e instanceof Error ? e.message : String(e) }))
     return () => ctl.abort()
   }, [chat, asking])
@@ -350,18 +356,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     turnsRef.current = [...turnsRef.current, { who: 'you' as const, text }].slice(-TALK_KEPT)
     askTurns(turnsRef.current)
   }
-  /** The last turn again (after a model file was chosen, a server started, or a slow answer). */
-  const askAgain = () => {
-    if (turnsRef.current.at(-1)?.who === 'you') askTurns(turnsRef.current)
-  }
-  /** The person's Stop: the ask ends (a model loading in this page for it stops loading, as any stop of an answer does). */
-  const stopTalk = () => {
-    setAsking(null)
-    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
-  }
   /** A reply still on its way: the next turn waits for it or for Stop, so a second message never cuts short a model
    *  that is still loading for the first (a new ask would end that load and start it again). */
   const replying = talk?.state === 'waiting'
+  /** The last reply the person has had on the card (shown and said); one that came while the card was away is unseen. */
+  const [seenTalk, setSeenTalk] = useState(0)
+  const unseen = talk !== null && talk.state !== 'waiting' && talk.id !== seenTalk
   /** The brief on the clipboard, or shown to copy by hand where the clipboard is out of reach. */
   const [copied, setCopied] = useState<'no' | 'yes' | 'shown'>('no')
   /** Bumped whenever a card opens or a question changes: restarts the settle timer and the focus effect. */
@@ -370,6 +370,23 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const inputRef = useRef<HTMLInputElement>(null)
   /** The next ask or goal card takes focus even on touch (the player tapped for it, so a keyboard may rise). */
   const focusNext = useRef(false)
+  /** Back to the field after a button that goes away when pressed (Stop, Ask again): focus never falls to the page, where
+   *  the next letter typed would be a step that puts the card away. */
+  const refocus = () => {
+    focusNext.current = true
+    setEpoch((n) => n + 1)
+  }
+  /** The last turn again (after a model file was chosen, a server started, or a slow answer). */
+  const askAgain = () => {
+    if (turnsRef.current.at(-1)?.who === 'you') askTurns(turnsRef.current)
+    refocus()
+  }
+  /** The person's Stop: the ask ends (a model loading in this page for it stops loading, as any stop of an answer does). */
+  const stopTalk = () => {
+    setAsking(null)
+    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
+    refocus()
+  }
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
   const [seenDriving, setSeenDriving] = useState(driving)
@@ -384,6 +401,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const talking = view === 'goal' && dialogue.brief?.chat === true
   const spoken = talking ? (talk && talk.state !== 'waiting' ? talkLine(talk) : '') : spokenLine(view, mood, name, nudge, dialogue)
   const spokenKey = view === 'nudge' && nudge ? `nudge:${nudge.id}` : spoken
+  // Adjusted while rendering: a reply is seen once the card shows it.
+  if (visible && talking && talk && talk.state !== 'waiting' && talk.id !== seenTalk) setSeenTalk(talk.id)
   const sayRef = useRef(onSay)
   const saidRef = useRef('')
   useEffect(() => { sayRef.current = onSay }, [onSay])
@@ -453,6 +472,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
       done = fresh.length ? [...applied, ...fresh] : applied
     }
     const brief = step ? null : whys.brief(done)
+    // Talk while a reply is still on its way (however it got here: typed, heard, after Another goal) waits in the field.
+    if (brief?.chat && replying) {
+      setDraft(brief.goal)
+      return
+    }
     setDialogue({ whys, step, brief, applied: done })
     setCopied('no')
     setDraft('')
@@ -471,7 +495,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     onGoalSent?.(goalText)
   }
   const reply = (text: string) => {
-    if (dialogue.brief?.chat && replying) return
+    // A reply still on its way: the words wait in the field (a heard line too), to go with Send once it lands.
+    if (dialogue.brief?.chat && replying) {
+      setDraft((d) => (d.trim() ? d : text))
+      return
+    }
     if (dialogue.whys && dialogue.step) {
       dialogue.whys.answer(text)
       advance(dialogue.whys, dialogue.applied)
@@ -501,8 +529,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const openGoal = () => {
     focusNext.current = true
-    // A conversation whose reply is still on its way is opened again as it stands, not ended by a fresh prompt.
-    if (replying && dialogue.brief?.chat) {
+    // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands.
+    if (dialogue.brief?.chat && (replying || unseen)) {
       open('goal')
       onGoal?.()
       return
@@ -523,7 +551,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const said = heardGoal(text, open)
     if (said === null) return
     if (open) reply(said)
-    else {
+    else if (dialogue.brief?.chat && replying) {
+      // "Sloane, …" from the chip while a reply is on its way: the conversation opens as it stands, the words in its field.
+      openGoal()
+      setDraft(said)
+    } else {
       openGoal()
       startGoal(said)
     }

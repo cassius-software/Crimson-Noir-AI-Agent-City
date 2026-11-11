@@ -145,11 +145,36 @@ const HARM = new RegExp(`\\b(?:(?:hurt|harm)(?:ing)? ${PERSON}|run(?:ning)? ${PE
 
 const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
 
-/** Talk, not a goal: a greeting, "how's it going", a question about Sloane, thanks, goodbye, or a wish to chat. Read
- *  on the normalized goal, and only when nothing else maps, so "hi, make it night" is still the night. */
-const SMALL_TALK = /\b(?:hi+|hiya|hey+|hello+|howdy|yo|sup|wh?at'?s ?up|wassup|greetings|good (?:morning|afternoon|evening|day)|how (?:are|r) (?:you|u|ya)|how'?s it (?:going|goin)|how is it going|how goes it|how (?:have|you) you been|how'?s (?:your|ur) (?:day|night|evening)|how do you do|nice to meet you|who (?:are|r) (?:you|u)|what (?:are|r) (?:you|u)|(?:what'?s|what is) (?:your|ur) name|your name|who (?:made|built|created|wrote) you|are you (?:an? )?(?:ai|bot|robot|real|human|alive|person|machine|model|llm|there)|tell me (?:about yourself|a joke|a story|something)|what can you do|what do you do|(?:let'?s|can we|could we|wanna|want to|i want to) (?:talk|chat)|talk to me|chat with me|(?:can|could|may) i (?:talk|speak|chat) (?:to|with) you|just (?:chatting|talking)|conversation|say (?:hello|hi)|i'?m bored|i am bored|thank(?:s| you)|thx|cheers|okay|ok|cool|nice|great|awesome|lol|haha+|bye|goodbye|see (?:you|ya)|sloane)\b/
+/** The "I don't know" phrases, everywhere in a goal (a talk-only goal is read with them blanked out). */
+const UNSURE_ALL = new RegExp(UNSURE.source, 'g')
+/** Acknowledgements and laughs: talk where nothing else is said, but never enough on their own to make an "I don't know"
+ *  ("no thanks", "i'm ok", "idk lol") a conversation. */
+const ACK = String.raw`thank(?:s| you)|thx|cheers|okay|ok|cool|nice|great|awesome|lol|(?:ha){2,}h?|(?:he){2,}|lmf?ao`
+/** Talk to Sloane: a greeting, "how's it going", a question about Sloane, goodbye, or a wish to chat. */
+const TALK = String.raw`hi+|hiya|hey+|hello+|howdy|yo|sup|wh?at'?s ?up|wassup|greetings|good (?:morning|afternoon|evening|day|night)|how (?:are|r) (?:you|u|ya)(?: (?:doing|today|tonight|this (?:morning|afternoon|evening)))*|how'?s it (?:going|goin)|how is it going|how goes it|how (?:have|you) you been|how'?s (?:your|ur) (?:day|night|evening|morning|afternoon)(?: going| been)?|how do you do|nice to meet you|who (?:are|r) (?:you|u)|what (?:are|r) (?:you|u)|(?:what'?s|what is) (?:your|ur) name|your name|who (?:made|built|created|wrote) you|are you (?:an? )?(?:ai|bot|robot|real|human|alive|person|machine|model|llm|there|ok|okay)|tell me (?:about yourself|a joke|a story|something)|what can you do|what do you do|(?:let'?s|can we|could we|wanna|want to|i want to) (?:have a )?(?:talk|chat|conversation)|(?:have|having) a (?:chat|talk|conversation)|(?:talk|chat|speak) (?:to|with) (?:me|sloane)|(?:can|could|may) i (?:talk|speak|chat) (?:to|with) you|just (?:chatting|talking)|conversation|say (?:hello|hi)(?: to (?:you|u|sloane))?|i'?m bored|i am bored|bye|goodbye|good bye|see (?:you|ya)|sloane`
+const TALK_ALL = new RegExp(String.raw`\b(?:${TALK}|${ACK})\b`, 'g')
+const TALK_SAID = new RegExp(String.raw`\b(?:${TALK})\b`)
+/** Words that leave a goal talk when talk is all else it says ("ok so thanks again", "hey there sloane"). */
+const FILLER = /\b(?:a|an|the|so|now|please|pls|plz|just|and|then|well|oh|um+|uh+|there|too|to|you|u|me|again|really|very|much|all|dear|mate|buddy)\b/g
+/**
+ * Whether the whole goal is talk (normalized): talk words (TALK or ACK) and fillers and nothing else, so "nice, find a
+ * cafe" is a goal and "hey sloane, how's it going" is talk. An "I don't know" beside talk to Sloane is talk too ("i'm
+ * good, how are you?"); beside an acknowledgement only it stays what it was ("no thanks", "i'm ok").
+ */
+function talkOnly(said: string, unsure: boolean): boolean {
+  if (!said.match(TALK_ALL)) return false
+  const rest = (unsure && TALK_SAID.test(said) ? said.replace(UNSURE_ALL, ' ') : said).replace(TALK_ALL, ' ').replace(FILLER, ' ')
+  return !/[a-z0-9]/.test(rest)
+}
+/** Courtesy before a question's first word ("please, what is…", "so why…"). */
+const LEAD = String.raw`(?:(?:please|pls|plz|so|um+|uh+|and|but|well|ok|okay|hey|hi|hello|sloane) )*`
 /** A question by its first words (the "?" is read on the goal as typed: normalize drops it). */
-const QUESTION = /^(?:what|what'?s|why|how|how'?s|who|who'?s|where|where'?s|when|which|whose|is|isn'?t|are|aren'?t|am|was|were|can|can'?t|could|would|will|should|shall|may|might|do (?:you|i|we|they)|does|did|have you|has|tell me)\b/
+const QUESTION = new RegExp(String.raw`^${LEAD}(?:what|what'?s|why|how|how'?s|who|who'?s|which|whose|is|isn'?t|are|aren'?t|was|were|should|do (?:you|i|we|they)|does|did|have you|has|tell me)\b`)
+/** A request worded as a question ("can you find a cafe?") and a question about the city's whereabouts or times ("where's
+ *  the courier?"): goals for the scouts, not talk, since a model knows nothing of this city's places. */
+const REQUEST = new RegExp(String.raw`^${LEAD}(?:(?:can|could|would|will|won'?t|can'?t) (?:you|u|ya)(?! (?:tell|explain|talk|chat|hear|see|understand|speak|say|be)\b)|where|when)\b`)
+/** A wish to send someone: scouts, a team, agents, a recruit. Never talk, even mid-conversation. */
+const SEND = /\b(?:send|dispatch|deploy|get)\b.*\b(?:scouts?|team|agents?|sub ?agents?|someone|somebody|workers?|bots?|helpers?|people)\b|\b(?:recruit|scouts?)\b/
 
 /** Peak by name (the Peak rule's words). */
 const PEAK_NAMED = /\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|(?<!\b(?:my|the|your|our|those|these) )past) ultra\b/
@@ -296,9 +321,10 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
     label: 'Weather: the city has one clear late-September day so far', modules: ['01_Initialize_World/solar.ts', '01_Initialize_World/world.ts', '07_Execute_Actions/postfx.ts'] },
   { re: /\b(?:dogs?|cats?|birds?|pigeons?|animals?|pets?|horses?|squirrels?|wildlife|deer)\b/,
     label: 'Animals: only people and cars live here so far', modules: ['03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowd.wgsl'] },
-  // Talk with Sloane herself is not company: it is chat (SMALL_TALK), answered by a connected model.
-  { re: /\b(?:friends?|multiplayer|online|other players?|co ?op|(?:chat(?:ting)?|talk(?:ing)?|speak(?:ing)?) (?:to|with) (?:someone|somebody|anyone|anybody|people|other people|others|strangers|the people|passers ?by|a person))\b/,
-    label: 'Company: the city is single-player and its people do not talk back; you can ask someone over by their skill (say "recruit" and a skill, or type recruit <skill> in the console), and Sloane talks with you when a language model answers this page', modules: ['08_Swarm/recruitment.ts', '03_Spawn_Agents/skills.ts', '06_Make_Decisions/intent.ts'] },
+  // Talk with Sloane themself is not company: it is chat (TALK), answered by a connected model. Talk aimed at anyone
+  // else is ("talk to the shopkeeper", "say hello to a stranger", "start a dialogue").
+  { re: /\b(?:friends?|multiplayer|online|other players?|co ?op|dialogue|(?:chat(?:ting)?|talk(?:ing)?|speak(?:ing)?|convers(?:e|ing|ation)) (?:to|with) (?!(?:you|u|ya|me|sloane)\b)[a-z]+|say (?:hello|hi) to (?!(?:you|u|ya|sloane)\b)[a-z]+)\b/,
+    label: 'Company: the city is single-player and passers-by keep to themselves; you can ask someone over by their skill (say "recruit" and a skill, or type recruit <skill> in the console) and they answer at the console, and Sloane talks with you when a language model answers this page', modules: ['08_Swarm/recruitment.ts', '03_Spawn_Agents/skills.ts', '06_Make_Decisions/intent.ts'] },
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: nobody flies or stands on a roof; the one way up is the sky floor of the Penthouse or the Sky-Mansion in the city, from the home\'s card', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
   { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
@@ -540,14 +566,19 @@ function analyze(input: string, scouts = false, chatting = false): Analysis {
   // A goal whose every note points at something the city has ("where are the shops", "go indoors") is answered by the
   // notes: nobody is sent to scout for it.
   const pointed = unmapped.length > 0 && unmapped.every((u) => u.exists === true)
-  // Talk is a conversation, not a goal: small talk, or a question, that nothing maps to and no note answers. In a
-  // conversation already going (`chatting`) anything that maps to nothing is the next turn, and so is a question or small
-  // talk beside a gap ("do you like dogs?"); an "I don't know" there is an answer, not a wish to look around.
+  // Talk is a conversation, not a goal. A goal that is talk and nothing else ("hey sloane, how's it going", "good
+  // evening", "are you a robot?") is talk whatever a word of it would set. A question nothing maps to and no note
+  // answers is talk too, but not a request worded as one or a question about the city's places (REQUEST). In a
+  // conversation already going (`chatting`) anything that maps to nothing is the next turn, and so is a question or
+  // talk beside a gap ("do you like dogs?"); an "I don't know" there is an answer, not a wish to look around. A wish to
+  // send someone (SEND) is never talk: the scouts go.
   const said = normalize(input)
-  const small = SMALL_TALK.test(said)
-  const question = /\?\s*$/.test(input) || QUESTION.test(said)
-  const chat = !harm && !named && worded && hyps.length === 0 && !pointed &&
-    (unmapped.length === 0 || (chatting && (small || question))) && (small || chatting || (unsure === null && question))
+  const send = SEND.test(said)
+  const only = !harm && worded && !send && !pointed && unmapped.length === 0 && talkOnly(said, unsure !== null)
+  if (only) { hyps.length = 0; tags.clear() }
+  const question = (/\?\s*$/.test(input) || QUESTION.test(said)) && !REQUEST.test(said)
+  const chat = only || (!harm && !named && worded && !send && hyps.length === 0 && !pointed &&
+    (unmapped.length === 0 || (chatting && question)) && (chatting || (unsure === null && question)))
   const team = harm || chat ? null : named || (scouts && worded && hyps.length === 0 && unsure === null && !pointed) ? teamOf(work, input) : null
   if (team) mergeHyp(hyps, { control: 'dispatch', value: team.lanes.length, confidence: team.scouting ? 0.5 : work.count !== null ? 1 : 0.9, at: work.at, derived: false })
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
