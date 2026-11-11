@@ -27,12 +27,12 @@ import {
   StorageBufferAttribute, Uint32BufferAttribute, Vector4, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
-  Fn, If, atan, attribute, cameraPosition, dot, float, fwidth, hash, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
+  Fn, If, atan, attribute, cameraPosition, dot, float, fwidth, instanceIndex, mix, normalLocal, positionGeometry, positionLocal, positionPrevious,
   select, smoothstep, step, storage, time, uint, uniform, uniformArray, varying, varyingProperty, vec2, vec3, vec4,
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
-import { bodyVertex } from './crowdBody.ts'
+import { bodyVertex, crowdHash } from './crowdBody.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, JACKET_HEM, LANDMARK, LOWER_PAINT, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
@@ -101,8 +101,8 @@ const STATURE_STEP = (WARDROBE.stature.max - WARDROBE.stature.min) / (WARDROBE.s
 const hex = (list: number[]) => list.map((c) => new Color(c))
 /**
  * three's TSL `hash` (nodes/math/Hash.js): PCG on the integer part of the seed, as the body material's h(k) runs it
- * on the GPU with seed = agent + k · 13.37 in f32. On the CPU it gives a promoted person's rig (07_Execute_Actions/
- * rigView.ts) the colour the crowd gives their figure.
+ * on the GPU (as crowdBody.ts crowdHash, the same bits) with seed = agent + k · 13.37 in f32. On the CPU it gives a
+ * promoted person's rig (07_Execute_Actions/rigView.ts) the colour the crowd gives their figure.
  */
 function tslHash(seed: number): number {
   const state = (Math.imul(Math.trunc(seed) >>> 0, 747796405) + 2891336453) >>> 0
@@ -173,6 +173,11 @@ const FRECKLE_DENSITY = Object.freeze([0, 0.16, 0.3, 0.48])
 /** Where freckles gather most on the face: the band of the cheeks and the nose's bridge, m of the rest body (humanoid.ts FACE: the lips' line to the nose's root). */
 const FRECKLE_BAND = Object.freeze({ from: FACE.lips.lineY, to: FACE.nose.rootY + 0.004 })
 
+/**
+ * The body material's hash: three's TSL `hash`, bit for bit, as the one WGSL function crowdBody.ts writes (crowdHash),
+ * so each stage carries it once and calls it where three's would write its statements out at every call.
+ */
+const hash = (s: Node): F1 => (crowdHash as unknown as (a: Node) => F1)(s)
 /** Three's hash of an integer cell, salted: the lattice the skin's noise and freckles are drawn from. */
 const lattice = (c: V3, salt: number): F1 => hash(dot(c, vec3(1, 57, 113)).add(salt))
 

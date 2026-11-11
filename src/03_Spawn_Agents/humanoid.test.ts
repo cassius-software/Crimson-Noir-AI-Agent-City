@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { BODY_INCLUDES, BODY_WGSL, statureFactor } from './crowdBody.ts'
+import { BODY_INCLUDES, BODY_WGSL, crowdHash, statureFactor } from './crowdBody.ts'
 import {
   BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GARMENT_STEP, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION,
   RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SKIRT_CUT, SKIRT_SHAPE, SLOT, SLOTS, SOLE, TROUSER_CUT, TROUSER_SHAPE, WALK,
@@ -23,8 +23,9 @@ import {
   pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skirtFollow, skirtLeft, skirtPose, skullFront, swingOf, walkAngles,
   type BodyPose, type BodyShape, type FaceShape, type LegAngles, type RigPose,
 } from './humanoid.ts'
-import { LOOK_BODIES, LOOK_PIECE_BIT } from './look.ts'
+import { LOOK_BODIES, LOOK_HASH, LOOK_PIECE_BIT, shaderHash } from './look.ts'
 import { FOOT, SEGMENTS } from './ragdollRig.ts'
+import { compileWgsl } from './wgslHost.ts'
 import { RIG_POSE, RIG_SEGMENTS, RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -1000,9 +1001,39 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.equal(statureFactor(HEIGHT_BASE * 2), 2)
 })
 
+test('crowdBody.ts crowdHash, the crowd\'s hash: one WGSL function, run through wgslHost.ts, gives the CPU\'s twin (look.ts shaderHash, three\'s pcg) bit for bit for every seed 0 to 100,000, both chains\' links for every agent of the street, and seeds past f32\'s whole numbers and u32\'s top; crowd.ts calls it under three\'s name', () => {
+  // The text three writes into each stage, read back through the wgslFn's own node.
+  const code = (crowdHash as unknown as { code: string }).code
+  assert.match(code, /^fn crowdHash\(s: f32\) -> f32 \{/)
+  const host = compileWgsl(code)
+  const gpu = (s: number): number => host.call('crowdHash', Math.fround(s)) as number
+  const differ = (seeds: Iterable<number>): number[] => {
+    const out: number[] = []
+    for (const s of seeds) if (!Object.is(gpu(s), shaderHash(s))) out.push(s)
+    return out
+  }
+  const counting = function* (from: number, to: number) { for (let s = from; s <= to; s++) yield s }
+  assert.deepEqual(differ(counting(0, 100_000)), [], 'every whole seed to 100,000')
+  // The links as the stages form them in f32: agent + k · 13.37 (the vertex stage's chain) and agent + k · 7.919 (the
+  // fragment's), so the fractional part is dropped by u32() alike.
+  const links = function* () {
+    for (let agent = 0; agent < 20_000; agent += 7) for (let k = 0; k < 64; k++) for (const step of [LOOK_HASH.pieces, LOOK_HASH.colours]) yield Math.fround(Math.fround(agent) + Math.fround(k * step))
+  }
+  assert.deepEqual(differ(links()), [], 'both chains\' links')
+  const large = [2 ** 24, 2 ** 24 + 2, 16_777_217.5, 123_456_789, 2 ** 31 - 128, 2 ** 31, 2 ** 31 + 256, 3_000_000_000, 2 ** 32 - 256, 2 ** 32, 2 ** 33, 1e12, 3.4e38, 0.5, 0.999, 40.11, -0.5, -3, -1e9]
+  assert.deepEqual(differ(large), [], 'seeds past f32\'s whole numbers, at and past u32\'s top (saturated), fractional and below zero')
+  for (const s of [0, 1, 7, 99_999]) assert.ok(gpu(s) >= 0 && gpu(s) < 1, `a hash in 0..1 (${s})`)
+  // crowd.ts keeps three's name for it, so every chain reads as it did; three's own is no longer imported there.
+  const crowd = read('./crowd.ts')
+  assert.match(crowd, /^const hash = \(s: Node\): F1 => \(crowdHash as unknown as \(a: Node\) => F1\)\(s\)$/m)
+  const tsl = crowd.match(/import \{([^}]*)\} from 'three\/tsl'/)
+  assert.ok(tsl, 'crowd.ts imports three/tsl')
+  assert.doesNotMatch(tsl[1], /\bhash\b/, 'three\'s hash is not imported')
+})
+
 test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face attributes, and the vertex stage is one bodyVertex call whose columns are the position and the normal', () => {
   const crowd = read('./crowd.ts')
-  assert.match(crowd, /import \{ bodyVertex \} from '\.\/crowdBody\.ts'/)
+  assert.match(crowd, /import \{ bodyVertex, crowdHash \} from '\.\/crowdBody\.ts'/)
   assert.match(crowd, /return geometryOf\(humanoidMesh\(v, detailed\)\)/)
   assert.match(crowd, /g\.setAttribute\('rig', new Float32BufferAttribute\(mesh\.rig, 3\)\)/)
   assert.match(crowd, /g\.setAttribute\('skin', new Float32BufferAttribute\(mesh\.skin, 2\)\)/)

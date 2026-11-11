@@ -12,7 +12,8 @@
  * then the stature's scales and the pelvis' rise, the spring-damper tilt, the heading and the position. One
  * call gives both the position and the normal, as two columns of a 3×3 matrix (the third is zero), so every sine is
  * taken once. Pure: builds nodes, needs no renderer; humanoid.test.ts holds its text to humanoid.ts's constants and
- * its include graph (BODY_INCLUDES) to the calls in the text.
+ * its include graph (BODY_INCLUDES) to the calls in the text. It also holds crowdHash, three's hash written as one
+ * function, which both stages of the body material call.
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
@@ -503,6 +504,16 @@ const fn = (name: string): ReturnType<typeof wgslFn> => {
 
 /** The vertex stage's function, with every function it calls as its includes. */
 export const bodyVertex = fn('bodyVertex')
+
+/**
+ * The crowd's hash: three's TSL `hash` (its nodes/math/Hash.js: PCG on the integer part of the seed, scaled to
+ * 0..1) as one WGSL function, the same operations in the same order, so the same bits. Three's is a TSL function
+ * without a layout, which writes its statements out again at every call: the near body's fragment stage called
+ * it more than a hundred times, and those copies were about a seventh of the stage. As a wgslFn it is written once per
+ * stage and called. crowd.ts uses it under the name `hash` in both stages; look.ts shaderHash is its CPU twin, and
+ * humanoid.test.ts runs this text through wgslHost.ts to hold the two equal.
+ */
+export const crowdHash = wgslFn('fn crowdHash(s: f32) -> f32 { let a = u32(s) * 747796405u + 2891336453u; let b = ((a >> ((a >> 28u) + 4u)) ^ a) * 277803737u; return f32((b >> 22u) ^ b) * 2.3283064365386963e-10; }')
 
 /** A stature in metres as the factor the shader scales the base body by (stance.x). */
 export const statureFactor = (metres: number): number => metres / HEIGHT_BASE
