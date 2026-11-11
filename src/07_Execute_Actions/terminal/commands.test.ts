@@ -3185,7 +3185,7 @@ test('lanes: the team runner through the bridge (status, the ledger verified on 
   assert.deepEqual(texts(run('lanes ledger verify', t, [])), ['ledger: 0 records', '  chain verified'])
   assert.deepEqual(texts(run('lanes stop', t, [])), ['released: 2 lanes closed'])
   for (const l of ['lanes go', 'lanes ledger now', 'lanes stop all', 'lanes ledger verify twice']) assert.deepEqual(texts(run(l, t, [])), ['usage: lanes [ledger [verify]|stop]'], l)
-  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the console never dispatches by itself: goal does')
+  assert.deepEqual(calls, ['status', 'ledger false', 'ledger true', 'stop'], 'the lanes command never dispatches: goal, the card and the walk\'s spawn_subagents do')
   const broken = { ...t, lanes: { ...t.lanes, status: () => { throw new Error('the realm halted') } } }
   assert.deepEqual(texts(run('lanes', broken, [])), ['lanes: the realm halted'])
   assert.deepEqual(complete('lanes '), ['lanes ledger', 'lanes stop'])
@@ -3375,7 +3375,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   const e = fake()
   e.exam = {
     verifyRing0: () => { doors.push(['verify']); said.push('verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing'); return 0xc0ffee },
-    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} asked over for ${role}`); return 2 },
+    spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} sub-agents at work for ${role}`); return 2 },
     unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
     report: () => said.splice(0),
     status: () => 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)',
@@ -3384,7 +3384,7 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
   assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
   const session = replSession()
   assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing' }])
-  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 asked over for sim2real_workplaces' }])
+  assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 sub-agents at work for sim2real_workplaces' }])
   assert.deepEqual(run(`noir ${PROGRAM[2]}`, e, [], session).lines, [{ kind: 'sys', text: 'unlock_city: the city is yours' }])
   assert.deepEqual(run('noir print(seal, swarm);', e, [], session).lines, [{ kind: 'out', text: '12648430 2' }])
   assert.deepEqual(doors, [['verify'], ['spawn', 24, 'sim2real_workplaces'], ['unlock', 0xc0ffee, 2]])

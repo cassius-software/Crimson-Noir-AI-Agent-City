@@ -36,7 +36,7 @@ export interface NoirWrites {
 /** The first walk's exam (the host wires 07_Execute_Actions/onboarding/exam.ts; absent: every exam intrinsic fails with the host's reason). Each may throw: the message becomes the run's error. */
 export interface NoirExam {
   verifyRing0(): number                             // a u32 seal over the live kernel; 0 when it does not hold
-  spawnSubagents(n: number, role: string): number   // how many were asked over, never how many were wished for
+  spawnSubagents(n: number, role: string): number   // how many sub-agents are running, never how many were wished for
   unlockCity(seal: number, swarm: number): boolean
 }
 export interface NoirHost { tables(): NoirTables; readonly write?: NoirWrites; readonly locked?: string; readonly exam?: NoirExam; readonly noExam?: string }

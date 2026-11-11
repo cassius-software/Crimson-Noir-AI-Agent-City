@@ -85,13 +85,21 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   assert.match(src, /case 'ring0': termRef\.current\?\.run\('laws'\)/)
   assert.match(src, /case 'exam': termRef\.current\?\.type\(`noir \$\{PROGRAM\[0\]\}`\)/)
   // The exam behind the exit program: composed in the console bridge over the host's vouch for the air gap, the
-  // kernel-panic state, the bridge's laws, the recruiter's own lane and the walk; the nonce drawn once per page load.
+  // kernel-panic state, the bridge's laws, the page's one team runner and the walk; the nonce drawn once per page load.
   assert.match(src, /exam: createExam\(\{/)
   assert.match(src, /contained: \(\) => airgapInstalled\(globalThis\)/)
   assert.match(src, /standing: \(\) => lockedRef\.current === null/)
   assert.match(src, /laws: \(\) => engineBridge\.laws\(\)/)
   assert.match(src, /checks: \(\) => GATE_CHECK_NAMES/, 'the gate\'s check names come through the operator tier, one of the gate\'s three keepers')
-  assert.match(src, /ask: \(skill\) => r\.tryAsk\(skill\)/)
+  // The swarm: the planner's sixteen-desk team for the count, through the runner Sloane's goals use (never a second
+  // runner, never the recruiter's within-earshot ask, which left a visitor inside a workplace with a swarm of 0), one
+  // tick at once, and the count of lanes still running after it.
+  const swarm = src.slice(src.indexOf('swarm: (n, role) => {'), src.indexOf('nonce: crypto.getRandomValues'))
+  assert.ok(swarm.length > 0, 'the exam host has a swarm')
+  assert.match(swarm, /const replaced = team\.views\(\)\.length\n\s+const plan = swarmTeam\(n, `spawn_subagents\(\$\{n\}, "\$\{role\}"\)`\)\n\s+const d = team\.dispatch\(plan\)\n\s+team\.tick\(\)\n\s+const running = team\.views\(\)\.filter\(\(v\) => v\.state === 'ready'\)\.length/)
+  assert.match(swarm, /return \{ running, opened: d\.lanes, desks: plan\.kinds\.length, replaced, missing: d\.missing \}/)
+  assert.doesNotMatch(swarm, /tryAsk|\br\.recruit\(/, 'the runner asks the bodies, once')
+  assert.ok(src.indexOf('const team = new TeamRunner(') < src.indexOf('exam: createExam({'), 'the runner exists before the exam is built')
   assert.match(src, /nonce: crypto\.getRandomValues\(new Uint32Array\(1\)\)\[0\]/)
   assert.match(src, /stage: \(\) => walkRef\.current\.stage/)
   assert.match(src, /on: \(\) => walk,/)

@@ -17,7 +17,7 @@ import { CAP_MOVE, CAP_WORKPLACE_TASK } from '../02_Define_The_Rules/capabilitie
 import { SKILLS } from '../03_Spawn_Agents/skills.ts'
 import { LANE_LIMITS, MAX_OPS_PER_TICK, NoirSession, type NoirTables } from '../07_Execute_Actions/terminal/noirscript/index.ts'
 import { LANE_MAX } from '../08_Swarm/lanes.ts'
-import { DESKS, DESK_IDS, SCOUTS, TEAM_CAPS, TEAM_MAX, WINDOW, deskAt, deskOf, laneSpec, plainWords, scanWork, teamFor, teamLabel, teamLines, teamNames, teamOf, teamRows, type DeskId } from './dispatch.ts'
+import { DESKS, DESK_IDS, SCOUTS, TEAM_CAPS, TEAM_MAX, WINDOW, deskAt, deskOf, laneSpec, plainWords, scanWork, swarmTeam, teamFor, teamLabel, teamLines, teamNames, teamOf, teamRows, type DeskId } from './dispatch.ts'
 import { FiveWhys, classify } from './intent.ts'
 
 /** A city-sized table: ten thousand people on a grid, two hundred and forty cars on a line, some parked, most moving. */
@@ -137,6 +137,26 @@ test('scanWork: the desks in order of first mention, the count in digits or word
   // "power" alone is nobody's; the grid's words are the grid's.
   assert.deepEqual(scanWork('more power').kinds, [])
   assert.deepEqual(scanWork('the power grid').kinds, ['microgrid'])
+})
+
+test('swarmTeam: the first walk\'s swarm, dealt round all sixteen desks in slot order from wherever the player stands', () => {
+  const goal = 'spawn_subagents(24, "sim2real_workplaces")'
+  const t = swarmTeam(24, goal)
+  assert.deepEqual(t.kinds, DESK_IDS, 'every desk named')
+  assert.equal(t.lanes.length, 24)
+  assert.deepEqual([t.asked, t.dropped, t.scouting, t.goal], [24, 0, false, goal])
+  // Two at each of the first eight desks, one at each of the last eight.
+  const per = DESK_IDS.map((k) => t.lanes.filter((l) => l.kind === k).length)
+  assert.deepEqual(per, [2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1])
+  assert.deepEqual(t.lanes.slice(0, 2).map((l) => l.tag), ['robotics:1', 'warehouse:1'])
+  assert.equal(t.lanes[16]!.tag, 'robotics:2')
+  assert.ok(t.lanes.every((l) => l.caps === TEAM_CAPS), 'a sub-agent holds move and a workplace task, never more')
+  assert.equal(teamLabel(swarmTeam(3, goal)), 'Send 3 sub-agents to the robotics lab, the warehouse and the server vault', 'fewer than sixteen name only the desks they reach')
+  // The cap, and what it left out; never fewer than one (the caller refuses a swarm of nobody before it plans one).
+  const big = swarmTeam(1000, goal)
+  assert.deepEqual([big.lanes.length, big.asked, big.dropped], [TEAM_MAX, 1000, 1000 - TEAM_MAX])
+  assert.equal(swarmTeam(2.9, goal).lanes.length, 2)
+  assert.equal(swarmTeam(0, goal).lanes.length, 1)
 })
 
 test('teamOf: one lane a desk by default, a count dealt round the desks, the cap and the dropped count, the scouts when nothing is named', () => {

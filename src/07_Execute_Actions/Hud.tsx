@@ -277,9 +277,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const micShown = voice && (micOpen || (visible && (!compact || micNeeded)))
   const micPill = micShown && <MicPill voice={voice} mic={mic} onMic={onMic} contrast={highContrast} panel={panel} muted={muted} dark={dark} />
   const micBadge = micShown && visible && compact && <MicBadge voice={voice} onMic={onMic} panel={panel} />
-  // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team Sloane dispatched,
-  // in one line (08_Swarm/team.ts). Without a host microphone (an older host, no pill) the chip also carries the MIC
-  // dot, so an open microphone is never without its indicator (it outlives the H key, like REC).
+  // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team at work (Sloane's
+  // for a goal, or the first walk's swarm), in one line (08_Swarm/team.ts). Without a host microphone (an older host,
+  // no pill) the chip also carries the MIC dot, so an open microphone is never without its indicator (it outlives the H
+  // key, like REC).
   const rc = s.supplier.recruiting
   const dotted = Boolean(rc?.listening) && !voice
   const team = s.supplier.team ?? ''

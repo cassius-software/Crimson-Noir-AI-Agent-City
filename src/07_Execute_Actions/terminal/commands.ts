@@ -115,7 +115,7 @@ const CORE = [
   { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; open as the city starts unless you muted it, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
   { name: 'access', usage: 'access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]', summary: 'accessibility: high contrast for every card, a colour-vision filter over the frame (protan, deutan, tritan), the text size of every card, the caption size, the dwell click, single-switch scanning, a one-handed pad layout, the screen reader\'s lines; kept between visits (?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= for one visit)' },
   { name: 'goal', usage: 'goal <words...>', summary: 'tell the city a goal in plain words, as you would tell Sloane: what can be done now is done, the rest is explained' },
-  { name: 'lanes', usage: 'lanes [ledger [verify]|stop]', summary: 'the team Sloane dispatched for a goal: each sub-agent\'s lane, its word, its reading or why it was isolated; ledger prints the fault chain; stop closes the lanes' },
+  { name: 'lanes', usage: 'lanes [ledger [verify]|stop]', summary: 'the team at work (Sloane\'s for a goal, or the first walk\'s swarm): each sub-agent\'s lane, its word, its reading or why it was isolated; ledger prints the fault chain; stop closes the lanes' },
   { name: 'progress', usage: 'progress [table|train <skill>|reroll|reset [--yes]]', summary: 'your level, XP, credits, hero points and skills; what a check pays; spend a skill increase or a hero point' },
   { name: 'hal', usage: 'hal [pair hid|serial|ble]', summary: 'hardware bus devices; pair a controller' },
   { name: 'robot', usage: 'robot [relay <ws url> <token>|relay off|spawn <id> [<x> <z>]|urdf <url> [<name>]|demo [<name>]|cell [<kind> <station>]|mode <id> twin|leader|watch|sim|set <id> <joint> <q>|arm <id>|disarm <id>|calibrate <id> <joint>|fit <id> <joint>|shape <id> [<seed>|off]|remove <id>]', summary: 'the robots: physical ones over HAL/1 or the loopback relay, simulated ones from a URDF file or a workstation cell; their bodies in the physics realm as twins or leaders, every setpoint through the gate; fit takes the better of two actuator models, shape randomizes the body\'s domain by a seed (relay, spawn, cell, urdf, arm, calibrate, fit and shape are the operator\'s)' },
@@ -1311,7 +1311,7 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines: [out(plan.root), ...lines, ...(!done && plan.steps.length ? [sys('  nothing could be done now: the rest needs the operator, or a restart')] : [])] }
   },
 
-  /** The team Sloane dispatched (08_Swarm/team.ts): its lanes, the fault ledger (verified on request), or stop. */
+  /** The team at work (08_Swarm/team.ts; Sloane's for a goal, or the first walk's swarm): its lanes, the fault ledger (verified on request), or stop. */
   lanes(args, b) {
     if (args.length > 2) return fail(usage('lanes'))
     const [sub, more] = args
@@ -1625,8 +1625,8 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     const writes = eliteWritesOf(b)
-    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the recruiter's own
-    // lane, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
+    // The first walk's exam (bridge.exam): its three intrinsics reach the walk, the kernel's seal and the page's one team
+    // runner, and nothing else; what each door said is printed after the run, so the visitor reads why the city stayed shut.
     const exam = b.exam
     const host: NoirHost = {
       tables: () => tables, locked: NOIR_LOCKED, noExam: NOIR_NO_EXAM,

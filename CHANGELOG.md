@@ -1811,6 +1811,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **The first walk's way out works from wherever you stand.** `spawn_subagents` asked only people within 5 m, and its
+  loop stopped at the first skill nobody near knew (Robotics), so the exit program answered a swarm of 0 and
+  `unlock_city` refused. The walk's own workplace stage leaves the visitor inside a room, where nobody can be asked
+  over at all, so on the accessible path the uncloseable walk could not be finished (seen on the live copy). Now the
+  exam sets its swarm to work through the same team runner Sloane's goals use (`onboarding/exam.ts`, `App.tsx`,
+  `dispatch.ts` `swarmTeam`): one lane a sub-agent, dealt round all sixteen workplaces' desks, opened from anywhere,
+  with anyone within earshot who has a desk's skill asked over by the runner. It answers with the lanes still running
+  after their first tick, says which team it replaced, caps at the runner's 32, and opens nothing while the page is not
+  contained or the realm is halted; on a map without workplaces (a surveyed region) it says the lanes read around
+  where you started and that nobody is asked over. The swarm stays at work after the city opens (`lanes`, `lanes
+  stop`), and the MIC chip counts a team at more than four desks in workplaces ("Team 24 · 16 workplaces") rather
+  than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from
+  where the workplace stage leaves the visitor, checks that nobody within earshot could be asked over there, and reads
+  the swarm back with `lanes`.
 - **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
   an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid
   ComputePipeline "crowd.simulate"] is invalid due to a previous error. - While Validating GetBindGroupLayout (0)". Not

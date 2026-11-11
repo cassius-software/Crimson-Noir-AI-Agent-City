@@ -1150,11 +1150,16 @@ shows it (there is no city to walk).
   the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
   by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
   standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
-  memory never matches. `spawn_subagents(n, role)` asks up to `n` people over for the role through the recruiter's own
-  lane, under the same page checks and realm answers as `recruit <skill>` (on foot, off the road, within earshot, at
-  most eight at a time; the one role today is `sim2real_workplaces`, which asks for Robotics, Rust, Python, Data,
-  Testing, Design, TypeScript and Security in turn), and answers with how many were actually asked, never the number
-  wished for: stand on a sidewalk near people, or it answers 0 and says so. `unlock_city(seal, swarm)` opens the city
+  memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for the role through
+  the same team runner Sloane's goals use: one lane each, a small NoirScript program at one of the sixteen workplaces,
+  dealt round the desks in order (twenty-four are two at each of the first eight and one at each of the rest), under
+  the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
+  anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
+  answers with how many lanes are still running after their first tick, never the number wished for, says which team
+  it replaced, and opens nothing while the page is not contained or the realm is halted. On a map without workplaces
+  (a surveyed region) its lanes read the city around where you started and nobody is asked over. The swarm stays at
+  work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads "Team 24 · 16
+  workplaces". `unlock_city(seal, swarm)` opens the city
   for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
   pass answers that the city is already yours. After each line the console prints what the doors said. In the console
   shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
@@ -1785,12 +1790,14 @@ while you type.
   clock, the quality tier, the sound, a team dispatched) are applied and printed `done`, the rest `later`, a step
   that failed `failed` with why, words nothing in the city maps to yet are named, and a dispatched team's lanes
   are listed (tag, desk, what each reads).
-- `lanes` prints the team Sloane dispatched for the last goal (from the card or `goal`): one row a lane with its
+- `lanes` prints the team at work, the one Sloane dispatched for the last goal (from the card or `goal`) or the first
+  walk's swarm: one row a lane with its
   tag, its state (`ready` or `isolated`), the capability word it holds, the steps its last tick took and its latest
   reading (or the gate's sentence that isolated it); then the people asked over for each desk and what came of
   them. `lanes ledger` prints the fault ledger (every isolated lane, hashed over the one before it) and `lanes
   ledger verify` recomputes the chain; `lanes stop` closes every lane (the people asked over stay; `recruit
-  dismiss` lets them go). The console never opens a team by itself: `goal` and the card do.
+  dismiss` lets them go). The console never opens a team by itself: `goal`, the card and the first walk's
+  `spawn_subagents` do, and each new team replaces the one before it.
 - `progress` shows the operator's progression (see The operator's progression): level, XP, civic credits, hero
   points, resolve, the round's actions, the six attributes and the eight skills with their ranks and modifiers;
   `progress table` prints the DC, a success's pay and each level's treasure, and the degrees and the breadth bonus;
