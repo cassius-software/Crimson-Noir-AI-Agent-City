@@ -1015,9 +1015,10 @@ test('crowdBody.ts crowdHash, the crowd\'s hash: one WGSL function, run through 
   const counting = function* (from: number, to: number) { for (let s = from; s <= to; s++) yield s }
   assert.deepEqual(differ(counting(0, 100_000)), [], 'every whole seed to 100,000')
   // The links as the stages form them in f32: agent + k · 13.37 (the vertex stage's chain) and agent + k · 7.919 (the
-  // fragment's), so the fractional part is dropped by u32() alike.
+  // fragment's), so the fractional part is dropped by u32() alike. Every agent to 20,000, past a desktop's crowd
+  // (governor.ts CROWD_DEFAULT.full, 14,000).
   const links = function* () {
-    for (let agent = 0; agent < 20_000; agent += 7) for (let k = 0; k < 64; k++) for (const step of [LOOK_HASH.pieces, LOOK_HASH.colours]) yield Math.fround(Math.fround(agent) + Math.fround(k * step))
+    for (let agent = 0; agent <= 20_000; agent++) for (let k = 0; k < 64; k++) for (const step of [LOOK_HASH.pieces, LOOK_HASH.colours]) yield Math.fround(Math.fround(agent) + Math.fround(k * step))
   }
   assert.deepEqual(differ(links()), [], 'both chains\' links')
   const large = [2 ** 24, 2 ** 24 + 2, 16_777_217.5, 123_456_789, 2 ** 31 - 128, 2 ** 31, 2 ** 31 + 256, 3_000_000_000, 2 ** 32 - 256, 2 ** 32, 2 ** 33, 1e12, 3.4e38, 0.5, 0.999, 40.11, -0.5, -3, -1e9]
