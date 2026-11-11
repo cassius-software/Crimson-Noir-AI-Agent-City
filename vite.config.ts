@@ -375,7 +375,7 @@ function moduleLast(): Plugin {
 /**
  * The shaders' text without their comments (src/01_Initialize_World/leanWgsl.node.ts). A `.wgsl?raw` import is the
  * file as a string, comments and all, and the crowd's shaders ride twice (the page's bundle and the physics worker's,
- * so this plugin stands in both lists below): about 88 KB of the one file that no GPU reads. 'pre', so this answers
+ * so this plugin stands in both lists below): about 83 KB of the one file that no GPU reads. 'pre', so this answers
  * before Vite's own raw loader. The dev server serves the same text as the build, and the lines stay the file's.
  */
 export function leanShaders(): Plugin {

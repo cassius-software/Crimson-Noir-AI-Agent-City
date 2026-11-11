@@ -1725,14 +1725,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   page-kernels`), the evidence the fallback kernels keep compiling where no runner has a phone's GPU. Whether that
   phone's driver accepts the narrower or the light kernel is not known until it is tried on one; if it refuses them
   all, the card now shows what it said. Manual: When the city cannot start or stops.
-- **The page no longer ships its shaders' comments.** The `.wgsl` files are imported as text, so the single file
-  carried every comment in them, and the crowd's shaders twice (the page's bundle and the physics worker's): about
-  83 KB that no GPU reads. With the light kernel's file, the phone layouts and the context growth together the page
-  came out 8 KB over its byte budget (`tools/verify/page_dist.mjs`); rather than raise the budget, the build now
-  hands over each shader without its comments (`vite.config.ts` `leanShaders` in the page's plugin list and the
-  workers', `src/01_Initialize_World/leanWgsl.node.ts`; the dev server serves the same text). Only a comment's text
-  and the spaces before it go: every line keeps its number, so a compilation message on the recovery card still
-  names the file's line, and each file's licence header stays word for word. `leanWgsl.test.ts` pins every shader
+- **The page no longer ships its shaders' comments.** The `.wgsl` files are imported as text, so the single file carried
+  every comment in them, and the crowd's shaders twice (the page's bundle and the physics worker's): about 83 KB that no
+  GPU reads. With the light kernel's file, the phone layouts, the context growth and the customizer's shoes, frames,
+  watch and pin together the page came out 8 KB over its byte budget (`tools/verify/page_dist.mjs`); rather than raise
+  the budget, the build now hands over each shader without its comments (`vite.config.ts` `leanShaders` in the page's
+  plugin list and the workers', `src/01_Initialize_World/leanWgsl.node.ts`; the dev server serves the same text). Only a
+  comment's text and the spaces before it go: every line keeps its number, so a compilation message on the recovery card
+  still names the file's line, and each file's licence header stays word for word. `leanWgsl.test.ts` pins every shader
   line by line against its source, WGSL's comment rules (nested blocks, every line break the language has) and the
   plugin in both lists; `tools/browser/kernels.mjs` compiles that same text in the browser job.
 - **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×

@@ -10,7 +10,8 @@
  * the crowd's shaders ride in both.
  * What breaks if it is removed? A change to the stripping that ate a token, moved a line or dropped the licence, or a
  * build that left the plugin out of the worker's list, would ship without a test noticing: the first is a shader that
- * no longer compiles or reports the wrong line, the second a page over its byte budget.
+ * no longer compiles or reports the wrong line, the second a page that carries the worker's copy of the comments
+ * again (about 41 KB), which the byte budget alone would not catch.
  */
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -42,7 +43,8 @@ test('every shader ships as its own lines without their comments, the licence he
     // The property below reads a line comment as everything from the first `//`; a block comment would need the
     // scanner's own state, so a shader that starts using one gets its cases here first.
     assert.ok(!source.includes('/*'), `${file}: no block comment (the line-by-line property below assumes none)`)
-    const lines = source.split('\n')
+    // A Windows checkout may hold the files with CRLF line ends; the shipped text has line feeds either way.
+    const lines = source.split(/\r?\n/)
     const lean = leanWgsl(source).split('\n')
     assert.equal(lean.length, lines.length, `${file}: every line stays on its number`)
     assert.deepEqual(lean.slice(0, 3), lines.slice(0, 3), `${file}: the licence header, word for word`)
@@ -110,5 +112,5 @@ test('the build strips a shader imported as text, in the page and in its workers
   // shaders, so a plugin only in the page's list would leave half the comments in the file.
   const config = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8')
   assert.match(config, /\n  plugins: \[leanShaders\(\), /, "first in the page's list")
-  assert.match(config, /\n  worker: \{ plugins: \(\) => \[leanShaders\(\), workerNotices\(\)\] \},\n/, "and in the workers'")
+  assert.match(config, /\n  worker: \{ plugins: \(\) => \[leanShaders\(\), workerNotices\(\)\] \},\r?\n/, "and in the workers'")
 })

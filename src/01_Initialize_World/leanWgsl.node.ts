@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? The shaders are `.wgsl` files imported as text (`?raw`), so the single-file page carried
  * every comment in them, and carried crowd.wgsl and its way files twice (the page's bundle and the physics worker's):
- * about 88 KB of a page held to a byte budget (tools/verify/page_dist.mjs), which no GPU reads. leanWgsl is a shader's
+ * about 83 KB of a page held to a byte budget (tools/verify/page_dist.mjs), which no GPU reads. leanWgsl is a shader's
  * text without its comments, for the build and the dev server (vite.config.ts leanShaders) and for the CI tool that
  * compiles every crowd kernel (tools/browser/kernels.mjs), so what is compiled there is what ships.
  * The tokens are the file's own: only a comment's text goes, with the spaces before it. Every line stays where it is
