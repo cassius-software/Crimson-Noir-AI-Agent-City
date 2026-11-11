@@ -238,12 +238,13 @@ async function diagnose(fetchFn: FetchLike, server: string): Promise<CognitionEr
 
 /**
  * A server's refusal of a prompt and answer cap longer than its model's window, in its own words: its window W and
- * its count of the prompt I, tokens. SGLang (tokenizer_manager.py; body `{ "object": "error", "message": "…" }`):
+ * its count of the prompt I, tokens. SGLang (tokenizer_manager.py, `>=` up to 0.5.10.post1 and `>` from 0.5.11; a
+ * 400 before a stream from 0.5.10, inside a 200 stream before; body `{ "object": "error", "message": "…" }`):
  * "Requested token count exceeds the model's maximum context length of W tokens. You requested a total of T tokens: I
- * tokens from the input messages and M tokens for the completion. …". vLLM from 0.11 (serving_engine.py, read at
- * 0.11.0 to 0.16.0; 0.23.0 fits the cap itself; body `{ "error": { "message": "…" } }`): "'max_tokens' or
- * 'max_completion_tokens' is too large: M. This model's maximum context length is W tokens and your request has I
- * input tokens (M > W - I)."
+ * tokens from the input messages and M tokens for the completion. …". vLLM 0.10.1 to 0.15 (serving_engine.py, later
+ * engine/serving.py, `>`; from 0.16 the chat format is refused in other words with I cut short, and 0.32 lowers the
+ * cap itself; body `{ "error": { "message": "…" } }`): "'max_tokens' or 'max_completion_tokens' is too large: M. This
+ * model's maximum context length is W tokens and your request has I input tokens (M > W - I)."
  */
 const WINDOW_REFUSALS: readonly RegExp[] = [
   /^Requested token count exceeds the model's maximum context length of (\d+) tokens\. You requested a total of \d+ tokens: (\d+) tokens from the input messages and \d+ tokens for the completion\./,
@@ -468,7 +469,8 @@ async function generated(res: Response, w: { signal: AbortSignal; beat(): void }
  * The context window is the server's own; `think` is not sent (the server decides). Resolves and rejects as generate,
  * including its timeouts (one watch for the whole answer, a retry included). A server that refuses the prompt and
  * ANSWER_TOKENS together as longer than its model's window, saying both numbers (windowOf), is asked once more, the
- * same body with the room it says is left as the cap (shorter, never longer), under the same stop (capAfter).
+ * same body with one token under the room it says is left as the cap (shorter, never longer), under the same stop
+ * (capAfter).
  */
 export async function chat(fetchFn: FetchLike, req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> {
   const server = loopbackServer(req.server)
@@ -501,17 +503,18 @@ export async function chat(fetchFn: FetchLike, req: AnswerRequest, onPiece: (p: 
 
 /**
  * After the chat format's first request failed: the cap to ask once more with when the server refused the prompt as
- * too long for its model's window (TooLong), its window less its count of the prompt, at least ANSWER_MIN_TOKENS and
- * below ANSWER_TOKENS. With less room, one sentence says so; anything else is thrown as it came.
+ * too long for its model's window (TooLong), one token under its window less its count of the prompt (SGLang up to
+ * 0.5.10.post1 refuses a total equal to the window), at least ANSWER_MIN_TOKENS and below ANSWER_TOKENS. With less
+ * room, one sentence says so; anything else is thrown as it came.
  */
 function capAfter(e: unknown): number {
   if (!(e instanceof TooLong)) throw e
-  const room = e.window - e.input
-  if (room >= ANSWER_TOKENS) throw e
-  if (room < ANSWER_MIN_TOKENS) {
+  const cap = e.window - e.input - 1
+  if (cap >= ANSWER_TOKENS) throw e
+  if (cap < ANSWER_MIN_TOKENS) {
     throw new CognitionError('server', `the prompt (${e.input} tokens) leaves no room for an answer in the model's window of ${e.window} tokens: ask with fewer people bound or a shorter question, or start the server with a larger window`)
   }
-  return room
+  return cap
 }
 
 /** The chat format's server-sent events, read under its request's watch. */

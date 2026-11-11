@@ -895,14 +895,14 @@ test("a chat-format server refusing a prompt too long for its window: one more r
   m.calls.length = 0
   next.push('refuse')
   assert.equal(await ask(r), '8080 says hi', 'the shorter answer is the answer')
-  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]])
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1095]])
 
   // Refused again: that is the answer's failure; the router sends nothing more.
   m.calls.length = 0
   next.push('refuse', 'refuse')
   const again = await r.answer(req(), () => {}).catch((e: unknown) => e)
   assert.ok(again instanceof CognitionError && again.code === 'server', String(again))
-  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]])
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1095]])
 
   // The retry finds the server gone: the server's failure, so no look and no answer from anywhere else.
   m.calls.length = 0
@@ -910,6 +910,6 @@ test("a chat-format server refusing a prompt too long for its window: one more r
   const gone = await r.answer(req(), () => {}).catch((e: unknown) => e)
   assert.ok(gone instanceof CognitionError, String(gone))
   assert.deepEqual([gone.code, gone.message], ['server', `no local model server is answering at ${LLAMACPP_SERVER}: start it, or point ask at the right address (ask server <url>)`])
-  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]], 'no list was asked for')
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1095]], 'no list was asked for')
   assert.equal(r.settings().found, 'llamacpp')
 })

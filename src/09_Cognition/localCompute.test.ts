@@ -17,7 +17,8 @@
  * wait may grow but never shrink. A larger context reaches the generate format alone, with a quarter of it as the
  * answer cap, and anything but a whole number from 8,192 to 32,768 sends today's body byte for byte. A chat-format
  * refusal in SGLang's or vLLM's own words (the prompt and the answer cap longer than the window) is asked once more
- * with the room the server says is left, at least 256 tokens, under the same stop; anything else is as it was.
+ * with one token under the room the server says is left, from 256 to 2,047 tokens, under the same stop and watch;
+ * anything else is as it was.
  * What breaks if it is removed? A prompt could go off the machine, an answer keep streaming after the person who
  * could give it was left behind, or a stopped server crash the console, and nothing would say so.
  */
@@ -1042,7 +1043,9 @@ test("an answer's context reaches the generate format only: the chat body and an
  * SGLang's refusal, verbatim: raised at
  * https://raw.githubusercontent.com/sgl-project/sglang/main/python/sglang/srt/managers/tokenizer_manager.py:1439-1446
  * (read 2026-11-11), sent before the stream starts as HTTP 400 (python/sglang/srt/entrypoints/openai/serving_chat.py:2368-2374)
- * in the shape of serving_base.py create_error_response (:205-221) and protocol.py ErrorResponse (:141-146).
+ * in the shape of serving_base.py create_error_response (:205-221) and protocol.py ErrorResponse (:141-146). Main
+ * refuses a total over the window; v0.5.10 (tokenizer_manager.py:811-835, its 400 from serving_chat.py:604-620) and
+ * every release before it refuse one equal to the window too (`>=`).
  */
 const sglangRefusal = (window: number, input: number, completion: number) => ({
   object: 'error',
@@ -1070,10 +1073,10 @@ const WORDS = Array.from({ length: 20 }, (_, i) => `w${i} `).join('')
 
 /**
  * A chat-format server on a free loopback port that answers its POSTs in turn: a refusal (its status and JSON body,
- * or a string as it is), or 'answer', twenty words one every 15 ms; one past the list answers. Notes each body as sent
- * and how each request ended.
+ * or a string as it is), 'answer', twenty words one every 15 ms, or 'silent', nothing at all; one past the list
+ * answers. Notes each body as sent and how each request ended.
  */
-async function chatServer(replies: readonly ({ status: number; body: unknown } | 'answer')[]) {
+async function chatServer(replies: readonly ({ status: number; body: unknown } | 'answer' | 'silent')[]) {
   const seen: { path: string; body: string; ended: 'complete' | 'client-gone' | 'open' }[] = []
   const server = createServer((req, res) => {
     let raw = ''
@@ -1082,6 +1085,10 @@ async function chatServer(replies: readonly ({ status: number; body: unknown } |
       const entry: (typeof seen)[number] = { path: req.url ?? '', body: raw, ended: 'open' }
       seen.push(entry)
       const reply = replies[seen.length - 1] ?? 'answer'
+      if (reply === 'silent') {
+        res.on('close', () => { entry.ended = 'client-gone' })
+        return
+      }
       if (reply !== 'answer') {
         res.writeHead(reply.status, { 'content-type': 'application/json' })
         res.end(typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body))
@@ -1112,13 +1119,13 @@ async function chatServer(replies: readonly ({ status: number; body: unknown } |
 const chatTo = (url: string, signal?: AbortSignal, onPiece: (p: Piece) => void = () => {}): Promise<Answer | unknown> =>
   chat(netFetch, { server: url, model: 'mock', system: 'S', prompt: 'P', ...(signal && { signal }) }, onPiece).catch((e: unknown) => e)
 
-test("chat: refused in SGLang's or vLLM's own words as longer than the window, it asks once more with the window less the prompt as the cap; the body otherwise byte for byte, and a 200 as it was", async () => {
+test("chat: refused in SGLang's or vLLM's own words as longer than the window, it asks once more with one token under the window less the prompt as the cap; the body otherwise byte for byte, and a 200 as it was", async () => {
   for (const [name, refusal] of REFUSALS) {
     const srv = await chatServer([{ status: 400, body: refusal(4096, 3000, ANSWER_TOKENS) }, 'answer'])
     try {
       const a = await chatTo(srv.url)
       assert.deepEqual(a, { text: WORDS, thinking: 0, tokens: 0, reason: 'stop' }, name)
-      assert.deepEqual(srv.seen.map((r) => [r.path, r.body]), [['/v1/chat/completions', chatBody(ANSWER_TOKENS)], ['/v1/chat/completions', chatBody(1096)]], name)
+      assert.deepEqual(srv.seen.map((r) => [r.path, r.body]), [['/v1/chat/completions', chatBody(ANSWER_TOKENS)], ['/v1/chat/completions', chatBody(1095)]], name)
     } finally {
       await srv.close()
     }
@@ -1133,21 +1140,29 @@ test("chat: refused in SGLang's or vLLM's own words as longer than the window, i
   }
 })
 
-test('chat: the retry needs ANSWER_MIN_TOKENS of room: 256 asks again with 256; 255 is one sentence naming the prompt and the window, and nothing more is sent', async () => {
+test('chat: the retry cap runs from 2,047 down to ANSWER_MIN_TOKENS: 256 asks again with 256; 255 is one sentence naming the prompt and the window, and nothing more is sent', async () => {
+  // The highest: SGLang up to 0.5.10.post1 refuses 2,048 of room (a total equal to the window), so it asks with 2,047.
+  const top = await chatServer([{ status: 400, body: sglangRefusal(4096, 2048, ANSWER_TOKENS) }, 'answer'])
+  try {
+    assert.equal((await chatTo(top.url) as Answer).text, WORDS)
+    assert.deepEqual(top.seen.map((r) => r.body), [chatBody(ANSWER_TOKENS), chatBody(2047)])
+  } finally {
+    await top.close()
+  }
   assert.equal(ANSWER_MIN_TOKENS, 256)
   for (const [name, refusal] of REFUSALS) {
-    const at = await chatServer([{ status: 400, body: refusal(4096, 3840, ANSWER_TOKENS) }, 'answer'])
+    const at = await chatServer([{ status: 400, body: refusal(4096, 3839, ANSWER_TOKENS) }, 'answer'])
     try {
       assert.equal((await chatTo(at.url) as Answer).text, WORDS, name)
       assert.deepEqual(at.seen.map((r) => r.body), [chatBody(ANSWER_TOKENS), chatBody(256)], name)
     } finally {
       await at.close()
     }
-    const under = await chatServer([{ status: 400, body: refusal(4096, 3841, ANSWER_TOKENS) }, 'answer'])
+    const under = await chatServer([{ status: 400, body: refusal(4096, 3840, ANSWER_TOKENS) }, 'answer'])
     try {
       const e = await chatTo(under.url)
       assert.ok(e instanceof CognitionError, name)
-      assert.deepEqual([e.code, e.message], ['server', "the prompt (3841 tokens) leaves no room for an answer in the model's window of 4096 tokens: ask with fewer people bound or a shorter question, or start the server with a larger window"], name)
+      assert.deepEqual([e.code, e.message], ['server', "the prompt (3840 tokens) leaves no room for an answer in the model's window of 4096 tokens: ask with fewer people bound or a shorter question, or start the server with a larger window"], name)
       assert.equal(under.seen.length, 1, name)
     } finally {
       await under.close()
@@ -1155,9 +1170,19 @@ test('chat: the retry needs ANSWER_MIN_TOKENS of room: 256 asks again with 256; 
   }
 })
 
-test('chat: exactly one retry: a second refusal is the answer, in the words a refusal has always had, whatever room it says is left', async () => {
+test('chat: exactly one retry: a second refusal is the answer, in the words a refusal has always had, whatever room it says is left, and any other failure keeps its own code', async () => {
+  // No such model (404) is 'model' as ever, which createLocalCompute reads to look the models up again.
+  const gone = await chatServer([{ status: 400, body: sglangRefusal(4096, 3000, ANSWER_TOKENS) }, { status: 404, body: { error: { message: 'model not found' } } }])
+  try {
+    const e = await chatTo(gone.url)
+    assert.ok(e instanceof CognitionError)
+    assert.deepEqual([e.code, e.message], ['model', "the local model server has no model 'mock': type ask to list the ones it has"])
+    assert.equal(gone.seen.length, 2)
+  } finally {
+    await gone.close()
+  }
   for (const [name, refusal] of REFUSALS) {
-    const second = refusal(4096, 3500, 1096)
+    const second = refusal(4096, 3500, 1095)
     const srv = await chatServer([{ status: 400, body: refusal(4096, 3000, ANSWER_TOKENS) }, { status: 400, body: second }, 'answer'])
     try {
       const e = await chatTo(srv.url)
@@ -1165,7 +1190,7 @@ test('chat: exactly one retry: a second refusal is the answer, in the words a re
       // SGLang's shape carries its message at the top, which the sentence has never read; vLLM's is cut as ever.
       const said = 'error' in second ? `: ${sentence(second.error.message)}` : ''
       assert.deepEqual([e.code, e.message], ['server', `the local model server failed (400)${said}`], name)
-      assert.deepEqual(srv.seen.map((r) => r.body), [chatBody(ANSWER_TOKENS), chatBody(1096)], name)
+      assert.deepEqual(srv.seen.map((r) => r.body), [chatBody(ANSWER_TOKENS), chatBody(1095)], name)
     } finally {
       await srv.close()
     }
@@ -1185,7 +1210,7 @@ test('chat: a stop during the retry ends it at once and closes its connection; a
     assert.equal(e, reason)
     assert.deepEqual(pieces, ['w0 ', 'w1 ', 'w2 '])
     await ended(srv)
-    assert.deepEqual(srv.seen.map((r) => [r.body, r.ended]), [[chatBody(ANSWER_TOKENS), 'complete'], [chatBody(1096), 'client-gone']])
+    assert.deepEqual(srv.seen.map((r) => [r.body, r.ended]), [[chatBody(ANSWER_TOKENS), 'complete'], [chatBody(1095), 'client-gone']])
   } finally {
     await srv.close()
   }
@@ -1194,6 +1219,36 @@ test('chat: a stop during the retry ends it at once and closes its connection; a
   const { f, calls } = fakeFetch(() => { c.abort(reason); return json(400, sglangRefusal(4096, 3000, ANSWER_TOKENS)) })
   assert.equal(await chat(f, { server: DEFAULT_SERVER, model: 'm', system: '', prompt: '', signal: c.signal }, () => {}).catch((x: unknown) => x), reason)
   assert.equal(calls.length, 1)
+  // A stop that came with any other 400 leaves that 400's sentence as it was.
+  const c2 = new AbortController()
+  const other = await chat(fakeFetch(() => { c2.abort(reason); return json(400, { error: { message: 'bad request' } }) }).f, { server: DEFAULT_SERVER, model: 'm', system: '', prompt: '', signal: c2.signal }, () => {}).catch((x: unknown) => x)
+  assert.ok(other instanceof CognitionError, String(other))
+  assert.equal(other.message, 'the local model server failed (400): bad request')
+})
+
+test("chat: a retry the server never answers is under the answer's one watch and stop: the first-piece wait ends it as 'timeout', and a stop ends it, closing its connection either way", async () => {
+  const quiet = await chatServer([{ status: 400, body: sglangRefusal(4096, 3000, ANSWER_TOKENS) }, 'silent'])
+  try {
+    const e = await within(chat(netFetch, { server: quiet.url, model: 'mock', system: 'S', prompt: 'P', timeouts: { firstMs: 1000, stallMs: 1000 } }, () => {}).catch((x: unknown) => x), 5000)
+    assert.ok(e instanceof CognitionError && e.code === 'timeout', String(e))
+    await ended(quiet)
+    assert.deepEqual(quiet.seen.map((r) => [r.body, r.ended]), [[chatBody(ANSWER_TOKENS), 'complete'], [chatBody(1095), 'client-gone']])
+  } finally {
+    await quiet.close()
+  }
+  const stopped = await chatServer([{ status: 400, body: vllmRefusal(4096, 3000, ANSWER_TOKENS) }, 'silent'])
+  try {
+    const c = new AbortController()
+    const reason = new DOMException('Spatial tether lost', 'AbortError')
+    const p = chatTo(stopped.url, c.signal)
+    for (let t = 0; t < 2000 && stopped.seen.length < 2; t += 10) await sleep(10)
+    c.abort(reason)
+    assert.equal(await within(Promise.resolve(p)), reason)
+    await ended(stopped)
+    assert.deepEqual(stopped.seen.map((r) => [r.body, r.ended]), [[chatBody(ANSWER_TOKENS), 'complete'], [chatBody(1095), 'client-gone']])
+  } finally {
+    await stopped.close()
+  }
 })
 
 test("chat: a retry that cannot reach the server is the server's failure, in the words it would have had, so nothing looks again after it", async () => {
@@ -1230,7 +1285,7 @@ test('chat: a 400 with any other body, or the same words at another status, at a
     ['sglang not at the start', 400, { object: 'error', message: `upstream: ${sglangRefusal(4096, 3000, ANSWER_TOKENS).message}` }, ''],
     ['a string error', 400, { error: s4096 }, `: ${sentence(s4096)}`],
     ['room past the cap', 400, vllmRefusal(100000, 10, ANSWER_TOKENS), `: ${sentence(vllmRefusal(100000, 10, ANSWER_TOKENS).error.message)}`],
-    ['room equal to the cap', 400, sglangRefusal(5048, 3000, ANSWER_TOKENS), ''],
+    ['a cap of 2,048', 400, sglangRefusal(5049, 3000, ANSWER_TOKENS), ''],
     ['not JSON', 400, 'Bad Request', ''],
   ]
   for (const [name, status, body, said] of cases) {
