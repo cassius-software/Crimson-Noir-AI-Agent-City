@@ -29,7 +29,7 @@ import {
   CUT, CUT_STREET, CUT_STREET_PACKED, garmentOf, LOOK_GARMENTS, lookGarment, lookWears, TIELESS_CUTS, withGarment,
   BOTTOM_CUT_STREET, BOTTOM_CUT_STREET_PACKED, LOOK_LOWER_GARMENTS, SKIRT_CUT, TROUSER_CUT, lookLowerGarment, lowerGarmentFits, lowerGarmentOf,
   FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET, FOOTWEAR_STREET_PACKED, FRAME_FINISH, FRAMES, LAPEL_PIN, TORTOISE_LIGHT, WATCH,
-  LOOK_STREET_FLAG, streetTattoos,
+  LOOK_STREET_FLAG, PROSTHETIC, streetTattoos, tattooCover,
   type Look, type LookBody, type LookSlot,
 } from './look.ts'
 import {
@@ -1562,6 +1562,32 @@ test('changeLook names a tattoo by its design or its 1-based number, none clears
   assert.equal(lines[LOOK_SLOTS.indexOf('tattooHand')], 'tattooHand       compass rose  [10/65]')
   assert.equal(lines[LOOK_SLOTS.indexOf('tattooNape')], 'tattooNape       none  [1/65]')
   assert.equal(lines[LOOK_SLOTS.indexOf('tattooInk')], 'tattooInk        gold leaf  [4/8]')
+})
+
+test('tattooCover says what hides a zone in the city, as the crowd\'s own gates do: the limb on its side, the cup over the right hand, a turtleneck under a jacket or a coat over the neck', () => {
+  const suit = { ...LOOK_PRESETS[0].look, cup: 0, prosthetic: PROSTHETIC.none }
+  const zones = ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const
+  const covers = (look: Look) => zones.map((z) => tattooCover(look, z))
+  assert.deepEqual(covers(suit), [null, null, null, null], 'nothing covers a bare look')
+  // A prosthetic arm on the person's left covers the left hand (bone HAND_R, crowd.ts armHere), on the right the right hand, both arms both.
+  assert.deepEqual(covers({ ...suit, prosthetic: PROSTHETIC.leftArm }), ['covered by the limb', null, null, null])
+  assert.deepEqual(covers({ ...suit, prosthetic: PROSTHETIC.rightArm }), [null, 'covered by the limb', null, null])
+  assert.deepEqual(covers({ ...suit, prosthetic: PROSTHETIC.bothArms }), ['covered by the limb', 'covered by the limb', null, null])
+  for (const leg of [PROSTHETIC.leftLeg, PROSTHETIC.rightLeg, PROSTHETIC.bothLegs]) assert.deepEqual(covers({ ...suit, prosthetic: leg }), [null, null, null, null], 'a leg covers no zone of these four')
+  // The cup is held over the right hand's back; the limb is named first where both are.
+  assert.deepEqual(covers({ ...suit, cup: 1 }), [null, 'the cup covers it', null, null])
+  assert.deepEqual(covers({ ...suit, cup: 1, prosthetic: PROSTHETIC.rightArm }), [null, 'covered by the limb', null, null])
+  // A turtleneck knits up the neck under a jacket or a coat; under shirt sleeves there is no turtleneck.
+  assert.equal(WARDROBE.cut[CUT.turtleneck], 'turtleneck')
+  for (const layer of [LAYER.jacket, LAYER.coat]) assert.deepEqual(covers({ ...suit, cut: CUT.turtleneck, layer }), [null, null, 'the turtleneck covers it', null], `layer ${layer}`)
+  assert.deepEqual(covers({ ...suit, cut: CUT.turtleneck, layer: LAYER.shirt }), [null, null, null, null])
+  for (const cut of [CUT.band, CUT.zip, CUT.notch]) assert.deepEqual(covers({ ...suit, cut }), [null, null, null, null], `cut ${cut}`)
+  for (const slot of LOOK_SLOTS.filter((x) => !(zones as readonly string[]).includes(x))) assert.equal(tattooCover({ ...suit, cup: 1, prosthetic: PROSTHETIC.bothArms, cut: CUT.turtleneck }, slot), null, slot)
+  // The gates it names are the shader's: the arm by side, the turtleneck's cut and layer.
+  assert.ok(CROWD.includes('boneIs(BONE.HAND_R).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms)).or(boneIs(BONE.HAND_L).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms)))'))
+  assert.ok(CROWD.includes('const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt)))'))
+  assert.equal(TATTOO_ZONES[0].bone, BONE.HAND_R, 'the left hand is bone HAND_R')
+  assert.equal(TATTOO_ZONES[1].bone, BONE.HAND_L, 'the right hand, which holds the cup, is bone HAND_L')
 })
 
 // --- Presets ---------------------------------------------------------------------------------------------------

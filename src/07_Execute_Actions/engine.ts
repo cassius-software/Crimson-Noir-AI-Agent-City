@@ -50,7 +50,7 @@ import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
 import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { doorDir, doorFront, drawRooms, stationTable, toLocal, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
-import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, type Shop } from '../01_Initialize_World/storefronts.ts'
+import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, SHOP_ORBIT, type Shop } from '../01_Initialize_World/storefronts.ts'
 import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initialize_World/properties.ts'
 import { inMask } from '../02_Define_The_Rules/homeGrid.ts'
 import { cellAt, cellsNear, SHAPE_IDS } from '../02_Define_The_Rules/homeLayout.ts'
@@ -2527,7 +2527,7 @@ export class Engine {
     this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)
     const show = this.showroom
     if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null
-    else if (show) show.angle += SHOP.orbit.rate * dt
+    else if (show) show.angle += (SHOP_ORBIT[this.shops[show.shop].kind] ?? SHOP.orbit).rate * dt
     // Which home the avatar stands in on foot; out of the home with its card open (a teleport, the console's moves),
     // the hold ends here and the host puts the card away at its next look.
     this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)
@@ -2578,12 +2578,13 @@ export class Engine {
       return
     }
     const cam = this.world.camera
-    // The mirror camera (a shop's catalogue open): for this draw alone the eye leaves the head and circles the body,
-    // whose own figure shows once the camera is past crowd.ts OWN_BODY.radius. Its matrices are refreshed before the
+    // The mirror camera (a shop's catalogue open): for this draw alone the eye leaves the head and circles the body
+    // (on the shop's own orbit where it has one, storefronts.ts SHOP_ORBIT: the ink studio's comes closer, for the
+    // tattoos), whose own figure shows once the camera is past crowd.ts OWN_BODY.radius. Its matrices are refreshed before the
     // cull, the sun shafts and the cinema camera's motion read them, and the head's pose is put back after the draw,
     // so the listener, the gaze and the ping keep the head. The draft camera (a home being furnished: furnishView) is
     // posed the same way, looking down at the draft's cursor from the side the card asks for.
-    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle) || this.furnishView()
+    const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle, SHOP_ORBIT[this.shops[this.showroom.shop].kind] ?? SHOP.orbit) || this.furnishView()
     if (mirror) {
       this.headPos.copy(cam.position)
       this.headRot.copy(cam.quaternion)

@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_INK_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_TATTOO_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -2232,6 +2232,37 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
   assert.deepEqual([...LOOK_WEAVE_ARGS], [...WARDROBE.weave].sort(), 'the weaves by their names')
   assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
+})
+
+test('look tattoos: the four zones complete the designs by name and the ink its eight, the lists are the wardrobe\'s; a design, a 1-based number, none and an ink reach the host as typed', () => {
+  // The lists the console offers are the wardrobe's own (look.ts and tattoo.ts, which the console must not import).
+  assert.deepEqual([...LOOK_TATTOO_ARGS], [...WARDROBE.tattoo].sort(), 'none and the sixty-four designs by their names')
+  assert.deepEqual([...LOOK_INK_ARGS], [...WARDROBE.tattooInk].sort(), 'the eight inks by their names')
+  assert.equal(LOOK_TATTOO_ARGS.length, 65)
+  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const) {
+    assert.deepEqual(complete(`look ${slot} `), [...WARDROBE.tattoo].sort().map((n) => `look ${slot} ${n}`), slot)
+    assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the card's options`)
+  }
+  assert.deepEqual(complete('look tattooInk '), lookOptions(0, 'tattooInk').map((o) => `look tattooInk ${o.name}`).sort())
+  // The manual's examples: a name is completed whole, so both designs that start "com" are offered.
+  assert.deepEqual(complete('look tattooHand com'), ['look tattooHand comet', 'look tattooHand compass rose'])
+  assert.deepEqual(complete('look tattooInk g'), ['look tattooInk gold leaf', 'look tattooInk grey wash'])
+  assert.deepEqual(complete('look tattooNape n'), ['look tattooNape nautilus shell', 'look tattooNape nested diamonds', 'look tattooNape nested triangles', 'look tattooNape none'])
+  assert.deepEqual(complete('look t'), ['look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
+  // Past a space typed inside a name, nothing more is offered (the words before the last are no key of the table).
+  assert.deepEqual(complete('look tattooHand compass r'), [])
+  const b = fake()
+  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor']) run(l, b, [])
+  assert.deepEqual(b.look.changes, [
+    { kind: 'slot', slot: 'tattooHand', value: 'compass rose' },
+    { kind: 'slot', slot: 'tattooHand', value: '10' },
+    { kind: 'slot', slot: 'tattooNape', value: 'none' },
+    { kind: 'slot', slot: 'tattooInk', value: 'gold leaf' },
+    { kind: 'slot', slot: 'tattooHandR', value: 'anchor' },
+  ])
+  assert.deepEqual(texts(run('look tattooNeck', b, [])), ['usage: look tattooNeck <n|name>'])
+  // The help's summary names them.
+  assert.match(texts(run('help look', b, [])).join('\n'), /tattoos and their ink/)
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {

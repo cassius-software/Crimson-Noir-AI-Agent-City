@@ -21,6 +21,7 @@
  * What breaks if it is removed? The shops have nothing to sell and nothing decides whether a purchase may happen.
  */
 import { LOOK_SLOTS, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import type { ShopKind } from '../01_Initialize_World/storefronts.ts'
 import { MAX_LEVEL, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 
@@ -94,9 +95,12 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   ...SCARVES.map((c, i) => item(16 + i, 'tailor', 'wear', 'Scarves', `${c[0].toUpperCase()}${c.slice(1)} scarf`, [1, 1, 2, 2, 3, 4, 5][i], [180, 180, 240, 240, 320, 450, 600][i], { scarf: i + 1 })),
   item(24, 'tailor', 'wear', 'Neckwear', 'Silk tie', 1, 120, { tie: 1 }),
 
-  // Aethelgard Ink Studio: designs for the forearm (the studio's chair places them; other zones with the customizer).
-  ...['Fine-line olive branch', 'Fibonacci spiral', 'Celtic knotwork band', 'Circuit-trace sleeve', 'Star-chart sleeve', 'Seigaiha waves',
-    'Origami crane sequence', 'Soundwave band', 'Wayfinder compass', 'Botanical sleeve', 'Euler\'s identity in script', 'Ocean-wave armband']
+  // Aethelgard Ink Studio: designs for the forearm, design i + 1 of the wardrobe's (tattoo.ts TATTOO_MOTIFS), on order
+  // until the forearm has its slot (the card already places any design on the hands, the neck and the nape, free);
+  // and the two inks, on sale. Each name says what the design draws: a rope's braid, a band of scalloped arcs, a
+  // compass rose, the unit circle's half turn. The ids, and so the bits a purchase sets, never change with a name.
+  ...['Fine-line olive branch', 'Fibonacci spiral', 'Braided rope band', 'Circuit-trace sleeve', 'Star-chart sleeve', 'Scalloped arc band',
+    'Origami crane sequence', 'Soundwave band', 'Compass rose', 'Botanical sleeve', 'Euler\'s identity circle', 'Ocean-wave armband']
     .map((name, i) => item(48 + i, 'inkStudio', 'wear', 'Designs', name, 1 + Math.floor(i / 2), 200 + i * 60, { tattooForearm: i + 1 })),
   item(64, 'inkStudio', 'wear', 'Inks', 'Gold-leaf ink', 12, 6000, { tattooInk: 3 }),
   item(65, 'inkStudio', 'wear', 'Inks', 'Luminescent ink', 16, 24000, { tattooInk: 4 }),
@@ -175,6 +179,24 @@ export function wearItem(look: Look, i: StoreItem): Look | null {
     if (!out) return null
   }
   return out
+}
+
+/** The design an ink borrows in the mirror when the look has none: the first, the olive branch, on the left hand. */
+export const PREVIEW_TATTOO = Object.freeze({ slot: 'tattooHand', design: TATTOO_MOTIFS[0].id } as const)
+
+/** Whether line `i` sells an ink: it sets the tattoos' one ink (look.ts WARDROBE.tattooInk). */
+export const isInkLine = (i: StoreItem): boolean => i.wear !== null && Object.hasOwn(i.wear, 'tattooInk')
+
+/**
+ * What the shop's mirror shows while line `i` is tried on: `look` wearing it (wearItem, so null where wearItem is),
+ * except that an ink tried on a look with no design on any zone the wardrobe has would colour nothing, so the mirror
+ * also borrows PREVIEW_TATTOO to show it on. Only the try-on borrows: buying wears wearItem's look, the ink alone.
+ */
+export function previewItem(look: Look, i: StoreItem): Look | null {
+  const worn = wearItem(look, i)
+  if (!worn || !isInkLine(i)) return worn
+  const inked = TATTOO_ZONES.some((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot) && worn[z.slot as LookSlot] > 0)
+  return inked ? worn : withLookSlot(worn, PREVIEW_TATTOO.slot, PREVIEW_TATTOO.design)
 }
 
 /**

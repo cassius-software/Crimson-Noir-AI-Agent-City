@@ -44,6 +44,10 @@ test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is
   const card = flat(read('./StoreCard.tsx'))
   assert.ok(card.includes('data-arcade>{shop.arcade}</div>'))
   assert.ok(!card.includes('info.arcade'))
+  // Try on shows previewItem's look (an ink on a look with no design borrows one for the mirror); Buy and Wear stay
+  // with wearItem, through the keeper, so what is bought is the line alone.
+  assert.ok(card.includes('const next = previewItem(look, item) if (next) onTry(item.id, next)'), 'the try-on is the preview')
+  assert.ok(card.includes('const next = keeper.wear(item.id, look)'), 'a bought line is worn as the keeper wears it')
   // A region's shops: picked after its workplaces, never on one of their lots, hollowed with them, the same lots to the worker.
   before(src, 'const lots = pack && layout && streets ? regionWorkplaceLots(', 'const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []', 'the workplaces first')
   assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots, homeLots)'))
@@ -53,13 +57,14 @@ test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is
   assert.ok(src.includes("if (input.take('browse') && !this.browse()) this.openHome()"), 'B asks without the car check')
   assert.ok(src.includes('if (i < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
   assert.ok(src.includes('if (show && (this.shopHere !== show.shop || this.rig.headset || this.netRoom)) this.showroom = null'), 'out of the shop, in a headset or a room, the eye goes back to the head')
+  assert.ok(src.includes('else if (show) show.angle += (SHOP_ORBIT[this.shops[show.shop].kind] ?? SHOP.orbit).rate * dt'), 'the camera turns at its own orbit\'s rate')
   assert.ok(src.includes('if (!shop || this.netRoom || st.driving >= 0 || this.rig.headset ||'), 'no step onto the fitting spot the network room did not make')
   // The orbit is the draw's alone (present()): posed and its matrices refreshed before the cull reads them, the head
   // put back after the draw, so the listener (fed after present()) keeps the head.
   const present = src.slice(src.indexOf(' private present('), src.indexOf(' private expose('))
   assert.ok(present.length > 0, 'present() found')
   for (const [a, b] of [
-    ['const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle)', 'cam.lookAt(mirror.at.x, mirror.at.y, mirror.at.z)'],
+    ['const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle, SHOP_ORBIT[this.shops[this.showroom.shop].kind] ?? SHOP.orbit)', 'cam.lookAt(mirror.at.x, mirror.at.y, mirror.at.z)'],
     ['cam.lookAt(mirror.at.x, mirror.at.y, mirror.at.z)', 'cam.updateMatrixWorld()'],
     ['cam.updateMatrixWorld()', 'this.projScreen.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)'],
     ['else this.gpu.renderer.render(this.world.scene, cam)', 'cam.quaternion.copy(this.headRot)'],

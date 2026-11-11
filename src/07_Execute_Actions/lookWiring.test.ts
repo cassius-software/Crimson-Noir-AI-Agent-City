@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
 import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, LOOK_V3_SLOTS, LOOK_V4_SLOTS, LOOK_WORDS, lookFromSeed, packFace, packFigure, packLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { tattoo } from '../03_Spawn_Agents/crowdTattoo.ts'
+import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -349,6 +350,54 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   // What the card prints (its string literals and JSX text) keeps the house's words.
   const printed = (card.match(/'[^'\n]*'|"[^"\n]*"|>[^<{]*</g) ?? []).join('\n')
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)
+})
+
+test('the card\'s Tattoos section: headed where the left hand\'s row was, the zones\' and the ink\'s plain rows gone; zone, design family, design and ink, every one a button radiogroup; tattoo.ts\'s tables only, never the shader\'s module', () => {
+  const card = read('./Customizer.tsx')
+  // The tables, not the shader: crowdTattoo.ts loads three, which the card never does.
+  assert.ok(card.includes("import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'"))
+  assert.doesNotMatch(card, /crowdTattoo/)
+  // The zones the wardrobe has slots for, the section at the first, no row for any zone or the ink.
+  assert.ok(card.includes('const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot))'))
+  assert.ok(card.includes("const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)"))
+  before(card, "if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />", 'if (isTattooSlot(slot)) return null', 'the section takes the first zone\'s place before the rows are dropped')
+  before(card, 'if (isTattooSlot(slot)) return null', 'if (isSlider(slot)) {', 'dropped before a row is built')
+  assert.equal(TATTOO_ZONES[0].slot, 'tattooHand', 'the first zone heads the section')
+  // The ink is the card's own swatch row (the slot row every colour slot draws), inside the section.
+  assert.ok(card.includes('const pills = optionRow(slot)'))
+  const section = between(card, 'function TattooSection(', '/** The wardrobe itself:')
+  assert.ok(section.includes('{ink}'))
+  // Three radiogroups of buttons, no select or field: switch scanning offers every button and presses it, and would
+  // take a select for a typed field (scanning.ts).
+  for (const name of ['Tattoo zone', 'Design family', 'Design']) assert.ok(section.includes(`role="radiogroup" aria-label="${name}"`), name)
+  assert.ok(section.includes('role="group" aria-label="Tattoos"'))
+  assert.doesNotMatch(section, /<select|<input|<option|onKeyDown/)
+  assert.equal(section.match(/<button\b/g)?.length, 4, 'zone, none, family, design')
+  assert.equal(section.match(/type="button"\s+role="radio"/g)?.length, 4, 'each a radio button')
+  const scanning = read('../04_Connect_Hardware/scanning.ts')
+  assert.match(scanning, /selector: 'button:not\(\[disabled\]\), /, 'the scan offers every button')
+  assert.match(scanning, /const TYPED = '[^']*, select'/, 'and focuses a select instead of pressing it')
+  // A zone's pill: its label, its design and what covers it read out; a dot when it holds a design; the cover beside it.
+  assert.ok(section.includes("aria-label={`${z.label}, ${designName(worn[z.slot])}${cover ? `, ${cover}` : ''}`}"))
+  assert.ok(section.includes('const cover = tattooCover(worn, z.slot)'), 'look.ts tattooCover (look.test.ts holds its rules)')
+  assert.ok(section.includes('{inked && <span aria-hidden className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current align-middle" data-inked />}'))
+  assert.ok(section.includes('{cover && <span className="ml-1 text-[11px] opacity-70" data-hint>· {cover}</span>}'))
+  assert.ok(section.includes("const [zone, setZone] = useState<LookSlot>(() => CARD_ZONES.find((z) => worn[z.slot] > 0)?.slot ?? 'tattooHand')"), 'it starts on the first zone that holds a design')
+  // None clears the zone; another family wears its first design at once; a design is worn as picked.
+  assert.ok(section.includes('onClick={() => set(zone, 0)}'))
+  assert.ok(section.includes('onClick={() => { if (family !== f) set(zone, TATTOO_BY_FAMILY[f][0]) }}'))
+  assert.ok(section.includes('onClick={() => set(zone, id)}'))
+  assert.ok(section.includes('const family = design > 0 ? TATTOO_MOTIFS[design - 1].family : null'), 'the family shown is the design\'s')
+  assert.ok(section.includes('{family !== null && ('), 'no design row under none')
+  assert.equal(TATTOO_FAMILIES.length, 8)
+  assert.ok(TATTOO_BY_FAMILY.every((ids) => ids.length === 8), 'at most eight zones, nine families with none and eight designs: never sixty-five pills')
+  // The labels: each zone's pill is its slotLabel, the person's own side.
+  for (const z of TATTOO_ZONES.slice(0, 4)) assert.ok(card.includes(`case '${z.slot}': return '${z.label}'`), z.slot)
+  assert.ok(card.includes("case 'tattooInk': return 'Ink'"))
+  // The captions promise what this wardrobe shows, no more: the hands, the neck and the nape, no forearms or legs yet.
+  assert.ok(section.includes("Shown on you in the city and in a shop's mirror."))
+  assert.doesNotMatch(card, /forearm|calves|calf|ankle|rolled sleeves|bare legs/i)
+  assert.ok(card.includes('shoe styles, the watch, the pin and tattoos show in the city, not in this outline.'))
 })
 
 test('lookStore: its own key, a look within the wardrobe round-trips as a v5 record, a v4 record (thirty-two slots) reads as it is, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {

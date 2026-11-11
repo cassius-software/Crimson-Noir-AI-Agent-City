@@ -9,7 +9,9 @@
  * look's own colours; the seven face sliders (brow, jaw, chin, cheekbones, nose, eyes, lips) and the age are range
  * inputs over a face view, front and profile, drawn from the head's rings the same way with the face sliders
  * applied; every other slot is a row of the options look.ts allows for the body chosen — named options
- * as a segmented control, colours as swatches drawn from the crowd's own palettes — with the eight presets, a
+ * as a segmented control, colours as swatches drawn from the crowd's own palettes — except the tattoos, one section
+ * of a zone, a design family, a design and the ink (tattoo.ts's tables, so sixty-five designs are never one row) —
+ * with the eight presets, a
  * "randomise" that asks lookFromSeed for the look the hash would give some other number, a reset to the look the
  * visitor's own seed gives, and the short shareable code (formatLookCode / parseLookCode, checksummed) to write down
  * or paste. Every change is worn at once: the host writes it to the player's body (engine.setLook) and keeps it
@@ -23,14 +25,15 @@
  * What breaks if it is removed? The player can only change their look or their agents by typing at the console, and
  * nothing shows them what the wardrobe holds.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
   FRAME_FINISH, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
   LOOK_LOWER_GARMENTS, formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, lowerGarmentFits, lowerGarmentOf, matchingSwatch, parseLookCode,
-  withBuild, withFaceShape, withGarment, withLookSlot,
+  tattooCover, withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
 } from '../03_Spawn_Agents/look.ts'
+import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
 import { PRONOUNS, ROSTER_MAX, VOICE_PROFILES, voiceProfile, type AgentIdentity, type Roster } from '../08_Swarm/roster.ts'
 
@@ -252,7 +255,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch and the pin show in the city, not in this outline.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch, the pin and tattoos show in the city, not in this outline.`}
       </p>
     </div>
   )
@@ -309,6 +312,89 @@ function Face({ look, t }: { look: Look; t: Theme }) {
   )
 }
 
+// --- The tattoos -------------------------------------------------------------------------------------------------
+
+/** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck and the nape). */
+const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => ({ ...z, slot: z.slot as LookSlot }))
+/** The slots the Tattoos section shows (the zones and the ink), never as rows of their own. */
+const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)
+/** A design's name by its id (the zone slot's value; 0 is none). */
+const designName = (id: number): string => (id > 0 ? TATTOO_MOTIFS[id - 1].name : 'none')
+
+/**
+ * The tattoos, as one section where sixty-five designs on each zone would be four rows of sixty-five pills: which zone
+ * (a dot on a zone that holds a design, and what covers it in the city: look.ts tattooCover), the design family (none
+ * clears the zone; another family wears its first design at once, as every change on the card is worn), the family's
+ * eight designs, and the ink row (`ink`, the slot row the card draws for every swatch slot). The zone chosen is the
+ * card's own: it starts on the first zone that holds a design, or the left hand. Every control is a button in a
+ * radiogroup, which switch scanning and dwell press like any other.
+ */
+function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, value: number): void; ink: ReactNode; t: Theme }) {
+  const [zone, setZone] = useState<LookSlot>(() => CARD_ZONES.find((z) => worn[z.slot] > 0)?.slot ?? 'tattooHand')
+  const design = worn[zone]
+  const family = design > 0 ? TATTOO_MOTIFS[design - 1].family : null
+  const label = `w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`
+  const pill = (on: boolean) => `rounded-full border px-2.5 py-0.5 text-[12px] ${on ? t.pillOn : t.pill}`
+  return (
+    <div className={`mb-2 mt-3 border-t pt-3 ${t.rule}`} role="group" aria-label="Tattoos" data-row="tattoos">
+      <div className="mb-2 flex items-baseline gap-3">
+        <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Tattoos</div>
+        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${t.muted}`}>Shown on you in the city and in a shop's mirror.</p>
+      </div>
+      <div className="mb-2 flex items-start gap-3" data-row="tattoo-zone">
+        <div className={label}>Zone</div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Tattoo zone">
+          {CARD_ZONES.map((z) => {
+            const on = z.slot === zone
+            const inked = worn[z.slot] > 0
+            const cover = tattooCover(worn, z.slot)
+            return (
+              <button
+                key={z.slot}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={`${z.label}, ${designName(worn[z.slot])}${cover ? `, ${cover}` : ''}`}
+                onClick={() => setZone(z.slot)}
+                className={pill(on)}
+                data-zone={z.slot}
+              >
+                {inked && <span aria-hidden className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current align-middle" data-inked />}
+                {z.label}
+                {cover && <span className="ml-1 text-[11px] opacity-70" data-hint>· {cover}</span>}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <div className="mb-2 flex items-start gap-3" data-row="tattoo-family">
+        <div className={label}>Design family</div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Design family">
+          <button type="button" role="radio" aria-checked={family === null} onClick={() => set(zone, 0)} className={pill(family === null)}>none</button>
+          {TATTOO_FAMILIES.map((name, f) => (
+            <button key={name} type="button" role="radio" aria-checked={family === f} onClick={() => { if (family !== f) set(zone, TATTOO_BY_FAMILY[f][0]) }} className={pill(family === f)}>
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
+      {family !== null && (
+        <div className="mb-2 flex items-start gap-3" data-row="tattoo-design">
+          <div className={label}>Design</div>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Design">
+            {TATTOO_BY_FAMILY[family].map((id) => (
+              <button key={id} type="button" role="radio" aria-checked={id === design} onClick={() => set(zone, id)} className={pill(id === design)}>
+                {designName(id)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {ink}
+    </div>
+  )
+}
+
 /** The wardrobe itself: the silhouette, presets, the slot rows and the code row, over one look; every change goes out through `onChange`. */
 function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onChange(look: Look): void; t: Theme }) {
   const body = worn.body as LookBody
@@ -328,6 +414,53 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
     setRefused(false)
     setCode('')
     onChange(parsed)
+  }
+  /** A slot's row of options: a colour as a swatch, a named option as a pill. */
+  const optionRow = (slot: LookSlot) => {
+    const options = lookOptions(body, slot, worn.layer)
+    const current = worn[slot]
+    return (
+      <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
+        <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
+          {options.map((o, i) => {
+            const on = i === current
+            // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth, the matching trim's the outer layer's).
+            const hex = o.hex ?? ((slot === 'bottom' || slot === 'trim') && o.name === 'matching' ? matchingSwatch(worn, slot) : null)
+            if (o.hex !== null) {
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  aria-label={o.name}
+                  title={o.name}
+                  onClick={() => set(slot, i)}
+                  style={{ backgroundColor: hex6(o.hex) }}
+                  className={`h-6 w-6 rounded-full border border-black/20 ${on ? `ring-2 ring-offset-1 ${t.ring}` : ''}`}
+                />
+              )
+            }
+            return (
+              <button
+                key={i}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => set(slot, i)}
+                className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on ? t.pillOn : t.pill}`}
+              >
+                {hex !== null && (
+                  <span aria-hidden className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-black/20 align-middle" style={{ backgroundColor: hex6(hex) }} />
+                )}
+                {o.name}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
   const code6 = formatLookCode(worn)
   const copy = () => {
@@ -369,6 +502,9 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim' || slot === 'lapelPin')) return null
           // The frames are the glasses' finish: without glasses there is nothing to finish.
           if (slot === 'frames' && worn.eyewear === 0) return null
+          // The tattoos are one section, headed where the first zone's row would be: the zones and the ink have no rows of their own.
+          if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />
+          if (isTattooSlot(slot)) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {
@@ -446,48 +582,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
             }
             return <Fragment key={slot}>{row}</Fragment>
           }
-          const pills = (
-            <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
-              <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
-                {options.map((o, i) => {
-                  const on = i === current
-                  // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth, the matching trim's the outer layer's).
-                  const hex = o.hex ?? ((slot === 'bottom' || slot === 'trim') && o.name === 'matching' ? matchingSwatch(worn, slot) : null)
-                  if (o.hex !== null) {
-                    return (
-                      <button
-                        key={i}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        aria-label={o.name}
-                        title={o.name}
-                        onClick={() => set(slot, i)}
-                        style={{ backgroundColor: hex6(o.hex) }}
-                        className={`h-6 w-6 rounded-full border border-black/20 ${on ? `ring-2 ring-offset-1 ${t.ring}` : ''}`}
-                      />
-                    )
-                  }
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => set(slot, i)}
-                      className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on ? t.pillOn : t.pill}`}
-                    >
-                      {hex !== null && (
-                        <span aria-hidden className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-black/20 align-middle" style={{ backgroundColor: hex6(hex) }} />
-                      )}
-                      {o.name}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )
+          const pills = optionRow(slot)
           // The garments head the outer layer's rows (each sets the layer, its cut and its weave; the colours stay the look's).
           if (slot === 'layer') {
             const wearing = garmentOf(worn)

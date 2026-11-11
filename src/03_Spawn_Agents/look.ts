@@ -1202,6 +1202,24 @@ export function streetTattoos(hc: (k: number) => number): StreetTattoos {
 }
 
 /**
+ * Why a tattoo zone's design would not be seen on `look`, in the card's words, or null when nothing covers it. A
+ * prosthetic arm on that side covers its hand (crowd.ts armHere paints the limb before the skin: the left arm is the
+ * left hand's, on bone HAND_R), the cup is held over the right hand's back, and a turtleneck under a jacket or a coat
+ * knits up the neck to the chin ring (crowd.ts turtleNeck). The turtleneck reaches only the lower half of the nape's
+ * square, so the nape says nothing; a scarf, a hijab, long hair or a full beard worn over a zone are pieces the person
+ * chose to wear there, so they say nothing either.
+ */
+export function tattooCover(look: Look, slot: LookSlot): string | null {
+  const arms = look.prosthetic === PROSTHETIC.bothArms
+  switch (slot) {
+    case 'tattooHand': return arms || look.prosthetic === PROSTHETIC.leftArm ? 'covered by the limb' : null
+    case 'tattooHandR': return arms || look.prosthetic === PROSTHETIC.rightArm ? 'covered by the limb' : look.cup === 1 ? 'the cup covers it' : null
+    case 'tattooNeck': return look.cut === CUT.turtleneck && look.layer !== LAYER.shirt ? 'the turtleneck covers it' : null
+    default: return null
+  }
+}
+
+/**
  * The look the crowd's hash gives an agent of this index (any non-negative integer; a profile seed does as well):
  * body = index mod 4, pieces, the figure and the face from the vertex chain, colours, the age, the undertone, the
  * Monk tone, vitiligo and freckles from the fragment chain, exactly as crowd.ts chooses them, each slider rounded to its step. What the words cannot carry
