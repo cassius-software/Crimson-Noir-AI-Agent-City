@@ -9,8 +9,8 @@
  * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and
  * the words for the gate's verdicts.
  *
- * A line whose look slots the wardrobe does not have yet (the forearm's tattoos, the umbrella and the headphones: the
- * customizer's coming slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of
+ * A line whose look slots the wardrobe does not have yet (the umbrella and the headphones: the customizer's coming
+ * slots) is on order: shown, priced, never sold, and live the moment the wardrobe gains a slot of
  * that name. The property deeds are on sale, because the seven homes stand in both maps
  * (01_Initialize_World/properties.ts), and so is the design house's furniture, because a home's owner can place it
  * (the home card's furnishing view, HomeCard.tsx): a furniture line is a licence for every home the player owns, up
@@ -20,7 +20,7 @@
  * (07_Execute_Actions/progress.ts, through shopkeeper.ts), and its purchase gate takes the credits and sets the bit.
  * What breaks if it is removed? The shops have nothing to sell and nothing decides whether a purchase may happen.
  */
-import { LOOK_SLOTS, tattooCover, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { LOOK_SLOTS, SLEEVES, tattooCover, withLookSlot, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import type { ShopKind } from '../01_Initialize_World/storefronts.ts'
 import { MAX_LEVEL, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
@@ -83,9 +83,9 @@ const SCARVES = ['burgundy', 'navy', 'sand', 'charcoal', 'tan', 'cornflower', 's
 
 /**
  * The catalogue, ids by shop: the tailor 0..47, the tattoo studio 48..95, the prosthetics atelier 96..127, the
- * horologist 128..159, the design house's furniture 160..223 and the deeds 224..230. The tattoo, limb, umbrella and
- * headphone slots named here are the ones the customizer's update is to bring; until the wardrobe has them, their
- * lines are on order (the hearing processor, the watches, the pin and the studio's two inks are on sale: the wardrobe
+ * horologist 128..159, the design house's furniture 160..223 and the deeds 224..230. The limb, umbrella and headphone
+ * slots named here are the ones the customizer's update is to bring; until the wardrobe has them, their lines are on
+ * order (the hearing processor, the watches, the pin, the studio's designs and its two inks are on sale: the wardrobe
  * has their slots).
  */
 export const CATALOGUE: readonly StoreItem[] = Object.freeze([
@@ -95,13 +95,13 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   ...SCARVES.map((c, i) => item(16 + i, 'tailor', 'wear', 'Scarves', `${c[0].toUpperCase()}${c.slice(1)} scarf`, [1, 1, 2, 2, 3, 4, 5][i], [180, 180, 240, 240, 320, 450, 600][i], { scarf: i + 1 })),
   item(24, 'tailor', 'wear', 'Neckwear', 'Silk tie', 1, 120, { tie: 1 }),
 
-  // Aethelgard Ink Studio: designs for the forearm, design i + 1 of the wardrobe's (tattoo.ts TATTOO_MOTIFS), on order
-  // until the forearm has its slot (the card already places any design on the hands, the neck and the nape, free);
-  // and the two inks, on sale. Each name says what the design draws: a rope's braid, a band of scalloped arcs, a
-  // compass rose, the unit circle's half turn. The ids, and so the bits a purchase sets, never change with a name.
+  // Aethelgard Ink Studio: designs for the left forearm, design i + 1 of the wardrobe's (tattoo.ts TATTOO_MOTIFS),
+  // each with the sleeves rolled to the elbow so what is bought is what the mirror showed (the card places any design
+  // on any zone, free); and the two inks. Each name says what the design draws: a rope's braid, a band of scalloped
+  // arcs, a compass rose, the unit circle's half turn. The ids, and so the bits a purchase sets, never change with a name.
   ...['Fine-line olive branch', 'Fibonacci spiral', 'Braided rope band', 'Circuit-trace sleeve', 'Star-chart sleeve', 'Scalloped arc band',
     'Origami crane sequence', 'Soundwave band', 'Compass rose', 'Botanical sleeve', 'Euler\'s identity circle', 'Ocean-wave armband']
-    .map((name, i) => item(48 + i, 'inkStudio', 'wear', 'Designs', name, 1 + Math.floor(i / 2), 200 + i * 60, { tattooForearm: i + 1 })),
+    .map((name, i) => item(48 + i, 'inkStudio', 'wear', 'Designs', name, 1 + Math.floor(i / 2), 200 + i * 60, { tattooForearm: i + 1, sleeves: SLEEVES.rolled })),
   item(64, 'inkStudio', 'wear', 'Inks', 'Gold-leaf ink', 12, 6000, { tattooInk: 3 }),
   item(65, 'inkStudio', 'wear', 'Inks', 'Luminescent ink', 16, 24000, { tattooInk: 4 }),
 
@@ -202,6 +202,18 @@ export function previewItem(look: Look, i: StoreItem): Look | null {
   const zones = TATTOO_ZONES.map((z) => z.slot as LookSlot).filter((z) => (LOOK_SLOTS as readonly string[]).includes(z) && tattooCover(worn, z) === null)
   if (zones.some((z) => worn[z] > 0)) return worn
   return withLookSlot(worn, zones.includes(PREVIEW_TATTOO.slot) ? PREVIEW_TATTOO.slot : zones[0] ?? PREVIEW_TATTOO.slot, PREVIEW_TATTOO.design)
+}
+
+/**
+ * Why a design line, worn on `look`, would not show (look.ts tattooCover: a coat keeps its sleeves down, a prosthetic
+ * arm covers its forearm), or null when it shows, when `look` cannot wear it, or when the line sets no design: the card
+ * says it under the line's name, so a try-on that changes nothing in the mirror says why.
+ */
+export function coverHint(look: Look, i: StoreItem): string | null {
+  const worn = wearItem(look, i)
+  if (!worn || i.wear === null) return null
+  const zone = TATTOO_ZONES.find((z) => Object.hasOwn(i.wear!, z.slot))
+  return zone ? tattooCover(worn, zone.slot as LookSlot) : null
 }
 
 /**

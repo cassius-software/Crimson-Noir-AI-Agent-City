@@ -82,6 +82,17 @@ export const TATTOO_FRAMES: readonly TattooFrame[] = Object.freeze(([
 ] as const).map(([axisX, centreY, angle, half, radius, reps, wrapY]) => Object.freeze({ axisX, centreY, angle, half, radius, reps, wrapY })))
 
 /**
+ * Rolled sleeves (look.ts SLEEVES): the height a rolled sleeve ends at (the forearm's top ring, humanoid.ts, above the
+ * forearms' squares), the turned cloth's band above it, and the zones (bit z for zone z) whose designs a street person
+ * rolls their sleeves for (look.ts lookFromSeed; the shader reads crowdTattoo.ts tatZones against the same bits).
+ */
+export const TATTOO_SLEEVE = Object.freeze({
+  roll: 1.1,
+  fold: 0.02,
+  zones: TATTOO_ZONES.reduce((bits, z, i) => (z.slot === 'tattooForearm' || z.slot === 'tattooForearmR' ? bits | (1 << i) : bits), 0),
+})
+
+/**
  * How the head's skin splits between the neck and the nape: below `top` only; at or behind `napeZ` it is the nape,
  * otherwise below `neckTop` (the chin ring) the neck, and above that neither, so a nape design never reaches the chin.
  */

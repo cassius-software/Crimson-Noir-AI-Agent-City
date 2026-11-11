@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { SHOP_INFO, type Shop } from '../01_Initialize_World/storefronts.ts'
 import type { Look } from '../03_Spawn_Agents/look.ts'
-import { GATE, cheapestOnSale, credits, previewItem, wearItem, type StoreItem } from './storeCatalog.ts'
+import { GATE, cheapestOnSale, coverHint, credits, previewItem, wearItem, type StoreItem } from './storeCatalog.ts'
 import type { ShopRow, Shopkeeper } from './shopkeeper.ts'
 
 export interface StoreCardProps {
@@ -102,6 +102,8 @@ function Row({ row, look, trying, t, where, balance, onTry, onBuy, onWear, onGo 
   const place = where ? [where.line, where.why].filter(Boolean).join(' · ') : ''
   const goOff = where === null || where.why !== null
   const warn = leavesTooLittle(item, verdict, balance)
+  // A design the look would hide (a coat's sleeves, a prosthetic arm) says so, or its try-on would show nothing new.
+  const hint = coverHint(look, item)
   return (
     <li className={`flex flex-wrap items-center gap-x-2 gap-y-1 border-b py-2 last:border-b-0 ${t.rule}`} data-item={item.id} data-verdict={verdict} data-owned={owned || undefined} data-worn={worn || undefined}>
       <div className="min-w-0 flex-1">
@@ -111,6 +113,7 @@ function Row({ row, look, trying, t, where, balance, onTry, onBuy, onWear, onGo 
         </div>
         {place && <div className={`text-[11px] leading-snug ${t.muted}`} data-place>{place}</div>}
         {warn && <div className={`text-[11px] leading-snug ${t.warn}`} data-warn>{warn}</div>}
+        {hint && <div className={`text-[11px] leading-snug ${t.muted}`} data-hint>{hint[0].toUpperCase() + hint.slice(1)}</div>}
         {owned && item.kind === 'furniture' && <div className={`text-[11px] leading-snug ${t.muted}`} data-at-home>Place it at home (B)</div>}
       </div>
       {!owned && fits && (
