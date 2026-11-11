@@ -22,14 +22,20 @@
  * here: the page reads each deed's name from the catalogue (deed id DEED_BASE + the property index), so the catalogue
  * and the wardrobe stay out of the physics worker, which reaches this file through city.ts.
  *
- * The worker also checks a home's furniture here (homeFrames, checkHomeBoxes): the page sends each home's solid boxes
- * in city metres (simCore.ts 'home'), and each one must stand inside that home's floor plan, on its floor, under its
- * ceiling, tall enough not to be stepped onto, and off the apron in front of the doorway. Nothing else about the
- * furniture is known here, so this file stays fit for the worker.
+ * In the city the Penthouse and the Sky-Mansion also have a sky floor (Home.sky): their tower's box is cut at a floor
+ * high up and replaced, in its place in the city's order, by the tower below it, a band of clear panes (STYLE.clear:
+ * they collide but are never drawn) between rail mullions round a fixed 15.6 m room on the lot's centre (homeGrid.ts
+ * SKY), a trim slab over the room, and the tower above it. The worker, the page and the network room's authority all
+ * build from the same boxes (city.ts generateCity), so the floor stands in all three. A region's homes have none.
+ *
+ * The worker also checks a home's furniture here (homeFrames, skyFrames, checkHomeBoxes): the page sends each room's
+ * solid boxes in city metres (simCore.ts 'home'), and each one must stand inside that room's floor plan, on its floor,
+ * under its ceiling, tall enough not to be stepped onto, and off the apron in front of the doorway (a sky floor's
+ * arrival). Nothing else about the furniture is known here, so this file stays fit for the worker.
  * What breaks if it is removed? The deeds have no homes to stand for: nothing to walk into, nowhere to go home to.
  */
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
-import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge } from '../02_Define_The_Rules/homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, SKY, backEdge, planOf, skyRoom } from '../02_Define_The_Rules/homeGrid.ts'
 // city.ts imports hollowProperties back: a cycle, safe because neither module reads the other at load (every use is in a function).
 import { CITY, CITY_CENTER, HERITAGE_COLUMNS, STYLE, cityPlan, districtOfLot, type Box, type Building } from './city.ts'
 import { ROOM, doorDir, insideRoom, toLocal, toWorld, workplaceLots, type RoomCanvas, type Side } from './interiors.ts'
@@ -75,6 +81,8 @@ export interface Home {
   shell: Building[]
   /** The fill block behind a room shallower than the grid (none in the two grandest homes), then the two planters. */
   fixtures: Building[]
+  /** The sky floor, for homes 3 and 6 in the city: its floor height and the boxes that replaced the tower; null elsewhere. */
+  sky: { y: number; boxes: Building[] } | null
 }
 
 const key = ({ k, m }: { k: number; m: number }) => `${k},${m}`
@@ -99,24 +107,24 @@ function lotPodiums(buildings: readonly Building[]): Map<string, Podium> {
  * The headquarters towers standing on their podiums, by lot, with their tops: a downtown lot inside the outer streets
  * (k from HERITAGE_COLUMNS to the last column, m above the lakefront row) whose box starts exactly at its podium's top,
  * is centred on the lot, is 8 to 11.5 m from its centre to each face and at least 70 m tall. That is exactly the tower
- * city.ts downtownLot raises; its four-building branch never stands on the lot's centre.
+ * city.ts downtownLot raises; its four-building branch never stands on the lot's centre. `at` is the tower's index.
  */
-function hqTowers(buildings: readonly Building[], podiums: ReadonlyMap<string, Podium>): { k: number; m: number; top: number }[] {
+function hqTowers(buildings: readonly Building[], podiums: ReadonlyMap<string, Podium>): { k: number; m: number; top: number; at: number }[] {
   const P = CITY.pitch, lake = CITY.blocks - 2, eps = 1e-9
-  const out = new Map<string, { k: number; m: number; top: number }>()
-  for (const { box: [x0, y0, z0, x1, y1, z1] } of buildings) {
-    if (y0 === 0 || y1 - y0 < 70) continue
+  const out = new Map<string, { k: number; m: number; top: number; at: number }>()
+  buildings.forEach(({ box: [x0, y0, z0, x1, y1, z1] }, at) => {
+    if (y0 === 0 || y1 - y0 < 70) return
     const bx = (x0 + x1) / 2, bz = (z0 + z1) / 2
     const k = Math.floor(bx / P), m = Math.floor(bz / P)
-    if (k < 0 || k >= CITY.blocks || m < 0 || m >= lake || districtOfLot(k, m) !== 'downtown') continue
+    if (k < 0 || k >= CITY.blocks || m < 0 || m >= lake || districtOfLot(k, m) !== 'downtown') return
     const p = podiums.get(`${k},${m}`)
-    if (!p || y0 !== p.top) continue
-    if (Math.abs(bx - (k + 0.5) * P) > eps || Math.abs(bz - (m + 0.5) * P) > eps) continue
+    if (!p || y0 !== p.top) return
+    if (Math.abs(bx - (k + 0.5) * P) > eps || Math.abs(bz - (m + 0.5) * P) > eps) return
     const w = (x1 - x0) / 2, d = (z1 - z0) / 2
-    if (w < 8 - eps || w > 11.5 + eps || d < 8 - eps || d > 11.5 + eps) continue
+    if (w < 8 - eps || w > 11.5 + eps || d < 8 - eps || d > 11.5 + eps) return
     const was = out.get(`${k},${m}`)
-    if (!was || y1 > was.top) out.set(`${k},${m}`, { k, m, top: y1 })
-  }
+    if (!was || y1 > was.top) out.set(`${k},${m}`, { k, m, top: y1, at })
+  })
   return [...out.values()]
 }
 
@@ -233,19 +241,53 @@ export function homesAt(lots: readonly HomeLot[], podium: (k: number, m: number)
       { box: worldBox(room, u0, -v1, u1, -v0, 0, height), style: STYLE.concrete },
       { box: worldBox(room, u0, v0, u1, v1, 0, height), style: STYLE.concrete },
     )
-    return { home, kind: PROPERTY_KINDS[home], k, m, cx, cz, side, door: toWorld(room, h, 0), depth: DEPTH[home], back, shell, fixtures }
+    return { home, kind: PROPERTY_KINDS[home], k, m, cx, cz, side, door: toWorld(room, h, 0), depth: DEPTH[home], back, shell, fixtures, sky: null }
   })
 }
 
 /**
+ * The sky floor's tuning, m: the clear glass's inner face (INSET outside the sky plan's edge at 7.78, as a hall keeps
+ * behind its fill block), the band's thickness (its panes, mullions and corner posts), the room's height under the slab,
+ * the slab's thickness, and how much tower is left over the slab at least.
+ */
+export const SKY_FLOOR = Object.freeze({ inner: GRID_HALF - SKY.r0 * CELL + INSET, band: 0.15, height: 4.2, slab: 0.3, above: 3 })
+
+/**
+ * A headquarters tower's box cut for its sky floor, on its lot's centre (cx, cz): its floor at F = 3.8 m × the whole
+ * storeys that leave at least SKY_FLOOR.above + the room and slab over it, and in its place, in order, the tower below
+ * (its finish), the 32 boxes of the band from F to F + 4.2 (on each face four clear panes and three rail mullions, then
+ * the four rail corner posts), the trim slab and the tower above. Every piece lies inside the tower's footprint.
+ */
+function skyFloor(tower: Building, cx: number, cz: number): { y: number; boxes: Building[] } {
+  const [x0, p, z0, x1, top, z1] = tower.box
+  const { inner, band, height, slab, above } = SKY_FLOOR
+  const y = 3.8 * Math.floor((top - height - slab - above) / 3.8), y1 = y + height
+  const outer = inner + band, pane = (2 * inner - 3 * band) / 4
+  const boxes: Building[] = [{ box: [x0, p, z0, x1, y, z1], style: tower.style }]
+  for (let i = 0; i < 7; i++) {
+    const a = -inner + Math.ceil(i / 2) * pane + Math.floor(i / 2) * band, b = i === 6 ? inner : a + (i & 1 ? band : pane)
+    const style = i & 1 ? STYLE.rail : STYLE.clear
+    for (const s of [-1, 1]) {
+      const f0 = Math.min(s * inner, s * outer), f1 = Math.max(s * inner, s * outer)
+      boxes.push({ box: [cx + a, y, cz + f0, cx + b, y1, cz + f1], style }, { box: [cx + f0, y, cz + a, cx + f1, y1, cz + b], style })
+    }
+  }
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) boxes.push({ box: [cx + Math.min(sx * inner, sx * outer), y, cz + Math.min(sz * inner, sz * outer), cx + Math.max(sx * inner, sx * outer), y1, cz + Math.max(sz * inner, sz * outer)], style: STYLE.rail })
+  boxes.push({ box: [x0, y1, z0, x1, y1 + slab, z1], style: STYLE.trim }, { box: [x0, y1 + slab, z0, x1, top, z1], style: tower.style })
+  return { y, boxes }
+}
+
+/**
  * Hollows the home lots out of a generated city (city.ts cityPlan, after the workplaces and the shops): each lot's
- * podium becomes the home's shell, the ceiling slab up to the podium's top in the podium's finish, and its fixtures.
- * Every other box (the towers above, every other lot) is untouched, and keeps its order. Returns the homes, in
- * PROPERTY_KINDS order.
+ * podium becomes the home's shell, the ceiling slab up to the podium's top in the podium's finish, and its fixtures;
+ * the tower over the Penthouse's and the Sky-Mansion's lots, when it is a headquarters tower, becomes its sky floor's
+ * boxes (skyFloor), in the tower's place. Every other box (every other tower, every other lot) is untouched, and keeps
+ * its order. Returns the homes, in PROPERTY_KINDS order.
  */
 export function hollowProperties(seed: number, buildings: Building[]): Home[] {
   const lots = propertyLots(seed, buildings)
   const podiums = lotPodiums(buildings)
+  const towers = hqTowers(buildings, podiums)
   const found = new Map<string, Podium>()
   for (const l of lots) {
     const p = podiums.get(key(l))
@@ -253,9 +295,15 @@ export function hollowProperties(seed: number, buildings: Building[]): Home[] {
     found.set(key(l), p)
   }
   const out = homesAt(lots, (k, m) => found.get(`${k},${m}`)!)
+  const splices: [number, Building[]][] = out.map((home) => [found.get(key(home))!.at, [...home.shell, ...home.fixtures]])
+  for (const home of out) {
+    const t = skyRoom(home.home) >= 0 ? towers.find((x) => x.k === home.k && x.m === home.m) : undefined
+    if (!t) continue
+    home.sky = skyFloor(buildings[t.at], home.cx, home.cz)
+    splices.push([t.at, home.sky.boxes])
+  }
   // Splice from the highest index down, so the earlier indices stay valid.
-  const order = [...out].sort((p, q) => found.get(key(q))!.at - found.get(key(p))!.at)
-  for (const home of order) buildings.splice(found.get(key(home))!.at, 1, ...home.shell, ...home.fixtures)
+  for (const [at, boxes] of splices.sort((p, q) => q[0] - p[0])) buildings.splice(at, 1, ...boxes)
   return out
 }
 
@@ -293,8 +341,12 @@ export const HOME_SOLID = Object.freeze({
   height: 0.4,
 } as const)
 
-/** A home's room frame, all the worker needs to check a box against it: the property index, the lot's centre, the doorway's street front and the floor plan's back edge (homeGrid.ts backEdge). */
-export interface HomeFrame { home: number; cx: number; cz: number; side: Side; back: number }
+/**
+ * A room's frame, all the worker needs to check a box against it: the room (a hall's property index, or a sky floor's
+ * 7 or 8), the lot's centre, the doorway's street front, the floor plan's back edge (homeGrid.ts backEdge) and, for a
+ * sky floor, its floor's height (absent: 0).
+ */
+export interface HomeFrame { home: number; cx: number; cz: number; side: Side; back: number; y?: number }
 
 /**
  * The room frames of the homes on `list` (a region's lots, as SimInit.homes carries them, or the city's homes from
@@ -312,12 +364,24 @@ export function homeFrames(list: readonly HomeLot[]): (HomeFrame | null)[] {
 }
 
 /**
- * One home's set of solid boxes as the page sends it (simCore.ts 'home'), checked: six city numbers per box (x0, y0,
- * z0, x1, y1, z1), at most HOME_PIECES boxes. Each box is turned into the room frame and must stand inside the floor
- * plan (u from the back edge to GRID_HALF, v within GRID_HALF, each with HOME_SOLID.slack), on the floor, under the
- * ceiling, at least HOME_SOLID.height tall and HOME_SOLID.thin across, and must not overlap the apron (homeGrid.ts
- * APRON: the cells in front of the doorway, kept clear so the way in is never blocked). Returns the boxes as city
- * boxes; anything else throws, with the reason. An empty list is sound: no solids.
+ * The sky floors' room frames of the city's homes `list`, for rooms 7 and 8 (homeGrid.ts SKY_HOMES): each at its
+ * floor's height, its back edge the sky plan's, or null where that home has no sky floor in `list` (a region: both).
+ */
+export function skyFrames(list: readonly Home[]): (HomeFrame | null)[] {
+  return [7, 8].map((room) => {
+    const h = list.find((x) => skyRoom(x.home) === room)
+    return h?.sky ? Object.freeze({ home: room, cx: h.cx, cz: h.cz, side: h.side, back: backEdge(room), y: h.sky.y }) : null
+  })
+}
+
+/**
+ * One room's set of solid boxes as the page sends it (simCore.ts 'home'), checked: six city numbers per box (x0, y0,
+ * z0, x1, y1, z1), at most HOME_PIECES boxes. Each box is turned into the room frame and must stand inside the room's
+ * floor plan (homeGrid.ts planOf: u from the back edge to the plan's front, v within its columns, each with
+ * HOME_SOLID.slack), on the floor, under the ceiling (both from the frame's floor height), at least HOME_SOLID.height
+ * tall and HOME_SOLID.thin across, and must not overlap the block the room keeps clear (a hall's apron in front of the
+ * doorway, a sky floor's arrival), so the way in is never blocked. Returns the boxes as city boxes; anything else
+ * throws, with the reason. An empty list is sound: no solids.
  */
 export function checkHomeBoxes(frame: HomeFrame, flat: unknown): Box[] {
   if (!Array.isArray(flat)) throw new Error('home: boxes must be a list of numbers')
@@ -325,23 +389,26 @@ export function checkHomeBoxes(frame: HomeFrame, flat: unknown): Box[] {
   if (flat.length / 6 > HOME_PIECES) throw new Error(`home: at most ${HOME_PIECES} boxes`)
   for (const n of flat) if (typeof n !== 'number' || !Number.isFinite(n)) throw new Error('home: every number of a box must be finite')
   const { slack, thin, floor, ceiling, height } = HOME_SOLID
-  const edge = GRID_HALF + slack
-  // The apron's rectangle, shrunk by a micrometre: a box that only touches it (to within the rounding of the turn into
-  // the room frame) keeps off it.
+  const base = frame.y ?? 0, plan = planOf(frame.home)!, keep = plan.keep
+  const line = (n: number) => -GRID_HALF + n * CELL
+  const u1 = line(plan.r1 + 1) + slack, v0 = line(plan.c0) - slack, v1 = line(plan.c1 + 1) + slack
+  // The kept block's rectangle, shrunk by a micrometre: a box that only touches it (to within the rounding of the turn
+  // into the room frame) keeps off it.
   const touch = 1e-6
-  const apronU0 = -GRID_HALF + APRON.r0 * CELL + touch, apronU1 = -GRID_HALF + (APRON.r1 + 1) * CELL - touch
-  const apronV0 = -GRID_HALF + APRON.c0 * CELL + touch, apronV1 = -GRID_HALF + (APRON.c1 + 1) * CELL - touch
+  const apronU0 = line(keep.r0) + touch, apronU1 = line(keep.r1 + 1) - touch
+  const apronV0 = line(keep.c0) + touch, apronV1 = line(keep.c1 + 1) - touch
+  const kept = frame.home < DEPTH.length ? 'home: a box must keep off the apron in front of the doorway' : 'home: a box must keep off the arrival'
   const out: Box[] = []
   for (let i = 0; i < flat.length; i += 6) {
     const [x0, y0, z0, x1, y1, z1] = flat.slice(i, i + 6) as number[]
     if (!(x1 - x0 >= thin && z1 - z0 >= thin)) throw new Error(`home: a box must be at least ${thin} m across`)
-    if (y0 < floor) throw new Error('home: a box must start on the floor')
-    if (y1 > ceiling) throw new Error(`home: a box must stay under ${ceiling} m`)
+    if (y0 < base + floor) throw new Error('home: a box must start on the floor')
+    if (y1 > base + ceiling) throw new Error(`home: a box must stay under ${ceiling} m`)
     if (y1 - y0 < height) throw new Error(`home: a box must stand at least ${height} m tall`)
     const a = toLocal(frame, x0, z0), b = toLocal(frame, x1, z1)
-    const u0 = Math.min(a.u, b.u), u1 = Math.max(a.u, b.u), v0 = Math.min(a.v, b.v), v1 = Math.max(a.v, b.v)
-    if (u0 < frame.back - slack || u1 > edge || v0 < -edge || v1 > edge) throw new Error("home: a box must stand inside the home's floor plan")
-    if (u1 > apronU0 && u0 < apronU1 && v1 > apronV0 && v0 < apronV1) throw new Error('home: a box must keep off the apron in front of the doorway')
+    const bu0 = Math.min(a.u, b.u), bu1 = Math.max(a.u, b.u), bv0 = Math.min(a.v, b.v), bv1 = Math.max(a.v, b.v)
+    if (bu0 < frame.back - slack || bu1 > u1 || bv0 < v0 || bv1 > v1) throw new Error("home: a box must stand inside the home's floor plan")
+    if (bu1 > apronU0 && bu0 < apronU1 && bv1 > apronV0 && bv0 < apronV1) throw new Error(kept)
     out.push([x0, y0, z0, x1, y1, z1])
   }
   return out

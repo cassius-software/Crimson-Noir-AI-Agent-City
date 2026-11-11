@@ -90,7 +90,7 @@ test('App keeps the posts in this browser, carries them through a rename and a f
   assert.ok(gate.includes("return engine.furnishRefusal(home) ?? (rec.newer ? 'Staff was saved by a newer version of the city: reload the page to post or stand down' : null) ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')"))
   const hooks = between(app, ' const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {', '} : null), [engine, keeper])')
   const staff = between(hooks, 'staff: {', ' }, ')
-  assert.ok(staff.includes('homeName: (home: number) => engine.homes.find((h) => h.home === home)?.name ?? \'another home\''), 'a home by its deed\'s name')
+  assert.ok(staff.includes('homeName: (home: number) => roomName(engine.homes.find((h) => h.home === deedOf(home))?.name ?? \'another home\', home),'), 'a home by its deed\'s name, a sky floor\'s with " · sky floor"')
   assert.ok(staff.includes('post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r, postsRef.current) ?? (roster.get(name) ? commitStaff(postTo('))
   assert.ok(staff.includes(': `No agent called ${name} on your roster`),'), 'a name off the roster is refused, in words')
   assert.ok(staff.includes('standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r, postsRef.current) ?? commitStaff(standDownAt('))

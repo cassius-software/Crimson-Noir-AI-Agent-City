@@ -10,7 +10,8 @@
  * place over one a mouse left focused (homeCard.test.ts holds the card to wiring these, and the browser smoke test
  * clicks View with a real mouse and presses Enter); in the Rest tab Place rests through the host and edits nothing; and
  * in the Staff tab Place posts the chosen agent at the workstation under the cursor through the host, Remove stands them
- * down, Q and E choose the agent, and none of it is a furniture edit or on Undo.
+ * down, Q and E choose the agent, and none of it is a furniture edit or on Undo; where the home has a sky floor in this
+ * map a sixth tab, Tower, rides through the host and edits nothing, and a visit upstairs keeps to the sky plan.
  * What breaks if it is removed? Closing the card could leave a different layout from the one the owner had, a right
  * click on a wall could remove some other piece, a diagonal could race the cursor across the room, and Enter after a
  * click could press Remove again instead of placing, with nothing to say so but a person furnishing.
@@ -20,14 +21,18 @@ import { test } from 'node:test'
 import { DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
 import { canPlace, fitLayout, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import { FocusOrigin, REST_TAB, STAFF_TAB, STICK, TABS, Visit, stickStep, type FurnishHooks, type RestHooks, type StaffAgent, type StaffHooks, type StickState } from './furnishVisit.ts'
+import {
+  FocusOrigin, REST_TAB, SKY_WALLS, STAFF_TAB, STICK, TABS, TOWER_TAB, Visit, placeWords, stickStep, verdictWords, type FurnishHooks, type RestHooks, type StaffAgent, type StaffHooks,
+  type StickState,
+} from './furnishVisit.ts'
+import type { FloorWhere } from './homeView.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE } from './storeCatalog.ts'
 
 const BOOKCASE = 164, SOFA = 163, TABLE = 162
 
-/** A visit to home `home` over `record`, with the lines in `owned` owned (and the host's rest and staff, if any); what it hands the host is kept in `sent`. */
-function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest?: RestHooks, staff?: StaffHooks) {
+/** A visit to home `home` over `record`, with the lines in `owned` owned (and the host's rest, staff and tower, if any); what it hands the host is kept in `sent`. */
+function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest?: RestHooks, staff?: StaffHooks, tower?: FurnishHooks['tower']) {
   const lines = new Set(owned)
   const sent: HomeRecord[] = []
   const drafts: unknown[] = []
@@ -37,7 +42,7 @@ function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest
   } as unknown as Shopkeeper
   const hooks: FurnishHooks = {
     refusal: () => null, begin: () => {}, setDraft: (d) => { drafts.push(d) }, blocked: () => new Uint8Array(GRID * GRID),
-    pickCell: () => null, canvas: () => null, rest, staff,
+    pickCell: () => null, canvas: () => null, rest, staff, tower,
   }
   const v = new Visit(home, record, { keeper, onRecord: (r) => sent.push(r), hooks, onClose: () => {}, changed: () => {} })
   const owns = (id: number) => lines.has(id)
@@ -554,4 +559,75 @@ test('a tap on a workstation\'s row ({ press } at its own cell) moves the cursor
   assert.deepEqual(staff.calls, [['post', home, 10, 20, 'Mara']])
   v.run({ press: { c: first.c, r: first.r } })
   assert.equal(v.staffLine(), 'Workstation 1 at column 5, row 5: free; Post puts Mara here')
+})
+
+test('six tabs where the tower hook reports a floor, five elsewhere; the triggers wrap by that count; TABS unchanged', () => {
+  assert.deepEqual([...TABS], ['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'])
+  assert.equal(TOWER_TAB, TABS.length, 'Tower after the five')
+  const rides: number[] = []
+  let why: string | null = null
+  const where = (room: number): FloorWhere | null => (room === 3 || room === 7 ? { up: room === 3, metres: 194, why } : null)
+  const tower = { where, ride: (room: number) => { rides.push(room); return why } }
+  // The Penthouse's hall with its floor: six tabs, and the triggers wrap through Tower.
+  const { v, sent } = visitOf(3, freshHomes(), [SOFA], undefined, undefined, tower)
+  assert.equal(v.tabCount, 6)
+  v.run('tabPrev')
+  assert.equal(v.tab, TOWER_TAB, 'back from Furniture to Tower')
+  v.run('tabNext')
+  assert.equal(v.tab, 0, 'on from Tower round to Furniture')
+  v.run({ tab: TOWER_TAB })
+  assert.equal(v.tab, TOWER_TAB)
+  // Place there rides through the host, once per press, and edits nothing; a refusal is said word for word.
+  v.run('place')
+  assert.deepEqual(rides, [3])
+  why = 'Step out of the car first'
+  v.run('place')
+  assert.deepEqual(rides, [3, 3])
+  assert.equal(v.said, why)
+  assert.deepEqual([sent.length, v.undoSteps.length, v.lifted], [0, 0, null], 'no edit, nothing for Undo, nothing in hand')
+  // Upstairs too (room 7, down): six tabs.
+  assert.equal(visitOf(7, freshHomes(), [SOFA], undefined, undefined, tower).v.tabCount, 6)
+  // A hall with no floor in this map (where says null), or no tower hook at all: five tabs, wrapping at Staff.
+  for (const other of [visitOf(4, freshHomes(), [SOFA], undefined, undefined, tower), visitOf(3, freshHomes(), [SOFA])]) {
+    assert.equal(other.v.tabCount, 5)
+    other.v.run('tabPrev')
+    assert.equal(other.v.tab, STAFF_TAB)
+    other.v.run('tabNext')
+    assert.equal(other.v.tab, 0)
+  }
+  // With no tower hook, Place in a tab 6 never reached says why, and still edits nothing.
+  const bare = visitOf(3, freshHomes(), [SOFA])
+  bare.v.tab = TOWER_TAB
+  bare.v.run('place')
+  assert.equal(bare.v.said, 'This home has no sky floor in this map')
+  assert.equal(bare.sent.length, 0)
+})
+
+test('a visit upstairs keeps to the sky plan: the cursor inside its 20 by 20 cells, the words from its corner, the arrival kept, no wall finishes', () => {
+  const { v, sent } = visitOf(7, freshHomes(), [SOFA])
+  assert.deepEqual([v.plan.r0, v.plan.r1, v.plan.c0, v.plan.c1, v.first], [6, 25, 6, 25, 6])
+  assert.ok(v.cursor.c >= 6 && v.cursor.c <= 25 && v.cursor.r >= 6 && v.cursor.r <= 25, JSON.stringify(v.cursor))
+  v.moveTo(0, 0)
+  assert.deepEqual(v.cursor, { c: 6, r: 6 }, 'clamped to the plan\'s first cell')
+  assert.equal(placeWords(7, v.cursor), 'column 1, row 1')
+  v.moveTo(GRID, GRID)
+  assert.deepEqual(v.cursor, { c: 25, r: 25 })
+  assert.equal(placeWords(7, v.cursor), 'column 20, row 20')
+  assert.equal(placeWords(0, { c: 0, r: GRID - DEPTH[0] }), 'column 1, row 1', 'a hall\'s words as before')
+  // The arrival is what a sky floor keeps clear, and the verdict says so; a hall's still says the doorway.
+  assert.equal(verdictWords('doorway', SOFA, 7), 'Keeps the arrival clear')
+  assert.equal(verdictWords('doorway', SOFA, 0), 'Keeps the doorway clear')
+  assert.equal(verdictWords('copies', SOFA, 8), verdictWords('copies', SOFA, 0), 'the other words the same upstairs')
+  // The Walls tab: its walls are its windows, nothing to choose, nothing edited.
+  v.run({ tab: 2 })
+  v.run('next')
+  assert.equal(v.said, SKY_WALLS)
+  v.run('prev')
+  assert.equal(v.said, SKY_WALLS)
+  assert.equal(sent.length, 0)
+  // The floor still changes upstairs.
+  v.run({ tab: 1 })
+  v.run('next')
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0][7]?.wall, 0, 'the wall stays clear glass')
 })

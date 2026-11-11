@@ -69,17 +69,21 @@ test('the same seed gives the same city (and furniture); another seed another', 
   assert.deepEqual(generateBuildings(1337), generateBuildings(1337))
   assert.deepEqual(streetFurniture(1337), streetFurniture(1337))
   assert.notDeepEqual(generateCity(1337), generateCity(7))
-  assert.deepEqual(generateCity(1337), generateBuildings(1337).map((b) => b.box), 'the physics worker\'s boxes are the drawn ones')
+  assert.deepEqual(generateCity(1337), generateBuildings(1337).map((b) => b.box), 'the physics worker\'s boxes are the plan\'s, drawn and clear alike')
 })
 
-test('the styles: every finish a number of its own; the homes\' furnishing styles (planted, lit) dress no box of the city', () => {
+test('the styles: every finish a number of its own; the homes\' furnishing styles (planted, lit) dress no box of the city; the clear panes only the sky floors\' bands', () => {
   assert.equal(new Set(Object.values(STYLE)).size, Object.keys(STYLE).length)
   assert.deepEqual([STYLE.planted, STYLE.lit], [11, 12], 'the two the furnishing adds, after glass')
+  assert.equal(STYLE.clear, 13, 'the sky floors\' panes, after the furnishing\'s two')
   for (const seed of SEEDS) {
     for (const o of [{}, { homes: false }]) {
-      const used = new Set(generateBuildings(seed, o).map(({ style }) => style))
+      const all = generateBuildings(seed, o)
+      const used = new Set(all.map(({ style }) => style))
       assert.ok(!used.has(STYLE.planted) && !used.has(STYLE.lit), `${seed}: ${[...used].sort((a, b) => a - b).join(', ')}`)
-      for (const s of used) assert.ok(Number.isInteger(s) && s >= STYLE.mixed && s <= STYLE.glass, `${seed}: style ${s}`)
+      for (const s of used) assert.ok(Number.isInteger(s) && ((s >= STYLE.mixed && s <= STYLE.glass) || s === STYLE.clear), `${seed}: style ${s}`)
+      // Two sky floors with homes, each four faces of four panes; none at all with the homes off.
+      assert.equal(all.filter(({ style }) => style === STYLE.clear).length, 'homes' in o ? 0 : 32, `${seed}: the clear panes`)
     }
   }
 })

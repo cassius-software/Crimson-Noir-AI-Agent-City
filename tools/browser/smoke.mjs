@@ -103,8 +103,10 @@
  *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
  *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
  *   planters, the HUD's chip offers to furnish the home (Furnish), B opens the doorstep card saying Yours, the avatar
- *   stands still under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and
- *   still knows the loft is owned;
+ *   stands still under it with W held, Esc closes it; inside the Penthouse B opens its deed's card, whose Go up rides
+ *   the visitor to the sky floor (the card closes, the chip names the sky floor), where W walks from the arrival and
+ *   the staged sofa stops it, the floor holding; and the lakefront metropolis, reloaded, has its seven homes, none with
+ *   a sky floor, and still knows the loft is owned;
  * - furnish: the loft claimed and the operator's record given level 2 and 3,000 credits by hand (sealed again, then
  *   reloaded), B inside opens the furnishing view, its strip's Order buys a bookcase and a sofa, E or Q takes each in
  *   hand, the arrows move the cursor and Enter places it, each piece one more collider in the physics realm; after a
@@ -2364,8 +2366,9 @@ const SCENARIOS = {
   /**
    * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, on the progression keeper (a new operator,
    * level 1): the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
-   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the lakefront metropolis has the
-   * seven too, and the deed bought in the city is still owned there.
+   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the Penthouse's card rides a visitor
+   * up to its sky floor, which holds them and whose staged furniture is solid; the lakefront metropolis has the seven
+   * too, none with a sky floor, and the deed bought in the city is still owned there.
    */
   async homes(chrome, origin) {
     const p = await open(chrome)
@@ -2430,6 +2433,35 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
       const gone = await p.waitFor(`!${at('aside[data-home]')} && window.__SIM__.snapshot().customer.home?.card === false`, 10_000).then(() => true, () => false)
       check(gone, 'homes: Esc closes the doorstep card')
+      // The Penthouse's sky floor: walked into the hall (onto its apron, 3 m in from the doorway), B opens the deed's
+      // card for a visitor (level 1), and its Go up rides there.
+      const pent = homes[3]
+      check(!!pent.sky && pent.sky.y > 60, 'homes: seed 1337\'s Penthouse has a sky floor up its tower', JSON.stringify(pent.sky))
+      const inward = Math.hypot(pent.cx - pent.door.x, pent.cz - pent.door.z)
+      await p.eval(`window.__SIM__.teleport(${pent.door.x + (3 * (pent.cx - pent.door.x)) / inward}, ${pent.door.z + (3 * (pent.cz - pent.door.z)) / inward})`)
+      const inPent = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 3`, 30_000).then(() => true, () => false)
+      check(inPent, 'homes: the avatar stands in the Penthouse\'s hall')
+      await p.tap('KeyB', 'b', 66)
+      const row = await p.waitFor(`!!${at('aside[data-home="3"] [data-action="floor"]')}`, 10_000).then(() => true, () => false)
+      const up = await p.eval(`({ text: ${at('aside[data-home="3"] [data-action="floor"]')}?.textContent ?? '', off: ${at('aside[data-home="3"] [data-action="floor"]')}?.disabled ?? true, line: ${at('aside[data-home="3"] [data-floor]')}?.textContent ?? '' })`)
+      check(row && up.text === 'Go up' && !up.off && /m up the tower/.test(up.line), 'homes: B opens the Penthouse\'s card, whose floor row offers Go up to a visitor', JSON.stringify(up))
+      await p.eval(`${at('aside[data-home="3"] [data-action="floor"]')}?.click()`)
+      const rode = await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.avatar.feetY - ${pent.sky.y}) < 0.1 && window.__SIM__.snapshot().customer.home?.room === 7`, 30_000).then(() => true, () => false)
+      const upstairs = await p.waitFor(`!${at('aside[data-home]')}`, 10_000).then(() => true, () => false)
+      const skyChip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && /sky floor/.test(c.textContent) && c.textContent })()`, 10_000).catch(() => '')
+      check(rode && upstairs && /sky floor/.test(skyChip ?? ''), 'homes: Go up puts the avatar on the sky floor, the card closed, the chip naming the sky floor', `${skyChip}; feet ${(await p.eval('window.__SIM__.engine.sim.state.avatar.feetY')).toFixed(2)} at ${pent.sky.y}`)
+      // W walks from the arrival toward the far glass; the staged sofa (solid, at the floor's height) stops it.
+      const where = `(() => { const v = window.__SIM__.engine.sim.state.avatar, n = ${inward}
+        return { x: v.x, z: v.z, feet: v.feetY, u: ((v.x - ${pent.cx}) * (${pent.door.x} - ${pent.cx}) + (v.z - ${pent.cz}) * (${pent.door.z} - ${pent.cz})) / n } })()`
+      const s0 = await p.eval(where)
+      await p.eval(`window.__SIM__.hold('KeyW', true)`)
+      const went = await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${s0.x}, v.z - ${s0.z}) >= 3.6 })()`, 30_000).then(() => true, () => false)
+      await p.frames(90)
+      await p.eval(`window.__SIM__.hold('KeyW', false)`)
+      const s1 = await p.eval(where)
+      const moved = Math.hypot(s1.x - s0.x, s1.z - s0.z)
+      check(went && moved >= 3.6 && moved <= 5 && s1.u >= 1.6 && Math.abs(s1.feet - pent.sky.y) < 0.1, 'homes: upstairs W walks from the arrival until the staged sofa stops it, on the floor', `moved ${moved.toFixed(2)} m to u ${s1.u.toFixed(2)}, feet ${s1.feet.toFixed(2)}`)
+      await p.shot('homes-sky')
       await p.shot('homes')
       const errs = (await p.snap()).errors
       check(errs.length === 0, 'homes: the engine recorded no error', errs.join(' | ').slice(0, 300))
@@ -2441,6 +2473,8 @@ const SCENARIOS = {
       const lake = await p.eval(`({ region: window.__SIM__.engine.places !== null, homes: window.__SIM__.homes().length, kept: window.__SIM__.engine.homes.length, owned: window.__SIM__.snapshot().customer.ownedHomes })`)
       check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
       check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)
+      const noSky = await p.eval('window.__SIM__.homes().every((h) => h.sky === null)')
+      check(noSky, 'homes: no home in the lakefront metropolis has a sky floor')
       p.health('homes lakefront')
     } finally { await p.b.close() }
   },

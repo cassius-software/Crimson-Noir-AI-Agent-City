@@ -13,21 +13,26 @@
  * whose name is still off the roster is drawn by nobody (App joins posts to the roster by name) until the next post
  * lets it go. Every storage access is guarded like the other stores'; a value that is not a record reads as nobody
  * posted, and a record a newer build wrote is never overwritten. Two tabs: the last save wins. Nothing leaves the device.
+ * A post's home is a room (homeGrid.ts): a hall's property index, or 7 and 8 for the sky floors. The record keeps
+ * version 1, byte for byte, while every post is in a hall, and is written as version 2 only once a post stands on a
+ * sky floor, which an older build reads as a newer build's: it shows no posts from it and never writes over it.
  * What breaks if it is removed? Nobody stays posted at a workstation past the visit.
  */
-import { DEPTH, GRID } from '../02_Define_The_Rules/homeGrid.ts'
+import { DEPTH, GRID, ROOM_COUNT } from '../02_Define_The_Rules/homeGrid.ts'
 import { sanitizeName, type ProfileStore } from './profile.ts'
 
 /** Keyed by the package id like the profile, the look, the progression and the homes. */
 export const STAFF_KEY = 'civic-simulation:staff:v1'
-/** The JSON record's own version (its `v`): a higher one is a newer build's (never written over), any other reads as nobody posted. */
+/** The JSON record's own version (its `v`): a higher one but STAFF_SKY_VERSION is a newer build's (never written over), any other reads as nobody posted. */
 export const STAFF_VERSION = 1
+/** The version a record is written as once a post stands on a sky floor (room 7 or 8); it reads every room. */
+export const STAFF_SKY_VERSION = 2
 /** At most one post per agent, so at most the roster's twelve (roster.ts ROSTER_MAX; staffStore.test.ts holds them equal). */
 export const STAFF_MAX = 12
 /** A stored value longer than this is corrupt: twelve posts of a 24-letter name are under 500 characters. */
 export const RAW_MAX = 1024
 
-/** One agent posted at one workstation: the roster's name, the home's property index, the workstation's lowest cell. */
+/** One agent posted at one workstation: the roster's name, the room (a home's property index, or a sky floor's 7 or 8), the workstation's lowest cell. */
 export interface Post { readonly name: string; readonly home: number; readonly c: number; readonly r: number }
 /**
  * Every post, frozen: at most one per name (any case) and one per workstation, at most STAFF_MAX; and whether the stored
@@ -42,12 +47,15 @@ const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCas
 const cell = (n: unknown, size: number): n is number => Number.isInteger(n) && (n as number) >= 0 && (n as number) < size
 const at = (p: Post, home: number, c: number, r: number): boolean => p.home === home && p.c === c && p.r === r
 
-/** The record a list of entries [name, home, c, r] gives: each well formed, the first for a name (any case) and the first for a seat. */
-function postsFrom(list: readonly unknown[], newer = false): StaffRecord {
+/**
+ * The record a list of entries [name, home, c, r] gives: each well formed with a room under `rooms` (a version 1
+ * record names halls only), the first for a name (any case) and the first for a seat.
+ */
+function postsFrom(list: readonly unknown[], newer = false, rooms = ROOM_COUNT): StaffRecord {
   const out: Post[] = []
   for (const e of list) {
     const [name, home, c, r] = Array.isArray(e) && e.length === 4 ? (e as unknown[]) : []
-    if (typeof name !== 'string' || !name || sanitizeName(name) !== name || /\s/.test(name) || !cell(home, DEPTH.length) || !cell(c, GRID) || !cell(r, GRID)) continue
+    if (typeof name !== 'string' || !name || sanitizeName(name) !== name || /\s/.test(name) || !cell(home, rooms) || !cell(c, GRID) || !cell(r, GRID)) continue
     if (!out.some((p) => same(p.name, name) || at(p, home, c, r))) out.push(Object.freeze({ name, home, c, r }))
   }
   return Object.freeze({ posts: Object.freeze(out.slice(0, STAFF_MAX)), newer })
@@ -60,11 +68,12 @@ function decode(raw: unknown): StaffRecord {
   let data: unknown
   try { data = JSON.parse(raw) } catch { return NO_STAFF }
   const { v, posts } = (data ?? {}) as { v?: unknown; posts?: unknown }
-  if (typeof v === 'number' && v > STAFF_VERSION) return postsFrom([], true)
-  return v === STAFF_VERSION && Array.isArray(posts) ? postsFrom(posts) : NO_STAFF
+  if (typeof v === 'number' && v > STAFF_VERSION && v !== STAFF_SKY_VERSION) return postsFrom([], true)
+  return (v === STAFF_VERSION || v === STAFF_SKY_VERSION) && Array.isArray(posts) ? postsFrom(posts, false, v === STAFF_VERSION ? DEPTH.length : ROOM_COUNT) : NO_STAFF
 }
 
-const encode = (rec: StaffRecord): string => JSON.stringify({ v: STAFF_VERSION, posts: entries(rec.posts) })
+/** The text a record is kept as: version 1 while every post is in a hall, version 2 once one stands on a sky floor. */
+const encode = (rec: StaffRecord): string => JSON.stringify({ v: rec.posts.some((p) => p.home >= DEPTH.length) ? STAFF_SKY_VERSION : STAFF_VERSION, posts: entries(rec.posts) })
 
 function browserStore(): ProfileStore | null {
   try { return (globalThis as { localStorage?: ProfileStore }).localStorage ?? null } catch { return null }

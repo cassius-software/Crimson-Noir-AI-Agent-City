@@ -152,11 +152,13 @@ test('App: a rest at home goes through the page\'s one keeper from the furnishin
   const hooks = between(GUI, '  const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {', '} : null), [engine, keeper])')
   assert.match(hooks, /^ {6}offer: \(home: number\) => \{ const r = restInputs\(home, homesRef\.current, keeper\); return restOffer\(pageProgress\(\), r\.level, r\.kinds\) \},$/m)
   assert.match(hooks, /^ {6}take: \(home: number\) => \{ const r = restInputs\(home, homesRef\.current, keeper\); return engine\.furnishRefusal\(home\) \?\? restTake\(pageProgress\(\), r\.level, r\.kinds\) \},$/m, 'the engine\'s gate checked again before the keeper rests')
-  // What a rest is measured by: the deed's level in the catalogue, and the kinds the engine draws there.
+  // What a rest is measured by: the deed's level in the catalogue (a sky floor's is its deed's), and the kinds the
+  // engine draws there.
   const inputs = between(APP, 'function restInputs(', '\n}\n')
-  assert.ok(inputs.includes('level: itemById(DEED_BASE + home)?.level ?? 0'))
+  assert.ok(inputs.includes('level: itemById(DEED_BASE + deedOf(home))?.level ?? 0'))
   assert.ok(inputs.includes('kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper)))'))
-  assert.match(APP, /^import \{ homePlaced \} from '\.\/07_Execute_Actions\/homeView\.ts'$/m)
+  assert.match(APP, /^import \{ homePlaced, roomName \} from '\.\/07_Execute_Actions\/homeView\.ts'$/m)
+  assert.match(APP, /^import \{ deedOf \} from '\.\/02_Define_The_Rules\/homeGrid\.ts'$/m)
   // Nothing else reaches the rest: not the engine, the HUD, the operator's script facade or the recruiter.
   for (const [name, src] of [['engine.ts', ENGINE], ['Hud.tsx', HUD], ['operator.ts', read('./operator.ts')], ['recruitment.ts', RECRUITMENT]] as const) {
     assert.doesNotMatch(code(src), /restAtHome|homeRest|restTake|restOffer/, `${name} never rests`)

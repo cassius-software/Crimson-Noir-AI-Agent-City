@@ -16,18 +16,25 @@
  * owned, is not decided here: homeLayout.ts fitLayout decides that each time the home is drawn, and keeps a piece
  * that does not fit as "not placed here" rather than deleting it, so a layout survives a progress reset or a change
  * of purse. Nothing leaves the device. Two tabs: the last save wins.
+ *
+ * The two sky floors (rooms 7 and 8, homeGrid.ts ROOM_COUNT) are kept under a key of their own, SKY_KEY, in the same
+ * form, so the homes' record stays byte for byte what an older build wrote and reads: an older build never meets a
+ * changed record, and leaves the sky floors' key alone. Each key is read and written on its own, so a broken one never
+ * empties the other's rooms.
  * What breaks if it is removed? Every visit starts with empty homes, and the furnishing card has nowhere to keep what
  * the operator placed.
  */
-import { DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
-import { DEFAULT_FINISH, FLOORS, WALLS, shapeOf, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
+import { DEPTH, GRID, HOME_PIECES, ROOM_COUNT } from '../02_Define_The_Rules/homeGrid.ts'
+import { FLOORS, WALLS, finishDefault, shapeOf, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import type { ProfileStore } from './profile.ts'
 
 /** Keyed by the package id like the profile, the look and the progression. */
 export const HOME_KEY = 'civic-simulation:home:v1'
+/** The two sky floors' record (rooms 7 and 8), beside the homes' and in its form. */
+export const SKY_KEY = 'civic-simulation:home-sky:v1'
 /** The JSON record's own version (its `v`). */
 export const HOME_RECORD_VERSION = 1
-/** How many homes the record holds, by property index: one for each home's depth (homeGrid.ts DEPTH). */
+/** How many homes HOME_KEY's record holds, by property index: one for each home's depth (homeGrid.ts DEPTH). The sky floors follow them in the record. */
 export const HOME_COUNT = DEPTH.length
 /**
  * The most pieces one home keeps: the HOME_PIECES a home can hold placed, plus up to eight that do not fit or are not
@@ -51,12 +58,15 @@ export interface HomeLayout {
   readonly pieces: readonly Piece[]
 }
 
-/** The whole record: HOME_COUNT entries by property index, null for a home never furnished (its default finishes, no pieces). */
+/** The whole record: ROOM_COUNT entries by room (the halls by property index, then the two sky floors), null for a room never furnished (its default finishes, no pieces). */
 export type HomeRecord = readonly (HomeLayout | null)[]
 
-/** A record with nothing furnished: every home null. */
+/** `count` rooms with nothing furnished. */
+const empty = (count: number): HomeRecord => Object.freeze(Array.from({ length: count }, () => null))
+
+/** A record with nothing furnished: every room null. */
 export function freshHomes(): HomeRecord {
-  return Object.freeze(Array.from({ length: HOME_COUNT }, () => null))
+  return empty(ROOM_COUNT)
 }
 
 /** Whether n is a whole number from 0 to max. */
@@ -90,17 +100,18 @@ function homeFrom(raw: unknown): HomeLayout | null {
 }
 
 /**
- * A stored value as a record. Never throws. A value that is not text, is longer than RAW_MAX, is not JSON, is not an
- * object of this version, or whose `homes` is not a list of HOME_COUNT gives a fresh record; otherwise each home is
- * read on its own (homeFrom), and a home that is not one becomes null while the others are kept.
+ * A stored value as `count` rooms (HOME_COUNT under HOME_KEY, two under SKY_KEY). Never throws. A value that is not
+ * text, is longer than RAW_MAX, is not JSON, is not an object of this version, or whose `homes` is not a list of
+ * `count` gives `count` empty rooms; otherwise each room is read on its own (homeFrom), and one that is not one becomes
+ * null while the others are kept.
  */
-function decode(raw: unknown): HomeRecord {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > RAW_MAX) return freshHomes()
+function decode(raw: unknown, count = HOME_COUNT): HomeRecord {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > RAW_MAX) return empty(count)
   let data: unknown
-  try { data = JSON.parse(raw) } catch { return freshHomes() }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return freshHomes()
+  try { data = JSON.parse(raw) } catch { return empty(count) }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return empty(count)
   const { v, homes } = data as { v?: unknown; homes?: unknown }
-  if (v !== HOME_RECORD_VERSION || !Array.isArray(homes) || homes.length !== HOME_COUNT) return freshHomes()
+  if (v !== HOME_RECORD_VERSION || !Array.isArray(homes) || homes.length !== count) return empty(count)
   return Object.freeze((homes as unknown[]).map((h) => (h === null ? null : homeFrom(h))))
 }
 
@@ -117,35 +128,49 @@ function browserStore(): ProfileStore | null {
   try { return (globalThis as { localStorage?: ProfileStore }).localStorage ?? null } catch { return null }
 }
 
-/** The saved record, or a fresh one when there is none, storage is unavailable, or the entry is not a record. Never throws. */
+/**
+ * The saved record: the homes' key's seven rooms, then the sky floors' key's two, each read on its own (none saved,
+ * storage unavailable, or an entry that is not a record leaves only that key's rooms empty). Never throws.
+ */
 export function loadHomes(store: ProfileStore | null = browserStore()): HomeRecord {
-  if (!store) return freshHomes()
-  let raw: string | null
-  try { raw = store.getItem(HOME_KEY) } catch { return freshHomes() }
-  return decode(raw)
+  const read = (key: string, count: number): HomeRecord => {
+    if (!store) return empty(count)
+    let raw: string | null
+    try { raw = store.getItem(key) } catch { return empty(count) }
+    return decode(raw, count)
+  }
+  return Object.freeze([...read(HOME_KEY, HOME_COUNT), ...read(SKY_KEY, ROOM_COUNT - HOME_COUNT)])
 }
 
 /**
- * Saves the record. A home with more than SAVED_MAX pieces is saved with its first SAVED_MAX (its placed pieces and
- * the first of those not placed here), never refused, so one crowded home cannot stop the other six from saving. The
- * text is then checked: it is written only when reading it back gives the same text (HOME_COUNT homes, finishes that
- * exist, every piece well formed), so a store never holds a value that would load as something else, and a record that
- * fails leaves the last good save in place. Never throws: a record that is not one, quota, private mode and blocked
- * storage all return false. Returns whether it was written.
+ * Saves the record (ROOM_COUNT rooms, or nothing is written): the seven homes under HOME_KEY, exactly as before the
+ * sky floors, and the two sky floors under SKY_KEY. A room with more than SAVED_MAX pieces is saved with its first
+ * SAVED_MAX (its placed pieces and the first of those not placed here), never refused, so one crowded room cannot stop
+ * the others from saving. Each key's text is then checked on its own: it is written only when reading it back gives
+ * the same text (its rooms, finishes that exist, every piece well formed), so a store never holds a value that would
+ * load as something else, and a key that fails keeps its last good save while the other is still written. Never
+ * throws: a record that is not one, quota, private mode and blocked storage all return false. Returns whether both
+ * keys were written.
  */
 export function saveHomes(r: HomeRecord, store: ProfileStore | null = browserStore()): boolean {
-  if (!store) return false
-  let raw: string
-  try { raw = encode(r) } catch { return false }
-  if (raw.length > RAW_MAX || encode(decode(raw)) !== raw) return false
-  try { store.setItem(HOME_KEY, raw) } catch { return false }
-  return true
+  if (!store || !Array.isArray(r) || r.length !== ROOM_COUNT) return false
+  const write = (key: string, rooms: HomeRecord): boolean => {
+    let raw: string
+    try { raw = encode(rooms) } catch { return false }
+    if (raw.length > RAW_MAX || encode(decode(raw, rooms.length)) !== raw) return false
+    try { store.setItem(key, raw) } catch { return false }
+    return true
+  }
+  const halls = write(HOME_KEY, r.slice(0, HOME_COUNT))
+  return write(SKY_KEY, r.slice(HOME_COUNT)) && halls
 }
 
-/** Forgets the saved record (no-op without storage): every home shows its default finishes, and its show home if unowned. */
+/** Forgets the saved record, both keys (no-op without storage): every room shows its default finishes, and its show home if unowned. */
 export function clearHomes(store: ProfileStore | null = browserStore()): void {
   if (!store) return
-  try { store.removeItem(HOME_KEY) } catch { /* storage unavailable */ }
+  for (const key of [HOME_KEY, SKY_KEY]) {
+    try { store.removeItem(key) } catch { /* storage unavailable */ }
+  }
 }
 
 /**
@@ -157,17 +182,17 @@ export function layoutOf(floor: number, wall: number, placed: readonly Piece[], 
   return Object.freeze({ floor, wall, pieces: Object.freeze([...placed, ...stored].slice(0, SAVED_MAX)) })
 }
 
-/** A copy of `r` with home `home`'s entry replaced (null forgets it). `r` itself is left as it was. */
+/** A copy of `r` with room `home`'s entry replaced (null forgets it), ROOM_COUNT rooms. `r` itself is left as it was. */
 export function withHome(r: HomeRecord, home: number, layout: HomeLayout | null): HomeRecord {
-  if (!Number.isInteger(home) || home < 0 || home >= HOME_COUNT) throw new RangeError(`no home ${home}`)
-  return Object.freeze(Array.from({ length: HOME_COUNT }, (_, i) => (i === home ? layout : r[i] ?? null)))
+  if (!Number.isInteger(home) || home < 0 || home >= ROOM_COUNT) throw new RangeError(`no home ${home}`)
+  return Object.freeze(Array.from({ length: ROOM_COUNT }, (_, i) => (i === home ? layout : r[i] ?? null)))
 }
 
-/** Home `home`'s finishes: the record's, or the home's defaults (homeLayout.ts DEFAULT_FINISH) while it has no entry. */
+/** Room `home`'s finishes: the record's, or the room's defaults (homeLayout.ts finishDefault) while it has no entry. */
 export function finishOf(r: HomeRecord, home: number): Readonly<{ floor: number; wall: number }> {
   const h = r[home]
   if (h) return { floor: h.floor, wall: h.wall }
-  const d = DEFAULT_FINISH[home]
+  const d = Number.isInteger(home) && home >= 0 ? finishDefault(home) : undefined
   if (!d) throw new RangeError(`no home ${home}`)
   return d
 }

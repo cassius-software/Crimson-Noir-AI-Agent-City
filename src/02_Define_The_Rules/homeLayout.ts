@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the furnishing rules for the seven homes (01_Initialize_World/properties.ts): the
+ * Why does this file exist? It is the furnishing rules for the homes' rooms (01_Initialize_World/properties.ts): the
  * shape of each of Lintel & Lumen's nine furniture lines on the floor plan (homeGrid.ts), how a piece turns, which
  * cells it fills and which it leaves walkable, the one rule that says whether a piece may go where the player puts it
  * (canPlace), how a saved layout is fitted to a home when it is drawn (fitLayout), how many kinds of furniture stand
@@ -18,11 +18,13 @@
  *
  * Nobody is ever walled out of a home or shut in one: the apron in front of the doorway is never used, and a piece is
  * refused when it would cut off any cell that could be walked to from the apron, any workstation's seat, or the way out
- * of someone standing inside a piece that has not yet turned solid.
+ * of someone standing inside a piece that has not yet turned solid. A room is a hall (0 to 6) or a sky floor (7 and 8,
+ * homeGrid.ts planOf): a sky floor keeps its arrival block clear as a hall keeps its apron, its walls are its clear
+ * glass (no panels), and its pieces stand on its own floor high up the tower, which the callers add.
  * What breaks if it is removed? Nothing could be placed in a home, nothing would say a layout leaves the way in open,
  * and the show homes, the finishes and the furniture's colliders would have no shapes.
  */
-import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, inApron, inMask } from './homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, inKeep, inMask, planOf } from './homeGrid.ts'
 
 // ---------------------------------------------------------------- the numbers
 
@@ -82,6 +84,11 @@ export const WALLS: readonly FinishLine[] = Object.freeze([
 export const DEFAULT_FINISH: readonly Readonly<{ floor: number; wall: number }>[] = Object.freeze(
   [[0, 0], [1, 1], [1, 2], [0, 0], [0, 0], [0, 0], [0, 0]].map(([floor, wall]) => Object.freeze({ floor, wall })),
 )
+/** The sky floors' finishes until their owner picks others, by room from 7: the Penthouse's in oak boards, the Sky-Mansion's in limestone; their walls are glass. */
+export const SKY_FINISH: readonly Readonly<{ floor: number; wall: number }>[] = Object.freeze([Object.freeze({ floor: 1, wall: 0 }), Object.freeze({ floor: 2, wall: 0 })])
+
+/** Room `room`'s default finishes (DEFAULT_FINISH for a hall, SKY_FINISH for a sky floor), or undefined for no room. */
+export const finishDefault = (room: number): Readonly<{ floor: number; wall: number }> | undefined => (room < DEPTH.length ? DEFAULT_FINISH[room] : SKY_FINISH[room - DEPTH.length])
 
 // ---------------------------------------------------------------- the shapes
 
@@ -329,31 +336,34 @@ function occupancy(placed: readonly Piece[]): Uint8Array {
   return grid
 }
 
-/** Every cell of home `home` that can be walked to from the apron, four ways (never diagonally), past nothing SOLID: 1, else 0. */
+/**
+ * Every cell of room `home` that can be walked to from the block it keeps clear (a hall's apron, a sky floor's
+ * arrival), four ways (never diagonally), inside its floor plan, past nothing SOLID: 1, else 0.
+ */
 function flood(home: number, grid: Uint8Array): Uint8Array {
   const seen = new Uint8Array(GRID * GRID)
-  const depth = DEPTH[home]
-  if (depth === undefined) return seen
-  const lowest = (GRID - depth) * GRID, last = GRID * GRID - GRID
+  const p = planOf(home)
+  if (!p) return seen
+  const { keep } = p
   // A cell is queued once: marked seen as it is queued, and only when nothing solid stands on it.
   const queue = new Int16Array(GRID * GRID)
   let head = 0, tail = 0
-  for (let r = APRON.r0; r <= APRON.r1; r++) {
-    for (let c = APRON.c0; c <= APRON.c1; c++) {
+  for (let r = keep.r0; r <= keep.r1; r++) {
+    for (let c = keep.c0; c <= keep.c1; c++) {
       const at = cellIndex(c, r)
       if ((grid[at] & SOLID) === 0) { seen[at] = 1; queue[tail++] = at }
     }
   }
   while (head < tail) {
-    const at = queue[head++], c = at % GRID
+    const at = queue[head++], c = at % GRID, r = (at - c) / GRID
     let n = at - 1
-    if (c > 0 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
+    if (c > p.c0 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
     n = at + 1
-    if (c < GRID - 1 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
+    if (c < p.c1 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
     n = at - GRID
-    if (n >= lowest && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
+    if (r > p.r0 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
     n = at + GRID
-    if (at < last && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
+    if (r < p.r1 && seen[n] === 0 && (grid[n] & SOLID) === 0) { seen[n] = 1; queue[tail++] = n }
   }
   return seen
 }
@@ -398,13 +408,14 @@ function shutsIn(placed: readonly Piece[], blocked: ArrayLike<number>, before: U
   return false
 }
 
-/** Whether a wall piece's back lies on the floor plan's edge for its turn. */
+/** Whether a wall piece's back lies on the floor plan's edge for its turn (a sky floor's edges are its glass, as a hall's walls are). */
 function backed(home: number, f: Footprint, rot: number): boolean {
+  const p = planOf(home)!
   switch (rot) {
-    case 0: return f.r === GRID - DEPTH[home]
-    case 1: return f.c + f.cols - 1 === GRID - 1
-    case 2: return f.r + f.rows - 1 === GRID - 1
-    default: return f.c === 0
+    case 0: return f.r === p.r0
+    case 1: return f.c + f.cols - 1 === p.c1
+    case 2: return f.r + f.rows - 1 === p.r1
+    default: return f.c === p.c0
   }
 }
 
@@ -415,7 +426,8 @@ function backed(home: number, f: Footprint, rot: number): boolean {
  * - 'full': HOME_PIECES pieces are already placed; 'copies': the line is already at its cap in this home;
  * - 'outside': a footprint cell is outside the home's floor plan (so is a piece that is not well-formed: no such line,
  *   cells that are not whole numbers, a turn outside 0..3);
- * - 'doorway': a footprint cell is in the apron; 'wall': a wall piece's back is not on the floor plan's edge;
+ * - 'doorway': a footprint cell is in the apron (a sky floor's arrival); 'wall': a wall piece's back is not on the
+ *   floor plan's edge;
  * - 'overlap': a footprint cell is already some piece's (a seat's included);
  * - 'you': a cell the piece would block is set in `blocked`, a GRID × GRID table by cellIndex (nonzero: someone
  *   stands there; the engine marks every cell near a local avatar on foot in this home, cellsNear);
@@ -429,7 +441,7 @@ function backed(home: number, f: Footprint, rot: number): boolean {
  */
 export function canPlace(home: number, placed: readonly Piece[], piece: Piece, blocked: ArrayLike<number> | null = null, owns: ((id: number) => boolean) | null = null): Verdict {
   const s = shapeOfPiece(piece)
-  if (!s || DEPTH[home] === undefined) return 'outside'
+  if (!s || !planOf(home)) return 'outside'
   if (owns && !owns(piece.id)) return 'unowned'
   if (placed.length >= HOME_PIECES) return 'full'
   let copies = 0
@@ -437,7 +449,7 @@ export function canPlace(home: number, placed: readonly Piece[], piece: Piece, b
   if (copies >= s.cap) return 'copies'
   const f = footprint(piece)!
   for (let r = f.r; r < f.r + f.rows; r++) for (let c = f.c; c < f.c + f.cols; c++) if (!inMask(home, c, r)) return 'outside'
-  for (let r = f.r; r < f.r + f.rows; r++) for (let c = f.c; c < f.c + f.cols; c++) if (inApron(c, r)) return 'doorway'
+  for (let r = f.r; r < f.r + f.rows; r++) for (let c = f.c; c < f.c + f.cols; c++) if (inKeep(home, c, r)) return 'doorway'
   if (s.wall && !backed(home, f, piece.rot)) return 'wall'
   const grid = occupancy(placed)
   const own = pieceCells(piece)
@@ -538,31 +550,34 @@ export function solidBox(p: Piece): RoomBox | null {
   return [u + r0 * CELL + PIECE_INSET, v + c0 * CELL + PIECE_INSET, u + r1 * CELL - PIECE_INSET, v + c1 * CELL - PIECE_INSET, 0, solid.top]
 }
 
-/** Throws unless `home` is a property index. */
+/** Throws unless `home` is a room (homeGrid.ts planOf). */
 function checkHome(home: number): void {
-  if (DEPTH[home] === undefined || !Number.isInteger(home)) throw new RangeError(`no home ${home}`)
+  if (!planOf(home)) throw new RangeError(`no home ${home}`)
 }
 
 /**
- * Home `home`'s floor overlay in the room frame: from the fill block's face (or the back glass, which is where
+ * Room `home`'s floor overlay in the room frame: from the fill block's face (or the back glass, which is where
  * backEdge − INSET falls in the two grandest homes) to the doorway wall's inner face, wall to wall, a few millimetres
- * above `base` (0 in the city, the region's paved floor height in a region). Its top is the floor finish. It hides the
+ * above `base` (0 in the city, the region's paved floor height in a region, the floor's height on a sky floor). A sky
+ * floor's runs glass to glass, INSET outside its plan on every side. Its top is the floor finish. It hides the
  * street's ground under the room, is never a collider, and pieces stand through it from the floor.
  */
 export function floorOverlay(home: number, base = 0): RoomBox {
   checkHome(home)
-  return [backEdge(home) - INSET, -GLASS, GLASS, GLASS, base + OVERLAY.y0, base + OVERLAY.y1]
+  const e = home < DEPTH.length ? GLASS : INSET - backEdge(home)
+  return [backEdge(home) - INSET, -e, e, e, base + OVERLAY.y0, base + OVERLAY.y1]
 }
 
 /**
- * Home `home`'s wall panels in the room frame for wall finish `wall` (WALLS): none for glass (or an index that is not
- * a finish), otherwise five panels PANEL.thick thick and PANEL.gap off the glass's inner faces and the fill block's face,
- * floor to slab: the back, the two sides (from the back panel's front face to the doorway wall's panels), and the
- * doorway wall either side of the opening, PANEL.door back from its edges. No two share a face.
+ * Room `home`'s wall panels in the room frame for wall finish `wall` (WALLS): none for glass (or an index that is not
+ * a finish) and none on a sky floor, whose walls are its windows; otherwise five panels PANEL.thick thick and PANEL.gap
+ * off the glass's inner faces and the fill block's face, floor to slab: the back, the two sides (from the back panel's
+ * front face to the doorway wall's panels), and the doorway wall either side of the opening, PANEL.door back from its
+ * edges. No two share a face.
  */
 export function wallPanels(home: number, wall: number): RoomBox[] {
   checkHome(home)
-  if (!Number.isInteger(wall) || (WALLS[wall]?.style ?? null) === null) return []
+  if (home >= DEPTH.length || !Number.isInteger(wall) || (WALLS[wall]?.style ?? null) === null) return []
   const out = GLASS - PANEL.gap, inn = out - PANEL.thick
   const b0 = backEdge(home) - INSET + PANEL.gap, b1 = b0 + PANEL.thick
   const door = DOORWAY + PANEL.door
@@ -601,3 +616,17 @@ export const HOME_STAGING: readonly (readonly Piece[])[] = Object.freeze([
   // The sky-mansion (the whole grid): the console and two workstations on the back wall, two sofas by the hologram table, the piano.
   staged([[161, 14, 0, 0], [168, 4, 0, 0], [168, 7, 0, 0], [162, 14, 12, 0], [163, 11, 11, 3], [163, 18, 11, 1], [166, 25, 6, 0]]),
 ])
+
+/**
+ * The sky floors' show floors, by room from 7, drawn and made solid while the deed is unowned, like HOME_STAGING. Each
+ * passes canPlace piece by piece in the sky plan (homeLayout.test.ts).
+ */
+export const SKY_STAGING: readonly (readonly Piece[])[] = Object.freeze([
+  // The Penthouse's (room 7): two sofas round the hologram table, the piano and a green wall on the back glass.
+  staged([[163, 13, 9, 0], [162, 14, 12, 0], [163, 13, 16, 2], [166, 21, 7, 0], [167, 7, 6, 0]]),
+  // The Sky-Mansion's (room 8): a green wall on the back glass, the hologram table between two sofas, the piano.
+  staged([[167, 7, 6, 0], [162, 14, 12, 0], [163, 11, 11, 3], [163, 18, 11, 1], [166, 21, 18, 0]]),
+])
+
+/** Room `room`'s show home: HOME_STAGING for a hall, SKY_STAGING for a sky floor; none for no room. */
+export const stagingOf = (room: number): readonly Piece[] => (room < DEPTH.length ? HOME_STAGING[room] : SKY_STAGING[room - DEPTH.length]) ?? []

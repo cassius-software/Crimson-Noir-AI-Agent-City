@@ -11,11 +11,11 @@
  * FbmSet.sample(), so the autoscaler's resolution swap reaches every material without rebuilding a shader.
  * What breaks if it is removed? Buildings and streets render as flat untextured grey.
  */
-import { MeshStandardNodeMaterial } from 'three/webgpu'
+import { MeshStandardNodeMaterial, Vector3 } from 'three/webgpu'
 import {
   Fn, abs, attribute, cross, dFdx, dFdy, dot, exp, faceDirection, float, floor, fract, fwidth, hash, length, max, min, mix,
   normalViewGeometry, normalWorldGeometry, positionView, positionWorld, select, sign, smoothstep, step,
-  time, vec2, vec3,
+  time, uniform, vec2, vec3,
 } from 'three/tsl'
 import type { Node, UniformNode, Vector2 } from 'three/webgpu'
 import { CITY, HERITAGE_COLUMNS, STYLE } from './city.ts'
@@ -27,6 +27,12 @@ import { TRAFFIC } from '../02_Define_The_Rules/civic.ts'
 type F = Node<'float'>
 type V2 = Node<'vec2'>
 type V3 = Node<'vec3'>
+
+/**
+ * The two sky floors' ceilings (properties.ts): each its lot's centre x and z and its slab's underside y, set by
+ * world.ts from the city's clear panes; far below (no ceiling) in a region, where there are none.
+ */
+export const SKY_CEILINGS = [uniform(new Vector3(0, -1e9, 0)), uniform(new Vector3(0, -1e9, 0))] as const
 
 /** Bump from a procedural height via screen-space derivatives. */
 function bumpedNormal(height: F, strength: number) {
@@ -161,8 +167,10 @@ export function buildingMaterial(fbm: FbmSet, night: UniformNode<'float', number
   // A workplace's ceiling (interiors.ts: the slab's underside at ROOM.height, the one downward face at that height):
   // white acoustic tile with a luminaire panel over each of the room's four fixtures (cityLights.ts FIXTURE: a lot's
   // centre is at (k + 0.5) × pitch, the fixtures FIXTURE.span from it on both axes), lit day and night: the fixtures'
-  // faces, whose light is the real PointLights hung under them.
-  const ceilingFace = n.y.lessThan(-0.5).and(abs(p.y.sub(ROOM.height)).lessThan(0.05))
+  // faces, whose light is the real PointLights hung under them. A sky floor's slab shows the same ceiling over its
+  // room, inside its glass (8 m from the lot's centre), with nothing hung under it.
+  const atSky = (s: (typeof SKY_CEILINGS)[number]) => abs(p.y.sub(s.y)).lessThan(0.05).and(max(abs(p.x.sub(s.x)), abs(p.z.sub(s.z))).lessThan(8))
+  const ceilingFace = n.y.lessThan(-0.5).and(abs(p.y.sub(ROOM.height)).lessThan(0.05).or(atSky(SKY_CEILINGS[0])).or(atSky(SKY_CEILINGS[1])))
   const ceilingLocal = fract(p.xz.div(CITY.pitch)).mul(CITY.pitch).sub(CITY.pitch / 2)
   const luminairePanel = band(abs(abs(ceilingLocal.x).sub(FIXTURE.span)), 0, FIXTURE.panel).mul(band(abs(abs(ceilingLocal.y).sub(FIXTURE.span)), 0, FIXTURE.panel))
   const tile = vec3(0.82, 0.82, 0.8).mul(noise(p.xz.div(1.5)).g.mul(0.1).add(0.95))

@@ -13,8 +13,13 @@
  * of the fill block's face in a shallower home). Row 0 is the back and row GRID − 1 the doorway; column c grows toward
  * +v, which is on the right when you look in from the door. Home i uses rows GRID − DEPTH[i] to GRID − 1, every column.
  *
+ * A home is furnished room by room. Rooms 0 to 6 are the homes' halls, by property index; rooms 7 and 8 are the sky
+ * floors up the towers of the Penthouse and the Sky-Mansion (SKY_HOMES), in the city only (properties.ts). Both sky
+ * floors use one fixed plan of the same grid, SKY: 20 by 20 cells round the lot's centre, with the arrival block
+ * (ARRIVAL) kept clear in front of where the ride up puts the player, as the apron is in a hall.
+ *
  * These numbers are shipped data, like the catalogue's bits: a saved layout names cells by (column, row), so GRID,
- * CELL, DEPTH and APRON keep their meaning for ever, and homeGrid.test.ts pins them.
+ * CELL, DEPTH, APRON, SKY and ARRIVAL keep their meaning for ever, and homeGrid.test.ts pins them.
  * What breaks if it is removed? The homes have no depth, the fill blocks no face, and a furnished layout would have no
  * frame to be saved in or drawn from.
  */
@@ -41,9 +46,36 @@ export const APRON: Readonly<{ r0: number; r1: number; c0: number; c1: number }>
 /** The most pieces a home holds (one collider each), the same as a workplace's furniture (interiors.ts ROOM.furniture). */
 export const HOME_PIECES = 16
 
-/** The u of home `home`'s first row's back edge, m: the room's back face (its fill block's, or the glass's) is INSET behind it. */
+/** The homes with a sky floor up their tower in the city, by property index: the Penthouse's is room 7, the Sky-Mansion's room 8. */
+export const SKY_HOMES: readonly number[] = Object.freeze([3, 6])
+/** How many rooms there are: the seven halls, then the two sky floors. */
+export const ROOM_COUNT = DEPTH.length + SKY_HOMES.length
+/** The property index (the deed) room `room` belongs to: a hall's own index, a sky floor's home's; −1 for no room. */
+export const deedOf = (room: number): number => (room < DEPTH.length ? room : SKY_HOMES[room - DEPTH.length] ?? -1)
+/** Home `home`'s sky floor's room (7 or 8), or −1 for a home without one. */
+export const skyRoom = (home: number): number => (SKY_HOMES.includes(home) ? DEPTH.length + SKY_HOMES.indexOf(home) : -1)
+
+/** A block of cells, both ends included. */
+export type Cells = Readonly<{ r0: number; r1: number; c0: number; c1: number }>
+/** A room's floor plan: its rows and columns, and the block kept clear for the way in (the apron, or the arrival). */
+export type Plan = Readonly<{ r0: number; r1: number; c0: number; c1: number; keep: Cells }>
+/**
+ * The arrival on a sky floor (u 4.668 to 7.78, |v| up to 2.334): the cells in front of the glass on the doorway's side,
+ * where the ride up puts the player (its centre, u 6.224, v 0). It is always free, as the apron is.
+ */
+export const ARRIVAL: Cells = Object.freeze({ r0: 22, r1: 25, c0: 13, c1: 18 })
+/** The sky floors' plan: rows and columns 6 to 25, 15.56 m square round the lot's centre (u and v ±7.78), the glass INSET outside it. */
+export const SKY: Plan = Object.freeze({ r0: 6, r1: 25, c0: 6, c1: 25, keep: ARRIVAL })
+const HALLS: readonly Plan[] = Object.freeze(DEPTH.map((d) => Object.freeze({ r0: GRID - d, r1: GRID - 1, c0: 0, c1: GRID - 1, keep: APRON })))
+
+/** Room `room`'s floor plan: a hall's rows GRID − DEPTH to GRID − 1 and every column, or SKY; null for no room. */
+export function planOf(room: number): Plan | null {
+  return !Number.isInteger(room) || room < 0 ? null : HALLS[room] ?? (room < ROOM_COUNT ? SKY : null)
+}
+
+/** The u of room `room`'s first row's back edge, m: the room's back face (its fill block's, or the glass's) is INSET behind it. */
 export function backEdge(home: number): number {
-  return -GRID_HALF + (GRID - DEPTH[home]) * CELL
+  return -GRID_HALF + (planOf(home)?.r0 ?? NaN) * CELL
 }
 
 /** The centre of cell (c, r) in the room frame, m. */
@@ -51,14 +83,21 @@ export function cellCentre(c: number, r: number): { u: number; v: number } {
   return { u: -GRID_HALF + (r + 0.5) * CELL, v: -GRID_HALF + (c + 0.5) * CELL }
 }
 
-/** Whether cell (c, r) is in home `home`'s floor plan: whole numbers on the grid, at or in front of its first row. */
+/** Whether whole-numbered cell (c, r) lies in block `b`. */
+const within = (b: Cells | null | undefined, c: number, r: number): boolean =>
+  !!b && Number.isInteger(c) && Number.isInteger(r) && r >= b.r0 && r <= b.r1 && c >= b.c0 && c <= b.c1
+
+/** Whether cell (c, r) is in room `home`'s floor plan: whole numbers inside its rows and columns. */
 export function inMask(home: number, c: number, r: number): boolean {
-  const depth = DEPTH[home]
-  if (depth === undefined || !Number.isInteger(c) || !Number.isInteger(r)) return false
-  return c >= 0 && c < GRID && r >= GRID - depth && r < GRID
+  return within(planOf(home), c, r)
 }
 
 /** Whether cell (c, r) is in the apron. */
 export function inApron(c: number, r: number): boolean {
-  return Number.isInteger(c) && Number.isInteger(r) && r >= APRON.r0 && r <= APRON.r1 && c >= APRON.c0 && c <= APRON.c1
+  return within(APRON, c, r)
+}
+
+/** Whether cell (c, r) is in the block room `room` keeps clear: a hall's apron, a sky floor's arrival. */
+export function inKeep(room: number, c: number, r: number): boolean {
+  return within(planOf(room)?.keep, c, r)
 }
