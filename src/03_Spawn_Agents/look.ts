@@ -12,8 +12,9 @@
  * the face itself, a coat, a scarf), the colour palettes it already paints people with and the steps of each slider, so no stored value, no
  * typed command and no shared code can dress anyone in anything the crowd does not wear today. Those four words are
  * the first of a look genome of sixteen (LOOK_WORDS): the words after them hold what the catalogue has grown since
- * (word 4, the skin word: the ten tones of the Monk Skin Tone Scale beside the eight older ones, vitiligo, freckles),
- * and every field of them is 0 for "as before", so a look of the older layouts is the same look with those words
+ * (word 4, the skin word: the ten tones of the Monk Skin Tone Scale beside the eight older ones, vitiligo, freckles;
+ * word 5, the cloth word: the weaves and the cuts; word 6, the accessory word: the shoe's style, the frames' finish, a
+ * watch, a lapel pin), and every field of them is 0 for "as before", so a look of the older layouts is the same look with those words
  * zero, its code is the same code, and the crowd draws it the same. The same module
  * reproduces the choice the shader's hash makes for an agent (lookFromSeed), so a returning visitor's look and an
  * agent's hashed look are the same kind of record; a short code with a checksum lets a look be written down and
@@ -94,7 +95,8 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
+  'eyewear', 'frames', 'watch', 'bag', 'cup',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -106,7 +108,7 @@ export type Look = Readonly<Record<LookSlot, number>>
  */
 export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'topWeave', 'bottomWeave', 'cut', 'bottomCut',
+  'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -327,6 +329,79 @@ export const BOTTOM_CUT_STREET: readonly (readonly number[])[] = Object.freeze([
   Object.freeze([SKIRT_CUT.pencil, SKIRT_CUT.aLine, SKIRT_CUT.pleated, SKIRT_CUT.wrap, SKIRT_CUT.midi, SKIRT_CUT.midiPencil, SKIRT_CUT.buttonFront, SKIRT_CUT.belted]),
 ])
 export const BOTTOM_CUT_STREET_PACKED: readonly number[] = Object.freeze(BOTTOM_CUT_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The shoe's style (WARDROBE.footwear), painted by crowd.ts on the shoe the body already has, from the rest position:
+ * the plain shoe every body wore before (0, so a stored look is shod as it was); a lace-up; a cap toe, a seam across
+ * the toe; a wingtip, its seam a W round the toe with a row of small holes behind it; a loafer, a saddle across the
+ * instep and an apron seam round the toe; a buckle strap; a two-tone, cream between a toe cap and a heel of the
+ * shoe's own colour; a sneaker, a white sole and toe bumper with no mark of any maker; a flat, the foot showing over
+ * its low sides; and three boots, ankle, lace-up and to the knee, whose shafts are painted up the bare leg (under a
+ * skirt, cropped trousers or culottes; full-length trousers cover them). The colour is still the `shoes` slot's: the
+ * style is a separate axis, so every style comes in every shoe colour. No style is named for a place or a people.
+ */
+export const FOOTWEAR = Object.freeze({
+  plain: 0, laceUp: 1, capToe: 2, wingtip: 3, loafer: 4, buckleStrap: 5, twoTone: 6, sneaker: 7, flat: 8, ankleBoot: 9, laceUpBoot: 10, kneeBoot: 11,
+})
+/** A 32-bit set of styles (bit s for style s), as the crowd's fragment stage tests it: `(set >> style) & 1`. */
+const styleSet = (...styles: number[]): number => styles.reduce((set, s) => set | (1 << s), 0) >>> 0
+/**
+ * What each shoe style is painted with, as a set of the styles that carry it: one test per feature in the shader, so
+ * a feature shared by several styles (the laces of five, the cap seam of two, the shaft of three boots) is drawn by
+ * one expression and no twelve-way chain.
+ */
+export const FOOTWEAR_FEATURES = Object.freeze({
+  laces: styleSet(FOOTWEAR.laceUp, FOOTWEAR.capToe, FOOTWEAR.wingtip, FOOTWEAR.sneaker, FOOTWEAR.laceUpBoot),
+  cap: styleSet(FOOTWEAR.capToe, FOOTWEAR.twoTone),
+  wing: styleSet(FOOTWEAR.wingtip),
+  loafer: styleSet(FOOTWEAR.loafer),
+  strap: styleSet(FOOTWEAR.buckleStrap),
+  twoTone: styleSet(FOOTWEAR.twoTone),
+  sneaker: styleSet(FOOTWEAR.sneaker),
+  flat: styleSet(FOOTWEAR.flat),
+  shaft: styleSet(FOOTWEAR.ankleBoot, FOOTWEAR.laceUpBoot, FOOTWEAR.kneeBoot),
+  kneeShaft: styleSet(FOOTWEAR.kneeBoot),
+})
+/**
+ * The shoe styles the hashed crowd wears (above LOOK_ODDS.footwear, one of eight entries per body, LOOK_HASHED_COLOUR
+ * footwearPick): the suit's lace-ups, cap toes and wingtips, the smart-casual body's loafers, sneakers and boots, the
+ * pantsuit's loafers and flats, the skirt suit's flats and knee boots. An entry may repeat, which makes it twice as
+ * common. Packed four bits each for crowd.ts (FOOTWEAR_STREET_PACKED).
+ */
+export const FOOTWEAR_STREET: readonly (readonly number[])[] = Object.freeze([
+  Object.freeze([FOOTWEAR.capToe, FOOTWEAR.capToe, FOOTWEAR.laceUp, FOOTWEAR.laceUp, FOOTWEAR.wingtip, FOOTWEAR.loafer, FOOTWEAR.buckleStrap, FOOTWEAR.twoTone]),
+  Object.freeze([FOOTWEAR.loafer, FOOTWEAR.loafer, FOOTWEAR.sneaker, FOOTWEAR.sneaker, FOOTWEAR.wingtip, FOOTWEAR.buckleStrap, FOOTWEAR.ankleBoot, FOOTWEAR.laceUpBoot]),
+  Object.freeze([FOOTWEAR.loafer, FOOTWEAR.loafer, FOOTWEAR.flat, FOOTWEAR.flat, FOOTWEAR.capToe, FOOTWEAR.sneaker, FOOTWEAR.ankleBoot, FOOTWEAR.laceUp]),
+  Object.freeze([FOOTWEAR.flat, FOOTWEAR.flat, FOOTWEAR.kneeBoot, FOOTWEAR.kneeBoot, FOOTWEAR.ankleBoot, FOOTWEAR.loafer, FOOTWEAR.twoTone, FOOTWEAR.capToe]),
+])
+export const FOOTWEAR_STREET_PACKED: readonly number[] = Object.freeze(FOOTWEAR_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The glasses' frame finish (WARDROBE.frames): black as every frame was (0, so a stored look's glasses are as they
+ * were), tortoiseshell, steel, gold tone, navy, burgundy, clear, and a browline (the upper rim black, the lower
+ * steel). It is a finish of the frame the glasses already have, so it shows only where glasses are worn.
+ */
+export const FRAMES = Object.freeze({ black: 0, tortoiseshell: 1, steel: 2, goldTone: 3, navy: 4, burgundy: 5, clear: 6, browline: 7 })
+/**
+ * Each frame finish's colour, linear RGB, as crowd.ts paints the rims and the card's outline shows them: black is the
+ * crowd's own `vec3(0.05, 0.05, 0.055)`; a browline's entry is its upper rim (its lower rim is the steel's).
+ */
+export const FRAME_FINISH: readonly (readonly [number, number, number])[] = Object.freeze(([
+  [0.05, 0.05, 0.055], [0.17, 0.08, 0.03], [0.55, 0.56, 0.58], [0.6, 0.47, 0.22],
+  [0.05, 0.07, 0.17], [0.26, 0.04, 0.06], [0.72, 0.74, 0.75], [0.05, 0.05, 0.055],
+] as [number, number, number][]).map((c) => Object.freeze(c)))
+/** The light mottle a tortoiseshell frame is flecked with over its dark base (FRAME_FINISH's tortoiseshell), linear RGB. */
+export const TORTOISE_LIGHT: readonly [number, number, number] = Object.freeze([0.42, 0.22, 0.07] as [number, number, number])
+/**
+ * The watch (WARDROBE.watch), painted by crowd.ts round the person's own left wrist: none (0, as before), a steel
+ * three-hand watch on a steel bracelet, a tourbillon chronograph (gold tone, a navy dial with the movement showing
+ * through), a watch on a leather strap, and a smartwatch, its face dark glass. Painted over a prosthetic hand too.
+ */
+export const WATCH = Object.freeze({ none: 0, steel: 1, tourbillon: 2, leather: 3, smartwatch: 4 })
+/**
+ * The lapel pin (WARDROBE.lapelPin), painted by crowd.ts on the wearer's left lapel (a cut without lapels wears it at
+ * the breast): none (0, as before), a rank pin (a plain gold disc), a silver bar, a buttonhole flower. Each is plain,
+ * with no emblem. Under shirt sleeves the jacket is off and the pin is not seen.
+ */
+export const LAPEL_PIN = Object.freeze({ none: 0, rank: 1, bar: 2, flower: 3 })
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -385,6 +460,12 @@ export const WARDROBE = Object.freeze({
   eyewear: Object.freeze(['none', 'glasses']),
   bag: Object.freeze(['none', 'bag']),
   cup: Object.freeze(['none', 'cup']),
+  footwear: Object.freeze([
+    'plain', 'lace-up', 'cap toe', 'wingtip', 'loafer', 'buckle strap', 'two-tone', 'sneaker', 'flat', 'ankle boot', 'lace-up boot', 'knee boot',
+  ]),
+  frames: Object.freeze(['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline']),
+  watch: Object.freeze(['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch']),
+  lapelPin: Object.freeze(['none', 'rank pin', 'silver bar', 'buttonhole flower']),
   outfits: Object.freeze([
     Object.freeze({ top: 'suits', bottom: 'suits', matching: true, shirt: 'shirts', shoes: 'menShoes' }),
     Object.freeze({ top: 'blazers', bottom: 'chinos', matching: false, shirt: 'casualShirts', shoes: 'casualShoes' }),
@@ -414,9 +495,14 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two, the hair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
  * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each,
- * then the outer layer's cut at four, then the lower garment's cut at four; bits 16 to 31 are spare, and so are words 6
- * to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
- * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
+ * then the outer layer's cut at four, then the lower garment's cut at four; bits 16 to 31 are spare. Word 6 is the
+ * accessory word, paint on the meshes the body already has: the shoe's style at five bits (twelve of thirty-two, room
+ * to grow), the glasses' frame finish at four, the watch at three, the lapel pin at three; bits 15 to 31 are spare, and
+ * the next slice is to take them in this order, so its fields are written down here and declared then: an umbrella
+ * [6, 15, 2], headphones [6, 17, 2], a heel [6, 19, 2], the shoe's finish [6, 21, 2], the tie's style [6, 23, 3] and
+ * the bag's [6, 26, 3]. Words 7 to 15 (LOOK_WORDS) are spare too, and unpackGenome requires every spare bit of the
+ * words from 4 on to be zero, so a reader older than a field refuses a look that sets it rather than drop it. Every
+ * width is pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
  */
 export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
   body: [0, 1, 2],
@@ -464,6 +550,10 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   bottomWeave: [5, 4, 4],
   cut: [5, 8, 4],
   bottomCut: [5, 12, 4],
+  footwear: [6, 0, 5],
+  frames: [6, 5, 4],
+  watch: [6, 9, 3],
+  lapelPin: [6, 12, 3],
 })
 
 /**
@@ -475,7 +565,7 @@ export const LOOK_FIELD_HIGH: Readonly<Partial<Record<LookSlot, readonly [word: 
   hairStyle: [4, 7, 2],
 })
 
-/** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, and eleven spare. */
+/** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, the cloth word, the accessory word, and nine spare. */
 export const LOOK_WORDS = 16
 
 /** The legacy look word's height and build fields (three bits each), read by the upgrade alone. */
@@ -528,9 +618,12 @@ export const LOOK_HASHED_HEARING = 26
  * headwear's cloth, the curl pattern, facial hair and its style, a prosthetic limb, which and its finish; whether the
  * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET; whether the outer layer
  * has a cut of its own (above LOOK_ODDS.cut) and which of the body's CUT_STREET; whether the trousers or the skirt
- * have one (above LOOK_ODDS.bottomCut) and which of the body's BOTTOM_CUT_STREET.
+ * have one (above LOOK_ODDS.bottomCut) and which of the body's BOTTOM_CUT_STREET; whether the shoes have a style
+ * (above LOOK_ODDS.footwear) and which of the body's FOOTWEAR_STREET; whether glasses have a finish of their own
+ * (above LOOK_ODDS.frames) and which; the watch; the lapel pin. The accessory word's links are the colours' chain's
+ * alone (38 to 43), so no pieces link is spent and no draw before them moves.
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37, footwear: 38, footwearPick: 39, frames: 40, framesPick: 41, watch: 42, lapelPin: 43 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -599,6 +692,11 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'eyewear': return named(WARDROBE.eyewear)
     case 'bag': return named(WARDROBE.bag)
     case 'cup': return named(WARDROBE.cup)
+    // The accessory word's slots: one list for every body, so a body change keeps them as they are.
+    case 'footwear': return named(WARDROBE.footwear)
+    case 'frames': return named(WARDROBE.frames)
+    case 'watch': return named(WARDROBE.watch)
+    case 'lapelPin': return named(WARDROBE.lapelPin)
   }
 }
 
@@ -1020,9 +1118,13 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * hair: below `longHair` on link 4 is short; otherwise a woman's split link (LOOK_HASHED_HAIR_SPLIT) under `bob` is
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
  * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone. Three outer layers
- * in ten wear a cut (`cut`), about one pair of trousers or skirt in three (`bottomCut`).
+ * in ten wear a cut (`cut`), about one pair of trousers or skirt in three (`bottomCut`). A little over half the
+ * street's shoes have a style (`footwear`), half of its glasses a frame finish (`frames`); on the watch's link a steel
+ * three-hand watch from `watchSteel`, a leather strap from `watchLeather`, a smartwatch from `watchSmart`; on the pin's
+ * link a silver bar from `pinBar` and a buttonhole flower from `pinFlower`. The street never wears the tourbillon or
+ * the rank pin: those are the watch shop's lines, earned there.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65, footwear: 0.45, frames: 0.5, watchSteel: 0.72, watchLeather: 0.84, watchSmart: 0.93, pinBar: 0.96, pinFlower: 0.98 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -1061,6 +1163,10 @@ export function lookFromSeed(seed: number): Look {
     : (above(wear, LOOK_ODDS.turban) ? HEADWEAR.turban : above(wear, LOOK_ODDS.kippah) ? HEADWEAR.kippah : above(wear, LOOK_ODDS.flatCap) ? HEADWEAR.flatCap : HEADWEAR.none)
   const layerLink = hp(LOOK_HASHED_LAYER)
   const layer = layerLink < f32(LOOK_ODDS.shirtSleeves) ? LAYER.shirt : above(layerLink, LOOK_ODDS.coat) ? LAYER.coat : LAYER.jacket
+  // Glasses first: a frame finish is drawn only for a face that wears them.
+  const eyewear = above(hp(5), LOOK_ODDS.glasses)
+  const watchLink = hc(LOOK_HASHED_COLOUR.watch)
+  const pinLink = hc(LOOK_HASHED_COLOUR.lapelPin)
   // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
   const topSize = LOOK_PALETTE[outfit.top].length
   const look: Record<LookSlot, number> = {
@@ -1103,6 +1209,13 @@ export function lookFromSeed(seed: number): Look {
     // Three outer layers in ten are cut otherwise than the notch lapel, one of the body's eight (CUT_STREET).
     cut: above(hc(LOOK_HASHED_COLOUR.cut), LOOK_ODDS.cut) ? CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.cutPick), CUT_STREET[body].length)] : 0,
     bottomCut: above(hc(LOOK_HASHED_COLOUR.bottomCut), LOOK_ODDS.bottomCut) ? BOTTOM_CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.bottomCutPick), BOTTOM_CUT_STREET[body].length)] : 0,
+    // The accessory word: a little over half the shoes styled, one of the body's eight entries (FOOTWEAR_STREET); half
+    // the glasses in a finish other than black; a watch on about one wrist in four (never the tourbillon); a pin on a
+    // few lapels (never the rank pin), and none in shirt sleeves, where the jacket is off.
+    footwear: above(hc(LOOK_HASHED_COLOUR.footwear), LOOK_ODDS.footwear) ? FOOTWEAR_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.footwearPick), FOOTWEAR_STREET[body].length)] : 0,
+    frames: eyewear && above(hc(LOOK_HASHED_COLOUR.frames), LOOK_ODDS.frames) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.framesPick), WARDROBE.frames.length - 1) : 0,
+    watch: above(watchLink, LOOK_ODDS.watchSmart) ? WATCH.smartwatch : above(watchLink, LOOK_ODDS.watchLeather) ? WATCH.leather : above(watchLink, LOOK_ODDS.watchSteel) ? WATCH.steel : WATCH.none,
+    lapelPin: layer === LAYER.shirt ? LAPEL_PIN.none : above(pinLink, LOOK_ODDS.pinFlower) ? LAPEL_PIN.flower : above(pinLink, LOOK_ODDS.pinBar) ? LAPEL_PIN.bar : LAPEL_PIN.none,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
@@ -1112,7 +1225,7 @@ export function lookFromSeed(seed: number): Look {
     shoes: pickIndex(hc(6), LOOK_PALETTE[outfit.shoes].length),
     tie: above(hp(1), LOOK_ODDS.tie),
     scarf: above(hp(LOOK_HASHED_SCARF), LOOK_ODDS.scarf) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.scarfCloth), LOOK_PALETTE.scarves.length) : 0,
-    eyewear: above(hp(5), LOOK_ODDS.glasses),
+    eyewear,
     bag: above(hp(2), woman ? LOOK_ODDS.bagWoman : LOOK_ODDS.bagMan),
     cup: above(hp(3), LOOK_ODDS.cup),
   }

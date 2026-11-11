@@ -26,7 +26,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
+  FRAME_FINISH, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
   LOOK_LOWER_GARMENTS, formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, lowerGarmentFits, lowerGarmentOf, matchingSwatch, parseLookCode,
   withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
@@ -97,10 +97,14 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'bottom': return body === 3 ? 'Skirt' : body === 1 ? 'Chinos' : 'Trousers'
     case 'bottomWeave': return body === 3 ? 'Skirt\'s weave' : 'Trousers\' weave'
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
-    case 'shoes': return 'Shoes'
+    case 'footwear': return 'Shoe style'
+    case 'shoes': return 'Shoe colour'
     case 'tie': return 'Tie'
     case 'scarf': return 'Scarf'
+    case 'lapelPin': return 'Lapel pin'
     case 'eyewear': return 'Glasses'
+    case 'frames': return 'Frames'
+    case 'watch': return 'Watch'
     case 'bag': return 'Bag'
     case 'cup': return 'Cup'
   }
@@ -156,7 +160,8 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.ACCENT] = '#2b2b2e'
   out[SLOT.PROP] = '#2a2a2a'
   out[SLOT.LEGWEAR] = look.body === 3 ? '#2a2626' : out[SLOT.BOTTOM]
-  out[SLOT.FRAME] = '#0d0d0e'
+  // The frames in their finish (look.ts FRAME_FINISH, the crowd's own linear values, as the black was): the black, #0d0d0e, as before.
+  out[SLOT.FRAME] = hex6(FRAME_FINISH[look.frames].reduce((n, c) => n * 256 + Math.round(255 * c), 0))
   out[SLOT.EYE] = '#e8e2dc'
   out[SLOT.IRIS] = '#4a3a2a'
   out[SLOT.LIP] = lipOf(lookSwatch(look, 'skin') ?? 0xd29f79)
@@ -241,7 +246,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch and the pin show in the city, not in this outline.`}
       </p>
     </div>
   )
@@ -354,8 +359,10 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         {LOOK_SLOTS.map((slot) => {
-          // Under shirt sleeves the jacket is off: its cut, its cloth, its weave and its trim are not seen, so their rows are not shown.
-          if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim')) return null
+          // Under shirt sleeves the jacket is off: its cut, its cloth, its weave, its trim and the pin on its lapel are not seen, so their rows are not shown.
+          if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim' || slot === 'lapelPin')) return null
+          // The frames are the glasses' finish: without glasses there is nothing to finish.
+          if (slot === 'frames' && worn.eyewear === 0) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
           if (isSlider(slot)) {

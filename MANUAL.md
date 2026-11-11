@@ -389,9 +389,10 @@ record (the progression engine's, kept in this browser), so the console's `progr
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
   carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
-  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase.
-  Lines that need slots the wardrobe does not have yet (the tattoo designs and inks, watches, the lapel pin, the
-  umbrella, headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
+  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
+  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin. Lines that need slots
+  the wardrobe does not have yet (the tattoo designs and inks, the umbrella, headphones) are listed as on order and go
+  on sale when the wardrobe's update adds those slots. The design house's seven property
   deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
   credits) are on sale (see Homes and Furnishing). A furniture line you own says **Place it at home (B)**, and so does
   the line the card says when you buy one. A deed whose price would leave you less than the cheapest furniture on sale
@@ -1138,17 +1139,19 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  thirty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the eighteen dress slots (skin, age,
-  undertone, vitiligo, freckles, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
-  one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
+  forty-nine slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the thirty-three dress slots (skin, age,
+  undertone, vitiligo, freckles, hair style, curl, hair colour, headwear, headwear colour, facial hair, hearing
+  devices, prosthetic, prosthetic finish, layer, cut, top, top weave, trim, bottom cut, bottom, bottom weave, shirt,
+  shoe style, shoes, tie, scarf, lapel pin, eyewear, frames, watch, bag, cup), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
   in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
-  within its body's options (the genome's later slots, vitiligo and freckles, may be left out and read as none). A
+  within its body's options (the genome's later slots, vitiligo, freckles and the accessory word's four among them,
+  may be left out and read as none). A
   look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
@@ -1252,6 +1255,26 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   wrap and button-front): each sets the cut and the weave and keeps your colours. Only the ones your body wears are
   listed, and the console refuses a skirt on a trouser body. About one pedestrian in three wears a lower cut. At the
   console: `look bottomCut midi`, `look garment wide-leg trousers`.
+- **Shoes, frames, a watch and a lapel pin.** A **Shoe style** row sits above the **Shoe colour** row: plain (as every
+  shoe was), lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot and
+  knee boot, painted on the shoe in its own colour (the laces, a toe cap, a wing's line and its perforations up close,
+  a loafer's saddle, a strap and its buckle, a cream upper, a sneaker's white sole, a flat's low sides showing the
+  hose or the sock). A boot's shaft shows up the leg where the leg shows: under the skirt, and below cropped trousers
+  and culottes; full-length trousers hide it, as they would. The ankle boots stop above the ankle and the knee boot
+  just below the knee, over a prosthetic shin as over the hose. **Frames** finish the glasses: black (as every pair
+  was), tortoiseshell, steel, gold tone, navy, burgundy, clear and browline (a black brow over a steel lower rim); the
+  row shows only while glasses are worn, and the silhouette's rims wear the finish. The **Watch** is on the left
+  wrist: none, a steel three-hand, a tourbillon chronograph (a gold case, its movement showing through a navy dial),
+  a leather strap or a smartwatch; it is drawn over a prosthetic hand as over the skin. The **Lapel pin** is on the
+  left lapel, or at the breast where the cut has no lapel to speak of: none, a rank pin (a plain gold disc with a
+  ring), a silver bar or a buttonhole flower. The pins are plain shapes with no emblem, and the row leaves the card in
+  shirt sleeves, with the jacket. All four are paint on the shoe, the rims, the hand and the jacket the crowd already
+  draws: no piece is added. The far crowd shows the shoe styles and the boots; the frames, the watch and the pin are
+  the near body's. On the street a little over half the pedestrians wear a shoe style (one of their body's eight),
+  a little over one in four a watch (steel, leather or a smartwatch, never the tourbillon), half of those in glasses frames
+  other than black, and about one in thirty-five a silver bar or a flower on the lapel (never the rank pin): the
+  tourbillon and the rank pin are the watch shop's. At the console: `look footwear wingtip`, `look watch smartwatch`,
+  `look frames tortoiseshell`, `look lapelPin silver bar`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -1264,10 +1287,11 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
   word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
   the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
-  weave, the bottom's and the outer layer's cut; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  weave, the bottom's and the outer layer's cut; word 6, the accessory word, holds the shoe's style, the frames, the
+  watch and the lapel pin in its low fifteen bits; words 7 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin, cloth and accessory words through one flat varying, and the vertex stage never reads the accessory word. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -1277,9 +1301,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut) adds a tail carrying those words up to the
-  last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
-  cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut, a shoe style, a watch) adds a tail
+  carrying those words up to the last that is not zero, with its own check: eight symbols for the skin word alone,
+  `-XXXXXXXX`, fifteen with the cloth word, `-XXXXXXXX-XXXXXXX`, twenty-one with the accessory word,
+  `-XXXXXXXX-XXXXXXXX-XXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
@@ -1640,8 +1665,8 @@ while you type.
   worker re-checks (see Pings and the rally).
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
-  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `shoes`, `tie`, `scarf`, `eyewear`, `bag`,
-  `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
+  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `footwear`, `shoes`,
+  `tie`, `scarf`, `lapelPin`, `eyewear`, `frames`, `watch`, `bag`, `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
   `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
