@@ -2374,6 +2374,14 @@ any of them.
   exception is Ollama under `auto` with the GPUs' memory given: after an answer cut at that limit, a model measured
   all on the GPU may get twice the context, with answers of up to a quarter of it, for the rest of the visit (How
   big a model auto gives Ollama, below); the client never asks for more than 32,768 tokens and 8,192 of answer.
+  In the chat format the answer cap can only come down, and only by the server's own numbers: a server that refuses
+  a request because the prompt and the 2,048 together are longer than its model's window, saying its window and its
+  count of the prompt in its own words (SGLang, and vLLM from 0.11, read up to 0.16; 0.23 and later fit the cap
+  themselves), is asked once more with the same request and an answer cap of the window less the prompt, when that
+  leaves at least 256 tokens (a starting value); with less, one sentence says the prompt leaves no room in the
+  model's window. Nothing is estimated, and a request a server accepts is sent as before. `localCompute.test.ts`
+  drives it against fake servers on this machine with both servers' sentences, copied from their sources, and
+  `router.auto.test.ts` through auto; no real SGLang or vLLM ran it.
   Running a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
@@ -2382,7 +2390,11 @@ any of them.
   or `ask api` changed since). When an ask's first answer goes at a larger context and Ollama refuses it before any
   of it arrives, the ask is answered once more at 8,192, unless a setting changed since it was sent or a stop came
   with the refusal; an answer that was itself the ask's one more (the moved model's retry, or the answer after a new
-  look) is not asked again (below). Under `auto`, an
+  look) is not asked again (below). A chat-format refusal of the prompt's length (Bounded, above) is followed by one
+  more `POST /v1/chat/completions` of the same body with the smaller `max_tokens`, at most once for each answer and
+  never after a stop, and by nothing more: the router's own retries are for Ollama's generate format and for a
+  server that does not answer at all, and a retry that cannot reach the server is reported as the server's failure,
+  so no look follows it. Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,

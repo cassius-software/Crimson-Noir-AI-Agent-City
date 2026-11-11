@@ -13,6 +13,7 @@
  * never once its answer has begun; the page's own model is only listed by a look (never answered or loaded), named
  * only when a file is kept, found only when one is chosen, and never taken for a server refusing the page; and with
  * nothing answering it fails the way the script stands in for, so the operator hears canned words labelled as such.
+ * A chat-format server refusing a prompt too long for its window costs an ask one more request at most, never a look.
  * What breaks if it is removed? A fresh machine with a model server running could still get only the script, or an
  * answer from a server the operator never meant to use.
  */
@@ -869,4 +870,46 @@ test('once the first round has settled with a text model, the second round still
     assert.ok(c.signal?.aborted, `${c.url} is still being asked`)
     assert.notEqual((c.signal?.reason as Error | undefined)?.name, 'TimeoutError', `${c.url} ran out the look's wait instead`)
   }
+})
+
+test("a chat-format server refusing a prompt too long for its window: one more request with the cap it leaves, and never a look or another answer after it", async () => {
+  // vLLM's own words (v0.13.0 serving_engine.py:1027-1034; localCompute.test.ts has the sources and both servers).
+  const refusal = JSON.stringify({ error: { message: "'max_tokens' or 'max_completion_tokens' is too large: 2048. This model's maximum context length is 4096 tokens and your request has 3000 input tokens (2048 > 4096 - 3000). None", type: 'BadRequestError', param: null, code: 400 } })
+  const m = machine({ 8080: ['local.gguf'] })
+  // What the chat POSTs get in turn while this holds entries: a refusal, or the server gone (it then takes no connection).
+  const next: ('refuse' | 'gone')[] = []
+  const f: FetchLike = async (url, init) => {
+    const step = url.endsWith('/v1/chat/completions') ? next.shift() : undefined
+    if (step === undefined) return m.f(url, init)
+    m.calls.push({ url, body: JSON.parse(String(init?.body)) })
+    if (step === 'refuse') return new Response(refusal, { status: 400, headers: { 'content-type': 'application/json' } })
+    m.servers[8080] = 'down'
+    throw new TypeError('Failed to fetch')
+  }
+  const r = createMindRouter({ fetch: f, lookMs: 50 })
+  assert.equal(await ask(r), '8080 says hi')
+  assert.equal(r.settings().found, 'llamacpp')
+  const chatPost = `${LLAMACPP_SERVER}/v1/chat/completions`
+  const caps = () => m.calls.map((c) => [c.url, (c.body as { max_tokens?: number } | null)?.max_tokens])
+
+  m.calls.length = 0
+  next.push('refuse')
+  assert.equal(await ask(r), '8080 says hi', 'the shorter answer is the answer')
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]])
+
+  // Refused again: that is the answer's failure; the router sends nothing more.
+  m.calls.length = 0
+  next.push('refuse', 'refuse')
+  const again = await r.answer(req(), () => {}).catch((e: unknown) => e)
+  assert.ok(again instanceof CognitionError && again.code === 'server', String(again))
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]])
+
+  // The retry finds the server gone: the server's failure, so no look and no answer from anywhere else.
+  m.calls.length = 0
+  next.push('refuse', 'gone')
+  const gone = await r.answer(req(), () => {}).catch((e: unknown) => e)
+  assert.ok(gone instanceof CognitionError, String(gone))
+  assert.deepEqual([gone.code, gone.message], ['server', `no local model server is answering at ${LLAMACPP_SERVER}: start it, or point ask at the right address (ask server <url>)`])
+  assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1096]], 'no list was asked for')
+  assert.equal(r.settings().found, 'llamacpp')
 })
