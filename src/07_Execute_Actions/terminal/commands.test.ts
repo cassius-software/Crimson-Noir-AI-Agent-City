@@ -2250,31 +2250,35 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
-test('look tattoos: the four zones complete the designs by name and the ink its eight, the lists are the wardrobe\'s; a design, a 1-based number, none and an ink reach the host as typed', () => {
+test('look tattoos: the six zones complete the designs by name, the ink its eight and the sleeves full or rolled, the lists are the wardrobe\'s; a design, a 1-based number, none, an ink and the sleeves reach the host as typed', () => {
   // The lists the console offers are the wardrobe's own (look.ts and tattoo.ts, which the console must not import).
   assert.deepEqual([...LOOK_TATTOO_ARGS], [...WARDROBE.tattoo].sort(), 'none and the sixty-four designs by their names')
   assert.deepEqual([...LOOK_INK_ARGS], [...WARDROBE.tattooInk].sort(), 'the eight inks by their names')
   assert.equal(LOOK_TATTOO_ARGS.length, 65)
-  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const) {
+  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooForearm', 'tattooForearmR'] as const) {
     assert.deepEqual(complete(`look ${slot} `), [...WARDROBE.tattoo].sort().map((n) => `look ${slot} ${n}`), slot)
     assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the card's options`)
   }
   assert.deepEqual(complete('look tattooInk '), lookOptions(0, 'tattooInk').map((o) => `look tattooInk ${o.name}`).sort())
+  assert.deepEqual(complete('look sleeves '), ['look sleeves full', 'look sleeves rolled'])
+  assert.deepEqual(complete('look sleeves '), lookOptions(0, 'sleeves').map((o) => `look sleeves ${o.name}`).sort(), 'sleeves: the card\'s options')
   // The manual's examples: a name is completed whole, so both designs that start "com" are offered.
   assert.deepEqual(complete('look tattooHand com'), ['look tattooHand comet', 'look tattooHand compass rose'])
   assert.deepEqual(complete('look tattooInk g'), ['look tattooInk gold leaf', 'look tattooInk grey wash'])
   assert.deepEqual(complete('look tattooNape n'), ['look tattooNape nautilus shell', 'look tattooNape nested diamonds', 'look tattooNape nested triangles', 'look tattooNape none'])
-  assert.deepEqual(complete('look t'), ['look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
+  assert.deepEqual(complete('look t'), ['look tattooForearm', 'look tattooForearmR', 'look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
   // Past a space typed inside a name, nothing more is offered (the words before the last are no key of the table).
   assert.deepEqual(complete('look tattooHand compass r'), [])
   const b = fake()
-  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor']) run(l, b, [])
+  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor', 'look sleeves rolled', 'look tattooForearm circuit trace']) run(l, b, [])
   assert.deepEqual(b.look.changes, [
     { kind: 'slot', slot: 'tattooHand', value: 'compass rose' },
     { kind: 'slot', slot: 'tattooHand', value: '10' },
     { kind: 'slot', slot: 'tattooNape', value: 'none' },
     { kind: 'slot', slot: 'tattooInk', value: 'gold leaf' },
     { kind: 'slot', slot: 'tattooHandR', value: 'anchor' },
+    { kind: 'slot', slot: 'sleeves', value: 'rolled' },
+    { kind: 'slot', slot: 'tattooForearm', value: 'circuit trace' },
   ])
   assert.deepEqual(texts(run('look tattooNeck', b, [])), ['usage: look tattooNeck <n|name>'])
   // The help's summary names them.

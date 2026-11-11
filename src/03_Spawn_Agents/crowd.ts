@@ -33,17 +33,17 @@ import {
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { bodyVertex, crowdHash } from './crowdBody.ts'
-import { tattoo } from './crowdTattoo.ts'
+import { tattoo, tattooZones } from './crowdTattoo.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, JACKET_HEM, LANDMARK, LOWER_PAINT, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
   FACIAL_HAIR, HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, HEARING, LAYER, LOOK_HASHED_HEARING, PROSTHETIC, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS, BOTTOM_CUT_STREET_PACKED, SKIRT_CUT, TROUSER_CUT,
-  FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN,
+  FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN, SLEEVES,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
-import { TATTOO_INK } from './tattoo.ts'
+import { TATTOO_INK, TATTOO_SLEEVE } from './tattoo.ts'
 
 /**
  * The player's own body (agent PLAYER_INDEX) seen from inside its head would fill the view: it is folded to
@@ -983,7 +983,26 @@ export class CrowdView {
     // moves; where they fall on a person is the person's own (an offset from their seed, like the iris).
     const vitiligo = select(custom, gene(LOOK_FIELD.vitiligo), select(h(LOOK_HASHED_COLOUR.vitiligo).greaterThanEqual(LOOK_ODDS.vitiligo), uint(h(LOOK_HASHED_COLOUR.vitiligoPattern).mul(WARDROBE.vitiligo.length - 1 - 0.001)).add(uint(1)), uint(0)))
     const freckles = select(custom, gene(LOOK_FIELD.freckles), select(h(LOOK_HASHED_COLOUR.freckles).greaterThanEqual(LOOK_ODDS.freckles), uint(h(LOOK_HASHED_COLOUR.frecklesDensity).mul(WARDROBE.freckles.length - 1 - 0.001)).add(uint(1)), uint(0)))
-    const marked = skinMarks(toned, vitiligo, freckles, rig, vec3(h(LOOK_HASHED_COLOUR.marks), h(LOOK_HASHED_COLOUR.marks + 1), h(LOOK_HASHED_COLOUR.marks + 2)), slot, near)
+    // The wardrobe word the vertex stage resolved (look.ts LOOK_FIELD's word 3): the layer owns the top's dye (the
+    // look's top index, or the hash's top link over this body's palette length, read from the coats under a coat: as
+    // look.ts lookOptions offers them), the trim is matching (the top's cloth) or one of the trim cloths, the scarf one
+    // of the scarf cloths (0 is none, and the piece is not drawn). Read here, ahead of the skin, for the sleeves.
+    const wardrobe = uint(vWardrobe.add(0.5))
+    const wfield = (s: 'layer' | 'trim' | 'scarf'): U1 => wardrobe.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
+    const layer = wfield('layer')
+    // Rolled sleeves (look.ts SLEEVES, the cloth word: the look's, or a passer-by's whose drawn designs reach a forearm,
+    // crowdTattoo.ts tatZones, as look.ts lookFromSeed rolls them; a coat keeps its sleeves down): below the roll line
+    // the sleeve's fragments are skin (the skin's slot for the colour, its marks, its tattoos, a prosthetic arm's finish
+    // and the skin's roughness) and above it a band of the sleeve's cloth turned back. Both bodies, so a person's arms
+    // do not change as they come close.
+    const onArm = rig.x.greaterThan(BONE.ARM_L - 0.5)
+    const rolledUp = select(custom, gene(LOOK_FIELD.sleeves).equal(uint(SLEEVES.rolled)), tattooZones(vSeed).bitAnd(uint(TATTOO_SLEEVE.zones)).notEqual(uint(0)))
+      .and(layer.notEqual(uint(LAYER.coat)))
+    const sleeveUp = rolledUp.and(onArm).and(slot.lessThan(SLOT.TOP + 0.5))
+    const bareArm = sleeveUp.and(positionGeometry.y.lessThan(TATTOO_SLEEVE.roll))
+    // The slot the skin's paints and the colour read: the skin's where a rolled sleeve bares the forearm.
+    const skinSlot = select(bareArm, float(SLOT.SKIN), slot).toVar() as unknown as F1
+    const marked = skinMarks(toned, vitiligo, freckles, rig, vec3(h(LOOK_HASHED_COLOUR.marks), h(LOOK_HASHED_COLOUR.marks + 1), h(LOOK_HASHED_COLOUR.marks + 2)), skinSlot, near)
     const wornSkin = mix(marked, vec3(dot(marked, vec3(0.2126, 0.7152, 0.0722))), age.mul(0.25)).toVar() as unknown as V3
     const greyed = mix(pickedHair, grey, smoothstep(0.5, 1, age)).toVar() as unknown as V3
     top = select(custom, ownTop, top)
@@ -992,11 +1011,6 @@ export class CrowdView {
     shoes = select(custom, ownShoes, shoes)
     // The shoe's colour before its style is painted on it: a boot's shaft is this cloth too (below).
     const shoeCloth = shoes.toVar() as unknown as V3
-    // The wardrobe word the vertex stage resolved (look.ts LOOK_FIELD's word 3): the layer owns the top's dye (the
-    // look's top index, or the hash's top link over this body's palette length, read from the coats under a coat: as
-    // look.ts lookOptions offers them), the trim is matching (the top's cloth) or one of the trim cloths, the scarf one
-    // of the scarf cloths (0 is none, and the piece is not drawn).
-    const wardrobe = uint(vWardrobe.add(0.5))
     // The hair's paint and the headwear the vertex stage resolved (the look's, or the hash's), above the wardrobe's bits.
     const hairTexture = wardrobe.shiftRight(uint(8)).bitAnd(uint((1 << HAIR_TEXTURE_BITS) - 1))
     const headwear = wardrobe.shiftRight(uint(8 + HAIR_TEXTURE_BITS)).bitAnd(uint(7))
@@ -1024,8 +1038,10 @@ export class CrowdView {
     // look's designs and ink (genome word 7), or for a person who wears no chosen look word 7's street bit alone, so the
     // shader draws theirs from their seed as look.ts streetTattoos does. The ink goes on before the facial hair, so a
     // beard paints over it; wornSkin itself stays bare, for the hose, the lips, the skin through cropped or shaved
-    // hair and a prosthetic's skin-matched finish. Word 8 (the forearms, the calf, the ankle) waits for its slots.
-    const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, slot, select(custom, genome.w, uint(0x80000000)), uint(0), vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null
+    // hair and a prosthetic's skin-matched finish. Word 8 (the forearms) is past the flat varying's four words, so a
+    // chosen look's is read from crowd.figure here (the person's third quad, its first word); the street's needs none.
+    const word8 = select(custom, b.figure.element(uint(vSeed.add(0.5)).mul(uint(FIGURE_QUADS)).add(uint(2))).x, uint(0))
+    const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, skinSlot, select(custom, genome.w, uint(0x80000000)), word8, vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null
     const skinShown = select(kippah, headCloth, facialPaint(inked ? inked.xyz : wornSkin, greyed, facialHair, rig, slot, near)).toVar() as unknown as V3
     // A prosthetic limb (the look's, or one in a hundred from the colours' chain): the hand below the sleeve for an
     // arm, the shin below the knee for a leg where it is bare (the skirt suit's, or below cropped trousers and
@@ -1068,17 +1084,19 @@ export class CrowdView {
     const footwearHas = (set: number) => uint(set).shiftRight(footwear).bitAnd(uint(1)).equal(uint(1))
     const bootTop = select(footwearHas(FOOTWEAR_FEATURES.kneeShaft), float(0.46), float(0.16))
     const booted = footwearHas(FOOTWEAR_FEATURES.shaft).and(onLegBone).and(positionGeometry.y.lessThan(bootTop)).and(slotIs(SLOT.LEGWEAR).or(ankle))
-    const armHere = slotIs(SLOT.SKIN).and(boneIs(BONE.HAND_R).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms)).or(boneIs(BONE.HAND_L).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms))))
+    // A prosthetic arm is the hand, and the forearm a rolled sleeve bares on its side (the person's left is +x).
+    const armSide = (hand: number, side: typeof bareArm) => slotIs(SLOT.SKIN).and(boneIs(hand)).or(bareArm.and(side))
+    const armHere = armSide(BONE.HAND_R, positionGeometry.x.greaterThan(0)).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms))
+      .or(armSide(BONE.HAND_L, positionGeometry.x.lessThan(0)).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms)))
     const legHere = slotIs(SLOT.LEGWEAR).and(positionGeometry.y.lessThan(0.46)).or(ankle)
       .and(boneIs(BONE.SHIN_R).and(limb(PROSTHETIC.leftLeg, PROSTHETIC.bothLegs)).or(boneIs(BONE.SHIN_L).and(limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs)))).and(booted.not())
     const limbHere = armHere.or(legHere)
     const weave = step(0.5, positionGeometry.x.add(positionGeometry.z).mul(140).fract()).add(step(0.5, positionGeometry.y.mul(140).fract())).mod(2)
     const fin = (k: number) => finish.equal(uint(k))
     const finishColour = select(fin(0), vec3(0.23, 0.24, 0.26), select(fin(1), mix(vec3(0.07, 0.075, 0.08), vec3(0.14, 0.145, 0.15), weave), select(fin(2), vec3(0.72, 0.74, 0.77), wornSkin.mul(0.96))))
-    const socketY = select(armHere, float(0.905), float(0.446))
+    // The socket's line: at the wrist below a sleeve, under the roll where a rolled sleeve bares the forearm.
+    const socketY = select(armHere, select(rolledUp, float(TATTOO_SLEEVE.roll - 0.01), float(0.905)), float(0.446))
     const limbColour = finishColour.mul(select(positionGeometry.y.sub(socketY).abs().lessThan(0.006), float(0.5), float(1)))
-    const wfield = (s: 'layer' | 'trim' | 'scarf'): U1 => wardrobe.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
-    const layer = wfield('layer')
     const trimAt = wfield('trim')
     const scarfAt = wfield('scarf')
     const coat = at(PALETTE.coats, select(custom, field('top'), uint(h(3).mul(cloth(outfit.top).length - 0.001))))
@@ -1093,7 +1111,6 @@ export class CrowdView {
     // lines (where the V closes, where its centre runs, how wide the lapels are) and adds its own marks below; the notch
     // lapel (0) moves nothing, so a look without a cut is drawn as it always was.
     const rest = positionGeometry
-    const onArm = rig.x.greaterThan(BONE.ARM_L - 0.5)
     const onTrunk = rig.x.lessThan(BONE.HEAD - 0.5)
     const isCoat = rig.z.greaterThan(PIECE.COAT - 0.5).and(rig.z.lessThan(PIECE.COAT + 0.5))
     const streetCut = uint(CUT_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.cutPick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15))
@@ -1305,11 +1322,15 @@ export class CrowdView {
     }
     // The high waist's top seam, over the trousers' cloth up the trunk.
     const waistBand = near ? mix(woven, woven.mul(0.5), thin(rest.y.sub(1.035).abs(), 0.003)) : woven
-    const worn = select(raisedWaist, waistBand, select(layer.equal(uint(LAYER.shirt)), shirt, jacket))
+    // A rolled sleeve's turned band above the roll line, a shade lighter (the cloth's inside turned out) under a fold's
+    // shadow at its top: a factor on the slot's colour, so the cloth is written out once.
+    const foldTop = TATTOO_SLEEVE.roll + TATTOO_SLEEVE.fold
+    const rollShade = select(sleeveUp.and(rest.y.lessThan(foldTop)), mix(float(1.12), float(0.5), thin(rest.y.sub(foldTop).abs(), 0.004)), float(1))
+    const worn = select(raisedWaist, waistBand, select(layer.equal(uint(LAYER.shirt)), shirt, jacket)).mul(rollShade)
     // Where the woven cloth shows (the jacket or the coat itself, a matching trim, the trousers or the skirt), the cloths
     // with a sheen of their own set it (WEAVE_SHEEN), and the rest keep the slot's; a shawl collar's facing and a
     // waistcoat's lining are satin.
-    const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt)))
+    const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt))).and(bareArm.not())
     const cutMarks = vestArm.or(cropped).or(belt).or(buttons).or(zip.and(rest.x.abs().lessThan(0.0035))).or(pinHere)
     const shownWeave = select(onBottom, select(lowMarks, uint(255), bottomWeave), select(outer.and(inV.or(shirtCollar).not())
       .and(lapel.or(collar).or(cuff).and(trimAt.notEqual(uint(0))).not()).and(cutMarks.not()).and(lining.not()), topWeave, uint(0)))
@@ -1343,8 +1364,8 @@ export class CrowdView {
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
     for (let s = slots.length - 2; s >= 0; s--) {
-      color = select(slot.lessThan(s + 0.5), slots[s], color)
-      roughness = select(slot.lessThan(s + 0.5), float(rough[s]), roughness)
+      color = select(skinSlot.lessThan(s + 0.5), slots[s], color)
+      roughness = select(skinSlot.lessThan(s + 0.5), float(rough[s]), roughness)
     }
     // Where a chosen look's ink shows, for the lit inks below (the street never wears them): the skin's slot, not under
     // the turtleneck's knit, the watch, a prosthetic hand, or a full or long beard (facialPaint's cover from 1.548 up,
@@ -1352,7 +1373,7 @@ export class CrowdView {
     // wrote the beard's test there alone, and the luminescent glow's branch read it unset, so the glow shone through a
     // beard.
     const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))
-    const inkShown = inked ? (select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null
+    const inkShown = inked ? (select(custom.and(skinSlot.greaterThan(SLOT.SKIN - 0.5)).and(skinSlot.lessThan(SLOT.SKIN + 0.5)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null
     // three writes each branch of a select out on its own (ConditionalNode isolates them), so a value two slots read,
     // first reached inside one branch, was written again in every other branch that read it, and the rain-mode and
     // dissolve wraps read the colour a second time: the fragment stage grew past its budget (shadowShaders.test.ts).
@@ -1361,7 +1382,7 @@ export class CrowdView {
     // shows) and the hair as painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays
     // for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), skinSlot, wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]

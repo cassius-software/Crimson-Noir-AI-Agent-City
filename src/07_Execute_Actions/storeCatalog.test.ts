@@ -21,13 +21,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
-import { CUT, LAYER, LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, tattooCover, validateLook, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { CUT, LAYER, LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, SLEEVES, WARDROBE, tattooCover, validateLook, type LookSlot } from '../03_Spawn_Agents/look.ts'
 import { TATTOO_INK, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 import { createProgress } from './progress.ts'
 import {
-  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, PREVIEW_TATTOO, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, cheapestOnSale, isInkLine, itemById, itemsOf, onSale, previewItem, wearItem, wearing, whyOf,
+  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, PREVIEW_TATTOO, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, cheapestOnSale, coverHint, isInkLine, itemById, itemsOf, onSale, previewItem, wearItem, wearing, whyOf,
   type ItemKind, type Space,
 } from './storeCatalog.ts'
 import { PROGRESS_WORD, createShopkeeper, progressionPurse, type ProgressLike } from './shopkeeper.ts'
@@ -116,9 +116,9 @@ test('every worn line on sale dresses every preset body in a valid look; a deed 
       assert.ok(wearing(worn, i), `${i.name} on the ${p.name} does not show as worn`)
     }
   }
-  // A line on order goes on sale the moment the wardrobe has its slots (the first such line today: a tattoo, 48).
+  // A line on order goes on sale the moment the wardrobe has its slots (the first such line today: the umbrella, 132).
   const waiting = CATALOGUE.find((i) => i.kind === 'wear' && !onSale(i))!
-  assert.equal(waiting.id, 48)
+  assert.equal(waiting.id, 132)
   assert.equal(onSale(waiting), false)
   assert.equal(onSale(waiting, [...LOOK_SLOTS, ...Object.keys(waiting.wear!)]), true)
 })
@@ -165,8 +165,9 @@ test('the atelier\'s four limbs are on sale, each setting the wardrobe\'s limb a
   }
 })
 
-test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in catalogue order, on order until the forearm has its slot; its two inks are the wardrobe\'s gold leaf and luminescent, on sale now that the wardrobe has the ink', () => {
-  // A design line wears `tattooForearm: i + 1`, so its design is the wardrobe's id i + 1 by construction (tattoo.ts).
+test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in catalogue order, on sale on the left forearm with the sleeves rolled; its two inks are the wardrobe\'s gold leaf and luminescent, on sale now that the wardrobe has the ink', () => {
+  // A design line wears `tattooForearm: i + 1` with the sleeves rolled, so its design is the wardrobe's id i + 1 by
+  // construction (tattoo.ts) and what is bought is what the mirror showed: a design under a sleeve shows nothing.
   const motifs = [
     'olive branch', 'fibonacci spiral', 'braided rope band', 'circuit trace', 'star chart', 'scalloped arc band',
     'origami cranes', 'soundwave band', 'compass rose', 'botanical vine', 'euler identity', 'ocean wave band',
@@ -183,13 +184,26 @@ test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in c
   assert.deepEqual(designs.map((i) => i.name), names)
   assert.deepEqual(designs.map((i) => i.index), Array.from({ length: 12 }, (_, i) => SHOP_LOOK_BASE + 48 + i), 'their bits are their ids\'')
   for (const [i, line] of designs.entries()) {
-    assert.deepEqual(line.wear, { tattooForearm: i + 1 }, line.name)
+    assert.deepEqual(line.wear, { tattooForearm: i + 1, sleeves: SLEEVES.rolled }, line.name)
     assert.equal(TATTOO_MOTIFS[line.wear!.tattooForearm - 1].name, motifs[i], `${line.name} is the wardrobe's ${motifs[i]}`)
     assert.equal(WARDROBE.tattoo[line.wear!.tattooForearm], motifs[i])
     // The shop's name carries its design's first word, so the card and the wardrobe read as the same drawing.
     assert.ok(line.name.toLowerCase().replace(/[-']/g, ' ').split(' ').includes(motifs[i].split(' ')[0]), `${line.name} names the ${motifs[i]}`)
-    assert.equal(onSale(line), false, `${line.name} waits for the forearm's slot`)
+    assert.ok(onSale(line), `${line.name} is on sale`)
     assert.equal(isInkLine(line), false)
+    for (const p of LOOK_PRESETS) {
+      const worn = wearItem(p.look, line)!
+      assert.deepEqual(worn, validateLook({ ...p.look, tattooForearm: i + 1, sleeves: SLEEVES.rolled }), `${line.name} on the ${p.name}`)
+      // Shown on the forearm unless a coat keeps the sleeves down (the coat presets), which the try-on says in words.
+      assert.equal(tattooCover(worn, 'tattooForearm'), worn.layer === LAYER.coat ? 'a coat keeps its sleeves down' : null, `${line.name} on the ${p.name}`)
+      assert.equal(coverHint(p.look, line), tattooCover(worn, 'tattooForearm'), `${line.name} on the ${p.name}: the card's hint`)
+    }
+    // The card's hint names what hides the design: a coat's sleeves, or a prosthetic arm on the left.
+    const jacket = validateLook({ ...LOOK_PRESETS[0].look, layer: LAYER.jacket, prosthetic: 0 })!
+    assert.equal(coverHint(jacket, line), null)
+    assert.equal(coverHint({ ...jacket, layer: LAYER.coat }, line), 'a coat keeps its sleeves down')
+    assert.equal(coverHint({ ...jacket, prosthetic: PROSTHETIC.leftArm }, line), 'covered by the limb')
+    assert.equal(coverHint({ ...jacket, prosthetic: PROSTHETIC.rightArm }, line), null, 'the right arm leaves the left forearm')
   }
   // The inks: each line's value is the wardrobe's ink its name says, and wearing one sets the ink alone.
   const inks = itemsOf('inkStudio').filter((i) => i.group === 'Inks')
@@ -240,11 +254,15 @@ test('the try-on: an ink on a look with no design showing borrows the olive bran
   assert.deepEqual(lent(knit), validateLook({ ...bare, ...knit, tattooInk: 3, tattooNape: 1 }))
   assert.deepEqual(lent({ prosthetic: PROSTHETIC.leftArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.leftArm, tattooHand: 30, tattooInk: 3, tattooHandR: 1 })
   assert.deepEqual(lent({ prosthetic: PROSTHETIC.rightArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.rightArm, tattooHand: 30, tattooInk: 3 })
+  // An ink, or any line that sets no design, has no hint of its own.
+  for (const i of CATALOGUE.filter((line) => !(line.wear && Object.hasOwn(line.wear, 'tattooForearm')))) {
+    for (const p of LOOK_PRESETS) assert.equal(coverHint(p.look, i), null, `${i.name} on the ${p.name}`)
+  }
   // Every other line on sale previews as it is worn, and a line on order previews as nothing.
   for (const i of CATALOGUE.filter((line) => !isInkLine(line))) {
     for (const p of LOOK_PRESETS) assert.deepEqual(previewItem(p.look, i), wearItem(p.look, i), `${i.name} on the ${p.name}`)
   }
-  assert.equal(previewItem(LOOK_PRESETS[0].look, itemById(48)!), null, 'the forearm\'s designs are on order')
+  assert.equal(previewItem(LOOK_PRESETS[0].look, itemById(132)!), null, 'the umbrella is on order')
   // Buying wears wearItem's look through the keeper: the ink alone, never the borrowed design.
   const k = createShopkeeper({ purse: { level: () => MAX_LEVEL, credits: () => 0, owns: () => true, canBuy: () => GATE.owned, buy: () => GATE.owned, subscribe: () => () => {} } })
   assert.deepEqual(k.wear(64, LOOK_PRESETS[0].look), { ...LOOK_PRESETS[0].look, tattooInk: TATTOO_INK.goldLeaf })
@@ -263,7 +281,8 @@ test('whyOf says why in words', () => {
   assert.match(whyOf(coat, GATE.credits, 10), /640 more credits/)
   assert.equal(whyOf(coat, GATE.bought, 9999), 'for sale')
   assert.equal(whyOf(coat, GATE.owned, 0), 'owned')
-  assert.match(whyOf(itemById(48)!, GATE.unavailable, 0), /on order/)
+  assert.match(whyOf(itemById(132)!, GATE.unavailable, 0), /on order/)
+  assert.equal(whyOf(itemById(48)!, GATE.unavailable, 0), 'not for sale', 'the forearm\'s designs are on sale, so an unavailable one is refused, not on order')
   assert.equal(whyOf(itemById(160)!, GATE.unavailable, 0), 'not for sale', 'furniture is on sale too, so an unavailable piece is refused, not on order')
   assert.match(whyOf(itemById(160)!, GATE.level, 0), /needs level 3/)
   assert.match(whyOf(itemById(164)!, GATE.credits, 150), /950 more credits/)
@@ -311,7 +330,8 @@ test('the progression keeper behind the shopkeeper: a new operator\'s level and 
   assert.equal(k.rows('tailor', worn).find((row) => row.item.id === 24)?.worn, true)
   // Refused with the reason, nothing taken: above the level, on order, no such line.
   assert.equal(k.buy(5).verdict, GATE.level)
-  assert.equal(k.buy(48).verdict, GATE.unavailable)
+  assert.equal(k.buy(48).verdict, GATE.credits, 'the forearm\'s designs are on sale, above a new operator\'s purse')
+  assert.equal(k.buy(132).verdict, GATE.unavailable)
   assert.equal(k.buy(160).verdict, GATE.level, 'furniture is on sale, above a new operator\'s level')
   assert.equal(k.buy(4242).verdict, GATE.unavailable)
   assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price)
