@@ -7,8 +7,9 @@
 # builds the page from source (tools/nix/page.nix), serves it on http://127.0.0.1:4180 and opens it in Chromium with
 # WebGPU on Vulkan (tools/nix/app.nix, tools/web/launch.mjs). nixosModules.default installs it built from the system's
 # own nixpkgs, so its Chromium can load the system's GPU driver, and turns on what a NixOS desktop needs
-# (tools/nix/module.nix). Another Linux with Nix runs it too, but Nix's Chromium cannot load that system's GPU driver:
-# there CHROME names the distribution's own browser (MANUAL.md, On NixOS). `nix develop` gives the tools a contributor
+# (tools/nix/module.nix); vmTests boots that module's Ollama option in a NixOS VM (tools/nix/ollama-test.nix). Another
+# Linux with Nix runs it too, but Nix's Chromium cannot load that system's GPU driver: there CHROME names the
+# distribution's own browser (MANUAL.md, On NixOS). `nix develop` gives the tools a contributor
 # runs (Node, Chromium for the browser smoke, rustup for the native crates, Python's z3 for `npm run verify -- smt`).
 # nixpkgs comes from the NixOS 26.05 channel's tarball, pinned in flake.lock. Flakes are still an experimental Nix
 # feature: a stock NixOS needs nix.settings.experimental-features = [ "nix-command" "flakes" ], or
@@ -70,6 +71,17 @@
 
       nixosModules.default = ./tools/nix/module.nix;
 
+      # The module's Ollama option booted in a NixOS VM on the CPU build (tools/nix/ollama-test.nix). Not in checks: it
+      # needs KVM and `nix flake check` must not (that command warns it does not know this output and leaves it alone).
+      # CI's nix workflow builds the x86-64 one in a job of its own: nix build -L .#vmTests.x86_64-linux.ollama
+      vmTests = forAll (
+        _: pkgs: {
+          ollama = pkgs.testers.runNixOSTest (
+            import ./tools/nix/ollama-test.nix { module = self.nixosModules.default; }
+          );
+        }
+      );
+
       checks = forAll (
         system: pkgs: {
           inherit (self.packages.${system}) page crimson-noir-agent-city;
@@ -77,7 +89,12 @@
           # rules in place, the package's derivation evaluated once the page is allowed and refused while it is not;
           # and its Ollama option alone: on loopback at 11434, the Vulkan build unless another is chosen, the graphics
           # driver for Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the
-          # integrated GPU only when asked for, the system's own settings winning.
+          # integrated GPU only when asked for, Ollama's cloud off (OLLAMA_NO_CLOUD=1) unless asked for, the system's
+          # own settings winning; no warning for the default or cloud = true, the cloud one for each OLLAMA_NO_CLOUD
+          # tried below that goes against `cloud` and for none of the others tried, the origins one with its value or
+          # unset, both read from ollama.service's environment (its own over systemd's global one) and only while the
+          # service runs, and three for the system's own host, port and origins; the option's variables kept on the
+          # unit whatever the system does to services.ollama.environmentVariables as a whole.
           # Only the configuration is evaluated; no system is built and nothing runs.
           module =
             let
@@ -132,7 +149,78 @@
               rocm = llm { programs.crimson-noir-agent-city.ollama.acceleration = "rocm"; };
               none = llm { programs.crimson-noir-agent-city.ollama.acceleration = null; };
               igpu = llm { programs.crimson-noir-agent-city.ollama.integratedGpu = true; };
-              off = llm { services.ollama.enable = false; };
+              cloud = llm { programs.crimson-noir-agent-city.ollama.cloud = true; };
+              # The system's own OLLAMA_NO_CLOUD in services.ollama.environmentVariables: it wins over the option's
+              # default on the unit, and the warning says so when Ollama reads it as false (envconfig's Bool, after its
+              # white space and quotes go: empty and Go's false spellings, "0", "f", "F", "false", "False" and "FALSE";
+              # "no" is true to Ollama), each one tried below; set with lib.mkDefault, it wins too, with no conflict.
+              ownNoCloud = v: llm { services.ollama.environmentVariables.OLLAMA_NO_CLOUD = v; };
+              ownDefaultNoCloud = llm { services.ollama.environmentVariables.OLLAMA_NO_CLOUD = lib.mkDefault "0"; };
+              # The system's whole environment given as a default: kept, with every one of the option's variables in
+              # use beside it, or its own OLLAMA_NO_CLOUD winning.
+              setDefault = llm {
+                programs.crimson-noir-agent-city.ollama = {
+                  extraOrigins = [ "https://a.example" ];
+                  integratedGpu = true;
+                };
+                services.ollama.environmentVariables = lib.mkDefault { OLLAMA_CONTEXT_LENGTH = "8192"; };
+              };
+              setDefaultOwn = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                services.ollama.environmentVariables = lib.mkDefault { OLLAMA_NO_CLOUD = "0"; };
+              };
+              cloudStillOff = llm {
+                programs.crimson-noir-agent-city.ollama.cloud = true;
+                services.ollama.environmentVariables.OLLAMA_NO_CLOUD = "1";
+              };
+              # The whole of services.ollama.environmentVariables replaced: the option's variables are on the unit, so
+              # they stay.
+              envReplaced = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                services.ollama.environmentVariables = lib.mkForce { };
+              };
+              # The warnings read the unit's own environment, over systemd's global one: set there, or taken out with
+              # null, the variable is what Ollama reads, whatever services.ollama.environmentVariables says.
+              unitOff = llm {
+                programs.crimson-noir-agent-city.ollama.cloud = true;
+                systemd.services.ollama.environment.OLLAMA_NO_CLOUD = "1";
+              };
+              globalOff = llm {
+                programs.crimson-noir-agent-city.ollama.cloud = true;
+                systemd.globalEnvironment.OLLAMA_NO_CLOUD = "1";
+              };
+              # The unit's own value over a global one: no warning, as Ollama reads "1".
+              globalUnder = llm { systemd.globalEnvironment.OLLAMA_NO_CLOUD = "0"; };
+              unitNull = llm { systemd.services.ollama.environment.OLLAMA_NO_CLOUD = lib.mkForce null; };
+              unitWins = llm {
+                services.ollama.environmentVariables.OLLAMA_NO_CLOUD = lib.mkForce "0";
+                systemd.services.ollama.environment.OLLAMA_NO_CLOUD = lib.mkForce "1";
+              };
+              # The unit's own OLLAMA_ORIGINS, the option's, over a global one: no warning.
+              globalOrigins = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                systemd.globalEnvironment.OLLAMA_ORIGINS = "https://b.example";
+              };
+              unitOrigins = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                systemd.services.ollama.environment.OLLAMA_ORIGINS = lib.mkForce "https://b.example";
+              };
+              # extraOrigins with the unit's OLLAMA_ORIGINS taken out: unset.
+              originsGone = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                systemd.services.ollama.environment.OLLAMA_ORIGINS = lib.mkForce null;
+              };
+              originsWarning =
+                seen:
+                "OLLAMA_ORIGINS in ollama.service's environment is ${seen}, so programs.crimson-noir-agent-city.ollama.extraOrigins is not used";
+              cloudWarning =
+                seen: state: cloud:
+                "OLLAMA_NO_CLOUD in ollama.service's environment is ${seen}, which ${state} Ollama's cloud features off although programs.crimson-noir-agent-city.ollama.cloud is ${cloud}";
+              # The service off: neither warning, though its unit, and so both variables, are gone.
+              off = llm {
+                programs.crimson-noir-agent-city.ollama.extraOrigins = [ "https://a.example" ];
+                services.ollama.enable = false;
+              };
               ownPackage = llm ({ pkgs, ... }: { services.ollama.package = pkgs.ollama-cpu; });
               ownDefault = llm { services.ollama.host = lib.mkDefault "0.0.0.0"; };
               cuda = llm { programs.crimson-noir-agent-city.ollama.acceleration = "cuda"; };
@@ -178,11 +266,38 @@
             assert !cpu.config.hardware.graphics.enable && !rocm.config.hardware.graphics.enable;
             assert !none.config.hardware.graphics.enable && cuda.config.hardware.graphics.enable;
             assert (env igpu).OLLAMA_IGPU_ENABLE == "1";
+            assert (env plain).OLLAMA_NO_CLOUD == "1";
+            assert !((env cloud) ? OLLAMA_NO_CLOUD) && ours cloud == [ ];
+            assert map (v: (env (ownNoCloud v)).OLLAMA_NO_CLOUD) [ "0" "true" ] == [ "0" "true" ];
+            assert lib.all (v: ours (ownNoCloud v) == [ (cloudWarning "\"${v}\"" "does not turn" "false") ]) [ "0" "f" "F" "false" "False" "FALSE" "" " 'False' " ];
+            assert lib.all (v: ours (ownNoCloud v) == [ ]) [ "1" "true" "no" ];
+            assert ours cloudStillOff == [ (cloudWarning "\"1\"" "turns" "true") ];
+            assert (env envReplaced).OLLAMA_NO_CLOUD == "1" && (env envReplaced).OLLAMA_ORIGINS == "https://a.example" && ours envReplaced == [ ];
+            assert (env ownDefaultNoCloud).OLLAMA_NO_CLOUD == "0" && ours ownDefaultNoCloud == [ (cloudWarning "\"0\"" "does not turn" "false") ];
+            assert
+              lib.attrsets.getAttrs [ "OLLAMA_CONTEXT_LENGTH" "OLLAMA_NO_CLOUD" "OLLAMA_ORIGINS" "OLLAMA_IGPU_ENABLE" ] (env setDefault)
+              == {
+                OLLAMA_CONTEXT_LENGTH = "8192";
+                OLLAMA_NO_CLOUD = "1";
+                OLLAMA_ORIGINS = "https://a.example";
+                OLLAMA_IGPU_ENABLE = "1";
+              }
+              && ours setDefault == [ ];
+            assert (env setDefaultOwn).OLLAMA_NO_CLOUD == "0" && ours setDefaultOwn == [ (cloudWarning "\"0\"" "does not turn" "false") ];
+            assert ours full == [ ];
+            assert ours unitOff == [ (cloudWarning "\"1\"" "turns" "true") ] && ours globalOff == ours unitOff;
+            assert ours unitNull == [ (cloudWarning "unset" "does not turn" "false") ] && ours unitWins == [ ] && ours globalUnder == [ ];
+            assert ours unitOrigins == [ (originsWarning "\"https://b.example\"") ];
+            assert (env globalOrigins).OLLAMA_ORIGINS == "https://a.example" && ours globalOrigins == [ ];
+            assert ours off == [ ] && !(off.config.systemd.services ? ollama);
+            assert
+              (env originsGone).OLLAMA_ORIGINS == null
+              && ours originsGone == [ (originsWarning "unset") ];
             assert !(builtins.tryEval cuda.config.services.ollama.package.drvPath).success;
             assert lib.isString cudaAllowed.config.services.ollama.package.drvPath;
             assert (env theirs).OLLAMA_HOST == "0.0.0.0:11500";
             assert (env theirs).OLLAMA_ORIGINS == "https://b.example";
-            assert lib.length (ours theirs) == 3;
+            assert lib.length (ours theirs) == 3 && lib.elem (originsWarning "\"https://b.example\"") (ours theirs);
             assert lib.sort lib.lessThan theirs.config.services.ollama.loadModels == [ "a" "b" ];
             assert ownPackage.config.services.ollama.package.drvPath == ownPackage.pkgs.ollama-cpu.drvPath;
             assert (env ownDefault).OLLAMA_HOST == "0.0.0.0:11434";

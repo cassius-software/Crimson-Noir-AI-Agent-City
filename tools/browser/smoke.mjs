@@ -103,8 +103,10 @@
  *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
  *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
  *   planters, the HUD's chip offers to furnish the home (Furnish), B opens the doorstep card saying Yours, the avatar
- *   stands still under it with W held, Esc closes it, and the lakefront metropolis, reloaded, has its seven homes and
- *   still knows the loft is owned;
+ *   stands still under it with W held, Esc closes it; inside the Penthouse B opens its deed's card, whose Go up rides
+ *   the visitor to the sky floor (the card closes, the chip names the sky floor), where W walks from the arrival and
+ *   the staged sofa stops it, the floor holding; and the lakefront metropolis, reloaded, has its seven homes, none with
+ *   a sky floor, and still knows the loft is owned;
  * - furnish: the loft claimed and the operator's record given level 2 and 3,000 credits by hand (sealed again, then
  *   reloaded), B inside opens the furnishing view, its strip's Order buys a bookcase and a sofa, E or Q takes each in
  *   hand, the arrows move the cursor and Enter places it, each piece one more collider in the physics realm; after a
@@ -115,7 +117,10 @@
  *   opens the furnishing view, 4 its Rest tab, which offers +1 for one kind of furniture beside a Rest button at least
  *   48 px tall that the panel describes; Enter rests (a hero point, a new round, word 40 of the record), a real click
  *   on Rest is refused while the rest lasts and changes nothing, the HUD's chip ends with "prepared +1", the console's
- *   next check line and `progress` say so, and after a reload all of it is still there;
+ *   next check line and `progress` say so, and after a reload all of it is still there; then, with a workstation placed
+ *   and an agent named by hand, 5 opens the Staff tab, the workstation's row in its list puts the cursor on the
+ *   workstation and Enter posts the agent there (saved, listed by engine.homeSeats, drawn; the row and the agent's
+ *   button say so), every staff button at least 48 px tall, and after a reload the agent still stands there;
  * - fail: the ways out when the city cannot start or stops, each in its own browser: navigator.gpu taken away (the
  *   card before a first visit's onboarding, at desktop and phone size and in Firefox on Android with Open in Chrome
  *   first, Restart focused and taken by Enter, the pad's
@@ -132,6 +137,8 @@
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
  * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
+ * `--shard i/n` runs only part i of n of those scenarios (shard.mjs: split by how long each took in CI), as CI's
+ * browser jobs do.
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -143,6 +150,7 @@ import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Browser, findChrome, loopbackOnly, SOFTWARE_WEBGPU, watchTargets } from './cdp.mjs'
 import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
+import { parseShard, shardOf } from './shard.mjs'
 import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
 import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
@@ -158,6 +166,8 @@ const arg = (name) => {
 }
 const OUT = arg('out') ?? mkdtempSync(join(tmpdir(), 'agent-city-smoke-out-'))
 const ONLY = arg('only')?.split(',').map((s) => s.trim()).filter(Boolean)
+/** The part of the scenarios this run takes (`--shard i/n`, shard.mjs), or null for all of them. */
+const SHARD = arg('shard') === undefined ? null : parseShard(arg('shard'))
 /** The software adapter renders a few frames a second: everything here waits on the page's own state, never on time. */
 const BOOT_MS = Number(arg('boot-ms') ?? 240_000)
 
@@ -2356,8 +2366,9 @@ const SCENARIOS = {
   /**
    * The seven homes (src/01_Initialize_World/properties.ts) and their deeds, on the progression keeper (a new operator,
    * level 1): the only purchase is the Micro-Loft's free deed. The design house's card sells it and goes there (Go home); the
-   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the lakefront metropolis has the
-   * seven too, and the deed bought in the city is still owned there.
+   * doorstep card (HomeCard.tsx) opens inside the home and holds the avatar still; the Penthouse's card rides a visitor
+   * up to its sky floor, which holds them and whose staged furniture is solid; the lakefront metropolis has the seven
+   * too, none with a sky floor, and the deed bought in the city is still owned there.
    */
   async homes(chrome, origin) {
     const p = await open(chrome)
@@ -2422,6 +2433,35 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
       const gone = await p.waitFor(`!${at('aside[data-home]')} && window.__SIM__.snapshot().customer.home?.card === false`, 10_000).then(() => true, () => false)
       check(gone, 'homes: Esc closes the doorstep card')
+      // The Penthouse's sky floor: walked into the hall (onto its apron, 3 m in from the doorway), B opens the deed's
+      // card for a visitor (level 1), and its Go up rides there.
+      const pent = homes[3]
+      check(!!pent.sky && pent.sky.y > 60, 'homes: seed 1337\'s Penthouse has a sky floor up its tower', JSON.stringify(pent.sky))
+      const inward = Math.hypot(pent.cx - pent.door.x, pent.cz - pent.door.z)
+      await p.eval(`window.__SIM__.teleport(${pent.door.x + (3 * (pent.cx - pent.door.x)) / inward}, ${pent.door.z + (3 * (pent.cz - pent.door.z)) / inward})`)
+      const inPent = await p.waitFor(`window.__SIM__.snapshot().customer.home?.index === 3`, 30_000).then(() => true, () => false)
+      check(inPent, 'homes: the avatar stands in the Penthouse\'s hall')
+      await p.tap('KeyB', 'b', 66)
+      const row = await p.waitFor(`!!${at('aside[data-home="3"] [data-action="floor"]')}`, 10_000).then(() => true, () => false)
+      const up = await p.eval(`({ text: ${at('aside[data-home="3"] [data-action="floor"]')}?.textContent ?? '', off: ${at('aside[data-home="3"] [data-action="floor"]')}?.disabled ?? true, line: ${at('aside[data-home="3"] [data-floor]')}?.textContent ?? '' })`)
+      check(row && up.text === 'Go up' && !up.off && /m up the tower/.test(up.line), 'homes: B opens the Penthouse\'s card, whose floor row offers Go up to a visitor', JSON.stringify(up))
+      await p.eval(`${at('aside[data-home="3"] [data-action="floor"]')}?.click()`)
+      const rode = await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.avatar.feetY - ${pent.sky.y}) < 0.1 && window.__SIM__.snapshot().customer.home?.room === 7`, 30_000).then(() => true, () => false)
+      const upstairs = await p.waitFor(`!${at('aside[data-home]')}`, 10_000).then(() => true, () => false)
+      const skyChip = await p.waitFor(`(() => { const c = ${at('[data-hint="home"]')}; return c && /sky floor/.test(c.textContent) && c.textContent })()`, 10_000).catch(() => '')
+      check(rode && upstairs && /sky floor/.test(skyChip ?? ''), 'homes: Go up puts the avatar on the sky floor, the card closed, the chip naming the sky floor', `${skyChip}; feet ${(await p.eval('window.__SIM__.engine.sim.state.avatar.feetY')).toFixed(2)} at ${pent.sky.y}`)
+      // W walks from the arrival toward the far glass; the staged sofa (solid, at the floor's height) stops it.
+      const where = `(() => { const v = window.__SIM__.engine.sim.state.avatar, n = ${inward}
+        return { x: v.x, z: v.z, feet: v.feetY, u: ((v.x - ${pent.cx}) * (${pent.door.x} - ${pent.cx}) + (v.z - ${pent.cz}) * (${pent.door.z} - ${pent.cz})) / n } })()`
+      const s0 = await p.eval(where)
+      await p.eval(`window.__SIM__.hold('KeyW', true)`)
+      const went = await p.waitFor(`(() => { const v = window.__SIM__.engine.sim.state.avatar; return Math.hypot(v.x - ${s0.x}, v.z - ${s0.z}) >= 3.6 })()`, 30_000).then(() => true, () => false)
+      await p.frames(90)
+      await p.eval(`window.__SIM__.hold('KeyW', false)`)
+      const s1 = await p.eval(where)
+      const moved = Math.hypot(s1.x - s0.x, s1.z - s0.z)
+      check(went && moved >= 3.6 && moved <= 5 && s1.u >= 1.6 && Math.abs(s1.feet - pent.sky.y) < 0.1, 'homes: upstairs W walks from the arrival until the staged sofa stops it, on the floor', `moved ${moved.toFixed(2)} m to u ${s1.u.toFixed(2)}, feet ${s1.feet.toFixed(2)}`)
+      await p.shot('homes-sky')
       await p.shot('homes')
       const errs = (await p.snap()).errors
       check(errs.length === 0, 'homes: the engine recorded no error', errs.join(' | ').slice(0, 300))
@@ -2433,6 +2473,8 @@ const SCENARIOS = {
       const lake = await p.eval(`({ region: window.__SIM__.engine.places !== null, homes: window.__SIM__.homes().length, kept: window.__SIM__.engine.homes.length, owned: window.__SIM__.snapshot().customer.ownedHomes })`)
       check(lake.region && lake.homes === 7 && lake.kept === 7, 'homes: the lakefront metropolis has its seven homes', JSON.stringify(lake))
       check((lake.owned & 1) === 1, 'homes: the loft claimed in the city is still owned there (one browser record)', `owned ${lake.owned}`)
+      const noSky = await p.eval('window.__SIM__.homes().every((h) => h.sky === null)')
+      check(noSky, 'homes: no home in the lakefront metropolis has a sky floor')
       p.health('homes lakefront')
     } finally { await p.b.close() }
   },
@@ -2604,14 +2646,18 @@ const SCENARIOS = {
   /**
    * A rest at home (HomeCard.tsx's Rest tab, progress.ts restOffer and restTake) in the Brownstone, by keyboard and by
    * a real mouse. The loft is claimed first (free: it puts the record in this browser), then the record gets level 3
-   * and 6,000 credits by hand, sealed again as progression.ts sealOf does, and the page reloaded; the Brownstone's
-   * deed and a bookcase are bought through the shopkeeper, and the Brownstone's layout written with that bookcase
+   * and 7,500 credits by hand, sealed again as progression.ts sealOf does, and the page reloaded; the Brownstone's
+   * deed, a bookcase and an agent workstation are bought through the shopkeeper, and the Brownstone's layout written with that bookcase
    * standing where its show home had one (the layout is read once at mount, so reloaded again). In the Brownstone B
    * opens the furnishing view and 4 its Rest tab: +1 for one kind of furniture, and a Rest button for a finger that
    * the panel describes. Enter rests: a hero point, a new round, word 40 of the record at 30 checks of +1. A real click
    * on Rest while it lasts is refused and changes nothing. The HUD's chip ends with "prepared +1" (and says so to a
    * screen reader), the console's next check carries the +1 and `progress` counts 29 more checks, and after a reload
-   * the record, the chip and `progress` still do. Copied from furnish rather than shared, so its checks stay put.
+   * the record, the chip and `progress` still do. Then staff at home (HomeCard.tsx's Staff tab, staffStore.ts): the
+   * workstation is written into the layout and an agent onto the roster by hand before that reload (the rest's checks
+   * after it do not depend on comfort); walked in again, 5 opens the Staff tab, the workstation's row in its list puts
+   * the cursor on the workstation and Enter posts the agent there, saved in this browser, listed by engine.homeSeats
+   * and drawn, with the row and the agent's button saying so, and after one more reload the agent still stands there. Copied from furnish rather than shared, so its checks stay put.
    */
   async rest(chrome, origin) {
     const p = await open(chrome)
@@ -2637,7 +2683,7 @@ const SCENARIOS = {
     try {
       await p.goto(`${origin}/?${LIGHT}&seed=1337`)
       await p.booted()
-      // The loft claimed (free), so the record is in this browser; then level 3 and 6,000 credits, sealed again, reloaded.
+      // The loft claimed (free), so the record is in this browser; then level 3 and 7,500 credits, sealed again, reloaded.
       const claimed = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(224); return k.owns(224) })()`)
       check(claimed, 'rest: the loft is claimed, so the record is kept in this browser')
       await p.eval(`(() => {
@@ -2645,7 +2691,7 @@ const SCENARIOS = {
         const data = JSON.parse(localStorage.getItem(key))
         const w = data.words
         w[14] = 3
-        w[16] = 6000
+        w[16] = 7500
         let h = 0x811c9dc5
         for (let i = 0; i < w.length; i++) {
           if (i === 63) continue
@@ -2659,9 +2705,10 @@ const SCENARIOS = {
         localStorage.setItem(key, JSON.stringify(data))
       })()`)
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
-      // The Brownstone (4,000) and a bookcase (1,100), then its layout with the bookcase standing; reloaded once more.
-      const bought = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(225); k.buy(164); return { home: k.owns(225), bookcase: k.owns(164), level: k.purse.level(), credits: k.purse.credits() } })()`)
-      check(bought.home && bought.bookcase && bought.level === 3 && bought.credits === 900, 'rest: level 3, the Brownstone and a bookcase bought, 900 credits left', JSON.stringify(bought))
+      // The Brownstone (4,000), a bookcase (1,100) and an agent workstation (1,500), then its layout with only the bookcase
+      // standing, so the Rest tab counts one kind of furniture; reloaded once more.
+      const bought = await p.eval(`(() => { const k = window.__SIM__.shopkeeper; k.buy(225); k.buy(164); k.buy(168); return { home: k.owns(225), bookcase: k.owns(164), workstation: k.owns(168), level: k.purse.level(), credits: k.purse.credits() } })()`)
+      check(bought.home && bought.bookcase && bought.workstation && bought.level === 3 && bought.credits === 900, 'rest: level 3, the Brownstone, a bookcase and a workstation bought, 900 credits left', JSON.stringify(bought))
       await p.eval(`localStorage.setItem('civic-simulation:home:v1', JSON.stringify({ v: 1, homes: [null, [1, 1, [[164, 2, 16, 0]]], null, null, null, null, null] }))`)
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
       const inside = await walkIn()
@@ -2730,6 +2777,10 @@ const SCENARIOS = {
       p.saveTranscript('rest')
       p.health('rest')
 
+      // For the staff steps after it: the workstation stands in the layout and Mara is on the roster (both read once at
+      // mount, so written before this reload). 'even' is the voice validateIdentity falls back to (roster.ts).
+      await p.eval(`localStorage.setItem('civic-simulation:home:v1', JSON.stringify({ v: 1, homes: [null, [1, 1, [[164, 2, 16, 0], [168, 10, 20, 0]]], null, null, null, null, null] }))`)
+      await p.eval(`localStorage.setItem('civic-simulation:roster:v1', JSON.stringify({ v: 1, agents: [{ name: 'Mara', pronouns: 'she/her', role: '', voice: 'even', look: null, agent: null }] }))`)
       // Reloaded: the record, the chip and progress still have it.
       await reload(p, `${origin}/?${LIGHT}&seed=1337`)
       const kept = await words()
@@ -2743,6 +2794,43 @@ const SCENARIOS = {
       const errs2 = (await p.snap()).errors
       check(errs2.length === 0, 'rest: after a reload the engine recorded no error', errs2.join(' | ').slice(0, 300))
       p.health('rest reloaded')
+
+      // Staff: 5 opens the Staff tab (pressed until it reads as open, as 4 is above); the workstation's row in the list
+      // puts the cursor on its cell (10, 20), as a tap or a screen reader would, and Enter posts Mara there.
+      check(await walkIn(), 'rest: staff: the avatar walks into the Brownstone again')
+      await p.tap('KeyB', 'b', 66)
+      await p.waitFor(`!!${at(card)}`, 10_000).catch(() => {})
+      let staff = false
+      for (let i = 0; i < 5 && !staff; i++) {
+        await p.tap('Digit5', '5', 53)
+        staff = await p.waitFor(`!!${at(`${card} [data-staff]`)}`, 4_000).then(() => true, () => false)
+      }
+      const row = `${card} [data-action="station"][data-seat="10,20"]`
+      await p.waitFor(`!!${at(row)}`, 4_000).catch(() => {})
+      await p.eval(`${at(row)}?.click()`)
+      await p.waitFor(`${at(`${card} [data-cursor]`)}?.dataset.cursor === '10,20'`, 4_000).catch(() => {})
+      const cur = await p.eval(`${at(`${card} [data-cursor]`)}?.dataset.cursor ?? ''`)
+      await p.tap('Enter', 'Enter', 13)
+      const posted = await p.waitFor(`/^Mara is at workstation 1 now/.test(${at(`${card} [data-reason]`)}?.textContent ?? '')`, 10_000).then(() => true, () => false)
+      const staffed = await p.eval(`(() => {
+        const seats = window.__SIM__.engine.homeSeats, s = seats.find((x) => x.kind === 'homeSeat:1:10:20')
+        const b = ${at(`${card} [data-action="place"]`)}, h = b?.getBoundingClientRect().height ?? 0
+        const rows = [...document.querySelectorAll('${card} [data-action="agent"], ${card} [data-action="station"]')].map((x) => x.getBoundingClientRect().height)
+        return { cursor: ${JSON.stringify(cur)}, stored: localStorage.getItem('civic-simulation:staff:v1'), occupant: s?.occupant ?? null, present: !!s?.present, visible: window.__SIM__.engine.staffView.group.visible,
+          row: ${at(row)}?.textContent ?? '', agent: ${at(`${card} [data-action="agent"]`)}?.getAttribute('aria-label') ?? '',
+          button: b?.textContent ?? '', tall: h >= 48 && rows.length >= 2 && rows.every((x) => x >= 48), reason: ${at(`${card} [data-reason]`)}?.textContent ?? '' } })()`)
+      check(staff && cur === '10,20' && posted && staffed.stored === '{"v":1,"posts":[["Mara",1,10,20]]}' && staffed.occupant === 'Mara' && staffed.present && staffed.visible,
+        'rest: staff: 5 opens the Staff tab, the workstation\'s row puts the cursor on it and Enter posts Mara at workstation 1, saved, listed by homeSeats and drawn', JSON.stringify({ staff, ...staffed }))
+      check(staffed.row === 'Workstation 1 · Mara' && staffed.agent === 'Mara: Workstation 1', 'rest: staff: the row says who stands there, and Mara\'s button says where she is', JSON.stringify(staffed))
+      check(staffed.button === 'Post' && staffed.tall, 'rest: staff: the primary button reads Post, and every staff button is at least 48 px tall', JSON.stringify(staffed))
+      await p.shot('rest-staff')
+      await p.tap('Escape', 'Escape', 27)
+      await reload(p, `${origin}/?${LIGHT}&seed=1337`)
+      const back = await p.waitFor(`window.__SIM__.engine.homeSeats.some((s) => s.kind === 'homeSeat:1:10:20' && s.occupant === 'Mara' && s.present) && window.__SIM__.engine.staffView.group.visible`, 20_000).then(() => true, () => false)
+      check(back, 'rest: staff: after a reload Mara still stands at workstation 1', back ? '' : JSON.stringify(await p.eval(`window.__SIM__.engine.homeSeats.map((s) => [s.kind, s.occupant, s.present])`)))
+      const errs3 = (await p.snap()).errors
+      check(errs3.length === 0, 'rest: staff: the engine recorded no error', errs3.join(' | ').slice(0, 300))
+      p.health('rest staff')
     } finally { await p.b.close() }
   },
 
@@ -3015,8 +3103,11 @@ async function main() {
   console.log(`shots    ${OUT}`)
   const { server, origin, port } = await serve()
   try {
-    for (const [name, run] of Object.entries(SCENARIOS)) {
-      if (ONLY && !ONLY.includes(name)) continue
+    const names = Object.keys(SCENARIOS).filter((name) => !ONLY || ONLY.includes(name))
+    const chosen = SHARD ? shardOf(names, SHARD.i, SHARD.n) : names
+    if (SHARD) console.log(`shard    ${SHARD.i}/${SHARD.n}: ${chosen.join(', ') || 'none'}`)
+    for (const name of chosen) {
+      const run = SCENARIOS[name]
       const t0 = Date.now()
       try { await run(chrome, origin, port) } catch (e) { check(false, `${name}: ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
       console.log(`      ${name}: ${((Date.now() - t0) / 1000).toFixed(0)} s`)

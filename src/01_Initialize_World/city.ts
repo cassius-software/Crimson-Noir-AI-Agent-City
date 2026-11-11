@@ -81,9 +81,10 @@ export function districtName(x: number, z: number): string {
  * the floor-to-ceiling curtain wall of a workplace's ground floor (interiors.ts): the downtown mix's glass, chosen.
  * 'planted' (a green wall's leaves) and 'lit' (a screen, a hologram's field, the furnishing cursor: dark glass with a
  * fine grid of light that always glows) dress only the homes' furniture (07_Execute_Actions/homeView.ts); no box of a
- * city or a region plan uses them, and they have no windows either.
+ * city or a region plan uses them, and they have no windows either. 'clear' is the clear glass of a sky floor
+ * (properties.ts): its panes collide but are never drawn (world.ts leaves them out), so the view shows through.
  */
-export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9, glass: 10, planted: 11, lit: 12 })
+export const STYLE = Object.freeze({ mixed: 0, stone: 1, brick: 2, trim: 3, roof: 4, concrete: 5, masonry: 6, condo: 7, deck: 8, rail: 9, glass: 10, planted: 11, lit: 12, clear: 13 })
 
 /** A box and its finish. */
 export interface Building { box: Box; style: number }

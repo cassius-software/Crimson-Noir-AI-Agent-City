@@ -58,6 +58,7 @@ const { TrackFleet } = await import('./trackFleet.ts')
 const { buildTrackNetwork } = await import('../06_Make_Decisions/tracks.ts')
 const { RigView } = await import('./rigView.ts')
 const { NetView } = await import('./netView.ts')
+const { StaffView } = await import('./staffView.ts')
 const { VEHICLE_KINDS } = await import('./car.ts')
 const { CROWD_DEFAULT } = await import('../05_Observe_Environment/governor.ts')
 
@@ -237,9 +238,10 @@ const drawKey = (m: Mesh): string =>
 
 /**
  * The draws that do not take rain mode: the sky (SkyMesh, three's own), and the network room's ghosts, which only a
- * network room draws and which are only ever seen in rain mode as the dim figures they are (netView.ts).
+ * network room draws and which are only ever seen in rain mode as the dim figures they are (netView.ts); and the posted
+ * agents, plain figures the page alone draws (staffView.ts), kept plain as those ghosts are.
  */
-const NO_RAIN_MODE = (name: string): boolean => name === 'Mesh' || name === 'NetPeople' || name === 'NetCars'
+const NO_RAIN_MODE = (name: string): boolean => name === 'Mesh' || name === 'NetPeople' || name === 'NetCars' || name === 'StaffPerson'
 
 interface Report { name: string; pass: 'main' | 'shadow'; vertex: number; fragment: number; surface: number; uniforms: number; storage: number }
 
@@ -335,7 +337,10 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   // The scheduled craft and the loop's structure, over the realm's own network (the page builds it from the same boxes).
   const network = buildTrackNetwork(SEED, world.boxes)
   const craft = new CraftView(network, new TrackFleet(network).count, world.night, world.matrixMode.globalState)
-  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars, ...craft.meshes)
+  // A posted agent at a workstation (staffView.ts), as the page draws one.
+  const staff = new StaffView()
+  staff.set([{ x: 0, y: 0, z: 0, yaw: 0, body: 1, ink: 0x3f4652, scale: 1 }])
+  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars, ...craft.meshes, staff.group)
   const built = buildScene('city', renderer, world.scene, world.camera)
   const shadowed = new Set(built.filter((b) => b.pass === 'shadow').map((b) => b.name))
   // The guideway's beams share the columns' material, geometry attributes and instancing: one draw, built once as the columns.
@@ -345,6 +350,7 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   // The homes' finishes and furniture: the buildings' material read through a uniform buffer of transforms (its 512
   // slots fit one), a draw of its own beside the buildings' instanced attributes, indoors under the slab, no shadow.
   assert.ok(mains.has('HomeFurniture') && !shadowed.has('HomeFurniture'), 'city: HomeFurniture is drawn and casts no shadow')
+  assert.ok(mains.has('StaffPerson') && !shadowed.has('StaffPerson'), 'city: a posted agent is drawn and casts no shadow')
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
   // The near bodies' main fragments were built, so each was held to NEAR_TARGET on the way (buildScene's check).

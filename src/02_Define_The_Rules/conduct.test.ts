@@ -234,6 +234,7 @@ const UNARMED_SOURCES: readonly string[] = Object.freeze([
   '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts', '03_Spawn_Agents/tattoo.ts',
   '06_Make_Decisions/actions.ts', '06_Make_Decisions/intent.ts',
   '07_Execute_Actions/acts.ts', '07_Execute_Actions/car.ts', '07_Execute_Actions/carRig.ts', '07_Execute_Actions/fleetView.ts',
+  '07_Execute_Actions/staffView.ts',
 ])
 
 test('no weapon in the agents\' mesh descriptors, rigs, shaders or action tables, in code or comment', () => {

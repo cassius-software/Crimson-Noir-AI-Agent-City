@@ -26,9 +26,10 @@ import { createRng, degreeOf } from '../02_Define_The_Rules/degrees.ts'
 import { stoppingDistance } from '../02_Define_The_Rules/laws.ts'
 import { CITY } from '../01_Initialize_World/city.ts'
 // Erased at runtime; the module itself is imported below, once the `?raw` hook is in place.
-import type { CarState, CullInput, CullSettings, SharedBuffers } from './crowdCompute.ts'
+import type { CarState, CrowdKernel, CullInput, CullSettings, SharedBuffers } from './crowdCompute.ts'
 import type { CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, onRoad, OperatorTrail, RECRUIT_SLOTS, sidewalkPath, SUMMON_ACCEPT, TETHER_PACE, TRAIL } from './skills.ts'
+import { kindOf } from '../07_Execute_Actions/bootFailure.ts'
 
 // Vite's `?raw` import, for Node: the file as a default-exported string.
 registerHooks({
@@ -45,15 +46,15 @@ Object.assign(globalThis, { GPUBufferUsage: USAGE, GPUMapMode: { READ: 1, WRITE:
 
 const { ROOM, ROOM_FLOATS, workplaces, workplacesAt } = await import('../01_Initialize_World/interiors.ts')
 const {
-  CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, MAX_CARS, PARAMS_ROOMS, PARAMS_ROUTES, PARAMS_SIZE, PARAMS_STREETS, PARAMS_TRAIL, PARAMS_TRAIL_COUNT, PASS_BINDINGS, RENDER_FLOATS,
-  SIM_PASSES, TRAIL_VEC4S, VARIANTS,
+  CROWD_KERNELS, CROWD_WORKGROUP, CULL_EASE, CULL_PASSES, FLAG_NON_FINITE, GRID_CELLS, MAX_CARS, PARAMS_ROOMS, PARAMS_ROUTES, PARAMS_SIZE, PARAMS_STREETS, PARAMS_TRAIL, PARAMS_TRAIL_COUNT, PASS_BINDINGS,
+  RENDER_FLOATS, SIM_PASSES, TRAIL_VEC4S, VARIANTS,
   agentQuota, corridorReach, crowdShader, geometryOf, packFrustumPlanes, packSimParams, simReadbackSize,
 } = await import('./crowdCompute.ts')
 const { STREET_VEC4S, cityStreetGrid, packStreets } = await import('../01_Initialize_World/region/streets.ts')
 const { ROUTE_LINES, ROUTE_ROOM_VEC4S, ROUTE_VEC4S, packRoutes } = await import('../01_Initialize_World/region/workplaces.ts')
 const { CROWD_SUBSTEP, CrowdSim } = await import('./crowdSim.ts')
 const { CrowdCull, MAX_HIDDEN } = await import('./crowdCull.ts')
-const { MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
+const { AGENTS_RANGE, MAX_CARS: SENSOR_MAX_CARS, PEDESTRIAN_MAX_SPEED } = await import('./crowdSensor.ts')
 
 const SOURCE = readFileSync(new URL('./crowd.wgsl', import.meta.url), 'utf8')
 const AGENTS = 1000
@@ -108,8 +109,8 @@ function bindings(code: string): Map<string, Binding> {
   return out
 }
 
-/** Bindings an entry point statically uses: referenced in it or in any function it calls. */
-function staticUse(code: string, entry: string): number[] {
+/** The functions an entry point reaches (itself included) and the bindings referenced in any of them. */
+function reach(code: string, entry: string): { fns: Set<string>; bindings: Set<number> } {
   const fns = functions(code)
   const vars = bindings(code)
   const seen = new Set<string>()
@@ -124,7 +125,22 @@ function staticUse(code: string, entry: string): number[] {
     }
   }
   visit(entry)
-  return [...used].sort((a, b) => a - b)
+  return { fns: seen, bindings: used }
+}
+
+/** Bindings an entry point statically uses: referenced in it or in any function it calls. */
+function staticUse(code: string, entry: string): number[] {
+  return [...reach(code, entry).bindings].sort((a, b) => a - b)
+}
+
+/** The workgroup size of a compute entry point, (x, y, z) with the defaults filled in. */
+function workgroupSize(code: string, entry: string): [number, number, number] {
+  const m = new RegExp(`@compute\\s*@workgroup_size\\(([^)]*)\\)\\s*fn\\s+${entry}\\b`).exec(uncomment(code))
+  assert.ok(m, `${entry}: no @workgroup_size`)
+  const named = constants(code)
+  const [x = 1, y = 1, z = 1] = m[1].split(',').map((v) => v.trim()).map((v) => (named.has(v) ? named.get(v)! : Number(v)))
+  assert.ok([x, y, z].every((n) => Number.isInteger(n) && n > 0), `${entry}: workgroup_size(${m[1]})`)
+  return [x, y, z]
 }
 
 interface Layout { size: number; align: number; stride?: number; members?: Map<string, { offset: number; type: string }> }
@@ -432,6 +448,19 @@ class MockBuffer {
 }
 
 interface Pipeline { entryPoint: string; getBindGroupLayout(i: number): { entryPoint: string } }
+/** What a mock GPU's own compiler says of a pass: a GPUPipelineError's reason and message. */
+interface Refusal { reason: 'validation' | 'internal'; message: string }
+interface CompilationMessage { type: 'error' | 'warning' | 'info'; lineNum: number; linePos: number; offset: number; length: number; message: string }
+
+class MockShaderModule {
+  readonly code: string
+  readonly device: MockDevice
+  constructor(code: string, device: MockDevice) {
+    this.code = code
+    this.device = device
+  }
+  getCompilationInfo(): Promise<{ messages: CompilationMessage[] }> { return Promise.resolve({ messages: this.device.compilation }) }
+}
 interface Group { label: string; entryPoint: string; entries: { binding: number; buffer: MockBuffer | undefined; texture?: MockTexture }[] }
 
 class MockTexture {
@@ -461,8 +490,19 @@ class MockDevice {
   readonly groups: Group[] = []
   readonly maps: MapRequest[] = []
   readonly log: string[] = []
+  /** Workgroups of the last dispatch of each entry point. */
+  readonly dispatched: Record<string, number> = {}
   readonly features = new Set<string>()
+  /** The last module's code, and every module's, in order (a crowd that falls back compiles two). */
   shader = ''
+  readonly modules: string[] = []
+  /** What this device's own compiler refuses (createComputePipelineAsync rejects as a GPUPipelineError); nothing by default. */
+  refuse: (entryPoint: string, code: string) => Refusal | null = () => null
+  /** The last module's compilation messages (getCompilationInfo). */
+  compilation: CompilationMessage[] = []
+  /** The first error each scope filter captures while a scope of that filter is open; none by default. */
+  scopeErrors: Partial<Record<string, string>> = {}
+  readonly scopes: string[] = []
   onDispatch: (entryPoint: string) => void = () => {}
   #loseDevice: (info: { reason: string; message: string }) => void = () => {}
   readonly lost = new Promise<{ reason: string; message: string }>((resolve) => { this.#loseDevice = resolve })
@@ -502,14 +542,22 @@ class MockDevice {
     assert.ok(b, label)
     return b
   }
-  createShaderModule(d: { code: string }): object {
+  createShaderModule(d: { code: string }): MockShaderModule {
     this.shader = d.code
-    return {}
+    this.modules.push(d.code)
+    return new MockShaderModule(d.code, this)
   }
-  createComputePipeline(d: { layout: string; compute: { entryPoint: string } }): Pipeline {
+  createComputePipeline(d: { layout: string; compute: { module: MockShaderModule; entryPoint: string } }): Pipeline {
     assert.equal(d.layout, 'auto')
+    assert.ok(d.compute.module instanceof MockShaderModule, 'a pipeline takes a module of this device')
     const entryPoint = d.compute.entryPoint
     return { entryPoint, getBindGroupLayout: (i: number) => { assert.equal(i, 0); return { entryPoint } } }
+  }
+  /** As the API: a refused pass rejects with a GPUPipelineError (its reason and the compiler's words), never a scope error. */
+  createComputePipelineAsync(d: { layout: string; compute: { module: MockShaderModule; entryPoint: string } }): Promise<Pipeline> {
+    const refusal = this.refuse(d.compute.entryPoint, d.compute.module.code)
+    if (refusal) return Promise.reject(Object.assign(new Error(refusal.message), { name: 'GPUPipelineError', reason: refusal.reason }))
+    return Promise.resolve(this.createComputePipeline(d))
   }
   createTexture(d: { label?: string; size: { width: number; height: number }; format: string; usage: number }): MockTexture {
     const t = new MockTexture(d)
@@ -532,7 +580,7 @@ class MockDevice {
           dispatchWorkgroups: (n: number) => {
             const ep = current!.entryPoint
             assert.ok(n > 0 && n <= 65535, `${ep}: ${n} workgroups`)
-            ops.push(() => { this.log.push(`dispatch ${ep}`); this.onDispatch(ep) })
+            ops.push(() => { this.log.push(`dispatch ${ep}`); this.dispatched[ep] = n; this.onDispatch(ep) })
           },
           end: () => {},
         }
@@ -551,8 +599,13 @@ class MockDevice {
       finish: (): Commands => ({ ops }),
     }
   }
-  pushErrorScope(): void {}
-  popErrorScope(): Promise<null> { return Promise.resolve(null) }
+  pushErrorScope(filter: string): void { this.scopes.push(filter) }
+  popErrorScope(): Promise<{ message: string } | null> {
+    const filter = this.scopes.pop()
+    assert.ok(filter, 'popErrorScope with no scope pushed')
+    const message = this.scopeErrors[filter]
+    return Promise.resolve(message ? { message } : null)
+  }
   /** Resolves pending mapAsync calls (oldest first by default) and lets their callbacks run. */
   async flush(order: 'fifo' | 'lifo' = 'fifo'): Promise<void> {
     while (this.maps.length) (order === 'fifo' ? this.maps.shift()! : this.maps.pop()!).resolve()
@@ -723,12 +776,249 @@ test('PASS_BINDINGS lists exactly the bindings each entry point statically uses 
   for (const name of entries) if (name !== 'simulate') assert.ok(!staticUse(MODULE, name).includes(12), `${name} must not list the hazard slots`)
 })
 
-test('no pass needs more than the default 8 storage buffers per stage', () => {
-  const vars = [...bindings(MODULE).values()]
-  for (const [name, list] of Object.entries(PASS_BINDINGS)) {
-    const storage = list.filter((b) => vars.find((v) => v.binding === b)!.space === 'storage').length
-    assert.ok(storage <= 8, `${name} uses ${storage} storage buffers`)
+// WebGPU's default limits (the "supported limits" table of the specification): what every adapter must offer and what
+// a device gets when nothing more is asked for, as neither the page (gpuDevice.ts) nor the worker (physics.worker.ts)
+// does. A phone's adapter offers little more than these, so the crowd fits every device exactly when it fits them.
+const DEFAULT_LIMITS = Object.freeze({
+  maxStorageBuffersPerShaderStage: 8,
+  maxUniformBuffersPerShaderStage: 12,
+  maxSampledTexturesPerShaderStage: 16,
+  maxStorageTexturesPerShaderStage: 4,
+  maxBindingsPerBindGroup: 1000,
+  maxUniformBufferBindingSize: 65536,
+  maxStorageBufferBindingSize: 128 * 2 ** 20,
+  maxBufferSize: 256 * 2 ** 20,
+  maxComputeWorkgroupSizeX: 256,
+  maxComputeWorkgroupSizeY: 256,
+  maxComputeWorkgroupSizeZ: 64,
+  maxComputeInvocationsPerWorkgroup: 256,
+  maxComputeWorkgroupStorageSize: 16384,
+  maxComputeWorkgroupsPerDimension: 65535,
+})
+
+/** The module of a kernel over the city, at the test's crowd. */
+const moduleOf = (kernel: CrowdKernel, agents = AGENTS) => crowdShader(agents, undefined, undefined, kernel)
+/** The full and narrow modules alone define the trail's spot: how a mock tells them from the light one. */
+const isFullKernel = (code: string) => code.includes('fn trailSpot(')
+/** The agent passes' workgroup width a module declares. */
+const workgroupOf = (code: string) => Number(/^const AGENT_WG: u32 = (\d+)u;$/m.exec(code)![1])
+/** The kernel a module is: what the header declares and which way file ends it. */
+const kernelOf = (code: string): CrowdKernel => (!isFullKernel(code) ? 'lite' : workgroupOf(code) === CROWD_WORKGROUP.full ? 'full' : 'narrow')
+/** A mock whose own compiler refuses the simulate pass of the kernels in `refused` (an internal error, the driver's words). */
+const refusing = (...refused: CrowdKernel[]) => {
+  const device = new MockDevice()
+  device.refuse = (entry, code) => (entry === 'simulate' && refused.includes(kernelOf(code)) ? { reason: 'internal', message: `CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (${kernelOf(code)})` } : null)
+  return device
+}
+
+test('every pass of every kernel stays within the WebGPU limits every device promises: bindings per stage, workgroup size and storage, no extension; the uniform, every buffer and every dispatch at the largest crowd', async () => {
+  for (const kernel of CROWD_KERNELS) {
+    const code = moduleOf(kernel)
+    assert.equal(kernelOf(code), kernel)
+    assert.ok(!/^\s*(enable|requires)\b/m.test(uncomment(code)), `${kernel}: no extension or language feature is required of the device`)
+    assert.ok(!/var<workgroup>/.test(uncomment(code)), `${kernel}: no workgroup storage (the limit is ${DEFAULT_LIMITS.maxComputeWorkgroupStorageSize} bytes; the crowd needs none)`)
+    const vars = [...bindings(code).values()]
+    const entries = [...functions(code).values()].filter((f) => f.compute).map((f) => f.name)
+    assert.deepEqual(entries.sort(), [...SIM_PASSES, ...CULL_PASSES].sort(), `${kernel}: the passes`)
+    for (const name of entries) {
+      const used = staticUse(code, name)
+      const of = (space: string) => used.filter((b) => vars.find((v) => v.binding === b)!.space === space).length
+      assert.ok(of('storage') <= DEFAULT_LIMITS.maxStorageBuffersPerShaderStage, `${kernel} ${name}: ${of('storage')} storage buffers`)
+      assert.ok(of('uniform') <= DEFAULT_LIMITS.maxUniformBuffersPerShaderStage, `${kernel} ${name}: ${of('uniform')} uniform buffers`)
+      assert.ok(of('texture') <= DEFAULT_LIMITS.maxSampledTexturesPerShaderStage, `${kernel} ${name}: ${of('texture')} sampled textures`)
+      assert.ok(Math.max(...used) < DEFAULT_LIMITS.maxBindingsPerBindGroup, `${kernel} ${name}: binding numbers`)
+      const [x, y, z] = workgroupSize(code, name)
+      assert.ok(x <= DEFAULT_LIMITS.maxComputeWorkgroupSizeX && y <= DEFAULT_LIMITS.maxComputeWorkgroupSizeY && z <= DEFAULT_LIMITS.maxComputeWorkgroupSizeZ, `${kernel} ${name}: workgroup ${x}×${y}×${z}`)
+      assert.ok(x * y * z <= DEFAULT_LIMITS.maxComputeInvocationsPerWorkgroup, `${kernel} ${name}: ${x * y * z} invocations a workgroup`)
+      // The agent passes take the kernel's width (the narrow and light kernels half the full one's: a phone GPU's core
+      // seats fewer threads of a kernel this size); the grid's clear, a store an invocation, keeps its own.
+      assert.deepEqual([x, y, z], [name === 'clearGrid' ? 256 : CROWD_WORKGROUP[kernel], 1, 1], `${kernel} ${name}: the workgroup`)
+    }
+    // simulate sits exactly at the storage-buffer limit: a ninth would fail every device at pipeline creation.
+    assert.equal(staticUse(code, 'simulate').filter((b) => vars.find((v) => v.binding === b)!.space === 'storage').length, 8, `${kernel}: simulate's storage buffers`)
   }
+  // The one uniform: Params, the same struct in both kernels, within the binding size (and within the 16 KiB a
+  // compatibility-level device would allow, for the record).
+  assert.ok(PARAMS_SIZE <= DEFAULT_LIMITS.maxUniformBufferBindingSize, `Params is ${PARAMS_SIZE} bytes`)
+  assert.ok(PARAMS_SIZE <= 16384, `Params is ${PARAMS_SIZE} bytes`)
+  for (const kernel of CROWD_KERNELS) assert.equal(layoutOf('Params', moduleOf(kernel)).size, PARAMS_SIZE, `${kernel}: Params`)
+  // Every buffer the worker makes at the largest crowd it accepts, and every dispatch of a step (the mock refuses a
+  // dispatch over maxComputeWorkgroupsPerDimension), within the limits, on every kernel (a device refusing the rungs
+  // above); the uniform binding within its own; each dispatch the crowd over the kernel's width.
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    for (const kernel of CROWD_KERNELS) {
+      const device = refusing(...CROWD_KERNELS.slice(0, CROWD_KERNELS.indexOf(kernel)))
+      const crowd = await CrowdSim.create(device as unknown as GPUDevice, AGENTS_RANGE[1])
+      assert.equal(crowd.kernel, kernel)
+      crowd.step(simInput())
+      await device.flush()
+      assert.ok(device.log.some((l) => l === 'dispatch simulate'), `${kernel}: the largest crowd steps`)
+      const groups = Math.ceil(AGENTS_RANGE[1] / CROWD_WORKGROUP[kernel])
+      assert.deepEqual(device.dispatched, { clearGrid: Math.ceil(GRID_CELLS / 256), binAgents: groups, spawn: groups, simulate: groups }, `${kernel}: the dispatches`)
+      for (const b of device.buffers) assert.ok(b.size <= DEFAULT_LIMITS.maxBufferSize, `${kernel} ${b.label}: ${b.size} bytes`)
+      for (const g of device.groups) {
+        for (const e of g.entries) {
+          if (!e.buffer) continue
+          const limit = e.buffer.usage & USAGE.UNIFORM ? DEFAULT_LIMITS.maxUniformBufferBindingSize : DEFAULT_LIMITS.maxStorageBufferBindingSize
+          assert.ok(e.buffer.size <= limit, `${kernel} ${g.label} binding ${e.binding} (${e.buffer.label}): ${e.buffer.size} bytes`)
+        }
+      }
+    }
+  } finally {
+    console.warn = warn
+  }
+})
+
+test('the narrow kernel is the full module at half the workgroup; the light kernel the same passes, bindings and uniform, the sensing, the contact, the containment and the commute kept, the room and lot routing gone and the simulate kernel smaller by its share', () => {
+  const full = moduleOf('full'), narrow = moduleOf('narrow'), lite = moduleOf('lite')
+  assert.ok(isFullKernel(full) && isFullKernel(narrow) && !isFullKernel(lite))
+  assert.deepEqual([workgroupOf(full), workgroupOf(narrow), workgroupOf(lite)], [128, 64, 64])
+  assert.equal(narrow.replace(/^const AGENT_WG: u32 = 64u;$/m, 'const AGENT_WG: u32 = 128u;'), full, 'the narrow module differs from the full one in AGENT_WG alone')
+  for (const name of [...SIM_PASSES, ...CULL_PASSES]) assert.deepEqual(staticUse(lite, name), staticUse(full, name), `${name}: the bindings`)
+  assert.deepEqual([...PASS_BINDINGS.simulate].sort((a, b) => a - b), staticUse(lite, 'simulate'))
+  // crowd.wgsl itself is in both, whole: the two differ in the way file alone.
+  assert.ok(full.includes(SOURCE) && lite.includes(SOURCE))
+  const f = reach(full, 'simulate').fns, l = reach(lite, 'simulate').fns
+  for (const kept of ['corridorGap', 'clockwise', 'contain', 'containRoom', 'pushOut', 'clampCity', 'hitsBox', 'standingCarAt', 'glassBetween', 'crossesGlass', 'summonWay', 'roomWay', 'lastStretch', 'offFurniture', 'offLot', 'offGlass', 'flowAt', 'arriveAt', 'commuteCorner', 'routeWay', 'towardCorner', 'nextCorner', 'isCrossing', 'walkDelay', 'degreeOf']) {
+    assert.ok(f.has(kept), `the full kernel reaches ${kept}`)
+    assert.ok(l.has(kept), `the light kernel keeps ${kept}`)
+  }
+  for (const dropped of ['trailSpot', 'clearOfFurniture', 'lotCut']) {
+    assert.ok(f.has(dropped), `the full kernel reaches ${dropped}`)
+    assert.ok(!l.has(dropped), `the light kernel has no ${dropped}`)
+  }
+  // The light room way tests the straight line against each piece (hitsBox) and rounds the first in its way by a
+  // corner: a line square into a face is refused whole by the containment, which would hold a recruit on a table.
+  const liteWay = functions(lite).get('roomWay')!.body
+  assert.ok(/hitsBox\(me, goal - me, lo, hi\)/.test(liteWay) && /ROOM_PAD \+ ROOM_ROUND/.test(liteWay) && /hitsBox\(me, q - me, lo, hi\)/.test(liteWay), 'the light roomWay skirts the first piece in its way by a corner in sight')
+  assert.ok(!/trail|clearOfFurniture|walled|ROOM_AISLE/.test(liteWay), 'and nothing of the full one\'s trail, aisles or glass')
+  // The same two functions, signature for signature, so crowd.wgsl calls either.
+  for (const name of ['roomWay', 'lastStretch']) assert.deepEqual(functions(lite).get(name)!.params, functions(full).get(name)!.params, name)
+  // What the light kernel sheds, by source reachable from simulate (the measure before a compiler inlines it, when the
+  // routing's loops of loops weigh more): the routing is an eighth of the full kernel, give or take; the sensing and the
+  // simulate body itself are most of it and stay. Pinned so a change to either side is seen for its size.
+  const size = (code: string, names: Set<string>) => [...names].reduce((n, name) => n + functions(code).get(name)!.body.replace(/\s+/g, ' ').length, 0)
+  const ratio = size(lite, l) / size(full, f)
+  assert.ok(ratio >= 0.8 && ratio <= 0.9, `the light kernel is ${(ratio * 100).toFixed(0)}% of the full one`)
+})
+
+test('a GPU whose own compiler refuses the full simulate pass gets the narrow kernel, then the light one, with the refusals kept (a refusal Safari reports as validation too); every rung refused, or the WGSL itself refused, fails with the browser\'s words, the pass and the compiler messages', async () => {
+  const warned: string[] = []
+  const warn = console.warn
+  console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(' ')) }
+  try {
+    // An internal error (the driver would not build the pass: Dawn's "CreateComputePipelines failed with ..."): the
+    // same module at half the workgroup is compiled in its place, runs, and says so in the console.
+    const d1 = refusing('full')
+    const narrow = await CrowdSim.create(d1 as unknown as GPUDevice, AGENTS)
+    assert.equal(narrow.kernel, 'narrow')
+    assert.deepEqual(d1.modules.map(kernelOf), ['full', 'narrow'])
+    assert.deepEqual(warned, ["[crowd] the full kernel at narrow workgroups runs: refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full))"])
+    narrow.step(simInput())
+    await d1.flush()
+    assert.ok(narrow.readout, 'the narrow crowd steps and reads back')
+    assert.equal(d1.scopes.length, 0, 'every scope popped')
+    // The narrow one refused too: the light kernel, with both refusals in the console.
+    warned.length = 0
+    const d1b = refusing('full', 'narrow')
+    const lite = await CrowdSim.create(d1b as unknown as GPUDevice, AGENTS)
+    assert.equal(lite.kernel, 'lite')
+    assert.deepEqual(d1b.modules.map(kernelOf), ['full', 'narrow', 'lite'])
+    assert.deepEqual(warned, ["[crowd] the light kernel runs: refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full)), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (narrow))"])
+    lite.step(simInput())
+    await d1b.flush()
+    assert.ok(lite.readout, 'the light crowd steps and reads back')
+    assert.equal(d1b.scopes.length, 0, 'every scope popped')
+    // Every rung refused: the failure names them all, in order, as a compiler failure (the card's words for the driver).
+    const d2 = new MockDevice()
+    d2.refuse = (entry) => (entry === 'simulate' ? { reason: 'internal', message: 'CreateComputePipelines failed with VK_ERROR_UNKNOWN' } : null)
+    const every = await CrowdSim.create(d2 as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
+    assert.ok(every)
+    assert.equal(every.message, "crowd.wgsl pipeline compilation failed: the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN), the light kernel (crowd.wgsl (light kernel) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN)")
+    assert.equal(kindOf(every, { secure: true }), 'compiler')
+    assert.deepEqual(d2.modules.map(kernelOf), ['full', 'narrow', 'lite'])
+    // Safari reports its Metal compiler's refusal as validation (WebKit's createComputePipelineAsync rejects every backing
+    // failure so): a validation refusal with no error of the module's own climbs the ladder the same way.
+    warned.length = 0
+    const safari = new MockDevice()
+    safari.refuse = (entry, code) => (entry === 'simulate' && kernelOf(code) === 'full' ? { reason: 'validation', message: 'Compute library failed to compile' } : null)
+    const metal = await CrowdSim.create(safari as unknown as GPUDevice, AGENTS)
+    assert.equal(metal.kernel, 'narrow')
+    assert.deepEqual(warned, ['[crowd] the full kernel at narrow workgroups runs: refused the full kernel (crowd.wgsl simulate: failed WebGPU validation: Compute library failed to compile)'])
+    warned.length = 0
+    // Every rung refused so: a validation failure (the browser's class), every rung's words kept.
+    const safariAll = new MockDevice()
+    safariAll.refuse = (entry) => (entry === 'simulate' ? { reason: 'validation', message: 'Compute library failed to compile' } : null)
+    const metalAll = await CrowdSim.create(safariAll as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
+    assert.ok(metalAll)
+    assert.equal(metalAll.message, 'crowd.wgsl pipeline validation failed: WebGPU refused the full kernel (crowd.wgsl simulate: failed WebGPU validation: Compute library failed to compile), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: failed WebGPU validation: Compute library failed to compile), the light kernel (crowd.wgsl (light kernel) simulate: failed WebGPU validation: Compute library failed to compile)')
+    assert.equal(kindOf(metalAll, { secure: true }), 'shader')
+    assert.deepEqual(safariAll.modules.map(kernelOf), ['full', 'narrow', 'lite'])
+    // An error of the module's own (WebGPU's validation of the WGSL, with its compiler messages) is the module's fault on
+    // every rung: no second kernel, the browser's words, and the messages with the line quoted (a line number into the
+    // assembled module, header and all, names nothing alone).
+    const d3 = new MockDevice()
+    d3.refuse = (entry) => (entry === 'binAgents' ? { reason: 'validation', message: 'Entry point "binAgents" uses binding 5 as read-write storage' } : null)
+    const line = moduleOf('full').split('\n').findIndex((l) => l.startsWith('fn binAgents(')) + 1
+    d3.compilation = [{ type: 'error', lineNum: line, linePos: 4, offset: 0, length: 9, message: 'no such thing' }, { type: 'warning', lineNum: 0, linePos: 0, offset: 0, length: 0, message: 'a word to the wise' }]
+    const refused = await CrowdSim.create(d3 as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
+    assert.ok(refused)
+    assert.equal(refused.message, `crowd.wgsl pipeline validation failed: WebGPU refused the full kernel (crowd.wgsl binAgents: failed WebGPU validation: Entry point "binAgents" uses binding 5 as read-write storage; compiler messages: error at line ${line}:4: no such thing "fn binAgents(@builtin(global_invocation_id) gid: vec3u) {" | warning: a word to the wise)`)
+    assert.equal(kindOf(refused, { secure: true }), 'shader')
+    assert.equal(d3.modules.length, 1, 'no second rung for an error of the module\'s own')
+    // A warning alone is not the module's error: the ladder climbs.
+    const d3w = new MockDevice()
+    d3w.refuse = (entry, code) => (entry === 'simulate' && kernelOf(code) === 'full' ? { reason: 'validation', message: 'x' } : null)
+    d3w.compilation = [{ type: 'warning', lineNum: 0, linePos: 0, offset: 0, length: 0, message: 'a word to the wise' }]
+    assert.equal((await CrowdSim.create(d3w as unknown as GPUDevice, AGENTS)).kernel, 'narrow')
+    warned.length = 0
+    // A refusal after the passes compiled (a buffer the device has no memory for, a bind group it refuses) comes out of its
+    // own scope with its filter, instead of a first step that dispatches nothing.
+    const d4 = new MockDevice()
+    d4.scopeErrors = { 'out-of-memory': 'crowd.gridSlots: no memory for 13,770,752 bytes' }
+    await assert.rejects(CrowdSim.create(d4 as unknown as GPUDevice, AGENTS), { message: 'crowd.wgsl could not be set up on this GPU: out-of-memory: crowd.gridSlots: no memory for 13,770,752 bytes' })
+    const d5 = new MockDevice()
+    d5.scopeErrors = { validation: '[BindGroup "crowd.simulate"] binding 14 is not a texture' }
+    await assert.rejects(CrowdSim.create(d5 as unknown as GPUDevice, AGENTS), { message: 'crowd.wgsl pipeline validation failed: [BindGroup "crowd.simulate"] binding 14 is not a texture' })
+    assert.equal(warned.length, 0, 'a failure does not warn; only a rung that runs')
+    assert.equal(kindOf(new Error('crowd.wgsl could not be set up on this GPU: out-of-memory: no memory'), { secure: true }), 'other', 'a scope refusal is not the compiler\'s')
+  } finally {
+    console.warn = warn
+  }
+})
+
+test('the page\'s cull: a pass its GPU\'s own compiler refuses fails the boot as a compiler failure, one WebGPU refuses as a validation failure; it never compiles another kernel', async () => {
+  const S = USAGE.STORAGE | USAGE.COPY_DST | USAGE.COPY_SRC
+  const rig = (refuse: MockDevice['refuse']) => {
+    const device = new MockDevice()
+    device.refuse = refuse
+    const shared = {
+      pos: device.createBuffer({ label: 'pos', size: AGENTS * 16, usage: S | USAGE.VERTEX }),
+      vel: device.createBuffer({ label: 'vel', size: AGENTS * 16, usage: S | USAGE.VERTEX }),
+      pose: device.createBuffer({ label: 'pose', size: AGENTS * 16, usage: S | USAGE.VERTEX }),
+      drawArgs: device.createBuffer({ label: 'drawArgs', size: VARIANTS * 2 * 20, usage: S | USAGE.INDIRECT }),
+      drawLists: device.createBuffer({ label: 'drawLists', size: agentQuota(AGENTS) * VARIANTS * 2 * 4, usage: S }),
+      look: device.createBuffer({ label: 'look', size: AGENTS * 4, usage: S }),
+    }
+    return { device, create: () => CrowdCull.create(device as unknown as GPUDevice, shared as unknown as SharedBuffers, new Uint32Array(VARIANTS * 2 * 5), AGENTS, { lodDistance: 30, nearRadius: 22, density: 0.6, maxDistance: 180 }) }
+  }
+  const internal = rig((entry) => (entry === 'cull' ? { reason: 'internal', message: 'CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED' } : null))
+  const e1 = await internal.create().then(() => null, (e: Error) => e)
+  assert.equal(e1?.message, "crowd.wgsl cull pipeline compilation failed: crowd.wgsl cull: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED")
+  assert.equal(kindOf(e1, { secure: true }), 'compiler')
+  assert.equal(internal.device.modules.length, 1)
+  const validation = rig((entry) => (entry === 'cull' ? { reason: 'validation', message: 'binding 13 is not in the layout' } : null))
+  const e2 = await validation.create().then(() => null, (e: Error) => e)
+  assert.equal(e2?.message, 'crowd.wgsl cull pipeline validation failed: crowd.wgsl cull: failed WebGPU validation: binding 13 is not in the layout')
+  assert.equal(kindOf(e2, { secure: true }), 'shader')
+  const fine = rig(() => null)
+  const cull = await fine.create()
+  assert.ok(cull)
+  assert.equal(kernelOf(fine.device.shader), 'full', 'the page compiles the full module (the cull reads no way)')
+  assert.equal(fine.device.modules.length, 1)
+  assert.equal(fine.device.scopes.length, 0)
 })
 
 test('struct layouts obey the uniform address-space rules and match the CPU sizes', () => {

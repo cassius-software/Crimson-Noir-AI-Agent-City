@@ -15,6 +15,7 @@
  */
 import { installAirgap } from '../02_Define_The_Rules/airgap.ts'
 import { CrowdSim } from '../03_Spawn_Agents/crowdSim.ts'
+import { adapterLine } from '../01_Initialize_World/gpuDevice.ts'
 import type { FlowGrid } from '../06_Make_Decisions/flowField.ts'
 import type { StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import type { Workplace } from '../01_Initialize_World/interiors.ts'
@@ -51,8 +52,22 @@ async function gpuCrowd(agents: number, grid: FlowGrid, streets: StreetGrid | nu
   const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' })
   if (!adapter) throw coded('worker-gpu', 'no WebGPU adapter inside the physics worker')
   const device = await adapter.requestDevice({ label: 'physics-realm crowd' })
-  device.addEventListener('uncapturederror', (e) => console.error('[physics worker] crowd GPU error:', (e as GPUUncapturedErrorEvent).error.message))
-  return CrowdSim.create(device, agents, grid, streets, rooms)
+  // Errors no scope captured, kept while the crowd is built: a failure's words then carry them to the page's card, where
+  // a phone's console is nothing anyone reads. The adapter's line names the GPU that refused, the page's own being unknown
+  // to this worker (and unknown to the card when the city failed before the page's engine stood).
+  const uncaptured: string[] = []
+  device.addEventListener('uncapturederror', (e) => {
+    const message = (e as GPUUncapturedErrorEvent).error.message
+    if (uncaptured.length < 8) uncaptured.push(message)
+    console.error('[physics worker] crowd GPU error:', message)
+  })
+  try {
+    return await CrowdSim.create(device, agents, grid, streets, rooms)
+  } catch (e) {
+    const info = adapterLine((adapter as Partial<Pick<GPUAdapter, 'info'>>).info)
+    const extra = uncaptured.length ? `; uncaptured GPU errors meanwhile: ${uncaptured.join(' | ')}` : ''
+    throw new Error(`${e instanceof Error ? e.message : String(e)} [crowd device: ${info}${extra}]`)
+  }
 }
 
 /** The realm, built on init. Rapier is WebAssembly: a browser with it switched off (Lockdown Mode, a policy) cannot build one. */

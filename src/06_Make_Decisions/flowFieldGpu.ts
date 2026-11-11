@@ -15,6 +15,7 @@
  */
 import flowSource from './flowField.wgsl?raw'
 import { seedCost, type FlowGrid, type FlowSolution, type FlowSolver } from './flowField.ts'
+import { scopedMessage, withErrorScopes } from '../01_Initialize_World/gpuPipelines.ts'
 
 /** Relax passes between two readbacks of the change counter: a batch is one submit, a readback is one map. */
 export const RELAX_BATCH = 32
@@ -130,10 +131,10 @@ export class FlowFieldGpu implements FlowSolver {
    * device refuses the shader (validation), so the caller can fall back to the CPU solver.
    */
   static async create(device: GPUDevice, grid: FlowGrid, flow: GPUTexture): Promise<FlowFieldGpu> {
-    device.pushErrorScope('validation')
-    const solver = new FlowFieldGpu(device, grid, flow)
-    const error = await device.popErrorScope()
-    if (error) throw new Error(`flowField.wgsl pipeline validation failed: ${error.message}`)
+    // Every kind of refusal, not validation alone: a pipeline the GPU's own compiler refuses is an internal error, which
+    // a validation scope never sees, and the solver would then dispatch an invalid pipeline every solve.
+    const { value: solver, errors } = await withErrorScopes(device, () => new FlowFieldGpu(device, grid, flow))
+    if (errors.length) throw new Error(`flowField.wgsl pipeline ${errors.every((e) => e.filter === 'validation') ? 'validation' : 'compilation'} failed: ${scopedMessage(errors)}`)
     return solver
   }
 

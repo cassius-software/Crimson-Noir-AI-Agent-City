@@ -424,7 +424,9 @@ home has one deed, sold at Lintel & Lumen Design House:
   Estate** (level 17, 1,100,000 credits) at its eastern end, both facing the lake.
 - **Crown Spire Sky-Mansion** (level 20, 4,500,000 credits) at the foot of the tallest headquarters tower no one else
   has, and **Crimson Tower Penthouse** (level 10, 75,000 credits) at the foot of another tower near the centre, at
-  least two lots away. For now each is the residence at its tower's foot; the card says the sky floor opens later.
+  least two lots away. In the city each also has a sky floor up its tower (the card says how far up). Inside the
+  home, the card's **Go up** takes you there, visitor or owner, and **Go down** brings you back inside the doorway.
+  The ride waits outside a network room and out of a car.
 
 Each home is a glass room built like a shop, with the ceiling slab in the building's own finish. The grander the home,
 the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft is 9.3 m deep and the two grandest
@@ -432,11 +434,17 @@ the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft
 fits. Anyone can walk into any home, in either map and in a network room. The minimap draws a home on sale in violet
 and one you own in gold.
 
+A sky floor is a 15.6 m square room with clear glass on all four sides, which you see through and cannot walk
+through, under the tower's own slab. You furnish it like the home below, with its own 16 pieces and caps, its own
+floor finish, Rest and Staff. Its walls are its windows, so the Walls tab has nothing to finish. A deed you do not own
+shows a staged floor.
+
 Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
 workplaces and shops have taken theirs, hollowed the same way. The seven nearest free lots to your start are chosen
 first, and among them the grander homes get the better-built ones (if a podium that carries a tower is among them, the
-grandest home there takes it), so a home's name does not promise a view of the lake or a tower there; a window with
-too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
+grandest home there takes it), so a home's name does not promise a view of the lake or a tower there, and no home there
+has a sky floor; a window with too few lots has fewer homes, and the surveyed region has none. A region home's card
+names the streets it stands on.
 
 On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Furnish** and the
 name of a home you own. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
@@ -472,13 +480,15 @@ shared room: it replays your walk and does not know your furniture"), and restin
 keeps applying there. The card switches to furnishing by itself once you leave the room. Walking out of the home or
 putting on a headset closes the card.
 
-- **Four tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
-  holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
-  hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
-  ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
-  house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
+- **Five tabs, six in a home with a sky floor.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk,
+  the six-screen console, the holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the
+  grand piano, the hydroponic green wall and the agent workstation. A line you own says how many stand in this room out
+  of its cap ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the
+  design house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
-  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below).
+  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below). **Staff** posts your own agents
+  at the agent workstations standing here (below). **Tower** says how far up the sky floor is and rides there or back
+  (Enter, Space, the pad's south button or the button).
 - **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
   many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
   (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new
@@ -491,6 +501,33 @@ putting on a headset closes the card.
   bonus runs its 30 checks too. Every check counts, at the console or in the city; a refused check and a hero point's
   reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
   where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
+- **Staff.** The Staff tab posts your own agents (the wardrobe card's Agents tab) at the agent workstations standing
+  in this home. It shows your agents as a row of buttons, the chosen one pressed, each with where that agent is under
+  the name: Free, Workstation 2 (one here), another home's name, or Workstation moved or put away, and "· out with
+  you" while hired. Under them, **Workstations here** lists this home's workstations, numbered in reading order (back row
+  first, then left to right), each with who stands at it ("Workstation 1 · Mara", or "· Nobody"); a screen reader
+  also hears its column and row. Choose an agent (Q / E, the pad's shoulders, or a tap) and move the cursor onto a
+  workstation, or tap its row in the list; the line under the plan says which workstation it is, who stands at it,
+  and what Post would do (off a workstation, which agent is chosen). Then press Enter, Space, the pad's south button
+  or **Post** (or tap the workstation or its row again). From then on they stand at that workstation, in their body
+  and their top's colour, at their height, facing its screen, in every visit, until you stand them down (Delete,
+  Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet disc and
+  their initial, faded while they are out with you, and in this tab a screen reader hears how many of the
+  workstations here are staffed.
+  Workstations turn in the Furniture tab (Rotate says so here). Posting and standing down work exactly where
+  furnishing does.
+  - Posting an agent who is posted elsewhere moves them, and the line says from where ("Mara is at workstation 2 now
+    (moved from workstation 1)", or from another home's name). Posting at a staffed workstation frees whoever stood
+    there.
+  - An agent you have hired steps away from the workstation while they are out with you, and is back once you part.
+  - A posted agent is only drawn. They are not a body in the city (you can walk through them), do not walk, earn
+    nothing and do no work. Staffing changes no check, no rest and no credit.
+  - Who stands where is saved in this browser by the agent's name (`civic-simulation:staff:v1`). A post is kept while
+    its workstation is moved or put away or the deed is not yours, and the agent is back when a workstation stands in
+    that place again; picking up a staffed workstation in the Furniture tab says who waits for it. Renaming an agent
+    keeps their post; forgetting an agent lets their post go, so a new agent given that name starts free. If a newer
+    version of the city saved who stands where, this page shows nobody posted and never writes over it: Post and
+    Stand down ask you to reload the page. Staffing is not on Undo; Stand down undoes a post.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -515,18 +552,21 @@ putting on a headset closes the card.
   as **Not placed here** with **Clear**, and comes back when it fits again.
 - **Show homes.** A home on sale is furnished as a show home, solid like any other. It empties when the deed is
   bought: the new owner starts with a bare room in the home's own finishes.
-- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid: the room replays the
-  walk it saw and knows nothing of the furniture.
+- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid, and nobody stands at
+  a workstation: the room replays the walk it saw and knows nothing of the furniture.
 
 | Furnishing | Keyboard | Mouse | Pad | Touch |
 |---|---|---|---|---|
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
 | Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
+| Post an agent (Staff tab) | Enter or Space | Post, click the workstation under the cursor, or click its row twice | south (A) | Post, or tap the workstation or its row twice |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
+| Stand down (Staff tab) | Delete, Backspace or X | Stand down, or right click | west (X) | Stand down |
 | Previous / next piece | Q / E | click in the strip | left / right shoulder | ◀ ▶, or tap in the strip |
-| Tabs | 1 / 2 / 3 / 4 | the tab | left / right trigger | the tab |
+| Previous / next agent (Staff tab) | Q / E | click the agent | left / right shoulder | ◀ ▶, or tap the agent |
+| Tabs | 1 / 2 / 3 / 4 / 5 | the tab | left / right trigger | the tab |
 | Choose a finish (Floor or Walls) | ← → or Q / E | the swatch | left / right shoulder | the swatch |
 | Undo | Z or Ctrl+Z | Undo | View | Undo |
 | Turn the camera | C | View | right stick left / right | View |
@@ -1390,7 +1430,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   `agent hire <name> [<skill>]` in the console asks someone nearby with that skill over as them, dresses that pedestrian in the
   agent's look, and from then on their prompts are told who they are ("You go by Nova (she/her), a quant analyst.")
   and `say` speaks them in their provider voice. A hire lasts while that person stays with you: one who leaves or is
-  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. The roster itself is kept
+  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. An agent can also be posted
+  at an agent workstation in a home you own (Furnishing, Staff tab): they stand there between visits and step away
+  while hired. The roster itself is kept
   in this browser only (key `civic-simulation:roster:v1`); every stored record is validated on the way in. Forget
   removes an agent from the roster and dresses their pedestrian as the city does; it does not break the tether
   (`recruit dismiss` does).
@@ -2399,7 +2441,8 @@ any of them.
   counts the task bound to the swarm. Each piece reaches the screen only through the lease, so nothing
   arrives once the tether is gone.
 - **When it cannot answer, it says why in one sentence:** no server answering (start it, or point `ask`
-  at it), running but refusing this page, no such model, a model that does not write text, the
+  at it), running but refusing this page, no such model, a cloud model an Ollama with its cloud off will not run,
+  a model that does not write text, the
   server's own failure (for example, out of memory), a server that sends nothing (below), or, for the Claude
   provider, no key or the API's own refusal of the key or the request.
 - **How long it waits.** A local server has 5 minutes to send the first line of an answer (room to load a model
@@ -3662,9 +3705,9 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | Stage | Files | Role |
 |---|---|---|
 | — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
-| 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
+| 01_Initialize_World | `world.ts`, `gpuPipelines.ts`, `leanWgsl.node.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device and the compute pipelines compiled with the browser's words for a refusal, the shaders' text without its comments for the build (Node only), city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
 | 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Gate.ts`, `ring0Panic.ts`, `guardrails.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
-| 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
+| 03_Spawn_Agents | `crowd.wgsl` (with `crowdWay.wgsl`, the room and lot routing, or `crowdWayLite.wgsl`, the light kernel's straight lines), `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
@@ -4122,6 +4165,7 @@ programs.crimson-noir-agent-city.ollama = {
   acceleration = "vulkan";        # the default; or "rocm", "cuda", "cpu", or null for services.ollama's own choice
   integratedGpu = false;          # true lets Ollama use an integrated GPU (see below)
   models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started; without one it starts empty
+  cloud = false;                  # the default; true lets Ollama reach ollama.com for its cloud features (see below)
   extraOrigins = [ ];             # other page addresses Ollama should answer, such as the web copy's
 };
 ```
@@ -4146,12 +4190,38 @@ programs.crimson-noir-agent-city.ollama = {
 - **The address.** Ollama answers pages from `http://127.0.0.1` and `http://localhost` on any port by itself, so the
   launcher's page needs nothing. The web copy, or the city opened from another address, goes in `extraOrigins`
   (`OLLAMA_ORIGINS`).
-- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and sets
-  `enable`, `package`, `OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as defaults, so a configuration's own values for any of
-  them win. `models` are added to the configuration's own `services.ollama.loadModels`. It warns when Ollama would
-  answer other machines (a host other than loopback), when the port is not 11434 (type
-  `ask connect ollama http://localhost:<port>` at the console then), and when an `OLLAMA_ORIGINS` set elsewhere means
-  `extraOrigins` is not used.
+- **Ollama's cloud, off.** Ollama has features that reach ollama.com: cloud models (answered on Ollama's servers), web
+  search and web fetch, and two jobs it starts by itself, unasked: model recommendations, fetched as it starts, then
+  about every four hours, and sooner (from about five minutes) after a failed fetch, and the details of its cloud
+  models, fetched once as it starts. In the `vm` job's first run (below), before this setting existed, Ollama tried
+  both as it started (the VM has no network, so both failed). The page reaches nothing beyond this machine, and the
+  city's auto provider skips Ollama's cloud models (by the mark in Ollama's list, or, in the chat format, whose list
+  has no mark, by a name ending in `cloud`), so the option sets `OLLAMA_NO_CLOUD=1` in the service's environment
+  unless `cloud = true`. Ollama then makes neither job's request, refuses the cloud features with a 403 that says
+  "ollama cloud is disabled", and logs `Ollama cloud disabled: true` as it starts. A cloud model named at the console
+  (`ask model <name>`), or one auto took for a local model by its name, is refused that way, and the console says the
+  server runs no cloud models, in Ollama's words. To turn them back on: `programs.crimson-noir-agent-city.ollama.cloud
+  = true;` (the variable is then left unset; Ollama's own `disable_ollama_cloud`, in `.ollama/server.json` under
+  `services.ollama.home`, still turns them off). Pulls are not cloud features: `models` and `ollama pull` still
+  download from Ollama's registry, and `ollama signin` still asks ollama.com.
+- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and
+  sets `enable` and `package` as defaults (`lib.mkDefault`). Its variables, `OLLAMA_ORIGINS`, `OLLAMA_IGPU_ENABLE` and
+  `OLLAMA_NO_CLOUD`, are defaults on the unit itself (`systemd.services.ollama.environment`), not in
+  `services.ollama.environmentVariables`, so a value there, set in any way, wins, as does one set on the unit plainly
+  or with `lib.mkForce` (a different one set on the unit with `lib.mkDefault` has the same priority, and Nix stops on
+  the conflict); and a whole `environmentVariables` given as `lib.mkDefault { ... }`, or replaced with `lib.mkForce`,
+  keeps its own variables with the option's beside them. `models` are added to the configuration's own
+  `services.ollama.loadModels`. It warns when Ollama would answer other machines (a host other than loopback), when
+  the port is not 11434 (type `ask connect ollama http://localhost:<port>` at the console then), and, while the
+  service is on, when `OLLAMA_ORIGINS` is not the one `extraOrigins` gives (so `extraOrigins` is not used) and when
+  `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or turns it off with `cloud` true. Those two read
+  the environment systemd gives `ollama.service` (the unit's `environment`, which carries
+  `services.ollama.environmentVariables`, over `systemd.globalEnvironment`; an `EnvironmentFile`,
+  `serviceConfig.Environment` and Ollama's own `.ollama/server.json` are not read), and name the value there or say it
+  is unset, as it is once the unit's is set to `null`. The cloud one reads the value as Ollama does, trimming white
+  space and then quotes: unset, empty and Go's false spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`) do not
+  turn the cloud off, and anything else, even `no`, does. It trims only space, tab, carriage return and line feed,
+  where Ollama also trims a vertical tab, a form feed and the Unicode spaces.
 - **On its own.** It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve models to itself
   without the city. It sets no context length (`OLLAMA_CONTEXT_LENGTH`): in Ollama's generate format the city sends
   its own with each answer (Bounded, under The model providers), and a configuration can still set one for the rest.
@@ -4176,14 +4246,21 @@ x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the pack
 minimal NixOS system, its package evaluating once the page is allowed and refused while it is not; its Ollama option
 evaluated alone: loopback at 11434, the Vulkan build by default, the CPU one when chosen and services.ollama's own
 with null, the graphics driver on for Vulkan and CUDA and off for CPU, ROCm and null, CUDA refused until unfree
-packages are allowed, origins, the model loader and the integrated GPU only when asked for, the system's own host
-(plain or as a default), port, package, origins and `enable = false` winning, its models added to the option's, with
-the three warnings), the Nix page
+packages are allowed, origins, the model loader and the integrated GPU only when asked for, `OLLAMA_NO_CLOUD=1` unless
+`cloud = true`, the system's own host (plain or as a default), port, package, origins, `OLLAMA_NO_CLOUD` and
+`enable = false` winning, its models added to the option's, with the four warnings, the cloud one firing for `0` (also
+set with `lib.mkDefault`, alone or in a whole `environmentVariables`), `f`, `F`, `false`, `False`, `FALSE`, an empty
+value, a quoted `False` and the unit's variable set to `null`, not for `1`, `true` or `no`, and for `1` with
+`cloud = true`, reading the unit's own environment over systemd's global one, the origins one also with the unit's
+variable set to another value or to `null` and not for a global one under the unit's, and neither with the service off,
+which then has no unit; the option's variables kept when `services.ollama.environmentVariables` is replaced with
+`lib.mkForce` or given whole as a `lib.mkDefault`, whose own variables stay), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
 Peak for a few frames).
-`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
+the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
 files in a temporary folder (a connector folder skipped), and `--check` reading nothing; no real GPU was probed.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
@@ -4195,9 +4272,26 @@ compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of
 run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
-matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (no build of it starts in
-CI, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU is untried), and heat over a long session. The
-`aarch64-linux` outputs are declared but neither built nor evaluated by CI.
+matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (CI's `vm` job, below,
+boots its CPU build in a VM with no GPU, no model and no network, so Vulkan, ROCm or CUDA inside its sandboxed unit on
+a real GPU is untried, and so is its cloud setting on a machine that can reach ollama.com), and heat over a long
+session. The `aarch64-linux` outputs are declared but neither built nor evaluated by
+CI.
+
+Run by CI, and not counted as verified above: the workflow's `vm` job, whose first runs are the pull request that added
+it. It boots the Ollama option in a NixOS VM under KVM (`nix build .#vmTests.x86_64-linux.ollama`,
+`tools/nix/ollama-test.nix`; `nix flake check` does not run it, and the job fails, saying so, on a runner without KVM),
+the flake's module with `acceleration = "cpu"` and one `extraOrigins` entry, and checks that `ollama.service` comes up,
+that its server process's only listening TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that
+it starts with no models, that `/api/tags` answers the launcher's origin (`http://127.0.0.1:4180`) and the extra origin
+with 200 and another with 403, and that the running server has `OLLAMA_ORIGINS` set; and, with `cloud` left off, that
+the server has `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true`, and, once both startup jobs that would reach
+ollama.com have logged that they skipped it because cloud is disabled, that no line of its journal names ollama.com
+(past the default `OLLAMA_REMOTES` in the configuration Ollama logs as it starts, a list of allowed hosts, not a
+request). Both jobs say they skipped only at debug level, so that VM runs Ollama with `OLLAMA_DEBUG=1`, and the script
+waits for what they log, the recommendations job's info line `model recommendations cache sleep scheduled` and the
+details job's skip line, rather than for a fixed time. It reads only Ollama's journal and captures no network traffic.
+This is what the job checks, not a result.
 
 ## When the city cannot start or stops
 
@@ -4212,6 +4306,22 @@ bar and no reload of their own, so the page carries its own way out.
   and Enter on Details opens it. Under **Details** are the raw message and
   one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
   ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
+- **A GPU whose own compiler refuses the crowd.** The crowd's compute passes are compiled asynchronously
+  (`src/01_Initialize_World/gpuPipelines.ts`), so a refusal comes with the browser's own words and the module's
+  compilation messages, and says whether WebGPU refused the shader (the page's or the browser's fault) or the GPU's
+  own compiler did (the driver would not build the kernel, as a phone's can with the full simulate pass: an internal
+  error in Chrome, one Safari reports as validation). On anything but an error in the WGSL itself, the physics
+  worker climbs down a ladder of crowd kernels (`crowdCompute.ts` `CROWD_KERNELS`), keeping every refusal: the same
+  kernel at 64-wide workgroups instead of 128, then the light kernel (`crowdWayLite.wgsl` in the place of
+  `crowdWay.wgsl`), in which someone asked over indoors walks the straight line, or round the first piece of
+  furniture in its way by a corner, and onto a lot walks the straight line, instead of following the operator's
+  trail and searching the lot's corners; the First-Law sensing, the contact, the containment, the detour round
+  standing cars, the commute and the flocking are the same on every rung. `hardware` at the console names the kernel
+  that runs, on a `crowd` row of its own. Every rung refused, the card reads "This device’s graphics driver couldn’t
+  build the crowd" (update the browser and the phone's system software, which carries the driver; on an iPhone, iOS
+  alone, whose graphics come with it), and its details hold the driver's words for each rung, the adapter and the
+  worker's uncaptured GPU errors. The browser CI job compiles every rung under Chrome's software WebGPU
+  (`tools/browser/kernels.mjs`); no CI runner has a phone's GPU, so which rung a given phone accepts is learned on it.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
   named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which
   runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
@@ -4265,7 +4375,11 @@ reset and a real pad.
   1.6 MB as base64 where it was 4.4 MB, and its worker inflates it as the engine starts (`vite.config.ts`
   `deflateRapier`, the browser's own DecompressionStream), which brought the file down to about 12 MB.
   `tools/verify/page_dist.mjs` (after every build in CI) fails unless `dist/` holds exactly `index.html`, no larger
-  than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The page carries
+  than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The shaders kept
+  as `.wgsl` files ride in it without their comments (`vite.config.ts` `leanShaders`,
+  `01_Initialize_World/leanWgsl.node.ts`: about 83 KB less, since the crowd's shaders are in the page's bundle and in
+  the physics worker's); every line keeps its number, so a compilation message still names the file's line, and each
+  file's licence header stays. The page carries
   no model and never will: a model is the operator's own file, kept in their browser. The build checks the embedded
   runtime against its pinned sha256 and against the npm package's, and the page checks it again before it runs.
 - **Network.** The page sends nothing off this machine, by construction, in three layers
@@ -4378,7 +4492,9 @@ the production page finds no physics object in the page and has every crafted me
   (`tools/verify/wasm_airgap.py`).
 - **In a browser, on every CI run:** the browser job runs the smoke (`tools/browser/smoke.mjs`) on the built page in
   Chrome on the software WebGPU adapter (and `tools/browser/shot.mjs` photographs the built page the same way, at
-  chosen hours, head angles and places, for a rendering change's before and after), and four of its scenarios run the real runtime with the tiny model
+  chosen hours, head angles and places, for a rendering change's before and after; `tools/browser/kernels.mjs`
+  compiles every crowd kernel's passes on that adapter, the fallback rungs a phone's GPU may be given included, from
+  the same comment-free text the build ships), and four of its scenarios run the real runtime with the tiny model
   `tools/browser/tinyGguf.mjs` writes. `inpage`, cross-origin isolated on two threads: the file picked at the
   console, kept and loaded with two threads and the context the model was trained on; a recruit asked and answered;
   the city's automatic tier set above the hold first, lowered to the hold while the model works and back after; a

@@ -171,7 +171,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   onBrowse?: (index: number) => void
   /** The world's homes (engine.homes), for the procedural city's minimap; a region's map layer draws its own. */
   homes?: readonly Home[] | null
-  /** Open the doorstep card of the home the avatar stands in, by its property index (the chip's tap; E and B go through the engine). */
+  /** Open the doorstep card of the room the avatar stands in, by its room (a hall's property index, or a sky floor's 7 or 8; the chip's tap; E and B go through the engine). */
   onHome?: (home: number) => void
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
@@ -220,7 +220,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const home = c.home
   const deed = home ? itemById(DEED_BASE + home.index) : null
   const homeChip = home && !home.card && !driving && !terminalOpen && (
-    <button type="button" onClick={() => onHome?.(home.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="home" data-owned={home.owned || undefined}>
+    <button type="button" onClick={() => onHome?.(home.room)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="home" data-owned={home.owned || undefined}>
       {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
       {home.owned
         ? <span>Furnish <bdi className="font-semibold">{home.name}</bdi></span>

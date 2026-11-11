@@ -9,17 +9,19 @@
  * while its siblings are kept; whether a piece fits or is owned is never judged here; a save is checked first, so a
  * record that would not load back the same is never written and a throwing store makes a save return false; and a
  * home past 24 pieces, which the furnishing rules allow, is saved with its placed pieces first rather than refused.
+ * The two sky floors (rooms 7 and 8) are kept under a key of their own, so the homes' key stays byte for byte as
+ * before, and either key broken leaves the other's rooms.
  * What breaks if it is removed? A damaged or hand-edited entry could wipe every home, a piece with a line that does
  * not exist could reach the furnishing rules, or a save could be lost without the page knowing (one crowded home
  * could stop every home from saving).
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
-import { DEFAULT_FINISH, FLOORS, HOME_STAGING, SHAPE_IDS, WALLS, canPlace, fitLayout, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
+import { DEPTH, GRID, HOME_PIECES, ROOM_COUNT, SKY_HOMES } from '../02_Define_The_Rules/homeGrid.ts'
+import { DEFAULT_FINISH, FLOORS, HOME_STAGING, SHAPE_IDS, SKY_FINISH, SKY_STAGING, WALLS, canPlace, finishDefault, fitLayout, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import { PROPERTY_KINDS } from '../01_Initialize_World/properties.ts'
 import {
-  HOME_COUNT, HOME_KEY, HOME_RECORD_VERSION, RAW_MAX, SAVED_MAX, clearHomes, finishOf, freshHomes, layoutOf, loadHomes, saveHomes, withHome,
+  HOME_COUNT, HOME_KEY, HOME_RECORD_VERSION, RAW_MAX, SAVED_MAX, SKY_KEY, clearHomes, finishOf, freshHomes, layoutOf, loadHomes, saveHomes, withHome,
   type HomeLayout, type HomeRecord,
 } from './homeStore.ts'
 import type { ProfileStore } from './profile.ts'
@@ -36,7 +38,8 @@ const stored = (homes: unknown, v: unknown = 1) => JSON.stringify({ v, homes })
 /** A good stored home with one piece, for the homes around the one under test. */
 const GOOD = [1, 2, [[163, 2, 24, 0]]]
 const goodLayout: HomeLayout = { floor: 1, wall: 2, pieces: [piece(163, 2, 24, 0)] }
-const fresh = () => Array.from({ length: 7 }, () => null)
+/** Nothing furnished: the seven halls and the two sky floors. */
+const fresh = () => Array.from({ length: 9 }, () => null)
 
 /** Loads a stored value from a store holding only it. */
 function loaded(raw: string): HomeRecord {
@@ -49,6 +52,9 @@ const plain = (r: HomeRecord) => JSON.parse(JSON.stringify(r)) as unknown
 
 test('the key, the version and the sizes are shipped: seven homes by property index, 24 pieces each', () => {
   assert.equal(HOME_KEY, 'civic-simulation:home:v1')
+  assert.equal(SKY_KEY, 'civic-simulation:home-sky:v1', 'the sky floors\' key of their own')
+  assert.equal(ROOM_COUNT, HOME_COUNT + SKY_HOMES.length)
+  assert.equal(ROOM_COUNT, 9, 'the record: seven halls, then two sky floors')
   assert.equal(HOME_RECORD_VERSION, 1)
   assert.equal(HOME_COUNT, 7)
   assert.equal(HOME_COUNT, PROPERTY_KINDS.length, 'one entry per home')
@@ -66,16 +72,18 @@ test('a record round-trips piece for piece, in order, in the documented format',
   const r = withHome(withHome(freshHomes(), 0, loft), 6, layoutOf(2, 5, [piece(162, 10, 10, 1)]))
   assert.ok(saveHomes(r, s))
   assert.equal(s.map.get(HOME_KEY), '{"v":1,"homes":[[1,3,[[163,0,20,0],[164,0,21,3],[168,30,30,2]]],null,null,null,null,null,[2,5,[[162,10,10,1]]]]}')
+  assert.equal(s.map.get(SKY_KEY), '{"v":1,"homes":[null,null]}')
   const back = loadHomes(s)
   assert.deepEqual(plain(back), plain(r))
   assert.deepEqual(back[0]?.pieces.map((p) => p.id), [163, 164, 168], 'placed first, then the stored, as saved')
   assert.ok(Object.isFrozen(back) && Object.isFrozen(back[0]) && Object.isFrozen(back[0]?.pieces) && Object.isFrozen(back[0]?.pieces[0]), 'a read record cannot be changed in place')
   // A record with every home empty but furnished (finishes only) keeps each home's finishes.
-  const finishes = Array.from({ length: 7 }, (_, i) => layoutOf(i % FLOORS.length, i % WALLS.length, []))
+  const finishes = Array.from({ length: ROOM_COUNT }, (_, i) => layoutOf(i % FLOORS.length, i % WALLS.length, []))
   assert.ok(saveHomes(finishes, s))
   assert.deepEqual(plain(loadHomes(s)), plain(finishes))
   // The show homes' layouts are records this store keeps as they are.
-  const staged = HOME_STAGING.map((pieces, i) => layoutOf(DEFAULT_FINISH[i].floor, DEFAULT_FINISH[i].wall, pieces))
+  const staged = [...HOME_STAGING, ...SKY_STAGING].map((pieces, i) => layoutOf(finishDefault(i)!.floor, finishDefault(i)!.wall, pieces))
+  assert.equal(staged.length, ROOM_COUNT)
   assert.ok(saveHomes(staged, s))
   assert.deepEqual(plain(loadHomes(s)), plain(staged))
 })
@@ -83,17 +91,18 @@ test('a record round-trips piece for piece, in order, in the documented format',
 test('the longest record fits RAW_MAX, and anything longer is not a record', () => {
   const s = memory()
   const most = layoutOf(FLOORS.length - 1, WALLS.length - 1, Array.from({ length: SAVED_MAX }, () => piece(Math.max(...SHAPE_IDS), GRID - 1, GRID - 1, 3)))
-  const r = Array.from({ length: 7 }, () => most)
-  assert.ok(saveHomes(r, s), 'seven homes of 24 pieces with the widest numbers are written')
+  const r = Array.from({ length: ROOM_COUNT }, () => most)
+  assert.ok(saveHomes(r, s), 'seven homes and two sky floors of 24 pieces with the widest numbers are written')
   const raw = s.map.get(HOME_KEY) ?? ''
   assert.ok(raw.length <= RAW_MAX && raw.length > 2000, `${raw.length} characters`)
+  assert.ok((s.map.get(SKY_KEY) ?? '').length < raw.length, 'the sky floors\' two rooms in less')
   assert.deepEqual(plain(loadHomes(s)), plain(r))
   // A stored value over RAW_MAX is refused whole, even when it would parse.
   const padded = `${raw.slice(0, -1)}${' '.repeat(RAW_MAX - raw.length + 1)}}`
   assert.equal(padded.length, RAW_MAX + 1)
   assert.deepEqual(JSON.parse(padded), JSON.parse(raw), 'the same record, padded')
   assert.deepEqual(loaded(padded), fresh())
-  assert.deepEqual(plain(loaded(padded.slice(0, -2) + '}')), plain(r), 'at RAW_MAX it still reads')
+  assert.deepEqual(plain(loaded(padded.slice(0, -2) + '}').slice(0, HOME_COUNT)), plain(r.slice(0, HOME_COUNT)), 'at RAW_MAX it still reads')
 })
 
 test('nothing stored, no storage, storage that throws: nothing furnished, never a throw', () => {
@@ -108,8 +117,10 @@ test('nothing stored, no storage, storage that throws: nothing furnished, never 
   clearHomes(null)
   const s = memory()
   assert.ok(saveHomes(withHome(freshHomes(), 2, goodLayout), s))
+  assert.ok(s.map.has(SKY_KEY), 'both keys are written')
   clearHomes(s)
   assert.equal(s.map.has(HOME_KEY), false)
+  assert.equal(s.map.has(SKY_KEY), false, 'and both forgotten')
   assert.deepEqual(loadHomes(s), fresh())
   // The default store: Node has no localStorage, so nothing is read and nothing written.
   assert.deepEqual(loadHomes(), fresh())
@@ -159,7 +170,8 @@ test('a home that is not a home becomes null, and the others are kept', () => {
     const r = loaded(stored([GOOD, home, null, GOOD, null, null, GOOD]))
     assert.equal(r[1], null, name)
     for (const i of [0, 3, 6]) assert.deepEqual(plain([r[i] ?? null]), plain([goodLayout]), `${name}: home ${i} kept`)
-    assert.equal(r.length, 7)
+    assert.equal(r.length, ROOM_COUNT)
+    assert.deepEqual(r.slice(HOME_COUNT), [null, null], `${name}: the sky floors null while only the homes' key is stored`)
   }
   // The edges that are allowed: the last floor and wall, an empty list, exactly 24 pieces.
   assert.ok(loaded(stored([[FLOORS.length - 1, WALLS.length - 1, []], null, null, null, null, null, null]))[0])
@@ -206,10 +218,11 @@ test('a save is checked first: a record that would not load back the same is nev
   const s = memory()
   const good = withHome(freshHomes(), 2, goodLayout)
   assert.ok(saveHomes(good, s))
-  const kept = s.map.get(HOME_KEY)
+  const kept = s.map.get(HOME_KEY), keptSky = s.map.get(SKY_KEY)
   const bad: [string, unknown][] = [
-    ['six homes', fresh().slice(1)],
-    ['eight homes', [...fresh(), null]],
+    ['a room short', fresh().slice(1)],
+    ['a room too many', [...fresh(), null]],
+    ['the seven homes without the sky floors', fresh().slice(0, HOME_COUNT)],
     ['not a list', { 0: goodLayout }],
     ['null', null],
     ['a floor that does not exist', withHome(freshHomes(), 0, layoutOf(FLOORS.length, 0, []))],
@@ -224,6 +237,7 @@ test('a save is checked first: a record that would not load back the same is nev
   for (const [name, r] of bad) {
     assert.equal(saveHomes(r as HomeRecord, s), false, name)
     assert.equal(s.map.get(HOME_KEY), kept, `${name}: the last good save stays`)
+    assert.equal(s.map.get(SKY_KEY), keptSky, `${name}: and the sky floors' too`)
   }
   // Fields a piece carries beyond its four are not saved, and do not stop the save.
   const extra = withHome(freshHomes(), 1, layoutOf(0, 0, [{ ...piece(163, 0, 20, 0), note: 'x' } as Piece]))
@@ -290,15 +304,61 @@ test('layoutOf, withHome and finishOf: saved order, a copy, and the defaults for
   assert.equal(one[4], goodLayout)
   assert.equal(withHome(one, 4, null)[4], null, 'null forgets it')
   assert.equal(withHome(one, 0, null)[4], goodLayout, 'the other homes are kept')
-  assert.equal(withHome([] as HomeRecord, 3, goodLayout).length, 7, 'always seven entries')
-  assert.throws(() => withHome(r, 7, null), RangeError)
+  assert.equal(withHome([] as HomeRecord, 3, goodLayout).length, ROOM_COUNT, 'always nine entries: the homes and the sky floors')
+  assert.equal(withHome(r, 8, goodLayout)[8], goodLayout, 'a sky floor is a room of the record')
+  assert.throws(() => withHome(r, 9, null), RangeError)
   assert.throws(() => withHome(r, -1, null), RangeError)
   assert.throws(() => withHome(r, 0.5, null), RangeError)
   for (let i = 0; i < 7; i++) assert.deepEqual(finishOf(r, i), DEFAULT_FINISH[i], `home ${i}: its defaults`)
+  for (let i = 7; i < 9; i++) assert.deepEqual(finishOf(r, i), SKY_FINISH[i - 7], `sky floor ${i}: its defaults`)
   assert.deepEqual(finishOf(one, 4), { floor: 1, wall: 2 }, 'the record\'s once furnished')
   assert.deepEqual(finishOf(r, 1), { floor: 1, wall: 1 }, 'the brownstone: oak boards and brick')
   assert.deepEqual(finishOf(r, 2), { floor: 1, wall: 2 }, 'the timber loft: oak boards and oak panelling')
-  assert.throws(() => finishOf(r, 7), RangeError)
+  assert.throws(() => finishOf(r, 9), RangeError)
+  assert.throws(() => finishOf(r, -1), RangeError)
+})
+
+test('the sky record: its own key and two rooms, each read on its own; the hall key byte for byte as before; either key broken leaves the other', () => {
+  const s = memory()
+  const pent = layoutOf(1, 0, [piece(163, 13, 9, 0)]), crown = layoutOf(2, 0, [piece(166, 21, 18, 0)], [piece(168, 30, 30, 2)])
+  const r = withHome(withHome(withHome(freshHomes(), 1, goodLayout), 7, pent), 8, crown)
+  assert.ok(saveHomes(r, s))
+  assert.equal(s.map.get(HOME_KEY), '{"v":1,"homes":[null,[1,2,[[163,2,24,0]]],null,null,null,null,null]}', 'the homes\' key as an older build wrote it')
+  assert.equal(s.map.get(SKY_KEY), '{"v":1,"homes":[[1,0,[[163,13,9,0]]],[2,0,[[166,21,18,0],[168,30,30,2]]]]}', 'rooms 7 and 8 in the homes\' form')
+  assert.deepEqual(plain(loadHomes(s)), plain(r))
+  // An older build's store: the homes' key alone loads with rooms 7 and 8 null, their default finishes.
+  const old = memory()
+  old.map.set(HOME_KEY, s.map.get(HOME_KEY)!)
+  const back = loadHomes(old)
+  assert.equal(back.length, ROOM_COUNT)
+  assert.deepEqual(plain(back.slice(0, HOME_COUNT)), plain(r.slice(0, HOME_COUNT)))
+  assert.deepEqual([back[7], back[8]], [null, null])
+  assert.deepEqual([finishOf(back, 7), finishOf(back, 8)], [...SKY_FINISH])
+  // Either key broken leaves only its own rooms empty.
+  for (const broken of ['{"v":1,"homes":[', stored([null]), stored([null, null, null]), stored([null, null], 2), 'x'.repeat(RAW_MAX + 1)]) {
+    const a = memory()
+    a.map.set(HOME_KEY, s.map.get(HOME_KEY)!)
+    a.map.set(SKY_KEY, broken)
+    assert.deepEqual(plain(loadHomes(a)), plain(withHome(withHome(r, 7, null), 8, null)), `the sky key ${broken.slice(0, 24)}: the homes kept`)
+    const b = memory()
+    b.map.set(HOME_KEY, broken)
+    b.map.set(SKY_KEY, s.map.get(SKY_KEY)!)
+    assert.deepEqual(plain(loadHomes(b)), plain(withHome(r, 1, null)), `the homes' key ${broken.slice(0, 24)}: the sky floors kept`)
+  }
+  // A sky room that is not a room becomes null, and the other is kept.
+  const one = memory()
+  one.map.set(SKY_KEY, stored([[FLOORS.length, 0, []], [2, 0, [[166, 21, 18, 0]]]]))
+  assert.deepEqual(plain(loadHomes(one).slice(HOME_COUNT)), plain([null, layoutOf(2, 0, [piece(166, 21, 18, 0)])]))
+  // A sky key that cannot be written fails the save, while the homes' key is still written.
+  const halls = new Map<string, string>()
+  const noSky: ProfileStore = { getItem: (k) => halls.get(k) ?? null, setItem: (k, v) => { if (k === SKY_KEY) throw new DOMException('quota', 'QuotaExceededError'); halls.set(k, v) }, removeItem: () => {} }
+  assert.equal(saveHomes(r, noSky), false)
+  assert.equal(halls.get(HOME_KEY), s.map.get(HOME_KEY), 'one failing does not stop the other')
+  // A sky floor that would not load back the same is refused on its own: its last good save stays.
+  const keptSky = s.map.get(SKY_KEY)
+  assert.equal(saveHomes(withHome(withHome(r, 1, layoutOf(2, 4, [])), 7, layoutOf(0, 0, [piece(170, 13, 9, 0)])), s), false)
+  assert.equal(s.map.get(SKY_KEY), keptSky)
+  assert.equal(s.map.get(HOME_KEY), '{"v":1,"homes":[null,[2,4,[]],null,null,null,null,null]}', 'the homes still saved')
 })
 
 test('the store has no banned word, and only the shapes, the grid and the guarded storage behind it', async () => {

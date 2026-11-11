@@ -108,6 +108,7 @@ test('no material of the page asks for a polygon offset: under the reversed buff
   const makers = [
     './world.ts', './materials.ts', './region/regionWorld.ts', '../03_Spawn_Agents/crowd.ts',
     '../07_Execute_Actions/fleetView.ts', '../07_Execute_Actions/ghost.ts', '../07_Execute_Actions/netView.ts', '../07_Execute_Actions/shutter.ts',
+    '../07_Execute_Actions/staffView.ts',
   ]
   for (const rel of makers) {
     const src = read(rel)

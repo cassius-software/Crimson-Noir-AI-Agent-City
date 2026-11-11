@@ -67,11 +67,13 @@ import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execut
 import { itemById, type StoreItem } from './07_Execute_Actions/storeCatalog.ts'
 import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
-import { homePlaced } from './07_Execute_Actions/homeView.ts'
+import { homePlaced, roomName } from './07_Execute_Actions/homeView.ts'
+import { deedOf } from './02_Define_The_Rules/homeGrid.ts'
 import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
-import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import { carry, loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
+import { loadProfile, seedFromName, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { changeLook, describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -202,11 +204,23 @@ function ownedLines(keeper: Shopkeeper): number {
 }
 
 /**
- * What a rest at home `home` is measured by: its deed's level (the catalogue's) and how many kinds of furniture stand
- * there now, as the engine draws them (homeView.ts homePlaced: the saved layout fitted with what is owned).
+ * What a rest at home in room `home` (a hall, or a sky floor) is measured by: its deed's level (the catalogue's, read
+ * through homeGrid.ts deedOf) and how many kinds of furniture stand there now, as the engine draws them (homeView.ts
+ * homePlaced: the saved layout fitted with what is owned).
  */
 function restInputs(home: number, record: HomeRecord, keeper: Shopkeeper): { level: number; kinds: number } {
-  return { level: itemById(DEED_BASE + home)?.level ?? 0, kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper))) }
+  return { level: itemById(DEED_BASE + deedOf(home))?.level ?? 0, kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper))) }
+}
+
+/**
+ * Why workstation (c, r) of room `home` (a hall, or a sky floor) cannot be staffed now: the engine's furnishing gate, a record a newer build saved
+ * (staffStore.ts never writes over it), or no workstation standing there as the engine lists them (engine.homeSeats);
+ * null when it can.
+ */
+function staffRefusal(engine: Engine, home: number, c: number, r: number, rec: StaffRecord): string | null {
+  return engine.furnishRefusal(home)
+    ?? (rec.newer ? 'Staff was saved by a newer version of the city: reload the page to post or stand down' : null)
+    ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')
 }
 
 /**
@@ -632,7 +646,7 @@ function App() {
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
 }
 
 /**
@@ -686,9 +700,9 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The most "Walk for me" keeps walking for, wall-clock ms (the stage's three metres end it long before on any ordinary frame). */
 const SHOW_WALK_MS = 60_000
 
-function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess }: {
+function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {
   options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
-  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void
+  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void; adapterHint?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
@@ -705,7 +719,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const [termOpen, setTermOpen] = useState(false)
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
-  const [adapter, setAdapter] = useState('')
+  // The adapter's line: the first visit's probe (adapterHint) until the engine's own device names it (onStage, Engine.create).
+  const [adapter, setAdapter] = useState(adapterHint)
   // Why the boot failed (whatever was thrown, words from bootFailure.ts classify), or null while nothing has.
   const [error, setError] = useState<{ cause: unknown } | null>(null)
   // What the boot is doing, for the veil's 'Still starting' line (bootFailure.ts BOOT_STAGE).
@@ -784,14 +799,38 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   // The frame loop's view of it: the open shop's index, or null.
   const storeOpenRef = useRef<number | null>(null)
   const [trying, setTrying] = useState<{ id: number; look: Look } | null>(null)
-  // The homes (01_Initialize_World/properties.ts): the home whose doorstep card is open (its property index, 0 to 6), or
-  // null, and the frame loop's view of it.
+  // The homes (01_Initialize_World/properties.ts): the room whose doorstep card is open (a hall's property index, 0 to 6,
+  // or a sky floor's 7 or 8; its deed is homeGrid.ts deedOf), or null, and the frame loop's view of it.
   const [homeOpen, setHomeOpen] = useState<number | null>(null)
   const homeOpenRef = useRef<number | null>(null)
   // The homes' furnishing (homeStore.ts), read once at mount; homesRef is the shopkeeper listener's view of it. Which
   // deeds are owned (bit i: home i) is kept as state too, so an owner's card asks the engine for its furnishing view.
   const [homes, setHomes] = useState<HomeRecord>(loadHomes)
   const homesRef = useRef<HomeRecord>(homes)
+  // Who of the player's own agents stands at which workstation (staffStore.ts), read once at mount; postsRef is the
+  // furnishing hooks' view of it, and every change is saved in this browser at once.
+  const [posts, setPosts] = useState<StaffRecord>(loadStaff)
+  const postsRef = useRef<StaffRecord>(posts)
+  const commitStaff = useCallback((next: StaffRecord): null => { postsRef.current = next; setPosts(next); saveStaff(next); return null }, [])
+  // A rename keeps the agent's post and a forget lets it go (staffStore.ts carry); a hire or a new agent changes nothing.
+  const namesRef = useRef(agents.map((a) => a.name))
+  useEffect(() => {
+    const after = agents.map((a) => a.name), next = carry(postsRef.current, namesRef.current, after)
+    namesRef.current = after
+    if (next) commitStaff(next)
+  }, [agents, commitStaff])
+  // The posts the engine draws and lists: only names on the roster (a post whose name is not, say one another tab
+  // renamed, is drawn by nobody until the next post lets it go), each in the agent's body and top's colour (their
+  // seed's look while they have none) at their height, standing there unless hired now. The engine keeps its list when
+  // nothing in it changed.
+  useEffect(() => {
+    engine?.setStaff(posts.posts.flatMap((p) => {
+      const id = roster.get(p.name)
+      if (!id) return []
+      const look = id.look ?? lookFromSeed(seedFromName(id.name))
+      return [{ ...p, name: id.name, present: id.agent === null, body: look.body, ink: lookSwatch(look, 'top') ?? 0x3f4652, scale: heightScale(look) }]
+    }))
+  }, [engine, posts, agents, roster])
   const [ownedDeeds, setOwnedDeeds] = useState(() => ownedHomes(keeper))
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
@@ -913,7 +952,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   }, [keeper])
   // The engine's hold follows the card, closed from anywhere, and an owner's card asks for the furnishing view (the
   // engine refuses it in a network room, in a headset, at the wheel or outside the home; the card then says why).
-  useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> homeOpen) & 1) === 1) }, [engine, homeOpen, ownedDeeds])
+  useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> deedOf(homeOpen)) & 1) === 1) }, [engine, homeOpen, ownedDeeds])
   // What the card needs of the engine to furnish: the refusal, the draft, who stands where, the cell under a pointer
   // on the city's canvas (the draft camera's view), and that canvas.
   const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {
@@ -928,6 +967,23 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       offer: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return restOffer(pageProgress(), r.level, r.kinds) },
       take: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return engine.furnishRefusal(home) ?? restTake(pageProgress(), r.level, r.kinds) },
     },
+    // Staffing the workstations: the roster's names and where each is posted, a home's name, and a post or stand-down
+    // saved in this browser (staffStore.ts) only where the engine allows furnishing and the workstation still stands,
+    // and a post only for a name on the roster.
+    staff: {
+      agents: () => roster.list().map((a) => ({ name: a.name, out: a.agent !== null, post: postOf(postsRef.current, a.name) })),
+      homeName: (home: number) => roomName(engine.homes.find((h) => h.home === deedOf(home))?.name ?? 'another home', home),
+      post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r, postsRef.current)
+        ?? (roster.get(name) ? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))) : `No agent called ${name} on your roster`),
+      standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r, postsRef.current) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
+    },
+    // The sky floor's ride (engine.floorWhere, engine.goFloor): where it goes or why it waits, and the ride itself.
+    tower: {
+      where: (room: number) => engine.floorWhere(room),
+      ride: (room: number) => (engine.goFloor(room) ? null : engine.floorWhere(room)?.why ?? 'This home has no sky floor in this map'),
+    },
+    // roster (made once with the shell) and commitStaff (no deps) never change, so the hooks stay keyed on these two.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   } : null), [engine, keeper])
   // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
   // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
@@ -1161,7 +1217,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           // the game's input must not stay suspended): its card goes.
           if (storeOpenRef.current !== null && ((s.customer.shop?.index ?? -1) !== storeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeStore()
           // Out of the home whose card is open, or into a headset, the doorstep card goes the same way.
-          if (homeOpenRef.current !== null && ((s.customer.home?.index ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()
+          if (homeOpenRef.current !== null && ((s.customer.home?.room ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()
           shown = true
         }
         throws = 0
@@ -1184,7 +1240,13 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     }
     const onResize = () => engine?.resize()
 
-    const onStage = (st: keyof typeof BOOT_STAGE) => { if (!cancelled) setStage(BOOT_STAGE[st]) }
+    // The adapter's line comes with the stage that learnt it (engine.ts: once the page's device stands), so a card for a
+    // boot that fails after that names the GPU.
+    const onStage = (st: keyof typeof BOOT_STAGE, adapter?: string) => {
+      if (cancelled) return
+      setStage(BOOT_STAGE[st])
+      if (adapter) setAdapter(adapter)
+    }
     loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then(
       (e) => {
         if (cancelled) {
@@ -1557,7 +1619,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
               shopkeeper: keeper,
               // The homes: where they stand (the arrival is Go home's spot on the sidewalk), and the E key's own path into a
               // home's doorstep card.
-              homes: () => e.homes.map((h) => ({ home: h.home, kind: h.kind, name: h.name, address: h.address, side: h.side, door: h.door, arrival: h.arrival })),
+              homes: () => e.homes.map((h) => ({ home: h.home, kind: h.kind, name: h.name, address: h.address, side: h.side, door: h.door, arrival: h.arrival, cx: h.cx, cz: h.cz, sky: h.sky ? { y: h.sky.y } : null })),
               openHome: () => e.openHome(),
               // The network session (10_Network): join a room, leave it, or read it as plain data.
               net: e.net,
@@ -1608,8 +1670,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   }, [boot, wearLook, link, roster, speaker, walk, keeper, openStore, closeStore, openHome, closeHome, mic, onMic, onAccess, announcer])
 
   // The open home's name and street address as the engine knows them (the city's grid, or a region's own streets).
-  const opened = homeOpen !== null ? engine?.homes.find((h) => h.home === homeOpen) : undefined
-  const homeInfo = opened ? { name: opened.name, address: opened.address } : undefined
+  const opened = homeOpen !== null ? engine?.homes.find((h) => h.home === deedOf(homeOpen)) : undefined
+  const homeInfo = opened && homeOpen !== null ? { name: roomName(opened.name, homeOpen), address: opened.address } : undefined
 
   // The boot's failure first; else a halt that is not an audit. Words for this device (bootFailure.ts).
   const env = useMemo(() => pageEnv(), [])
@@ -1727,7 +1789,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       {hud && (
         <HomeCard
           visible={homeOpen !== null && veilDone && !termOpen && locked === null}
-          home={homeOpen}
+          room={homeOpen}
           keeper={keeper}
           homeInfo={homeInfo}
           pad={act === null || !bridge}

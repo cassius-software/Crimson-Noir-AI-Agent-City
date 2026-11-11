@@ -164,13 +164,13 @@ test('with no headquarters tower free, the tower homes go on the free downtown l
   }
 })
 
-test('the city\'s boxes: each home\'s podium replaced by the shop\'s glass, the slab in the podium\'s finish and height, the fixtures; every other box as it was, in its order', () => {
+test('the city\'s boxes: each home\'s podium replaced by the shop\'s glass, the slab in the podium\'s finish and height, the fixtures; a sky floor\'s tower by its pieces in its place; every other box as it was, in its order', () => {
   for (const seed of SEEDS.slice(0, 16)) {
     const at = `seed ${seed}`
     const plain = generateBuildings(seed, { homes: false })
     const { buildings, homes } = cityPlan(seed)
     assert.equal(homes.length, 7)
-    const own = new Set(homes.flatMap((x) => [...x.shell, ...x.fixtures]))
+    const own = new Set(homes.flatMap((x) => [...x.shell, ...x.fixtures, ...(x.sky?.boxes ?? [])]))
     for (const home of homes) {
       const podium = plain.find(isPodium(home.k, home.m))!
       assert.ok(podium, `${at}: home ${home.home} had a podium`)
@@ -190,10 +190,23 @@ test('the city\'s boxes: each home\'s podium replaced by the shop\'s glass, the 
         if (x1 > home.cx - inner && x0 < home.cx + inner && z1 > home.cz - inner && z0 < home.cz + inner) assert.ok(own.has(b), `${at}: a box not the ${home.kind}'s stands inside it`)
       }
     }
-    // Every other box byte for byte, in the same order: the towers over the homes too.
+    // The sky floors' towers: each cut from the tower's own footprint, bottom to top, in the tower's finish below and above.
+    const towers = new Map<Building, Building[]>()
+    for (const home of homes) {
+      if (!home.sky) continue
+      const first = home.sky.boxes[0], last = home.sky.boxes[home.sky.boxes.length - 1]
+      const tower = plain.find(({ box: b, style }) => style === first.style && style === last.style
+        && b[0] === first.box[0] && b[1] === first.box[1] && b[2] === first.box[2] && b[3] === last.box[3] && b[4] === last.box[4] && b[5] === last.box[5])
+      assert.ok(tower, `${at}: the ${home.kind}'s sky floor stands where a tower stood`)
+      towers.set(tower!, home.sky.boxes)
+    }
+    // Every other box byte for byte, in the same order: the other towers over the homes too.
     const podiums = new Set(homes.map((x) => plain.find(isPodium(x.k, x.m))))
-    assert.deepEqual(buildings.filter((b) => !own.has(b)), plain.filter((b) => !podiums.has(b)), `${at}: the rest of the city as it was`)
-    assert.equal(buildings.length, plain.length + homes.reduce((n, x) => n + x.shell.length + x.fixtures.length - 1, 0))
+    assert.deepEqual(buildings.filter((b) => !own.has(b)), plain.filter((b) => !podiums.has(b) && !towers.has(b)), `${at}: the rest of the city as it was`)
+    assert.equal(buildings.length, plain.length + homes.reduce((n, x) => n + x.shell.length + x.fixtures.length - 1 + (x.sky ? x.sky.boxes.length - 1 : 0), 0))
+    // And in its place: each podium's pieces and each tower's where it stood in the order.
+    const byPodium = new Map(homes.map((x) => [plain.find(isPodium(x.k, x.m))!, [...x.shell, ...x.fixtures]]))
+    assert.deepEqual(buildings, plain.flatMap((b) => byPodium.get(b) ?? towers.get(b) ?? [b]), `${at}: every piece at its box's old place`)
   }
 })
 

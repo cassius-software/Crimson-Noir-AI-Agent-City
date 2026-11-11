@@ -269,6 +269,10 @@ test('every way the server can fail is one plain sentence (the first three are w
   // And every other way.
   const refused = await failure(() => json(403, {}))
   assert.equal(refused.code, 'refused')
+  // Ollama with OLLAMA_NO_CLOUD, asked for a cloud model (server/routes.go, Ollama 0.40.3): its words, not the origin's.
+  const noCloud = await failure(() => json(403, { error: 'ollama cloud is disabled: remote model is unavailable' }))
+  assert.deepEqual([noCloud.code, noCloud.message], ['model', 'the local model server runs no cloud models (403: ollama cloud is disabled: remote model is unavailable): choose one on this machine (type ask to list them)'])
+  assert.equal((await failure(() => json(403, { error: 'origin not allowed' }))).code, 'refused')
   const bad = await failure(() => new Response('Bad Gateway', { status: 502 }))
   assert.deepEqual([bad.code, bad.message], ['server', 'the local model server failed (502)'])
   const garbled = await failure(() => streamed('{"response":"a","done":false}\nnot json\n'))
@@ -855,6 +859,8 @@ test('chat: done at [DONE], or at the finish reason if the server closes without
   assert.deepEqual([oom.error.code, oom.error.message], ['server', 'the local model server failed (500): failed to allocate KV cache'])
   const refused = await collectChat(json(403, { error: 'origin not allowed' }))
   assert.ok(refused.error instanceof CognitionError && refused.error.code === 'refused')
+  const noCloud = await collectChat(json(403, { error: { message: 'ollama cloud is disabled: remote model is unavailable', type: 'api_error' } }))
+  assert.ok(noCloud.error instanceof CognitionError && noCloud.error.code === 'model' && noCloud.error.message.startsWith('the local model server runs no cloud models (403'))
 })
 
 test('chat: the moment the signal aborts mid-answer, it rejects with the reason and the body is cancelled', async () => {

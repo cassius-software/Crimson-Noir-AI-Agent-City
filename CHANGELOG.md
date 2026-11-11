@@ -46,12 +46,31 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 183,728
   characters (the pantsuit's 183,551), under the 225,000 target the test now asserts for every near body; the far
   fragments (at most 139,888), the vertex stages (at most 54,921) and the shadow fragment (1,101) are as after the
-  hash change below. `dist/index.html` grows by 31,608 bytes, from 12,012,112 to 12,043,720; the limit in
+  hash change below. `dist/index.html` grows by 31,595 bytes, from 11,969,058 to 12,000,653; the limit in
   `tools/verify/page_dist.mjs` is unchanged. In the browser on the software WebGPU adapter (SwiftShader), Chrome's WGSL
   compiler builds the tattoo code (the desktop smoke passes), and pictures of the ink studio's mirror show the designs
   on both hands, the neck and the nape, the eight inks, the halo on the lightest and deepest skins, and the cover by a
   prosthetic arm, a turtleneck and a full beard. Unverified: no hardware GPU has compiled or drawn it yet.
-
+- **Sky floors.** In the city, the Crimson Tower Penthouse and the Crown Spire Sky-Mansion each have a floor up their
+  tower: a 15.6 m square room with clear glass on four sides (seed 1337: 193.8 m and 228.0 m up). The home's card
+  offers Go up inside the home and Go down upstairs, by keyboard, mouse, pad or touch. Visitors may ride, and only the
+  owner furnishes. The floor is furnished like the home below, with its own pieces, caps, floor finish, Rest and Staff,
+  and a staged floor while the deed is not yours. It is saved in this browser under `civic-simulation:home-sky:v1`,
+  with the home record unchanged. A post upstairs saves the staff record as version 2, which an older build shows no
+  posts from and never overwrites. The ride waits outside a network room, whose replay would put you back. There are
+  no sky floors in Lakefront Metro. The physics worker and the network room build the floor from the same city boxes.
+  Covered by unit tests and the `homes` smoke scenario, whose headless browser run is CI's.
+- **Staff at home.** The furnishing view's fifth tab, Staff, posts your own agents (the roster's names) at the agent
+  workstations standing in a home you own. Each stands at the workstation's seat facing its screen, in their body
+  and their top's colour, at their height, in every visit until stood down, and steps away while hired (their disc
+  on the plan fades). The tab shows each agent with where they are posted, and lists the home's workstations in
+  reading order with who stands at each (a tap on a row moves the cursor there, a second posts); a post that moves an
+  agent from another workstation or home says from where. They are drawn by the page alone: no collider, never in the
+  crowd or the physics realm, nothing in a network room. Nothing is earned and no work is done. Saved in this browser
+  under `civic-simulation:staff:v1`; a rename keeps the post, a forget lets it go, and a record a newer build wrote is
+  never overwritten. `engine.homeSeats` lists each owned home's workstations, read-only: kind, name, the home's
+  doorstep, the standing point and who is posted, the same array until one of those changes. Covered by unit tests
+  and the `rest` smoke scenario, whose headless browser run is CI's.
 - **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
   checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
   Kept in progression record word 40 with no layout change; refused in a network room with furnishing; the chip,
@@ -1559,8 +1578,44 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   an `OLLAMA_ORIGINS` set elsewhere. It works without the city's own `enable`. CI evaluates it in `nix flake check` on
   the pinned NixOS 26.05: loopback, the Vulkan, CPU and default builds, the graphics driver for
   Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
-  when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
-  real GPU is untried.
+  when asked for, the system's own settings winning, the three warnings. The service on a real GPU is untried.
+- **NixOS: a VM test of the Ollama option, run by CI.** The nix workflow's new `vm` job builds
+  `vmTests.x86_64-linux.ollama` (`tools/nix/ollama-test.nix`), a NixOS VM under KVM with the flake's module, the CPU
+  build and one extra origin, which checks that `ollama.service` comes up, that its server process's only listening
+  TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that it starts with no models, that
+  `/api/tags` answers the launcher's origin and the extra one with 200 and another with 403, and that it runs with
+  `OLLAMA_ORIGINS`. It is outside `nix flake check`, and fails on a runner without KVM. This is what the job checks,
+  not a result: its first runs are the pull request that added it. The service, on a real machine or any GPU, stays
+  unverified.
+- **NixOS: Ollama's cloud off unless asked for.** The Ollama option gains `cloud`, false by default, which sets
+  `OLLAMA_NO_CLOUD=1`; `programs.crimson-noir-agent-city.ollama.cloud = true;` leaves it unset. In the `vm` job's
+  first run Ollama tried to reach ollama.com twice as it started, for model recommendations and for its cloud models'
+  details (the VM has no network, so both failed). Read from Ollama's source at the version the flake builds, those
+  two jobs are the only requests it makes on its own, and `OLLAMA_NO_CLOUD` stops both before their request, as it
+  refuses cloud models, web search and web fetch with a 403; pulls are untouched (`models` and `ollama pull` still
+  download from Ollama's registry). The console now says a cloud model was refused because the server runs none, in
+  Ollama's words, where it used to report any 403 as the page's origin being refused. The option's variables
+  (`OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as well as the new one) are now defaults on `ollama.service` itself
+  (`systemd.services.ollama.environment`), not in `services.ollama.environmentVariables`, where a definition
+  outranked, and dropped, a configuration's whole set given as `lib.mkDefault { ... }`; a value in
+  `environmentVariables`, set in any way, wins over them, and replacing the whole set with `lib.mkForce` keeps them.
+  While the service is on, the option warns when `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or
+  turns it off with `cloud` true, reading the value as Ollama does (but for a vertical tab, a form feed and the
+  Unicode spaces, which it does not trim) from the environment systemd gives `ollama.service` (the unit's own over
+  `systemd.globalEnvironment`; an `EnvironmentFile` and Ollama's own `.ollama/server.json` are not read), so a value
+  set on the unit or globally, or the unit's set to `null`, counts; the warning names the value there, or that it is
+  unset. The `extraOrigins` warning, which read only `environmentVariables`, now reads the same environment and is
+  worded the same way. `nix flake check` evaluates the default, `cloud = true`, the system's own values winning, a
+  whole `environmentVariables` replaced or given as a default, and the warnings: the cloud one firing for Go's false
+  spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`), an empty value, a quoted `False` and the variable set to
+  `null`, not for `1`, `true` or `no`, and for `1` with `cloud = true`, with the unit's and the global environment,
+  the origins one with the unit's variable set to another value or to `null`, and neither with the service off. The
+  `vm` job now also checks that the server runs with `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true` and, once
+  both startup jobs have logged that they skipped ollama.com, that no line of its journal names it past the default
+  `OLLAMA_REMOTES` in the configuration it logs, a list of allowed hosts, not a request (Ollama's debug logging is on
+  in that VM, since both say so only at debug level; the check reads only the journal and captures no network
+  traffic). This is what the checks are, not a result. Ollama on a real machine, and its cloud setting on one that can
+  reach ollama.com, stay unverified.
 
 ### Changed
 
@@ -1756,6 +1811,48 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
+  an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid
+  ComputePipeline "crowd.simulate"] is invalid due to a previous error. - While Validating GetBindGroupLayout (0)". Not
+  a limit the crowd was over: every pass sits within the limits WebGPU promises every device (simulate binds exactly its
+  eight storage buffers, a 128-wide workgroup, an 11 KB uniform, no extension). The pipelines were built with
+  `createComputePipeline` inside a validation error scope, which keeps only the first validation error; a GPU driver
+  refusing to build a kernel is an *internal* error in WebGPU, which that scope never sees, so the first validation
+  error it saw was the follow-on one, which names nothing. `src/01_Initialize_World/gpuPipelines.ts` (new) compiles a
+  module's passes with `createComputePipelineAsync`, whose `GPUPipelineError` says whether WebGPU refused the shader
+  (validation) or the GPU's own compiler did (internal), in the browser's words, with the module's compilation messages
+  (line, column and the source line quoted); the crowd's buffers, bind groups and spawn stand under validation,
+  out-of-memory and internal scopes at once (the page's cull and the flow field's solver the same). When the full
+  simulate pass is refused for anything but an error in the WGSL itself (the GPU's own compiler, which Chrome reports as
+  an internal error and Safari as validation; a pipeline rule), `crowdSim.ts` climbs down a ladder of kernels
+  (`crowdCompute.ts` `CROWD_KERNELS`), every refusal kept for the record: the same module at 64-wide workgroups (a phone
+  GPU's core seats fewer threads of a kernel this size than a workgroup of 128 asks for), then the light kernel,
+  `crowdWayLite.wgsl` in the place of `crowdWay.wgsl` (new: the room and lot routing moved out of `crowd.wgsl`, the
+  functions unchanged), which walks someone asked over indoors by the straight line, or round the first piece of
+  furniture in its way by a corner, and onto a lot by the straight line, instead of the trail following and the
+  lot-corner search; the First-Law sensing, the contact, the containment, the detour round standing cars, the commute
+  and the flocking are the same `crowd.wgsl` on every rung. The recovery card has its own words for the driver ("This
+  device's graphics driver couldn't build the crowd": update Chrome and the phone's system software; on an iPhone, iOS,
+  whose graphics come with it), names the adapter when the boot fails before the engine stands, and its details carry
+  the driver's words, the kernel it refused and the worker's uncaptured GPU errors; `hardware` at the console names the
+  kernel that runs on a row of its own. `crowdCompute.test.ts` pins every pass of every kernel within the default limits
+  (bindings a stage, workgroup size and storage, the uniform, every buffer and every dispatch at the largest crowd), the
+  narrow kernel as the full module at half the width, the light kernel's drops and keeps, and the ladder with its
+  messages; `bootFailure.test.ts` and `commands.test.ts` pin the card's words and the console's row. The browser job now
+  compiles every rung's five passes under Chrome's software WebGPU as well (`tools/browser/kernels.mjs`, `checks.sh
+  page-kernels`), the evidence the fallback kernels keep compiling where no runner has a phone's GPU. Whether that
+  phone's driver accepts the narrower or the light kernel is not known until it is tried on one; if it refuses them all,
+  the card now shows what it said. Manual: When the city cannot start or stops.
+- **The page no longer ships its shaders' comments.** The `.wgsl` files are imported as text, so the single file carried
+  every comment in them, and the crowd's shaders twice (the page's bundle and the physics worker's): about 83 KB that no
+  GPU reads. With the light kernel's file, the phone layouts, the context growth and the customizer's shoes, frames,
+  watch and pin together the page came out 8 KB over its byte budget (`tools/verify/page_dist.mjs`); rather than raise
+  the budget, the build now hands over each shader without its comments (`vite.config.ts` `leanShaders` in the page's
+  plugin list and the workers', `src/01_Initialize_World/leanWgsl.node.ts`; the dev server serves the same text). Only a
+  comment's text and the spaces before it go: every line keeps its number, so a compilation message on the recovery card
+  still names the file's line, and each file's licence header stays word for word. `leanWgsl.test.ts` pins every shader
+  line by line against its source, WGSL's comment rules (nested blocks, every line break the language has) and the
+  plugin in both lists; `tools/browser/kernels.mjs` compiles that same text in the browser job.
 - **A chat-format server with a small window answers a long prompt instead of refusing it.** The chat format
   (`09_Cognition/localCompute.ts` `chat`, used for llama-server, LM Studio, vLLM, SGLang and Ollama's chat format)
   always asks for answers of up to 2,048 tokens, and SGLang from 0.5.10 and vLLM up to 0.15 (by their sources,

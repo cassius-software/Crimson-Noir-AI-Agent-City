@@ -84,9 +84,11 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   assert.ok(src.includes("if (input.take('browse') && !this.browse()) this.openHome()"))
   const open = between(src, ' openHome(interact = false): boolean {', ' setHomeCard(')
   assert.ok(open.includes('if (this.halted || this.disposed || !this.onHome || st.driving >= 0 || this.rig.headset) return false'), 'on foot, out of a headset (the card is the page\'s), in a city that runs')
-  assert.ok(open.includes('const h = homeAt(this.homes, st.avatar.x, st.avatar.z)'))
+  assert.ok(open.includes('const h = this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z)'), 'the room the avatar stands in: a hall, or a sky floor up its tower')
+  const roomAt = between(src, ' private homeRoomAt(x: number, feetY: number, z: number): number {', ' private homeOfRoom(')
+  assert.ok(roomAt.includes('const home = homeAt(this.homes, x, z) const sky = this.homes.find((h) => h.home === home)?.sky return sky && feetY > sky.y / 2 ? skyRoom(home) : home'), 'over half the floor\'s height, the sky floor\'s room')
   assert.ok(open.includes('if (h < 0 || (interact && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE) >= 0)) return false'), 'a car in reach keeps E (only E) for its door')
-  assert.ok(src.includes('if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) { this.homeCard = null; return false }'), 'the card only for the home the avatar stands in, on foot, never in a headset (no hold with nothing drawn)')
+  assert.ok(src.includes('if (this.halted || this.disposed || st.driving >= 0 || this.rig.headset || this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) !== home) { this.homeCard = null; return false }'), 'the card only for the room the avatar stands in, on foot, never in a headset (no hold with nothing drawn)')
   // The hold: right after the poll every queued action goes (a pad's edges queue even under suspend), then the E line;
   // after the controls are read (and a script's walk applied), the walk is zeroed.
   const frame = between(raw, '  frame(nowMs: number): void {', '  /** One drawn frame')
@@ -101,7 +103,7 @@ test('the engine: the homes kept with their names and addresses; E (unless a car
   before(frame, 'applyWalk(this.scriptedWalk, nowMs, foot)', 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'a script\'s walk waits too')
   before(frame, 'if (this.homeCard !== null) { foot.x = 0; foot.z = 0 }', 'const w = footWish(foot.x, foot.z)', 'what the room is told is the held walk')
   // Out of the home (a teleport, the console's moves), the hold ends at once; the host closes the card at its next look.
-  before(frame, 'this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)', 'this.homeHere = driving >= 0 ? -1 : homeAt(this.homes, av.x, av.z)', 'beside the shop\'s')
+  before(frame, 'this.shopHere = driving >= 0 ? -1 : shopAt(this.shops, av.x, av.z)', 'this.homeHere = driving >= 0 ? -1 : this.homeRoomAt(av.x, av.feetY, av.z)', 'beside the shop\'s')
   assert.ok(frame.includes('if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null'), 'out of the home or into a headset, the hold ends at once, whatever the page\'s loop is doing')
   assert.ok(read('../04_Connect_Hardware/input.ts').includes('  drain(): void {\n    this.queued.clear()\n  }'), 'the drain drops the queue and nothing else')
 })
@@ -117,21 +119,32 @@ test('the engine: Go home is refused in a network room, at the wheel and for a h
   assert.ok(where.includes("why: this.netRoom ? 'not in a shared room: walk there' : null"))
   assert.ok(src.includes('...(this.homeHere >= 0 && { home: this.homeView(this.homeHere) }),'))
   assert.ok(src.includes('ownedHomes: this.ownedHomes,'))
-  assert.ok(src.includes("return { index: home, kind: h?.kind ?? '', name: h?.name ?? '', owned: ((this.ownedHomes >>> home) & 1) === 1, card: this.homeCard === home }"))
+  assert.ok(src.includes("const index = deedOf(room), h = this.homes.find((x) => x.home === index) return { index, room, kind: h?.kind ?? '', name: h ? roomName(h.name, room) : '', owned: ((this.ownedHomes >>> index) & 1) === 1, card: this.homeCard === room }"), 'the deed by its index, the room the avatar stands in, owned with its deed')
   assert.ok(src.includes('drawShops(ctx, shops, x, z, dark, radius); drawHomes(ctx, homes, x, z, dark, this.ownedHomes, radius)'), 'a region\'s homes over its map, after its shops')
   const telemetry = flat(read('../05_Observe_Environment/telemetry.ts'))
-  assert.ok(telemetry.includes('home?: { index: number; kind: string; name: string; owned: boolean; card: boolean }'))
+  assert.ok(telemetry.includes('home?: { index: number; room: number; kind: string; name: string; owned: boolean; card: boolean }'))
   assert.ok(telemetry.includes('ownedHomes?: number'))
   // No word the house keeps out of the engine's pinned ranges in the homes' own code.
   assert.doesNotMatch(between(read('./engine.ts'), '  openHome(interact = false): boolean {', '  /** Enter the nearest car'), FORBIDDEN)
   assert.doesNotMatch(between(read('./engine.ts'), '/** The city\'s street address of a point', '/** One prop\'s dissolve amounts'), FORBIDDEN)
+  // The ride to a sky floor: refused for floorRefusal's reasons, the card closed first, then the realm's teleport onto
+  // the arrival (feet on the floor) or the hall's apron, looking into the room, and a toast.
+  const ride = between(src, ' goFloor(room: number): boolean {', ' /**')
+  assert.ok(ride.includes('if (!f || f.why !== null || !h?.sky) return false'))
+  before(ride, 'this.setHomeCard(null)', "this.sim.send(f.up ? { c: 'teleport', x: at.x, z: at.z, y: h.sky.y + PERSON.halfHeight + PERSON.radius + 0.05 } : { c: 'teleport', x: at.x, z: at.z })", 'furnishing ends and the look comes back before the ride')
+  assert.ok(ride.includes('this.input.yaw = Math.atan2(d.x, d.z)') && ride.includes('this.input.pitch = 0'), 'looking into the room, as Go home does')
+  assert.ok(src.includes('const RIDE = Object.freeze({ up: 6.224, down: 10.892 })'), 'the arrival\'s centre up, the apron down')
+  const fw = between(src, ' floorWhere(room: number): FloorWhere | null {', ' /**')
+  assert.ok(fw.includes('const why = floorRefusal({ stopped: this.halted || this.disposed, floor: true, shared: this.netRoom, up, driving: st.driving >= 0, inside: this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) === room })'))
+  assert.doesNotMatch(between(read('./engine.ts'), '  floorWhere(room: number): FloorWhere | null {', '  /**\n   * The cells of room'), FORBIDDEN)
 })
 
 test('the HUD: the home\'s chip on foot with its card closed; the homes on the city\'s minimap after the shops', () => {
   const raw = read('./Hud.tsx')
   const src = flat(raw)
   assert.ok(src.includes('const homeChip = home && !home.card && !driving && !terminalOpen && ('), 'never behind the console or at the wheel')
-  assert.ok(src.includes('onClick={() => onHome?.(home.index)}'))
+  assert.ok(src.includes('onClick={() => onHome?.(home.room)}'), 'the card of the room the avatar stands in')
+  assert.ok(src.includes('const deed = home ? itemById(DEED_BASE + home.index) : null'), 'the deed by its index')
   assert.ok(src.includes('<span>Furnish <bdi className="font-semibold">{home.name}</bdi></span>'), 'an owner\'s chip says what it opens (slice 2b)')
   assert.ok(!src.includes('Your home: '))
   assert.ok(src.includes("<span>For sale: <bdi className=\"font-semibold\">{home.name}</bdi>{deed && ` · Level ${deed.level} · ${deed.price === 0 ? 'Free' : credits(deed.price)}`}</span>"))
@@ -146,7 +159,7 @@ test('App: one home card state; the engine and the chip open it; input suspended
   assert.ok(src.includes('const [homeOpen, setHomeOpen] = useState<number | null>(null)'))
   assert.ok(src.includes('if (termOpenRef.current || engineRef.current?.setHomeCard(home) !== true) return setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(home) }, [])'), 'a card the engine refuses, or one the console would hide while the engine held the avatar, never opens; one card at a time, and no try-on left worn')
   assert.ok(src.includes('pad={act === null || !bridge}'), 'while a city action waits for its OK the act card alone reads the pad (ActCard.tsx shows it when there is a bridge)')
-  assert.ok(src.includes('useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> homeOpen) & 1) === 1) }, [engine, homeOpen, ownedDeeds])'), 'the engine\'s hold follows the card, closed from anywhere; an owner\'s card asks to furnish (slice 2b)')
+  assert.ok(src.includes('useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> deedOf(homeOpen)) & 1) === 1) }, [engine, homeOpen, ownedDeeds])'), 'the engine\'s hold follows the card, closed from anywhere; an owner\'s card asks to furnish (slice 2b), a sky floor\'s with its deed')
   assert.ok(src.includes('e.onHome = openHome'))
   assert.ok(src.includes('onHome={openHome}'), 'the chip opens the same card')
   assert.ok(src.includes('homes={engine?.homes ?? null}'), 'the city\'s minimap draws the engine\'s homes')
@@ -156,7 +169,8 @@ test('App: one home card state; the engine and the chip open it; input suspended
   assert.ok(src.includes('}, [lookOpen, storeOpen, homeOpen])'))
   assert.ok(src.includes('if (termOpenRef.current || lookOpenRef.current || storeOpenRef.current !== null || homeOpenRef.current !== null) e.input.suspend(true)'), 'an engine that arrives under an open card starts suspended')
   assert.ok(src.includes("if (open) { setLookOpen(false); setStoreOpen(null); setTrying(null); setHomeOpen(null); walkRef.current.note('console') }"), 'the console opening puts the card away (and the first walk hears of it)')
-  assert.ok(src.includes("if (homeOpenRef.current !== null && ((s.customer.home?.index ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()"), 'out of the home or into a headset, the card goes')
+  assert.ok(src.includes("if (homeOpenRef.current !== null && ((s.customer.home?.room ?? -1) !== homeOpenRef.current || s.supplier.xr.state === 'vr' || s.supplier.xr.state === 'ar')) closeHome()"), 'out of the room (up or down the tower too) or into a headset, the card goes')
+  assert.ok(src.includes("ride: (room: number) => (engine.goFloor(room) ? null : engine.floorWhere(room)?.why ?? 'This home has no sky floor in this map'),"), 'the ride through the engine, or why not')
   assert.ok(src.includes('{engine && hud && !termOpen && homeOpen === null && ( <TouchControls'), 'no touch controls under the card')
   assert.ok(src.includes('visible={veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null}'), 'Sloane steps aside')
   assert.ok(src.includes('<HomeCard visible={homeOpen !== null && veilDone && !termOpen && locked === null}'), 'never over the veil, the console or a halted city')
@@ -177,6 +191,11 @@ test('what learns nothing new: the worker\'s glass and the garage\'s rooms list 
   const core = flat(read('./simCore.ts'))
   assert.ok(core.includes('this.#glass = [...rooms, ...(o.region ? (o.streets && o.shops?.length ? shopsAt(o.shops) : []) : shops(o.seed))]'))
   assert.ok(core.includes('homeFrames(o.streets && o.homes?.length ? o.homes : []) : homeFrames(cityHomes(o.seed))'), 'the frames: a region\'s from its lots, the city\'s from its seed')
+  assert.ok(core.includes('.concat(skyFrames(o.region ? [] : cityHomes(o.seed)))'), 'then the sky floors\' frames, the city\'s alone')
+  // Player 1's figure is hidden while the feet are up a tower: it would be drawn standing in the hall below.
+  assert.ok(core.includes('const feet = a.body.translation(this.#pos).y - a.person.halfHeight - a.person.radius'))
+  assert.ok(core.includes('visible: this.#driving[0] === null && feet <= ALOFT },'))
+  assert.ok(core.includes('const ALOFT = 20'))
   assert.doesNotMatch(core, /homesAt|hollowProperties/, 'no home geometry in the worker')
   const garage = flat(read('../10_Network/garage.node.ts'))
   assert.ok(garage.includes('this.#rooms = [...workplaces(this.seed), ...shops(this.seed)]'))
@@ -215,6 +234,15 @@ test('the world: the homes\' finishes and furniture in one HomeFurniture mesh in
   before(build, 'if (!region || plan.length > 0) scene.add(buildings)', `scene.add(${mesh})`, 'after the buildings')
   assert.match(build, /return \{[^}]*\bsetHomes\b[^}]*\}/, 'the setter on the world')
   before(flat(read('./engine.ts')), 'const world = buildWorld(', 'await gpu.renderer.compileAsync(world.scene, world.camera)', 'built before the boot compiles')
+  // A sky floor's clear panes collide (the plan holds them) but take no instance slot: the mesh draws the rest.
+  assert.ok(build.includes('order.splice(0, order.length, ...order.filter((i) => plan[i].style !== STYLE.clear))'), 'the clear panes left out of the drawn order')
+  before(build, 'const order = boxes.map((_, i) => i)', 'order.splice(0, order.length, ...order.filter(', 'out of the order the boxes give')
+  before(build, 'order.splice(0, order.length, ...order.filter(', 'const sortBuildings = (', 'before any sort fills a slot')
+  before(build, 'buildings.count = order.length', 'buildings.computeBoundingSphere()', 'the count set before the bounds are taken')
+  before(build, 'sortBuildings(CITY_CENTER, CITY_CENTER)', 'buildings.count = order.length', 'after the first sort fills the slots')
+  // The sky floors' ceilings: lit like any ceiling, read from two uniforms the world sets from the clear panes.
+  assert.ok(mat.includes('export const SKY_CEILINGS = [uniform(new Vector3(0, -1e9, 0)), uniform(new Vector3(0, -1e9, 0))] as const'))
+  assert.ok(build.includes('SKY_CEILINGS.forEach((u, i) => u.value.copy([...skies.values()][i] ?? new Vector3(0, -1e9, 0)))'), 'parked far below the ground where there is no sky floor')
 })
 
 test('the engine: furnishing only for the owner, on foot inside the home, out of a headset and of a network room; the look held while it lasts and given back; it ends with the card or as soon as it is refused', () => {
@@ -225,8 +253,8 @@ test('the engine: furnishing only for the owner, on foot inside the home, out of
   for (const [check, why] of [
     ['if (this.rig.headset) return ', 'the plan is drawn on the page'],
     ['if (st.driving >= 0) return ', 'on foot'],
-    ['if (homeAt(this.homes, st.avatar.x, st.avatar.z) !== home) return ', 'inside that home'],
-    ['if (((this.homeDeeds >>> home) & 1) !== 1) return ', 'the deed owned, by the same mask the furniture is drawn with'],
+    ['if (this.homeRoomAt(st.avatar.x, st.avatar.feetY, st.avatar.z) !== home) return ', 'inside that room'],
+    ['if (((this.homeDeeds >>> deedOf(home)) & 1) !== 1) return ', 'the deed owned, by the same mask the furniture is drawn with'],
   ] as const) assert.ok(refusal.includes(check), why)
   // The card: 2a's hold as it was (pinned above); furnishing only on a card that took, and only where it is allowed.
   const card = between(src, ' setHomeCard(home: number | null, furnish = false): boolean {', ' furnishRefusal(')
@@ -272,11 +300,12 @@ test('the engine: every home drawn from boot; a home\'s solids sent only when th
   assert.ok(draw.includes('const d = this.draft, draft = d && this.furnishHome !== null && d.home === this.furnishHome ? d : null'), 'the ghost and cursor only while that home is furnished')
   const send = between(raw, '  private sendHomes(): void {', '\n  }\n')
   assert.match(send, /^ {4}if \(this\.netRoom \|\| this\.halted \|\| this\.disposed\) return$/m, 'never in a network room: its realm refuses the command')
-  assert.ok(send.includes('const boxes = homeSolids(h, homePlaced(h.home, this.homeRecord, this.homeDeeds, this.homeLines))'), 'the solids of the pieces drawn')
-  before(send, 'if (this.homeSent[h.home] === key) continue', "this.sim.send({ c: 'home', index: h.home, boxes })", 'only a change is sent')
+  assert.ok(send.includes('for (let room = 0; room < ROOM_COUNT; room++) {') && send.includes('if (!h) continue'), 'every room this map has, the sky floors after the halls')
+  assert.ok(send.includes('const boxes = homeSolids(h, homePlaced(room, this.homeRecord, this.homeDeeds, this.homeLines), this.roomBase(room, 0))'), 'the solids of the pieces drawn, a sky floor\'s at its height')
+  before(send, 'if (this.homeSent[room] === key) continue', "this.sim.send({ c: 'home', index: room, boxes })", 'only a change is sent')
   assert.equal((raw.match(/c: 'home'/g) ?? []).length, 1, 'one place sends a home\'s solids')
   assert.equal((raw.match(/this\.sendHomes\(\)/g) ?? []).length, 2, 'on a change of furnishing and on leaving a room')
-  assert.ok(src.includes("private readonly homeSent: (string | null)[] = Array.from({ length: HOME_COUNT }, () => '')"), 'the realm starts with no set')
+  assert.ok(src.includes("private readonly homeSent: (string | null)[] = Array.from({ length: ROOM_COUNT }, () => '')"), 'the realm starts with no set, in any room')
   // Joining: the room's start goes ahead of everything queued (simClient.ts first), so a 'home' queued just before it is
   // refused; what was sent is forgotten, and the homes are drawn without pieces.
   const nf = between(raw, '  private netFrame(', '  /**\n   * A realm state as the room')
@@ -309,18 +338,19 @@ test('the engine: the draft camera posed in present() alone, after the mirror\'s
   assert.equal((src.match(/this\.pickCam = /g) ?? []).length, 1, 'kept in one place')
   const view = between(src, ' private furnishView(): ', ' private redrawHomes(')
   assert.ok(view.includes('if (home === null || !d || d.home !== home) return null'), 'only the draft of the home being furnished')
-  assert.ok(view.includes('return h ? furnishEye(h, d.cursor, d.view) : null'))
+  assert.ok(view.includes('const h = this.homeOfRoom(home) return h ? furnishEye(h, d.cursor, d.view, home) : null'), 'the room\'s eye: a sky floor\'s under its own ceiling')
   const pick = between(src, ' pickCell(clientX: number, clientY: number): { c: number; r: number } | null {', ' private furnishView(')
   assert.ok(pick.includes('this.pickHome !== home'), 'only once that home\'s draft camera has drawn')
   assert.ok(pick.includes('const view = this.views.length > 1 ? this.views[0].rect : { x: 0, y: 0, width: cw, height: ch }'), 'player 1\'s view of the canvas: the whole of it alone, whatever it was resized to')
   before(pick, 'const eye = cam.getWorldPosition(this.pickEye)', '.unproject(cam).sub(eye)', 'a ray from the eye through the point')
-  assert.ok(pick.includes('const y = this.homeBase + PICK_FLOOR'), 'met with the floor 5 cm up (a region\'s paved floor under it)')
+  assert.ok(pick.includes('const y = this.roomBase(home) + PICK_FLOOR'), 'met with the floor 5 cm up (a region\'s paved floor under it, a sky floor\'s high up)')
+  assert.ok(src.includes('return room === deedOf(room) ? hall : this.homeOfRoom(room)?.sky?.y ?? hall'))
   before(pick, 'const at = toLocal(h, eye.x + d.x * t, eye.z + d.z * t)', 'const cell = cellAt(at.u, at.v)', 'in the room frame')
   assert.ok(pick.includes('return cell && inMask(home, cell.c, cell.r) ? cell : null'), 'only a cell of the home\'s floor plan')
   assert.ok(src.includes('const PICK_FLOOR = 0.05'))
   assert.ok(src.includes('this.homeBase = p.places ? SURFACE.sidewalk : 0'), 'a region\'s homes stand on its paved floors')
   const blocked = between(src, ' blockedCells(home: number): Uint8Array {', ' pickCell(')
-  assert.ok(blocked.includes('if ((st.drivings[k] ?? -1) < 0 && homeAt(this.homes, a.x, a.z) === home) people.push(toLocal(h, a.x, a.z))'), 'every local avatar on foot in that home, in its room frame')
+  assert.ok(blocked.includes('if ((st.drivings[k] ?? -1) < 0 && this.homeRoomAt(a.x, a.feetY, a.z) === home) people.push(toLocal(h, a.x, a.z))'), 'every local avatar on foot in that room, in its room frame')
   assert.ok(blocked.includes('return cellsNear(people, PERSON.radius + STAND_CLEAR)'))
   assert.ok(src.includes('const STAND_CLEAR = 0.05'))
   // No word the house keeps out of the engine's pinned ranges in the furnishing's own code.
