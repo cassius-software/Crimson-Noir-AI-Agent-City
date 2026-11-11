@@ -165,14 +165,15 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </button>
   )
   // Inside a home (properties.ts), on foot, its card closed, the console shut: the home's deed for sale with its level
-  // and price, or the player's own home, as a button that opens its card; the key is the shop chip's.
+  // and price, or, in the player's own home, Furnish and its name; a button that opens its card (the furnishing view
+  // for an owner, HomeCard.tsx, or the reason it waits); the key is the shop chip's.
   const home = c.home
   const deed = home ? itemById(DEED_BASE + home.index) : null
   const homeChip = home && !home.card && !driving && !terminalOpen && (
     <button type="button" onClick={() => onHome?.(home.index)} className={`pointer-events-auto flex items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="home" data-owned={home.owned || undefined}>
       {shopGlyph && <><GlyphKey glyph={shopGlyph} kind={glyphKind('interact', family)} />{' '}</>}
       {home.owned
-        ? <span>Your home: <bdi className="font-semibold">{home.name}</bdi></span>
+        ? <span>Furnish <bdi className="font-semibold">{home.name}</bdi></span>
         : <span>For sale: <bdi className="font-semibold">{home.name}</bdi>{deed && ` · Level ${deed.level} · ${deed.price === 0 ? 'Free' : credits(deed.price)}`}</span>}
     </button>
   )

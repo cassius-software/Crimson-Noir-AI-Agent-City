@@ -10,7 +10,9 @@
  * with every other box of the city left as it was and in its order, so the VTOL pads and the track network do not
  * move; the planter gaps wide enough for a person and too narrow for either car, proved with the real Rapier world
  * (a cast of each chassis is stopped at the planters, and the real avatar walks in from the sidewalk onto the apron);
- * the minimap's colours; and the deeds' names fit to show.
+ * the minimap's colours; the deeds' names fit to show; and the physics worker's check of a home's furniture solids
+ * (each home's room frame as its lot gives it, a sound solid taken in every doorway direction, and every bad box
+ * refused with its reason).
  * What breaks if it is removed? A seed could put a home on a shop's lot, leave a podium standing inside a home, let a
  * car into one, or shift a rooftop pad, and only a browser on that seed would show it.
  */
@@ -19,9 +21,9 @@ import { test } from 'node:test'
 import { forbiddenWordIn } from './assets/cc0.ts'
 import { CITY, CITY_CENTER, HERITAGE_COLUMNS, STYLE, cityPlan, districtOfLot, generateBuildings, type Box, type Building } from './city.ts'
 import { ROOM, doorDir, doorFront, insideRoom, toLocal, toWorld, workplaceLots } from './interiors.ts'
-import { DEED_BASE, HOME, PROPERTY_KINDS, cityHomes, drawHomes, homeAt, homesAt, hollowProperties, propertyLots, type Home } from './properties.ts'
+import { DEED_BASE, HOME, HOME_SOLID, PROPERTY_KINDS, checkHomeBoxes, cityHomes, drawHomes, homeAt, homeFrames, homesAt, hollowProperties, propertyLots, type Home, type HomeFrame } from './properties.ts'
 import { shopLots } from './storefronts.ts'
-import { APRON, CELL, DEPTH, GRID, INSET, backEdge, cellCentre } from '../02_Define_The_Rules/homeGrid.ts'
+import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre } from '../02_Define_The_Rules/homeGrid.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { buildTrackNetwork, poseAt, trainLoops, vtolPads } from '../06_Make_Decisions/tracks.ts'
 import { RIDE_HEIGHT, chassisBox } from '../07_Execute_Actions/car.ts'
@@ -369,6 +371,126 @@ test('homesAt: the property index decides the depth in any map, and an unknown p
   }
   assert.throws(() => homesAt([{ home: 7, k: 5, m: 3, side: 0 }]), /no property 7/)
   assert.throws(() => homesAt([{ home: 1.5, k: 5, m: 3, side: 0 }]), /no property/)
+})
+
+test('homeFrames: each home\'s room frame as its lot gives it, by property index, the same for a lot and its home; null where a map has none', () => {
+  for (const seed of SEEDS.slice(0, 4)) {
+    const homes = cityHomes(seed)
+    const frames = homeFrames(homes)
+    assert.equal(frames.length, PROPERTY_KINDS.length)
+    for (const x of homes) {
+      assert.deepEqual(frames[x.home], { home: x.home, cx: x.cx, cz: x.cz, side: x.side, back: x.back }, `seed ${seed}: home ${x.home}`)
+      assert.ok(Object.isFrozen(frames[x.home]))
+    }
+    assert.deepEqual(homeFrames(homes.map(({ home, k, m, side }) => ({ home, k, m, side }))), frames, 'a lot gives its home\'s frame')
+  }
+  // A region with three of the seven: the others are null.
+  const some = homeFrames([{ home: 6, k: 52, m: 53, side: 2 }, { home: 0, k: 55, m: 52, side: 1 }, { home: 3, k: 60, m: 61, side: 3 }])
+  assert.deepEqual(some.map((f) => f?.home ?? null), [0, null, null, 3, null, null, 6])
+  assert.deepEqual(some[6], { home: 6, cx: 52.5 * P, cz: 53.5 * P, side: 2, back: backEdge(6) })
+  assert.deepEqual(homeFrames([]), [null, null, null, null, null, null, null])
+  assert.throws(() => homeFrames([{ home: 7, k: 5, m: 3, side: 0 }]), /no property 7/)
+  assert.throws(() => homeFrames([{ home: -1, k: 5, m: 3, side: 0 }]), /no property -1/)
+  assert.throws(() => homeFrames([{ home: 2.5, k: 5, m: 3, side: 0 }]), /no property 2\.5/)
+  assert.throws(() => homeFrames([{ home: 2, k: 5, m: 3, side: 0 }, { home: 2, k: 6, m: 3, side: 0 }]), /property 2 listed twice/)
+})
+
+/** A room-frame box (u, v, y ranges) as the page sends it: six city numbers, through toWorld. */
+const sent = (f: HomeFrame, u0: number, v0: number, u1: number, v1: number, y0: number, y1: number): number[] => {
+  const a = toWorld(f, u0, v0), b = toWorld(f, u1, v1)
+  return [Math.min(a.x, b.x), y0, Math.min(a.z, b.z), Math.max(a.x, b.x), y1, Math.max(a.z, b.z)]
+}
+/** The edge of cell index n along u or v (the grid's lines), m. */
+const line = (n: number) => -GRID_HALF + n * CELL
+
+test('checkHomeBoxes takes real solids from inside a home, in every doorway direction: against the back, against a side wall, beside the apron, at the doorway edge', () => {
+  for (const side of [0, 1, 2, 3] as const) {
+    for (const home of [0, 3, 6]) {
+      const [f] = homeFrames(homesAt([{ home, k: 6, m: 5, side }])).filter((x) => x !== null)
+      const first = GRID - DEPTH[home]
+      // A sofa (4 x 2 cells, its solid the first 1.6 cells from its back, 0.85 m) against the back, a bookcase
+      // (3 x 1, its solid 0.55 cells deep, 2.4 m) against the +v wall, a desk beside the apron and a console at the
+      // doorway's edge of the floor plan on the -v side, each inset 1 cm as the page draws them.
+      const flat = [
+        ...sent(f, line(first) + 0.01, line(2) + 0.01, line(first + 1.6) - 0.01, line(6) - 0.01, 0, 0.85),
+        ...sent(f, line(first + 2) + 0.01, line(32 - 0.55) + 0.01, line(first + 5) - 0.01, line(32) - 0.01, 0, 2.4),
+        ...sent(f, line(APRON.r0) + 0.01, line(APRON.c1 + 1) + 0.01, line(32) - 0.01, line(APRON.c1 + 3) - 0.01, 0, 0.76),
+        ...sent(f, line(30) + 0.01, line(0) + 0.01, line(32) - 0.01, line(3) - 0.01, 0, 1.95),
+        // The tallest a piece stands (a bookcase's carcass would reach 4.1 m; its solid stops at 2.4 m, this does not).
+        ...sent(f, line(first) + 0.01, line(10) + 0.01, line(first + 1) - 0.01, line(13) - 0.01, 0, 4.1),
+      ]
+      const at = `side ${side}, home ${home}`
+      const boxes = checkHomeBoxes(f, flat)
+      assert.equal(boxes.length, 5, at)
+      assert.deepEqual(boxes.flat(), flat, `${at}: the boxes come back as sent, city boxes`)
+      for (const [x0, , z0, x1, , z1] of boxes) assert.ok(x1 > x0 && z1 > z0, at)
+    }
+  }
+  // The city's homes, each one's real frame: a solid against its back edge.
+  for (const x of cityHomes(1337)) {
+    const [f] = homeFrames([x]).filter((y) => y !== null)
+    assert.equal(checkHomeBoxes(f, sent(f, x.back + 0.01, -1, x.back + 1, 1, 0, 0.85)).length, 1, `home ${x.home}`)
+  }
+  // No boxes: a home with nothing solid.
+  const [f] = homeFrames(homesAt([{ home: 5, k: 6, m: 5, side: 0 }])).filter((x) => x !== null)
+  assert.deepEqual(checkHomeBoxes(f, []), [])
+  // HOME_PIECES boxes, the most a home holds.
+  assert.equal(checkHomeBoxes(f, Array.from({ length: HOME_PIECES }, (_, i) => sent(f, line(i) + 0.01, -1, line(i + 1) - 0.01, 1, 0, 1)).flat()).length, HOME_PIECES)
+})
+
+test('checkHomeBoxes refuses each bad box with its reason, in every doorway direction', () => {
+  const { slack, ceiling, height, thin } = HOME_SOLID
+  assert.deepEqual({ slack, ceiling, height, thin, floor: HOME_SOLID.floor }, { slack: 0.01, ceiling: 4.15, height: 0.4, thin: 0.05, floor: -0.01 })
+  for (const side of [0, 1, 2, 3] as const) {
+    const [f] = homeFrames(homesAt([{ home: 1, k: 9, m: 3, side }])).filter((x) => x !== null)
+    const back = backEdge(1)
+    const good = sent(f, back + 1, -1, back + 3, 1, 0, 0.85)
+    const at = `side ${side}`
+    assert.equal(checkHomeBoxes(f, good).length, 1, at)
+    const refused = (flat: unknown, reason: RegExp, why: string) => assert.throws(() => checkHomeBoxes(f, flat), reason, `${at}: ${why}`)
+    refused('0,0,0,1,1,1', /^Error: home: boxes must be a list of numbers$/, 'a string')
+    refused({ length: 6, 0: 1 }, /boxes must be a list of numbers/, 'not an array')
+    refused(null, /boxes must be a list of numbers/, 'nothing')
+    refused(new Float64Array(good), /boxes must be a list of numbers/, 'a typed array is not a plain list')
+    refused(good.slice(0, 5), /boxes come in sixes/, 'five numbers')
+    refused([...good, 1], /boxes come in sixes/, 'seven numbers')
+    refused(Array.from({ length: HOME_PIECES + 1 }, () => good).flat(), /at most 16 boxes/, 'seventeen boxes')
+    for (const bad of [Number.NaN, Infinity, -Infinity, '1', null, undefined]) {
+      const flat: unknown[] = [...good]
+      flat[3] = bad
+      refused(flat, /every number of a box must be finite/, `a ${String(bad)}`)
+    }
+    const hole: unknown[] = new Array(6)
+    good.forEach((n, i) => { if (i !== 3) hole[i] = n })
+    refused(hole, /every number of a box must be finite/, 'a hole')
+    const [x0, y0, z0, x1, y1, z1] = good
+    refused([x0, y0, z0, x0 + thin - 0.001, y1, z1], /at least 0\.05 m across/, 'too thin along x')
+    refused([x0, y0, z0, x1, y1, z0 + thin - 0.001], /at least 0\.05 m across/, 'too thin along z')
+    refused([x1, y0, z0, x0, y1, z1], /at least 0\.05 m across/, 'turned inside out')
+    refused([x0, -0.011, z0, x1, y1, z1], /must start on the floor/, 'under the floor')
+    refused([x0, y0, z0, x1, ceiling + 0.001, z1], /must stay under 4\.15 m/, 'into the ceiling')
+    refused([x0, 0.2, z0, x1, 0.2 + height - 0.001, z1], /at least 0\.4 m tall/, 'low enough to step onto')
+    refused([x0, 1, z0, x1, 1.2, z1], /at least 0\.4 m tall/, 'a shelf in the air, too thin')
+    assert.equal(checkHomeBoxes(f, [x0, -0.009, z0, x1, ceiling, z1]).length, 1, `${at}: a centimetre's slack at the floor, the ceiling's limit itself`)
+    // Outside the floor plan: behind the back edge, past the doorway edge, past either side.
+    refused(sent(f, back - slack - 0.005, -1, back + 1, 1, 0, 1), /inside the home's floor plan/, 'behind the back edge')
+    refused(sent(f, -12, -1, -11, 1, 0, 1), /inside the home's floor plan/, 'in the fill block')
+    refused(sent(f, 11, 4, GRID_HALF + slack + 0.005, 5, 0, 1), /inside the home's floor plan/, 'past the doorway edge')
+    refused(sent(f, 0, GRID_HALF - 1, 1, GRID_HALF + slack + 0.005, 0, 1), /inside the home's floor plan/, 'past the +v side')
+    refused(sent(f, 0, -GRID_HALF - slack - 0.005, 1, -GRID_HALF + 1, 0, 1), /inside the home's floor plan/, 'past the -v side')
+    refused(sent(f, 20, -1, 21, 1, 0, 1), /inside the home's floor plan/, 'out in the street')
+    assert.equal(checkHomeBoxes(f, sent(f, back - slack + 0.001, -GRID_HALF - slack + 0.001, back + 1, -GRID_HALF + 1, 0, 1)).length, 1, `${at}: a centimetre's slack behind and beside`)
+    // On the apron: from behind it, from either side of it, wholly in it; touching it is not on it.
+    const a = { u0: line(APRON.r0), v0: line(APRON.c0), v1: line(APRON.c1 + 1) }
+    refused(sent(f, a.u0 - 1, -0.5, a.u0 + 0.01, 0.5, 0, 1), /keep off the apron/, 'into the apron from behind')
+    refused(sent(f, a.u0 + 1, a.v1 - 0.01, a.u0 + 2, a.v1 + 1, 0, 1), /keep off the apron/, 'into the apron from the +v side')
+    refused(sent(f, a.u0 + 1, a.v0 - 1, a.u0 + 2, a.v0 + 0.01, 0, 1), /keep off the apron/, 'into the apron from the -v side')
+    refused(sent(f, a.u0 + 1, -0.5, a.u0 + 2, 0.5, 0, 1), /keep off the apron/, 'on the apron')
+    refused(sent(f, 12, -0.5, GRID_HALF, 0.5, 0, 1), /keep off the apron/, 'in the doorway')
+    assert.equal(checkHomeBoxes(f, [...sent(f, a.u0 - 1, -0.5, a.u0, 0.5, 0, 1), ...sent(f, a.u0, a.v1, GRID_HALF, a.v1 + 1, 0, 1)]).length, 2, `${at}: touching the apron`)
+    // One bad box refuses the whole set.
+    refused([...good, ...sent(f, a.u0 + 1, -0.5, a.u0 + 2, 0.5, 0, 1)], /keep off the apron/, 'a good box and a bad one')
+  }
 })
 
 /** Words that name a weapon or a fight, as conduct.test.ts's unarmed() reads them. */

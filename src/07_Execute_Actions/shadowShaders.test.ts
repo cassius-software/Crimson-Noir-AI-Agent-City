@@ -320,6 +320,9 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   for (const name of ['Buildings', 'StreetLamps', 'StreetTrees', 'TrafficSignals', 'Wheels', 'Trains', 'VTOLs', 'VTOLPads', 'Guideway', 'GuidewayColumns']) assert.ok(shadowed.has(name), `city: ${name} was built for the shadow pass`)
   const mains = new Set(built.filter((b) => b.pass === 'main').map((b) => b.name))
   for (const name of ['Drones', 'Planes']) assert.ok(mains.has(name) && !shadowed.has(name), `city: ${name} is drawn and casts no shadow`)
+  // The homes' finishes and furniture: the buildings' material read through a uniform buffer of transforms (its 512
+  // slots fit one), a draw of its own beside the buildings' instanced attributes, indoors under the slab, no shadow.
+  assert.ok(mains.has('HomeFurniture') && !shadowed.has('HomeFurniture'), 'city: HomeFurniture is drawn and casts no shadow')
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
   // Its shadow pass draws the pose and the dissolve's shadow mask, nothing of the paint: three multiplies the shadow's

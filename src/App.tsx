@@ -12,7 +12,9 @@
  * page is picked here too: one hidden file input, opened from the console's `ask file` or the Menu, or a file dropped on
  * the city on a desktop. The operator's progression reaches the city here too: the page's one keeper (progress.ts) is
  * earned into by the engine's deeds, the recruiter's arrivals and understood requests, and the wardrobe card, and its one
- * listener cues each success (the engine's chime and tap, the HUD's chip).
+ * listener cues each success (the engine's chime and tap, the HUD's chip). The homes' furnishing is kept here too: the
+ * saved record (05_Observe_Environment/homeStore.ts), saved on every edit the home card commits and handed to the engine
+ * with what the shopkeeper says is owned, which draws the homes and makes their furniture solid.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -53,10 +55,12 @@ import { probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize
 import { Concierge } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
-import { HomeCard } from './07_Execute_Actions/HomeCard.tsx'
+import { HomeCard, type FurnishHooks } from './07_Execute_Actions/HomeCard.tsx'
 import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
 import type { StoreItem } from './07_Execute_Actions/storeCatalog.ts'
 import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
+import { FURNITURE_BASE, SHAPE_IDS } from './02_Define_The_Rules/homeLayout.ts'
+import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
 import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -175,6 +179,16 @@ const pageStore = (key: string) => ({
 function ownedHomes(keeper: Shopkeeper): number {
   let mask = 0
   for (let i = 0; i < PROPERTY_KINDS.length; i++) if (keeper.owns(DEED_BASE + i)) mask |= 1 << i
+  return mask
+}
+
+/**
+ * The furniture lines the shopkeeper says the player owns, one bit per line (bit i: line FURNITURE_BASE + i, the
+ * progression record's furniture unlock i, storeCatalog.ts): a line is a licence for every home the player owns.
+ */
+function ownedLines(keeper: Shopkeeper): number {
+  let mask = 0
+  for (const id of SHAPE_IDS) if (keeper.owns(id)) mask |= 1 << (id - FURNITURE_BASE)
   return mask
 }
 
@@ -672,6 +686,11 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   // null, and the frame loop's view of it.
   const [homeOpen, setHomeOpen] = useState<number | null>(null)
   const homeOpenRef = useRef<number | null>(null)
+  // The homes' furnishing (homeStore.ts), read once at mount; homesRef is the shopkeeper listener's view of it. Which
+  // deeds are owned (bit i: home i) is kept as state too, so an owner's card asks the engine for its furnishing view.
+  const [homes, setHomes] = useState<HomeRecord>(loadHomes)
+  const homesRef = useRef<HomeRecord>(homes)
+  const [ownedDeeds, setOwnedDeeds] = useState(() => ownedHomes(keeper))
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
   const [locked, setLocked] = useState<string | null>(null)
@@ -763,7 +782,6 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
   const closeHome = useCallback(() => setHomeOpen(null), [])
   // The doorstep card is player 1's: in split screen only seat 0's pads press or move through it (input.ts).
   const playerOnePad = useCallback((padIndex: number) => engineRef.current?.input.playerOnePad(padIndex) ?? true, [])
-  useEffect(() => { engine?.setHomeCard(homeOpen) }, [engine, homeOpen])
   // Which homes the player owns, for the HUD's chip and the minimaps: the shopkeeper's every change (a purchase here or
   // on a doorstep, a reset from the console) is told to the engine.
   useEffect(() => {
@@ -771,6 +789,39 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
     engine.setOwnedHomes(ownedHomes(keeper))
     return keeper.onChange(() => engine.setOwnedHomes(ownedHomes(keeper)))
   }, [engine, keeper])
+  // The homes' furnishing reaches the engine once it exists and on every change of what the shopkeeper says is owned
+  // (a deed or a furniture line bought anywhere, a reset): the saved record with the deeds and lines owned, from which
+  // it draws every home (an owned one's own layout, a home on sale's show home) and sends the realm their solids.
+  useEffect(() => {
+    if (!engine) return
+    const furnish = () => {
+      const deeds = ownedHomes(keeper)
+      engine.setFurnishings(homesRef.current, deeds, ownedLines(keeper))
+      setOwnedDeeds(deeds)
+    }
+    furnish()
+    return keeper.onChange(furnish)
+  }, [engine, keeper])
+  // Every edit the home card commits: saved in this browser (homeStore.ts saveHomes) and handed to the engine at once.
+  const onRecord = useCallback((next: HomeRecord) => {
+    homesRef.current = next
+    setHomes(next)
+    saveHomes(next)
+    engineRef.current?.setFurnishings(next, ownedHomes(keeper), ownedLines(keeper))
+  }, [keeper])
+  // The engine's hold follows the card, closed from anywhere, and an owner's card asks for the furnishing view (the
+  // engine refuses it in a network room, in a headset, at the wheel or outside the home; the card then says why).
+  useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> homeOpen) & 1) === 1) }, [engine, homeOpen, ownedDeeds])
+  // What the card needs of the engine to furnish: the refusal, the draft, who stands where, the cell under a pointer
+  // on the city's canvas (the draft camera's view), and that canvas.
+  const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {
+    refusal: (home: number) => engine.furnishRefusal(home),
+    begin: (home: number) => { if (!engine.furnishing) engine.setHomeCard(home, true) },
+    setDraft: (draft) => engine.setHomeDraft(draft),
+    blocked: (home: number) => engine.blockedCells(home),
+    pickCell: (x: number, y: number) => engine.pickCell(x, y),
+    canvas: () => canvasRef.current,
+  } : null), [engine])
   // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
   // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.
   const goHome = useCallback((item: StoreItem) => {
@@ -1489,6 +1540,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link }: { opt
           homeInfo={homeInfo}
           pad={act === null || !bridge}
           padFrom={playerOnePad}
+          record={homes}
+          onRecord={onRecord}
+          furnish={furnishHooks}
           onClose={closeHome}
           dark={hud.customer.daylight < 0.35}
         />
