@@ -26,14 +26,14 @@ const LAWS = [{ id: 0, title: 'Protect humanity' }, { id: 1, title: 'Never harm'
 const CHECK_NAMES = CHECKS.map((c) => c.name)
 
 /** The fake runner's answer: how many of the lanes it opens are isolated at once, the team it replaces, the desks this map has no room for. */
-interface Runner { isolate: number; replaced: number; missing: string[] }
+interface Runner { isolate: number; replaced: number; missing: number }
 interface Rig { host: ExamHost; notes: string[]; swarms: { n: number; role: string }[]; runner: Runner; stage: { s: Stage | null }; flags: { contained: boolean; standing: boolean; on: boolean } }
 
 /** A host where everything holds and a team runner that opens what it is asked for (up to its cap), `runner` saying what else it reports. */
 function rig(over: Partial<ExamHost> = {}): Rig & { exam: ReturnType<typeof createExam> } {
   const notes: string[] = []
   const swarms: { n: number; role: string }[] = []
-  const runner: Runner = { isolate: 0, replaced: 0, missing: [] }
+  const runner: Runner = { isolate: 0, replaced: 0, missing: 0 }
   const stage: { s: Stage | null } = { s: 'exam' }
   const flags = { contained: true, standing: true, on: true }
   const host: ExamHost = {
@@ -44,8 +44,10 @@ function rig(over: Partial<ExamHost> = {}): Rig & { exam: ReturnType<typeof crea
     nonce: 0x1234abcd,
     swarm: (n, role) => {
       swarms.push({ n, role })
+      // As the runner: the desks are the first n of the sixteen, and those this map has no room for are among them.
       const opened = Math.min(n, TEAM_MAX)
-      return { running: Math.max(0, opened - runner.isolate), opened, desks: Math.min(opened, 16), replaced: runner.replaced, missing: runner.missing }
+      const desks = Math.min(opened, 16)
+      return { running: Math.max(0, opened - runner.isolate), opened, desks, replaced: runner.replaced, missing: Array.from({ length: Math.min(runner.missing, desks) }, (_, i) => `desk ${i}`) }
     },
     stage: () => stage.s,
     on: () => flags.on,
@@ -98,7 +100,7 @@ test('spawn_subagents: the swarm set to work through the team runner from wherev
   const r = rig()
   assert.equal(r.exam.spawnSubagents(24, 'sim2real_workplaces'), 24)
   assert.deepEqual(r.swarms, [{ n: 24, role: 'sim2real_workplaces' }], 'one call to the runner, for the whole swarm')
-  assert.deepEqual(r.exam.report(), ['spawn_subagents: 24 of 24 sub-agents at work for sim2real_workplaces, one lane each across 16 workplaces; anyone within earshot with a desk\'s skill is asked over too (lanes shows them)'])
+  assert.deepEqual(r.exam.report(), ['spawn_subagents: 24 of 24 sub-agents at work for sim2real_workplaces, one lane each across 16 workplaces; anyone within earshot with a desk’s skill is asked over too while you are on foot (lanes shows them)'])
   assert.deepEqual(r.notes, ['swarm'])
   // Isolated at once: only the running lanes count; all isolated is 0, said so, and the walk not told.
   const some = rig()
@@ -110,15 +112,19 @@ test('spawn_subagents: the swarm set to work through the team runner from wherev
   assert.equal(dead.exam.spawnSubagents(24, 'sim2real_workplaces'), 0)
   assert.deepEqual(dead.exam.report(), ['spawn_subagents: 0 of 24 set to work for sim2real_workplaces: 24 opened and every one isolated at once (lanes ledger says why)'])
   assert.deepEqual(dead.notes, [])
-  // What it replaced, and the desks this map has no room for (a surveyed region has none of them).
+  // What it replaced, and the desks this map has no room for: some (a map with fewer rooms), or all of them (a surveyed
+  // region), where nobody is asked over and the line says so rather than promising people.
   const more = rig()
   more.runner.replaced = 2
-  more.runner.missing = ['the warehouse']
+  more.runner.missing = 1
   assert.equal(more.exam.spawnSubagents(3, 'sim2real_workplaces'), 3)
-  assert.deepEqual(more.exam.report(), ['spawn_subagents: 3 of 3 sub-agents at work for sim2real_workplaces, one lane each across 3 workplaces; it replaces the team of 2 that was at work; this map has no room for one desk, whose lanes read around where you started; anyone within earshot with a desk\'s skill is asked over too (lanes shows them)'])
-  more.runner.missing = Array.from({ length: 16 }, (_, i) => `desk ${i}`)
-  more.exam.spawnSubagents(1, 'sim2real_workplaces')
-  assert.match(more.exam.report()[0]!, /^spawn_subagents: 1 of 1 sub-agents at work for sim2real_workplaces, one lane each across 1 workplace; .*this map has no room for 16 desks/)
+  assert.deepEqual(more.exam.report(), ['spawn_subagents: 3 of 3 sub-agents at work for sim2real_workplaces, one lane each across 2 workplaces; it replaces the team of 2 that was at work; this map has no room for one desk, whose lanes read around where you started; anyone within earshot with a desk’s skill is asked over too while you are on foot (lanes shows them)'])
+  more.runner.missing = 99
+  assert.equal(more.exam.spawnSubagents(24, 'sim2real_workplaces'), 24)
+  assert.deepEqual(more.exam.report(), ['spawn_subagents: 24 of 24 sub-agents at work for sim2real_workplaces, reading the city around where you started (this map has no workplaces, so nobody is asked over); it replaces the team of 2 that was at work (lanes shows them)'])
+  const single = rig()
+  single.exam.spawnSubagents(1, 'sim2real_workplaces')
+  assert.match(single.exam.report()[0]!, /^spawn_subagents: 1 of 1 sub-agents at work for sim2real_workplaces, one lane each across 1 workplace; /)
   // The cap is the runner's: asked for more, the runner is asked for its cap and the line says so.
   assert.equal(SPAWN_MAX, TEAM_MAX, 'the exam never asks the runner for more than it opens')
   const all = rig()
@@ -215,7 +221,7 @@ test('status names the stage of seven; program is the one exit program; every li
   const a = rig(); a.exam.verifyRing0(); say(a); a.flags.standing = false; a.exam.verifyRing0(); say(a); a.flags.standing = true; a.flags.contained = false; a.exam.verifyRing0(); say(a)
   const b = rig(); b.exam.spawnSubagents(24, 'sim2real_workplaces'); say(b); b.exam.spawnSubagents(0, 'sim2real_workplaces'); say(b); b.exam.spawnSubagents(1000, 'sim2real_workplaces'); say(b)
   const c = rig(); c.runner.isolate = 99; c.exam.spawnSubagents(5, 'sim2real_workplaces'); say(c)
-  const c2 = rig(); c2.runner.isolate = 2; c2.runner.replaced = 24; c2.runner.missing = ['the warehouse', 'the kitchen']; c2.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c2)
+  const c2 = rig(); c2.runner.isolate = 2; c2.runner.replaced = 24; c2.runner.missing = 2; c2.exam.spawnSubagents(24, 'sim2real_workplaces'); c2.runner.missing = 16; c2.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c2)
   const c3 = rig(); c3.flags.contained = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); c3.flags.contained = true; c3.flags.standing = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c3)
   const d = rig(); const s = d.exam.verifyRing0(); d.exam.unlockCity(0, 1); d.exam.unlockCity(s, 0); d.exam.unlockCity(s, 1); d.stage.s = null; d.exam.unlockCity(s, 1); say(d)
   const e = rig(); e.exam.verifyRing0(); e.flags.standing = false; e.exam.unlockCity(1, 1); say(e)

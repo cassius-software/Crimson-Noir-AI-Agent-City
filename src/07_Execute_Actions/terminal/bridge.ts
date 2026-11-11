@@ -500,7 +500,7 @@ export interface TerminalBridge {
   access?: AccessBridge
   /** A goal in plain words, planned as Sloane plans one (06_Make_Decisions/intent.ts) with what can be done now done; absent in the console shell. */
   goal?(text: string): GoalPlan
-  /** The team Sloane dispatched for a goal (08_Swarm/team.ts); absent until the host has built its team runner (the terminal then says so). */
+  /** The team at work (08_Swarm/team.ts): Sloane's for a goal, or the first walk's swarm; absent until the host has built its team runner (the terminal then says so). */
   lanes?: LanesBridge
   /** The operator's progression; absent in the console shell (it is kept by the city) and on an older host. */
   progress?: ProgressBridge

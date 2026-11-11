@@ -1082,7 +1082,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     let engine: Engine | null = null
     let recruiter: Recruiter | null = null
     let router: TaskRouter | null = null
-    /** The team runner (08_Swarm/team.ts): Sloane's dispatched sub-agents, stepped every TEAM_TICK_MS from the frame loop. */
+    /** The team runner (08_Swarm/team.ts): the sub-agents Sloane or the first walk's swarm set to work, stepped every TEAM_TICK_MS from the frame loop. */
     let crew: TeamRunner | null = null
     let lastTeam = 0
     /** Stops following the recruiter: its events into the swarm's memory, its list into the roster's hires. */
@@ -1135,7 +1135,7 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
           s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
-          // The team Sloane dispatched (08_Swarm/team.ts): its lanes for the Concierge, its one line for the MIC chip.
+          // The team at work (08_Swarm/team.ts; Sloane's, or the first walk's swarm): its lanes for the Concierge, its one line for the MIC chip.
           if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
           // A city action waiting for the operator's OK takes the activity line (the MIC chip reads it, console open or closed).

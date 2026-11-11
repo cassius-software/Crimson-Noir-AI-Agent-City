@@ -155,17 +155,24 @@ export function createExam(host: ExamHost): ExamBridge {
       const r = host.swarm(Math.min(want, SPAWN_MAX), role)
       const running = Math.max(0, Math.floor(r.running))
       const isolated = Math.max(0, r.opened - running)
+      // The workplaces this map has a room for: a desk without one reads around where the player started, and nobody is
+      // asked over for it (a surveyed region has none at all).
+      const placed = Math.max(0, r.desks - r.missing.length)
+      const where = placed === 0
+        ? 'reading the city around where you started (this map has no workplaces, so nobody is asked over)'
+        : `one lane each across ${placed} ${placed === 1 ? 'workplace' : 'workplaces'}`
       const also = [
         ...(want > SPAWN_MAX ? [`a team holds at most ${SPAWN_MAX}`] : []),
         ...(isolated ? [`${isolated} isolated at once (lanes ledger says why)`] : []),
         ...(r.replaced ? [`it replaces the team of ${r.replaced} that was at work`] : []),
-        ...(r.missing.length ? [`this map has no room for ${r.missing.length === 1 ? 'one desk' : `${r.missing.length} desks`}, whose lanes read around where you started`] : []),
+        ...(placed > 0 && r.missing.length ? [`this map has no room for ${r.missing.length === 1 ? 'one desk' : `${r.missing.length} desks`}, whose lanes read around where you started`] : []),
+        ...(placed > 0 ? ['anyone within earshot with a desk’s skill is asked over too while you are on foot'] : []),
       ]
       if (running === 0) {
         say(`spawn_subagents: 0 of ${want} set to work for ${role}: ${r.opened} opened and every one isolated at once (lanes ledger says why)`)
         return 0
       }
-      say(`spawn_subagents: ${running} of ${want} sub-agents at work for ${role}, one lane each across ${r.desks} ${r.desks === 1 ? 'workplace' : 'workplaces'}${also.length ? `; ${also.join('; ')}` : ''}; anyone within earshot with a desk's skill is asked over too (lanes shows them)`)
+      say(`spawn_subagents: ${running} of ${want} sub-agents at work for ${role}, ${where}${also.length ? `; ${also.join('; ')}` : ''} (lanes shows them)`)
       host.note('swarm')
       return running
     },

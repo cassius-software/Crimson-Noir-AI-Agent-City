@@ -1679,8 +1679,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `dispatch.ts` `swarmTeam`): one lane a sub-agent, dealt round all sixteen workplaces' desks, opened from anywhere,
   with anyone within earshot who has a desk's skill asked over by the runner. It answers with the lanes still running
   after their first tick, says which team it replaced, caps at the runner's 32, and opens nothing while the page is not
-  contained or the realm is halted; the swarm stays at work after the city opens (`lanes`, `lanes stop`). The walk
-  stays uncloseable. The browser smoke's `walk` scenario now runs the program from where the workplace stage leaves
+  contained or the realm is halted; on a map without workplaces (a surveyed region) it says the lanes read around
+  where you started and that nobody is asked over. The swarm stays at work after the city opens (`lanes`, `lanes
+  stop`), and the MIC chip counts a team at more than four desks in workplaces ("Team 24 · 16 workplaces") rather
+  than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from where the workplace stage leaves
   the visitor, checks that nobody within earshot could be asked over there, and reads the swarm back with `lanes`.
 
 - **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×

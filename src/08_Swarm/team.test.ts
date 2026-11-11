@@ -16,9 +16,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { CAP_MOVE, CAP_WORKPLACE_TASK } from '../02_Define_The_Rules/capabilities.ts'
 import { RALLY_RANGE } from '../03_Spawn_Agents/skills.ts'
-import { teamFor } from '../06_Make_Decisions/dispatch.ts'
+import { swarmTeam, teamFor } from '../06_Make_Decisions/dispatch.ts'
 import type { NoirTables } from '../07_Execute_Actions/terminal/noirscript/index.ts'
-import { GONE_TICKS, NOTES_MAX, RALLY_RETRY_TICKS, TEAM_TICK_MS, TeamRunner, type TeamHost, type TeamRoom } from './team.ts'
+import { GONE_TICKS, LINE_DESKS, NOTES_MAX, RALLY_RETRY_TICKS, TEAM_TICK_MS, TeamRunner, type TeamHost, type TeamRoom } from './team.ts'
 
 /** A small city: a hundred people on a grid within 14 m of the origin, ten cars on a line far east. */
 function tables(): NoirTables {
@@ -187,6 +187,16 @@ test('bodies: an arrived recruit is sent to the desk\'s door only when the playe
   await settle()
   assert.match(t.status().find((l) => l.startsWith('  warehouse:1 '))!, /refused {3}nobody within earshot has Go$/)
   assert.equal(t.line(), 'Team 1 · warehouse 1')
+})
+
+test('the HUD\'s one line counts a team at more than LINE_DESKS desks in workplaces (the first walk\'s swarm at all sixteen), so the MIC chip stays short', () => {
+  const crew = new TeamRunner(host())
+  crew.dispatch(swarmTeam(24, 'spawn_subagents(24, "sim2real_workplaces")'))
+  crew.tick()
+  assert.match(crew.line(), /^Team 24 · 16 workplaces( · |$)/)
+  assert.ok(crew.line().length < 80, crew.line())
+  crew.dispatch(swarmTeam(LINE_DESKS, 'four'))
+  assert.match(crew.line(), new RegExp(`^Team ${LINE_DESKS} · robotics 1, warehouse 1, vault 1, metro 1( · |$)`), 'up to LINE_DESKS desks are named one by one')
 })
 
 test('a host that vouches nothing or whose realm halted: every lane isolated through the gate at the first tick, one line a lane, nobody asked over, the ledger verifies', () => {

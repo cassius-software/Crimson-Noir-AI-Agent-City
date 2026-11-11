@@ -289,10 +289,11 @@ export function eli8Of(s: Stage, city?: FirstWalkOptions['city']): string {
   }
 }
 
-/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`). */
+/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`, the workplaces' desks only where `city.rooms`). */
 export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly string[] {
   const shops = city?.stores === true
   const homes = city?.homes === true
+  const rooms = city?.rooms !== false
   switch (s) {
     case 'move': return Object.freeze([
       'Why does the picture smear a little when you turn fast? Because the camera is a film camera: it shows twenty-four pictures a second and each one is open for half of its moment (a 180-degree shutter), so motion blurs the way it does at the cinema.',
@@ -339,7 +340,9 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
     case 'exam': return Object.freeze([
       'Why a program and not a button? Because this city is a coding tool you live in: the first thing you do here should be the thing you will do most, which is tell a machine exactly what you mean.',
       'Why does verify_ring0 give a number? Because it is a seal: a checksum of the kernel’s live state, the four laws, the fifteen checks and the air gap; if any of them is off, the seal is zero and the city stays shut.',
-      `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program at one of the sixteen workplaces, held by the same walls as yours and opened from wherever you stand; anyone near with a desk’s skill is asked over too, and the console tells you how many are running.`,
+      rooms
+        ? `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program at one of the sixteen workplaces, held by the same walls as yours and opened from wherever you stand; anyone near with a desk’s skill is asked over too, and the console tells you how many are running.`
+        : `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program held by the same walls as yours and opened from wherever you stand; this map has no workplaces, so they read the city around where you started, and the console tells you how many are running.`,
       'Why can the program not simply set a flag? Because NoirScript writes to nothing it is not handed; unlock_city is handed one door, this walk’s own, and only the kernel’s seal opens it.',
       'Why does the walk end in the console? Because from here on the console is where you meet the city as it is, and the city should meet you there too.',
     ])

@@ -267,6 +267,13 @@ test('every spoken line is plain words, admissible, true to the device, and neve
       assert.ok(card.title && card.show && card.ask === ask.text)
     }
   }
+  // The swarm's why names the workplaces' desks only where the map has rooms (a surveyed region has none: its lanes read
+  // around where the player started, and nobody is asked over for a desk).
+  const roomless = whysOf('exam', { fleet: true, rooms: false })
+  check(roomless[2]!, 'exam why without rooms')
+  assert.doesNotMatch(roomless.join(' '), /sixteen workplaces|desk|asked over/, 'no desk promised on a map without rooms')
+  assert.match(roomless[2]!, /this map has no workplaces, so they read the city around where you started/)
+  assert.match(whysOf('exam', KEYS.city)[2]!, /one of the sixteen workplaces/)
   check(passedLine(), 'passed')
   check(passedLine('Dana'), 'passed named')
   assert.match(passedLine('Dana'), /Dana/)

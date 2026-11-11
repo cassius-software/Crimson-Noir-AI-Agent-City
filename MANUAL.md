@@ -1093,8 +1093,10 @@ shows it (there is no city to walk).
   the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
   anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
   answers with how many lanes are still running after their first tick, never the number wished for, says which team
-  it replaced, and opens nothing while the page is not contained or the realm is halted. The swarm stays at work
-  after the city opens: `lanes` shows it and `lanes stop` closes it. `unlock_city(seal, swarm)` opens the city
+  it replaced, and opens nothing while the page is not contained or the realm is halted. On a map without workplaces
+  (a surveyed region) its lanes read the city around where you started and nobody is asked over. The swarm stays at
+  work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads "Team 24 · 16
+  workplaces". `unlock_city(seal, swarm)` opens the city
   for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
   pass answers that the city is already yours. After each line the console prints what the doors said. In the console
   shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
