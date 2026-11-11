@@ -1529,7 +1529,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that it starts with no models, that
   `/api/tags` answers the launcher's origin and the extra one with 200 and another with 403, and that it runs with
   `OLLAMA_ORIGINS`. It is outside `nix flake check`, and fails on a runner without KVM. This is what the job checks,
-  not a result: its first runs are this pull request's own. The service, on a real machine or any GPU, stays
+  not a result: its first runs are the pull request that added it. The service, on a real machine or any GPU, stays
   unverified.
 
 ### Changed
