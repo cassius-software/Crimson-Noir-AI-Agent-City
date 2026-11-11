@@ -21,6 +21,8 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
 import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, LOOK_V3_SLOTS, LOOK_V4_SLOTS, LOOK_WORDS, lookFromSeed, packFace, packFigure, packLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { tattoo } from '../03_Spawn_Agents/crowdTattoo.ts'
+import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -224,6 +226,44 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const worn = select\(raisedWaist, waistBand, select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)\)/, 'under shirt sleeves the whole slot is the shirt\'s, but where high-waisted trousers rise over it')
 })
 
+test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome word 7, or the street\'s draw under its flag, before the facial hair, declared once with the shared values; the studio\'s inks are lit where the ink shows; a genome word the varying does not carry is refused', () => {
+  const crowd = read('../03_Spawn_Agents/crowd.ts')
+  const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
+  const inked = 'const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, slot, select(custom, genome.w, uint(0x80000000)), uint(0), vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null'
+  assert.ok(fragment.includes(inked), 'the near body\'s alone: the skin as worn, the rest point, the bone, the slot, word 7 or the street flag, no word 8 yet, the seed, the pixel\'s width')
+  assert.ok(fragment.includes('facialPaint(inked ? inked.xyz : wornSkin, greyed, facialHair, rig, slot, near)'), 'the beard paints over the ink')
+  before(fragment, inked, 'const skinShown = select(kippah, headCloth, facialPaint(inked ? inked.xyz : wornSkin', 'inked before the skin is shown')
+  assert.ok(fragment.includes('wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown,'), 'declared once with the shared values, or every branch calls it again (and where it shows, which both lit inks read)')
+  // Where a chosen look's ink shows: on the skin, where nothing covers it, declared before the shared list.
+  assert.ok(fragment.includes('const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))'), 'facialPaint\'s full beard\'s cover')
+  assert.ok(fragment.includes('const inkShown = inked ? (select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0)) as unknown as F1).toVar() as unknown as F1 : null'), 'a chosen look\'s ink, on the skin, where nothing covers it')
+  before(fragment, 'const inkShown = inked ?', 'const shared = [', 'declared with the colour')
+  assert.match(crowd, /^type V4 = Node<'vec4'>$/m)
+  // wornSkin itself stays bare: the hose, the lips and the skin-matched prosthetic read it, not the ink.
+  assert.ok(fragment.includes('const hose = mix(wornSkin, ') && fragment.includes('const lip = wornSkin.mul(') && fragment.includes('wornSkin.mul(0.96)'))
+  // Words 4 to 7 alone ride the varying; a field of a later word cannot be read as word 7.
+  assert.ok(fragment.includes('if (w < 4 || w > 7) throw new Error(`genome word ${w} is not in the fragment\'s flat varying (words 4 to 7)`)'))
+  // The lit inks: after the sheen is set, before the wraps that dim and add to the emissive.
+  const lit = between(fragment, 'if (inkShown) {', '\n    }\n')
+  assert.ok(lit.includes('const inkNo = gene(LOOK_FIELD.tattooInk)'))
+  assert.ok(!lit.includes('select(custom.and(slotIs(SLOT.SKIN))'), 'the inks read the declared cover, never a gate of their own')
+  assert.ok(lit.includes('const gold = select(inkNo.equal(uint(TATTOO_INK.goldLeaf)), inkShown, float(0))'))
+  assert.ok(lit.includes('m.roughnessNode = mix(m.roughnessNode as F1, float(0.32), gold)') && lit.includes('m.metalnessNode = mix(m.metalnessNode as F1, float(0.7), gold)'), 'gold leaf\'s sheen')
+  assert.ok(lit.includes('m.emissiveNode = vec3(0.33, 0.57, 0.48).mul(select(inkNo.equal(uint(TATTOO_INK.luminescent)), inkShown, float(0))).mul(float(1).sub(vDissolve))'), 'luminescent\'s glow, gone with the body')
+  before(fragment, 'm.metalnessNode = select(chrome, float(0.85), float(0))', 'if (inkShown) {', 'after the sheen')
+  before(fragment, 'if (inkShown) {', 'applyMatrixMode(m, ', 'before the rain mode dims the emissive')
+  // Built: the near bodies' colour reaches the tattoo function, the far bodies' never does.
+  const code = (tattoo as unknown as { code: string }).code
+  const view = new CrowdView(16)
+  for (const mesh of view.meshes) {
+    const m = materialOf(mesh)
+    const inks = (root: unknown) => [...reach(root)].some((n) => (n as { code?: unknown }).code === code)
+    assert.equal(inks(m.colorNode), mesh.name.endsWith('lod0'), `${mesh.name}: the colour ${mesh.name.endsWith('lod0') ? 'inks' : 'has no ink'}`)
+    // The dissolve gives every body an emissive; only the near one's carries the ink's glow.
+    assert.equal(inks(m.emissiveNode), mesh.name.endsWith('lod0'), `${mesh.name}: the luminescent glow on the near body alone`)
+  }
+})
+
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {
   const wgsl = read('../03_Spawn_Agents/crowd.wgsl')
   assert.match(wgsl, /@group\(0\) @binding\(13\) var<storage, read> look: array<u32>;/)
@@ -315,6 +355,54 @@ test('app: the player\'s look is kept under its own key, worn on agent 0 from th
   assert.doesNotMatch(printed, /\btarget\b|ragdoll|matrix/i)
 })
 
+test('the card\'s Tattoos section: headed where the left hand\'s row was, the zones\' and the ink\'s plain rows gone; zone, design family, design and ink, every one a button radiogroup; tattoo.ts\'s tables only, never the shader\'s module', () => {
+  const card = read('./Customizer.tsx')
+  // The tables, not the shader: crowdTattoo.ts loads three, which the card never does.
+  assert.ok(card.includes("import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'"))
+  assert.doesNotMatch(card, /crowdTattoo/)
+  // The zones the wardrobe has slots for, the section at the first, no row for any zone or the ink.
+  assert.ok(card.includes('const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot))'))
+  assert.ok(card.includes("const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)"))
+  before(card, "if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />", 'if (isTattooSlot(slot)) return null', 'the section takes the first zone\'s place before the rows are dropped')
+  before(card, 'if (isTattooSlot(slot)) return null', 'if (isSlider(slot)) {', 'dropped before a row is built')
+  assert.equal(TATTOO_ZONES[0].slot, 'tattooHand', 'the first zone heads the section')
+  // The ink is the card's own swatch row (the slot row every colour slot draws), inside the section.
+  assert.ok(card.includes('const pills = optionRow(slot)'))
+  const section = between(card, 'function TattooSection(', '/** The wardrobe itself:')
+  assert.ok(section.includes('{ink}'))
+  // Three radiogroups of buttons, no select or field: switch scanning offers every button and presses it, and would
+  // take a select for a typed field (scanning.ts).
+  for (const name of ['Tattoo zone', 'Design family', 'Design']) assert.ok(section.includes(`role="radiogroup" aria-label="${name}"`), name)
+  assert.ok(section.includes('role="group" aria-label="Tattoos"'))
+  assert.doesNotMatch(section, /<select|<input|<option|onKeyDown/)
+  assert.equal(section.match(/<button\b/g)?.length, 4, 'zone, none, family, design')
+  assert.equal(section.match(/type="button"\s+role="radio"/g)?.length, 4, 'each a radio button')
+  const scanning = read('../04_Connect_Hardware/scanning.ts')
+  assert.match(scanning, /selector: 'button:not\(\[disabled\]\), /, 'the scan offers every button')
+  assert.match(scanning, /const TYPED = '[^']*, select'/, 'and focuses a select instead of pressing it')
+  // A zone's pill: its label, its design and what covers it read out; a dot when it holds a design; the cover beside it.
+  assert.ok(section.includes("aria-label={`${z.label}, ${designName(worn[z.slot])}${cover ? `, ${cover}` : ''}`}"))
+  assert.ok(section.includes('const cover = tattooCover(worn, z.slot)'), 'look.ts tattooCover (look.test.ts holds its rules)')
+  assert.ok(section.includes('{inked && <span aria-hidden className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-current align-middle" data-inked />}'))
+  assert.ok(section.includes('{cover && <span className="ml-1 text-[11px] opacity-70" data-hint>· {cover}</span>}'))
+  assert.ok(section.includes("const [zone, setZone] = useState<LookSlot>(() => CARD_ZONES.find((z) => worn[z.slot] > 0)?.slot ?? 'tattooHand')"), 'it starts on the first zone that holds a design')
+  // None clears the zone; another family wears its first design at once; a design is worn as picked.
+  assert.ok(section.includes('onClick={() => set(zone, 0)}'))
+  assert.ok(section.includes('onClick={() => { if (family !== f) set(zone, TATTOO_BY_FAMILY[f][0]) }}'))
+  assert.ok(section.includes('onClick={() => set(zone, id)}'))
+  assert.ok(section.includes('const family = design > 0 ? TATTOO_MOTIFS[design - 1].family : null'), 'the family shown is the design\'s')
+  assert.ok(section.includes('{family !== null && ('), 'no design row under none')
+  assert.equal(TATTOO_FAMILIES.length, 8)
+  assert.ok(TATTOO_BY_FAMILY.every((ids) => ids.length === 8), 'at most eight zones, nine families with none and eight designs: never sixty-five pills')
+  // The labels: each zone's pill is its slotLabel, the person's own side.
+  for (const z of TATTOO_ZONES.slice(0, 4)) assert.ok(card.includes(`case '${z.slot}': return '${z.label}'`), z.slot)
+  assert.ok(card.includes("case 'tattooInk': return 'Ink'"))
+  // The captions promise what this wardrobe shows, no more: the hands, the neck and the nape, no forearms or legs yet.
+  assert.ok(section.includes("Shown on you in the city and in a shop's mirror."))
+  assert.doesNotMatch(card, /forearm|calves|calf|ankle|rolled sleeves|bare legs/i)
+  assert.ok(card.includes('shoe styles, the watch, the pin and tattoos show in the city, not in this outline.'))
+})
+
 test('lookStore: its own key, a look within the wardrobe round-trips as a v5 record, a v4 record (thirty-two slots) reads as it is, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {
   assert.equal(LOOK_KEY, 'civic-simulation:look:v1')
   assert.notEqual(LOOK_KEY, PROFILE_KEY)
@@ -335,6 +423,15 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v5 rec
   const marked = validateLook({ ...look, skin: 17, vitiligo: 3, freckles: 2 })!
   assert.equal(saveLook(marked, store), true)
   assert.deepEqual(loadLook(store), marked)
+  // Every slot at its longest value, every tattoo zone inked with the longest numbers: the record stays far under the
+  // length past which a stored value is taken for corruption (lookStore.ts RAW_MAX), so a tattooed look is kept.
+  const rawMax = Number(/const RAW_MAX = (\d+)/.exec(read('../05_Observe_Environment/lookStore.ts'))![1])
+  assert.equal(rawMax, 2048)
+  const tattooed = validateLook({ ...LOOK_PRESETS[1].look, skin: 17, tattooHand: 64, tattooHandR: 63, tattooNeck: 62, tattooNape: 61, tattooInk: 7, footwear: 11, watch: 4 })!
+  assert.ok(tattooed, 'a fully tattooed look is a look')
+  assert.equal(saveLook(tattooed, store), true)
+  assert.ok(store.map.get(LOOK_KEY)!.length < rawMax, `${store.map.get(LOOK_KEY)!.length} characters`)
+  assert.deepEqual(loadLook(store), tattooed)
   // A look kept before the skin word (v 4, the thirty-two slots of the four words): worn as it was, no vitiligo, no freckles.
   const v4: Record<string, number> = {}
   for (const s of LOOK_V4_SLOTS) v4[s] = LOOK_PRESETS[6].look[s]

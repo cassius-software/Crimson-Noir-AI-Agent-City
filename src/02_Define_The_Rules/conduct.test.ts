@@ -229,9 +229,9 @@ test('an ACTION line cannot arm anyone: a weapon verb is refused, never proposed
 const UNARMED_SOURCES: readonly string[] = Object.freeze([
   '01_Initialize_World/codeDissolve.ts', '01_Initialize_World/matrixMesh.wgsl', '01_Initialize_World/matrixMode.ts',
   '02_Define_The_Rules/civic.ts',
-  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdBody.ts', '03_Spawn_Agents/crowdCompute.ts',
+  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdBody.ts', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowdTattoo.ts',
   '03_Spawn_Agents/crowdCull.ts', '03_Spawn_Agents/crowdSensor.ts', '03_Spawn_Agents/crowdSim.ts', '03_Spawn_Agents/humanoid.ts',
-  '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts',
+  '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts', '03_Spawn_Agents/tattoo.ts',
   '06_Make_Decisions/actions.ts', '06_Make_Decisions/intent.ts',
   '07_Execute_Actions/acts.ts', '07_Execute_Actions/car.ts', '07_Execute_Actions/carRig.ts', '07_Execute_Actions/fleetView.ts',
   '07_Execute_Actions/staffView.ts',

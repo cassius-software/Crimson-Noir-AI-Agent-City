@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { SHOP_INFO, type Shop } from '../01_Initialize_World/storefronts.ts'
 import type { Look } from '../03_Spawn_Agents/look.ts'
-import { GATE, cheapestOnSale, credits, wearItem, type StoreItem } from './storeCatalog.ts'
+import { GATE, cheapestOnSale, credits, previewItem, wearItem, type StoreItem } from './storeCatalog.ts'
 import type { ShopRow, Shopkeeper } from './shopkeeper.ts'
 
 export interface StoreCardProps {
@@ -180,7 +180,8 @@ export function StoreCard({ visible, shop, keeper, look, trying, mirror = true, 
 
   const tryOn = (item: StoreItem) => {
     if (trying === item.id) { onTry(null, null); return }
-    const next = wearItem(look, item)
+    // An ink tried on a look with no design borrows one for the mirror (storeCatalog.ts previewItem); buying wears the ink alone.
+    const next = previewItem(look, item)
     if (next) onTry(item.id, next)
   }
   const whereOf = (item: StoreItem): Where | null => (item.kind === 'deed' && whereFor?.(item)) || null

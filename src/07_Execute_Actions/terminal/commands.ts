@@ -109,7 +109,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoe style, shoes, tie, lapel pin, eyewear, frames, watch, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoe style, shoes, tie, lapel pin, eyewear, frames, watch, bag, cup, tattoos and their ink)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; open as the city starts unless you muted it, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
@@ -211,6 +211,7 @@ export const LOOK_SLOT_ARGS = [
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
   'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'watch', 'bag', 'cup',
+  'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -248,6 +249,21 @@ export const LOOK_GARMENT_ARGS = [
   'unbuttoned blazer', 'unbuttoned linen blazer', 'waistcoat', 'wide-leg trousers', 'windowpane blazer', 'wrap coat', 'wrap jacket', 'wrap skirt',
   'zip-front jacket',
 ] as const
+/**
+ * What a tattoo zone may hold: none and the sixty-four designs by name (03_Spawn_Agents/tattoo.ts TATTOO_MOTIFS),
+ * sorted. Typed after any of the four zones; a number is the option's place, 1-based, so 1 is none.
+ */
+export const LOOK_TATTOO_ARGS = [
+  'ammonite', 'anchor', 'anemone', 'apple blossom', 'archimedean spiral', 'atom', 'botanical vine', 'braided rope band', 'cherry blossom',
+  'circuit trace', 'comet', 'compass rose', 'daisy', 'dandelion clock', 'diamond', 'dogwood', 'double helix', 'eclipse', 'eucalyptus sprig',
+  'euler identity', 'fern leaf', 'fibonacci spiral', 'forget-me-not', 'four-point star', 'gulls in flight', 'heartbeat line', 'hexagon', 'hibiscus',
+  'honeycomb', 'hot air balloon', 'isometric cube', 'laurel sprig', 'lavender sprig', 'lighthouse', 'moon phases', 'mountain range', 'nautilus shell',
+  'nested diamonds', 'nested triangles', 'none', 'ocean wave band', 'olive branch', 'orbits', 'origami cranes', 'paper plane', 'pentagon',
+  'pine twig', 'ringed planet', 'rope coil', 'sailboat', 'scalloped arc band', 'sea star', 'snail shell', 'snowflake', 'soundwave band', 'sparkles',
+  'spiral galaxy', 'star chart', 'storm spiral', 'sunburst', 'sunflower', 'triangle', 'water ripples', 'waxing crescent', 'wheat ear',
+] as const
+/** The eight inks by name (tattoo.ts TATTOO_INKS), sorted: one ink colours every zone of a look. */
+export const LOOK_INK_ARGS = ['black', 'brick red', 'forest green', 'gold leaf', 'grey wash', 'indigo', 'luminescent', 'white'] as const
 const LOOK_ACTIONS = ['build', 'code', 'face', 'garment', 'preset', 'random', 'reset', 'show'] as const
 
 /** Tab-completion candidates for arguments, keyed by the words before the one being completed. */
@@ -308,6 +324,11 @@ const ARGS: Record<string, readonly string[]> = {
   'look trim': ['matching'],
   'look scarf': ['none'],
   'look preset': LOOK_PRESET_ARGS,
+  'look tattooHand': LOOK_TATTOO_ARGS,
+  'look tattooHandR': LOOK_TATTOO_ARGS,
+  'look tattooNeck': LOOK_TATTOO_ARGS,
+  'look tattooNape': LOOK_TATTOO_ARGS,
+  'look tattooInk': LOOK_INK_ARGS,
   progress: ['reroll', 'reset', 'table', 'train'],
   'progress train': ['commerce', 'computers', 'optics', 'piloting', 'robotics', 'security', 'swarm', 'voice'],
   'progress reset': ['--yes'],

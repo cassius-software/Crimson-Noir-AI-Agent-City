@@ -11,20 +11,23 @@
  * keeper (progress.ts createProgress) buys a line once, takes its price from the record, sets its bit and keeps both
  * across a reload, and refuses with the first reason; a new operator claims the free loft and is told the level the
  * brownstone and each piece of furniture need, and a keeper at those levels buys them; a keeper that refuses leaves no
- * bit; the atelier's four limbs are on sale, each the limb, side and finish its name says; the 14A screen passes every
- * name.
+ * bit; the atelier's four limbs are on sale, each the limb, side and finish its name says; the ink studio's twelve
+ * designs are the wardrobe's first twelve, in order, under names that say what each draws, and its two inks the
+ * wardrobe's gold leaf and luminescent, on sale; an ink tried on a look with no design borrows the olive branch for the
+ * mirror alone (previewItem), never for what is bought; the 14A screen passes every name.
  * What breaks if it is removed? A shop could sell a line twice, sell a line nobody can wear, take credits for nothing,
  * or set a bit another thread's line means.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
-import { LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, validateLook } from '../03_Spawn_Agents/look.ts'
+import { CUT, LAYER, LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, tattooCover, validateLook, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { TATTOO_INK, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 import { createProgress } from './progress.ts'
 import {
-  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, cheapestOnSale, itemById, itemsOf, onSale, wearItem, wearing, whyOf,
+  CATALOGUE, GATE, MAX_LEVEL, OPEN_KINDS, PREVIEW_TATTOO, SHOP_LOOK_BASE, SHOP_LOOK_END, SPACE_SIZE, cheapestOnSale, isInkLine, itemById, itemsOf, onSale, previewItem, wearItem, wearing, whyOf,
   type ItemKind, type Space,
 } from './storeCatalog.ts'
 import { PROGRESS_WORD, createShopkeeper, progressionPurse, type ProgressLike } from './shopkeeper.ts'
@@ -55,7 +58,7 @@ test('ids and bits are unique, every bit inside its space and the worn lines in 
     assert.ok(Object.isFrozen(i))
   }
   for (const shop of SHOP_KINDS) assert.ok(itemsOf(shop).length > 0, `${shop} lists nothing`)
-  for (const shop of ['tailor', 'prosthetics', 'horology'] as const) assert.ok(itemsOf(shop).some((i) => onSale(i)), `${shop} sells nothing today`)
+  for (const shop of ['tailor', 'inkStudio', 'prosthetics', 'horology'] as const) assert.ok(itemsOf(shop).some((i) => onSale(i)), `${shop} sells nothing today`)
   assert.equal(itemById(9999), null)
   // Shipped bits keep their meaning: a few pinned by value.
   assert.deepEqual([itemById(0), itemById(24), itemById(96), itemById(128), itemById(160), itemById(224)].map((i) => `${i?.space}:${i?.index}`),
@@ -160,6 +163,91 @@ test('the atelier\'s four limbs are on sale, each setting the wardrobe\'s limb a
       assert.equal(worn.prostheticFinish, fin, `${name} on the ${p.name}`)
     }
   }
+})
+
+test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in catalogue order, on order until the forearm has its slot; its two inks are the wardrobe\'s gold leaf and luminescent, on sale now that the wardrobe has the ink', () => {
+  // A design line wears `tattooForearm: i + 1`, so its design is the wardrobe's id i + 1 by construction (tattoo.ts).
+  const motifs = [
+    'olive branch', 'fibonacci spiral', 'braided rope band', 'circuit trace', 'star chart', 'scalloped arc band',
+    'origami cranes', 'soundwave band', 'compass rose', 'botanical vine', 'euler identity', 'ocean wave band',
+  ]
+  // The shop's own names: four were renamed for what the drawing shows (a rope's braid, a band of scalloped arcs, a
+  // compass rose, the unit circle's half turn), so none names a people, a culture's pattern or a declined symbol; the
+  // ids, and so the bits already bought, stay as they were.
+  const names = [
+    'Fine-line olive branch', 'Fibonacci spiral', 'Braided rope band', 'Circuit-trace sleeve', 'Star-chart sleeve', 'Scalloped arc band',
+    'Origami crane sequence', 'Soundwave band', 'Compass rose', 'Botanical sleeve', 'Euler\'s identity circle', 'Ocean-wave armband',
+  ]
+  const designs = itemsOf('inkStudio').filter((i) => i.group === 'Designs')
+  assert.deepEqual(designs.map((i) => i.id), Array.from({ length: 12 }, (_, i) => 48 + i), 'lines 48 to 59')
+  assert.deepEqual(designs.map((i) => i.name), names)
+  assert.deepEqual(designs.map((i) => i.index), Array.from({ length: 12 }, (_, i) => SHOP_LOOK_BASE + 48 + i), 'their bits are their ids\'')
+  for (const [i, line] of designs.entries()) {
+    assert.deepEqual(line.wear, { tattooForearm: i + 1 }, line.name)
+    assert.equal(TATTOO_MOTIFS[line.wear!.tattooForearm - 1].name, motifs[i], `${line.name} is the wardrobe's ${motifs[i]}`)
+    assert.equal(WARDROBE.tattoo[line.wear!.tattooForearm], motifs[i])
+    // The shop's name carries its design's first word, so the card and the wardrobe read as the same drawing.
+    assert.ok(line.name.toLowerCase().replace(/[-']/g, ' ').split(' ').includes(motifs[i].split(' ')[0]), `${line.name} names the ${motifs[i]}`)
+    assert.equal(onSale(line), false, `${line.name} waits for the forearm's slot`)
+    assert.equal(isInkLine(line), false)
+  }
+  // The inks: each line's value is the wardrobe's ink its name says, and wearing one sets the ink alone.
+  const inks = itemsOf('inkStudio').filter((i) => i.group === 'Inks')
+  assert.deepEqual(inks.map((i) => i.id), [64, 65])
+  for (const [id, ink, name] of [[64, TATTOO_INK.goldLeaf, 'gold leaf'], [65, TATTOO_INK.luminescent, 'luminescent']] as const) {
+    const line = itemById(id)!
+    assert.deepEqual(line.wear, { tattooInk: ink })
+    assert.equal(WARDROBE.tattooInk[ink], name, `${line.name} is the wardrobe's ${name}`)
+    assert.equal(line.name.toLowerCase().replace(/-/g, ' '), `${name} ink`, `${line.name}: the name is the value's`)
+    assert.ok(onSale(line), `${line.name} is on sale`)
+    assert.ok(isInkLine(line))
+    for (const p of LOOK_PRESETS) assert.deepEqual(wearItem(p.look, line), { ...p.look, tattooInk: ink }, `${line.name} on the ${p.name} sets the ink alone`)
+  }
+})
+
+test('the try-on: an ink on a look with no design showing borrows the olive branch for the mirror, on the left hand or the first zone nothing covers; with a design showing, or any other line, it is wearItem\'s look; buying still wears the ink alone', () => {
+  assert.deepEqual({ ...PREVIEW_TATTOO }, { slot: 'tattooHand', design: 1 })
+  assert.equal(WARDROBE.tattoo[PREVIEW_TATTOO.design], 'olive branch')
+  assert.equal(TATTOO_ZONES.find((z) => z.slot === PREVIEW_TATTOO.slot)?.label, 'Left hand')
+  for (const id of [64, 65]) {
+    const line = itemById(id)!
+    const ink = line.wear!.tattooInk
+    for (const p of LOOK_PRESETS) {
+      // No design on any zone the wardrobe has (the presets wear none): the mirror shows the ink on the olive branch.
+      assert.deepEqual(previewItem(p.look, line), { ...p.look, tattooInk: ink, tattooHand: 1 }, `${line.name} on the ${p.name}`)
+      assert.ok(validateLook(previewItem(p.look, line)!))
+      // A design on any of the four zones that nothing covers: nothing is borrowed. One the cup covers (the camel
+      // blazer's right hand) shows nothing, so the olive branch is lent to the left hand as well.
+      for (const z of TATTOO_ZONES.filter((zone) => (LOOK_SLOTS as readonly string[]).includes(zone.slot))) {
+        const inked = validateLook({ ...p.look, [z.slot]: 30 })!
+        if (tattooCover(inked, z.slot as LookSlot) === null) {
+          assert.deepEqual(previewItem(inked, line), wearItem(inked, line), `${line.name} over a design on the ${z.label}`)
+          assert.deepEqual(previewItem(inked, line), { ...inked, tattooInk: ink })
+        } else {
+          assert.deepEqual(previewItem(inked, line), { ...inked, tattooInk: ink, tattooHand: 1 }, `${line.name} over a covered design on the ${z.label}`)
+        }
+      }
+    }
+  }
+  // The olive branch goes where nothing covers it: past a prosthetic left arm to the right hand, past both arms to the
+  // neck, past both arms and a turtleneck under a jacket to the nape; a design under the limb alone borrows too.
+  const gold = itemById(64)!
+  const bare = validateLook({ ...LOOK_PRESETS[0].look, cup: 0 })!
+  const lent = (look: object) => previewItem(validateLook({ ...bare, ...look })!, gold)
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.leftArm }), { ...bare, prosthetic: PROSTHETIC.leftArm, tattooInk: 3, tattooHandR: 1 })
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.bothArms }), { ...bare, prosthetic: PROSTHETIC.bothArms, tattooInk: 3, tattooNeck: 1 })
+  const knit = { prosthetic: PROSTHETIC.bothArms, cut: CUT.turtleneck, layer: LAYER.coat }
+  assert.deepEqual(lent(knit), validateLook({ ...bare, ...knit, tattooInk: 3, tattooNape: 1 }))
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.leftArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.leftArm, tattooHand: 30, tattooInk: 3, tattooHandR: 1 })
+  assert.deepEqual(lent({ prosthetic: PROSTHETIC.rightArm, tattooHand: 30 }), { ...bare, prosthetic: PROSTHETIC.rightArm, tattooHand: 30, tattooInk: 3 })
+  // Every other line on sale previews as it is worn, and a line on order previews as nothing.
+  for (const i of CATALOGUE.filter((line) => !isInkLine(line))) {
+    for (const p of LOOK_PRESETS) assert.deepEqual(previewItem(p.look, i), wearItem(p.look, i), `${i.name} on the ${p.name}`)
+  }
+  assert.equal(previewItem(LOOK_PRESETS[0].look, itemById(48)!), null, 'the forearm\'s designs are on order')
+  // Buying wears wearItem's look through the keeper: the ink alone, never the borrowed design.
+  const k = createShopkeeper({ purse: { level: () => MAX_LEVEL, credits: () => 0, owns: () => true, canBuy: () => GATE.owned, buy: () => GATE.owned, subscribe: () => () => {} } })
+  assert.deepEqual(k.wear(64, LOOK_PRESETS[0].look), { ...LOOK_PRESETS[0].look, tattooInk: TATTOO_INK.goldLeaf })
 })
 
 test('every name passes the 14A screen and names no real place', () => {

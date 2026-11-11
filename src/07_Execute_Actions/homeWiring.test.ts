@@ -323,7 +323,7 @@ test('the engine: the draft camera posed in present() alone, after the mirror\'s
   const raw = read('./engine.ts')
   const src = flat(raw)
   const present = between(src, ' private present(', ' private presentView(')
-  const mirror = 'const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle) || this.furnishView()'
+  const mirror = 'const mirror = this.showroom && orbitEye(st.avatar.x, st.avatar.feetY, st.avatar.z, this.showroom.angle, SHOP_ORBIT[this.shops[this.showroom.shop].kind] ?? SHOP.orbit) || this.furnishView()'
   assert.ok(present.includes(mirror), 'the shop\'s orbit first, then the draft camera, posed through the same lines')
   assert.equal((src.match(/this\.furnishView\(\)/g) ?? []).length, 1, 'posed in present() alone')
   const copy = 'this.pickCam = (this.pickCam ?? cam.clone()).copy(cam, false)'

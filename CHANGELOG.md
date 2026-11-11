@@ -15,6 +15,42 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
+  (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
+  hand, the neck and the nape at seven bits each, and one ink at three; bit 31 is the shader's street flag, which no
+  look may set. Option 0 of each is as before, so every preset, every bare look and every untattooed hashed look keeps
+  its code, and a stored record without the five keys still validates. The designs (eight families of eight:
+  flowers, stars and rays, circles and orbits, shapes, bands, spirals, sprigs, pictures) and the inks (black, indigo,
+  white, gold leaf, luminescent, brick red, forest green, grey wash) are plain tables (`tattoo.ts`), and the near
+  body's fragment stage draws them as signed-distance drawings from the skin's rest position (`crowdTattoo.ts`,
+  12,801 characters of WGSL written from those tables): no texture, sampler, uniform or varying is added, only the
+  skin is inked, and the far body, the vertex stages and the shadow pass draw none. Gold leaf adds a metal's sheen and
+  luminescent a faint glow. Every ink keeps 3:1 against the skin under it (WCAG 1.4.11): where the line would fall
+  short, a halo just outside it takes the skin toward a warm white or a brown-black until it does. `tattoo.test.ts`
+  runs the shipped WGSL through the WGSL host (`wgslHost.ts`): for the eight inks on 81 skins (ten Monk tones, four
+  undertones, two ages and the vitiligo pale) no ratio is under 2.9999989 (3 in f32); each design covers 5.5% to
+  46.8% of its square and no two overlap by more than 0.582 (soft masks at 32 pixels). One passer-by in five carries a
+  tattoo, drawn in the shader from colour links 44 to 48, never one of the ink studio's twelve designs or its two
+  inks: over 20,000 seeds the test finds carriers within 0.20 ± 0.005 and those shown on a hand, the neck or the nape
+  within 0.1005 ± 0.005, and the CPU mirror `lookFromSeed` uses (`streetTattoos`) agrees with the shader on every zone
+  of all 20,000. The card gains a Tattoos section in place of the slots' own rows (zone, design family, design and
+  ink, all button radiogroups that switch scanning and dwell can press, and a note on a zone a prosthetic arm, the cup
+  or a turtleneck covers), and the console `look tattooHand compass rose`, `look tattooHand 10`, `look tattooNape
+  none` and `look tattooInk gold leaf`, with Tab completing the names (`commands.test.ts` pins the lists to the
+  wardrobe's). A tattooed look's code is fifty-six symbols. The ink studio's gold-leaf and luminescent inks (lines 64
+  and 65) go on sale; trying one on a look with no design showing borrows the olive branch for the mirror alone,
+  on the left hand or the first zone nothing covers, and buying sets the ink alone (`storeCatalog.ts` `previewItem`); the studio's mirror circles at 1.4 m
+  instead of 2.6 m (`storefronts.ts` `SHOP_ORBIT`, inside the shop's clear circle); four of its forearm lines are
+  renamed for what they draw (Braided rope band, Scalloped arc band, Compass rose, Euler's identity circle; their ids
+  and bits are unchanged), and all twelve stay on order until the forearm has its slot. The shader budget holds
+  (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 183,728
+  characters (the pantsuit's 183,551), under the 225,000 target the test now asserts for every near body; the far
+  fragments (at most 139,888), the vertex stages (at most 54,921) and the shadow fragment (1,101) are as after the
+  hash change below. `dist/index.html` grows by 31,595 bytes, from 11,969,058 to 12,000,653; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. In the browser on the software WebGPU adapter (SwiftShader), Chrome's WGSL
+  compiler builds the tattoo code (the desktop smoke passes), and pictures of the ink studio's mirror show the designs
+  on both hands, the neck and the nape, the eight inks, the halo on the lightest and deepest skins, and the cover by a
+  prosthetic arm, a turtleneck and a full beard. Unverified: no hardware GPU has compiled or drawn it yet.
 - **Sky floors.** In the city, the Crimson Tower Penthouse and the Crown Spire Sky-Mansion each have a floor up their
   tower: a 15.6 m square room with clear glass on four sides (seed 1337: 193.8 m and 228.0 m up). The home's card
   offers Go up inside the home and Go down upstairs, by keyboard, mouse, pad or touch. Visitors may ride, and only the
@@ -1583,6 +1619,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
+  three's `hash` node was written out inline at every use (110 copies in the suit's near fragment stage, 39 in the
+  vertex stage). `crowdBody.ts` `crowdHash` is one WGSL function with the same arithmetic, so each stage carries it
+  once and no look on the street changes: `humanoid.test.ts` compares it with `look.ts` `shaderHash` bit for bit over
+  seeds 0 to 100,000, every link of every agent 0 to 20,000, and large, fractional and negative seeds. The shirt, the
+  bottom and the top cloth are declared once in the fragment stage, and the turned cuff multiplies its cloth by a
+  factor instead of selecting a second copy of it, pixel for pixel the same. Measured in `shadowShaders.test.ts`, the
+  worst near main fragment stage goes from 221,913 characters (the pantsuit's) to 172,390 (the suit's) and the worst
+  far one from 173,039 to 139,888, and no vertex stage is over 54,921; the tattoos above spend 11,338 of the near
+  stage's saving. The turtleneck under a jacket or a coat now knits up the neck to the chin ring (below y 1.578 on the
+  head bone), where it used to stop at the collar line and leave the neck bare; `look.test.ts` pins the gate, and
+  `shadowShaders.test.ts` now holds every near body's main fragment stage to 225,000 characters.
 - **The page is about 2.8 MB smaller.** The physics engine's WebAssembly (Rapier's compatibility module, 3.3 MB of
   code) rode in the page as plain base64, 4.4 MB of text and about a third of the file. The build now stores it
   deflated, about 1.6 MB as base64, and the physics worker inflates it with the browser's own DecompressionStream as

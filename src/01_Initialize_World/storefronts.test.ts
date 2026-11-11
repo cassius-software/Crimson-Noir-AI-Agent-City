@@ -6,16 +6,18 @@
  * physics worker rely on: one shop per kind on a lot of its own quarter, never a workplace's lot nor another shop's,
  * for every seed; the lot's podium really gone from the city's boxes and the shop's shell and fixtures in its place;
  * every fixture inside the walls and out of the doorway; the walk from the street through the doorway to the fitting
- * spot, and the mirror camera's circle round it, clear of every fixture; and the real avatar (Rapier, its capsule and
+ * spot, and the mirror camera's circle round it, clear of every fixture, with a shop's own closer orbit (the ink
+ * studio's) inside that circle and far enough from the head to show the player's figure; and the real avatar (Rapier, its capsule and
  * autostep) walking in from the sidewalk to that spot.
  * What breaks if it is removed? A seed could put a shop on a workplace's lot (two shells on one lot), a fixture in the
  * doorway or in the camera's orbit, or a podium left standing inside a shop, and only a browser on that seed would show it.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { CITY, CITY_CENTER, HERITAGE_COLUMNS, STYLE, generateBuildings, type Box } from './city.ts'
 import { ROOM, doorFront, insideRoom, penetrates, toLocal, toWorld, workplaceLots } from './interiors.ts'
-import { SHOP, SHOP_INFO, SHOP_KINDS, drawShops, orbitEye, shopAt, shopLots, shops, shopsAt } from './storefronts.ts'
+import { SHOP, SHOP_INFO, SHOP_KINDS, SHOP_ORBIT, drawShops, orbitEye, shopAt, shopLots, shops, shopsAt } from './storefronts.ts'
 import { Physics } from '../07_Execute_Actions/physics.ts'
 import { Avatar } from '../07_Execute_Actions/player.ts'
 
@@ -139,6 +141,31 @@ test('shopAt: the fitting spot is in its own shop, the street outside in none; t
     const { eye, at } = orbitEye(10, 0.3, -4, angle)
     assert.ok(Math.abs(Math.hypot(eye.x - 10, eye.z + 4) - SHOP.orbit.radius) < 1e-9)
     assert.ok(Math.abs(eye.y - (0.3 + SHOP.orbit.height)) < 1e-9 && Math.abs(at.y - (0.3 + SHOP.orbit.aim)) < 1e-9)
+  }
+})
+
+test('a shop\'s own orbit: the ink studio\'s mirror comes in to 1.4 m, inside the clear circle, its eye past the radius that hides the player\'s own figure', () => {
+  assert.deepEqual(Object.keys(SHOP_ORBIT), ['inkStudio'], 'the other shops keep SHOP.orbit')
+  const ink = SHOP_ORBIT.inkStudio!
+  assert.deepEqual({ ...ink }, { radius: 1.4, height: 1.45, aim: 1.1, rate: 0.35 })
+  assert.ok(ink.radius < SHOP.orbit.radius, 'closer than the other shops\' mirror')
+  assert.match(SHOP_INFO.inkStudio.line, /botanical designs/, 'the studio\'s line names what its designs draw')
+  // The player's own figure is hidden while the camera is within crowd.ts OWN_BODY.radius of its head (read from the
+  // source: crowd.ts loads three).
+  const own = /export const OWN_BODY = \{ height: ([\d.]+), radius: ([\d.]+) \}/.exec(readFileSync(new URL('../03_Spawn_Agents/crowd.ts', import.meta.url), 'utf8'))
+  assert.ok(own, 'OWN_BODY found')
+  const [headY, hidden] = [Number(own[1]), Number(own[2])]
+  for (const [kind, orbit] of Object.entries(SHOP_ORBIT)) {
+    assert.ok((SHOP_KINDS as readonly string[]).includes(kind), kind)
+    assert.ok(orbit.radius > 0 && orbit.radius < SHOP.clear, `${kind}: the orbit (${orbit.radius} m) is inside the clear circle (${SHOP.clear} m)`)
+    assert.ok(orbit.aim > 0 && orbit.aim < orbit.height && orbit.height < 2, `${kind}: the eye above what it looks at, under the ceiling`)
+    assert.ok(orbit.rate > 0)
+    for (const angle of [0, 1, 2.5, -3]) {
+      const { eye, at } = orbitEye(10, 0.3, -4, angle, orbit)
+      assert.ok(Math.abs(Math.hypot(eye.x - 10, eye.z + 4) - orbit.radius) < 1e-9)
+      assert.ok(Math.abs(eye.y - (0.3 + orbit.height)) < 1e-9 && Math.abs(at.y - (0.3 + orbit.aim)) < 1e-9)
+      assert.ok(Math.hypot(eye.x - 10, eye.y - (0.3 + headY), eye.z + 4) > hidden, `${kind}: the eye is past ${hidden} m from the head, so the figure shows`)
+    }
   }
 })
 

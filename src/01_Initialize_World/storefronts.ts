@@ -40,7 +40,7 @@ export type ShopKind = (typeof SHOP_KINDS)[number]
  */
 export const SHOP_INFO: Readonly<Record<ShopKind, { name: string; arcade: string; line: string }>> = Object.freeze({
   tailor: Object.freeze({ name: 'Verrin & Vale Tailors', arcade: 'Midtown Avenue', line: 'Bespoke suits, coats, trims and scarves, cut while you wait.' }),
-  inkStudio: Object.freeze({ name: 'Aethelgard Ink Studio', arcade: 'Lakefront Arts Row', line: 'Fine-line, geometric and heritage designs, previewed before a needle moves.' }),
+  inkStudio: Object.freeze({ name: 'Aethelgard Ink Studio', arcade: 'Lakefront Arts Row', line: 'Fine-line, geometric and botanical designs, previewed before a needle moves.' }),
   prosthetics: Object.freeze({ name: 'Bio-Frame Prosthetics Atelier', arcade: 'Biomedical Plaza', line: 'Limbs, hearing tech and smart eyewear, fitted and finished to order.' }),
   horology: Object.freeze({ name: 'Escapement Row Horology', arcade: 'Financial District Arcade', line: 'Watches, briefcases, lapel pins and the small things that finish a look.' }),
   designHouse: Object.freeze({ name: 'Lintel & Lumen Design House', arcade: 'Waterline Galleria', line: 'Furniture, lighting and art, and the brokerage for every home you can own.' }),
@@ -58,6 +58,25 @@ export const SHOP = Object.freeze({
   /** The mirror camera: its distance from the body, its height above the feet, the height it looks at, and its turn rate, rad/s. */
   orbit: Object.freeze({ radius: 2.6, height: 1.55, aim: 1.05, rate: 0.35 }),
 } as const)
+
+/** A mirror camera's orbit: its distance from the body, its height above the feet, the height it looks at, and its turn rate, rad/s. */
+export interface Orbit {
+  readonly radius: number
+  readonly height: number
+  readonly aim: number
+  readonly rate: number
+}
+
+/**
+ * A shop's own mirror camera, where SHOP.orbit does not suit its trade. The ink studio's comes in to 1.4 m, a little
+ * lower and aimed a little higher, so a design on a hand, the neck or the nape fills about twice the pixels it would
+ * at 2.6 m (a hand's square about 40 pixels across at 1080p instead of 21). Every orbit stays inside SHOP.clear, and
+ * its eye stays farther from the head than the distance inside which the player's own figure is hidden
+ * (storefronts.test.ts holds both).
+ */
+export const SHOP_ORBIT: Readonly<Partial<Record<ShopKind, Orbit>>> = Object.freeze({
+  inkStudio: Object.freeze({ radius: 1.4, height: 1.45, aim: 1.1, rate: 0.35 }),
+})
 
 /** A shop's lot: its kind, the lot (between streets k and k + 1, m and m + 1) and its doorway's street front. */
 export interface ShopLot { kind: ShopKind; k: number; m: number; side: Side }
@@ -277,10 +296,11 @@ export function shopAt(list: readonly Shop[], x: number, z: number): number {
 
 /**
  * The mirror camera's eye for a body standing at (x, feetY, z), `angle` radians round it (0: on the side the body
- * faces when it stands at the fitting spot, looking back at it), and the point it looks at.
+ * faces when it stands at the fitting spot, looking back at it), and the point it looks at, on `orbit` (SHOP.orbit,
+ * or the shop's own from SHOP_ORBIT).
  */
-export function orbitEye(x: number, feetY: number, z: number, angle: number): { eye: { x: number; y: number; z: number }; at: { x: number; y: number; z: number } } {
-  const { radius, height, aim } = SHOP.orbit
+export function orbitEye(x: number, feetY: number, z: number, angle: number, orbit: Orbit = SHOP.orbit): { eye: { x: number; y: number; z: number }; at: { x: number; y: number; z: number } } {
+  const { radius, height, aim } = orbit
   return {
     eye: { x: x + Math.sin(angle) * radius, y: feetY + height, z: z + Math.cos(angle) * radius },
     at: { x, y: feetY + aim, z },

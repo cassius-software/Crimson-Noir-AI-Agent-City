@@ -86,7 +86,7 @@ Sixteen downtown lots have their ground floor hollowed into a walk-in room, one 
 * **Voice recruiting.** `recruit listen` opens the browser's on-device-only speech recogniser and `recruit stop` closes it; it is off until asked. Up to eight recruits follow the operator at once, lending their skills to operator tasks under a lease.
 * **The cognition router.** `ask` goes to `auto`, `claude` (through a loopback gateway, default model `claude-opus-5-5`), `ollama`, `llamacpp`, an OpenAI-compatible server on this machine (LM Studio, vLLM, SGLang), `inpage` (a GGUF file kept in the page, run by wllama, sized by the device's memory) or `scripted` (no backend at all). `swarm run` splits a goal over up to five role prompts, one after another.
 * **Controllers and headsets.** A DualSense and DualSense Edge HID driver (adaptive-trigger brake resistance and throttle hold, rumble, lightbar and player LEDs) over WebHID or `hidapi` in the Windows app, WebXR, touch and gamepad input. The HID and WebXR paths are unverified on physical hardware.
-* **Also on main:** the operator's progression and credits, retail stores, a look customizer (skin, hair, headwear, prosthetics, garments), the ISA-95 unified namespace, the `.agv` video-plus-telemetry recorder, an opt-in loopback network room, and the Lakefront Metro map.
+* **Also on main:** the operator's progression and credits, retail stores, a look customizer (skin, hair, headwear, prosthetics, garments, tattoos), the ISA-95 unified namespace, the `.agv` video-plus-telemetry recorder, an opt-in loopback network room, and the Lakefront Metro map.
 
 ---
 
