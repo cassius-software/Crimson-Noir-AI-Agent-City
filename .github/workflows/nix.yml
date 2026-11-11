@@ -132,5 +132,5 @@ jobs:
               *) echo "::error::Nix's system-features lack $f"; exit 1 ;;
             esac
           done
-      - name: The Ollama option in a NixOS VM (ollama.service on 127.0.0.1:11434, its origins, OLLAMA_ORIGINS)
+      - name: The Ollama option in a NixOS VM (ollama.service on 127.0.0.1:11434, its origins, OLLAMA_ORIGINS, cloud off)
         run: nix build -L --no-link .#vmTests.x86_64-linux.ollama
