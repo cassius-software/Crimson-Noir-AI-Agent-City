@@ -1305,7 +1305,7 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   of their look is (`look.ts` `streetTattoos`, the shader's own draw): one zone or two, each a design after the
   studio's twelve, in one ink, about seven carriers in ten black, one in seven grey wash, one in fourteen indigo, then
   brick red, forest green and white. About one passer-by in ten shows theirs, on a hand, the neck or the nape; the
-  rest are inked on a forearm, the calf or the ankle, which sleeves and trousers cover. A prosthetic arm hides its
+  rest are inked on a forearm, the calf or the ankle, which sleeves, trousers and hose cover. A prosthetic arm hides its
   side's hand; the watch covers a band design where it passes the left wrist; a turtleneck under a jacket or a coat
   covers the neck and the nape's lower half; a full or long beard is drawn over the neck; a scarf, a hijab, long hair
   and the cup in the right hand cover what lies under them. At the console: `look tattooHand compass rose`, `look
