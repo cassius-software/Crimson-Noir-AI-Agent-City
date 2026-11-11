@@ -33,6 +33,7 @@ import {
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
 import { bodyVertex, crowdHash } from './crowdBody.ts'
+import { tattoo } from './crowdTattoo.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, JACKET_HEM, LANDMARK, LOWER_PAINT, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
 import {
@@ -42,6 +43,7 @@ import {
   FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
+import { TATTOO_INK } from './tattoo.ts'
 
 /**
  * The player's own body (agent PLAYER_INDEX) seen from inside its head would fill the view: it is folded to
@@ -58,6 +60,7 @@ export const OWN_BODY = { height: 1.6, radius: 0.8 } as const
 export const PEOPLE_DISSOLVE_INK: readonly [number, number, number] = Object.freeze([0.85, 1, 0.85] as [number, number, number])
 
 type V3 = Node<'vec3'>
+type V4 = Node<'vec4'>
 type F1 = Node<'float'>
 type U1 = Node<'uint'>
 /** A 3×3 matrix node as crowdBody.ts returns one (a column per element), held in a variable so the call runs once. */
@@ -937,7 +940,11 @@ export class CrowdView {
     // flat: one person's four integers in every fragment (an integer varying is never interpolated). Read only where
     // the look word says a look is worn: the hash's people leave them zero.
     const genome = varying(b.figure.element(b.lists.element(instanceIndex.add(uint(listBase))).mul(uint(FIGURE_QUADS)).add(uint(1))), 'vAgentGenome').setInterpolation('flat')
-    const genomeWord = (w: number): U1 => (w === 4 ? genome.x : w === 5 ? genome.y : w === 6 ? genome.z : genome.w) as unknown as U1
+    // Words 4 to 7 alone ride the varying: a field of word 8 or later must be read from crowd.figure, never as word 7.
+    const genomeWord = (w: number): U1 => {
+      if (w < 4 || w > 7) throw new Error(`genome word ${w} is not in the fragment's flat varying (words 4 to 7)`)
+      return (w === 4 ? genome.x : w === 5 ? genome.y : w === 6 ? genome.z : genome.w) as unknown as U1
+    }
     const gene = ([w, shift, width]: readonly [number, number, number]): U1 => genomeWord(w).shiftRight(uint(shift)).bitAnd(uint((1 << width) - 1))
     const at = (list: Color[], i: U1): V3 => {
       const last = uint(list.length - 1)
@@ -1013,7 +1020,13 @@ export class CrowdView {
     // Facial hair (the look's, or a man's from the colours' chain: stubble to a full beard) in the hair's colour.
     const facialHair = select(custom, gene(LOOK_FIELD.facialHair), woman ? uint(0)
       : select(h(LOOK_HASHED_COLOUR.facialHair).greaterThanEqual(LOOK_ODDS.facialHair), uint(h(LOOK_HASHED_COLOUR.facialHairStyle).mul(FACIAL_HAIR.fullBeard - 0.001)).add(uint(1)), uint(0)))
-    const skinShown = select(kippah, headCloth, facialPaint(wornSkin, greyed, facialHair, rig, slot, near)).toVar() as unknown as V3
+    // The tattoos (crowdTattoo.ts), the near body's alone: on the skin of a hand, the neck or the nape, the chosen
+    // look's designs and ink (genome word 7), or for a person who wears no chosen look word 7's street bit alone, so the
+    // shader draws theirs from their seed as look.ts streetTattoos does. The ink goes on before the facial hair, so a
+    // beard paints over it; wornSkin itself stays bare, for the hose, the lips, the skin through cropped or shaved
+    // hair and a prosthetic's skin-matched finish. Word 8 (the forearms, the calf, the ankle) waits for its slots.
+    const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, slot, select(custom, genome.w, uint(0x80000000)), uint(0), vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null
+    const skinShown = select(kippah, headCloth, facialPaint(inked ? inked.xyz : wornSkin, greyed, facialHair, rig, slot, near)).toVar() as unknown as V3
     // A prosthetic limb (the look's, or one in a hundred from the colours' chain): the hand below the sleeve for an
     // arm, the shin below the knee for a leg where it is bare (the skirt suit's, or below cropped trousers and
     // culottes), in its finish, with the socket's line.
@@ -1337,10 +1350,11 @@ export class CrowdView {
     // first reached inside one branch, was written again in every other branch that read it, and the rain-mode and
     // dissolve wraps read the colour a second time: the fragment stage grew past its budget (shadowShaders.test.ts).
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
-    // the skin and the hair as painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays
-    // for its marks under its own branches.
+    // the skin, its ink (the tattoo call, which every branch that reads it would otherwise call again) and the hair as
+    // painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays for its marks under
+    // its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, ...(inked ? [inked] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
@@ -1353,6 +1367,21 @@ export class CrowdView {
     const chrome = limbShown.and(fin(2))
     m.roughnessNode = select(chrome, float(0.22), select(limbShown.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
     m.metalnessNode = select(chrome, float(0.85), float(0))
+    // The studio's two inks are lit (the street never wears them, so only a chosen look's can be): gold leaf has a
+    // metal's sheen and luminescent a faint glow of its own colour, each as far as the ink covers, and the glow goes
+    // as the body goes to code. Only where the ink shows: the skin's slot, not under the turtleneck's knit, the watch,
+    // a prosthetic hand, or a full or long beard (facialPaint's cover from 1.548 up, in front of z -0.03). Here, after
+    // the sheen and before the rain mode's and the dissolve's wraps, which dim and add to an emissive already set.
+    if (inked) {
+      const inkNo = gene(LOOK_FIELD.tattooInk)
+      const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))
+      const inkShown = select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0))
+      const gold = select(inkNo.equal(uint(TATTOO_INK.goldLeaf)), inkShown, float(0))
+      m.roughnessNode = mix(m.roughnessNode as F1, float(0.32), gold)
+      m.metalnessNode = mix(m.metalnessNode as F1, float(0.7), gold)
+      // Six tenths of the luminescent ink's albedo (tattoo.ts TATTOO_INKS).
+      m.emissiveNode = vec3(0.33, 0.57, 0.48).mul(select(inkNo.equal(uint(TATTOO_INK.luminescent)), inkShown, float(0))).mul(float(1).sub(vDissolve))
+    }
     // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
     if (this.matrixMode) applyMatrixMode(m, this.matrixMode)
     // The code dissolve, over everything above, with the body's feet as its origin (fresh reads: nothing of posed()'s

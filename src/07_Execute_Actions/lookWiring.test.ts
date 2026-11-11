@@ -21,6 +21,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { InstancedMesh, MeshStandardNodeMaterial } from 'three/webgpu'
 import { LEGACY_LOOK_SLOTS, LOOK_NONE, LOOK_PRESETS, LOOK_V2_SLOTS, LOOK_V3_SLOTS, LOOK_V4_SLOTS, LOOK_WORDS, lookFromSeed, packFace, packFigure, packLook, upgradeFaceLook, upgradeFigureLook, upgradeLegacyLook, validateLook, type Look, type LookSlot } from '../03_Spawn_Agents/look.ts'
+import { tattoo } from '../03_Spawn_Agents/crowdTattoo.ts'
 import { LOOK_KEY, clearLook, loadLook, saveLook } from '../05_Observe_Environment/lookStore.ts'
 import { PROFILE_KEY, type ProfileStore } from '../05_Observe_Environment/profile.ts'
 
@@ -222,6 +223,41 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const scarf = at\(PALETTE\.scarves, select\(scarfAt\.equal\(uint\(0\)\), uint\(0\), scarfAt\.sub\(uint\(1\)\)\)\)/)
   assert.match(fragment, /const rest = positionGeometry/, 'the garment lines are cut from the rest position')
   assert.match(fragment, /const worn = select\(raisedWaist, waistBand, select\(layer\.equal\(uint\(LAYER\.shirt\)\), shirt, jacket\)\)/, 'under shirt sleeves the whole slot is the shirt\'s, but where high-waisted trousers rise over it')
+})
+
+test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome word 7, or the street\'s draw under its flag, before the facial hair, declared once with the shared values; the studio\'s inks are lit where the ink shows; a genome word the varying does not carry is refused', () => {
+  const crowd = read('../03_Spawn_Agents/crowd.ts')
+  const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
+  const inked = 'const inked = near ? (tattoo(wornSkin, positionGeometry, rig.x, slot, select(custom, genome.w, uint(0x80000000)), uint(0), vSeed, footprint) as unknown as V4).toVar() as unknown as V4 : null'
+  assert.ok(fragment.includes(inked), 'the near body\'s alone: the skin as worn, the rest point, the bone, the slot, word 7 or the street flag, no word 8 yet, the seed, the pixel\'s width')
+  assert.ok(fragment.includes('facialPaint(inked ? inked.xyz : wornSkin, greyed, facialHair, rig, slot, near)'), 'the beard paints over the ink')
+  before(fragment, inked, 'const skinShown = select(kippah, headCloth, facialPaint(inked ? inked.xyz : wornSkin', 'inked before the skin is shown')
+  assert.ok(fragment.includes('wornSkin, ...(inked ? [inked] : []), greyed, wornHair, skinShown,'), 'declared once with the shared values, or every branch calls it again')
+  assert.match(crowd, /^type V4 = Node<'vec4'>$/m)
+  // wornSkin itself stays bare: the hose, the lips and the skin-matched prosthetic read it, not the ink.
+  assert.ok(fragment.includes('const hose = mix(wornSkin, ') && fragment.includes('const lip = wornSkin.mul(') && fragment.includes('wornSkin.mul(0.96)'))
+  // Words 4 to 7 alone ride the varying; a field of a later word cannot be read as word 7.
+  assert.ok(fragment.includes('if (w < 4 || w > 7) throw new Error(`genome word ${w} is not in the fragment\'s flat varying (words 4 to 7)`)'))
+  // The lit inks: after the sheen is set, before the wraps that dim and add to the emissive.
+  const lit = between(fragment, 'if (inked) {', '\n    }\n')
+  assert.ok(lit.includes('const inkNo = gene(LOOK_FIELD.tattooInk)'))
+  assert.ok(lit.includes('const beardOver = facialHair.greaterThanEqual(uint(FACIAL_HAIR.fullBeard)).and(rest.y.greaterThan(1.548)).and(rest.z.greaterThan(-0.03))'), 'facialPaint\'s full beard\'s cover')
+  assert.ok(lit.includes('const inkShown = select(custom.and(slotIs(SLOT.SKIN)).and(turtleNeck.or(watchHere).or(armHere).or(beardOver).not()), inked.w, float(0))'), 'a chosen look\'s ink, on the skin, where nothing covers it')
+  assert.ok(lit.includes('const gold = select(inkNo.equal(uint(TATTOO_INK.goldLeaf)), inkShown, float(0))'))
+  assert.ok(lit.includes('m.roughnessNode = mix(m.roughnessNode as F1, float(0.32), gold)') && lit.includes('m.metalnessNode = mix(m.metalnessNode as F1, float(0.7), gold)'), 'gold leaf\'s sheen')
+  assert.ok(lit.includes('m.emissiveNode = vec3(0.33, 0.57, 0.48).mul(select(inkNo.equal(uint(TATTOO_INK.luminescent)), inkShown, float(0))).mul(float(1).sub(vDissolve))'), 'luminescent\'s glow, gone with the body')
+  before(fragment, 'm.metalnessNode = select(chrome, float(0.85), float(0))', 'if (inked) {', 'after the sheen')
+  before(fragment, 'if (inked) {', 'applyMatrixMode(m, ', 'before the rain mode dims the emissive')
+  // Built: the near bodies' colour reaches the tattoo function, the far bodies' never does.
+  const code = (tattoo as unknown as { code: string }).code
+  const view = new CrowdView(16)
+  for (const mesh of view.meshes) {
+    const m = materialOf(mesh)
+    const inks = (root: unknown) => [...reach(root)].some((n) => (n as { code?: unknown }).code === code)
+    assert.equal(inks(m.colorNode), mesh.name.endsWith('lod0'), `${mesh.name}: the colour ${mesh.name.endsWith('lod0') ? 'inks' : 'has no ink'}`)
+    // The dissolve gives every body an emissive; only the near one's carries the ink's glow.
+    assert.equal(inks(m.emissiveNode), mesh.name.endsWith('lod0'), `${mesh.name}: the luminescent glow on the near body alone`)
+  }
 })
 
 test('the cull reads the body out of the word (binding 13, the page\'s pass alone); no simulation pass binds it', () => {
