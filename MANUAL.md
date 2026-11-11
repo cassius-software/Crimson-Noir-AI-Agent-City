@@ -4142,12 +4142,7 @@ the three warnings), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
-Peak for a few frames). The workflow's `vm` job boots the Ollama option in a NixOS VM under KVM
-(`nix build .#vmTests.x86_64-linux.ollama`, `tools/nix/ollama-test.nix`; `nix flake check` does not run it, and the job
-fails, saying so, on a runner without KVM): the flake's module with `acceleration = "cpu"` and one `extraOrigins`
-entry, checked for `ollama.service` coming up, listening on `127.0.0.1:11434` and nowhere else, starting with no
-models, answering `/api/tags` with 200 to the launcher's origin (`http://127.0.0.1:4180`) and to the extra origin and
-with 403 to another, and running with `OLLAMA_ORIGINS` set.
+Peak for a few frames).
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
 the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
@@ -4161,9 +4156,19 @@ compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of
 run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
-matching the window to its menu entry and icon, the DualSense rules, Ollama's GPU builds (Vulkan, ROCm or CUDA inside
-its sandboxed unit on a real GPU; CI's VM runs the CPU build with no GPU and no model) and its service on a real
-machine, and heat over a long session. The `aarch64-linux` outputs are declared but neither built nor evaluated by CI.
+matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (CI's `vm` job, below,
+boots its CPU build in a VM with no GPU and no model, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU
+is untried), and heat over a long session. The `aarch64-linux` outputs are declared but neither built nor evaluated by
+CI.
+
+Run by CI, and not counted as verified above: the workflow's `vm` job, whose first runs are the pull request that added
+it. It boots the Ollama option in a NixOS VM under KVM (`nix build .#vmTests.x86_64-linux.ollama`,
+`tools/nix/ollama-test.nix`; `nix flake check` does not run it, and the job fails, saying so, on a runner without KVM),
+the flake's module with `acceleration = "cpu"` and one `extraOrigins` entry, and checks that `ollama.service` comes up,
+that its server process's only listening TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that
+it starts with no models, that `/api/tags` answers the launcher's origin (`http://127.0.0.1:4180`) and the extra origin
+with 200 and another with 403, and that the running server has `OLLAMA_ORIGINS` set. This is what the job checks, not a
+result.
 
 ## When the city cannot start or stops
 

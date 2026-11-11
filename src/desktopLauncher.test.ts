@@ -319,7 +319,7 @@ test('CI boots the Ollama option in a NixOS VM, in a job of its own outside nix 
   assert.match(vm, /acceleration = "cpu";/, 'the runner has no GPU, and the binary cache has the CPU build')
   assert.match(vm, /qemu\.forceAccel = true;/, 'no KVM is an error, never software emulation')
   assert.ok(vm.includes(`LAUNCHER = "http://127.0.0.1:${launcher.PORT}"`), 'the launcher\'s own origin')
-  for (const proof of ['machine.wait_for_unit("ollama.service")', 'assert listeners == ["127.0.0.1:11434"]', 'assert tags == {"models": []}', 'for origin in (LAUNCHER, EXTRA):', 'assert got == ("200", origin)', 'assert got == ("403", None)', 'assert f"OLLAMA_ORIGINS={EXTRA}" in env']) assert.ok(vm.includes(proof), `the VM test checks ${proof}`)
+  for (const proof of ['machine.wait_for_unit("ollama.service")', 'assert listeners == ["127.0.0.1:11434"]', 'machine.succeed("ss -Htlnp").splitlines() if f"pid={pid}," in line', 'assert own == ["127.0.0.1:11434"]', 'assert tags == {"models": []}', 'for origin in (LAUNCHER, EXTRA):', 'assert got == ("200", origin)', 'assert got == ("403", None)', 'assert f"OLLAMA_ORIGINS={EXTRA}" in env']) assert.ok(vm.includes(proof), `the VM test checks ${proof}`)
 
   const jobs = read('.github/workflows/nix.yml').split(/^jobs:$/m)[1] ?? ''
   const [flakeJob = '', vmJob = ''] = jobs.split(/^ {2}vm:$/m)
@@ -331,7 +331,11 @@ test('CI boots the Ollama option in a NixOS VM, in a job of its own outside nix 
   assert.ok(vmJob.includes('KERNEL=="kvm", GROUP="kvm", MODE="0666"'), 'the udev rule opens /dev/kvm to Nix\'s build users')
   assert.match(vmJob, /udevadm trigger --name-match=kvm/)
   assert.match(vmJob, /extra-system-features = kvm nixos-test/)
-  assert.ok(vmJob.indexOf('/dev/kvm') < vmJob.indexOf('install-nix'), 'KVM is checked before anything is installed')
+  // The check's own text and the steps' names, not the first '/dev/kvm', which the steps' comments also hold.
+  const kvmStep = vmJob.indexOf('- name: KVM for Nix\'s build users')
+  const kvmCheck = vmJob.indexOf('if [ ! -c /dev/kvm ]')
+  const nixStep = vmJob.indexOf('- name: Nix, with its daemon')
+  assert.ok(kvmStep !== -1 && kvmStep < kvmCheck && kvmCheck < nixStep && nixStep < vmJob.indexOf('install-nix'), 'KVM is checked, in its own step, before Nix is installed')
   assert.match(vmJob, /run: nix build -L --no-link \.#vmTests\.x86_64-linux\.ollama$/m)
 })
 

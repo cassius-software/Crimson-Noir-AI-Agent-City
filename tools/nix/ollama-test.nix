@@ -5,11 +5,12 @@
 # Why does this file exist? flake.nix's checks.module proves what the Ollama option configures; this NixOS VM test
 # proves the Ollama it configures runs. A VM imports the flake's own module (nixosModules.default, passed in as
 # `module`), turns the option on with the CPU build and one extra origin, boots, and checks that ollama.service comes
-# up and listens on 127.0.0.1:11434 and nowhere else, that it starts with no models, that /api/tags answers the
-# launcher's page (http://127.0.0.1:4180, which Ollama allows by itself) and the extra origin with 200 and their
-# Access-Control-Allow-Origin, and any other page with 403, and that the running server has OLLAMA_ORIGINS. It runs
-# the CPU build: CI's runner has no GPU, and the NixOS binary cache has that build. flake.nix exposes the test as
-# vmTests.<system>.ollama, outside `checks`, so `nix flake check` never needs KVM; the nix workflow's vm job builds it.
+# up, that its server process's only listening TCP socket is 127.0.0.1:11434 and nothing else listens on port 11434,
+# that it starts with no models, that /api/tags answers the launcher's page (http://127.0.0.1:4180, which Ollama allows
+# by itself) and the extra origin with 200 and their Access-Control-Allow-Origin, and any other page with 403, and that
+# the running server has OLLAMA_ORIGINS. It runs the CPU build: CI's runner has no GPU, and the NixOS binary cache has
+# that build. flake.nix exposes the test as vmTests.<system>.ollama, outside `checks`, so `nix flake check` never needs
+# KVM; the nix workflow's vm job builds it.
 # What breaks if it is removed? The option could configure an Ollama that never starts, listens on another address or
 # refuses the city's page, and only a NixOS machine would show it.
 { module }:
@@ -70,10 +71,17 @@ in
 
     machine.wait_for_unit("ollama.service")
     machine.wait_for_open_port(11434, "127.0.0.1")
+    # The server itself: the unit runs `ollama serve` with Type=exec, unwrapped for the CPU build.
+    pid = machine.succeed("systemctl show --property=MainPID --value ollama.service").strip()
+    assert pid not in ("", "0"), f"ollama.service has no main process: {pid!r}"
 
-    # Loopback only: one listener on 11434, at 127.0.0.1 (not 0.0.0.0, not [::]).
+    # Loopback only. Port 11434 has one listener, at 127.0.0.1 (not 0.0.0.0, not [::]).
     listeners = [line.split()[3] for line in machine.succeed("ss -Htln 'sport = :11434'").splitlines() if line.strip()]
-    assert listeners == ["127.0.0.1:11434"], f"Ollama listens on {listeners}"
+    assert listeners == ["127.0.0.1:11434"], f"port 11434 has {listeners}"
+    # And the server's every listening TCP socket, on any address or port, is that one. (A model's runner is a process
+    # of its own, which this does not count.)
+    own = sorted(line.split()[3] for line in machine.succeed("ss -Htlnp").splitlines() if f"pid={pid}," in line)
+    assert own == ["127.0.0.1:11434"], f"Ollama's server (pid {pid}) listens on {own}"
 
     # No model was asked for, so it starts empty.
     tags = json.loads(machine.succeed("curl -sSf http://127.0.0.1:11434/api/tags"))
@@ -88,7 +96,6 @@ in
     assert got == ("403", None), f"{STRANGER}: {got}"
 
     # The running server's own environment, not only the unit file.
-    pid = machine.succeed("systemctl show --property=MainPID --value ollama.service").strip()
     env = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/environ").splitlines()
     assert f"OLLAMA_ORIGINS={EXTRA}" in env, env
     assert "OLLAMA_HOST=127.0.0.1:11434" in env, env
