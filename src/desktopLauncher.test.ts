@@ -297,11 +297,58 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
   assert.match(module, /llmPackage = if llm\.acceleration == null then null else "ollama-\$\{llm\.acceleration\}";/)
   assert.doesNotMatch(module, /^\s*(host|port) = /m, 'host and port stay nixpkgs\' own 127.0.0.1:11434, where auto looks, so a system\'s own value wins')
   assert.match(module, /OLLAMA_IGPU_ENABLE = lib\.mkDefault "1";/, 'an integrated GPU only when asked for')
+  // Ollama's cloud (its calls to ollama.com, its own at start among them) off unless asked for, as a default the system's own OLLAMA_NO_CLOUD beats.
+  assert.match(module, /^ {6}cloud = lib\.mkOption \{\n {8}type = lib\.types\.bool;\n {8}default = false;/m, 'cloud is off unless the configuration says cloud = true')
+  // On the unit, so they never outrank a system's whole environmentVariables given as a default, and no unit while the service is off.
+  assert.match(module, /systemd\.services = lib\.mkIf config\.services\.ollama\.enable \{\n {8}ollama\.environment = lib\.mkMerge \[/)
+  assert.match(module, /\(lib\.mkIf \(!llm\.cloud\) \{ OLLAMA_NO_CLOUD = lib\.mkDefault "1"; \}\)/)
+  assert.doesNotMatch(module, /environmentVariables = lib\.mkMerge|environmentVariables\.OLLAMA_/, 'nothing in services.ollama.environmentVariables')
   assert.match(module, /ask connect ollama http:\/\/localhost:/, 'the port warning names the command that works under auto')
   assert.doesNotMatch(module, /^\s*acceleration = (?!lib\.mkOption)/m, 'services.ollama.acceleration is gone in nixpkgs 26.05')
   for (const never of [/openFirewall/, /OLLAMA_HOST/, /modelsDir/, /services\.ollama\.models\b/, /OLLAMA_CONTEXT_LENGTH/]) assert.doesNotMatch(module, never, String(never))
   const flakeChecks = read('flake.nix')
-  for (const proof of ['plain.pkgs.ollama-vulkan.drvPath', 'cpu.pkgs.ollama-cpu.drvPath', 'cuda.config.hardware.graphics.enable', '(env igpu).OLLAMA_IGPU_ENABLE == "1"', '(env ownDefault).OLLAMA_HOST == "0.0.0.0:11434"', '!(builtins.tryEval cuda.config.services.ollama.package.drvPath).success', '(env theirs).OLLAMA_ORIGINS == "https://b.example"', 'lib.length (ours theirs) == 3']) assert.ok(flakeChecks.includes(proof), `nix flake check proves ${proof}`)
+  for (const proof of ['plain.pkgs.ollama-vulkan.drvPath', 'cpu.pkgs.ollama-cpu.drvPath', 'cuda.config.hardware.graphics.enable', '(env igpu).OLLAMA_IGPU_ENABLE == "1"', '(env ownDefault).OLLAMA_HOST == "0.0.0.0:11434"', '!(builtins.tryEval cuda.config.services.ollama.package.drvPath).success', '(env theirs).OLLAMA_ORIGINS == "https://b.example"', 'lib.length (ours theirs) == 3', '(env plain).OLLAMA_NO_CLOUD == "1"', '!((env cloud) ? OLLAMA_NO_CLOUD) && ours cloud == [ ]', '[ "0" "true" ] == [ "0" "true" ]', 'ours (ownNoCloud v) == [ (cloudWarning "\\"${v}\\"" "does not turn" "false") ]) [ "0" "f" "F" "false" "False" "FALSE" "" " \'False\' " ]', 'ours (ownNoCloud v) == [ ]) [ "1" "true" "no" ]', 'ours cloudStillOff == [ (cloudWarning "\\"1\\"" "turns" "true") ]', '(env envReplaced).OLLAMA_NO_CLOUD == "1" && (env envReplaced).OLLAMA_ORIGINS == "https://a.example" && ours envReplaced == [ ]', 'OLLAMA_IGPU_ENABLE = "1";\n              }\n              && ours setDefault == [ ]', 'ours unitNull == [ (cloudWarning "unset" "does not turn" "false") ]', 'ours globalOff == ours unitOff', 'ours globalUnder == [ ]', '(env globalOrigins).OLLAMA_ORIGINS == "https://a.example" && ours globalOrigins == [ ]', 'ours setDefaultOwn == [ (cloudWarning "\\"0\\"" "does not turn" "false") ]', 'ours off == [ ] && !(off.config.systemd.services ? ollama)']) assert.ok(flakeChecks.includes(proof), `nix flake check proves ${proof}`)
+})
+
+test('CI boots the Ollama option in a NixOS VM, in a job of its own outside nix flake check, and fails without KVM', () => {
+  const flake = read('flake.nix')
+  assert.match(flake, /^ {6}vmTests = forAll \(/m, 'an output of its own')
+  assert.match(flake, /import \.\/tools\/nix\/ollama-test\.nix \{ module = self\.nixosModules\.default; \}/, 'the flake\'s own module, not a copy')
+  const checks = flake.slice(flake.indexOf('      checks = forAll ('))
+  assert.ok(flake.indexOf('vmTests = forAll') < flake.indexOf('      checks = forAll ('))
+  for (const never of ['ollama-test', 'runNixOSTest', 'vmTests']) assert.ok(!checks.includes(never), `checks holds no ${never}: nix flake check runs without KVM`)
+
+  const vm = read('tools/nix/ollama-test.nix')
+  assert.equal(headers.licenseOf('tools/nix/ollama-test.nix'), 'mit')
+  assert.match(vm, /^\{ module \}:$/m)
+  assert.match(vm, /imports = \[ module \];/)
+  assert.match(vm, /acceleration = "cpu";/, 'the runner has no GPU, and the binary cache has the CPU build')
+  assert.match(vm, /qemu\.forceAccel = true;/, 'no KVM is an error, never software emulation')
+  assert.ok(vm.includes(`LAUNCHER = "http://127.0.0.1:${launcher.PORT}"`), 'the launcher\'s own origin')
+  for (const proof of ['machine.wait_for_unit("ollama.service")', 'assert listeners == ["127.0.0.1:11434"]', 'machine.succeed("ss -Htlnp").splitlines() if f"pid={pid}," in line', 'assert own == ["127.0.0.1:11434"]', 'assert tags == {"models": []}', 'for origin in (LAUNCHER, EXTRA):', 'assert got == ("200", origin)', 'assert got == ("403", None)', 'assert f"OLLAMA_ORIGINS={EXTRA}" in env']) assert.ok(vm.includes(proof), `the VM test checks ${proof}`)
+  // Ollama's cloud off, the option's default: in the server's environment, in its own words, and no line naming ollama.com once
+  // its two startup jobs that would call it have run (each waited for by what it logs, never a fixed sleep).
+  assert.doesNotMatch(vm, /cloud = /, 'the VM leaves the option\'s cloud at its default')
+  assert.match(vm, /services\.ollama\.environmentVariables\.OLLAMA_DEBUG = "1";/, 'both startup jobs say they skipped ollama.com only at debug level, and the script asserts both lines')
+  assert.doesNotMatch(vm, /\bsleep\(/, 'the script waits for what Ollama logs, not for a fixed time')
+  for (const proof of ['assert "OLLAMA_NO_CLOUD=1" in env', 'msg="Ollama cloud disabled: true"', 'wait_logged(\'msg="model recommendations cache sleep scheduled"\')', 'msg="skipping model recommendations refresh because cloud is disabled"', 'msg="skipping model show cloud cache hydration because cloud is disabled"', 'msg="model show cloud cache hydration failed"', 'line.replace(" OLLAMA_REMOTES:[ollama.com] ", " ", 1)', 'assert named == []']) assert.ok(vm.includes(proof), `the VM test checks ${proof}`)
+
+  const jobs = read('.github/workflows/nix.yml').split(/^jobs:$/m)[1] ?? ''
+  const [flakeJob = '', vmJob = ''] = jobs.split(/^ {2}vm:$/m)
+  assert.ok(vmJob, 'the VM runs in a job of its own')
+  assert.match(flakeJob, /nix flake check/)
+  assert.doesNotMatch(flakeJob, /kvm/i, 'nix flake check\'s job needs no KVM')
+  assert.match(vmJob, /timeout-minutes: \d+/)
+  assert.match(vmJob, /if \[ ! -c \/dev\/kvm \]; then\n\s+echo "::error::[^"\n]+"\n\s+exit 1/, 'no KVM fails, saying so')
+  assert.ok(vmJob.includes('KERNEL=="kvm", GROUP="kvm", MODE="0666"'), 'the udev rule opens /dev/kvm to Nix\'s build users')
+  assert.match(vmJob, /udevadm trigger --name-match=kvm/)
+  assert.match(vmJob, /extra-system-features = kvm nixos-test/)
+  // The check's own text and the steps' names, not the first '/dev/kvm', which the steps' comments also hold.
+  const kvmStep = vmJob.indexOf('- name: KVM for Nix\'s build users')
+  const kvmCheck = vmJob.indexOf('if [ ! -c /dev/kvm ]')
+  const nixStep = vmJob.indexOf('- name: Nix, with its daemon')
+  assert.ok(kvmStep !== -1 && kvmStep < kvmCheck && kvmCheck < nixStep && nixStep < vmJob.indexOf('install-nix'), 'KVM is checked, in its own step, before Nix is installed')
+  assert.match(vmJob, /run: nix build -L --no-link \.#vmTests\.x86_64-linux\.ollama$/m)
 })
 
 test('Nix leaves nothing the repository\'s walkers, the page build or git would pick up', () => {

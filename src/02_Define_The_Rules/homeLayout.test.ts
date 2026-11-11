@@ -9,7 +9,10 @@
  * turn among them); the apron is never used; and 2,000 seeded runs of placing, removing and fitting never use the
  * apron, never cut off a workstation's seat, and never refuse a removal. Someone standing inside a piece that is not
  * yet solid is never ringed in (400 more seeded runs take the piece away and find them a way out), and people standing
- * by only ever add refusals. The seven show homes fit their own homes. No
+ * by only ever add refusals. The seven show homes fit their own homes, and comfortOf counts the kinds of furniture
+ * standing in a home (a rest at home's comfort). A workstation's station (where a posted agent stands, stationOf) turns
+ * with the piece, lies on the edge between its two seat cells and faces the desk; stationsIn lists workstations in
+ * reading order. No
  * two boxes of a home (the shell, the fill block, the planters, the floor overlay, the wall panels and a full layout)
  * share a face in the same plane facing the same way, in every home, facing every way; and every name passes the 14A
  * screen.
@@ -27,11 +30,11 @@ import { CATALOGUE } from '../07_Execute_Actions/storeCatalog.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import { screen } from './conduct.ts'
 import { createRng } from './degrees.ts'
-import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre, inApron, inMask } from './homeGrid.ts'
+import { APRON, ARRIVAL, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, SKY, backEdge, cellCentre, inApron, inKeep, inMask } from './homeGrid.ts'
 import {
   CEILING, COVER, DEFAULT_FINISH, DOORWAY, FINISHES, FLOORS, FURNITURE_BASE, GLASS, HOME_STAGING, OVERLAY, PANEL, PIECE_INSET, PIECE_TOP, SHAPES, SHAPE_IDS,
-  SOLID_FROM, SOLID_MAX, VERDICTS, WALLS, canPlace, cellAt, cellIndex, cellsNear, fitLayout, floorOverlay, footprint, pieceCells, reach, renderBoxes,
-  rotateBox, shapeOf, solidBox, solidOf, wallPanels, type Piece, type Rect, type RoomBox, type Verdict,
+  SKY_FINISH, SKY_STAGING, SOLID_FROM, SOLID_MAX, VERDICTS, WALLS, canPlace, finishDefault, stagingOf, cellAt, cellIndex, cellsNear, comfortOf, fitLayout, floorOverlay, footprint, pieceCells, reach, renderBoxes,
+  rotateBox, shapeOf, solidBox, solidOf, stationOf, stationsIn, wallPanels, type Piece, type Rect, type RoomBox, type Verdict,
 } from './homeLayout.ts'
 
 const close = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`)
@@ -282,7 +285,8 @@ test('canPlace: each verdict', () => {
   for (const bad of [P(999, 2, 24), P(224, 2, 24), P(163, 2.5, 24), P(163, 2, 24, 4), P(163, 2, 24, -1), P(163, 2, 24, 0.5), P(163, Number.NaN, 24)]) {
     assert.equal(canPlace(home, [], bad), 'outside', JSON.stringify(bad))
   }
-  assert.equal(canPlace(7, [], sofa), 'outside', 'there is no eighth home')
+  assert.equal(canPlace(7, [], sofa), 'outside', "room 7's plan does not reach column 2")
+  assert.equal(canPlace(9, [], sofa), 'outside', 'there is no tenth room')
   // overlap
   assert.equal(canPlace(home, [sofa], P(160, 4, 25)), 'overlap')
   assert.equal(canPlace(home, [sofa], P(160, 6, 24)), 'ok', 'side by side')
@@ -414,6 +418,17 @@ test('fitLayout keeps what is not owned or does not fit, in order, and places th
   // Someone standing where a piece goes stores it, when the engine asks.
   const sofaCells = cellsNear([cellCentre(3, 24)], 0.3)
   assert.deepEqual(fitLayout(home, [saved[0]], null, sofaCells), { placed: [], stored: [saved[0]] })
+})
+
+test('comfortOf counts the different furniture lines standing in a home: copies once, nothing that is not a line; the show homes hold 3, 4, 3, 4, 3, 5 and 5', () => {
+  assert.deepEqual(HOME_STAGING.map(comfortOf), [3, 4, 3, 4, 3, 5, 5])
+  const top = first(0)
+  assert.equal(comfortOf([P(164, 4, top), P(164, 25, top), P(164, 8, top)]), 1, 'three bookcases are one kind')
+  assert.equal(comfortOf([]), 0)
+  assert.equal(comfortOf([P(999, 4, top)]), 0, 'not a furniture line')
+  assert.equal(comfortOf([P(999, 4, top), P(163, 2, 24), P(160, 14, 21)]), 2)
+  // What stands, not what is saved: a layout fitted with only the bookcase owned has one kind.
+  assert.equal(comfortOf(fitLayout(0, HOME_STAGING[0], (id) => id === 164).placed), 1)
 })
 
 test('2,000 seeded runs of placing, removing and fitting keep the apron free, every seat reachable, and every removal allowed', () => {
@@ -588,6 +603,75 @@ test('every show home fits its own home piece by piece, with the plan\'s furnitu
   }
 })
 
+test('SKY_STAGING places piece by piece in each sky room; SKY_FINISH names finishes that exist', () => {
+  assert.deepEqual(SKY_STAGING.map((l) => l.map((p) => [p.id, p.c, p.r, p.rot])), [
+    [[163, 13, 9, 0], [162, 14, 12, 0], [163, 13, 16, 2], [166, 21, 7, 0], [167, 7, 6, 0]],
+    [[167, 7, 6, 0], [162, 14, 12, 0], [163, 11, 11, 3], [163, 18, 11, 1], [166, 21, 18, 0]],
+  ], 'the plan\'s two show floors')
+  for (const [i, layout] of SKY_STAGING.entries()) {
+    const room = DEPTH.length + i
+    assert.ok(Object.isFrozen(layout) && layout.every(Object.isFrozen), `room ${room} is frozen`)
+    build(room, layout)
+    // Every footprint inside the sky plan and off the arrival; the arrival and the whole floor reachable from it.
+    for (const p of layout) {
+      const f = footprint(p)!
+      for (let r = f.r; r < f.r + f.rows; r++) for (let c = f.c; c < f.c + f.cols; c++) assert.ok(inMask(room, c, r) && !inKeep(room, c, r), `room ${room}: ${c},${r}`)
+    }
+    const seen = reach(room, layout)
+    for (let r = ARRIVAL.r0; r <= ARRIVAL.r1; r++) for (let c = ARRIVAL.c0; c <= ARRIVAL.c1; c++) assert.equal(seen[cellIndex(c, r)], 1, `room ${room}: arrival ${c},${r}`)
+    assert.deepEqual(fitLayout(room, layout, () => true), { placed: [...layout], stored: [] })
+    assert.equal(stagingOf(room), layout)
+  }
+  for (let h = 0; h < DEPTH.length; h++) assert.equal(stagingOf(h), HOME_STAGING[h], `hall ${h}: its show home`)
+  assert.deepEqual(stagingOf(9), [], 'no tenth room')
+  // The defaults upstairs: oak (the Penthouse) and limestone (the Sky-Mansion) under clear glass, which has no panels.
+  assert.deepEqual(SKY_FINISH.map((f) => [f.floor, f.wall]), [[1, 0], [2, 0]])
+  for (const [i, f] of SKY_FINISH.entries()) {
+    assert.ok(FLOORS[f.floor] && WALLS[f.wall], `room ${7 + i}: finishes that exist`)
+    assert.equal(WALLS[f.wall].style, null, 'its walls are its windows')
+    assert.equal(finishDefault(7 + i), f)
+  }
+  for (let h = 0; h < DEPTH.length; h++) assert.equal(finishDefault(h), DEFAULT_FINISH[h])
+  assert.equal(finishDefault(9), undefined)
+})
+
+test('canPlace upstairs: outside past the plan, doorway on the arrival, walls backed on the plan\'s edges, sealed against the arrival', () => {
+  const room = 7, top = SKY.r0
+  assert.deepEqual([SKY.r0, SKY.r1, SKY.c0, SKY.c1], [6, 25, 6, 25])
+  // outside: a column or a row past each edge of the sky plan; the hall's own corners are not the sky floor's.
+  assert.equal(canPlace(room, [], P(163, 10, 10)), 'ok')
+  assert.equal(canPlace(room, [], P(163, 5, 10)), 'outside', 'left of the plan')
+  assert.equal(canPlace(room, [], P(163, 23, 10)), 'outside', 'its last cells past the right edge')
+  assert.equal(canPlace(room, [], P(163, 10, 5)), 'outside', 'behind the far glass')
+  assert.equal(canPlace(room, [], P(163, 10, 25)), 'outside', 'its back row past the near glass')
+  assert.equal(canPlace(room, [], P(163, 2, 24)), 'outside', 'a hall\'s spot')
+  // doorway: on the arrival (the way in is kept clear), and up to its edge is fine.
+  assert.equal(canPlace(room, [], P(163, 14, 22)), 'doorway')
+  assert.equal(canPlace(room, [], P(163, 9, 23)), 'ok', 'beside the arrival')
+  assert.equal(canPlace(room, [], P(163, 14, 20)), 'ok', 'in front of it')
+  // walls: each wall line backed on each edge of the sky plan, and refused one cell in.
+  for (const id of SHAPE_IDS.filter((i) => SHAPES[i].wall)) {
+    const sh = SHAPES[id]
+    const spots: [Piece, Piece][] = [
+      [P(id, 8, top, 0), P(id, 8, top + 1, 0)],
+      [P(id, SKY.c1 + 1 - sh.d, top + 2, 1), P(id, SKY.c1 - sh.d, top + 2, 1)],
+      [P(id, 7, SKY.r1 + 1 - sh.d, 2), P(id, 7, SKY.r1 - sh.d, 2)],
+      [P(id, SKY.c0, top + 2, 3), P(id, SKY.c0 + 1, top + 2, 3)],
+    ]
+    spots.forEach(([on, off], rot) => {
+      assert.equal(canPlace(room, [], on), 'ok', `line ${id} turn ${rot}: backed on the glass`)
+      assert.equal(canPlace(room, [], off), 'wall', `line ${id} turn ${rot}: one cell in`)
+    })
+    assert.equal(canPlace(room, [], P(id, 2, top, 0)), 'outside', `line ${id}: a hall's back wall is not the glass`)
+  }
+  // sealed: a bookcase on the far glass, then a sofa that would close the corner cell behind it off from the arrival.
+  assert.equal(canPlace(room, [P(164, 7, top)], P(163, 6, top + 1)), 'sealed')
+  assert.equal(canPlace(room, [P(164, 6, top)], P(163, 6, top + 1)), 'ok', 'nothing left behind it to close off')
+  // Room 8 is the same plan.
+  assert.equal(canPlace(8, [P(164, 7, top)], P(163, 6, top + 1)), 'sealed')
+  assert.equal(canPlace(8, [], P(163, 14, 22)), 'doorway')
+})
+
 // ---------------------------------------------------------------- the boxes
 
 test('renderBoxes and solidBox: in the room frame, inside the footprint by 1 cm, and within what the worker accepts', () => {
@@ -643,8 +727,15 @@ test('the floor overlay and the wall panels: the plan\'s numbers', () => {
   }
   close(face(5), -12.5)
   assert.deepEqual([PANEL.thick, PANEL.gap, PANEL.door, OVERLAY.y0, OVERLAY.y1], [0.02, 0.012, 0.02, 0.003, 0.015])
-  assert.throws(() => floorOverlay(7), RangeError)
+  // A sky floor's overlay covers its own plan, to the glass's inner faces all round; its walls are its windows.
+  for (const room of [7, 8]) {
+    assert.deepEqual(floorOverlay(room).map((x) => +x.toFixed(9)), [-7.832, -7.832, 7.832, 7.832, 0.003, 0.015], `room ${room}`)
+    assert.deepEqual(floorOverlay(room, 193.8).slice(4).map((x) => +x.toFixed(9)), [193.803, 193.815])
+    for (let wall = 0; wall < WALLS.length; wall++) assert.deepEqual(wallPanels(room, wall), [], `room ${room} wall ${wall}: no panels`)
+  }
+  assert.throws(() => floorOverlay(9), RangeError)
   assert.throws(() => wallPanels(-1, 1), RangeError)
+  assert.throws(() => wallPanels(9, 1), RangeError)
   function face(home: number) { return backEdge(home) - INSET }
 })
 
@@ -764,4 +855,40 @@ test('every line and finish name passes the 14A screen, is unarmed, names no rea
     assert.doesNotMatch(name, /matri/i)
   }
   assert.doesNotMatch(SHAPES[165].name, /\b(?:wine|beer|cocktail|liquor|spirits?|whisk(?:e)?y|vodka|gin|rum)\b/i, 'the bar is coffee and juice')
+})
+
+test('stationOf turns with the piece: on the edge between the two seat cells, facing the desk', () => {
+  // Line 168 at (10, 20): u toward the doorway, v across, in the room frame (probed: the station is [1, 1.5] in its own cells).
+  const want = [
+    { u: -GRID_HALF + 21.5 * CELL, v: -GRID_HALF + 11 * CELL, fu: -1, fv: 0 },
+    { u: -GRID_HALF + 21 * CELL, v: -GRID_HALF + 10.5 * CELL, fu: 0, fv: 1 },
+    { u: -GRID_HALF + 20.5 * CELL, v: -GRID_HALF + 11 * CELL, fu: 1, fv: 0 },
+    { u: -GRID_HALF + 21 * CELL, v: -GRID_HALF + 11.5 * CELL, fu: 0, fv: -1 },
+  ]
+  for (let rot = 0; rot < 4; rot++) {
+    const p = P(168, 10, 20, rot)
+    const s = stationOf(p)
+    assert.ok(s, `turn ${rot}`)
+    close(s.u, want[rot].u)
+    close(s.v, want[rot].v)
+    assert.deepEqual([s.fu, s.fv], [want[rot].fu, want[rot].fv], `turn ${rot} faces the desk`)
+    // Three quarters of a cell ahead is a cell the desk blocks; a quarter of a cell to either side is one of the two
+    // seat cells, so the station is on the edge between them, in the middle of the seat row.
+    const at = (du: number, dv: number) => { const cell = cellAt(s.u + du * CELL, s.v + dv * CELL); return cell ? cellIndex(cell.c, cell.r) : -1 }
+    const { blocked, seat } = pieceCells(p)
+    assert.ok(blocked.includes(at(s.fu * 0.75, s.fv * 0.75)), `turn ${rot}: the desk ahead`)
+    const left = at(s.fv * 0.25, -s.fu * 0.25), right = at(-s.fv * 0.25, s.fu * 0.25)
+    assert.ok(left !== right && seat.includes(left) && seat.includes(right), `turn ${rot}: on the edge between the two seat cells`)
+  }
+})
+
+test('stationOf is null for lines without a station and for malformed pieces; stationsIn lists workstations in reading order', () => {
+  for (const id of SHAPE_IDS) if (id !== 168) assert.equal(stationOf(P(id, 10, 20)), null, `line ${id}`)
+  assert.equal(stationOf(P(168, 10, 20, 4)), null)
+  assert.equal(stationOf(P(168, 1.5, 20)), null)
+  assert.equal(stationOf(P(168, 10, 20, -1)), null)
+  assert.equal(stationOf(P(999, 10, 20)), null)
+  const list = [P(164, 2, 16), P(168, 10, 20), P(168, 4, 24), P(168, 4, 20)]
+  assert.deepEqual(stationsIn(list), [P(168, 4, 20), P(168, 10, 20), P(168, 4, 24)], 'back row first, then left to right')
+  assert.deepEqual(stationsIn(HOME_STAGING[6]).map((p) => p.c), [4, 7], 'the sky-mansion\'s two')
 })

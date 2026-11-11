@@ -11,11 +11,14 @@
 # - the packaged command's own `--check`: tools/web/launch.mjs serves the Nix page and boots the city in the package's
 #   Chromium on the software WebGPU adapter;
 # - the browser smoke's desktop and Ultra scenarios in that same Chromium (tools/browser/smoke.mjs), the Chromium
-#   flake.lock pins rather than the runner's Chrome; the screenshots are kept as an artifact.
+#   flake.lock pins rather than the runner's Chrome; the screenshots are kept as an artifact;
+# - in a job of its own, `vm`: the NixOS module's Ollama option booted in a NixOS VM on the CPU build
+#   (vmTests.x86_64-linux.ollama, tools/nix/ollama-test.nix). It needs KVM, so it is not in `nix flake check`, which
+#   runs without it; the job fails, saying why, on a runner without KVM rather than skip the VM or emulate it.
 # It is its own workflow, not a ci job: the self-healing agent answers ci and build-release failures only, and a Nix
 # fault is not one of those. `workflow_dispatch` lets a person run it on any branch.
-# What breaks if it is removed? A change to the lockfile, the build or the launcher could break `nix run` and the
-# NixOS module, and only a NixOS machine would show it.
+# What breaks if it is removed? A change to the lockfile, the build, the launcher or the module could break `nix run`,
+# the NixOS module or the Ollama it starts, and only a NixOS machine would show it.
 
 name: nix
 
@@ -80,3 +83,54 @@ jobs:
           path: ${{ runner.temp }}/nix-smoke/
           if-no-files-found: ignore
           retention-days: 30
+
+  vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # GitHub's Linux runners have /dev/kvm, open to root and the kvm group only; this rule, from GitHub's changelog
+      # (2024-04-02), opens it to Nix's build users, who run QEMU. No KVM is a failure, never software emulation (the
+      # test also sets qemu.forceAccel).
+      - name: KVM for Nix's build users (fails if the runner has none)
+        run: |
+          if [ ! -c /dev/kvm ]; then
+            echo "::error::This runner has no /dev/kvm: the NixOS VM test needs KVM and is not run without it."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is still not open to every user after the udev rule: $(ls -l /dev/kvm)"
+            exit 1
+          fi
+          ls -l /dev/kvm
+      # Nix adds kvm to its system features by itself only when its daemon can open /dev/kvm as it starts; naming it,
+      # with nixos-test, here (extra- keeps the defaults) gives the VM test's derivation both features it requires.
+      - name: Nix, with its daemon, the flakes feature, and the kvm and nixos-test system features
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o "$RUNNER_TEMP/install-nix"
+          echo "$NIX_INSTALL_SHA256  $RUNNER_TEMP/install-nix" | sha256sum -c -
+          {
+            echo 'experimental-features = nix-command flakes'
+            echo 'max-jobs = auto'
+            echo 'extra-system-features = kvm nixos-test'
+          } > "$RUNNER_TEMP/nix.conf"
+          sh "$RUNNER_TEMP/install-nix" --daemon --yes --no-channel-add --nix-extra-conf-file "$RUNNER_TEMP/nix.conf"
+          echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
+      - name: Nix has the kvm and nixos-test system features
+        run: |
+          features=" $(nix config show system-features) "
+          echo "system-features:$features"
+          for f in kvm nixos-test; do
+            case "$features" in
+              *" $f "*) ;;
+              *) echo "::error::Nix's system-features lack $f"; exit 1 ;;
+            esac
+          done
+      - name: The Ollama option in a NixOS VM (ollama.service on 127.0.0.1:11434, its origins, OLLAMA_ORIGINS, cloud off)
+        run: nix build -L --no-link .#vmTests.x86_64-linux.ollama

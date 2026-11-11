@@ -15,6 +15,87 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
+  (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
+  hand, the neck and the nape at seven bits each, and one ink at three; bit 31 is the shader's street flag, which no
+  look may set. Option 0 of each is as before, so every preset, every bare look and every untattooed hashed look keeps
+  its code, and a stored record without the five keys still validates. The designs (eight families of eight:
+  flowers, stars and rays, circles and orbits, shapes, bands, spirals, sprigs, pictures) and the inks (black, indigo,
+  white, gold leaf, luminescent, brick red, forest green, grey wash) are plain tables (`tattoo.ts`), and the near
+  body's fragment stage draws them as signed-distance drawings from the skin's rest position (`crowdTattoo.ts`,
+  12,801 characters of WGSL written from those tables): no texture, sampler, uniform or varying is added, only the
+  skin is inked, and the far body, the vertex stages and the shadow pass draw none. Gold leaf adds a metal's sheen and
+  luminescent a faint glow. Every ink keeps 3:1 against the skin under it (WCAG 1.4.11): where the line would fall
+  short, a halo just outside it takes the skin toward a warm white or a brown-black until it does. `tattoo.test.ts`
+  runs the shipped WGSL through the WGSL host (`wgslHost.ts`): for the eight inks on 81 skins (ten Monk tones, four
+  undertones, two ages and the vitiligo pale) no ratio is under 2.9999989 (3 in f32); each design covers 5.5% to
+  46.8% of its square and no two overlap by more than 0.582 (soft masks at 32 pixels). One passer-by in five carries a
+  tattoo, drawn in the shader from colour links 44 to 48, never one of the ink studio's twelve designs or its two
+  inks: over 20,000 seeds the test finds carriers within 0.20 ± 0.005 and those shown on a hand, the neck or the nape
+  within 0.1005 ± 0.005, and the CPU mirror `lookFromSeed` uses (`streetTattoos`) agrees with the shader on every zone
+  of all 20,000. The card gains a Tattoos section in place of the slots' own rows (zone, design family, design and
+  ink, all button radiogroups that switch scanning and dwell can press, and a note on a zone a prosthetic arm, the cup
+  or a turtleneck covers), and the console `look tattooHand compass rose`, `look tattooHand 10`, `look tattooNape
+  none` and `look tattooInk gold leaf`, with Tab completing the names (`commands.test.ts` pins the lists to the
+  wardrobe's). A tattooed look's code is fifty-six symbols. The ink studio's gold-leaf and luminescent inks (lines 64
+  and 65) go on sale; trying one on a look with no design showing borrows the olive branch for the mirror alone,
+  on the left hand or the first zone nothing covers, and buying sets the ink alone (`storeCatalog.ts` `previewItem`); the studio's mirror circles at 1.4 m
+  instead of 2.6 m (`storefronts.ts` `SHOP_ORBIT`, inside the shop's clear circle); four of its forearm lines are
+  renamed for what they draw (Braided rope band, Scalloped arc band, Compass rose, Euler's identity circle; their ids
+  and bits are unchanged), and all twelve stay on order until the forearm has its slot. The shader budget holds
+  (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 183,728
+  characters (the pantsuit's 183,551), under the 225,000 target the test now asserts for every near body; the far
+  fragments (at most 139,888), the vertex stages (at most 54,921) and the shadow fragment (1,101) are as after the
+  hash change below. `dist/index.html` grows by 31,595 bytes, from 11,969,058 to 12,000,653; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. In the browser on the software WebGPU adapter (SwiftShader), Chrome's WGSL
+  compiler builds the tattoo code (the desktop smoke passes), and pictures of the ink studio's mirror show the designs
+  on both hands, the neck and the nape, the eight inks, the halo on the lightest and deepest skins, and the cover by a
+  prosthetic arm, a turtleneck and a full beard. Unverified: no hardware GPU has compiled or drawn it yet.
+- **Sky floors.** In the city, the Crimson Tower Penthouse and the Crown Spire Sky-Mansion each have a floor up their
+  tower: a 15.6 m square room with clear glass on four sides (seed 1337: 193.8 m and 228.0 m up). The home's card
+  offers Go up inside the home and Go down upstairs, by keyboard, mouse, pad or touch. Visitors may ride, and only the
+  owner furnishes. The floor is furnished like the home below, with its own pieces, caps, floor finish, Rest and Staff,
+  and a staged floor while the deed is not yours. It is saved in this browser under `civic-simulation:home-sky:v1`,
+  with the home record unchanged. A post upstairs saves the staff record as version 2, which an older build shows no
+  posts from and never overwrites. The ride waits outside a network room, whose replay would put you back. There are
+  no sky floors in Lakefront Metro. The physics worker and the network room build the floor from the same city boxes.
+  Covered by unit tests and the `homes` smoke scenario, whose headless browser run is CI's.
+- **Staff at home.** The furnishing view's fifth tab, Staff, posts your own agents (the roster's names) at the agent
+  workstations standing in a home you own. Each stands at the workstation's seat facing its screen, in their body
+  and their top's colour, at their height, in every visit until stood down, and steps away while hired (their disc
+  on the plan fades). The tab shows each agent with where they are posted, and lists the home's workstations in
+  reading order with who stands at each (a tap on a row moves the cursor there, a second posts); a post that moves an
+  agent from another workstation or home says from where. They are drawn by the page alone: no collider, never in the
+  crowd or the physics realm, nothing in a network room. Nothing is earned and no work is done. Saved in this browser
+  under `civic-simulation:staff:v1`; a rename keeps the post, a forget lets it go, and a record a newer build wrote is
+  never overwritten. `engine.homeSeats` lists each owned home's workstations, read-only: kind, name, the home's
+  doorstep, the standing point and who is posted, the same array until one of those changes. Covered by unit tests
+  and the `rest` smoke scenario, whose headless browser run is CI's.
+- **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
+  checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
+  Kept in progression record word 40 with no layout change; refused in a network room with furnishing; the chip,
+  `progress` and each check line say when it applies.
+- **Shoe styles, frames, a watch and a lapel pin.** The look genome's word 6 becomes the accessory word
+  (`src/03_Spawn_Agents/look.ts` LOOK_FIELD, bits 0 to 14; bits 15 and up are spare and refused): a shoe style
+  (twelve: plain, lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot,
+  knee boot), the glasses' frames (eight finishes, black first), a watch (none, steel three-hand, tourbillon
+  chronograph, leather strap, smartwatch) and a lapel pin (none, rank pin, silver bar, buttonhole flower). Option 0 of
+  each is as before: every preset, every bare look and every hashed look without them packs word 6 to zero and keeps
+  its code, and a stored record without the four keys still validates. All four are fragment paint on meshes the
+  crowd already draws (`crowd.ts` `footwearPaint`, a boot's shaft up the bare leg, the watch on the left wrist over the
+  skin or a prosthetic hand, the pin on the left lapel, the frames' finish on the rims): no piece, mesh, varying or
+  uniform is added, and the vertex stages (but for one generated buffer name) and the shadow pass are unchanged. The hashed crowd draws them from new links
+  of the colours' chain (38 to 43), as `lookFromSeed` does: a little over half the street wears a shoe style (one of
+  its body's eight), about 28% a watch, half of those in glasses a frame other than black, about 3% a pin, and the street
+  never wears the tourbillon or the rank pin. The card gains the Shoe style, Lapel pin, Frames and Watch rows (Shoes is
+  now Shoe colour; the pin's row leaves in shirt sleeves and the frames' without glasses), the console `look footwear
+  wingtip`, `look watch smartwatch`, `look frames`, `look lapelPin`, and a look code with the accessory word is
+  forty-nine symbols (`-XXXXXXXX-XXXXXXXX-XXXXX` after the head). The watch shop's steel three-hand watch, tourbillon
+  chronograph and rank lapel pin (lines 129 to 131) go on sale; the umbrella and the headphones stay on order. The
+  shader budget holds (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near fragment stage, the
+  pantsuit's, goes from 200,360 to 221,913 characters and the worst far one from 159,904 to 173,039, against 225,000;
+  the shadow fragment stays at 1,105.
+
 - **The microphone pill, an on-device voice detector and barge-in over Sloane.** A pill under the HUD's header
   (`07_Execute_Actions/Hud.tsx` `MicPill`) reads the microphone's state (Mic off, Listening with a live meter of the
   room, Hearing you, Speaking while Sloane talks over it, Muted, or why it could not open) and is a button: a press,
@@ -1497,11 +1578,70 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   an `OLLAMA_ORIGINS` set elsewhere. It works without the city's own `enable`. CI evaluates it in `nix flake check` on
   the pinned NixOS 26.05: loopback, the Vulkan, CPU and default builds, the graphics driver for
   Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
-  when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
-  real GPU is untried.
+  when asked for, the system's own settings winning, the three warnings. The service on a real GPU is untried.
+- **NixOS: a VM test of the Ollama option, run by CI.** The nix workflow's new `vm` job builds
+  `vmTests.x86_64-linux.ollama` (`tools/nix/ollama-test.nix`), a NixOS VM under KVM with the flake's module, the CPU
+  build and one extra origin, which checks that `ollama.service` comes up, that its server process's only listening
+  TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that it starts with no models, that
+  `/api/tags` answers the launcher's origin and the extra one with 200 and another with 403, and that it runs with
+  `OLLAMA_ORIGINS`. It is outside `nix flake check`, and fails on a runner without KVM. This is what the job checks,
+  not a result: its first runs are the pull request that added it. The service, on a real machine or any GPU, stays
+  unverified.
+- **NixOS: Ollama's cloud off unless asked for.** The Ollama option gains `cloud`, false by default, which sets
+  `OLLAMA_NO_CLOUD=1`; `programs.crimson-noir-agent-city.ollama.cloud = true;` leaves it unset. In the `vm` job's
+  first run Ollama tried to reach ollama.com twice as it started, for model recommendations and for its cloud models'
+  details (the VM has no network, so both failed). Read from Ollama's source at the version the flake builds, those
+  two jobs are the only requests it makes on its own, and `OLLAMA_NO_CLOUD` stops both before their request, as it
+  refuses cloud models, web search and web fetch with a 403; pulls are untouched (`models` and `ollama pull` still
+  download from Ollama's registry). The console now says a cloud model was refused because the server runs none, in
+  Ollama's words, where it used to report any 403 as the page's origin being refused. The option's variables
+  (`OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as well as the new one) are now defaults on `ollama.service` itself
+  (`systemd.services.ollama.environment`), not in `services.ollama.environmentVariables`, where a definition
+  outranked, and dropped, a configuration's whole set given as `lib.mkDefault { ... }`; a value in
+  `environmentVariables`, set in any way, wins over them, and replacing the whole set with `lib.mkForce` keeps them.
+  While the service is on, the option warns when `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or
+  turns it off with `cloud` true, reading the value as Ollama does (but for a vertical tab, a form feed and the
+  Unicode spaces, which it does not trim) from the environment systemd gives `ollama.service` (the unit's own over
+  `systemd.globalEnvironment`; an `EnvironmentFile` and Ollama's own `.ollama/server.json` are not read), so a value
+  set on the unit or globally, or the unit's set to `null`, counts; the warning names the value there, or that it is
+  unset. The `extraOrigins` warning, which read only `environmentVariables`, now reads the same environment and is
+  worded the same way. `nix flake check` evaluates the default, `cloud = true`, the system's own values winning, a
+  whole `environmentVariables` replaced or given as a default, and the warnings: the cloud one firing for Go's false
+  spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`), an empty value, a quoted `False` and the variable set to
+  `null`, not for `1`, `true` or `no`, and for `1` with `cloud = true`, with the unit's and the global environment,
+  the origins one with the unit's variable set to another value or to `null`, and neither with the service off. The
+  `vm` job now also checks that the server runs with `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true` and, once
+  both startup jobs have logged that they skipped ollama.com, that no line of its journal names it past the default
+  `OLLAMA_REMOTES` in the configuration it logs, a list of allowed hosts, not a request (Ollama's debug logging is on
+  in that VM, since both say so only at debug level; the check reads only the journal and captures no network
+  traffic). This is what the checks are, not a result. Ollama on a real machine, and its cloud setting on one that can
+  reach ollama.com, stay unverified.
 
 ### Changed
 
+- **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
+  three's `hash` node was written out inline at every use (110 copies in the suit's near fragment stage, 39 in the
+  vertex stage). `crowdBody.ts` `crowdHash` is one WGSL function with the same arithmetic, so each stage carries it
+  once and no look on the street changes: `humanoid.test.ts` compares it with `look.ts` `shaderHash` bit for bit over
+  seeds 0 to 100,000, every link of every agent 0 to 20,000, and large, fractional and negative seeds. The shirt, the
+  bottom and the top cloth are declared once in the fragment stage, and the turned cuff multiplies its cloth by a
+  factor instead of selecting a second copy of it, pixel for pixel the same. Measured in `shadowShaders.test.ts`, the
+  worst near main fragment stage goes from 221,913 characters (the pantsuit's) to 172,390 (the suit's) and the worst
+  far one from 173,039 to 139,888, and no vertex stage is over 54,921; the tattoos above spend 11,338 of the near
+  stage's saving. The turtleneck under a jacket or a coat now knits up the neck to the chin ring (below y 1.578 on the
+  head bone), where it used to stop at the collar line and leave the neck bare; `look.test.ts` pins the gate, and
+  `shadowShaders.test.ts` now holds every near body's main fragment stage to 225,000 characters.
+- **The page is about 2.8 MB smaller.** The physics engine's WebAssembly (Rapier's compatibility module, 3.3 MB of
+  code) rode in the page as plain base64, 4.4 MB of text and about a third of the file. The build now stores it
+  deflated, about 1.6 MB as base64, and the physics worker inflates it with the browser's own DecompressionStream as
+  Rapier starts, the way the in-page model's runtime already rides (`vite.config.ts` `rapierDeflate`, `deflateRapier`
+  and `INFLATE_HELPER`). The deflater is fflate's (plain JavaScript, shipped with three) rather than Node's zlib,
+  whose output differed between CI's Node and the flake's, so the flake's page stays byte for byte npm's. The inflater checks the size it gets back, and a Rapier upgrade that moved its
+  initialisation, carried two, or carried bytes that are not WebAssembly stops the build instead of shipping a page
+  whose physics cannot start. `dist/index.html` went from 14,806,761 bytes to 12,005,697; the page size limit in
+  `tools/verify/page_dist.mjs` is unchanged. `src/rapierDeflate.test.ts` deflates the installed package, runs the
+  page's inflater in Node and gets the package's module back byte for byte, and checks the built page carries no
+  plain copy; the browser smoke boots, walks and drives on it.
 - **The prosthetics atelier sells its four limbs.** They were on order, waiting for limb slots the wardrobe gained
   under other names (`prosthetic` and `prostheticFinish`, `look.ts` PROSTHETIC and WARDROBE.prostheticFinish). Each
   line now sets the limb and its finish, and its name says the side: the brushed-titanium right arm (chrome), the
@@ -1682,9 +1822,72 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   contained or the realm is halted; on a map without workplaces (a surveyed region) it says the lanes read around
   where you started and that nobody is asked over. The swarm stays at work after the city opens (`lanes`, `lanes
   stop`), and the MIC chip counts a team at more than four desks in workplaces ("Team 24 · 16 workplaces") rather
-  than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from where the workplace stage leaves
-  the visitor, checks that nobody within earshot could be asked over there, and reads the swarm back with `lanes`.
-
+  than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from
+  where the workplace stage leaves the visitor, checks that nobody within earshot could be asked over there, and reads
+  the swarm back with `lanes`.
+- **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
+  an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid
+  ComputePipeline "crowd.simulate"] is invalid due to a previous error. - While Validating GetBindGroupLayout (0)". Not
+  a limit the crowd was over: every pass sits within the limits WebGPU promises every device (simulate binds exactly its
+  eight storage buffers, a 128-wide workgroup, an 11 KB uniform, no extension). The pipelines were built with
+  `createComputePipeline` inside a validation error scope, which keeps only the first validation error; a GPU driver
+  refusing to build a kernel is an *internal* error in WebGPU, which that scope never sees, so the first validation
+  error it saw was the follow-on one, which names nothing. `src/01_Initialize_World/gpuPipelines.ts` (new) compiles a
+  module's passes with `createComputePipelineAsync`, whose `GPUPipelineError` says whether WebGPU refused the shader
+  (validation) or the GPU's own compiler did (internal), in the browser's words, with the module's compilation messages
+  (line, column and the source line quoted); the crowd's buffers, bind groups and spawn stand under validation,
+  out-of-memory and internal scopes at once (the page's cull and the flow field's solver the same). When the full
+  simulate pass is refused for anything but an error in the WGSL itself (the GPU's own compiler, which Chrome reports as
+  an internal error and Safari as validation; a pipeline rule), `crowdSim.ts` climbs down a ladder of kernels
+  (`crowdCompute.ts` `CROWD_KERNELS`), every refusal kept for the record: the same module at 64-wide workgroups (a phone
+  GPU's core seats fewer threads of a kernel this size than a workgroup of 128 asks for), then the light kernel,
+  `crowdWayLite.wgsl` in the place of `crowdWay.wgsl` (new: the room and lot routing moved out of `crowd.wgsl`, the
+  functions unchanged), which walks someone asked over indoors by the straight line, or round the first piece of
+  furniture in its way by a corner, and onto a lot by the straight line, instead of the trail following and the
+  lot-corner search; the First-Law sensing, the contact, the containment, the detour round standing cars, the commute
+  and the flocking are the same `crowd.wgsl` on every rung. The recovery card has its own words for the driver ("This
+  device's graphics driver couldn't build the crowd": update Chrome and the phone's system software; on an iPhone, iOS,
+  whose graphics come with it), names the adapter when the boot fails before the engine stands, and its details carry
+  the driver's words, the kernel it refused and the worker's uncaptured GPU errors; `hardware` at the console names the
+  kernel that runs on a row of its own. `crowdCompute.test.ts` pins every pass of every kernel within the default limits
+  (bindings a stage, workgroup size and storage, the uniform, every buffer and every dispatch at the largest crowd), the
+  narrow kernel as the full module at half the width, the light kernel's drops and keeps, and the ladder with its
+  messages; `bootFailure.test.ts` and `commands.test.ts` pin the card's words and the console's row. The browser job now
+  compiles every rung's five passes under Chrome's software WebGPU as well (`tools/browser/kernels.mjs`, `checks.sh
+  page-kernels`), the evidence the fallback kernels keep compiling where no runner has a phone's GPU. Whether that
+  phone's driver accepts the narrower or the light kernel is not known until it is tried on one; if it refuses them all,
+  the card now shows what it said. Manual: When the city cannot start or stops.
+- **The page no longer ships its shaders' comments.** The `.wgsl` files are imported as text, so the single file carried
+  every comment in them, and the crowd's shaders twice (the page's bundle and the physics worker's): about 83 KB that no
+  GPU reads. With the light kernel's file, the phone layouts, the context growth and the customizer's shoes, frames,
+  watch and pin together the page came out 8 KB over its byte budget (`tools/verify/page_dist.mjs`); rather than raise
+  the budget, the build now hands over each shader without its comments (`vite.config.ts` `leanShaders` in the page's
+  plugin list and the workers', `src/01_Initialize_World/leanWgsl.node.ts`; the dev server serves the same text). Only a
+  comment's text and the spaces before it go: every line keeps its number, so a compilation message on the recovery card
+  still names the file's line, and each file's licence header stays word for word. `leanWgsl.test.ts` pins every shader
+  line by line against its source, WGSL's comment rules (nested blocks, every line break the language has) and the
+  plugin in both lists; `tools/browser/kernels.mjs` compiles that same text in the browser job.
+- **A chat-format server with a small window answers a long prompt instead of refusing it.** The chat format
+  (`09_Cognition/localCompute.ts` `chat`, used for llama-server, LM Studio, vLLM, SGLang and Ollama's chat format)
+  always asks for answers of up to 2,048 tokens, and SGLang from 0.5.10 and vLLM up to 0.15 (by their sources,
+  vLLM's read back to 0.5.5) refuse with 400 when the prompt and that cap together are longer than the model's window
+  (SGLang up to 0.5.10.post1 also when they fill it exactly), so the agent gave no answer, only a sentence saying the
+  server failed (400). Now a 400 that says, in SGLang's sentence or either of vLLM's (one up to 0.10.0, another from
+  0.10.1), the window and the server's count of the prompt is sent once more, the same body with the answer cap
+  lowered to one token under the window less the prompt, when the window less the prompt is at least 256 tokens
+  (`ANSWER_MIN_TOKENS`, a starting value); with less, one sentence says the prompt leaves no room in the model's
+  window. SGLang before 0.5.10 sends this refusal inside a streamed answer, and vLLM 0.16 to 0.31 in other words with
+  the prompt's count cut short, so there it reads as before; vLLM 0.32 lowers the cap itself. The cap only comes
+  down, by the server's own numbers and never an estimate: a request a server accepts is sent byte for byte as
+  before, any other 400 reads as before, the retry is sent once and under the same stop and waits, and one that
+  cannot reach the server or is refused this page (403) is the server's failure, so auto neither looks again nor
+  answers twice for it. `localCompute.test.ts` pins the three sentences, copied from the servers' sources with the
+  file and line, against fake servers on this machine: each retries with one token under the window less the prompt,
+  2,048 and 256 tokens of room retry (with 2,047 and 255) and 255 does not, a second refusal is the answer, a 403 on
+  the retry or one that cannot reach the server is the server's failure and any other failure of it keeps its own
+  code, a stop during the retry closes it, so does what is left of the answer's one first-piece wait, and other
+  bodies and statuses are as before; `router.auto.test.ts` shows one ask sends at most one more request for it. No
+  real SGLang or vLLM ran it.
 - **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×
   844), and held sideways it was squeezed into a strip 30 to 50 px tall above the thumbs, over her chip. Now
   (`onboarding/FirstWalk.tsx`): anywhere but the wide side-by-side place it steps aside while her card is open; upright

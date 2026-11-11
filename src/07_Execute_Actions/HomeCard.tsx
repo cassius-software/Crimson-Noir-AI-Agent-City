@@ -4,53 +4,54 @@
 /**
  * Why does this file exist? It is the card on a home's doorstep: B, E or the HUD's chip inside one of the seven homes
  * (01_Initialize_World/properties.ts) opens it. For a visitor it shows that home's deed (storeCatalog.ts, line 224 +
- * the home's index): the home's name and the address the host supplies, a line about the home (homeView.ts
- * CITY_LINES), its level and its price, and then Buy, or Claim (free) for the free loft, through the one shopkeeper
- * (shopkeeper.ts), so the doorstep and Lintel & Lumen's card can never disagree about what is owned or what it cost.
- * When the gate refuses, the card shows its reason instead; an owner sees "Yours". The purse line says whose credits
- * these are, as the store card's does. The Penthouse and the Sky-Mansion are sold for now as the residences at the
- * foot of their towers, and the card says that the sky floor opens later.
+ * the home's index): the home's name and the address the host supplies, a line about the home (homeView.ts CITY_LINES),
+ * its level and its price, and then Buy, or Claim (free) for the free loft, through the one shopkeeper (shopkeeper.ts),
+ * so the doorstep and Lintel & Lumen's card can never disagree about what is owned or what it cost. When the gate
+ * refuses, the card shows its reason instead; an owner sees "Yours". The purse line says whose credits these are, as
+ * the store card's does. The Penthouse and the Sky-Mansion each have a sky floor up the tower in the city (homeGrid.ts
+ * rooms 7, 8): a floor row rides there and back (FurnishHooks.tower).
  *
  * For the owner it is where the home is furnished, unless the engine says why not yet: in a network room, which replays
  * the walk and knows nothing of the furniture, the deed view says so (leaving the home or putting on a headset closes
- * the card: App). The furnishing view has three tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
+ * the card: App). The furnishing view has five tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
  * with how many of its cap stand here, each other one with its price and Order, through the same shopkeeper's gate, or
  * the gate's reason; and the pieces the saved layout keeps that are not placed here, with Clear), the floor and the
- * walls (free finishes). Under them is the home's floor plan, 32 by 32 cells (02_Define_The_Rules/homeGrid.ts): the
- * back at the top and the doorway at the bottom under an arrow, only this home's own rows (a smaller home a shorter
- * plan), the apron in front of the doorway hatched, every piece in its finish's colour with its initial, a
- * workstation's seat dotted, the people standing in the home as dots, and the cursor with the piece in hand, green
- * where it fits and red where it does not, with the reason said under the plan (homeLayout.ts canPlace, in words). The
- * engine shows the same draft in the city: the piece in hand as a ghost and a camera under the ceiling looking at the
- * cursor (setDraft), and a press on the city's canvas picks a cell through that camera (a mouse hovering the plan moves
- * the cursor; hovering the city does not, since that camera follows the cursor). The visit itself, its state and every
- * edit, is furnishVisit.ts's Visit: every committed edit goes to the host as the whole record, which saves it and
- * redraws the homes and their solids; a piece picked up leaves the home until it is placed again, and Undo, another
- * line or closing the card puts it back where it was. Undo takes back 20 edits.
+ * walls (free finishes), Rest (a rest at home, in the host's words), Staff (the player's own agents posted at the
+ * workstations here, through the host), and Tower (the ride). Under them is the floor plan, 32 by 32 cells (a sky
+ * floor's 20 by 20; 02_Define_The_Rules/homeGrid.ts): the back at the top and the doorway at the bottom under an arrow,
+ * only this home's own rows (a smaller home a shorter plan), the apron in front of the doorway hatched, every piece in
+ * its finish's colour with its initial, a workstation's seat dotted, the people standing in the home as dots, and the
+ * cursor with the piece in hand, green where it fits and red where it does not, with the reason said under the plan
+ * (homeLayout.ts canPlace, in words). The engine shows the same draft in the city: the piece in hand as a ghost and a
+ * camera under the ceiling looking at the cursor (setDraft), and a press on the city's canvas picks a cell through that
+ * camera (a mouse hovering the plan moves the cursor; hovering the city does not, since that camera follows the
+ * cursor). The visit, its state and every edit, is furnishVisit.ts's Visit: every committed edit goes to the host as
+ * the whole record, which saves it and redraws the homes and their solids; a piece picked up leaves the home until it
+ * is placed again, and Undo, another line or closing the card puts it back where it was. Undo takes back 20 edits.
  *
- * Esc, B, the close button or Done puts it away through the host. The listeners run in the capture phase, as the
- * store card's does, and take only the keys they handle, never H (the HUD's) nor ` (the console's, whose opening puts
- * the card away). In the deed view a pad's south face button presses the focused button and its d-pad moves focus
+ * Esc, B, the close button or Done puts it away through the host. The listeners run in the capture phase, as the store
+ * card's does, and take only the keys they handle, never H (the HUD's) nor ` (the console's, whose opening puts the
+ * card away). In the deed view a pad's south face button presses the focused button and its d-pad moves focus
  * (padNav.ts); its east button and Menu close. In the furnishing view the card reads the pad itself, every animation
- * frame (padEdges: a button held when the view opens counts only from its next press, and the focus walk is off so
- * one press never both presses a button and places): the d-pad and the left stick move the cursor, A places, X
- * removes, Y turns, the shoulders change the piece (or the finish), the triggers the tab, View undoes, the right
- * stick turns the camera. Every button is at least 48 px for a finger, 8 px apart.
+ * frame (padEdges: a button held when the view opens counts only from its next press, and the focus walk is off so one
+ * press never both presses a button and places): the d-pad and the left stick move the cursor, A places, X removes, Y
+ * turns, the shoulders change the piece (or the finish), the triggers the tab, View undoes, the right stick turns the
+ * camera. Every button is at least 48 px for a finger, 8 px apart.
  * What breaks if it is removed? A home's deed can be bought only at the design house, the free loft cannot be claimed
  * where it stands, a visitor walking into a home has nothing to tell them what it is or what it costs, and nothing
  * can be furnished.
  */
 import { useEffect, useMemo, useReducer, useRef, useState, type RefObject } from 'react'
 import { SHOP_INFO } from '../01_Initialize_World/storefronts.ts'
-import { APRON, DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
+import { DEPTH, GRID, HOME_PIECES, deedOf, planOf } from '../02_Define_The_Rules/homeGrid.ts'
 import { FLOORS, WALLS, footprint, pieceCells, shapeOf, type Finish, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
 import { TOUCH } from '../04_Connect_Hardware/touchLayout.ts'
 import { finishOf, freshHomes, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import {
-  FocusOrigin, STICK, TABS, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
+  FocusOrigin, REST_TAB, SKY_WALLS, STAFF_TAB, STICK, TABS, TOWER_TAB, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
 } from './furnishVisit.ts'
-import { CITY_LINES, type Draft } from './homeView.ts'
+import { CITY_LINES, type Draft, type FloorWhere } from './homeView.ts'
 import { padEdges, padsFor, readPads, usePadNav } from './padNav.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE, credits, itemById } from './storeCatalog.ts'
@@ -61,8 +62,8 @@ export type { FurnishHooks }
 export interface HomeCardProps {
   /** Show the card (the host passes false while the veil covers the page, the console is open or the city is halted). */
   visible: boolean
-  /** The home whose deed it shows, by its property index 0..6, or null. */
-  home: number | null
+  /** The room whose card it is (a hall by its property index 0..6, or a sky floor's 7 or 8), or null: the deed shown is deedOf(room). */
+  room: number | null
   /** The one shopkeeper the page buys through. */
   keeper: Shopkeeper
   /** The home's name and its street address, as the host knows them (the city's grid, or a region's own places). */
@@ -93,11 +94,13 @@ const DEED = 224
 /** No home furnished: the record when the host hands none. */
 const NO_RECORD: HomeRecord = freshHomes()
 
-/** What the two tower deeds are until their sky floors open: the residence at the foot of the tower. */
+/** What the two tower deeds are: the residence at the foot of the tower, with a sky floor up it (in the city). */
 const SKY_NOTES: Readonly<Record<number, string>> = Object.freeze({
-  3: 'The residence at the foot of Crimson Tower (the sky floor opens later).',
-  6: 'The residence at the foot of the Crown Spire (the sky floor opens later).',
+  3: 'The residence at the foot of Crimson Tower, with a sky floor up the tower.',
+  6: 'The residence at the foot of the Crown Spire, with a sky floor up the spire.',
 })
+/** What a tower deed says instead where the map has no sky floor (Lakefront Metro). */
+const NO_SKY = 'In this map the deed is a ground-floor home, with no sky floor.'
 
 /**
  * Whether a key press puts the card away: Esc, or B (the key that opens it) unless it is held down, chorded or typed
@@ -158,6 +161,7 @@ const GLASS_COLOUR = '#bfdbfe'
 const PLAN = Object.freeze({
   floor: '#f1f5f9', floorDark: '#1e293b', line: 'rgba(15,23,42,0.08)', lineDark: 'rgba(255,255,255,0.08)',
   hatch: '#94a3b8', person: '#f59e0b', cursor: '#0ea5e9', ok: '#16a34a', bad: '#dc2626', door: '#0d9488',
+  staff: '#7c3aed',
 })
 /** The band under the plan where the doorway's arrow stands, px. */
 const DOOR_BAND = 14
@@ -174,16 +178,17 @@ const PAD_ACT: Readonly<Record<number, Act>> = Object.freeze({
 
 /**
  * The furnishing view's action for a key press: the arrows or W A S D move the cursor (Shift: four cells), Enter or
- * Space places (or picks up), R turns, Delete, Backspace or X removes, Q and E change the piece, 1 2 3 the tab, Z or
- * Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish instead. Never H (the HUD's)
- * nor ` (the console's), never Esc or B (the card's close listener has those), and no chord but Ctrl (or Cmd) + Z.
+ * Space places (or picks up; in the Rest tab, rests; in the Staff tab, posts; in the Tower tab, rides), R turns, Delete, Backspace or X removes
+ * (in the Staff tab, stands down), Q and E change the piece (in the Staff tab, the agent), 1 to 5 the tab (6 Tower, of `tabs` tabs), Z or Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish
+ * instead. Never H (the HUD's) nor ` (the console's), never Esc or B (the card's close listener has those), and no
+ * chord but Ctrl (or Cmd) + Z.
  * Null: not this view's key, so the page gets it.
  */
-function keyAct(e: KeyboardEvent, tab: number): Act | null {
+function keyAct(e: KeyboardEvent, tab: number, tabs: number = TABS.length): Act | null {
   if (e.code === 'KeyZ' && !e.altKey) return 'undo'
   if (e.ctrlKey || e.metaKey || e.altKey) return null
   const n = e.shiftKey ? 4 : 1
-  const finish = tab !== 0
+  const finish = tab === 1 || tab === 2
   switch (e.code) {
     case 'ArrowUp': case 'KeyW': return { move: [0, -n] }
     case 'ArrowDown': case 'KeyS': return { move: [0, n] }
@@ -199,6 +204,9 @@ function keyAct(e: KeyboardEvent, tab: number): Act | null {
     case 'Digit1': return { tab: 0 }
     case 'Digit2': return { tab: 1 }
     case 'Digit3': return { tab: 2 }
+    case 'Digit4': return { tab: 3 }
+    case 'Digit5': return { tab: 4 }
+    case 'Digit6': return tabs > TOWER_TAB ? { tab: TOWER_TAB } : null
     case 'KeyC': return 'view'
     default: return null
   }
@@ -228,6 +236,7 @@ function people(blocked: Uint8Array): { x: number; y: number }[] {
 
 /** What the plan draws. */
 interface PlanScene {
+  /** The room (its plan: homeGrid.ts planOf). */
   home: number
   /** One cell's side, CSS px. */
   cell: number
@@ -237,6 +246,9 @@ interface PlanScene {
   cursor: { c: number; r: number }
   blocked: Uint8Array
   dark: boolean
+  /** The agents posted here (Visit.staffMarks), and the workstation under the cursor in the Staff tab. */
+  staff: readonly { x: number; y: number; initial: string; out: boolean }[]
+  seat: Piece | null
 }
 
 /** Fills piece `p`'s cells: those its solid blocks in `colour`, the walkable rest fainter, a seat dotted, and its initial. */
@@ -265,30 +277,32 @@ function drawPiece(ctx: CanvasRenderingContext2D, p: Piece, s: number, colour: s
 
 /**
  * Draws the floor plan: the back wall at the top and the doorway at the bottom (an arrow under the apron pointing in),
- * column c growing to the right as seen from the doorway; only the home's own rows (a shallower home is a shorter plan,
- * so the first screen is never a dark band of rows the home does not have), the apron hatched, every piece, the people
- * standing here as dots, and the cursor with the piece in hand, green where it fits and red where it does not. Drawn in
- * the grid's own rows, shifted up by the home's first row. Sharp at the screen's pixel ratio.
+ * column c growing to the right as seen from the doorway; only the room's own rows and columns (a shallower home is a
+ * shorter plan, so the first screen is never a dark band of rows the home does not have; a sky floor's is its own 20 by
+ * 20), the apron (a sky floor's arrival) hatched, every piece, the people standing here as dots, and the cursor with the
+ * piece in hand, green where it fits and red where it does not. Drawn in the grid's own rows and columns, shifted by the
+ * plan's first row and column. Sharp at the screen's pixel ratio.
  */
 function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
   const ctx = el?.getContext('2d')
-  if (!el || !ctx) return
-  const first = GRID - DEPTH[o.home]
-  const s = o.cell, w = GRID * s, h = DEPTH[o.home] * s + DOOR_BAND
+  const p = planOf(o.home)
+  if (!el || !ctx || !p) return
+  const first = p.r0, end = p.r1 + 1, left = p.c0, right = p.c1 + 1, keep = p.keep
+  const s = o.cell, w = (right - left) * s, h = (end - first) * s + DOOR_BAND
   const ratio = clamp(Math.round(globalThis.devicePixelRatio || 1), 1, 3)
   if (el.width !== w * ratio || el.height !== h * ratio) { el.width = w * ratio; el.height = h * ratio }
-  ctx.setTransform(ratio, 0, 0, ratio, 0, -first * s * ratio)
-  ctx.clearRect(0, first * s, w, h)
+  ctx.setTransform(ratio, 0, 0, ratio, -left * s * ratio, -first * s * ratio)
+  ctx.clearRect(left * s, first * s, w, h)
   ctx.fillStyle = o.dark ? PLAN.floorDark : PLAN.floor
-  ctx.fillRect(0, first * s, w, (GRID - first) * s)
+  ctx.fillRect(left * s, first * s, w, (end - first) * s)
   ctx.strokeStyle = o.dark ? PLAN.lineDark : PLAN.line
   ctx.lineWidth = 1
   ctx.beginPath()
-  for (let i = 0; i <= GRID; i++) { ctx.moveTo(i * s + 0.5, first * s); ctx.lineTo(i * s + 0.5, GRID * s) }
-  for (let r = first; r <= GRID; r++) { ctx.moveTo(0, r * s + 0.5); ctx.lineTo(w, r * s + 0.5) }
+  for (let i = left; i <= right; i++) { ctx.moveTo(i * s + 0.5, first * s); ctx.lineTo(i * s + 0.5, end * s) }
+  for (let r = first; r <= end; r++) { ctx.moveTo(left * s, r * s + 0.5); ctx.lineTo(right * s, r * s + 0.5) }
   ctx.stroke()
-  // The apron, hatched: nothing is ever placed in front of the doorway.
-  const ax = APRON.c0 * s, ay = APRON.r0 * s, aw = (APRON.c1 - APRON.c0 + 1) * s, ah = (APRON.r1 - APRON.r0 + 1) * s
+  // The apron (a sky floor's arrival), hatched: nothing is ever placed on the way in.
+  const ax = keep.c0 * s, ay = keep.r0 * s, aw = (keep.c1 - keep.c0 + 1) * s, ah = (keep.r1 - keep.r0 + 1) * s
   ctx.save()
   ctx.beginPath()
   ctx.rect(ax, ay, aw, ah)
@@ -305,6 +319,18 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     ctx.arc(x * s, y * s, Math.max(2.5, s * 0.32), 0, Math.PI * 2)
     ctx.fill()
   }
+  // The agents posted here: a violet disc with their initial at the station, faded while they are out with the player.
+  ctx.font = `700 ${Math.max(8, Math.floor(s * 0.8))}px system-ui, sans-serif`
+  for (const m of o.staff) {
+    ctx.globalAlpha = m.out ? 0.45 : 1
+    ctx.fillStyle = PLAN.staff
+    ctx.beginPath()
+    ctx.arc(m.x * s, m.y * s, Math.max(4, s * 0.55), 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(m.initial, m.x * s, m.y * s)
+  }
+  ctx.globalAlpha = 1
   // The piece in hand where it would go, and the cursor round its footprint (one cell with nothing in hand).
   const colour = o.hand === null ? PLAN.cursor : o.ok ? PLAN.ok : PLAN.bad
   if (o.hand) {
@@ -312,16 +338,16 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     drawPiece(ctx, o.hand, s, colour, o.dark)
     ctx.globalAlpha = 1
   }
-  const f = (o.hand && footprint(o.hand)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }
+  const f = (o.hand && footprint(o.hand)) ?? (o.seat && footprint(o.seat)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }
   ctx.strokeStyle = colour
   ctx.lineWidth = 2
   ctx.strokeRect(f.c * s + 1, f.r * s + 1, f.cols * s - 2, f.rows * s - 2)
-  const mid = ((APRON.c0 + APRON.c1 + 1) / 2) * s
+  const mid = ((keep.c0 + keep.c1 + 1) / 2) * s
   ctx.fillStyle = PLAN.door
   ctx.beginPath()
-  ctx.moveTo(mid, GRID * s + 2)
-  ctx.lineTo(mid - 7, GRID * s + DOOR_BAND - 1)
-  ctx.lineTo(mid + 7, GRID * s + DOOR_BAND - 1)
+  ctx.moveTo(mid, end * s + 2)
+  ctx.lineTo(mid - 7, end * s + DOOR_BAND - 1)
+  ctx.lineTo(mid + 7, end * s + DOOR_BAND - 1)
   ctx.closePath()
   ctx.fill()
 }
@@ -342,9 +368,39 @@ function useWidth(ref: RefObject<HTMLElement | null>, active: boolean): number {
   return width
 }
 
+// ---------------------------------------------------------------- the sky floor's row
+
+/** The ride's button words for a screen reader: up to the sky floor and how far, or down inside the doorway. */
+const rideLabel = (f: FloorWhere): string => (f.up ? `Go up to the sky floor, ${f.metres} metres up` : "Go down to the home's doorway")
+
+/**
+ * The sky floor's row (the deed view's, and the Tower tab's panel): how far up it is, and why the ride waits (a live
+ * line the button points at); in the deed view the ride's button (`onRide`), in the Tower tab how its keys ride (the
+ * toolbar has its button there).
+ */
+function FloorRow({ id, f, t, onRide }: { id: string; f: FloorWhere; t: Theme; onRide?: () => void }) {
+  const off = f.why !== null
+  return (
+    <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-floor={f.up ? 'up' : 'down'}>
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold">Sky floor</div>
+        <p className="text-[12px] leading-snug">{f.up ? `${f.metres} m up the tower, behind clear glass on all four sides.` : `You are ${f.metres} m up the tower.`}</p>
+        {!onRide && <p className={`text-[12px] leading-snug ${t.muted}`}>{"Enter, Space or the pad's south button rides."}</p>}
+        <p id={id} className={`text-[12px] leading-snug ${t.muted}`} role="status" aria-live="polite" data-floor-why>{f.why ?? ''}</p>
+      </div>
+      {onRide && (
+        <button type="button" onClick={onRide} disabled={off} aria-label={rideLabel(f)} aria-describedby={off ? id : undefined} className={`${BUTTON} px-5 font-semibold ${off ? `border ${t.off} cursor-not-allowed` : t.buy}`} data-action="floor" data-touch>
+          {f.up ? 'Go up' : 'Go down'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------- the furnishing view
 
 interface FurnisherProps {
+  /** The room furnished: a hall's property index, or a sky floor's 7 or 8. */
   home: number
   keeper: Shopkeeper
   record: HomeRecord
@@ -369,15 +425,18 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
   const fit = visit.fit()
   const hand = visit.hand()
   const verdict = visit.verdict(fit)
+  const staffTab = visit.tab === STAFF_TAB, seat = staffTab ? visit.station(fit) : null
   const under = hand ? null : visit.pieceAt(fit.placed, visit.cursor.c, visit.cursor.r)
   const finish = finishOf(visit.record, home)
   const counts = new Map<number, number>()
   for (const p of fit.placed) counts.set(p.id, (counts.get(p.id) ?? 0) + 1)
   const rows = keeper.rows('designHouse', null).filter((r) => r.item.kind === 'furniture')
-  const cell = Math.max(9, Math.floor(Math.min(width - 40, 384) / GRID))
+  const plan = visit.plan, cols = plan.c1 - plan.c0 + 1, sky = home >= DEPTH.length
+  const cell = Math.max(9, Math.floor(Math.min(width - 40, 384) / cols))
+  const floor = hooks.tower?.where(home) ?? null
   const where = placeWords(home, visit.cursor)
   const reason = visit.said
-    || (hand && verdict ? `${nameOf(hand.id)} at ${where}: ${verdictWords(verdict, hand.id)}`
+    || (staffTab ? visit.staffLine() : hand && verdict ? `${nameOf(hand.id)} at ${where}: ${verdictWords(verdict, hand.id, home)}`
       : under ? `${nameOf(under.id)} at ${where}: Place picks it up, Remove takes it out`
         : `Nothing in hand at ${where}: choose a piece in the strip`)
   const { c, r } = visit.cursor
@@ -405,7 +464,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
     const onKey = (e: KeyboardEvent) => {
       origin.key(e.code)
       if (isEditableTarget(e.target)) return
-      const a = keyAct(e, visit.tab)
+      const a = keyAct(e, visit.tab, visit.tabCount)
       if (a === null) return
       // A button reached with Tab keeps Enter and Space: they press it, as they press any button. One a pointer left
       // focused does not: they place.
@@ -500,10 +559,10 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
     const el = planRef.current
     if (!el) return
     const cellOf = (e: PointerEvent): { c: number; r: number } | null => {
-      const b = el.getBoundingClientRect(), size = b.width / GRID
+      const p = visit.plan, b = el.getBoundingClientRect(), size = b.width / (p.c1 - p.c0 + 1)
       if (!(size > 0)) return null
-      const at = { c: Math.floor((e.clientX - b.left) / size), r: visit.first + Math.floor((e.clientY - b.top) / size) }
-      return at.c >= 0 && at.c < GRID && at.r >= visit.first && at.r < GRID ? at : null
+      const at = { c: p.c0 + Math.floor((e.clientX - b.left) / size), r: p.r0 + Math.floor((e.clientY - b.top) / size) }
+      return at.c >= p.c0 && at.c <= p.c1 && at.r >= p.r0 && at.r <= p.r1 ? at : null
     }
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return
@@ -528,9 +587,13 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
     }
   }, [visit])
   useEffect(() => {
-    drawPlan(planRef.current, { home, cell, placed: fit.placed, hand, ok, cursor: { c, r }, blocked: visit.blocked, dark })
+    drawPlan(planRef.current, { home, cell, placed: fit.placed, hand, ok, cursor: { c, r }, blocked: visit.blocked, dark, staff: visit.staffMarks(), seat: seat?.p ?? null })
   })
 
+  const restId = `home-rest-${home}`
+  const staffId = `home-staff-${home}`
+  const towerId = `home-tower-${home}`
+  const inHandName = visit.inHand()
   const swatch = (colour: string) => <span aria-hidden="true" className={`inline-block h-5 w-5 shrink-0 rounded-full border ${t.rule}`} style={{ background: colour }} />
   const undoOff = visit.undoSteps.length === 0
   return (
@@ -545,8 +608,8 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         data-placed={fit.placed.length}
         data-view={view}
       >
-        <div role="tablist" aria-label="What to furnish" className="mt-2 flex" style={GAP}>
-          {TABS.map((name, i) => (
+        <div role="tablist" aria-label={floor ? 'Furnish, rest, staff or ride' : 'Furnish, rest or staff'} className="mt-2 flex flex-wrap" style={GAP}>
+          {(floor ? [...TABS, 'Tower'] : TABS).map((name, i) => (
             <button
               key={name}
               type="button"
@@ -606,7 +669,9 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
           </ul>
         )}
 
-        {visit.tab !== 0 && (
+        {visit.tab === 2 && sky && <p className={`mt-3 text-[12px] leading-snug ${t.muted}`} data-finishes="walls">{SKY_WALLS}.</p>}
+
+        {(visit.tab === 1 || (visit.tab === 2 && !sky)) && (
           <div className="mt-3 grid grid-cols-2" style={GAP} role="radiogroup" aria-label={visit.tab === 1 ? 'Floor' : 'Walls'} data-finishes={visit.tab === 1 ? 'floor' : 'walls'}>
             {(visit.tab === 1 ? FLOORS : WALLS).map((line, i) => {
               const on = (visit.tab === 1 ? finish.floor : finish.wall) === i
@@ -630,6 +695,62 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
           </div>
         )}
 
+        {visit.tab === REST_TAB && (
+          <div id={restId} className={`mt-3 rounded-2xl border px-3 py-2 text-[12px] leading-snug ${t.rule}`} data-rest>
+            {(hooks.rest?.offer(home).lines ?? ['Resting is not offered here']).map((line) => <p key={line}>{line}</p>)}
+            <p className={`mt-1 ${t.muted}`}>{"Enter, Space, the pad's south button or Rest below rests here."}</p>
+          </div>
+        )}
+
+        {visit.tab === TOWER_TAB && floor && <FloorRow id={towerId} f={floor} t={t} />}
+
+        {staffTab && (
+          <div id={staffId} className="mt-3" data-staff>
+            <div role="group" className="flex overflow-x-auto pb-1" style={GAP} aria-label="Your agents" data-agents>
+              {visit.staffAgents().map((a) => {
+                const at = visit.whereIs(a)
+                return (
+                  <button
+                    key={a.name}
+                    type="button"
+                    onClick={() => visit.run({ agent: a.name })}
+                    aria-pressed={inHandName === a.name}
+                    aria-label={`${a.name}: ${at}`}
+                    className={`${BUTTON} shrink-0 border px-3 text-left leading-tight ${inHandName === a.name ? t.pillOn : t.pill}`}
+                    data-action="agent"
+                    data-name={a.name}
+                    data-touch
+                  >
+                    <span className="block font-semibold">{a.name}</span>
+                    <span className="block text-[12px]" data-where>{at}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div role="group" className="mt-2 grid grid-cols-2" style={GAP} aria-label="Workstations here" data-stations>
+              {visit.stations(fit).map((p, i) => {
+                const who = visit.who(p)?.name ?? 'Nobody'
+                return (
+                  <button
+                    key={`${p.c},${p.r}`}
+                    type="button"
+                    onClick={() => visit.run({ press: { c: p.c, r: p.r } })}
+                    aria-pressed={seat?.n === i + 1}
+                    aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}
+                    className={`${BUTTON} min-w-0 break-words border px-3 text-left leading-tight ${seat?.n === i + 1 ? t.pillOn : t.pill}`}
+                    data-action="station"
+                    data-seat={`${p.c},${p.r}`}
+                    data-touch
+                  >
+                    Workstation {i + 1} · {who}
+                  </button>
+                )
+              })}
+            </div>
+            <p className={`mt-2 text-[12px] leading-snug ${t.muted}`}>Choose an agent, move the cursor onto a workstation and press Post. They stand at it between visits, and step away while they are out with you.</p>
+          </div>
+        )}
+
         {fit.stored.length > 0 && (
           <div className={`mt-3 flex flex-wrap items-center rounded-2xl border px-3 py-2 ${t.rule}`} style={GAP} data-stored={fit.stored.length}>
             <span className="min-w-0 flex-1 text-[12px] leading-snug">
@@ -642,20 +763,26 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         <canvas
           ref={planRef}
           role="img"
-          aria-label={`Floor plan: the back wall at the top, the doorway at the bottom; ${fit.placed.length} of ${HOME_PIECES} pieces placed; the cursor at ${where}`}
+          aria-label={`Floor plan: ${sky ? 'the far windows at the top, the arrival' : 'the back wall at the top, the doorway'} at the bottom; ${fit.placed.length} of ${HOME_PIECES} pieces placed; the cursor at ${where}${staffTab ? `; ${visit.staffMarks().length} of ${visit.stations(fit).length} workstations staffed` : ''}`}
           className="mx-auto mt-3 block touch-none select-none"
-          style={{ width: GRID * cell, height: DEPTH[home] * cell + DOOR_BAND }}
+          style={{ width: cols * cell, height: (plan.r1 - plan.r0 + 1) * cell + DOOR_BAND }}
           data-plan
         />
         <p className="mt-2 min-h-[2.5rem] text-[12px] leading-snug" role="status" aria-live="polite" data-reason>{reason}</p>
       </div>
 
       <div role="toolbar" aria-label="Furnishing" className={`flex flex-wrap items-center border-t px-5 pt-3 ${t.rule}`} style={GAP}>
-        <button type="button" onClick={() => visit.run('prev')} aria-label={visit.tab === 0 ? 'Previous piece (Q)' : 'Previous finish (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
-        <button type="button" onClick={() => visit.run('next')} aria-label={visit.tab === 0 ? 'Next piece (E)' : 'Next finish (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
+        <button type="button" onClick={() => visit.run('prev')} aria-label={staffTab ? 'Previous agent (Q)' : visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
+        <button type="button" onClick={() => visit.run('next')} aria-label={staffTab ? 'Next agent (E)' : visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
         <button type="button" onClick={() => visit.run('rotate')} aria-label="Rotate the piece (R)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="rotate" data-touch>Rotate</button>
-        <button type="button" onClick={() => visit.run('place')} aria-label={hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>Place</button>
-        <button type="button" onClick={() => visit.run('remove')} aria-label="Remove the piece (Delete)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>Remove</button>
+        {visit.tab === REST_TAB ? (
+          <button type="button" onClick={() => visit.run('place')} aria-label="Rest here (Enter)" aria-describedby={restId} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="rest" data-touch>Rest</button>
+        ) : visit.tab === TOWER_TAB && floor ? (
+          <button type="button" onClick={() => visit.run('place')} disabled={floor.why !== null} aria-label={`${rideLabel(floor)} (Enter)`} aria-describedby={towerId} className={`${BUTTON} px-4 font-semibold ${floor.why !== null ? `border ${t.off} cursor-not-allowed` : t.buy}`} style={TARGET} data-action="floor" data-touch>{floor.up ? 'Go up' : 'Go down'}</button>
+        ) : (
+          <button type="button" onClick={() => visit.run('place')} aria-label={staffTab ? (inHandName ? `Post ${inHandName} at the workstation under the cursor (Enter)` : 'Post (Enter)') : hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} aria-describedby={staffTab ? staffId : undefined} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>{staffTab ? 'Post' : 'Place'}</button>
+        )}
+        <button type="button" onClick={() => visit.run('remove')} aria-label={staffTab ? 'Stand down the agent at this workstation (Delete)' : 'Remove the piece (Delete)'} className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>
         <button type="button" onClick={() => visit.run('undo')} disabled={undoOff} aria-label="Undo (Z)" className={`${BUTTON} border px-3 ${undoOff ? `${t.off} cursor-not-allowed` : t.pill}`} style={TARGET} data-action="undo" data-touch>Undo</button>
         <button type="button" onClick={() => visit.run('view')} aria-label="Turn the camera (C)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="view" data-touch>View</button>
         <button type="button" onClick={onClose} aria-label="Done (Esc)" className={`${BUTTON} px-4 font-semibold ${t.primary}`} style={TARGET} data-action="done" data-touch>Done</button>
@@ -666,8 +793,9 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
 
 // ---------------------------------------------------------------- the card
 
-export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = true, padFrom, record = NO_RECORD, onRecord, furnish = null, onClose }: HomeCardProps) {
+export function HomeCard({ visible, room, keeper, homeInfo, dark = false, pad = true, padFrom, record = NO_RECORD, onRecord, furnish = null, onClose }: HomeCardProps) {
   const cardRef = useRef<HTMLElement>(null)
+  const home = room === null ? null : deedOf(room)
   // The shopkeeper's every change (a purchase here or at the design house, a reset from the console) redraws the card.
   const [, setVersion] = useState(0)
   useEffect(() => keeper.onChange(() => setVersion((v) => v + 1)), [keeper])
@@ -677,25 +805,26 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
   const open = visible && item !== null && item.kind === 'deed'
   const owned = item !== null && keeper.owns(item.id)
   // The owner furnishes here, unless the engine says why not yet (then the deed view says it).
-  const refusal = open && owned && furnish !== null && home !== null ? furnish.refusal(home) : null
+  const refusal = open && owned && furnish !== null && room !== null ? furnish.refusal(room) : null
   const furnishing = open && owned && furnish !== null && onRecord !== undefined && refusal === null
   usePadNav(cardRef, open && pad && !furnishing, padFrom)
   const width = useWidth(cardRef, open)
 
-  // The engine's refusal changes by itself (a network room joined or left, a headset put on): read every frame while
-  // an owner's card is open, and the card drawn again when it changes.
+  // The engine's refusals change by themselves (a network room joined or left, a headset put on): an owner's furnishing
+  // and the ride's, read every frame while the card is open, and the card drawn again when one changes.
   useEffect(() => {
-    if (!open || !owned || !furnish || home === null) return
+    if (!open || !furnish || room === null) return
     let raf = 0
-    let last = furnish.refusal(home)
+    const read = () => `${owned ? furnish.refusal(room) : ''}|${furnish.tower?.where(room)?.why}`
+    let last = read()
     const poll = () => {
-      const now = furnish.refusal(home)
+      const now = read()
       if (now !== last) { last = now; setVersion((v) => v + 1) }
       raf = requestAnimationFrame(poll)
     }
     raf = requestAnimationFrame(poll)
     return () => cancelAnimationFrame(raf)
-  }, [open, owned, furnish, home])
+  }, [open, owned, furnish, room])
 
   // Esc and B put the card away (captured, so the game's own key handling never sees them while the card is open).
   useEffect(() => {
@@ -709,7 +838,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
     window.addEventListener('keydown', onKey, true)
     cardRef.current?.focus()
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, home, onClose])
+  }, [open, room, onClose])
 
   // The deed view's pad: East (B) and Menu close it (the furnishing view reads its own pad).
   useEffect(() => {
@@ -726,7 +855,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
     return () => cancelAnimationFrame(raf)
   }, [open, pad, furnishing, padFrom, onClose])
 
-  if (!open || home === null || !item) return null
+  if (!open || home === null || room === null || !item) return null
   const t = themeOf(dark)
   const glass = dark
     ? 'border-white/10 bg-slate-900/70 text-slate-50 shadow-[0_20px_60px_rgba(0,0,0,0.45)]'
@@ -738,6 +867,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
   const free = item.price === 0
   const w = keeper.purse
   const sky = SKY_NOTES[home]
+  const floor = furnish?.tower?.where(room) ?? null
 
   const buy = () => {
     const r = keeper.buy(item.id)
@@ -753,6 +883,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
         aria-modal="false"
         aria-label={furnishing ? `Furnish ${name}` : name}
         data-home={home}
+        data-room={room}
         data-verdict={verdict}
         data-owned={owned || undefined}
         data-furnish={furnishing || undefined}
@@ -768,12 +899,13 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
         </div>
 
         {furnishing && furnish && onRecord ? (
-          <Furnisher key={home} home={home} keeper={keeper} record={record} onRecord={onRecord} hooks={furnish} pad={pad} padFrom={padFrom} width={width} dark={dark} t={t} onClose={onClose} />
+          <Furnisher key={room} home={room} keeper={keeper} record={record} onRecord={onRecord} hooks={furnish} pad={pad} padFrom={padFrom} width={width} dark={dark} t={t} onClose={onClose} />
         ) : (
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2">
               <p className="mt-2 leading-snug" data-tagline>{CITY_LINES[home]}</p>
-              {sky && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-sky>{sky}</p>}
+              {sky && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-sky>{floor ? sky : NO_SKY}</p>}
+              {floor && <FloorRow id={`home-floor-${room}`} f={floor} t={t} onRide={() => { const why = furnish?.tower?.ride(room); if (why) setSaid({ home, text: why }) }} />}
 
               <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-item={item.id}>
                 <div className="min-w-0 flex-1">
@@ -797,6 +929,7 @@ export function HomeCard({ visible, home, keeper, homeInfo, dark = false, pad = 
                 )}
               </div>
               {owned && refusal && <p className={`mt-2 text-[12px] leading-snug ${t.muted}`} data-refusal>{refusal}</p>}
+              {owned && refusal && furnish?.rest && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-rest-wait>Resting here waits for the same reason.</p>}
 
               <div className={`mt-2 flex items-baseline justify-between gap-2 rounded-2xl border px-3 py-2 ${t.rule}`} data-purse>
                 <span className="font-semibold">Level {w.level()} · {credits(w.credits())}</span>

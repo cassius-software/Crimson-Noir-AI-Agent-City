@@ -7,19 +7,24 @@
  * words it says (the plan's verdict words and each furniture line's short name), the left stick's repeat (stickStep)
  * and how a card button got the focus (FocusOrigin). Kept apart from the card's markup so Node runs it as the page does
  * (furnishVisit.test.ts): a piece picked up goes back where it was, a press on no cell does nothing, a held diagonal
- * repeats on the plan's timer, and Enter places after a mouse click on a button.
+ * repeats on the plan's timer, and Enter places after a mouse click on a button. Its fourth tab is a rest at home: Place
+ * there asks the host to rest (RestHooks), which says what it gave, and edits nothing. Its fifth, Staff, posts one of
+ * the player's own agents at the workstation under the cursor through the host (StaffHooks), or stands them down; that
+ * is no furniture edit and not on Undo. A home with a sky floor in this map has a sixth, Tower: Place there rides between
+ * the hall and the sky floor through the host (FurnishHooks.tower), and edits nothing. A visit is to a room: a hall, or
+ * a sky floor (rooms 7 and 8), whose plan, arrival and windows the words follow.
  * Every committed edit (a piece placed, picked up, moved, removed, a finish, Clear, Undo) goes to the host as the whole
  * record (homeStore.ts withHome and layoutOf: the placed pieces first, then those not placed here). A piece picked up
  * leaves the home until it is placed again; Undo, switching line or closing the card puts it back at its place in the
  * saved order, so the home is drawn as it was before. Undo takes back 20 edits.
  * What breaks if it is removed? The card has nothing to furnish with: no cursor, no piece in hand, no edit, no Undo.
  */
-import { DEPTH, GRID } from '../02_Define_The_Rules/homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF, planOf, type Plan } from '../02_Define_The_Rules/homeGrid.ts'
 import {
-  FLOORS, SHAPE_IDS, WALLS, canPlace, cellIndex, fitLayout, pieceCells, shapeOf, type Piece, type Verdict,
+  FLOORS, SHAPE_IDS, WALLS, canPlace, cellIndex, fitLayout, pieceCells, shapeOf, stationOf, stationsIn, type Piece, type Verdict,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { finishOf, layoutOf, withHome, type HomeLayout, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import type { Draft } from './homeView.ts'
+import type { Draft, FloorWhere } from './homeView.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE, itemById } from './storeCatalog.ts'
 
@@ -36,10 +41,53 @@ export interface FurnishHooks {
   blocked(home: number): Uint8Array
   pickCell(clientX: number, clientY: number): { c: number; r: number } | null
   canvas(): HTMLCanvasElement | null
+  /** A rest at home through the page's keeper (App); absent, the Rest tab says it is not offered. */
+  rest?: RestHooks
+  /** Staffing the workstations through the host (App); absent, the Staff tab says it is not offered. */
+  staff?: StaffHooks
+  /**
+   * The ride between a home's hall and its sky floor (App over engine.ts floorWhere and goFloor): where the floor is
+   * from room `room` (null: no sky floor in this map), and the ride, answering null when it went or the sentence why not.
+   */
+  tower?: { where(room: number): FloorWhere | null; ride(room: number): string | null }
 }
 
-/** The furnishing view's tabs, in order: 1, 2 and 3 on the keyboard, the pad's triggers step through them. */
-export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls'] as const)
+/**
+ * A rest at home, as the host offers it (App over the page's keeper, progress.ts restOffer and restTake): the words
+ * for home `home` now (why not, null when it may, and the lines the Rest tab shows), and the rest itself, which
+ * answers with the sentence the reason line says.
+ */
+export interface RestHooks {
+  offer(home: number): { readonly why: string | null; readonly lines: readonly string[] }
+  take(home: number): string
+}
+
+/** One of the player's own agents as the Staff tab lists them: the roster's name, whether hired now, and where posted (or null). */
+export interface StaffAgent { readonly name: string; readonly out: boolean; readonly post: { readonly home: number; readonly c: number; readonly r: number } | null }
+
+/**
+ * Staffing a home's workstations, as the host offers it (App over staffStore.ts, the roster and the engine): the
+ * agents, a home's name, and a post or a stand-down, each answering null when done or the sentence why not.
+ */
+export interface StaffHooks {
+  agents(): readonly StaffAgent[]
+  homeName(home: number): string
+  post(home: number, c: number, r: number, name: string): string | null
+  standDown(home: number, c: number, r: number): string | null
+}
+
+/** The furnishing view's tabs, in order: 1 to 5 on the keyboard, the pad's triggers step through them (and Tower, below). */
+export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'] as const)
+/** The sixth tab, Tower, where the home has a sky floor in this map (6 on the keyboard): Place there rides up or down. */
+export const TOWER_TAB = 5
+/** The Rest tab: Place there rests (RestHooks) instead of placing. */
+export const REST_TAB = 3
+/** The Staff tab: Place there posts the agent chosen at the workstation under the cursor, Remove stands them down. */
+export const STAFF_TAB = 4
+const NO_AGENTS = "No agents of your own yet: name one in the wardrobe's Agents tab, or type agent new and a name in the console"
+const NOT_STAFFED = 'Staffing is not offered here'
+/** What the Walls tab says on a sky floor, whose walls are its clear glass. */
+export const SKY_WALLS = "The sky floor's walls are its windows: there is nothing to finish here"
 
 /** How many committed edits Undo can take back in one visit. */
 export const UNDO_STEPS = 20
@@ -50,15 +98,15 @@ export const UNDO_STEPS = 20
  */
 export const STICK = Object.freeze({ dead: 0.5, first: 300, repeat: 120, turn: 0.15 })
 
-/** What canPlace's verdicts say under the plan (N: the line's cap in one home). */
+/** What canPlace's verdicts say under the plan (N: the line's cap in one room). */
 const VERDICT_WORDS: Readonly<Record<Verdict, string>> = Object.freeze({
   ok: 'Fits',
   outside: 'Outside the room',
   overlap: 'Something is already there',
   doorway: 'Keeps the doorway clear',
   wall: 'Goes against a wall',
-  copies: 'N of these is the most for one home',
-  full: '16 pieces is the most a home holds',
+  copies: 'N of these is the most for one room',
+  full: '16 pieces is the most a room holds',
   you: 'You are standing there',
   sealed: 'Would cut off part of the room',
   seat: 'Would block a workstation\'s seat',
@@ -79,10 +127,15 @@ const SHORT: Readonly<Record<number, string>> = Object.freeze({
 })
 
 export const nameOf = (id: number): string => SHORT[id] ?? itemById(id)?.name ?? `line ${id}`
-export const verdictWords = (v: Verdict, id: number): string => VERDICT_WORDS[v].replace(/^N\b/, String(shapeOf(id)?.cap ?? ''))
+/** The doorway verdict on a sky floor, whose kept block is the arrival. */
+const SKY_DOORWAY = 'Keeps the arrival clear'
+export const verdictWords = (v: Verdict, id: number, room = 0): string => (v === 'doorway' && room >= DEPTH.length ? SKY_DOORWAY : VERDICT_WORDS[v].replace(/^N\b/, String(shapeOf(id)?.cap ?? '')))
 export const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x))
-/** Where the cursor is, in words: columns from the left as seen from the doorway, rows from the home's back wall, from 1. */
-export const placeWords = (home: number, at: { c: number; r: number }): string => `column ${at.c + 1}, row ${at.r - (GRID - DEPTH[home]) + 1}`
+/** Where the cursor is, in words: columns from the room's left as seen from the doorway, rows from its back (wall or glass), from 1. */
+export const placeWords = (home: number, at: { c: number; r: number }): string => {
+  const p = planOf(home)!
+  return `column ${at.c - p.c0 + 1}, row ${at.r - p.r0 + 1}`
+}
 
 /** One thing the keys, the pad, a pointer or a button asks of the furnishing view. */
 export type Act =
@@ -97,6 +150,7 @@ export type Act =
   | { order: number }
   | { floor: number }
   | { wall: number }
+  | { agent: string }
 
 /**
  * One step Undo takes back: the home's layout before an edit, the piece then picked up and its place in the saved
@@ -126,8 +180,11 @@ function cellsKey(cells: ArrayLike<number>): string {
  * is the one it last committed (or was handed), so two edits in one frame build on each other.
  */
 export class Visit {
+  /** The room visited: a hall's property index, or a sky floor's 7 or 8. */
   readonly home: number
-  /** The home's first row (its back wall's): the cursor stays in rows first to GRID − 1. */
+  /** The room's floor plan (homeGrid.ts planOf): the cursor stays inside it. */
+  readonly plan: Plan
+  /** The room's first row (its back wall's): the cursor stays in rows first to the plan's last. */
   readonly first: number
   io: VisitIo
   tab = 0
@@ -145,6 +202,8 @@ export class Visit {
   view: 0 | 1 | 2 | 3 = 0
   /** What the last press did, in words, until the cursor or the piece changes; then the reason line says the verdict. */
   said = ''
+  /** The agent chosen in the Staff tab (a roster name), or null for the first not posted. */
+  agent: string | null = null
   readonly undoSteps: Step[] = []
   record: HomeRecord
   blocked: Uint8Array
@@ -156,18 +215,23 @@ export class Visit {
 
   constructor(home: number, record: HomeRecord, io: VisitIo) {
     this.home = home
-    this.first = GRID - DEPTH[home]
+    this.plan = planOf(home)!
+    this.first = this.plan.r0
     this.io = io
     this.record = record
     // In hand at first: the first line owned that has room left here, else the first owned, else nothing.
     const placed = this.fit().placed
     const mine = SHAPE_IDS.filter((id) => this.owns(id))
     this.sel = mine.find((id) => placed.filter((p) => p.id === id).length < (shapeOf(id)?.cap ?? 0)) ?? mine[0] ?? null
-    this.cursor = { c: GRID / 2 - 1, r: this.first + Math.floor(DEPTH[home] / 2) - 1 }
+    this.cursor = { c: GRID / 2 - 1, r: this.first + Math.floor((this.plan.r1 - this.first + 1) / 2) - 1 }
     this.blocked = io.hooks.blocked(home)
     this.blockedKey = cellsKey(this.blocked)
   }
 
+  /** How many tabs this visit has: six where the home has a sky floor in this map (Tower), else five. */
+  get tabCount(): number {
+    return this.io.hooks.tower?.where(this.home) ? TABS.length + 1 : TABS.length
+  }
   /** Whether the player owns line `id`: the shopkeeper's word, read afresh. */
   owns(id: number): boolean {
     return this.io.keeper.owns(id)
@@ -178,6 +242,7 @@ export class Visit {
   }
   /** The piece in hand at the cursor: the one picked up, else the chosen line; null for none. */
   hand(): Piece | null {
+    if (this.tab === STAFF_TAB) return null
     const id = this.lifted ? this.lifted.id : this.sel
     return id === null ? null : Object.freeze({ id, c: this.cursor.c, r: this.cursor.r, rot: this.rot })
   }
@@ -231,7 +296,7 @@ export class Visit {
   }
 
   moveTo(c: number, r: number): void {
-    const at = { c: clamp(c, 0, GRID - 1), r: clamp(r, this.first, GRID - 1) }
+    const at = { c: clamp(c, this.plan.c0, this.plan.c1), r: clamp(r, this.first, this.plan.r1) }
     if (at.c === this.cursor.c && at.r === this.cursor.r) return
     this.cursor = at
     this.quiet()
@@ -257,10 +322,12 @@ export class Visit {
     this.commit({ placed: fit.placed.filter((x) => x !== p), stored: fit.stored }, p, fit.placed.indexOf(p))
     this.rot = p.rot
     this.cursor = { c: p.c, r: p.r }
-    this.say(`${nameOf(p.id)} picked up: Place puts it down, Undo puts it back`)
+    const w = shapeOf(p.id)?.station ? this.who(p) : null
+    this.say(`${nameOf(p.id)} picked up: Place puts it down, Undo puts it back${w ? `; ${w.name} waits until it is back in its place` : ''}`)
   }
   /** Place the piece in hand where it fits; else pick up the piece under the cursor; else say why not. */
   place(): void {
+    if (this.tab === STAFF_TAB) { this.post(); return }
     const fit = this.fit()
     const hand = this.hand()
     const verdict = this.verdict(fit)
@@ -272,10 +339,112 @@ export class Visit {
     }
     const under = this.lifted ? null : this.pieceAt(fit.placed, this.cursor.c, this.cursor.r)
     if (under) { this.pickUp(under); return }
-    this.say(hand && verdict ? verdictWords(verdict, hand.id) : 'Nothing here to pick up: choose a piece in the strip')
+    this.say(hand && verdict ? verdictWords(verdict, hand.id, this.home) : 'Nothing here to pick up: choose a piece in the strip')
+  }
+  /** Rest here (the Rest tab's Place): the host rests and says what it gave, or why not; nothing in the home changes. */
+  rest(): void {
+    this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')
+  }
+  /** Ride up or down (the Tower tab's Place): the host rides, closing the card, or says why not; nothing in the home changes. */
+  ride(): void {
+    const why = this.io.hooks.tower ? this.io.hooks.tower.ride(this.home) : 'This home has no sky floor in this map'
+    if (why) this.say(why)
+  }
+  /** The workstations standing here (pieces with a station), in reading order: back row first, then left to right. */
+  stations(fit = this.fit()): Piece[] {
+    return stationsIn(fit.placed)
+  }
+  /** The workstation under the cursor and its number here (from 1), or null. */
+  station(fit = this.fit()): { p: Piece; n: number } | null {
+    const at = cellIndex(this.cursor.c, this.cursor.r), list = this.stations(fit)
+    const i = list.findIndex((p) => pieceCells(p).cells.includes(at))
+    return i < 0 ? null : { p: list[i], n: i + 1 }
+  }
+  /** The host's agents, read afresh; none without staff hooks. */
+  staffAgents(): readonly StaffAgent[] {
+    return this.io.hooks.staff?.agents() ?? []
+  }
+  /** Who is posted at workstation `p` of this home, or null. */
+  who(p: Piece): StaffAgent | null {
+    return this.staffAgents().find((a) => a.post?.home === this.home && a.post.c === p.c && a.post.r === p.r) ?? null
+  }
+  /** The agent chosen: the one picked while listed, else the first not posted, else the first; null with none. */
+  inHand(): string | null {
+    const list = this.staffAgents()
+    return list.find((a) => a.name === this.agent)?.name ?? list.find((a) => !a.post)?.name ?? list[0]?.name ?? null
+  }
+  /**
+   * Where post `p` stands, in words, `w` being "Workstation" or "workstation": another home's name (hooks.staff), or
+   * workstation N here; null for none, and for one here whose workstation is moved or put away.
+   */
+  private postWords(p: StaffAgent['post'], w: string): string | null {
+    if (!p) return null
+    if (p.home !== this.home) return this.io.hooks.staff!.homeName(p.home)
+    const n = this.stations().findIndex((s) => s.c === p.c && s.r === p.r)
+    return n < 0 ? null : `${w} ${n + 1}`
+  }
+  /**
+   * Where agent `a` is, as the strip says under the name: Free, Workstation N, another home's name, or Workstation
+   * moved or put away; then " · out with you" while hired.
+   */
+  whereIs(a: StaffAgent): string {
+    const at = this.postWords(a.post, 'Workstation') ?? (a.post ? 'Workstation moved or put away' : 'Free')
+    return a.out ? `${at} · out with you` : at
+  }
+  /** The next or previous agent (Q, E, the shoulders), or one by name (a tap in the strip). */
+  pickAgent(d: 1 | -1 | string): void {
+    const list = this.staffAgents()
+    if (typeof d === 'string') this.agent = d
+    else if (list.length > 0) { const i = list.findIndex((a) => a.name === this.inHand()); this.agent = list[(i + d + list.length) % list.length].name }
+    this.quiet()
+  }
+  /** The workstation under the cursor and its number, or why the Staff tab cannot act there (no hooks, no workstation). */
+  private staffAt(fit = this.fit()): { p: Piece; n: number } | string {
+    return !this.io.hooks.staff ? NOT_STAFFED : this.station(fit) ?? `Nothing to staff at ${placeWords(this.home, this.cursor)}: move onto a workstation`
+  }
+  /** Post the agent chosen at the workstation under the cursor (the Staff tab's Place), through the host. */
+  post(): void {
+    const d = this.staffAt(), name = this.inHand()
+    if (typeof d === 'string') { this.say(d); return }
+    if (!name) { this.say(NO_AGENTS); return }
+    const me = this.staffAgents().find((a) => a.name === name)!, was = this.who(d.p)
+    if (was?.name === name) { this.say(`${name} is already at workstation ${d.n}`); return }
+    const from = this.postWords(me.post, 'workstation')
+    this.say(this.io.hooks.staff!.post(this.home, d.p.c, d.p.r, name)
+      ?? `${name} is at workstation ${d.n} now${from ? ` (moved from ${from})` : ''}${was ? `; ${was.name} is free` : ''}${me.out ? '; out with you until you part' : ''}`)
+  }
+  /** Stand down whoever is at the workstation under the cursor (the Staff tab's Remove), through the host. */
+  standDown(): void {
+    const d = this.staffAt()
+    if (typeof d === 'string') { this.say(d); return }
+    const was = this.who(d.p)
+    if (!was) { this.say(`Nobody is at workstation ${d.n}`); return }
+    this.say(this.io.hooks.staff!.standDown(this.home, d.p.c, d.p.r) ?? `${was.name} left workstation ${d.n}`)
+  }
+  /** What the reason line says in the Staff tab while nothing was just said. */
+  staffLine(): string {
+    const fit = this.fit(), d = this.staffAt(fit)
+    if (d === NOT_STAFFED) return d
+    // Off a workstation the line still names the agent chosen, so Q and E are heard wherever the cursor is.
+    const name = this.inHand(), to = name ? ` to post ${name}` : ''
+    if (this.stations(fit).length === 0) return `No workstation stands here yet: place one in the Furniture tab${to}`
+    if (typeof d === 'string') return d + to
+    const who = this.who(d.p)?.name ?? null
+    if (!name) return NO_AGENTS
+    return `Workstation ${d.n} at ${placeWords(this.home, d.p)}: ${who ? `${who} is here` : 'free'}; ${who === name ? 'Stand down frees it' : `Post puts ${name} here`}`
+  }
+  /** Each agent posted here as the plan marks them: the station's point in cells, their initial, and whether out with the player. */
+  staffMarks(): { x: number; y: number; initial: string; out: boolean }[] {
+    const out: { x: number; y: number; initial: string; out: boolean }[] = []
+    for (const p of this.stations()) {
+      const a = this.who(p), s = a && stationOf(p)
+      if (a && s) out.push({ x: (s.v + GRID_HALF) / CELL, y: (s.u + GRID_HALF) / CELL, initial: [...a.name][0].toUpperCase(), out: a.out })
+    }
+    return out
   }
   /** Take the piece picked up out of the home, or the piece under the cursor. */
   remove(): void {
+    if (this.tab === STAFF_TAB) { this.standDown(); return }
     if (this.lifted) {
       const p = this.lifted
       this.commit(null, null)
@@ -289,6 +458,7 @@ export class Visit {
     this.say(`${nameOf(under.id)} removed`)
   }
   rotate(): void {
+    if (this.tab === STAFF_TAB) { this.say('Workstations turn in the Furniture tab'); return }
     if (!this.hand()) { this.say('Nothing in hand to turn: choose a piece in the strip'); return }
     this.rot = (this.rot + 1) & 3
     this.quiet()
@@ -307,6 +477,8 @@ export class Visit {
   }
   /** The next or previous piece (the lines owned, in catalogue order; all nine while none is), or finish in its tab. */
   cycle(d: 1 | -1): void {
+    if (this.tab === STAFF_TAB) { this.pickAgent(d); return }
+    if (this.tab === 2 && this.home >= DEPTH.length) { this.say(SKY_WALLS); return }
     const f = finishOf(this.record, this.home)
     if (this.tab === 1) { this.setFinish((f.floor + d + FLOORS.length) % FLOORS.length, undefined); return }
     if (this.tab === 2) { this.setFinish(undefined, (f.wall + d + WALLS.length) % WALLS.length); return }
@@ -342,12 +514,18 @@ export class Visit {
     this.quiet()
   }
   toTab(i: number): void {
-    this.tab = (i + TABS.length) % TABS.length
+    const n = this.tabCount
+    this.tab = (i + n) % n
     this.quiet()
   }
-  /** A press on a cell (the plan or the city): on the cursor's cell it places (or picks up); elsewhere the cursor goes there. */
+  /**
+   * A press on a cell (the plan or the city): on the cursor's cell it places (or picks up); elsewhere the cursor goes
+   * there. In the Staff tab a press on any cell of the workstation under the cursor posts, as Place does there.
+   */
   press(cell: { c: number; r: number } | null): void {
     if (!cell) return
+    const d = this.tab === STAFF_TAB ? this.station() : null
+    if (d && pieceCells(d.p).cells.includes(cellIndex(cell.c, cell.r))) { this.post(); return }
     if (cell.c === this.cursor.c && cell.r === this.cursor.r) this.place()
     else this.moveTo(cell.c, cell.r)
   }
@@ -373,7 +551,7 @@ export class Visit {
   run(a: Act): void {
     if (typeof a === 'string') {
       switch (a) {
-        case 'place': this.place(); return
+        case 'place': if (this.tab === REST_TAB) this.rest(); else if (this.tab === TOWER_TAB) this.ride(); else this.place(); return
         case 'rotate': this.rotate(); return
         case 'remove': this.remove(); return
         case 'undo': this.undo(); return
@@ -397,6 +575,7 @@ export class Visit {
     else if ('order' in a) this.order(a.order)
     else if ('floor' in a) this.setFinish(a.floor, undefined)
     else if ('wall' in a) this.setFinish(undefined, a.wall)
+    else if ('agent' in a) this.pickAgent(a.agent)
   }
   /** Someone stepping onto or off the cells by a piece changes what may go there ('you'): the pad's loop asks a few times a second. */
   refreshBlocked(): void {

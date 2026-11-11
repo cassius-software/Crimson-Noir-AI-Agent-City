@@ -103,8 +103,9 @@ test('two modules serve the network (the authenticated room host and the robot r
   const HOST = 'src/10_Network/replication.node.ts'
   const RELAY = 'src/10_Network/robotRelay.node.ts'
   // The browser smoke test and the screenshot tool serve dist/index.html to their own headless browser for the length
-  // of a run: a test server in a tool's file, held to the test servers' rule.
-  const HARNESSES = ['tools/browser/smoke.mjs', 'tools/browser/shot.mjs']
+  // of a run, and the crowd kernels' compile serves it one blank page (about:blank gets no WebGPU adapter): a test
+  // server in a tool's file, held to the test servers' rule.
+  const HARNESSES = ['tools/browser/smoke.mjs', 'tools/browser/shot.mjs', 'tools/browser/kernels.mjs']
   // The desktop launcher serves the built page to this machine's own browser. Its port is fixed (4180) because the
   // page keeps its settings per address, and a page opened from a file instead loses the shared bridge and the local
   // model servers (MANUAL.md, On NixOS): it may name any port, but only on the loopback literal.

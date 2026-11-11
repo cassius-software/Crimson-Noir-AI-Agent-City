@@ -18,7 +18,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
-  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
+  FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_INK_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_TATTOO_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
   isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
 } from './commands.ts'
 import {
@@ -1833,7 +1833,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('look hairStyle '), [...WARDROBE.hairStyle].sort().map((n) => `look hairStyle ${n}`), 'every style, the catalogue\'s names')
   assert.deepEqual(complete('look curl '), [...WARDROBE.curl].sort().map((n) => `look curl ${n}`))
   assert.deepEqual(complete('look headwear '), [...WARDROBE.headwear].sort().map((n) => `look headwear ${n}`))
-  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
+  for (const slot of ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish', 'footwear', 'frames', 'watch', 'lapelPin'] as const) assert.deepEqual(complete(`look ${slot} `), [...WARDROBE[slot]].sort().map((n) => `look ${slot} ${n}`))
   assert.deepEqual(complete('look undertone '), ['look undertone cool', 'look undertone neutral', 'look undertone olive', 'look undertone warm'])
   assert.deepEqual(complete('look layer '), ['look layer coat', 'look layer jacket', 'look layer shirt sleeves'])
   assert.deepEqual(complete('look trim '), ['look trim matching'])
@@ -1974,6 +1974,22 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.ok(lite[1].startsWith('adapter   arm / bifrost / Mali-G52') && lite[1].endsWith('...'), lite[1])
   assert.equal(lite[2], 'limits    bind 1.5 GiB  buffer 1 GiB  workgroup 512 wide  512 invocations')
   assert.equal(lite[3], 'lanes     512 simulated  (2500 default for a phone, 60000 ceiling)')
+  // The crowd kernel the worker runs, a seventh row: none for the full one, the rung for a GPU that refused it, within
+  // the readout's 80 columns (a suffix on the lanes row ran to 135).
+  const kernel = (k: 'full' | 'narrow' | 'lite' | 'none') => formatHardware({
+    class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, adapter: 'arm / Mali-G52 MC2',
+    limits: { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 },
+    tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000, kernel: k },
+    frames: { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 }, host: 'browser', cores: 6, memoryGb: undefined,
+  })
+  for (const k of ['full', 'none', 'narrow', 'lite'] as const) {
+    assert.equal(kernel(k)[3], 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)', k)
+    for (const l of kernel(k)) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), `${k}: ${l}`)
+  }
+  assert.equal(kernel('full').length, 6)
+  assert.equal(kernel('none').length, 6)
+  assert.equal(kernel('narrow')[6], 'crowd     narrow kernel: 64-wide workgroups (this GPU refused the full one)')
+  assert.equal(kernel('lite')[6], 'crowd     light kernel: straight-line routing (this GPU refused the full one)')
   assert.equal(lite[4], 'frames    p50 41.20 ms  p95 55.25 ms  p99 120.50 ms  (3 frames in 0.2 s)')
   assert.equal(lite[5], 'machine   threads unknown  4 GB reported  native shell')
   for (const l of [...phone, ...lite]) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), l)
@@ -2232,6 +2248,37 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(complete('look skin '), lookOptions(0, 'skin').slice(8).map((o) => `look skin ${o.name}`), 'the Monk tones by their scale names')
   assert.deepEqual([...LOOK_WEAVE_ARGS], [...WARDROBE.weave].sort(), 'the weaves by their names')
   assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
+})
+
+test('look tattoos: the four zones complete the designs by name and the ink its eight, the lists are the wardrobe\'s; a design, a 1-based number, none and an ink reach the host as typed', () => {
+  // The lists the console offers are the wardrobe's own (look.ts and tattoo.ts, which the console must not import).
+  assert.deepEqual([...LOOK_TATTOO_ARGS], [...WARDROBE.tattoo].sort(), 'none and the sixty-four designs by their names')
+  assert.deepEqual([...LOOK_INK_ARGS], [...WARDROBE.tattooInk].sort(), 'the eight inks by their names')
+  assert.equal(LOOK_TATTOO_ARGS.length, 65)
+  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const) {
+    assert.deepEqual(complete(`look ${slot} `), [...WARDROBE.tattoo].sort().map((n) => `look ${slot} ${n}`), slot)
+    assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the card's options`)
+  }
+  assert.deepEqual(complete('look tattooInk '), lookOptions(0, 'tattooInk').map((o) => `look tattooInk ${o.name}`).sort())
+  // The manual's examples: a name is completed whole, so both designs that start "com" are offered.
+  assert.deepEqual(complete('look tattooHand com'), ['look tattooHand comet', 'look tattooHand compass rose'])
+  assert.deepEqual(complete('look tattooInk g'), ['look tattooInk gold leaf', 'look tattooInk grey wash'])
+  assert.deepEqual(complete('look tattooNape n'), ['look tattooNape nautilus shell', 'look tattooNape nested diamonds', 'look tattooNape nested triangles', 'look tattooNape none'])
+  assert.deepEqual(complete('look t'), ['look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
+  // Past a space typed inside a name, nothing more is offered (the words before the last are no key of the table).
+  assert.deepEqual(complete('look tattooHand compass r'), [])
+  const b = fake()
+  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor']) run(l, b, [])
+  assert.deepEqual(b.look.changes, [
+    { kind: 'slot', slot: 'tattooHand', value: 'compass rose' },
+    { kind: 'slot', slot: 'tattooHand', value: '10' },
+    { kind: 'slot', slot: 'tattooNape', value: 'none' },
+    { kind: 'slot', slot: 'tattooInk', value: 'gold leaf' },
+    { kind: 'slot', slot: 'tattooHandR', value: 'anchor' },
+  ])
+  assert.deepEqual(texts(run('look tattooNeck', b, [])), ['usage: look tattooNeck <n|name>'])
+  // The help's summary names them.
+  assert.match(texts(run('help look', b, [])).join('\n'), /tattoos and their ink/)
 })
 
 test('map: the map the shell walks; map city|lakefront|default hands the host a reload, never the same map twice; no bridge call', () => {

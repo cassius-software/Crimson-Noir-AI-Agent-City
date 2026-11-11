@@ -12,8 +12,10 @@
  * the face itself, a coat, a scarf), the colour palettes it already paints people with and the steps of each slider, so no stored value, no
  * typed command and no shared code can dress anyone in anything the crowd does not wear today. Those four words are
  * the first of a look genome of sixteen (LOOK_WORDS): the words after them hold what the catalogue has grown since
- * (word 4, the skin word: the ten tones of the Monk Skin Tone Scale beside the eight older ones, vitiligo, freckles),
- * and every field of them is 0 for "as before", so a look of the older layouts is the same look with those words
+ * (word 4, the skin word: the ten tones of the Monk Skin Tone Scale beside the eight older ones, vitiligo, freckles;
+ * word 5, the cloth word: the weaves and the cuts; word 6, the accessory word: the shoe's style, the frames' finish, a
+ * watch, a lapel pin; word 7, the tattoo word: a design on each hand, the neck and the nape, and their ink, from the
+ * tables of tattoo.ts), and every field of them is 0 for "as before", so a look of the older layouts is the same look with those words
  * zero, its code is the same code, and the crowd draws it the same. The same module
  * reproduces the choice the shader's hash makes for an agent (lookFromSeed), so a returning visitor's look and an
  * agent's hashed look are the same kind of record; a short code with a checksum lets a look be written down and
@@ -25,6 +27,7 @@
  * crowd's per-agent attributes would have no agreed bit layout to carry.
  */
 import { HEIGHT_BASE, SKIRT_CUT, TROUSER_CUT, type BodyShape, type FaceShape } from './humanoid.ts'
+import { TATTOO_INK, TATTOO_INKS, TATTOO_MOTIFS, TATTOO_STREET_SETS, TATTOO_STUDIO_LINES, TATTOO_ZONES } from './tattoo.ts'
 
 /** The four bodies crowd.ts draws, in draw-list order (an agent's hashed body is its index modulo four). */
 export const LOOK_BODIES = ['suit', 'smart casual', 'pantsuit', 'skirt suit'] as const
@@ -94,7 +97,9 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
+  'eyewear', 'frames', 'watch', 'bag', 'cup',
+  'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -106,7 +111,8 @@ export type Look = Readonly<Record<LookSlot, number>>
  */
 export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'topWeave', 'bottomWeave', 'cut', 'bottomCut',
+  'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin',
+  'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -327,6 +333,79 @@ export const BOTTOM_CUT_STREET: readonly (readonly number[])[] = Object.freeze([
   Object.freeze([SKIRT_CUT.pencil, SKIRT_CUT.aLine, SKIRT_CUT.pleated, SKIRT_CUT.wrap, SKIRT_CUT.midi, SKIRT_CUT.midiPencil, SKIRT_CUT.buttonFront, SKIRT_CUT.belted]),
 ])
 export const BOTTOM_CUT_STREET_PACKED: readonly number[] = Object.freeze(BOTTOM_CUT_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The shoe's style (WARDROBE.footwear), painted by crowd.ts on the shoe the body already has, from the rest position:
+ * the plain shoe every body wore before (0, so a stored look is shod as it was); a lace-up; a cap toe, a seam across
+ * the toe; a wingtip, its seam a W round the toe with a row of small holes behind it; a loafer, a saddle across the
+ * instep and an apron seam round the toe; a buckle strap; a two-tone, cream between a toe cap and a heel of the
+ * shoe's own colour; a sneaker, a white sole and toe bumper with no mark of any maker; a flat, the foot showing over
+ * its low sides; and three boots, ankle, lace-up and to the knee, whose shafts are painted up the bare leg (under a
+ * skirt, cropped trousers or culottes; full-length trousers cover them). The colour is still the `shoes` slot's: the
+ * style is a separate axis, so every style comes in every shoe colour. No style is named for a place or a people.
+ */
+export const FOOTWEAR = Object.freeze({
+  plain: 0, laceUp: 1, capToe: 2, wingtip: 3, loafer: 4, buckleStrap: 5, twoTone: 6, sneaker: 7, flat: 8, ankleBoot: 9, laceUpBoot: 10, kneeBoot: 11,
+})
+/** A 32-bit set of styles (bit s for style s), as the crowd's fragment stage tests it: `(set >> style) & 1`. */
+const styleSet = (...styles: number[]): number => styles.reduce((set, s) => set | (1 << s), 0) >>> 0
+/**
+ * What each shoe style is painted with, as a set of the styles that carry it: one test per feature in the shader, so
+ * a feature shared by several styles (the laces of five, the cap seam of two, the shaft of three boots) is drawn by
+ * one expression and no twelve-way chain.
+ */
+export const FOOTWEAR_FEATURES = Object.freeze({
+  laces: styleSet(FOOTWEAR.laceUp, FOOTWEAR.capToe, FOOTWEAR.wingtip, FOOTWEAR.sneaker, FOOTWEAR.laceUpBoot),
+  cap: styleSet(FOOTWEAR.capToe, FOOTWEAR.twoTone),
+  wing: styleSet(FOOTWEAR.wingtip),
+  loafer: styleSet(FOOTWEAR.loafer),
+  strap: styleSet(FOOTWEAR.buckleStrap),
+  twoTone: styleSet(FOOTWEAR.twoTone),
+  sneaker: styleSet(FOOTWEAR.sneaker),
+  flat: styleSet(FOOTWEAR.flat),
+  shaft: styleSet(FOOTWEAR.ankleBoot, FOOTWEAR.laceUpBoot, FOOTWEAR.kneeBoot),
+  kneeShaft: styleSet(FOOTWEAR.kneeBoot),
+})
+/**
+ * The shoe styles the hashed crowd wears (above LOOK_ODDS.footwear, one of eight entries per body, LOOK_HASHED_COLOUR
+ * footwearPick): the suit's lace-ups, cap toes and wingtips, the smart-casual body's loafers, sneakers and boots, the
+ * pantsuit's loafers and flats, the skirt suit's flats and knee boots. An entry may repeat, which makes it twice as
+ * common. Packed four bits each for crowd.ts (FOOTWEAR_STREET_PACKED).
+ */
+export const FOOTWEAR_STREET: readonly (readonly number[])[] = Object.freeze([
+  Object.freeze([FOOTWEAR.capToe, FOOTWEAR.capToe, FOOTWEAR.laceUp, FOOTWEAR.laceUp, FOOTWEAR.wingtip, FOOTWEAR.loafer, FOOTWEAR.buckleStrap, FOOTWEAR.twoTone]),
+  Object.freeze([FOOTWEAR.loafer, FOOTWEAR.loafer, FOOTWEAR.sneaker, FOOTWEAR.sneaker, FOOTWEAR.wingtip, FOOTWEAR.buckleStrap, FOOTWEAR.ankleBoot, FOOTWEAR.laceUpBoot]),
+  Object.freeze([FOOTWEAR.loafer, FOOTWEAR.loafer, FOOTWEAR.flat, FOOTWEAR.flat, FOOTWEAR.capToe, FOOTWEAR.sneaker, FOOTWEAR.ankleBoot, FOOTWEAR.laceUp]),
+  Object.freeze([FOOTWEAR.flat, FOOTWEAR.flat, FOOTWEAR.kneeBoot, FOOTWEAR.kneeBoot, FOOTWEAR.ankleBoot, FOOTWEAR.loafer, FOOTWEAR.twoTone, FOOTWEAR.capToe]),
+])
+export const FOOTWEAR_STREET_PACKED: readonly number[] = Object.freeze(FOOTWEAR_STREET.map((list) => list.reduce((w, k, i) => (w | (k << (4 * i))) >>> 0, 0)))
+/**
+ * The glasses' frame finish (WARDROBE.frames): black as every frame was (0, so a stored look's glasses are as they
+ * were), tortoiseshell, steel, gold tone, navy, burgundy, clear, and a browline (the upper rim black, the lower
+ * steel). It is a finish of the frame the glasses already have, so it shows only where glasses are worn.
+ */
+export const FRAMES = Object.freeze({ black: 0, tortoiseshell: 1, steel: 2, goldTone: 3, navy: 4, burgundy: 5, clear: 6, browline: 7 })
+/**
+ * Each frame finish's colour, linear RGB, as crowd.ts paints the rims and the card's outline shows them: black is the
+ * crowd's own `vec3(0.05, 0.05, 0.055)`; a browline's entry is its upper rim (its lower rim is the steel's).
+ */
+export const FRAME_FINISH: readonly (readonly [number, number, number])[] = Object.freeze(([
+  [0.05, 0.05, 0.055], [0.17, 0.08, 0.03], [0.55, 0.56, 0.58], [0.6, 0.47, 0.22],
+  [0.05, 0.07, 0.17], [0.26, 0.04, 0.06], [0.72, 0.74, 0.75], [0.05, 0.05, 0.055],
+] as [number, number, number][]).map((c) => Object.freeze(c)))
+/** The light mottle a tortoiseshell frame is flecked with over its dark base (FRAME_FINISH's tortoiseshell), linear RGB. */
+export const TORTOISE_LIGHT: readonly [number, number, number] = Object.freeze([0.42, 0.22, 0.07] as [number, number, number])
+/**
+ * The watch (WARDROBE.watch), painted by crowd.ts round the person's own left wrist: none (0, as before), a steel
+ * three-hand watch on a steel bracelet, a tourbillon chronograph (gold tone, a navy dial with the movement showing
+ * through), a watch on a leather strap, and a smartwatch, its face dark glass. Painted over a prosthetic hand too.
+ */
+export const WATCH = Object.freeze({ none: 0, steel: 1, tourbillon: 2, leather: 3, smartwatch: 4 })
+/**
+ * The lapel pin (WARDROBE.lapelPin), painted by crowd.ts on the wearer's left lapel (a cut without lapels wears it at
+ * the breast): none (0, as before), a rank pin (a plain gold disc), a silver bar, a buttonhole flower. Each is plain,
+ * with no emblem. Under shirt sleeves the jacket is off and the pin is not seen.
+ */
+export const LAPEL_PIN = Object.freeze({ none: 0, rank: 1, bar: 2, flower: 3 })
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -346,7 +425,8 @@ export const LAYER = Object.freeze({ jacket: 0, shirt: 1, coat: 2 })
  * patches anywhere, most of the skin, or one side of the body); `freckles` how many; `outfits` is per body, mirroring crowd.ts's
  * four fragment branches: the suit's trousers match the jacket (the hashed crowd) or take another suit cloth; the
  * pantsuit's match the blazer or are dark trousers; the skirt suit's skirt and the smart-casual chinos have palettes
- * of their own.
+ * of their own. `tattoo` is what a tattoo zone may hold (none, then tattoo.ts TATTOO_MOTIFS by id, so a zone's value
+ * is the design's id) and `tattooInk` the inks one look's designs are all inked in (TATTOO_INKS, black first).
  */
 export const WARDROBE = Object.freeze({
   bodies: LOOK_BODIES,
@@ -385,6 +465,14 @@ export const WARDROBE = Object.freeze({
   eyewear: Object.freeze(['none', 'glasses']),
   bag: Object.freeze(['none', 'bag']),
   cup: Object.freeze(['none', 'cup']),
+  footwear: Object.freeze([
+    'plain', 'lace-up', 'cap toe', 'wingtip', 'loafer', 'buckle strap', 'two-tone', 'sneaker', 'flat', 'ankle boot', 'lace-up boot', 'knee boot',
+  ]),
+  frames: Object.freeze(['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline']),
+  watch: Object.freeze(['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch']),
+  lapelPin: Object.freeze(['none', 'rank pin', 'silver bar', 'buttonhole flower']),
+  tattoo: Object.freeze(['none', ...TATTOO_MOTIFS.map((m) => m.name)]),
+  tattooInk: Object.freeze(TATTOO_INKS.map((i) => i.name)),
   outfits: Object.freeze([
     Object.freeze({ top: 'suits', bottom: 'suits', matching: true, shirt: 'shirts', shoes: 'menShoes' }),
     Object.freeze({ top: 'blazers', bottom: 'chinos', matching: false, shirt: 'casualShirts', shoes: 'casualShoes' }),
@@ -414,9 +502,21 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * a Monk tone is option 8 and up, past the look word's three bits), vitiligo at three bits and freckles at two, the hair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
  * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each,
- * then the outer layer's cut at four, then the lower garment's cut at four; bits 16 to 31 are spare, and so are words 6
- * to 15 (LOOK_WORDS), which unpackGenome requires to be zero. Every width is
- * pinned to hold its slot's largest option count (with its high bits, for a slot that has them).
+ * then the outer layer's cut at four, then the lower garment's cut at four; bits 16 to 31 are spare. Word 6 is the
+ * accessory word, paint on the meshes the body already has: the shoe's style at five bits (twelve of thirty-two, room
+ * to grow), the glasses' frame finish at four, the watch at three, the lapel pin at three; bits 15 to 31 are spare, and
+ * the next slice is to take them in this order, so its fields are written down here and declared then: an umbrella
+ * [6, 15, 2], headphones [6, 17, 2], a heel [6, 19, 2], the shoe's finish [6, 21, 2], the tie's style [6, 23, 3] and
+ * the bag's [6, 26, 3]. Word 7 is the tattoo word: the design on the left hand, the right hand, the neck and the nape
+ * at seven bits each (0 is none, 1 to 64 a design's id: tattoo.ts TATTOO_MOTIFS), then the ink at three (0 is black,
+ * as before); bits 0 to 30 are its fields. Its bit 31 is never a field's: the crowd's fragment stage reads a person
+ * in no chosen look as word 7 with that bit alone set, the street flag that draws their tattoos from their seed, so
+ * no worn look may set it and unpackGenome refuses one that does (LOOK_STREET_FLAG). Word 8 is the next slices', so its
+ * fields are written down here and declared then: the forearms' designs [8, 0, 7] and [8, 7, 7] with the sleeves
+ * [5, 16, 2], then the calf's [8, 14, 7] and the ankle's [8, 21, 7] with the legs [5, 18, 2]. Words 8 to 15
+ * (LOOK_WORDS) are spare for now, and unpackGenome requires every spare bit of the words from 4 on to be zero, so
+ * a reader older than a field refuses a look that sets it rather than drop it. Every width is pinned to hold its
+ * slot's largest option count (with its high bits, for a slot that has them).
  */
 export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift: number, width: number]>> = Object.freeze({
   body: [0, 1, 2],
@@ -464,7 +564,22 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   bottomWeave: [5, 4, 4],
   cut: [5, 8, 4],
   bottomCut: [5, 12, 4],
+  footwear: [6, 0, 5],
+  frames: [6, 5, 4],
+  watch: [6, 9, 3],
+  lapelPin: [6, 12, 3],
+  tattooHand: [7, 0, 7],
+  tattooHandR: [7, 7, 7],
+  tattooNeck: [7, 14, 7],
+  tattooNape: [7, 21, 7],
+  tattooInk: [7, 28, 3],
 })
+
+/**
+ * The bit of the genome no look may set: word 7's top bit, which the crowd's fragment stage reads as "this person
+ * wears no chosen look: draw their tattoos from their seed". GENOME_BITS never holds it.
+ */
+export const LOOK_STREET_FLAG = Object.freeze({ word: 7, bit: 31 })
 
 /**
  * The slots that outgrew their first field: the value's bits past that field's width go here, [word, shift, width].
@@ -475,7 +590,7 @@ export const LOOK_FIELD_HIGH: Readonly<Partial<Record<LookSlot, readonly [word: 
   hairStyle: [4, 7, 2],
 })
 
-/** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, and eleven spare. */
+/** The genome's length in u32 words: the look, figure, face and wardrobe words, the skin word, the cloth word, the accessory word, the tattoo word, and eight spare. */
 export const LOOK_WORDS = 16
 
 /** The legacy look word's height and build fields (three bits each), read by the upgrade alone. */
@@ -528,9 +643,14 @@ export const LOOK_HASHED_HEARING = 26
  * headwear's cloth, the curl pattern, facial hair and its style, a prosthetic limb, which and its finish; whether the
  * top is woven with a pattern (above LOOK_ODDS.weave) and which of the body's WEAVE_STREET; whether the outer layer
  * has a cut of its own (above LOOK_ODDS.cut) and which of the body's CUT_STREET; whether the trousers or the skirt
- * have one (above LOOK_ODDS.bottomCut) and which of the body's BOTTOM_CUT_STREET.
+ * have one (above LOOK_ODDS.bottomCut) and which of the body's BOTTOM_CUT_STREET; whether the shoes have a style
+ * (above LOOK_ODDS.footwear) and which of the body's FOOTWEAR_STREET; whether glasses have a finish of their own
+ * (above LOOK_ODDS.frames) and which; the watch; the lapel pin; then the tattoos (streetTattoos): whether a person
+ * carries ink (above LOOK_ODDS.tattoo), which zone set (tattoo.ts TATTOO_STREET_SETS), the design on the set's first
+ * zone and on its second, and the ink. The accessory word's links and the tattoos' are the colours' chain's alone (38
+ * to 48), so no pieces link is spent and no draw before them moves.
  */
-export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37 })
+export const LOOK_HASHED_COLOUR = Object.freeze({ age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37, footwear: 38, footwearPick: 39, frames: 40, framesPick: 41, watch: 42, lapelPin: 43, tattoo: 44, tattooZones: 45, tattooFirst: 46, tattooSecond: 47, tattooInk: 48 })
 
 const isBody = (v: unknown): v is LookBody => v === 0 || v === 1 || v === 2 || v === 3
 const womanBody = (body: LookBody): boolean => body >= 2
@@ -540,6 +660,8 @@ const named = (names: readonly string[]): LookOption[] => names.map((name) => ({
 const steps = (n: number): LookOption[] => Array.from({ length: n }, (_, i) => ({ name: `${i + 1}`, hex: null }))
 const isSlider = (slot: string): slot is LookSlider => (LOOK_BODY_SLIDERS as readonly string[]).includes(slot)
 const isFaceSlider = (slot: string): slot is LookFaceSlider => (LOOK_FACE_SLIDERS as readonly string[]).includes(slot)
+/** A tattoo zone's slot: its sixty-five options are too many to list in a refusal, so the console names the range and the completion instead. */
+const isTattooZone = (slot: string): boolean => TATTOO_ZONES.some((z) => z.slot === slot)
 
 /** The stature a height step names, m (step 0 is 1.50 m, step 31 is 2.05 m). */
 export function statureOf(step: number): number {
@@ -599,6 +721,14 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'eyewear': return named(WARDROBE.eyewear)
     case 'bag': return named(WARDROBE.bag)
     case 'cup': return named(WARDROBE.cup)
+    // The accessory word's slots: one list for every body, so a body change keeps them as they are.
+    case 'footwear': return named(WARDROBE.footwear)
+    case 'frames': return named(WARDROBE.frames)
+    case 'watch': return named(WARDROBE.watch)
+    case 'lapelPin': return named(WARDROBE.lapelPin)
+    // The tattoo word's slots: every zone offers every design, and the ink is a swatch (its sRGB, for the card).
+    case 'tattooHand': case 'tattooHandR': case 'tattooNeck': case 'tattooNape': return named(WARDROBE.tattoo)
+    case 'tattooInk': return TATTOO_INKS.map((i) => ({ name: i.name, hex: i.hex }))
   }
 }
 
@@ -864,6 +994,8 @@ const GENOME_BITS: readonly number[] = (() => {
     const high = LOOK_FIELD_HIGH[slot]
     if (high) bits[high[0]] |= ((1 << high[2]) - 1) << high[1]
   }
+  // The street flag is the shader's, never a field's: a field that took it would let a worn look pass for the street.
+  if (((bits[LOOK_STREET_FLAG.word] >>> LOOK_STREET_FLAG.bit) & 1) === 1) throw new Error('a look field holds the street flag (LOOK_STREET_FLAG)')
   return bits.map((b) => b >>> 0)
 })()
 
@@ -1020,20 +1152,80 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * hair: below `longHair` on link 4 is short; otherwise a woman's split link (LOOK_HASHED_HAIR_SPLIT) under `bob` is
  * long, under `bun` a bob, else a bun; a man's split link at or above `bald` is bald, else long. Two people in a
  * hundred have vitiligo (`vitiligo`), about one in six freckles (`freckles`), whatever their tone. Three outer layers
- * in ten wear a cut (`cut`), about one pair of trousers or skirt in three (`bottomCut`).
+ * in ten wear a cut (`cut`), about one pair of trousers or skirt in three (`bottomCut`). A little over half the
+ * street's shoes have a style (`footwear`), half of its glasses a frame finish (`frames`); on the watch's link a steel
+ * three-hand watch from `watchSteel`, a leather strap from `watchLeather`, a smartwatch from `watchSmart`; on the pin's
+ * link a silver bar from `pinBar` and a buttonhole flower from `pinFlower`. The street never wears the tourbillon or
+ * the rank pin: those are the watch shop's lines, earned there. One person in five carries a tattoo (`tattoo`), inked
+ * black below `inkGrey`, in grey wash from there, indigo from `inkIndigo`, brick red from `inkRed`, forest green from
+ * `inkGreen` and white from `inkWhite`; the street never wears the ink studio's designs or its gold leaf and
+ * luminescent inks either.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65, footwear: 0.45, frames: 0.5, watchSteel: 0.72, watchLeather: 0.84, watchSmart: 0.93, pinBar: 0.96, pinFlower: 0.98, tattoo: 0.8, inkGrey: 0.7, inkIndigo: 0.84, inkRed: 0.91, inkGreen: 0.95, inkWhite: 0.98 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
 /** A hashed step: round(h × n), as the shader does it (floor(h × n + 0.5)). */
 const stepOf = (h: number, n: number): number => Math.min(n, Math.round(h * n))
 
+/** What the street draws for one person: the design on each of the eight zones (tattoo.ts TATTOO_ZONES order, 0 for none) and the ink. */
+export interface StreetTattoos {
+  readonly motifs: readonly number[]
+  readonly ink: number
+}
+const NO_TATTOOS: StreetTattoos = Object.freeze({ motifs: Object.freeze(TATTOO_ZONES.map(() => 0)), ink: TATTOO_INK.black })
+
+/**
+ * The street's tattoos for a person, from their colours' chain `hc` (k to the hash of link k, as lookFromSeed takes
+ * it): exactly what the crowd's fragment stage draws (crowdTattoo.ts tatStreet). Four people in five carry none. A
+ * carrier wears one of TATTOO_STREET_SETS (one hand, the other, the neck, the nape, a forearm, the other, both
+ * forearms, or the calf with the ankle), a design after the studio's twelve on each zone of it (the set's first zone
+ * from one link, its second from another) and one ink, never the studio's gold leaf or luminescent. Every zone is
+ * drawn whether or not the wardrobe has its slot yet, so a later slot shows what the street already wore.
+ */
+export function streetTattoos(hc: (k: number) => number): StreetTattoos {
+  if (!above(hc(LOOK_HASHED_COLOUR.tattoo), LOOK_ODDS.tattoo)) return NO_TATTOOS
+  const set = TATTOO_STREET_SETS[pickIndex(hc(LOOK_HASHED_COLOUR.tattooZones), TATTOO_STREET_SETS.length)]
+  const hi = hc(LOOK_HASHED_COLOUR.tattooInk)
+  const ink = above(hi, LOOK_ODDS.inkWhite) ? TATTOO_INK.white : above(hi, LOOK_ODDS.inkGreen) ? TATTOO_INK.forestGreen
+    : above(hi, LOOK_ODDS.inkRed) ? TATTOO_INK.brickRed : above(hi, LOOK_ODDS.inkIndigo) ? TATTOO_INK.indigo
+      : above(hi, LOOK_ODDS.inkGrey) ? TATTOO_INK.greyWash : TATTOO_INK.black
+  const designs = TATTOO_MOTIFS.length - TATTOO_STUDIO_LINES
+  let first = true
+  const motifs = TATTOO_ZONES.map((_, z) => {
+    if (((set >>> z) & 1) === 0) return 0
+    const link = first ? LOOK_HASHED_COLOUR.tattooFirst : LOOK_HASHED_COLOUR.tattooSecond
+    first = false
+    return TATTOO_STUDIO_LINES + 1 + pickIndex(hc(link), designs)
+  })
+  return Object.freeze({ motifs: Object.freeze(motifs), ink })
+}
+
+/**
+ * Why a tattoo zone's design would not be seen on `look`, in the card's words, or null when nothing covers it. A
+ * prosthetic arm on that side covers its hand (crowd.ts armHere paints the limb before the skin: the left arm is the
+ * left hand's, on bone HAND_R), the cup is held over the right hand's back, and a turtleneck under a jacket or a coat
+ * knits up the neck to the chin ring (crowd.ts turtleNeck). The turtleneck reaches only the lower half of the nape's
+ * square, so the nape says nothing; a scarf, a hijab, long hair or a full beard worn over a zone are pieces the person
+ * chose to wear there, so they say nothing either.
+ */
+export function tattooCover(look: Look, slot: LookSlot): string | null {
+  const arms = look.prosthetic === PROSTHETIC.bothArms
+  switch (slot) {
+    case 'tattooHand': return arms || look.prosthetic === PROSTHETIC.leftArm ? 'covered by the limb' : null
+    case 'tattooHandR': return arms || look.prosthetic === PROSTHETIC.rightArm ? 'covered by the limb' : look.cup === 1 ? 'the cup covers it' : null
+    case 'tattooNeck': return look.cut === CUT.turtleneck && look.layer !== LAYER.shirt ? 'the turtleneck covers it' : null
+    default: return null
+  }
+}
+
 /**
  * The look the crowd's hash gives an agent of this index (any non-negative integer; a profile seed does as well):
  * body = index mod 4, pieces, the figure and the face from the vertex chain, colours, the age, the undertone, the
  * Monk tone, vitiligo and freckles from the fragment chain, exactly as crowd.ts chooses them, each slider rounded to its step. What the words cannot carry
  * (the tie's cloth, the bag's leather, the skirt suit's hose, the iris) stays hashed in the shader, so it is not here.
+ * The tattoos are the street's draw (streetTattoos) on the zones the wardrobe has, with the drawn ink only when one of
+ * them is inked (else black, as before); the street's other zones wait for their slots.
  */
 export function lookFromSeed(seed: number): Look {
   const s = Number.isFinite(seed) ? Math.abs(Math.trunc(seed)) % 4294967296 : 0
@@ -1061,8 +1253,14 @@ export function lookFromSeed(seed: number): Look {
     : (above(wear, LOOK_ODDS.turban) ? HEADWEAR.turban : above(wear, LOOK_ODDS.kippah) ? HEADWEAR.kippah : above(wear, LOOK_ODDS.flatCap) ? HEADWEAR.flatCap : HEADWEAR.none)
   const layerLink = hp(LOOK_HASHED_LAYER)
   const layer = layerLink < f32(LOOK_ODDS.shirtSleeves) ? LAYER.shirt : above(layerLink, LOOK_ODDS.coat) ? LAYER.coat : LAYER.jacket
+  // Glasses first: a frame finish is drawn only for a face that wears them.
+  const eyewear = above(hp(5), LOOK_ODDS.glasses)
+  const watchLink = hc(LOOK_HASHED_COLOUR.watch)
+  const pinLink = hc(LOOK_HASHED_COLOUR.lapelPin)
   // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
   const topSize = LOOK_PALETTE[outfit.top].length
+  const street = streetTattoos(hc)
+  const [tattooHand, tattooHandR, tattooNeck, tattooNape] = street.motifs
   const look: Record<LookSlot, number> = {
     body,
     height: statureSteps.from + stepOf(hp(6), statureSteps.span),
@@ -1103,6 +1301,13 @@ export function lookFromSeed(seed: number): Look {
     // Three outer layers in ten are cut otherwise than the notch lapel, one of the body's eight (CUT_STREET).
     cut: above(hc(LOOK_HASHED_COLOUR.cut), LOOK_ODDS.cut) ? CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.cutPick), CUT_STREET[body].length)] : 0,
     bottomCut: above(hc(LOOK_HASHED_COLOUR.bottomCut), LOOK_ODDS.bottomCut) ? BOTTOM_CUT_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.bottomCutPick), BOTTOM_CUT_STREET[body].length)] : 0,
+    // The accessory word: a little over half the shoes styled, one of the body's eight entries (FOOTWEAR_STREET); half
+    // the glasses in a finish other than black; a watch on about one wrist in four (never the tourbillon); a pin on a
+    // few lapels (never the rank pin), and none in shirt sleeves, where the jacket is off.
+    footwear: above(hc(LOOK_HASHED_COLOUR.footwear), LOOK_ODDS.footwear) ? FOOTWEAR_STREET[body][pickIndex(hc(LOOK_HASHED_COLOUR.footwearPick), FOOTWEAR_STREET[body].length)] : 0,
+    frames: eyewear && above(hc(LOOK_HASHED_COLOUR.frames), LOOK_ODDS.frames) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.framesPick), WARDROBE.frames.length - 1) : 0,
+    watch: above(watchLink, LOOK_ODDS.watchSmart) ? WATCH.smartwatch : above(watchLink, LOOK_ODDS.watchLeather) ? WATCH.leather : above(watchLink, LOOK_ODDS.watchSteel) ? WATCH.steel : WATCH.none,
+    lapelPin: layer === LAYER.shirt ? LAPEL_PIN.none : above(pinLink, LOOK_ODDS.pinFlower) ? LAPEL_PIN.flower : above(pinLink, LOOK_ODDS.pinBar) ? LAPEL_PIN.bar : LAPEL_PIN.none,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),
@@ -1112,9 +1317,15 @@ export function lookFromSeed(seed: number): Look {
     shoes: pickIndex(hc(6), LOOK_PALETTE[outfit.shoes].length),
     tie: above(hp(1), LOOK_ODDS.tie),
     scarf: above(hp(LOOK_HASHED_SCARF), LOOK_ODDS.scarf) ? 1 + pickIndex(hc(LOOK_HASHED_COLOUR.scarfCloth), LOOK_PALETTE.scarves.length) : 0,
-    eyewear: above(hp(5), LOOK_ODDS.glasses),
+    eyewear,
     bag: above(hp(2), woman ? LOOK_ODDS.bagWoman : LOOK_ODDS.bagMan),
     cup: above(hp(3), LOOK_ODDS.cup),
+    // The tattoo word: the street's designs on the hands, the neck and the nape, and its ink where one of them is inked.
+    tattooHand,
+    tattooHandR,
+    tattooNeck,
+    tattooNape,
+    tattooInk: tattooHand + tattooHandR + tattooNeck + tattooNape > 0 ? street.ink : TATTOO_INK.black,
   }
   return Object.freeze(look)
 }
@@ -1632,7 +1843,7 @@ export function changeLook(look: Look, change: LookChange, seed: number): LookCh
         index = statureStep(Number(text.replace(/\s*m$/i, '')))
       } else {
         index = options.findIndex((o) => o.name.toLowerCase() === text.toLowerCase())
-        if (index < 0) return refused(`no ${slot} named '${text}': ${isSlider(slot) || isFaceSlider(slot) || slot === 'age' ? `1-${options.length}` : options.map((o) => o.name).join(', ')}`)
+        if (index < 0) return refused(`no ${slot} named '${text}': ${isSlider(slot) || isFaceSlider(slot) || slot === 'age' ? `1-${options.length}` : isTattooZone(slot) ? `1-${options.length} or a design's name (Tab completes them)` : options.map((o) => o.name).join(', ')}`)
       }
       return changed(withLookSlot(look, slot, index), `${slot} ${index + 1} is outside the wardrobe`)
     }

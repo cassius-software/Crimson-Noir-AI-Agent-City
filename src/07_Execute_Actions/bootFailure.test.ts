@@ -142,6 +142,13 @@ test('codes win; today\'s exact messages still map to their class', () => {
     ['init: pedestrian sensing failed to start: GPU device lost (unknown): GPU process crashed', 'gpu-reset'],
     ['init: crowd.wgsl pipeline validation failed: binding 14', 'shader'],
     ['crowd.wgsl cull pipeline validation failed: x', 'shader'],
+    ["init: crowd.wgsl pipeline validation failed: crowd.wgsl binAgents: failed WebGPU validation: Entry point \"binAgents\" uses binding 5; compiler messages: error at line 9:4: no such thing", 'shader'],
+    // The GPU's own compiler refusing a kernel WebGPU accepted (gpuPipelines.ts): the driver's class, not the shader's.
+    ["init: crowd.wgsl pipeline compilation failed: the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED), the full kernel at narrow workgroups (x), the light kernel (y) [crowd device: arm / Mali-G52 MC2]", 'compiler'],
+    ["crowd.wgsl cull pipeline compilation failed: crowd.wgsl cull: refused by the GPU's own compiler (internal error): x", 'compiler'],
+    ["init: flowField.wgsl pipeline compilation failed: internal: x", 'compiler'],
+    ["init: crowd.wgsl pipeline validation failed: WebGPU refused the full kernel (crowd.wgsl simulate: failed WebGPU validation: Compute library failed to compile), the full kernel at narrow workgroups (x), the light kernel (y)", 'shader'],
+    ['init: crowd.wgsl could not be set up on this GPU: out-of-memory: crowd.gridSlots: no memory', 'other'],
     ['SYSTEM LOCKED: Physics realm fault: worker error', 'realm-fault'],
     ['the embedded region names something after a weapon: x', 'other'],
     ['the physics worker simulates 512 pedestrians, the page draws 600', 'other'],
@@ -152,6 +159,32 @@ test('codes win; today\'s exact messages still map to their class', () => {
   assert.equal(kindOf(coded('worker-gpu', 'anything'), e), 'worker-gpu')
   assert.equal(kindOf(Object.assign(new Error('Operation failed'), { code: 0 }), e), 'other')
   assert.equal(kindOf('a thrown string: GPU device lost', e), 'gpu-reset')
+})
+
+test('the compiler card: the driver, not the browser, named as what refused the crowd; a phone told to update its system software, the Windows app its driver and WebView2; the ladder named', () => {
+  const refused = new Error("init: crowd.wgsl pipeline compilation failed: the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED), the full kernel at narrow workgroups (x), the light kernel (y)")
+  const phone = classify(refused, env(UA.androidChrome, { touchPoints: 5 }))
+  assert.equal(phone.headline, 'This device’s graphics driver couldn’t build the crowd')
+  assert.match(text(phone), /WebGPU accepted the crowd’s shader, but the GPU’s own compiler refused/)
+  assert.match(text(phone), /Update Chrome and the phone’s system software \(the graphics driver comes with it\), then open the page again\./)
+  assert.match(text(phone), /For the crowd’s simulate pass the city also tried narrower workgroups and its lighter kernel; the details name each refusal\./)
+  assert.doesNotMatch(text(phone), /rejected part of the city’s drawing/, 'not the shader card')
+  assert.equal(phone.detail, refused.message, 'the driver’s words, the kernel named, on the card')
+  assert.match(text(classify(refused, env(UA.edgeWindows, TAURI))), /Update the graphics driver and WebView2/)
+  assert.match(text(classify(refused, env(UA.chromeLinux))), /Update the graphics driver and the browser/)
+  // Every browser on iOS is WebKit and its graphics come with iOS: the home-screen app and a Safari tab are told to
+  // update the iPhone, never Chrome; the Android home-screen app is told Chrome, which it runs on.
+  const home = classify(refused, env(UA.homeScreen, HOME_SCREEN))
+  assert.match(text(home), /Update the iPhone’s system software \(Safari’s graphics come with it\), then open the app again\./)
+  assert.doesNotMatch(text(home), /Chrome/)
+  assert.match(text(classify(refused, env(UA.ios26, IPHONE))), /Update the iPhone’s system software \(Safari’s graphics come with it\), then open the page again\./)
+  assert.match(text(classify(refused, env(UA.androidChrome, { touchPoints: 5, standalone: true }))), /Update Chrome and the phone’s system software \(the graphics driver comes with it\), then open the app again\./)
+  // A coded 'compiler' is the same card (the installed apps' loop above drives it so).
+  assert.equal(classify(Object.assign(new Error('x'), { code: 'compiler' }), env(UA.chromeLinux)).kind, 'compiler')
+  // The shader card is unchanged for a validation refusal, now with the browser's words and the compiler's line.
+  const shader = classify(new Error('init: crowd.wgsl pipeline validation failed: crowd.wgsl binAgents: failed WebGPU validation: x; compiler messages: error at line 9:4: y "fn binAgents("'), env(UA.chromeLinux))
+  assert.equal(shader.headline, 'The browser couldn’t build the city’s graphics')
+  assert.match(shader.detail, /compiler messages: error at line 9:4/)
 })
 
 test('an empty or missing message still gives a card with words', () => {
@@ -165,7 +198,7 @@ test('an empty or missing message still gives a card with words', () => {
 
 test('the installed iPhone app and the Windows app are never told to edit an address or switch browsers', () => {
   const NO = /address bar|copy the link|Open (?:this|the) page in|open the page again|in Chrome|in Safari/
-  for (const code of ['no-api', 'no-adapter', 'compat-only', 'device', 'gpu-reset', 'stalled', 'shader'] as const) {
+  for (const code of ['no-api', 'no-adapter', 'compat-only', 'device', 'gpu-reset', 'stalled', 'shader', 'compiler'] as const) {
     const e = Object.assign(new Error('x'), { code })
     assert.doesNotMatch(text(classify(e, env(UA.homeScreen, HOME_SCREEN))), NO, `home screen ${code}`)
     assert.doesNotMatch(text(classify(e, env(UA.edgeWindows, TAURI))), NO, `Tauri ${code}`)

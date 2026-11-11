@@ -15,7 +15,11 @@
  * committed edit handed to the host as a whole record, Undo of 20, and the draft taken away when it closes. The store
  * card's deed rows have Visit or Go home, off with the reason as the title, an address line, a purchase line that says
  * where the home stands, and a warning when a deed leaves too little for any furniture; its furniture says where it
- * goes.
+ * goes. The furnishing view's fourth tab, Rest, shows the host's words and rests with its own button, and every
+ * sentence a rest at home can say passes the same screen. Its fifth, Staff, shows the player's own agents as a strip
+ * of 48 px buttons, each with where the agent is under the name, and the workstations here as a list of 48 px buttons
+ * that move the cursor, turns Place and Remove into Post and Stand down, keeps the store and the roster out of the
+ * card, and every sentence staffing can say passes the same screen.
  * What breaks if it is removed? A tagline could fail the screen or name a real place, the card could buy around the
  * gate or swallow the HUD's key, the furnishing view could lose a control or an edit, and the deed rows could lose the
  * way to the home without anyone noticing.
@@ -28,6 +32,12 @@ import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { REAL_PLACES } from '../../tools/world/real-places.mjs'
 import { itemById } from './storeCatalog.ts'
 import { PAD, padEdges, padStep, padsFor } from './padNav.ts'
+import { createProgress, restOffer, restTake } from './progress.ts'
+import { AT, seal } from '../02_Define_The_Rules/progression.ts'
+import { GRID, DEPTH } from '../02_Define_The_Rules/homeGrid.ts'
+import { freshHomes, layoutOf, withHome } from '../05_Observe_Environment/homeStore.ts'
+import { STAFF_TAB, Visit, type StaffAgent, type StaffHooks } from './furnishVisit.ts'
+import type { Shopkeeper } from './shopkeeper.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const flat = (s: string) => s.replace(/\s+/g, ' ')
@@ -74,7 +84,7 @@ function clean(what: string, text: string): void {
 
 test('one line per home, each a sentence; they, the sky-floor notes and the seven deed names all pass the screen', () => {
   // The card shows the city's own line for the home (homeView.ts), so the doorstep and the city never tell two stories.
-  assert.ok(card.includes("import { CITY_LINES, type Draft } from './homeView.ts'"))
+  assert.ok(card.includes("import { CITY_LINES, type Draft, type FloorWhere } from './homeView.ts'"))
   assert.ok(card.includes('<p className="mt-2 leading-snug" data-tagline>{CITY_LINES[home]}</p>'))
   assert.ok(!card.includes('HOME_LINES'), 'no second list of taglines in the card')
   assert.equal(LINES.length, 7, 'one line for each of the seven homes')
@@ -94,6 +104,11 @@ test('one line per home, each a sentence; they, the sky-floor notes and the seve
     'Claim (free)', 'Buy', 'Yours', 'Also sold at', 'Esc or B closes', 'Your civic credits', 'Saved in this browser · Esc or B to finish',
     'Not placed here (', 'Order', 'Rotate', 'Place', 'Remove', 'Undo', 'View', 'Done', 'Clear', 'Furnish ', 'Furniture', 'Floor', 'Walls',
     'Nothing in hand at ', ': Place picks it up, Remove takes it out',
+    // The sky floor's row and its Tower tab (section 6 of the sky floors' plan).
+    'Sky floor', 'Go up', 'Go down', ' m up the tower, behind clear glass on all four sides.', 'You are ', ' m up the tower.',
+    "Enter, Space or the pad's south button rides.", 'In this map the deed is a ground-floor home, with no sky floor.',
+    'Go up to the sky floor, ', ' metres up', "Go down to the home's doorway", 'Tower', 'Furnish, rest, staff or ride',
+    'the far windows at the top, the arrival',
   ]
   for (const words of fixed) {
     assert.ok(card.includes(words), `the card says ${words}`)
@@ -103,6 +118,7 @@ test('one line per home, each a sentence; they, the sky-floor notes and the seve
     "'Furniture', 'Floor', 'Walls'", 'picked up: Place puts it down, Undo puts it back', 'Nothing here to pick up: choose a piece in the strip',
     'Nothing here to remove', 'Nothing in hand to turn: choose a piece in the strip', 'Nothing to undo', 'Undone', 'taken out of the home',
     'The pieces not placed here are cleared', ': move it into place and press Place', ' moved', ' placed', 'Floor: ', 'Walls: ',
+    "The sky floor's walls are its windows: there is nothing to finish here", 'Keeps the arrival clear', 'This home has no sky floor in this map',
   ]
   for (const words of said) {
     assert.ok(visitSrc.includes(words), `a visit says ${words}`)
@@ -110,12 +126,12 @@ test('one line per home, each a sentence; they, the sky-floor notes and the seve
   }
 })
 
-test('only the Penthouse and the Sky-Mansion say that their sky floor opens later', () => {
+test('the Penthouse and the Sky-Mansion say they have a sky floor', () => {
   assert.equal(NOTES.length, 2)
   const keys = [...card.slice(card.indexOf('const SKY_NOTES'), card.indexOf('})', card.indexOf('const SKY_NOTES'))).matchAll(/\n\s*(\d+):/g)].map((m) => Number(m[1]))
   assert.deepEqual(keys, [3, 6])
   assert.deepEqual([itemById(227)?.name, itemById(230)?.name], ['Crimson Tower Penthouse', 'Crown Spire Sky-Mansion'])
-  for (const note of NOTES) assert.match(note, /^The residence at the foot of .+ \(the sky floor opens later\)\.$/)
+  for (const note of NOTES) assert.match(note, /^The residence at the foot of .+, with a sky floor up the (tower|spire)\.$/)
   assert.match(NOTES[0], /Crimson Tower/)
   assert.match(NOTES[1], /Crown Spire/)
 })
@@ -135,14 +151,20 @@ test('the card buys the deed through the shopkeeper\'s gate, offers Claim for th
   assert.ok(src.includes('{!owned && <p'), 'the design house is named to a buyer')
   assert.ok(src.includes('Also sold at {SHOP_INFO.designHouse.name}'))
   assert.ok(src.includes('const sky = SKY_NOTES[home]'))
+  // The card is a room's (a hall, or a sky floor); the deed it shows is that room's deed.
+  assert.ok(src.includes('const home = room === null ? null : deedOf(room)'))
+  assert.ok(src.includes('{sky && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-sky>{floor ? sky : NO_SKY}</p>}'), 'a tower deed without a floor in this map says so')
+  assert.ok(src.includes('const floor = furnish?.tower?.where(room) ?? null'))
   // What the smoke test and the wiring tests look for.
-  for (const mark of ['data-home={home}', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
+  for (const mark of ['data-home={home}', 'data-room={room}', 'data-floor={f.up ? \'up\' : \'down\'}', 'data-floor-why>', 'data-action="floor"', 'data-owned={owned || undefined}', 'data-action="buy"', 'data-action="done"', 'data-purse>', 'data-said>', 'data-place>{address}']) {
     assert.ok(src.includes(mark), `missing ${mark}`)
   }
-  // Every button is big enough for a finger and marked for touch: the deed view's three and the furnishing view's 13.
+  // Every button is big enough for a finger and marked for touch: the deed view's four (the floor row's Go up or Go
+  // down among them) and the furnishing view's 17 (Rest among them, in Place's spot in the Rest tab, the ride in it in
+  // the Tower tab, and the Staff tab's agent and workstation buttons).
   assert.ok(src.includes("const BUTTON = 'min-h-12 "))
   const buttons = buttonsIn(src)
-  assert.equal(buttons.length, 16, 'every button tag, read whole')
+  assert.equal(buttons.length, 21, 'every button tag, read whole')
   for (const b of buttons) assert.ok(b.includes('${BUTTON}') && b.includes('data-touch'), b)
   // Imports point down: no wardrobe and no properties module in the card, and of the saved homes only the pure record
   // helpers: the host loads and saves the record (App.tsx), the card hands it each edit.
@@ -230,7 +252,7 @@ test('the furnishing view says the plan\'s words for every verdict, and each fur
   // Section 6 of the homes plan, in canPlace's order; N is the line's cap in one home.
   assert.deepEqual(VERDICTS, [
     'Fits', 'Outside the room', 'Something is already there', 'Keeps the doorway clear', 'Goes against a wall',
-    'N of these is the most for one home', '16 pieces is the most a home holds', 'You are standing there',
+    'N of these is the most for one room', '16 pieces is the most a room holds', 'You are standing there',
     'Would cut off part of the room', 'Would block a workstation\'s seat', 'Not yours yet: Order it',
   ])
   const keys = [...visitSrc.slice(visitSrc.indexOf('const VERDICT_WORDS'), visitSrc.indexOf('})', visitSrc.indexOf('const VERDICT_WORDS'))).matchAll(/\n\s*(\w+):/g)].map((m) => m[1])
@@ -267,11 +289,13 @@ test('the furnishing view takes only its own keys, in the capture phase: never H
     KeyA: '{ move: [-n, 0] }', KeyD: '{ move: [n, 0] }',
     Enter: "'place'", NumpadEnter: "'place'", Space: "'place'", KeyR: "'rotate'",
     Delete: "'remove'", Backspace: "'remove'", KeyX: "'remove'", KeyQ: "'prev'", KeyE: "'next'",
-    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', KeyC: "'view'",
+    Digit1: '{ tab: 0 }', Digit2: '{ tab: 1 }', Digit3: '{ tab: 2 }', Digit4: '{ tab: 3 }', Digit5: '{ tab: 4 }', KeyC: "'view'",
+    Digit6: 'tabs > TOWER_TAB ? { tab: TOWER_TAB } : null',
   })
   for (const never of ['KeyH', 'Backquote', 'Escape', 'KeyB']) assert.ok(!acts.has(never), `${never} is never the furnishing view's`)
   // The listener: captured, skipping a field being typed in, stopping only a key it handles; held, only moves repeat.
-  assert.ok(src.includes('origin.key(e.code) if (isEditableTarget(e.target)) return const a = keyAct(e, visit.tab) if (a === null) return'))
+  assert.ok(src.includes('origin.key(e.code) if (isEditableTarget(e.target)) return const a = keyAct(e, visit.tab, visit.tabCount) if (a === null) return'))
+  assert.ok(src.includes('function keyAct(e: KeyboardEvent, tab: number, tabs: number = TABS.length): Act | null {'), '6 is the Tower tab only where the visit has six')
   assert.ok(src.includes("if (a === 'place' && origin.byKeys(e.target)) return e.preventDefault() e.stopPropagation()"))
   // How a button got the focus is followed as the focus moves (furnishVisit.ts FocusOrigin, run in furnishVisit.test.ts),
   // never read from :focus-visible at the key, which a mouse-clicked button already matches by then.
@@ -316,11 +340,11 @@ test('the furnishing view reads the pad in its own frame loop by edges, so a but
 test('the furnishing view: every committed edit reaches the host as the whole record; Undo keeps 20; closing puts a piece in hand back and takes the draft away', () => {
   const src = flat(card)
   // Only an owner, with the engine's leave: otherwise the deed view says why not.
-  assert.ok(src.includes('const refusal = open && owned && furnish !== null && home !== null ? furnish.refusal(home) : null'))
+  assert.ok(src.includes('const refusal = open && owned && furnish !== null && room !== null ? furnish.refusal(room) : null'))
   assert.ok(src.includes('const furnishing = open && owned && furnish !== null && onRecord !== undefined && refusal === null'))
   assert.ok(src.includes('{owned && refusal && <p className={`mt-2 text-[12px] leading-snug ${t.muted}`} data-refusal>{refusal}</p>}'))
   assert.ok(src.includes('aria-label={furnishing ? `Furnish ${name}` : name}'))
-  assert.ok(src.includes('<Furnisher key={home} home={home} keeper={keeper} record={record} onRecord={onRecord} hooks={furnish}'))
+  assert.ok(src.includes('<Furnisher key={room} home={room} keeper={keeper} record={record} onRecord={onRecord} hooks={furnish}'))
   // The visit (furnishVisit.ts; furnishVisit.test.ts runs it): what stands here is what the engine draws (fitLayout
   // with the lines owned); a piece goes down only where canPlace says.
   const visit = flat(visitSrc)
@@ -371,7 +395,7 @@ test('the furnishing view\'s pointers and fingers: the 3D view through pickCell,
   assert.ok(src.includes('const GAP = Object.freeze({ gap: TOUCH.gap })'))
   const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
   const tools = buttonsIn(toolbar)
-  assert.deepEqual(tools.map((b) => b.match(/data-action="(\w+)"/)?.[1]), ['prev', 'next', 'rotate', 'place', 'remove', 'undo', 'view', 'done'])
+  assert.deepEqual(tools.map((b) => b.match(/data-action="(\w+)"/)?.[1]), ['prev', 'next', 'rotate', 'rest', 'floor', 'place', 'remove', 'undo', 'view', 'done'])
   for (const b of tools) assert.ok(b.includes('style={TARGET}'), b)
   assert.ok(src.includes('<canvas ref={planRef} role="img"'), 'the plan is named for a screen reader')
   assert.ok(src.includes('role="status" aria-live="polite" data-reason'))
@@ -384,9 +408,252 @@ test('the host keeps the homes\' record, saves every edit and hands it to the en
   assert.ok(app.includes('for (const id of SHAPE_IDS) if (keeper.owns(id)) mask |= 1 << (id - FURNITURE_BASE)'), 'lineMask bit i: line 160 + i owned')
   assert.ok(app.includes('const onRecord = useCallback((next: HomeRecord) => { homesRef.current = next setHomes(next) saveHomes(next) engineRef.current?.setFurnishings(next, ownedHomes(keeper), ownedLines(keeper)) }, [keeper])'))
   assert.ok(app.includes('const furnish = () => { const deeds = ownedHomes(keeper) engine.setFurnishings(homesRef.current, deeds, ownedLines(keeper)) setOwnedDeeds(deeds) } furnish() return keeper.onChange(furnish)'), 'at boot and on every change of what is owned')
-  assert.ok(app.includes('useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> homeOpen) & 1) === 1) }, [engine, homeOpen, ownedDeeds])'))
+  assert.ok(app.includes('useEffect(() => { engine?.setHomeCard(homeOpen, homeOpen !== null && ((ownedDeeds >>> deedOf(homeOpen)) & 1) === 1) }, [engine, homeOpen, ownedDeeds])'), 'a sky floor is owned with its deed')
   for (const hook of ['refusal: (home: number) => engine.furnishRefusal(home)', 'begin: (home: number) => { if (!engine.furnishing) engine.setHomeCard(home, true) }', 'setDraft: (draft) => engine.setHomeDraft(draft)', 'blocked: (home: number) => engine.blockedCells(home)', 'pickCell: (x: number, y: number) => engine.pickCell(x, y)', 'canvas: () => canvasRef.current']) {
     assert.ok(app.includes(hook), `missing ${hook}`)
   }
   assert.ok(app.includes('record={homes} onRecord={onRecord} furnish={furnishHooks}'))
+})
+
+test('the Rest tab: the panel shows the host\'s words (hooks.rest.offer), never computed in the card; there the toolbar\'s primary button is Rest (BUTTON, TARGET, Enter, aria-describedby the panel) while Place keeps its own button; the finishes show only in Floor and Walls; the tabs wrap; the deed view says resting waits with furnishing', () => {
+  const src = flat(card)
+  const visit = flat(visitSrc)
+  assert.ok(visit.includes("export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'] as const)"))
+  assert.ok(visit.includes('export const REST_TAB = 3'))
+  assert.ok(visit.includes("case 'place': if (this.tab === REST_TAB) this.rest(); else if (this.tab === TOWER_TAB) this.ride(); else this.place(); return"), 'Enter, Space, A and the button rest in the Rest tab (and ride in the Tower tab)')
+  assert.ok(visit.includes("this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')"))
+  // The panel: the host's lines as they come, then the hint; the card computes nothing of a rest.
+  assert.ok(src.includes('const restId = `home-rest-${home}`'))
+  assert.ok(src.includes("{visit.tab === REST_TAB && ( <div id={restId} className={`mt-3 rounded-2xl border px-3 py-2 text-[12px] leading-snug ${t.rule}`} data-rest> {(hooks.rest?.offer(home).lines ?? ['Resting is not offered here']).map((line) => <p key={line}>{line}</p>)}"))
+  assert.ok(src.includes(`{"Enter, Space, the pad's south button or Rest below rests here."}`))
+  assert.ok(!/progress\.ts'|progression\.ts'|restBonus|homeRest|restAtHome|pageProgress|comfortOf/.test(src), 'nothing of the keeper or the rules in the card')
+  assert.ok(!/progress\.ts'|progression\.ts'|restBonus|homeRest|restAtHome|pageProgress/.test(visit), 'nor in the visit')
+  // The toolbar: Rest in Place's spot, the same size and colour, named for Enter and described by the panel.
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const restButton = buttonsIn(toolbar).find((b) => b.includes('data-action="rest"'))
+  assert.ok(restButton, 'a Rest button')
+  for (const part of ["onClick={() => visit.run('place')}", 'aria-label="Rest here (Enter)"', 'aria-describedby={restId}', 'className={`${BUTTON} px-4 font-semibold ${t.buy}`}', 'style={TARGET}', 'data-touch']) {
+    assert.ok(restButton.includes(part), `the Rest button: ${part}`)
+  }
+  assert.ok(toolbar.includes('{visit.tab === REST_TAB ? ( <button'), 'Rest only in the Rest tab, Place everywhere else')
+  assert.ok(toolbar.includes('data-action="rest" data-touch>Rest</button> ) : visit.tab === TOWER_TAB && floor ? ( <button'))
+  assert.ok(toolbar.includes("data-action=\"floor\" data-touch>{floor.up ? 'Go up' : 'Go down'}</button> ) : ( <button"), 'Place everywhere else')
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Previous agent (Q)' : visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'}"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Next agent (E)' : visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'}"))
+  // The finishes only in Floor and Walls, and the arrows move the cursor in the Rest tab as in Furniture.
+  assert.ok(src.includes('{(visit.tab === 1 || (visit.tab === 2 && !sky)) && ( <div className="mt-3 grid grid-cols-2"'), 'a sky floor\'s Walls tab has no finishes')
+  assert.ok(src.includes('{visit.tab === 2 && sky && <p className={`mt-3 text-[12px] leading-snug ${t.muted}`} data-finishes="walls">{SKY_WALLS}.</p>}'))
+  assert.ok(!src.includes('visit.tab !== 0'))
+  assert.ok(src.includes('const finish = tab === 1 || tab === 2'))
+  // Five tabs wrap on a narrow phone.
+  assert.ok(src.includes('<div role="tablist" aria-label={floor ? \'Furnish, rest, staff or ride\' : \'Furnish, rest or staff\'} className="mt-2 flex flex-wrap" style={GAP}>'))
+  assert.ok(src.includes("{(floor ? [...TABS, 'Tower'] : TABS).map((name, i) => ("), 'six tabs where the home has a sky floor in this map')
+  // The deed view in a network room: resting waits with furnishing.
+  assert.ok(src.includes('{owned && refusal && furnish?.rest && <p className={`mt-1 text-[12px] leading-snug ${t.muted}`} data-rest-wait>Resting here waits for the same reason.</p>}'))
+  for (const words of ['Resting is not offered here', "Enter, Space, the pad's south button or Rest below rests here.", 'Resting here waits for the same reason.', 'Rest here (Enter)', 'Furnish, rest or staff']) clean('the Rest tab', words)
+})
+
+test('the floor row and the Tower tab: Go up and Go down with their spoken names; Digit6 and the triggers reach the tab only where there is a floor', () => {
+  const src = flat(card)
+  // The row: its heading, how far up (or that you are up there), and why the ride waits in a live line the button points at.
+  const row = src.slice(src.indexOf('function FloorRow('), src.indexOf('interface FurnisherProps'))
+  assert.ok(row.length > 500, 'the row read whole')
+  assert.ok(row.includes('<div className="font-semibold">Sky floor</div>'))
+  assert.ok(row.includes("{f.up ? `${f.metres} m up the tower, behind clear glass on all four sides.` : `You are ${f.metres} m up the tower.`}"))
+  assert.ok(row.includes('<p id={id} className={`text-[12px] leading-snug ${t.muted}`} role="status" aria-live="polite" data-floor-why>{f.why ?? \'\'}</p>'))
+  assert.ok(row.includes('aria-describedby={off ? id : undefined}') && row.includes('disabled={off}'), 'while it waits, the button is off and points at why')
+  assert.ok(row.includes("{f.up ? 'Go up' : 'Go down'}"))
+  assert.ok(src.includes("const rideLabel = (f: FloorWhere): string => (f.up ? `Go up to the sky floor, ${f.metres} metres up` : \"Go down to the home's doorway\")"))
+  assert.ok(row.includes('aria-label={rideLabel(f)}'), 'the spoken name says where it goes')
+  assert.ok(row.includes("{!onRide && <p className={`text-[12px] leading-snug ${t.muted}`}>{\"Enter, Space or the pad's south button rides.\"}</p>}"), 'in the Tower tab, how its keys ride')
+  // The deed view's row rides through the host and says why not in the card's own line; the Tower tab's row has no button
+  // of its own (the toolbar's rides), and both only where the host reports a floor.
+  assert.ok(src.includes('{floor && <FloorRow id={`home-floor-${room}`} f={floor} t={t} onRide={() => { const why = furnish?.tower?.ride(room); if (why) setSaid({ home, text: why }) }} />}'))
+  assert.ok(src.includes('{visit.tab === TOWER_TAB && floor && <FloorRow id={towerId} f={floor} t={t} />}'))
+  assert.ok(src.includes('const floor = hooks.tower?.where(home) ?? null'))
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const ride = buttonsIn(toolbar).find((b) => b.includes('data-action="floor"'))
+  assert.ok(ride, 'the toolbar\'s ride')
+  for (const part of ["onClick={() => visit.run('place')}", 'disabled={floor.why !== null}', 'aria-label={`${rideLabel(floor)} (Enter)`}', 'aria-describedby={towerId}', 'style={TARGET}', 'data-touch']) {
+    assert.ok(ride.includes(part), `the ride: ${part}`)
+  }
+  // Digit6 reaches the Tower tab only where the visit has six tabs; the triggers wrap by the visit's count (Visit.toTab,
+  // run in furnishVisit.test.ts); the poll redraws the card when the ride's reason changes, for a visitor too.
+  const body = card.slice(card.indexOf('function keyAct('), card.indexOf('\n}\n', card.indexOf('function keyAct(')))
+  assert.ok(body.includes("case 'Digit6': return tabs > TOWER_TAB ? { tab: TOWER_TAB } : null"))
+  assert.ok(src.includes("[BTN.lt]: 'tabPrev', [BTN.rt]: 'tabNext'"))
+  assert.ok(flat(visitSrc).includes('toTab(i: number): void { const n = this.tabCount this.tab = (i + n) % n'))
+  assert.ok(src.includes("const read = () => `${owned ? furnish.refusal(room) : ''}|${furnish.tower?.where(room)?.why}`"))
+  // The plan upstairs: its own rows and columns, the arrival hatched, named for a screen reader.
+  assert.ok(src.includes('const p = planOf(o.home)'))
+  assert.ok(src.includes("aria-label={`Floor plan: ${sky ? 'the far windows at the top, the arrival' : 'the back wall at the top, the doorway'} at the bottom;"))
+  assert.ok(src.includes('style={{ width: cols * cell, height: (plan.r1 - plan.r0 + 1) * cell + DOOR_BAND }}'))
+})
+
+test('every sentence a rest at home can say passes the card\'s screen', () => {
+  const levels = Array.from({ length: 7 }, (_, h) => itemById(224 + h)?.level ?? 0)
+  assert.deepEqual(levels, [1, 3, 6, 10, 14, 17, 20])
+  const said = new Set<string>()
+  for (const hero of [1, 3]) {
+    for (const level of levels) {
+      for (const kinds of [0, 1, 3, 5, 9]) {
+        const p = createProgress({ store: null, seed: () => 3, now: () => 0 })
+        p.record[AT.hero] = hero
+        seal(p.record)
+        for (const l of restOffer(p, level, kinds).lines) said.add(l)
+        said.add(restTake(p, level, kinds))
+        for (const other of levels) for (const l of restOffer(p, other, 9).lines) said.add(l)
+        said.add(restTake(p, 20, 9))
+        said.add(restTake(p, 20, 9))
+      }
+    }
+  }
+  assert.ok(said.size >= 20, `${said.size} sentences`)
+  for (const text of said) clean('a rest at home', text)
+})
+
+test('the Staff tab: a strip of the player\'s agents with where each is, and a list of the workstations here that moves the cursor, 48 px with text labels; Post and Stand down in Place\'s and Remove\'s buttons; the plan\'s label counts the staffed; the store and the roster stay out of the card', () => {
+  const src = flat(card)
+  const visit = flat(visitSrc)
+  assert.ok(visit.includes('export const STAFF_TAB = 4'))
+  assert.ok(src.includes('const staffTab = visit.tab === STAFF_TAB, seat = staffTab ? visit.station(fit) : null'))
+  assert.ok(src.includes('|| (staffTab ? visit.staffLine() : hand && verdict ?'), 'the reason line is the visit\'s in the Staff tab')
+  // The panel: the strip of agents (a group of buttons, the chosen one pressed, the name and where the agent is shown
+  // and in the label), the list of workstations, and the hint.
+  assert.ok(src.includes('const staffId = `home-staff-${home}`'))
+  assert.ok(src.includes('{staffTab && ( <div id={staffId} className="mt-3" data-staff>'))
+  assert.ok(src.includes('<div role="group" className="flex overflow-x-auto pb-1" style={GAP} aria-label="Your agents" data-agents>'))
+  assert.ok(src.includes('{visit.staffAgents().map((a) => { const at = visit.whereIs(a)'), 'where each agent is, in the visit\'s words')
+  const agent = buttonsIn(src).find((b) => b.includes('data-action="agent"'))
+  assert.ok(agent, 'an agent button')
+  for (const part of ['onClick={() => visit.run({ agent: a.name })}', 'aria-pressed={inHandName === a.name}', 'aria-label={`${a.name}: ${at}`}', '${BUTTON}', 'data-name={a.name}', 'data-touch']) {
+    assert.ok(agent.includes(part), `the agent button: ${part}`)
+  }
+  assert.ok(src.includes('data-touch > <span className="block font-semibold">{a.name}</span> <span className="block text-[12px]" data-where>{at}</span> </button>'),
+    'its text label is the name over where the agent is (data-where), as its aria-label says')
+  // The list: one button per workstation here in reading order, a tap moving the cursor onto it (a second posts, as any
+  // press on the cursor's cell), the one under the cursor pressed.
+  assert.ok(src.includes('<div role="group" className="mt-2 grid grid-cols-2" style={GAP} aria-label="Workstations here" data-stations> {visit.stations(fit).map((p, i) => { const who = visit.who(p)?.name ?? \'Nobody\''))
+  const station = buttonsIn(src).find((b) => b.includes('data-action="station"'))
+  assert.ok(station, 'a workstation button')
+  for (const part of [
+    'onClick={() => visit.run({ press: { c: p.c, r: p.r } })}', 'aria-pressed={seat?.n === i + 1}', 'aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}',
+    'data-seat={`${p.c},${p.r}`}', '${BUTTON}', 'data-touch',
+    // A 24-letter name (roster.ts NAME_MAX) wraps inside its half of the row instead of spilling past the card's edge.
+    '${BUTTON} min-w-0 break-words border',
+  ]) {
+    assert.ok(station.includes(part), `the workstation button: ${part}`)
+  }
+  assert.ok(src.includes('data-touch > Workstation {i + 1} · {who} </button>'), 'its text label is its number and who stands there')
+  // The toolbar: Post and Stand down are Place's and Remove's own buttons (the data-action list is unchanged), named for their keys.
+  const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
+  const place = buttonsIn(toolbar).find((b) => b.includes('data-action="place"'))!
+  assert.ok(place.includes("aria-label={staffTab ? (inHandName ? `Post ${inHandName} at the workstation under the cursor (Enter)` : 'Post (Enter)') : hand"))
+  assert.ok(place.includes('aria-describedby={staffTab ? staffId : undefined}'))
+  assert.ok(toolbar.includes("data-action=\"place\" data-touch>{staffTab ? 'Post' : 'Place'}</button>"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Stand down the agent at this workstation (Delete)' : 'Remove the piece (Delete)'}"))
+  assert.ok(toolbar.includes("data-action=\"remove\" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>"))
+  // The plan: each posted agent's disc and initial, and the cursor round the workstation under it; its label counts the
+  // workstations staffed in the Staff tab.
+  assert.ok(src.includes('staff: visit.staffMarks(), seat: seat?.p ?? null'))
+  assert.ok(src.includes('the cursor at ${where}${staffTab ? `; ${visit.staffMarks().length} of ${visit.stations(fit).length} workstations staffed` : \'\'}`}'))
+  assert.ok(src.includes('const f = (o.hand && footprint(o.hand)) ?? (o.seat && footprint(o.seat)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }'))
+  assert.ok(src.includes('staff: \'#7c3aed\','))
+  // An agent out with the player is a faded disc, so the plan never shows someone the room shows empty; the alpha is
+  // put back before the piece in hand is drawn.
+  const marks = src.slice(src.indexOf('for (const m of o.staff) {'), src.indexOf('// The piece in hand'))
+  assert.ok(marks.length > 0, 'the marks come before the piece in hand')
+  assert.ok(marks.includes('ctx.globalAlpha = m.out ? 0.45 : 1 ctx.fillStyle = PLAN.staff'))
+  assert.ok(marks.includes('} ctx.globalAlpha = 1'), 'and back to full after the marks')
+  // The card and the visit never reach the store or the roster: the host's hooks answer for them.
+  assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(src), 'nothing of the store or the roster in the card')
+  assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(visit), 'nor in the visit')
+  assert.ok(!/loadStaff|saveStaff|localStorage/.test(src + visit), 'neither reads nor writes the browser\'s store')
+  const words = [
+    'Your agents', 'Workstations here', 'Workstation', 'Nobody', ' workstations staffed', 'Previous agent (Q)', 'Next agent (E)', 'Post', ' at the workstation under the cursor (Enter)', 'Post (Enter)',
+    'Stand down the agent at this workstation (Delete)', 'Stand down',
+    'Choose an agent, move the cursor onto a workstation and press Post. They stand at it between visits, and step away while they are out with you.', 'Furnish, rest or staff', 'Staff',
+    'Free', ' · out with you', 'Workstation moved or put away', 'Workstations turn in the Furniture tab', ' (moved from ',
+  ]
+  for (const w of words) {
+    assert.ok(card.includes(w) || visitSrc.includes(w), `the card says ${w}`)
+    clean('the Staff tab', w)
+  }
+  // No desk in the player's words, and nothing a posted agent does not do.
+  for (const w of [...words, ...stringsIn(visitSrc, 'const NO_AGENTS = ', '\n')]) assert.doesNotMatch(w, /\bdesks?\b|\bsit|\bseated\b|\bworks\b|\bearn|\bassigned\b|\blane\b|\bteam\b/i, w)
+})
+
+test('every sentence staffing can say passes the card\'s screen', () => {
+  const keeper = { owns: () => true, buy: () => ({ verdict: 0, message: '' }) } as unknown as Shopkeeper
+  const said = new Set<string>()
+  const names = ['Mara', 'Theo', 'Ines', 'Abcdefghijklmnopqrstuvwx']
+  for (let home = 0; home < 7; home++) {
+    const first = GRID - DEPTH[home]
+    const record = withHome(freshHomes(), home, layoutOf(0, 0, [{ id: 168, c: 4, r: first, rot: 0 }, { id: 168, c: 10, r: first, rot: 2 }], []))
+    for (const mode of ['ok', 'away', 'refused', 'none', 'bare'] as const) {
+      const posts = new Map<string, { home: number; c: number; r: number }>()
+      // Away: one agent posted in the next home, one where no workstation stands now.
+      if (mode === 'away') { posts.set('Ines', { home: (home + 1) % 7, c: 4, r: 20 }); posts.set('Theo', { home, c: 20, r: first + 3 }) }
+      const hooks: StaffHooks = {
+        agents: (): StaffAgent[] => (mode === 'none' ? [] : names.map((name, i) => ({ name, out: i % 2 === 1, post: posts.get(name) ?? null }))),
+        homeName: (h) => itemById(224 + h)?.name ?? 'another home',
+        post: (h, c, r, name) => { if (mode === 'refused') return 'Furnishing happens inside the home: walk in first'; for (const [n, p] of posts) if (p.c === c && p.r === r) posts.delete(n); posts.set(name, { home: h, c, r }); return null },
+        standDown: (_h, c, r) => { for (const [n, p] of posts) if (p.c === c && p.r === r) posts.delete(n); return null },
+      }
+      const v = new Visit(home, mode === 'bare' ? freshHomes() : record, {
+        keeper, onRecord: () => {}, onClose: () => {}, changed: () => {},
+        hooks: { refusal: () => null, begin: () => {}, setDraft: () => {}, blocked: () => new Uint8Array(GRID * GRID), pickCell: () => null, canvas: () => null, staff: hooks },
+      })
+      v.run({ tab: STAFF_TAB })
+      const note = () => { said.add(v.staffLine()); if (v.said) said.add(v.said); for (const a of v.staffAgents()) said.add(v.whereIs(a)) }
+      for (const [c, r] of [[4, first], [11, first + 1], [20, first + 3]]) {
+        v.moveTo(c, r)
+        note()
+        for (const name of names) {
+          v.run({ agent: name })
+          v.run('place')
+          note()
+          v.run('place')
+          note()
+        }
+        v.run('remove')
+        note()
+        v.run('remove')
+        note()
+        v.run('rotate')
+        note()
+      }
+      // One agent moved from the first workstation to the second.
+      v.moveTo(4, first)
+      v.run({ agent: names[0] })
+      v.run('place')
+      v.moveTo(11, first + 1)
+      v.run('place')
+      note()
+      // Q and E off a workstation, then a staffed workstation picked up in the Furniture tab (who waits for it).
+      v.moveTo(20, first + 3)
+      for (const d of ['next', 'prev'] as const) { v.run(d); note() }
+      v.run({ tab: 0 })
+      v.moveTo(10, first)
+      v.run('place')
+      note()
+      v.run('undo')
+    }
+  }
+  // The host's own refusals (App.tsx), with each name.
+  const app = read('../App.tsx')
+  const newer = 'Staff was saved by a newer version of the city: reload the page to post or stand down'
+  assert.ok(app.includes("'No workstation stands there now'") && app.includes('`No agent called ${name} on your roster`') && app.includes(`'${newer}'`))
+  said.add('No workstation stands there now')
+  said.add(newer)
+  for (const name of names) said.add(`No agent called ${name} on your roster`)
+  for (const kind of [
+    /\(moved from workstation \d\)/, /\(moved from [A-Z]/, /^Workstation moved or put away/, / · out with you$/, /^Free$/, /^Workstations turn in the Furniture tab$/,
+    /^Workstation picked up: .*; [A-Z]\w+ waits until it is back in its place$/, /^Nothing to staff at .*: move onto a workstation to post [A-Z]/,
+    /^No workstation stands here yet: place one in the Furniture tab to post [A-Z]/,
+  ]) {
+    assert.ok([...said].some((t) => kind.test(t)), `among them: ${kind}`)
+  }
+  assert.ok(said.size >= 20, `${said.size} sentences`)
+  for (const text of said) clean('staffing', text)
 })

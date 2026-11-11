@@ -14,7 +14,9 @@ import { test } from 'node:test'
 import { CITY } from '../01_Initialize_World/city.ts'
 import { ROOM } from '../01_Initialize_World/interiors.ts'
 import { PERSON } from '../07_Execute_Actions/simProtocol.ts'
-import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cellCentre, inApron, inMask } from './homeGrid.ts'
+import {
+  APRON, ARRIVAL, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, ROOM_COUNT, SKY, SKY_HOMES, backEdge, cellCentre, deedOf, inApron, inKeep, inMask, planOf, skyRoom,
+} from './homeGrid.ts'
 
 const close = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`)
 
@@ -75,7 +77,8 @@ test('the helpers: backEdge, cellCentre, inMask and inApron agree with the numbe
     assert.ok(!inMask(home, -1, GRID - 1) && !inMask(home, GRID, GRID - 1) && !inMask(home, 0, GRID))
     assert.ok(!inMask(home, 0.5, GRID - 1), 'a cell is named by whole numbers')
   }
-  assert.ok(!inMask(7, 0, GRID - 1), 'there is no eighth home')
+  assert.ok(!inMask(7, 0, GRID - 1), "room 7's plan does not reach column 0")
+  assert.ok(!inMask(9, 15, 15), 'there is no tenth room')
   const c = cellCentre(0, 0)
   close(c.u, -GRID_HALF + CELL / 2)
   close(c.v, -GRID_HALF + CELL / 2)
@@ -86,4 +89,43 @@ test('the helpers: backEdge, cellCentre, inMask and inApron agree with the numbe
   for (let r = 0; r < GRID; r++) for (let col = 0; col < GRID; col++) if (inApron(col, r)) apron++
   assert.equal(apron, 4 * 6)
   assert.ok(!inApron(12, 31) && !inApron(19, 31) && !inApron(15, 27) && !inApron(15.5, 30))
+})
+
+test('the rooms: nine; the halls\' plans as before; rooms 7 and 8 share the 20 x 20 plan and its arrival; deedOf and skyRoom undo each other', () => {
+  assert.equal(ROOM_COUNT, 9)
+  assert.deepEqual([...SKY_HOMES], [3, 6], 'the Penthouse and the Sky-Mansion')
+  assert.ok(Object.isFrozen(SKY_HOMES) && Object.isFrozen(SKY) && Object.isFrozen(ARRIVAL))
+  // The halls: every row the home is deep, every column, the apron kept.
+  for (let h = 0; h < DEPTH.length; h++) {
+    assert.deepEqual(planOf(h), { r0: GRID - DEPTH[h], r1: GRID - 1, c0: 0, c1: GRID - 1, keep: APRON }, `hall ${h}`)
+    assert.equal(deedOf(h), h)
+  }
+  // The sky floors: one fixed plan, 20 cells each way, its edges 7.78 m from the centre, the arrival on the doorway side.
+  for (const room of [7, 8]) assert.equal(planOf(room), SKY)
+  assert.deepEqual([SKY.r0, SKY.r1, SKY.c0, SKY.c1], [6, 25, 6, 25])
+  assert.equal(SKY.keep, ARRIVAL)
+  assert.deepEqual([ARRIVAL.r0, ARRIVAL.r1, ARRIVAL.c0, ARRIVAL.c1], [22, 25, 13, 18])
+  close(backEdge(7), -7.78, 1e-9)
+  close(-GRID_HALF + (SKY.r1 + 1) * CELL, 7.78, 1e-9)
+  close(-GRID_HALF + SKY.c0 * CELL, -7.78, 1e-9)
+  close(cellCentre(ARRIVAL.c0, ARRIVAL.r0).u - CELL / 2, 4.668, 1e-9)
+  close((cellCentre(ARRIVAL.c0, ARRIVAL.r0).u - CELL / 2 + cellCentre(ARRIVAL.c1, ARRIVAL.r1).u + CELL / 2) / 2, 6.224, 1e-9)
+  close((cellCentre(ARRIVAL.c0, ARRIVAL.r0).v + cellCentre(ARRIVAL.c1, ARRIVAL.r1).v) / 2, 0, 1e-9)
+  // The arrival inside the plan, and the hall's apron and the arrival each only their own room's.
+  for (let r = ARRIVAL.r0; r <= ARRIVAL.r1; r++) for (let c = ARRIVAL.c0; c <= ARRIVAL.c1; c++) assert.ok(inMask(7, c, r) && inKeep(7, c, r) && inKeep(8, c, r))
+  assert.ok(!inKeep(7, APRON.c0, APRON.r1), 'the apron\'s last row is outside the sky plan')
+  assert.ok(inKeep(0, APRON.c0, APRON.r1) && !inKeep(0, ARRIVAL.c0, ARRIVAL.r0))
+  assert.ok(inMask(7, 6, 6) && inMask(8, 25, 25) && !inMask(7, 5, 6) && !inMask(7, 26, 6) && !inMask(7, 6, 26))
+  // deedOf and skyRoom: the sky floors' deeds are their homes'; only homes 3 and 6 have a sky room.
+  assert.deepEqual([deedOf(7), deedOf(8)], [3, 6])
+  assert.deepEqual([skyRoom(3), skyRoom(6)], [7, 8])
+  for (const h of [0, 1, 2, 4, 5]) assert.equal(skyRoom(h), -1, `hall ${h} has no sky floor`)
+  for (const room of [7, 8]) assert.equal(skyRoom(deedOf(room)), room)
+  // Nothing past the ninth room, nor a room that is not a whole number.
+  for (const bad of [9, -1, 0.5, Number.NaN]) {
+    assert.equal(planOf(bad), null, `room ${bad}`)
+    assert.ok(Number.isNaN(backEdge(bad)))
+    assert.ok(!inMask(bad, 15, 15) && !inKeep(bad, 15, 23))
+  }
+  assert.equal(deedOf(9), -1)
 })

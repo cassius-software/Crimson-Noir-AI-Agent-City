@@ -9,7 +9,8 @@
  * the page is shown, on the rumble alone; the chime in player 1's ears alone; one keeper listener in App, cueing a
  * success but not a reroll that stayed one, taken back on a halt and with the city; the wardrobe's check once per
  * visit from the card; the HUD's chip from the snapshot alone, read as text, its glow once, never cut, and still under
- * reduced motion; and the keeper never built at module scope or by the engine or the recruiter.
+ * reduced motion; the keeper never built at module scope or by the engine or the recruiter; and a rest at home only
+ * through the furnishing hooks, where the engine allows furnishing.
  * What breaks if it is removed? A shared setter could start earning (the console's own check would then be lost to the
  * skill's rest), a check's tap could drown out or stand in for the limiter's hum, the chime could play in every seat,
  * a stale listener could drive a stopped city, or a Node test could build the page's keeper, with no test going red.
@@ -143,6 +144,25 @@ test('App: one keeper listener cues every success and is taken back on a halt an
   before(loop, 's.supplier.progress = hudProgress(', 'setHud(s)', 'on the snapshot React sees')
   assert.equal(count(APP_CODE, /\bhudProgress\(/g), 1)
   assert.match(APP, /^ {4}haptics: q\.get\('haptics'\) !== '0',$/m, '?haptics=0 starts them off')
+})
+
+test('App: a rest at home goes through the page\'s one keeper from the furnishing hooks inside GuiShell, only where engine.furnishRefusal is null, with the deed\'s level and the kinds homePlaced draws; the engine, the HUD and the operator never reach it', () => {
+  assert.equal(count(APP_CODE, /\brestTake\(/g), 1)
+  assert.equal(count(APP_CODE, /\brestOffer\(/g), 1)
+  const hooks = between(GUI, '  const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {', '} : null), [engine, keeper])')
+  assert.match(hooks, /^ {6}offer: \(home: number\) => \{ const r = restInputs\(home, homesRef\.current, keeper\); return restOffer\(pageProgress\(\), r\.level, r\.kinds\) \},$/m)
+  assert.match(hooks, /^ {6}take: \(home: number\) => \{ const r = restInputs\(home, homesRef\.current, keeper\); return engine\.furnishRefusal\(home\) \?\? restTake\(pageProgress\(\), r\.level, r\.kinds\) \},$/m, 'the engine\'s gate checked again before the keeper rests')
+  // What a rest is measured by: the deed's level in the catalogue (a sky floor's is its deed's), and the kinds the
+  // engine draws there.
+  const inputs = between(APP, 'function restInputs(', '\n}\n')
+  assert.ok(inputs.includes('level: itemById(DEED_BASE + deedOf(home))?.level ?? 0'))
+  assert.ok(inputs.includes('kinds: comfortOf(homePlaced(home, record, ownedHomes(keeper), ownedLines(keeper)))'))
+  assert.match(APP, /^import \{ homePlaced, roomName \} from '\.\/07_Execute_Actions\/homeView\.ts'$/m)
+  assert.match(APP, /^import \{ deedOf \} from '\.\/02_Define_The_Rules\/homeGrid\.ts'$/m)
+  // Nothing else reaches the rest: not the engine, the HUD, the operator's script facade or the recruiter.
+  for (const [name, src] of [['engine.ts', ENGINE], ['Hud.tsx', HUD], ['operator.ts', read('./operator.ts')], ['recruitment.ts', RECRUITMENT]] as const) {
+    assert.doesNotMatch(code(src), /restAtHome|homeRest|restTake|restOffer/, `${name} never rests`)
+  }
 })
 
 test('App: the wardrobe card earns once a visit when the look really changes; the console\'s look keeps wearLook', () => {

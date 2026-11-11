@@ -58,6 +58,7 @@ const { TrackFleet } = await import('./trackFleet.ts')
 const { buildTrackNetwork } = await import('../06_Make_Decisions/tracks.ts')
 const { RigView } = await import('./rigView.ts')
 const { NetView } = await import('./netView.ts')
+const { StaffView } = await import('./staffView.ts')
 const { VEHICLE_KINDS } = await import('./car.ts')
 const { CROWD_DEFAULT } = await import('../05_Observe_Environment/governor.ts')
 
@@ -70,6 +71,18 @@ const SEED = 1337
  * 500 million characters in Chrome, a billion in Firefox) when it failed.
  */
 const STAGE_BUDGET = 256 * 1024
+
+/**
+ * The most WGSL the near crowd body's main fragment stage may be, in characters: a target of its own, inside
+ * STAGE_BUDGET. That stage is the page's longest, the whole wardrobe's paint (221,913 at its worst before the crowd's
+ * hash was written once and its cloths declared once, about 172 thousand after), and every wardrobe slice adds to it,
+ * so the room a slice leaves the next is held here rather than found at the budget, where no pipeline is left to
+ * spare.
+ */
+const NEAR_TARGET = 225_000
+
+/** The near bodies of the crowd (crowd.ts names each mesh People.<body>.lod<level>; level 0 is the near one). */
+const NEAR_BODY = /^People\..+\.lod0$/
 
 /**
  * The bindings WebGPU promises a stage on every adapter (maxUniformBuffersPerShaderStage, maxStorageBuffersPerShaderStage,
@@ -225,9 +238,10 @@ const drawKey = (m: Mesh): string =>
 
 /**
  * The draws that do not take rain mode: the sky (SkyMesh, three's own), and the network room's ghosts, which only a
- * network room draws and which are only ever seen in rain mode as the dim figures they are (netView.ts).
+ * network room draws and which are only ever seen in rain mode as the dim figures they are (netView.ts); and the posted
+ * agents, plain figures the page alone draws (staffView.ts), kept plain as those ghosts are.
  */
-const NO_RAIN_MODE = (name: string): boolean => name === 'Mesh' || name === 'NetPeople' || name === 'NetCars'
+const NO_RAIN_MODE = (name: string): boolean => name === 'Mesh' || name === 'NetPeople' || name === 'NetCars' || name === 'StaffPerson'
 
 interface Report { name: string; pass: 'main' | 'shadow'; vertex: number; fragment: number; surface: number; uniforms: number; storage: number }
 
@@ -254,6 +268,16 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
       assert.ok(s.vertex.length > 0 && s.fragment.length > 0, `${name}: both stages built`)
       assert.ok(s.vertex.length <= STAGE_BUDGET, `${name}: vertex stage ${s.vertex.length} characters, budget ${STAGE_BUDGET}`)
       assert.ok(s.fragment.length <= STAGE_BUDGET, `${name}: fragment stage ${s.fragment.length} characters, budget ${STAGE_BUDGET}`)
+      if (pass === 'main' && NEAR_BODY.test(draw)) {
+        assert.ok(s.fragment.length <= NEAR_TARGET, `${name}: the near body's fragment stage is ${s.fragment.length} characters, target ${NEAR_TARGET}`)
+        // Where a chosen look's ink shows (crowd.ts inkShown, its beard's cover from 1.548 up in front of z -0.03): written
+        // once, at the top of the stage, so the gold leaf's branch and the luminescent glow's read it set. First reached
+        // inside the gold leaf's branch, it was written there alone and the glow read the beard's test unset.
+        const gates = [...s.fragment.matchAll(/\.y > 1\.548 \) \) && \( \w+\.z > -0\.03 \)/g)]
+        assert.equal(gates.length, 1, `${name}: the inks' cover is written once`)
+        const head = s.fragment.slice(s.fragment.indexOf('fn main('), gates[0].index)
+        assert.equal((head.match(/\{/g)?.length ?? 0) - (head.match(/\}/g)?.length ?? 0), 1, `${name}: the inks' cover is written at the top of the stage, under no branch`)
+      }
       assert.equal(surfaceCalls(s.vertex), 0, `${name}: the vertex stage never calls the rain-mode surface`)
       const surface = surfaceCalls(s.fragment)
       assert.ok(surface <= 1, `${name}: the rain-mode surface is called ${surface} times; a material takes rain mode once`)
@@ -313,7 +337,10 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   // The scheduled craft and the loop's structure, over the realm's own network (the page builds it from the same boxes).
   const network = buildTrackNetwork(SEED, world.boxes)
   const craft = new CraftView(network, new TrackFleet(network).count, world.night, world.matrixMode.globalState)
-  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars, ...craft.meshes)
+  // A posted agent at a workstation (staffView.ts), as the page draws one.
+  const staff = new StaffView()
+  staff.set([{ x: 0, y: 0, z: 0, yaw: 0, body: 1, ink: 0x3f4652, scale: 1 }])
+  world.scene.add(...crowd.meshes, ...fleet.bodies, fleet.wheels, ...rigs.meshes, net.people, net.cars, ...craft.meshes, staff.group)
   const built = buildScene('city', renderer, world.scene, world.camera)
   const shadowed = new Set(built.filter((b) => b.pass === 'shadow').map((b) => b.name))
   // The guideway's beams share the columns' material, geometry attributes and instancing: one draw, built once as the columns.
@@ -323,8 +350,11 @@ test('the procedural city, its crowd, fleet, rigs and network ghosts: every mate
   // The homes' finishes and furniture: the buildings' material read through a uniform buffer of transforms (its 512
   // slots fit one), a draw of its own beside the buildings' instanced attributes, indoors under the slab, no shadow.
   assert.ok(mains.has('HomeFurniture') && !shadowed.has('HomeFurniture'), 'city: HomeFurniture is drawn and casts no shadow')
+  assert.ok(mains.has('StaffPerson') && !shadowed.has('StaffPerson'), 'city: a posted agent is drawn and casts no shadow')
   // The crowd: four bodies at two levels of detail, a material each; the rigs' thirteen parts share one.
   assert.equal([...shadowed].filter((n) => n.startsWith('People.')).length, crowd.meshes.length, 'city: every body of the crowd was built for the shadow pass')
+  // The near bodies' main fragments were built, so each was held to NEAR_TARGET on the way (buildScene's check).
+  assert.equal([...mains].filter((n) => NEAR_BODY.test(n)).length, crowd.meshes.length / 2, 'city: every near body of the crowd was built for the main pass')
   // Its shadow pass draws the pose and the dissolve's shadow mask, nothing of the paint: three multiplies the shadow's
   // alpha by the colour's, which once wrote every weave and cut into the shadow map's fragment stage (about 138
   // thousand characters, run for every texel a body covers; the browser job outran its half hour).

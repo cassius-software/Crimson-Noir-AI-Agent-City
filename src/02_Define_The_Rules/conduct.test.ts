@@ -168,6 +168,13 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   assert.deepEqual([...WARDROBE.hairStyle].slice(0, 5), ['short', 'long', 'bob', 'bun', 'bald'])
   assert.equal(WARDROBE.hairStyle.length, 32)
   assert.deepEqual([...WARDROBE.headwear], ['none', 'hijab', 'turban', 'head wrap', 'kippah', 'durag', 'beanie', 'flat cap'])
+  // 14A: paint on existing meshes, plain shapes, no emblem, nothing carried. The shoe's style, the glasses' frames,
+  // the watch on the wrist and the pin on the lapel are colours on the shoe, the rims, the hand and the jacket: no
+  // piece is added, and the pins are a disc, a bar and a flower, never a badge of anything.
+  assert.deepEqual([...WARDROBE.footwear], ['plain', 'lace-up', 'cap toe', 'wingtip', 'loafer', 'buckle strap', 'two-tone', 'sneaker', 'flat', 'ankle boot', 'lace-up boot', 'knee boot'])
+  assert.deepEqual([...WARDROBE.frames], ['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline'])
+  assert.deepEqual([...WARDROBE.watch], ['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch'])
+  assert.deepEqual([...WARDROBE.lapelPin], ['none', 'rank pin', 'silver bar', 'buttonhole flower'])
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)
@@ -222,11 +229,12 @@ test('an ACTION line cannot arm anyone: a weapon verb is refused, never proposed
 const UNARMED_SOURCES: readonly string[] = Object.freeze([
   '01_Initialize_World/codeDissolve.ts', '01_Initialize_World/matrixMesh.wgsl', '01_Initialize_World/matrixMode.ts',
   '02_Define_The_Rules/civic.ts',
-  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdBody.ts', '03_Spawn_Agents/crowdCompute.ts',
+  '03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowd.wgsl', '03_Spawn_Agents/crowdBody.ts', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowdTattoo.ts',
   '03_Spawn_Agents/crowdCull.ts', '03_Spawn_Agents/crowdSensor.ts', '03_Spawn_Agents/crowdSim.ts', '03_Spawn_Agents/humanoid.ts',
-  '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts',
+  '03_Spawn_Agents/look.ts', '03_Spawn_Agents/ragdoll.ts', '03_Spawn_Agents/ragdollRig.ts', '03_Spawn_Agents/skills.ts', '03_Spawn_Agents/tattoo.ts',
   '06_Make_Decisions/actions.ts', '06_Make_Decisions/intent.ts',
   '07_Execute_Actions/acts.ts', '07_Execute_Actions/car.ts', '07_Execute_Actions/carRig.ts', '07_Execute_Actions/fleetView.ts',
+  '07_Execute_Actions/staffView.ts',
 ])
 
 test('no weapon in the agents\' mesh descriptors, rigs, shaders or action tables, in code or comment', () => {

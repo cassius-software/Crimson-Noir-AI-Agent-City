@@ -373,7 +373,9 @@ window, and no shops.
 On foot inside one, the HUD shows **Browse** and the shop's name. E, B, the pad's south face button or a tap on that
 chip opens the shop's card (`07_Execute_Actions/StoreCard.tsx`); near a car, E keeps opening its door, and B still
 opens the card. While the card is open you stand on the fitting spot facing the door, and the camera leaves your head
-to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. In a network room the
+to circle your body slowly (the mirror), so what you wear shows; the sound stays at your head. The ink studio's mirror
+comes in closer, to 1.4 m instead of 2.6 m, lower and aimed a little higher, so a tattoo on a hand, the neck or the
+nape is about twice as many pixels across (`storefronts.ts` `SHOP_ORBIT`). In a network room the
 card opens without the mirror (the room did not make the step onto the fitting spot). Esc, × or Done gives the eye
 back. Every line lists
 its level and its price. **Try on** wears it on your body until the card closes. **Buy** takes the credits and wears it
@@ -389,9 +391,16 @@ record (the progression engine's, kept in this browser), so the console's `progr
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
   carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
-  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase.
-  Lines that need slots the wardrobe does not have yet (the tattoo designs and inks, watches, the lapel pin, the
-  umbrella, headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
+  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
+  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin; the ink studio's two
+  inks (gold leaf and luminescent, each setting the wardrobe's tattoo Ink alone). Trying an ink on a look with no
+  tattoo showing puts the olive branch on your left hand for the mirror (or on the first zone nothing covers: past a
+  prosthetic arm, the cup or a turtleneck), so the ink has something to colour; buying it sets
+  the ink alone (`storeCatalog.ts` `previewItem`). Lines that need slots the wardrobe does not have yet (the studio's
+  twelve forearm designs, the umbrella, headphones) are listed as on order and go on sale when the wardrobe's update
+  adds those slots. Four of the studio's designs carry names that say what each draws (the braided rope band, the
+  scalloped arc band, the compass rose and Euler's identity circle); their ids and the bits a purchase sets are as
+  they were. The design house's seven property
   deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
   credits) are on sale (see Homes and Furnishing). A furniture line you own says **Place it at home (B)**, and so does
   the line the card says when you buy one. A deed whose price would leave you less than the cheapest furniture on sale
@@ -415,7 +424,9 @@ home has one deed, sold at Lintel & Lumen Design House:
   Estate** (level 17, 1,100,000 credits) at its eastern end, both facing the lake.
 - **Crown Spire Sky-Mansion** (level 20, 4,500,000 credits) at the foot of the tallest headquarters tower no one else
   has, and **Crimson Tower Penthouse** (level 10, 75,000 credits) at the foot of another tower near the centre, at
-  least two lots away. For now each is the residence at its tower's foot; the card says the sky floor opens later.
+  least two lots away. In the city each also has a sky floor up its tower (the card says how far up). Inside the
+  home, the card's **Go up** takes you there, visitor or owner, and **Go down** brings you back inside the doorway.
+  The ride waits outside a network room and out of a car.
 
 Each home is a glass room built like a shop, with the ceiling slab in the building's own finish. The grander the home,
 the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft is 9.3 m deep and the two grandest
@@ -423,11 +434,17 @@ the deeper the room: a solid wall stands behind a smaller one, so the Micro-Loft
 fits. Anyone can walk into any home, in either map and in a network room. The minimap draws a home on sale in violet
 and one you own in gold.
 
+A sky floor is a 15.6 m square room with clear glass on all four sides, which you see through and cannot walk
+through, under the tower's own slab. You furnish it like the home below, with its own 16 pieces and caps, its own
+floor finish, Rest and Staff. Its walls are its windows, so the Walls tab has nothing to finish. A deed you do not own
+shows a staged floor.
+
 Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
 workplaces and shops have taken theirs, hollowed the same way. The seven nearest free lots to your start are chosen
 first, and among them the grander homes get the better-built ones (if a podium that carries a tower is among them, the
-grandest home there takes it), so a home's name does not promise a view of the lake or a tower there; a window with
-too few lots has fewer homes, and the surveyed region has none. A region home's card names the streets it stands on.
+grandest home there takes it), so a home's name does not promise a view of the lake or a tower there, and no home there
+has a sky floor; a window with too few lots has fewer homes, and the surveyed region has none. A region home's card
+names the streets it stands on.
 
 On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Furnish** and the
 name of a home you own. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
@@ -459,16 +476,58 @@ The card that opens inside a home you own is where you furnish it (`07_Execute_A
 at the right, on a phone a sheet over the lower half, so the room stays in view above it. The camera leaves your head
 for a point under the ceiling a few metres from the cursor, looking down at it, and your look comes back when the card
 closes. In a network room the card shows the deed instead, with the reason ("Furnishing waits until you leave the
-shared room: it replays your walk and does not know your furniture"), and switches to furnishing by itself once you
-leave the room. Walking out of the home or putting on a headset closes the card.
+shared room: it replays your walk and does not know your furniture"), and resting waits too; a rest already taken
+keeps applying there. The card switches to furnishing by itself once you leave the room. Walking out of the home or
+putting on a headset closes the card.
 
-- **Three tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
-  holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
-  hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
-  ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
-  house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
+- **Five tabs, six in a home with a sky floor.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk,
+  the six-screen console, the holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the
+  grand piano, the hydroponic green wall and the agent workstation. A line you own says how many stand in this room out
+  of its cap ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the
+  design house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
-  board-formed concrete, blackened steel) are free.
+  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below). **Staff** posts your own agents
+  at the agent workstations standing here (below). **Tower** says how far up the sky floor is and rides there or back
+  (Enter, Space, the pad's south button or the button).
+- **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
+  many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
+  (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new
+  round, and +2 to every check for the next 30 checks"). The bonus is the lower of two: the home's, by its deed's
+  level (+1 from a level 3 deed, +2 from 9, +3 from 17, so the Micro-Loft gives none, the Brownstone and the Timber
+  Loft up to +1, the Penthouse and the Villa up to +2, the Estate and the Sky-Mansion up to +3), and its comfort's, by
+  how many different lines stand in it now (+1 from one kind, +2 from three, +3 from five; copies of a line count
+  once, and a piece not placed here or picked up and in hand does not count until it is put down). While a rest lasts
+  another waits for its 30 checks, unless a home gives a higher bonus, which then takes its place; a rest that gave no
+  bonus runs its 30 checks too. Every check counts, at the console or in the city; a refused check and a hero point's
+  reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
+  where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
+- **Staff.** The Staff tab posts your own agents (the wardrobe card's Agents tab) at the agent workstations standing
+  in this home. It shows your agents as a row of buttons, the chosen one pressed, each with where that agent is under
+  the name: Free, Workstation 2 (one here), another home's name, or Workstation moved or put away, and "· out with
+  you" while hired. Under them, **Workstations here** lists this home's workstations, numbered in reading order (back row
+  first, then left to right), each with who stands at it ("Workstation 1 · Mara", or "· Nobody"); a screen reader
+  also hears its column and row. Choose an agent (Q / E, the pad's shoulders, or a tap) and move the cursor onto a
+  workstation, or tap its row in the list; the line under the plan says which workstation it is, who stands at it,
+  and what Post would do (off a workstation, which agent is chosen). Then press Enter, Space, the pad's south button
+  or **Post** (or tap the workstation or its row again). From then on they stand at that workstation, in their body
+  and their top's colour, at their height, facing its screen, in every visit, until you stand them down (Delete,
+  Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet disc and
+  their initial, faded while they are out with you, and in this tab a screen reader hears how many of the
+  workstations here are staffed.
+  Workstations turn in the Furniture tab (Rotate says so here). Posting and standing down work exactly where
+  furnishing does.
+  - Posting an agent who is posted elsewhere moves them, and the line says from where ("Mara is at workstation 2 now
+    (moved from workstation 1)", or from another home's name). Posting at a staffed workstation frees whoever stood
+    there.
+  - An agent you have hired steps away from the workstation while they are out with you, and is back once you part.
+  - A posted agent is only drawn. They are not a body in the city (you can walk through them), do not walk, earn
+    nothing and do no work. Staffing changes no check, no rest and no credit.
+  - Who stands where is saved in this browser by the agent's name (`civic-simulation:staff:v1`). A post is kept while
+    its workstation is moved or put away or the deed is not yours, and the agent is back when a workstation stands in
+    that place again; picking up a staffed workstation in the Furniture tab says who waits for it. Renaming an agent
+    keeps their post; forgetting an agent lets their post go, so a new agent given that name starts free. If a newer
+    version of the city saved who stands where, this page shows nobody posted and never writes over it: Post and
+    Stand down ask you to reload the page. Staffing is not on Undo; Stand down undoes a post.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -493,17 +552,21 @@ leave the room. Walking out of the home or putting on a headset closes the card.
   as **Not placed here** with **Clear**, and comes back when it fits again.
 - **Show homes.** A home on sale is furnished as a show home, solid like any other. It empties when the deed is
   bought: the new owner starts with a bare room in the home's own finishes.
-- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid: the room replays the
-  walk it saw and knows nothing of the furniture.
+- **In a network room** every home keeps its floor and walls, but no furniture is drawn or solid, and nobody stands at
+  a workstation: the room replays the walk it saw and knows nothing of the furniture.
 
 | Furnishing | Keyboard | Mouse | Pad | Touch |
 |---|---|---|---|---|
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
+| Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
+| Post an agent (Staff tab) | Enter or Space | Post, click the workstation under the cursor, or click its row twice | south (A) | Post, or tap the workstation or its row twice |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
+| Stand down (Staff tab) | Delete, Backspace or X | Stand down, or right click | west (X) | Stand down |
 | Previous / next piece | Q / E | click in the strip | left / right shoulder | ◀ ▶, or tap in the strip |
-| Tabs | 1 / 2 / 3 | the tab | left / right trigger | the tab |
+| Previous / next agent (Staff tab) | Q / E | click the agent | left / right shoulder | ◀ ▶, or tap the agent |
+| Tabs | 1 / 2 / 3 / 4 / 5 | the tab | left / right trigger | the tab |
 | Choose a finish (Floor or Walls) | ← → or Q / E | the swatch | left / right shoulder | the swatch |
 | Undo | Z or Ctrl+Z | Undo | View | Undo |
 | Turn the camera | C | View | right stick left / right | View |
@@ -518,7 +581,7 @@ The map is becoming a real metropolitan region with fictional names: its streets
 are surveyed, and every name is invented. Real fictional cities work the same way. The first piece is a
 pilot region of 12.1 × 7.8 km: the downtown waterfront, its harbour and islands, 49,620 buildings, 11,141 street runs.
 Every build carries it: `dist/index.html` holds the compiled pack (`world/pilot.region.json.gz`, 2.5 MB, as base64,
-about 3.4 MB of the file's 14 MB), so the one file plays the region from a disk or a stick with no network and nothing
+about 3.4 MB of the file's 12 MB), so the one file plays the region from a disk or a stick with no network and nothing
 beside it. The page inflates the pack itself (the browser's own gzip stream); nothing is fetched.
 
 - `?region=on` walks the surveyed region in any build. The default build opens on the procedural city, where the
@@ -1143,17 +1206,20 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  thirty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the eighteen dress slots (skin, age,
-  undertone, vitiligo, freckles, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
-  one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
+  fifty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the thirty-eight dress slots (skin, age,
+  undertone, vitiligo, freckles, hair style, curl, hair colour, headwear, headwear colour, facial hair, hearing
+  devices, prosthetic, prosthetic finish, layer, cut, top, top weave, trim, bottom cut, bottom, bottom weave, shirt,
+  shoe style, shoes, tie, scarf, lapel pin, eyewear, frames, watch, bag, cup, and the tattoos on the left hand, the
+  right hand, the neck and the nape with their one ink), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
   in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
-  within its body's options (the genome's later slots, vitiligo and freckles, may be left out and read as none). A
+  within its body's options (the genome's later slots, vitiligo, freckles, the accessory word's four and the tattoo
+  word's five among them, may be left out and read as none). A
   look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
@@ -1257,6 +1323,53 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   wrap and button-front): each sets the cut and the weave and keeps your colours. Only the ones your body wears are
   listed, and the console refuses a skirt on a trouser body. About one pedestrian in three wears a lower cut. At the
   console: `look bottomCut midi`, `look garment wide-leg trousers`.
+- **Shoes, frames, a watch and a lapel pin.** A **Shoe style** row sits above the **Shoe colour** row: plain (as every
+  shoe was), lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot and
+  knee boot, painted on the shoe in its own colour (the laces, a toe cap, a wing's line and its perforations up close,
+  a loafer's saddle, a strap and its buckle, a cream upper, a sneaker's white sole, a flat's low sides showing the
+  hose or the sock). A boot's shaft shows up the leg where the leg shows: under the skirt, and below cropped trousers
+  and culottes; full-length trousers hide it, as they would. The ankle boots stop above the ankle and the knee boot
+  just below the knee, over a prosthetic shin as over the hose. **Frames** finish the glasses: black (as every pair
+  was), tortoiseshell, steel, gold tone, navy, burgundy, clear and browline (a black brow over a steel lower rim); the
+  row shows only while glasses are worn, and the silhouette's rims wear the finish. The **Watch** is on the left
+  wrist: none, a steel three-hand, a tourbillon chronograph (a gold case, its movement showing through a navy dial),
+  a leather strap or a smartwatch; it is drawn over a prosthetic hand as over the skin. The **Lapel pin** is on the
+  left lapel, or at the breast where the cut has no lapel to speak of: none, a rank pin (a plain gold disc with a
+  ring), a silver bar or a buttonhole flower. The pins are plain shapes with no emblem, and the row leaves the card in
+  shirt sleeves, with the jacket. All four are paint on the shoe, the rims, the hand and the jacket the crowd already
+  draws: no piece is added. The far crowd shows the shoe styles and the boots; the frames, the watch and the pin are
+  the near body's. On the street a little over half the pedestrians wear a shoe style (one of their body's eight),
+  a little over one in four a watch (steel, leather or a smartwatch, never the tourbillon), half of those in glasses frames
+  other than black, and about one in thirty-five a silver bar or a flower on the lapel (never the rank pin): the
+  tourbillon and the rank pin are the watch shop's. At the console: `look footwear wingtip`, `look watch smartwatch`,
+  `look frames tortoiseshell`, `look lapelPin silver bar`.
+- **Tattoos.** A design on the **Left hand**, the **Right hand**, the **Neck** and the **Nape** (the person's own
+  sides), and one **Ink** for all of them, the genome's word 7. There are sixty-four designs in eight families of
+  eight (`03_Spawn_Agents/tattoo.ts`): flowers, stars and rays, circles and orbits, shapes, bands, spirals, sprigs and
+  pictures (a paper plane, a sailboat, a lighthouse, gulls in flight and others). Each is a plain drawing named for
+  what it shows, never a people's, a faith's or a clan's sign. A design is one drawing, two or three stacked, or a
+  band round the wrist or the neck. The near body's fragment stage draws it from the skin's rest position
+  (`crowdTattoo.ts`, its WGSL written from those tables), so it moves with every pose, and on the skin alone: a
+  sleeve, a collar, a scarf or the hair is never inked. The far crowd and the shadow pass draw none, and a design
+  fades out as its wearer walks away. On the card the tattoos are one section instead of a row per slot: **Zone**
+  (a dot on a zone that holds a design, and a note where something covers it in the city: a prosthetic arm on that
+  side, the cup in the right hand, a turtleneck under a jacket or a coat on the neck), **Design family** (none clears
+  the zone; another family wears its first design at once), **Design** (the family's eight) and **Ink**, eight
+  swatches: black (as every tattoo was), indigo, white, gold leaf, luminescent, brick red, forest green and grey wash.
+  Gold leaf has a metal's sheen and luminescent a faint glow of its own; both are the ink studio's, and the street
+  never wears them. Every ink stays legible on every skin: the line is the skin taken nine tenths of the way to the
+  ink, and where that stands out from the skin by less than 3:1 (WCAG's contrast for graphics), a thin halo just
+  outside the line takes the skin toward a warm white (round a dark line) or a brown-black (round a light one) just
+  far enough to reach 3:1, and no further. One passer-by in five carries a tattoo, drawn from their seed as the rest
+  of their look is (`look.ts` `streetTattoos`, the shader's own draw): one zone or two, each a design after the
+  studio's twelve, in one ink, about seven carriers in ten black, one in seven grey wash, one in fourteen indigo, then
+  brick red, forest green and white. About one passer-by in ten shows theirs, on a hand, the neck or the nape; the
+  rest are inked on a forearm, the calf or the ankle, which sleeves, trousers and hose cover. A prosthetic arm hides its
+  side's hand; the watch covers a band design where it passes the left wrist; a turtleneck under a jacket or a coat
+  covers the neck and the nape's lower half; a full or long beard is drawn over the neck; a scarf, a hijab, long hair
+  and the cup in the right hand cover what lies under them. At the console: `look tattooHand compass rose`, `look
+  tattooHand 10` (numbers count none as 1, so 10 is the ninth design, the compass rose), `look tattooNape none`,
+  `look tattooInk gold leaf`; Tab after `look tattooHand com` offers comet and compass rose.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -1269,10 +1382,13 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
   word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
   the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
-  weave, the bottom's and the outer layer's cut; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  weave, the bottom's and the outer layer's cut; word 6, the accessory word, holds the shoe's style, the frames, the
+  watch and the lapel pin in its low fifteen bits; word 7, the tattoo word, holds a design (one of sixty-four, or
+  none) on each hand, the neck and the nape and their ink in its low thirty-one bits, its top bit the shader's street
+  flag that no look may set; words 8 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin, cloth and accessory words through one flat varying, and the vertex stage never reads the accessory word. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -1282,9 +1398,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut) adds a tail carrying those words up to the
-  last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
-  cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut, a shoe style, a watch) adds a tail
+  carrying those words up to the last that is not zero, with its own check: eight symbols for the skin word alone,
+  `-XXXXXXXX`, fifteen with the cloth word, `-XXXXXXXX-XXXXXXX`, twenty-one with the accessory word,
+  `-XXXXXXXX-XXXXXXXX-XXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
@@ -1295,8 +1412,8 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   sliders, in the look's colours, the coat and the scarf among them; the tie, the bag and the hose keep the
   street's own colours, and the trim's lines are the street's alone, its row shows the cloth), above a row per
   slot: the sliders as sliders (the height read in metres), named options as a segmented control, colours as
-  swatches from the crowd's palettes (under shirt sleeves the jacket's and the trim's rows are not shown); the
-  presets; Randomise (the look the hash would give some other number);
+  swatches from the crowd's palettes (under shirt sleeves the jacket's and the trim's rows are not shown), and the
+  tattoos as one section of zone, design family, design and ink (see Tattoos); the presets; Randomise (the look the hash would give some other number);
   Reset (the look your own seed gives, the first use of the profile seed); and the code, to copy or to paste. The
   face sliders sit under a face view of their own, the head's rings six times the silhouette's scale, from the
   front and in profile, with the hair style, the features and the glasses drawn as the street draws them: under
@@ -1318,7 +1435,9 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   `agent hire <name> [<skill>]` in the console asks someone nearby with that skill over as them, dresses that pedestrian in the
   agent's look, and from then on their prompts are told who they are ("You go by Nova (she/her), a quant analyst.")
   and `say` speaks them in their provider voice. A hire lasts while that person stays with you: one who leaves or is
-  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. The roster itself is kept
+  dismissed is let go and dressed as the city dresses them, and no hire outlasts the visit. An agent can also be posted
+  at an agent workstation in a home you own (Furnishing, Staff tab): they stand there between visits and step away
+  while hired. The roster itself is kept
   in this browser only (key `civic-simulation:roster:v1`); every stored record is validated on the way in. Forget
   removes an agent from the roster and dresses their pedestrian as the city does; it does not break the tether
   (`recruit dismiss` does).
@@ -1645,8 +1764,10 @@ while you type.
   worker re-checks (see Pings and the rally).
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
-  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `shoes`, `tie`, `scarf`, `eyewear`, `bag`,
-  `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
+  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `footwear`, `shoes`,
+  `tie`, `scarf`, `lapelPin`, `eyewear`, `frames`, `watch`, `bag`, `cup`, `tattooHand`, `tattooHandR`, `tattooNeck`,
+  `tattooNape`, `tattooInk`; a height takes a step or metres, `look height 1.80`; a tattoo zone a design's name, which
+  Tab completes, `look tattooHand compass rose`, or `none`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
   `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
@@ -1986,8 +2107,15 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
 - **Levels.** Each level from 2 brings a skill increase (`progress train <skill>`: expert any time, master from level
   7, legendary from 15) and a resolve; levels 5, 10, 15 and 20 bring four attribute boosts, to the attributes behind
   the skills used most (a boost at +4 or more counts half).
-- **Hero points.** One at the start of every session at least; `progress reroll` spends one on the last check that
-  was not a critical success. The better of the two results pays; nothing is taken back.
+- **Hero points.** One at the start of every session at least, and a rest at home gives one; `progress reroll` spends
+  one on the last check that was not a critical success. The better of the two results pays; nothing is taken back.
+- **Rest at home.** In a home you own, the home card's Rest tab rests (see Furnishing): a hero point, a new round, and
+  for the next 30 checks an item bonus of up to +3 on every check (none from the Micro-Loft or a home with no
+  furniture standing), the lower of the home's (by its deed's level: +1 from 3, +2 from 9, +3 from 17) and its
+  comfort's (by the kinds of furniture standing there: +1 from 1, +2 from 3, +3 from 5). Each check line shows it
+  (`Optics and cinema: 12 +5 +1 prepared = 18 vs DC 14, success`), `progress` says how much and for how many more
+  checks, and `progress table` states the rule. It is kept in the record, so a reload keeps it, and nothing runs down
+  while you are away; `progress reset --yes` ends it.
 - **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
   unlock set in the same record and the same save, so a purchase never takes the credits without the item.
 - **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
@@ -2005,7 +2133,7 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
   quieter than the recruitment cue from anyone near enough to be asked over, it waits for a cue or a ping still
   sounding, and one that starts over it fades it out. A hero point's reroll that stayed a success is not cued again. The chip, under the
   status chips at the top left, reads `Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺` (◆ an action left,
-  ◇ one spent, ↺ the reaction ready), and for four seconds after a check which degree, in which skill and what it
+  ◇ one spent, ↺ the reaction ready; `· prepared +2` at the end while a rest at home adds to checks), and for four seconds after a check which degree, in which skill and what it
   paid, with one soft ring around it (none when the system asks for reduced motion). On a phone it shows only for
   those four seconds, and not at all held in landscape. A check the city earns makes no toast: the chip and the
   chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,
@@ -2320,7 +2448,8 @@ any of them.
   counts the task bound to the swarm. Each piece reaches the screen only through the lease, so nothing
   arrives once the tether is gone.
 - **When it cannot answer, it says why in one sentence:** no server answering (start it, or point `ask`
-  at it), running but refusing this page, no such model, a model that does not write text, the
+  at it), running but refusing this page, no such model, a cloud model an Ollama with its cloud off will not run,
+  a model that does not write text, the
   server's own failure (for example, out of memory), a server that sends nothing (below), or, for the Claude
   provider, no key or the API's own refusal of the key or the request.
 - **How long it waits.** A local server has 5 minutes to send the first line of an answer (room to load a model
@@ -2356,6 +2485,17 @@ any of them.
   exception is Ollama under `auto` with the GPUs' memory given: after an answer cut at that limit, a model measured
   all on the GPU may get twice the context, with answers of up to a quarter of it, for the rest of the visit (How
   big a model auto gives Ollama, below); the client never asks for more than 32,768 tokens and 8,192 of answer.
+  In the chat format the answer cap can only come down, and only by the server's own numbers: a server that refuses
+  a request because the prompt and the 2,048 together are longer than its model's window, saying its window and its
+  count of the prompt in its own words (by their sources, SGLang from 0.5.10 and vLLM up to 0.15, read back to
+  0.5.5), is asked once more with the same request and an answer cap one token under the window less the prompt
+  (SGLang up to 0.5.10.post1 also refuses a total equal to the window), when the window less the prompt is at least
+  256 tokens (a starting value); with less, one sentence says the prompt leaves no room in the model's window. SGLang
+  before 0.5.10 sends that refusal inside a streamed answer, and vLLM 0.16 to 0.31 in other words with the prompt's
+  count cut short, so there it reads as before; vLLM 0.32 lowers the cap itself. Nothing is estimated, and a request
+  a server accepts is sent as before. `localCompute.test.ts` drives it against fake servers on this machine with
+  both servers' sentences (vLLM's two), copied from their sources, and `router.auto.test.ts` through auto; no real
+  SGLang or vLLM ran it.
   Running a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
@@ -2364,7 +2504,13 @@ any of them.
   or `ask api` changed since). When an ask's first answer goes at a larger context and Ollama refuses it before any
   of it arrives, the ask is answered once more at 8,192, unless a setting changed since it was sent or a stop came
   with the refusal; an answer that was itself the ask's one more (the moved model's retry, or the answer after a new
-  look) is not asked again (below). Under `auto`, an
+  look) is not asked again (below). A chat-format refusal of the prompt's length (Bounded, above) is followed by one
+  more `POST /v1/chat/completions` of the same body with the smaller `max_tokens`, at most once for each answer and
+  never after a stop; when that one cannot reach the server, by the `no-cors` `GET /api/version` that follows any
+  answer that cannot (it tells a server that is down from one refusing this page); and by nothing more: the
+  router's own retries are for Ollama's generate format and for a server that does not answer at all, and a retry
+  that cannot reach the server, or is refused this page (403), is reported as the server's failure, so no look
+  follows it. Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
@@ -3566,9 +3712,9 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | Stage | Files | Role |
 |---|---|---|
 | — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
-| 01_Initialize_World | `world.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device, city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
+| 01_Initialize_World | `world.ts`, `gpuPipelines.ts`, `leanWgsl.node.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device and the compute pipelines compiled with the browser's words for a refusal, the shaders' text without its comments for the build (Node only), city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
 | 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Gate.ts`, `ring0Panic.ts`, `guardrails.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
-| 03_Spawn_Agents | `crowd.wgsl`, `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
+| 03_Spawn_Agents | `crowd.wgsl` (with `crowdWay.wgsl`, the room and lot routing, or `crowdWayLite.wgsl`, the light kernel's straight lines), `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
@@ -4026,6 +4172,7 @@ programs.crimson-noir-agent-city.ollama = {
   acceleration = "vulkan";        # the default; or "rocm", "cuda", "cpu", or null for services.ollama's own choice
   integratedGpu = false;          # true lets Ollama use an integrated GPU (see below)
   models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started; without one it starts empty
+  cloud = false;                  # the default; true lets Ollama reach ollama.com for its cloud features (see below)
   extraOrigins = [ ];             # other page addresses Ollama should answer, such as the web copy's
 };
 ```
@@ -4050,12 +4197,38 @@ programs.crimson-noir-agent-city.ollama = {
 - **The address.** Ollama answers pages from `http://127.0.0.1` and `http://localhost` on any port by itself, so the
   launcher's page needs nothing. The web copy, or the city opened from another address, goes in `extraOrigins`
   (`OLLAMA_ORIGINS`).
-- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and sets
-  `enable`, `package`, `OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as defaults, so a configuration's own values for any of
-  them win. `models` are added to the configuration's own `services.ollama.loadModels`. It warns when Ollama would
-  answer other machines (a host other than loopback), when the port is not 11434 (type
-  `ask connect ollama http://localhost:<port>` at the console then), and when an `OLLAMA_ORIGINS` set elsewhere means
-  `extraOrigins` is not used.
+- **Ollama's cloud, off.** Ollama has features that reach ollama.com: cloud models (answered on Ollama's servers), web
+  search and web fetch, and two jobs it starts by itself, unasked: model recommendations, fetched as it starts, then
+  about every four hours, and sooner (from about five minutes) after a failed fetch, and the details of its cloud
+  models, fetched once as it starts. In the `vm` job's first run (below), before this setting existed, Ollama tried
+  both as it started (the VM has no network, so both failed). The page reaches nothing beyond this machine, and the
+  city's auto provider skips Ollama's cloud models (by the mark in Ollama's list, or, in the chat format, whose list
+  has no mark, by a name ending in `cloud`), so the option sets `OLLAMA_NO_CLOUD=1` in the service's environment
+  unless `cloud = true`. Ollama then makes neither job's request, refuses the cloud features with a 403 that says
+  "ollama cloud is disabled", and logs `Ollama cloud disabled: true` as it starts. A cloud model named at the console
+  (`ask model <name>`), or one auto took for a local model by its name, is refused that way, and the console says the
+  server runs no cloud models, in Ollama's words. To turn them back on: `programs.crimson-noir-agent-city.ollama.cloud
+  = true;` (the variable is then left unset; Ollama's own `disable_ollama_cloud`, in `.ollama/server.json` under
+  `services.ollama.home`, still turns them off). Pulls are not cloud features: `models` and `ollama pull` still
+  download from Ollama's registry, and `ollama signin` still asks ollama.com.
+- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and
+  sets `enable` and `package` as defaults (`lib.mkDefault`). Its variables, `OLLAMA_ORIGINS`, `OLLAMA_IGPU_ENABLE` and
+  `OLLAMA_NO_CLOUD`, are defaults on the unit itself (`systemd.services.ollama.environment`), not in
+  `services.ollama.environmentVariables`, so a value there, set in any way, wins, as does one set on the unit plainly
+  or with `lib.mkForce` (a different one set on the unit with `lib.mkDefault` has the same priority, and Nix stops on
+  the conflict); and a whole `environmentVariables` given as `lib.mkDefault { ... }`, or replaced with `lib.mkForce`,
+  keeps its own variables with the option's beside them. `models` are added to the configuration's own
+  `services.ollama.loadModels`. It warns when Ollama would answer other machines (a host other than loopback), when
+  the port is not 11434 (type `ask connect ollama http://localhost:<port>` at the console then), and, while the
+  service is on, when `OLLAMA_ORIGINS` is not the one `extraOrigins` gives (so `extraOrigins` is not used) and when
+  `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or turns it off with `cloud` true. Those two read
+  the environment systemd gives `ollama.service` (the unit's `environment`, which carries
+  `services.ollama.environmentVariables`, over `systemd.globalEnvironment`; an `EnvironmentFile`,
+  `serviceConfig.Environment` and Ollama's own `.ollama/server.json` are not read), and name the value there or say it
+  is unset, as it is once the unit's is set to `null`. The cloud one reads the value as Ollama does, trimming white
+  space and then quotes: unset, empty and Go's false spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`) do not
+  turn the cloud off, and anything else, even `no`, does. It trims only space, tab, carriage return and line feed,
+  where Ollama also trims a vertical tab, a form feed and the Unicode spaces.
 - **On its own.** It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve models to itself
   without the city. It sets no context length (`OLLAMA_CONTEXT_LENGTH`): in Ollama's generate format the city sends
   its own with each answer (Bounded, under The model providers), and a configuration can still set one for the rest.
@@ -4080,14 +4253,21 @@ x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the pack
 minimal NixOS system, its package evaluating once the page is allowed and refused while it is not; its Ollama option
 evaluated alone: loopback at 11434, the Vulkan build by default, the CPU one when chosen and services.ollama's own
 with null, the graphics driver on for Vulkan and CUDA and off for CPU, ROCm and null, CUDA refused until unfree
-packages are allowed, origins, the model loader and the integrated GPU only when asked for, the system's own host
-(plain or as a default), port, package, origins and `enable = false` winning, its models added to the option's, with
-the three warnings), the Nix page
+packages are allowed, origins, the model loader and the integrated GPU only when asked for, `OLLAMA_NO_CLOUD=1` unless
+`cloud = true`, the system's own host (plain or as a default), port, package, origins, `OLLAMA_NO_CLOUD` and
+`enable = false` winning, its models added to the option's, with the four warnings, the cloud one firing for `0` (also
+set with `lib.mkDefault`, alone or in a whole `environmentVariables`), `f`, `F`, `false`, `False`, `FALSE`, an empty
+value, a quoted `False` and the unit's variable set to `null`, not for `1`, `true` or `no`, and for `1` with
+`cloud = true`, reading the unit's own environment over systemd's global one, the origins one also with the unit's
+variable set to another value or to `null` and not for a global one under the unit's, and neither with the service off,
+which then has no unit; the option's variables kept when `services.ollama.environmentVariables` is replaced with
+`lib.mkForce` or given whole as a `lib.mkDefault`, whose own variables stay), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
 Peak for a few frames).
-`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
+the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
 files in a temporary folder (a connector folder skipped), and `--check` reading nothing; no real GPU was probed.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
@@ -4099,9 +4279,26 @@ compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of
 run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
-matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (no build of it starts in
-CI, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU is untried), and heat over a long session. The
-`aarch64-linux` outputs are declared but neither built nor evaluated by CI.
+matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (CI's `vm` job, below,
+boots its CPU build in a VM with no GPU, no model and no network, so Vulkan, ROCm or CUDA inside its sandboxed unit on
+a real GPU is untried, and so is its cloud setting on a machine that can reach ollama.com), and heat over a long
+session. The `aarch64-linux` outputs are declared but neither built nor evaluated by
+CI.
+
+Run by CI, and not counted as verified above: the workflow's `vm` job, whose first runs are the pull request that added
+it. It boots the Ollama option in a NixOS VM under KVM (`nix build .#vmTests.x86_64-linux.ollama`,
+`tools/nix/ollama-test.nix`; `nix flake check` does not run it, and the job fails, saying so, on a runner without KVM),
+the flake's module with `acceleration = "cpu"` and one `extraOrigins` entry, and checks that `ollama.service` comes up,
+that its server process's only listening TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that
+it starts with no models, that `/api/tags` answers the launcher's origin (`http://127.0.0.1:4180`) and the extra origin
+with 200 and another with 403, and that the running server has `OLLAMA_ORIGINS` set; and, with `cloud` left off, that
+the server has `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true`, and, once both startup jobs that would reach
+ollama.com have logged that they skipped it because cloud is disabled, that no line of its journal names ollama.com
+(past the default `OLLAMA_REMOTES` in the configuration Ollama logs as it starts, a list of allowed hosts, not a
+request). Both jobs say they skipped only at debug level, so that VM runs Ollama with `OLLAMA_DEBUG=1`, and the script
+waits for what they log, the recommendations job's info line `model recommendations cache sleep scheduled` and the
+details job's skip line, rather than for a fixed time. It reads only Ollama's journal and captures no network traffic.
+This is what the job checks, not a result.
 
 ## When the city cannot start or stops
 
@@ -4116,6 +4313,22 @@ bar and no reload of their own, so the page carries its own way out.
   and Enter on Details opens it. Under **Details** are the raw message and
   one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
   ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
+- **A GPU whose own compiler refuses the crowd.** The crowd's compute passes are compiled asynchronously
+  (`src/01_Initialize_World/gpuPipelines.ts`), so a refusal comes with the browser's own words and the module's
+  compilation messages, and says whether WebGPU refused the shader (the page's or the browser's fault) or the GPU's
+  own compiler did (the driver would not build the kernel, as a phone's can with the full simulate pass: an internal
+  error in Chrome, one Safari reports as validation). On anything but an error in the WGSL itself, the physics
+  worker climbs down a ladder of crowd kernels (`crowdCompute.ts` `CROWD_KERNELS`), keeping every refusal: the same
+  kernel at 64-wide workgroups instead of 128, then the light kernel (`crowdWayLite.wgsl` in the place of
+  `crowdWay.wgsl`), in which someone asked over indoors walks the straight line, or round the first piece of
+  furniture in its way by a corner, and onto a lot walks the straight line, instead of following the operator's
+  trail and searching the lot's corners; the First-Law sensing, the contact, the containment, the detour round
+  standing cars, the commute and the flocking are the same on every rung. `hardware` at the console names the kernel
+  that runs, on a `crowd` row of its own. Every rung refused, the card reads "This device’s graphics driver couldn’t
+  build the crowd" (update the browser and the phone's system software, which carries the driver; on an iPhone, iOS
+  alone, whose graphics come with it), and its details hold the driver's words for each rung, the adapter and the
+  worker's uncaptured GPU errors. The browser CI job compiles every rung under Chrome's software WebGPU
+  (`tools/browser/kernels.mjs`); no CI runner has a phone's GPU, so which rung a given phone accepts is learned on it.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
   named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which
   runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
@@ -4128,7 +4341,7 @@ bar and no reload of their own, so the page carries its own way out.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
   starting…" with the step it is on (asking for the graphics device, building the city, starting the physics,
   preparing the shaders, which is the long step on a phone, drawing the first frame, waiting for the crowd) and
-  Restart and Open the console, and the boot goes on. The page's script (about 14 MB) now stands at the end of the
+  Restart and Open the console, and the boot goes on. The page's script (about 12 MB) now stands at the end of the
   page, so on a slow connection the splash shows while it downloads instead of a blank page; after the first visit the
   installed copy opens offline.
 - **Firefox and other browsers on Android** have no WebGPU: the card's first button, **Open in Chrome**, hands the
@@ -4165,9 +4378,15 @@ reset and a real pad.
 - **File size.** `dist/index.html` is about 14 MB, about 3.7 MB more than before, since it carries the in-page
   model's runtime (wllama's WebAssembly build of llama.cpp, 8.8 MB, committed gzipped as
   `third_party/wllama/3.8.1/wllama.wasm.gz` and embedded as base64, about 3.2 MB, with wllama's JavaScript) beside
-  the surveyed region's 3.4 MB.
+  the surveyed region's 3.4 MB. The physics engine's own WebAssembly (Rapier's, 3.3 MB) is stored deflated, about
+  1.6 MB as base64 where it was 4.4 MB, and its worker inflates it as the engine starts (`vite.config.ts`
+  `deflateRapier`, the browser's own DecompressionStream), which brought the file down to about 12 MB.
   `tools/verify/page_dist.mjs` (after every build in CI) fails unless `dist/` holds exactly `index.html`, no larger
-  than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The page carries
+  than its budget (the measured size plus 3 %), with no `.gguf` file, naming only the reviewed hosts. The shaders kept
+  as `.wgsl` files ride in it without their comments (`vite.config.ts` `leanShaders`,
+  `01_Initialize_World/leanWgsl.node.ts`: about 83 KB less, since the crowd's shaders are in the page's bundle and in
+  the physics worker's); every line keeps its number, so a compilation message still names the file's line, and each
+  file's licence header stays. The page carries
   no model and never will: a model is the operator's own file, kept in their browser. The build checks the embedded
   runtime against its pinned sha256 and against the npm package's, and the page checks it again before it runs.
 - **Network.** The page sends nothing off this machine, by construction, in three layers
@@ -4280,7 +4499,9 @@ the production page finds no physics object in the page and has every crafted me
   (`tools/verify/wasm_airgap.py`).
 - **In a browser, on every CI run:** the browser job runs the smoke (`tools/browser/smoke.mjs`) on the built page in
   Chrome on the software WebGPU adapter (and `tools/browser/shot.mjs` photographs the built page the same way, at
-  chosen hours, head angles and places, for a rendering change's before and after), and four of its scenarios run the real runtime with the tiny model
+  chosen hours, head angles and places, for a rendering change's before and after; `tools/browser/kernels.mjs`
+  compiles every crowd kernel's passes on that adapter, the fallback rungs a phone's GPU may be given included, from
+  the same comment-free text the build ships), and four of its scenarios run the real runtime with the tiny model
   `tools/browser/tinyGguf.mjs` writes. `inpage`, cross-origin isolated on two threads: the file picked at the
   console, kept and loaded with two threads and the context the model was trained on; a recruit asked and answered;
   the city's automatic tier set above the hold first, lowered to the hold while the model works and back after; a

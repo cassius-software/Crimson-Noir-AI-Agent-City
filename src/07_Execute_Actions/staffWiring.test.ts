@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+/**
+ * Why does this file exist? It holds the wiring of the player's own agents posted at their homes' workstations to its
+ * boundaries, which Node cannot run as the page does, so it reads the source as the other wiring tests do. The engine
+ * draws the posts (staffView.ts) and lists the workstations (homeSeats) after the homes' own draw, builds that list
+ * again only when what it is built from changed (so a reader can compare it by identity), keeps the posts as they were
+ * when the same ones come again, and tells the realm nothing; it never reaches the store, the roster, the team runner,
+ * the dispatcher or the recruiter. App keeps the posts in this browser, carries a post through a rename and lets it go
+ * on a forget, hands the engine only names on the roster, and posts or stands down only where the engine allows
+ * furnishing, no newer build's record stands and the engine lists the workstation, and posts only a name on the
+ * roster; nobody is moved (no rally, no tether, no recruiter, no operator). The dispatcher, the team runner and the
+ * lanes know nothing of it.
+ * What breaks if it is removed? A post could reach the physics realm or the crowd, a stored name the roster never
+ * screened could reach the engine, a new agent could inherit a forgotten one's workstation, an older tab could write
+ * over a newer build's posts, homeSeats could hand P2 a new array on every cursor step, or staffing could start moving
+ * the hired pedestrian around, unnoticed.
+ */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { test } from 'node:test'
+
+const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
+const flat = (s: string) => s.replace(/\s+/g, ' ')
+const before = (src: string, first: string, second: string, why: string) => {
+  const a = src.indexOf(first), b = src.indexOf(second)
+  assert.ok(a >= 0, `missing ${first}`)
+  assert.ok(b >= 0, `missing ${second}`)
+  assert.ok(a < b, why)
+}
+const between = (src: string, from: string, to: string) => {
+  const a = src.indexOf(from)
+  assert.ok(a >= 0, `missing ${from}`)
+  const b = src.indexOf(to, a + from.length)
+  assert.ok(b > a, `missing ${to} after ${from}`)
+  return src.slice(a, b)
+}
+/** What a module imports: every `from '...'` it names, a multi-line import list included. */
+const importsOf = (src: string): string[] => [...src.matchAll(/^import\b[^;]*?from '([^']+)'/gm)].map((m) => m[1])
+
+test('the engine draws the posts and lists the workstations after the homes\' own draw, and tells the realm nothing', () => {
+  const raw = read('./engine.ts')
+  const src = flat(raw)
+  const set = between(src, ' setStaff(posts: readonly StaffPost[]): void {', ' blockedCells(')
+  assert.ok(set.includes('this.homeStaff = Object.freeze(posts.slice(0, STAFF_VIEW.max))'), 'at most one figure per roster agent')
+  assert.ok(set.includes('this.redrawHomes()'))
+  // The same posts again (App's effect runs on every roster edit) keep the list, and so homeSeats, as they were.
+  before(set, 'if (JSON.stringify(posts.slice(0, STAFF_VIEW.max)) === JSON.stringify(this.homeStaff)) return', 'this.homeStaff = ', 'unchanged posts change nothing')
+  assert.doesNotMatch(set, /sim\.send|sendHomes|netClient/, 'nothing is sent')
+  const draw = between(src, ' private redrawHomes(): void {', ' private sendHomes(')
+  const homes = 'this.world.setHomes(homeInstances(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, { room: this.netRoom, base: this.homeBase, draft }))'
+  before(draw, homes, 'this.staffView.set(staffFigures(this.seatList(), this.homeStaff))', 'the homes first, as they were, then the figures at the seats listed')
+  // The list is built again only when what it is built from changed by identity: the owner's draft moving while
+  // furnishing (setHomeDraft, which redraws) changes none of it, so homeSeats hands back the same array.
+  const list = between(src, ' private seatList(): readonly HomeSeat[] {', ' private sendHomes(')
+  assert.ok(list.includes('const from = [this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, this.netRoom]'))
+  before(list, 'if (from.some((v, i) => v !== this.seatsFrom[i])) { this.seatsFrom = from', 'this.seats = homeSeats(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, { room: this.netRoom, base: this.homeBase })', 'rebuilt only on a change')
+  assert.ok(list.includes('return this.seats'))
+  assert.equal((src.match(/this\.seats = /g) ?? []).length, 1, 'built in that one place')
+  assert.ok(between(src, ' private constructor(p: {', ' static async create(').includes('p.world.scene.add(this.staffView.group)'))
+  assert.ok(between(src, ' dispose(): void {', ' this.input.dispose()').includes('this.staffView.dispose()'))
+  const getter = between(src, ' get homeSeats(): readonly HomeSeat[] {', ' get panicReason()')
+  assert.ok(getter.includes('return this.halted || this.disposed ? Object.freeze([]) : this.seatList()'), 'none once the city has stopped')
+  // The new getter sits beside the team runner's, which stay as they were (teamWiring.test.ts pins them).
+  before(src, ' get teamCentre(): ', ' get homeSeats(): ', 'after the team runner\'s rooms and centre')
+  const imports = importsOf(raw)
+  for (const never of ['staffStore.ts', 'roster.ts', '/team.ts', 'dispatch.ts', 'recruitment.ts']) {
+    assert.ok(!imports.some((m) => m.endsWith(never)), `engine.ts never imports ${never}`)
+  }
+  assert.ok(imports.includes('./staffView.ts'))
+})
+
+test('App keeps the posts in this browser, carries them through a rename and a forget, hands the engine only names on the roster, and posts or stands down only where the engine allows furnishing, no newer record stands and a workstation stands, and posts only a name on the roster; nobody is moved', () => {
+  const app = flat(read('../App.tsx'))
+  assert.ok(app.includes("import { carry, loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'"))
+  assert.ok(app.includes('const [posts, setPosts] = useState<StaffRecord>(loadStaff)'), 'read once at mount')
+  assert.ok(app.includes('const commitStaff = useCallback((next: StaffRecord): null => { postsRef.current = next; setPosts(next); saveStaff(next); return null }, [])'), 'every change saved at once')
+  // A rename carries the post and a forget lets it go, saved at once: the roster's names before and after each change.
+  before(app, 'const commitStaff = useCallback(', 'const namesRef = useRef(agents.map((a) => a.name))', 'after commitStaff')
+  const carried = between(app, 'const namesRef = useRef(agents.map((a) => a.name)) useEffect(() => {', '}, [agents, commitStaff])')
+  assert.ok(carried.includes('const after = agents.map((a) => a.name), next = carry(postsRef.current, namesRef.current, after) namesRef.current = after if (next) commitStaff(next)'))
+  const effect = between(app, 'engine?.setStaff(posts.posts.flatMap((p) => {', '}, [engine, posts, agents, roster])')
+  assert.ok(effect.includes('const id = roster.get(p.name) if (!id) return []'), 'only names on the roster reach the engine')
+  assert.ok(effect.includes('const look = id.look ?? lookFromSeed(seedFromName(id.name))'), 'in their look, their seed\'s while they have none')
+  assert.ok(effect.includes('present: id.agent === null'), 'away while hired')
+  // The gate: the engine's furnishing refusal first, then a newer build's record (never written over), then a
+  // workstation the engine lists at that cell.
+  const gate = between(app, 'function staffRefusal(engine: Engine, home: number, c: number, r: number, rec: StaffRecord): string | null {', ' }')
+  assert.ok(gate.includes("return engine.furnishRefusal(home) ?? (rec.newer ? 'Staff was saved by a newer version of the city: reload the page to post or stand down' : null) ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')"))
+  const hooks = between(app, ' const furnishHooks = useMemo((): FurnishHooks | null => (engine ? {', '} : null), [engine, keeper])')
+  const staff = between(hooks, 'staff: {', ' }, ')
+  assert.ok(staff.includes('homeName: (home: number) => roomName(engine.homes.find((h) => h.home === deedOf(home))?.name ?? \'another home\', home),'), 'a home by its deed\'s name, a sky floor\'s with " · sky floor"')
+  assert.ok(staff.includes('post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r, postsRef.current) ?? (roster.get(name) ? commitStaff(postTo('))
+  assert.ok(staff.includes(': `No agent called ${name} on your roster`),'), 'a name off the roster is refused, in words')
+  assert.ok(staff.includes('standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r, postsRef.current) ?? commitStaff(standDownAt('))
+  assert.doesNotMatch(staff, /rally|dismiss|recruit|roster\.(?:set|add|remove|bind)|operator|tether/, 'nobody is moved')
+})
+
+test('the dispatcher, the team runner and the lanes know nothing of staffing', () => {
+  for (const rel of ['../06_Make_Decisions/dispatch.ts', '../08_Swarm/team.ts', '../08_Swarm/lanes.ts']) {
+    assert.doesNotMatch(read(rel), /homeSeat|staffStore|staffView|setStaff/, `${rel} is untouched`)
+  }
+  assert.ok(!importsOf(read('../08_Swarm/team.ts')).some((m) => m.endsWith('ring0Gate.ts')), 'team.ts never imports the gate')
+})
