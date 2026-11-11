@@ -11,7 +11,9 @@
  * limit of the answer; what they remember of the operator, 08_Swarm/memory.ts, is their history), streams the answer as the server generates it (its thinking and its text), stops the request
  * the moment the task's signal aborts (the spatial lease breaking, or the operator's own stop), and turns every way
  * the server can fail into one plain sentence: not running, running but refusing this page, no such model, not a
- * model that writes text, out of memory. Nothing it sends can leave the machine.
+ * model that writes text, out of memory. A chat-format server that refuses a prompt as too long for its model's
+ * window, saying its window and its count of the prompt, is asked once more with a shorter answer cap from those two
+ * numbers, or told in one sentence that the prompt leaves no room. Nothing it sends can leave the machine.
  * With a GPU size given, the router also reads how big each model Ollama lists is (/api/tags) and where a loaded one sits (/api/ps), on the same server on this machine,
  * and may ask Ollama for a larger context (at most CONTEXT_MAX) after a measurement.
  * What breaks if it is removed? `ask` has nothing behind it. Nothing else in the city needs it.
@@ -47,6 +49,12 @@ export const DEFAULT_MODEL = 'qwen3-vl:4b'
 export const CONTEXT_TOKENS = 8192
 /** The longest answer, thinking included, tokens. */
 export const ANSWER_TOKENS = 2048
+/**
+ * Starting value: the least room, tokens, a server that refused a prompt and ANSWER_TOKENS together as longer than its
+ * model's window must say is left (its window less its count of the prompt, windowOf) for the chat format to ask once
+ * more, with one token under that room as the cap. With less, the refusal is a sentence.
+ */
+export const ANSWER_MIN_TOKENS = 256
 /**
  * Starting value: the largest context the generate format ever asks of a server, tokens. Only the router's auto
  * provider asks for more than CONTEXT_TOKENS (modelFit.ts widen), and only of Ollama, after a measurement.
@@ -230,13 +238,54 @@ async function diagnose(fetchFn: FetchLike, server: string): Promise<CognitionEr
 }
 
 /**
+ * A server's refusal of a prompt and answer cap longer than its model's window, in its own words: its window W and
+ * its count of the prompt I, tokens. SGLang (tokenizer_manager.py, `>=` up to 0.5.10.post1 and `>` from 0.5.11; a
+ * 400 before a stream from 0.5.10, inside a 200 stream before; body `{ "object": "error", "message": "…" }`):
+ * "Requested token count exceeds the model's maximum context length of W tokens. You requested a total of T tokens: I
+ * tokens from the input messages and M tokens for the completion. …". vLLM up to 0.10.0 (serving_engine.py, read
+ * back to 0.5.5, `>`; body `{ "object": "error", "message": "…" }`): "This model's maximum context length is W tokens.
+ * However, you requested T tokens (I in the messages, M in the completion). …". vLLM 0.10.1 to 0.15 (serving_engine.py,
+ * later engine/serving.py, `>`; from 0.16 the chat format is refused in other words with I cut short, and 0.32 lowers
+ * the cap itself; body `{ "error": { "message": "…" } }`): "'max_tokens' or 'max_completion_tokens' is too large: M.
+ * This model's maximum context length is W tokens and your request has I input tokens (M > W - I)."
+ */
+const WINDOW_REFUSALS: readonly RegExp[] = [
+  /^Requested token count exceeds the model's maximum context length of (\d+) tokens\. You requested a total of \d+ tokens: (\d+) tokens from the input messages and \d+ tokens for the completion\./,
+  /^This model's maximum context length is (\d+) tokens\. However, you requested \d+ tokens \((\d+) in the messages, \d+ in the completion\)\./,
+  /^'max_tokens' or 'max_completion_tokens' is too large: \d+\. This model's maximum context length is (\d+) tokens and your request has (\d+) input tokens \(/,
+]
+/** The window and the count of the prompt from a refusal's whole JSON body (WINDOW_REFUSALS), or null. */
+function windowOf(body: unknown): { window: number; input: number } | null {
+  const o = typeof body === 'object' && body !== null ? (body as { message?: unknown; error?: unknown }) : null
+  const nested = typeof o?.error === 'object' && o.error !== null ? (o.error as { message?: unknown }).message : undefined
+  const said = typeof o?.message === 'string' ? o.message : typeof nested === 'string' ? nested : ''
+  for (const re of WINDOW_REFUSALS) {
+    const m = re.exec(said)
+    if (m) return { window: Number(m[1]), input: Number(m[2]) }
+  }
+  return null
+}
+/** A 400 the server said was too long for its model's window: today's sentence and code, with its own two numbers. */
+class TooLong extends CognitionError {
+  readonly window: number
+  readonly input: number
+  constructor(message: string, window: number, input: number) {
+    super('server', message)
+    this.window = window
+    this.input = input
+  }
+}
+
+/**
  * A non-2xx answer as one sentence, from the server's own error when it sends one: `{ "error": "…" }` (generate) or
- * `{ "error": { "message": "…" } }` (chat).
+ * `{ "error": { "message": "…" } }` (chat). A 400 refusing the prompt as too long for the model's window (windowOf,
+ * read from the whole body before sentence() cuts it) is a TooLong.
  */
 async function httpFailure(res: Response, model: string | null): Promise<CognitionError> {
   let said = ''
+  let body: unknown = null
   try {
-    const body: unknown = JSON.parse(await res.text())
+    body = JSON.parse(await res.text())
     const e = typeof body === 'object' && body !== null ? (body as { error?: unknown }).error : undefined
     if (typeof e === 'string') said = e
     else if (typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string') said = (e as { message: string }).message
@@ -250,7 +299,9 @@ async function httpFailure(res: Response, model: string | null): Promise<Cogniti
   if (res.status === 404 && model !== null) return new CognitionError('model', `the local model server has no model '${model}': type ask to list the ones it has`)
   if (res.status === 400 && /does not support generate/i.test(said)) return new CognitionError('model', `the model '${model}' does not write text: choose another (type ask to list them)`)
   if (res.status === 400 && /does not support think/i.test(said)) return new CognitionError('model', `the model '${model}' does not think before it answers: ask think off`)
-  return new CognitionError('server', `the local model server failed (${res.status})${said ? `: ${sentence(said)}` : ''}`)
+  const message = `the local model server failed (${res.status})${said ? `: ${sentence(said)}` : ''}`
+  const room = res.status === 400 ? windowOf(body) : null
+  return room ? new TooLong(message, room.window, room.input) : new CognitionError('server', message)
 }
 
 /** A request that failed before any answer: the signal's own reason if it aborted, else what the server's state was. */
@@ -420,23 +471,54 @@ async function generated(res: Response, w: { signal: AbortSignal; beat(): void }
  * chunk whose first choice's delta carries text (`content`) or thinking (`reasoning_content` or `reasoning`, as
  * servers name it); `data: [DONE]` ends it (a server that closes after the finish reason without it is done too).
  * The context window is the server's own; `think` is not sent (the server decides). Resolves and rejects as generate,
- * including its timeouts.
+ * including its timeouts (one watch for the whole answer, a retry included). A server that refuses the prompt and
+ * ANSWER_TOKENS together as longer than its model's window, saying both numbers (windowOf), is asked once more, the
+ * same body with one token under the room it says is left as the cap (shorter, never longer), under the same stop
+ * (capAfter).
  */
 export async function chat(fetchFn: FetchLike, req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> {
   const server = loopbackServer(req.server)
   if (server === null) throw new CognitionError('refused', `not a server on this machine: ${String(req.server)}`)
-  const body = JSON.stringify({
+  const body = (cap: number): string => JSON.stringify({
     model: req.model,
     messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.prompt }],
-    stream: true, max_tokens: ANSWER_TOKENS, stream_options: { include_usage: true },
+    stream: true, max_tokens: cap, stream_options: { include_usage: true },
   })
   const w = watch(server, req.signal, req.timeouts ?? TIMEOUTS)
+  const send = (cap: number): Promise<Response> => post(fetchFn, server, '/v1/chat/completions', body(cap), w.signal, req.model, 'text/event-stream')
   try {
-    const res = await post(fetchFn, server, '/v1/chat/completions', body, w.signal, req.model, 'text/event-stream')
+    let res: Response
+    try {
+      res = await send(ANSWER_TOKENS)
+    } catch (e) {
+      const cap = capAfter(e)
+      w.signal.throwIfAborted()
+      // Once, and its failure is the answer's: one that cannot reach the server or is refused this page (403) is the
+      // server's failure, so the router's look (which answers again after 'offline' or 'refused') never follows it.
+      res = await send(cap).catch((x: unknown) => {
+        throw x instanceof CognitionError && (x.code === 'offline' || x.code === 'refused') ? new CognitionError('server', x.message) : x
+      })
+    }
     return await chatted(res, w, onPiece)
   } finally {
     w.end()
   }
+}
+
+/**
+ * After the chat format's first request failed: the cap to ask once more with when the server refused the prompt as
+ * too long for its model's window (TooLong), one token under the room it says is left, its window less its count of
+ * the prompt (SGLang up to 0.5.10.post1 refuses a total equal to the window), when that room is at least
+ * ANSWER_MIN_TOKENS and at most ANSWER_TOKENS. With less room, one sentence says so; anything else is thrown as it came.
+ */
+function capAfter(e: unknown): number {
+  if (!(e instanceof TooLong)) throw e
+  const room = e.window - e.input
+  if (room > ANSWER_TOKENS) throw e
+  if (room < ANSWER_MIN_TOKENS) {
+    throw new CognitionError('server', `the prompt (${e.input} tokens) leaves no room for an answer in the model's window of ${e.window} tokens: ask with fewer people tethered or a shorter question, or start the server with a larger window`)
+  }
+  return room - 1
 }
 
 /** The chat format's server-sent events, read under its request's watch. */

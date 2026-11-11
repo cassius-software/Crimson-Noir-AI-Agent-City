@@ -1692,6 +1692,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A chat-format server with a small window answers a long prompt instead of refusing it.** The chat format
+  (`09_Cognition/localCompute.ts` `chat`, used for llama-server, LM Studio, vLLM, SGLang and Ollama's chat format)
+  always asks for answers of up to 2,048 tokens, and SGLang from 0.5.10 and vLLM up to 0.15 (by their sources,
+  vLLM's read back to 0.5.5) refuse with 400 when the prompt and that cap together are longer than the model's window
+  (SGLang up to 0.5.10.post1 also when they fill it exactly), so the agent gave no answer, only a sentence saying the
+  server failed (400). Now a 400 that says, in SGLang's sentence or either of vLLM's (one up to 0.10.0, another from
+  0.10.1), the window and the server's count of the prompt is sent once more, the same body with the answer cap
+  lowered to one token under the window less the prompt, when the window less the prompt is at least 256 tokens
+  (`ANSWER_MIN_TOKENS`, a starting value); with less, one sentence says the prompt leaves no room in the model's
+  window. SGLang before 0.5.10 sends this refusal inside a streamed answer, and vLLM 0.16 to 0.31 in other words with
+  the prompt's count cut short, so there it reads as before; vLLM 0.32 lowers the cap itself. The cap only comes
+  down, by the server's own numbers and never an estimate: a request a server accepts is sent byte for byte as
+  before, any other 400 reads as before, the retry is sent once and under the same stop and waits, and one that
+  cannot reach the server or is refused this page (403) is the server's failure, so auto neither looks again nor
+  answers twice for it. `localCompute.test.ts` pins the three sentences, copied from the servers' sources with the
+  file and line, against fake servers on this machine: each retries with one token under the window less the prompt,
+  2,048 and 256 tokens of room retry (with 2,047 and 255) and 255 does not, a second refusal is the answer, a 403 on
+  the retry or one that cannot reach the server is the server's failure and any other failure of it keeps its own
+  code, a stop during the retry closes it, so does what is left of the answer's one first-piece wait, and other
+  bodies and statuses are as before; `router.auto.test.ts` shows one ask sends at most one more request for it. No
+  real SGLang or vLLM ran it.
 - **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×
   844), and held sideways it was squeezed into a strip 30 to 50 px tall above the thumbs, over her chip. Now
   (`onboarding/FirstWalk.tsx`): anywhere but the wide side-by-side place it steps aside while her card is open; upright
