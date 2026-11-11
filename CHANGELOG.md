@@ -1551,6 +1551,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `OLLAMA_ORIGINS`. It is outside `nix flake check`, and fails on a runner without KVM. This is what the job checks,
   not a result: its first runs are the pull request that added it. The service, on a real machine or any GPU, stays
   unverified.
+- **NixOS: Ollama's cloud off unless asked for.** The Ollama option gains `cloud`, false by default, which sets
+  `OLLAMA_NO_CLOUD=1`; `programs.crimson-noir-agent-city.ollama.cloud = true;` leaves it unset. In the `vm` job's
+  first run Ollama tried to reach ollama.com twice as it started, for model recommendations and for its cloud models'
+  details (the VM has no network, so both failed). Read from Ollama's source at the version the flake builds, those
+  two jobs are the only requests it makes on its own, and `OLLAMA_NO_CLOUD` stops both before their request, as it
+  refuses cloud models, web search and web fetch with a 403; pulls are untouched (`models` and `ollama pull` still
+  download from Ollama's registry). The console now says a cloud model was refused because the server runs none, in
+  Ollama's words, where it used to report any 403 as the page's origin being refused. The option's variables
+  (`OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as well as the new one) are now defaults on `ollama.service` itself
+  (`systemd.services.ollama.environment`), not in `services.ollama.environmentVariables`, where a definition
+  outranked, and dropped, a configuration's whole set given as `lib.mkDefault { ... }`; a value in
+  `environmentVariables`, set in any way, wins over them, and replacing the whole set with `lib.mkForce` keeps them.
+  While the service is on, the option warns when `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or
+  turns it off with `cloud` true, reading the value as Ollama does (but for a vertical tab, a form feed and the
+  Unicode spaces, which it does not trim) from the environment systemd gives `ollama.service` (the unit's own over
+  `systemd.globalEnvironment`; an `EnvironmentFile` and Ollama's own `.ollama/server.json` are not read), so a value
+  set on the unit or globally, or the unit's set to `null`, counts; the warning names the value there, or that it is
+  unset. The `extraOrigins` warning, which read only `environmentVariables`, now reads the same environment and is
+  worded the same way. `nix flake check` evaluates the default, `cloud = true`, the system's own values winning, a
+  whole `environmentVariables` replaced or given as a default, and the warnings: the cloud one firing for Go's false
+  spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`), an empty value, a quoted `False` and the variable set to
+  `null`, not for `1`, `true` or `no`, and for `1` with `cloud = true`, with the unit's and the global environment,
+  the origins one with the unit's variable set to another value or to `null`, and neither with the service off. The
+  `vm` job now also checks that the server runs with `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true` and, once
+  both startup jobs have logged that they skipped ollama.com, that no line of its journal names it past the default
+  `OLLAMA_REMOTES` in the configuration it logs, a list of allowed hosts, not a request (Ollama's debug logging is on
+  in that VM, since both say so only at debug level; the check reads only the journal and captures no network
+  traffic). This is what the checks are, not a result. Ollama on a real machine, and its cloud setting on one that can
+  reach ollama.com, stay unverified.
 
 ### Changed
 

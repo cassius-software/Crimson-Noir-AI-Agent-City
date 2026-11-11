@@ -2401,7 +2401,8 @@ any of them.
   counts the task bound to the swarm. Each piece reaches the screen only through the lease, so nothing
   arrives once the tether is gone.
 - **When it cannot answer, it says why in one sentence:** no server answering (start it, or point `ask`
-  at it), running but refusing this page, no such model, a model that does not write text, the
+  at it), running but refusing this page, no such model, a cloud model an Ollama with its cloud off will not run,
+  a model that does not write text, the
   server's own failure (for example, out of memory), a server that sends nothing (below), or, for the Claude
   provider, no key or the API's own refusal of the key or the request.
 - **How long it waits.** A local server has 5 minutes to send the first line of an answer (room to load a model
@@ -4124,6 +4125,7 @@ programs.crimson-noir-agent-city.ollama = {
   acceleration = "vulkan";        # the default; or "rocm", "cuda", "cpu", or null for services.ollama's own choice
   integratedGpu = false;          # true lets Ollama use an integrated GPU (see below)
   models = [ "qwen3-vl:4b" ];     # pulled once Ollama has started; without one it starts empty
+  cloud = false;                  # the default; true lets Ollama reach ollama.com for its cloud features (see below)
   extraOrigins = [ ];             # other page addresses Ollama should answer, such as the web copy's
 };
 ```
@@ -4148,12 +4150,38 @@ programs.crimson-noir-agent-city.ollama = {
 - **The address.** Ollama answers pages from `http://127.0.0.1` and `http://localhost` on any port by itself, so the
   launcher's page needs nothing. The web copy, or the city opened from another address, goes in `extraOrigins`
   (`OLLAMA_ORIGINS`).
-- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and sets
-  `enable`, `package`, `OLLAMA_ORIGINS` and `OLLAMA_IGPU_ENABLE` as defaults, so a configuration's own values for any of
-  them win. `models` are added to the configuration's own `services.ollama.loadModels`. It warns when Ollama would
-  answer other machines (a host other than loopback), when the port is not 11434 (type
-  `ask connect ollama http://localhost:<port>` at the console then), and when an `OLLAMA_ORIGINS` set elsewhere means
-  `extraOrigins` is not used.
+- **Ollama's cloud, off.** Ollama has features that reach ollama.com: cloud models (answered on Ollama's servers), web
+  search and web fetch, and two jobs it starts by itself, unasked: model recommendations, fetched as it starts, then
+  about every four hours, and sooner (from about five minutes) after a failed fetch, and the details of its cloud
+  models, fetched once as it starts. In the `vm` job's first run (below), before this setting existed, Ollama tried
+  both as it started (the VM has no network, so both failed). The page reaches nothing beyond this machine, and the
+  city's auto provider skips Ollama's cloud models (by the mark in Ollama's list, or, in the chat format, whose list
+  has no mark, by a name ending in `cloud`), so the option sets `OLLAMA_NO_CLOUD=1` in the service's environment
+  unless `cloud = true`. Ollama then makes neither job's request, refuses the cloud features with a 403 that says
+  "ollama cloud is disabled", and logs `Ollama cloud disabled: true` as it starts. A cloud model named at the console
+  (`ask model <name>`), or one auto took for a local model by its name, is refused that way, and the console says the
+  server runs no cloud models, in Ollama's words. To turn them back on: `programs.crimson-noir-agent-city.ollama.cloud
+  = true;` (the variable is then left unset; Ollama's own `disable_ollama_cloud`, in `.ollama/server.json` under
+  `services.ollama.home`, still turns them off). Pulls are not cloud features: `models` and `ollama pull` still
+  download from Ollama's registry, and `ollama signin` still asks ollama.com.
+- **Your own settings win.** The option leaves `host` and `port` as nixpkgs sets them (`127.0.0.1` and `11434`) and
+  sets `enable` and `package` as defaults (`lib.mkDefault`). Its variables, `OLLAMA_ORIGINS`, `OLLAMA_IGPU_ENABLE` and
+  `OLLAMA_NO_CLOUD`, are defaults on the unit itself (`systemd.services.ollama.environment`), not in
+  `services.ollama.environmentVariables`, so a value there, set in any way, wins, as does one set on the unit plainly
+  or with `lib.mkForce` (a different one set on the unit with `lib.mkDefault` has the same priority, and Nix stops on
+  the conflict); and a whole `environmentVariables` given as `lib.mkDefault { ... }`, or replaced with `lib.mkForce`,
+  keeps its own variables with the option's beside them. `models` are added to the configuration's own
+  `services.ollama.loadModels`. It warns when Ollama would answer other machines (a host other than loopback), when
+  the port is not 11434 (type `ask connect ollama http://localhost:<port>` at the console then), and, while the
+  service is on, when `OLLAMA_ORIGINS` is not the one `extraOrigins` gives (so `extraOrigins` is not used) and when
+  `OLLAMA_NO_CLOUD` does not turn the cloud off with `cloud` false, or turns it off with `cloud` true. Those two read
+  the environment systemd gives `ollama.service` (the unit's `environment`, which carries
+  `services.ollama.environmentVariables`, over `systemd.globalEnvironment`; an `EnvironmentFile`,
+  `serviceConfig.Environment` and Ollama's own `.ollama/server.json` are not read), and name the value there or say it
+  is unset, as it is once the unit's is set to `null`. The cloud one reads the value as Ollama does, trimming white
+  space and then quotes: unset, empty and Go's false spellings (`0`, `f`, `F`, `false`, `False` and `FALSE`) do not
+  turn the cloud off, and anything else, even `no`, does. It trims only space, tab, carriage return and line feed,
+  where Ollama also trims a vertical tab, a form feed and the Unicode spaces.
 - **On its own.** It does not need `programs.crimson-noir-agent-city.enable`, so a machine can serve models to itself
   without the city. It sets no context length (`OLLAMA_CONTEXT_LENGTH`): in Ollama's generate format the city sends
   its own with each answer (Bounded, under The model providers), and a configuration can still set one for the rest.
@@ -4178,9 +4206,15 @@ x86-64 Ubuntu runner: `nix flake check` (the page built in the sandbox, the pack
 minimal NixOS system, its package evaluating once the page is allowed and refused while it is not; its Ollama option
 evaluated alone: loopback at 11434, the Vulkan build by default, the CPU one when chosen and services.ollama's own
 with null, the graphics driver on for Vulkan and CUDA and off for CPU, ROCm and null, CUDA refused until unfree
-packages are allowed, origins, the model loader and the integrated GPU only when asked for, the system's own host
-(plain or as a default), port, package, origins and `enable = false` winning, its models added to the option's, with
-the three warnings), the Nix page
+packages are allowed, origins, the model loader and the integrated GPU only when asked for, `OLLAMA_NO_CLOUD=1` unless
+`cloud = true`, the system's own host (plain or as a default), port, package, origins, `OLLAMA_NO_CLOUD` and
+`enable = false` winning, its models added to the option's, with the four warnings, the cloud one firing for `0` (also
+set with `lib.mkDefault`, alone or in a whole `environmentVariables`), `f`, `F`, `false`, `False`, `FALSE`, an empty
+value, a quoted `False` and the unit's variable set to `null`, not for `1`, `true` or `no`, and for `1` with
+`cloud = true`, reading the unit's own environment over systemd's global one, the origins one also with the unit's
+variable set to another value or to `null` and not for a global one under the unit's, and neither with the service off,
+which then has no unit; the option's variables kept when `services.ollama.environmentVariables` is replaced with
+`lib.mkForce` or given whole as a `lib.mkDefault`, whose own variables stay), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
@@ -4199,8 +4233,9 @@ run as an ordinary user where user namespaces are switched off, Nix's Chromium s
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
 matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (CI's `vm` job, below,
-boots its CPU build in a VM with no GPU and no model, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU
-is untried), and heat over a long session. The `aarch64-linux` outputs are declared but neither built nor evaluated by
+boots its CPU build in a VM with no GPU, no model and no network, so Vulkan, ROCm or CUDA inside its sandboxed unit on
+a real GPU is untried, and so is its cloud setting on a machine that can reach ollama.com), and heat over a long
+session. The `aarch64-linux` outputs are declared but neither built nor evaluated by
 CI.
 
 Run by CI, and not counted as verified above: the workflow's `vm` job, whose first runs are the pull request that added
@@ -4209,8 +4244,14 @@ it. It boots the Ollama option in a NixOS VM under KVM (`nix build .#vmTests.x86
 the flake's module with `acceleration = "cpu"` and one `extraOrigins` entry, and checks that `ollama.service` comes up,
 that its server process's only listening TCP socket is `127.0.0.1:11434` and nothing else listens on port 11434, that
 it starts with no models, that `/api/tags` answers the launcher's origin (`http://127.0.0.1:4180`) and the extra origin
-with 200 and another with 403, and that the running server has `OLLAMA_ORIGINS` set. This is what the job checks, not a
-result.
+with 200 and another with 403, and that the running server has `OLLAMA_ORIGINS` set; and, with `cloud` left off, that
+the server has `OLLAMA_NO_CLOUD=1`, logs `Ollama cloud disabled: true`, and, once both startup jobs that would reach
+ollama.com have logged that they skipped it because cloud is disabled, that no line of its journal names ollama.com
+(past the default `OLLAMA_REMOTES` in the configuration Ollama logs as it starts, a list of allowed hosts, not a
+request). Both jobs say they skipped only at debug level, so that VM runs Ollama with `OLLAMA_DEBUG=1`, and the script
+waits for what they log, the recommendations job's info line `model recommendations cache sleep scheduled` and the
+details job's skip line, rather than for a fixed time. It reads only Ollama's journal and captures no network traffic.
+This is what the job checks, not a result.
 
 ## When the city cannot start or stops
 

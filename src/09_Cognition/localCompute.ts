@@ -10,8 +10,8 @@
  * address must be loopback: the page itself never sends a prompt off the machine. It turns the people a task is bound to into the system prompt (the skills they bring are the persona and the
  * limit of the answer; what they remember of the operator, 08_Swarm/memory.ts, is their history), streams the answer as the server generates it (its thinking and its text), stops the request
  * the moment the task's signal aborts (the spatial lease breaking, or the operator's own stop), and turns every way
- * the server can fail into one plain sentence: not running, running but refusing this page, no such model, not a
- * model that writes text, out of memory. A chat-format server that refuses a prompt as too long for its model's
+ * the server can fail into one plain sentence: not running, running but refusing this page, no such model, a cloud
+ * model an Ollama with its cloud off will not run, not a model that writes text, out of memory. A chat-format server that refuses a prompt as too long for its model's
  * window, saying its window and its count of the prompt, is asked once more with a shorter answer cap from those two
  * numbers, or told in one sentence that the prompt leaves no room. Nothing it sends can leave the machine.
  * With a GPU size given, the router also reads how big each model Ollama lists is (/api/tags) and where a loaded one sits (/api/ps), on the same server on this machine,
@@ -291,6 +291,11 @@ async function httpFailure(res: Response, model: string | null): Promise<Cogniti
     else if (typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string') said = (e as { message: string }).message
   } catch {
     // not JSON: the status alone
+  }
+  // Ollama with its cloud off (OLLAMA_NO_CLOUD) refuses a cloud model with a 403 that says so; an origin it does not
+  // allow gets a 403 with no words.
+  if (res.status === 403 && /^ollama cloud is disabled/i.test(said.trim())) {
+    return new CognitionError('model', `the local model server runs no cloud models (403: ${sentence(said)}): choose one on this machine (type ask to list them)`)
   }
   if (res.status === 403) return new CognitionError('refused', `the local model server refused this page (403): allow this page's origin in its settings, or open the page from http://localhost`)
   if (res.status === 404 && model === DEFAULT_MODEL) {
