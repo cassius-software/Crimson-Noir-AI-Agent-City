@@ -584,3 +584,14 @@ test('restOffer and restTake: the words for each home and each state, from the n
   // Every offer is frozen, and not computed in the card (the card shows these lines as they come).
   assert.ok(Object.isFrozen(restOffer(z, 3, 1)) && Object.isFrozen(restOffer(z, 3, 1).lines))
 })
+
+test('MANUAL says what the Rest tab shows and what a rest gives, the Micro-Loft and a home with no furniture included', () => {
+  const { p } = keeper()
+  // The comfort line comes only in a home whose deed can add to checks: the Micro-Loft's tab has the one line.
+  assert.deepEqual([restOffer(p, 1, 4).lines.length, restOffer(p, 3, 0).lines.length], [1, 2])
+  // A rest in the Micro-Loft, or in a home with no furniture standing, gives no bonus; none gives more than +3.
+  assert.deepEqual([restOffer(p, 1, 9).bonus, restOffer(p, 3, 0).bonus, restOffer(p, 20, 0).bonus, restOffer(p, 20, 9).bonus], [0, 0, 0, 3])
+  const manual = readFileSync(new URL('../../MANUAL.md', import.meta.url), 'utf8').replace(/\s+/g, ' ')
+  assert.match(manual, /or why not now, and, in a home whose deed can add to checks, how many kinds of furniture stand there\./)
+  assert.match(manual, /an item bonus of up to \+3 on every check \(none from the Micro-Loft or a home with no furniture standing\)/)
+})

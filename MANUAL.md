@@ -461,18 +461,18 @@ putting on a headset closes the card.
   house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
   board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below).
-- **Rest.** The Rest tab says what a rest gives here, or why not now, and how many kinds of furniture stand in the
-  home. Enter, Space, the pad's south button or the **Rest** button rests: a hero point (up to three), a new round,
-  and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new round, and +2 to every check for
-  the next 30 checks"). The bonus is the lower of two: the home's, by its deed's level (+1 from a level 3 deed, +2
-  from 9, +3 from 17, so the Micro-Loft gives none, the Brownstone and the Timber Loft up to +1, the Penthouse and the
-  Villa up to +2, the Estate and the Sky-Mansion up to +3), and its comfort's, by how many different lines stand in it
-  now (+1 from one kind, +2 from three, +3 from five; copies of a line count once, and a piece not placed here or
-  picked up and in hand does not count until it is put down). While a rest lasts another waits for its 30 checks,
-  unless a home gives a higher bonus, which then takes its place; a rest that gave no bonus runs its 30 checks too.
-  Every check counts, at the console or in the city; a refused check and a hero point's reroll do not. Nothing runs
-  down with time or while you are away, and a reload keeps it. Resting is offered exactly where furnishing is: inside
-  a home you own, on foot, out of a headset and out of a network room.
+- **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
+  many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
+  (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new
+  round, and +2 to every check for the next 30 checks"). The bonus is the lower of two: the home's, by its deed's
+  level (+1 from a level 3 deed, +2 from 9, +3 from 17, so the Micro-Loft gives none, the Brownstone and the Timber
+  Loft up to +1, the Penthouse and the Villa up to +2, the Estate and the Sky-Mansion up to +3), and its comfort's, by
+  how many different lines stand in it now (+1 from one kind, +2 from three, +3 from five; copies of a line count
+  once, and a piece not placed here or picked up and in hand does not count until it is put down). While a rest lasts
+  another waits for its 30 checks, unless a home gives a higher bonus, which then takes its place; a rest that gave no
+  bonus runs its 30 checks too. Every check counts, at the console or in the city; a refused check and a hero point's
+  reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
+  where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -1886,11 +1886,12 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
 - **Hero points.** One at the start of every session at least, and a rest at home gives one; `progress reroll` spends
   one on the last check that was not a critical success. The better of the two results pays; nothing is taken back.
 - **Rest at home.** In a home you own, the home card's Rest tab rests (see Furnishing): a hero point, a new round, and
-  for the next 30 checks an item bonus of +1 to +3 on every check, the lower of the home's (by its deed's level: +1
-  from 3, +2 from 9, +3 from 17) and its comfort's (by the kinds of furniture standing there: +1 from 1, +2 from 3, +3
-  from 5). Each check line shows it (`Optics and cinema: 12 +5 +1 prepared = 18 vs DC 14, success`), `progress` says
-  how much and for how many more checks, and `progress table` states the rule. It is kept in the record, so a reload
-  keeps it, and nothing runs down while you are away; `progress reset --yes` ends it.
+  for the next 30 checks an item bonus of up to +3 on every check (none from the Micro-Loft or a home with no
+  furniture standing), the lower of the home's (by its deed's level: +1 from 3, +2 from 9, +3 from 17) and its
+  comfort's (by the kinds of furniture standing there: +1 from 1, +2 from 3, +3 from 5). Each check line shows it
+  (`Optics and cinema: 12 +5 +1 prepared = 18 vs DC 14, success`), `progress` says how much and for how many more
+  checks, and `progress table` states the rule. It is kept in the record, so a reload keeps it, and nothing runs down
+  while you are away; `progress reset --yes` ends it.
 - **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
   unlock set in the same record and the same save, so a purchase never takes the credits without the item.
 - **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
