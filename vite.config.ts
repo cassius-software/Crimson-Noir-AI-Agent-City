@@ -24,6 +24,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 import { BRAND, MONOLITH_SVG } from './src/brand.ts'
+import { isRawWgsl, leanWgsl } from './src/01_Initialize_World/leanWgsl.node.ts'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 
@@ -371,8 +372,25 @@ function moduleLast(): Plugin {
   }
 }
 
+/**
+ * The shaders' text without their comments (src/01_Initialize_World/leanWgsl.node.ts). A `.wgsl?raw` import is the
+ * file as a string, comments and all, and the crowd's shaders ride twice (the page's bundle and the physics worker's,
+ * so this plugin stands in both lists below): about 88 KB of the one file that no GPU reads. 'pre', so this answers
+ * before Vite's own raw loader. The dev server serves the same text as the build, and the lines stay the file's.
+ */
+export function leanShaders(): Plugin {
+  return {
+    name: 'lean-shaders',
+    enforce: 'pre',
+    load(id) {
+      if (!isRawWgsl(id)) return null
+      return `export default ${JSON.stringify(leanWgsl(readFileSync(id.slice(0, id.indexOf('?')), 'utf8')))}`
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), viteSingleFile(), moduleLast(), isolation()],
-  worker: { plugins: () => [workerNotices()] },
+  plugins: [leanShaders(), react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), viteSingleFile(), moduleLast(), isolation()],
+  worker: { plugins: () => [leanShaders(), workerNotices()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))

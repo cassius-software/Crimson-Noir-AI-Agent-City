@@ -12,7 +12,8 @@
  * the moment the task's signal aborts (the spatial lease breaking, or the operator's own stop), and turns every way
  * the server can fail into one plain sentence: not running, running but refusing this page, no such model, not a
  * model that writes text, out of memory. Nothing it sends can leave the machine.
- * With a GPU size given, the router also reads how big each model Ollama lists is (/api/tags) and where a loaded one sits (/api/ps), on the same server on this machine.
+ * With a GPU size given, the router also reads how big each model Ollama lists is (/api/tags) and where a loaded one sits (/api/ps), on the same server on this machine,
+ * and may ask Ollama for a larger context (at most CONTEXT_MAX) after a measurement.
  * What breaks if it is removed? `ask` has nothing behind it. Nothing else in the city needs it.
  */
 import { loopbackServer } from '../02_Define_The_Rules/airgap.ts'
@@ -46,6 +47,18 @@ export const DEFAULT_MODEL = 'qwen3-vl:4b'
 export const CONTEXT_TOKENS = 8192
 /** The longest answer, thinking included, tokens. */
 export const ANSWER_TOKENS = 2048
+/**
+ * Starting value: the largest context the generate format ever asks of a server, tokens. Only the router's auto
+ * provider asks for more than CONTEXT_TOKENS (modelFit.ts widen), and only of Ollama, after a measurement.
+ */
+export const CONTEXT_MAX = 32768
+/**
+ * The longest answer at a context of `ctx` tokens: a quarter of it, today's 2,048 of 8,192 (a starting value), never
+ * less than ANSWER_TOKENS. 8,192 gives 2,048, 16,384 gives 4,096, 32,768 gives 8,192.
+ */
+export const answerTokensFor = (ctx: number): number => Math.max(ANSWER_TOKENS, Math.floor(ctx / 4))
+/** The context a request asks for: `ctx` when it is a whole number from CONTEXT_TOKENS to CONTEXT_MAX, else CONTEXT_TOKENS. */
+export const contextOf = (ctx: unknown): number => (typeof ctx === 'number' && Number.isSafeInteger(ctx) && ctx >= CONTEXT_TOKENS && ctx <= CONTEXT_MAX ? ctx : CONTEXT_TOKENS)
 /**
  * How long a server may send nothing at all before the request is given up, ms: long enough for a server to load a
  * model from a slow disk and read the prompt on a modest machine (a 4B model took 51 s for a whole answer on an
@@ -331,8 +344,11 @@ function watch(server: string, signal: AbortSignal | undefined, t: Timeouts): { 
   }
 }
 
-/** What both wire formats take. */
-export interface AnswerRequest { server: string; model: string; system: string; prompt: string; signal?: AbortSignal; think?: boolean; timeouts?: Timeouts }
+/**
+ * What both wire formats take. `context` is the generate format's context window (contextOf: CONTEXT_TOKENS unless a
+ * whole number up to CONTEXT_MAX), its answer cap answerTokensFor that; the chat format ignores it.
+ */
+export interface AnswerRequest { server: string; model: string; system: string; prompt: string; signal?: AbortSignal; think?: boolean; timeouts?: Timeouts; context?: number }
 
 /**
  * One streamed answer in the generate format: POSTs the prompt to `server` + /api/generate (the server must be a
@@ -346,10 +362,12 @@ export async function generate(fetchFn: FetchLike, req: AnswerRequest, onPiece: 
   const server = loopbackServer(req.server)
   if (server === null) throw new CognitionError('refused', `not a server on this machine: ${String(req.server)}`)
   // `think` is always sent: false asks a thinking model to answer without reasoning first (a model that cannot think
-  // accepts it), true asks for its reasoning (streamed as thinking pieces).
+  // accepts it), true asks for its reasoning (streamed as thinking pieces). The context is CONTEXT_TOKENS and the
+  // answer ANSWER_TOKENS unless the request asks for a larger context (the router's auto, for Ollama alone).
+  const ctx = contextOf(req.context)
   const body = JSON.stringify({
     model: req.model, system: req.system, prompt: req.prompt, stream: true, think: req.think === true,
-    options: { num_ctx: CONTEXT_TOKENS, num_predict: ANSWER_TOKENS },
+    options: { num_ctx: ctx, num_predict: answerTokensFor(ctx) },
   })
   // The first-piece wait runs until the first line of the body: a server may send its headers at once and only then
   // load the model and read the prompt.
@@ -519,8 +537,17 @@ export async function installedSizes(fetchFn: FetchLike, server: string, signal?
 /** Whether Ollama's name `listed` is the model `n`: the same name, or `n` with Ollama's default tag (`qwen3` is `qwen3:latest`). */
 export const sameModel = (listed: unknown, n: string): boolean => listed === n || listed === `${n}:latest`
 
-/** Where Ollama has `model` loaded now (/api/ps): its bytes in all and on GPUs. Null when not loaded, not on this machine, or anything fails; never throws. */
-export async function placementOf(fetchFn: FetchLike, server: string, model: string, signal?: AbortSignal): Promise<{ loaded: number; gpu: number } | null> {
+/** Where a loaded model sits: its bytes in all and on GPUs, and the context it runs at when Ollama says (`ctx`). */
+export interface Placement { readonly loaded: number; readonly gpu: number; readonly ctx?: number }
+/** The largest context Ollama is believed to report (2^24 tokens, a sanity bound); a larger one is not said. */
+const CTX_REPORTED_MAX = 2 ** 24
+
+/**
+ * Where Ollama has `model` loaded now (/api/ps): its bytes in all and on GPUs, and its `context_length` (Ollama v0.10.0
+ * and later) as `ctx` when that is a whole number from 1 to 2^24. Null when not loaded, not on this machine, or
+ * anything fails; never throws.
+ */
+export async function placementOf(fetchFn: FetchLike, server: string, model: string, signal?: AbortSignal): Promise<Placement | null> {
   try {
     const origin = loopbackServer(server)
     if (origin === null) return null
@@ -529,11 +556,13 @@ export async function placementOf(fetchFn: FetchLike, server: string, model: str
     const models = ((await res.json()) as { models?: unknown } | null)?.models
     if (!Array.isArray(models)) return null
     // Ollama names a loaded model as its list does, the default tag shown or not.
-    const e = models.find((m) => sameModel((m as { name?: unknown } | null)?.name, model)) as { size?: unknown; size_vram?: unknown } | undefined
+    const e = models.find((m) => sameModel((m as { name?: unknown } | null)?.name, model)) as { size?: unknown; size_vram?: unknown; context_length?: unknown } | undefined
     const size = e?.size
     const vram = e?.size_vram
     if (!bytesOk(size) || size <= 0 || typeof vram !== 'number' || !Number.isFinite(vram) || vram < 0) return null
-    return { loaded: size, gpu: Math.min(vram, size) }
+    const ctx = e?.context_length
+    const said = typeof ctx === 'number' && Number.isSafeInteger(ctx) && ctx > 0 && ctx <= CTX_REPORTED_MAX
+    return { loaded: size, gpu: Math.min(vram, size), ...(said && { ctx }) }
   } catch {
     return null
   }
@@ -552,6 +581,13 @@ export interface SettingsStore {
 }
 
 /**
+ * A Mind over a local server: `answer` also takes the generate format's context for that one answer (the router's, for
+ * Ollama under auto: modelFit.ts widen, worked out once as the answer is sent); CONTEXT_TOKENS without it, and the
+ * chat format ignores it.
+ */
+export interface LocalMind extends Mind { answer(req: MindRequest, onPiece: (p: Piece) => void, context?: number): Promise<Answer> }
+
+/**
  * The local model as the operator tier uses it (operator.ts Mind): the server's address (a loopback address; the
  * default unless the operator set one), its wire format (generate unless the operator chose chat), the model (DEFAULT_MODEL unless the operator chose another) and whether it
  * thinks before it answers (off unless the operator turns it on: a small model on a modest machine can spend minutes,
@@ -564,7 +600,7 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
   fetch: FetchLike; store?: SettingsStore; defaults?: { server?: string; model?: string; api?: WireFormat }; timeouts?: Timeouts
   /** A longer first-piece wait for `model`, ms (the router's: a big model takes long to read from disk, modelFit.ts coldWaitMs); never a shorter one. */
   coldWait?: (model: string) => number
-}): Mind {
+}): LocalMind {
   const defaultServer = loopbackServer(defaults.server) ?? DEFAULT_SERVER
   const defaultModel = defaults.model?.trim() || DEFAULT_MODEL
   const defaultApi: WireFormat = isWireFormat(defaults.api) ? defaults.api : DEFAULT_API
@@ -662,13 +698,13 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
       }
       return names
     },
-    answer: async (req: MindRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+    answer: async (req: MindRequest, onPiece: (p: Piece) => void, context?: number): Promise<Answer> => {
       const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
       const name = await modelFor(req.signal)
       // A model that takes longer to load may wait longer for its first piece; the same timeouts when nothing is longer.
       const extra = coldWait?.(name) ?? 0
       const t = Number.isFinite(extra) && extra > timeouts.firstMs ? { ...timeouts, firstMs: extra } : timeouts
-      const r = { server, model: name, system, prompt: req.prompt, signal: req.signal, think, timeouts: t }
+      const r = { server, model: name, system, prompt: req.prompt, signal: req.signal, think, timeouts: t, context }
       try {
         // The hash of the exact string sent, for the audit: computed here, over `system` as it goes into the request.
         const a = await (api === 'chat' ? chat(fetchFn, r, onPiece) : generate(fetchFn, r, onPiece))

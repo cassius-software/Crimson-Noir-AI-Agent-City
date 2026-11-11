@@ -39,6 +39,7 @@ import {
   FACIAL_HAIR, HAIR_PIECE_STYLES, HAIR_TEXTURE, HAIR_TEXTURE_BITS, HAIR_TEXTURE_STYLES, HEADWEAR, HEARING, LAYER, LOOK_HASHED_HEARING, PROSTHETIC, LOOK_FIELD, LOOK_FIELD_HIGH, LOOK_HASHED_COLOUR,
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS, BOTTOM_CUT_STREET_PACKED, SKIRT_CUT, TROUSER_CUT,
+  FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 
@@ -479,6 +480,71 @@ function weavePaint(clothIn: V3, weaveIn: U1, rigIn: V3, slotIn: F1, footprintIn
   return paint(clothIn, weaveIn, rigIn, slotIn, footprintIn)
 }
 
+/** The shoes' own colours, linear RGB: a two-tone's cream, a sneaker's white sole and its laces, a buckle's metal. */
+const SHOE = Object.freeze({ cream: vec3(0.86, 0.82, 0.74), white: vec3(0.86, 0.85, 0.82), laces: vec3(0.9, 0.9, 0.9), metal: vec3(0.62, 0.6, 0.55) })
+
+/**
+ * The shoe's style (look.ts FOOTWEAR) over the shoe's colour, from the rest position about the shoe's own axis (the
+ * shoe's rings centre on x = ±LANDMARK.hipX, the toe toward +z: humanoid.ts legTubes). The upper is above y 0.012 and
+ * the sole below it; on the centreline the instep runs from (y 0.085, z 0.05) down to (y 0.045, z 0.125) and the toe
+ * box on to z 0.15, so every mark across the foot sits between z 0.05 and the toe. Each feature is one test of the
+ * style against its set (look.ts FOOTWEAR_FEATURES), so the laces five styles share are drawn by one expression, and
+ * later features paint over earlier ones: a two-tone's cream between the toe cap and the heel, a sneaker's white sole
+ * and toe bumper (no stripe and no mark: nothing that reads as a maker's), a loafer's saddle and a strap across the
+ * instep, the cap toe's seam, the wingtip's W (its centre turned back toward the laces, its wings swept back along the
+ * sides) and the row of small holes behind it, the loafer's apron round the toe, the laces' panel and their rungs, the
+ * strap's buckle on the outside, a flat's open top where the foot shows in its hose. `footprint` is a pixel's width
+ * on the rest body (the stage's shared one): the seams fade over it and the holes fade out where they are finer than
+ * a pixel. The far body keeps the colours and leaves the seams, the holes and the rungs to the near body. The plain
+ * shoe (0) comes back as it went in.
+ */
+function footwearPaint(clothIn: V3, styleIn: U1, hoseIn: V3, footprintIn: F1, near: boolean): V3 {
+  const paint = Fn(([cloth, style, hose, footprint]: [V3, U1, V3, F1]) => {
+    const out = vec3(cloth).toVar()
+    If(style.notEqual(uint(FOOTWEAR.plain)), () => {
+      const rest = positionGeometry
+      const y = rest.y, z = rest.z
+      // Across the foot from its own centreline, then which side of it is the outside.
+      const legX = rest.x.sub(rest.x.sign().mul(LANDMARK.hipX)).toVar()
+      const has = (set: number) => uint(set).shiftRight(style).bitAnd(uint(1)).equal(uint(1))
+      const thin = (d: F1, width: number): F1 => float(width / 2).sub(d).div(footprint).add(0.5).clamp(0, 1)
+      const F = FOOTWEAR_FEATURES
+      const upper = y.greaterThan(0.012)
+      // Where the toe cap starts, and the wingtip's W (read by more than one feature: variables, as weavePaint's are).
+      const capZ = legX.mul(legX).mul(3).add(0.1).toVar()
+      const wingZ = legX.abs().mul(1.2).add(0.092).min(float(0.115).sub(legX.mul(legX).mul(26))).toVar()
+      const sneaker = has(F.sneaker)
+      out.assign(select(has(F.twoTone).and(upper).and(z.lessThanEqual(capZ)).and(z.greaterThanEqual(-0.045)), SHOE.cream, out))
+      out.assign(select(sneaker.and(y.lessThan(0.018).or(z.greaterThan(0.135).and(y.lessThan(0.03)))), SHOE.white, out))
+      out.assign(select(has(F.loafer).and(z.greaterThan(0.058)).and(z.lessThan(0.072)).and(y.greaterThan(0.045)), cloth.mul(0.7), out))
+      out.assign(select(has(F.strap).and(z.greaterThan(0.052)).and(z.lessThan(0.068)).and(y.greaterThan(0.05)), cloth.mul(0.75), out))
+      const seam = cloth.mul(0.45)
+      if (near) {
+        // The cap toe's seam, the wingtip's, and the loafer's apron (an ellipse round the toe box) are each one style's.
+        // The apron's ellipse lies on the upper the whole way round, from the toe's front (z 0.13, down to y 0.023) back to
+        // just behind the saddle (z 0.054), on the narrower women's shoe too, so the upper's own test is all it needs.
+        const apron = legX.div(0.026).pow(2).add(z.sub(0.092).div(0.038).pow(2)).sqrt()
+        const line = select(has(F.cap), thin(z.sub(capZ).abs(), 0.003), select(has(F.wing), thin(z.sub(wingZ).abs(), 0.003),
+          select(has(F.loafer), thin(apron.sub(1).abs().mul(0.026), 0.003), float(0))))
+        out.assign(mix(out, seam, select(upper, line, float(0))))
+        // The wingtip's row of small holes just behind its seam, on a 4 mm grid, gone where a hole is finer than a pixel.
+        const hole = vec2(rest.x, z).div(0.004).fract().sub(0.5).length().mul(0.004).lessThan(0.0009)
+        const holes = has(F.wing).and(upper).and(z.lessThan(wingZ)).and(wingZ.sub(z).lessThan(0.006)).and(hole)
+        out.assign(mix(out, cloth.mul(0.5), select(holes, float(1).sub(smoothstep(0.2, 0.45, footprint.div(0.004))), float(0))))
+      }
+      const panel = has(F.laces).and(legX.abs().lessThan(0.012)).and(z.greaterThan(0.048)).and(z.lessThan(0.088)).and(y.greaterThan(0.058))
+      out.assign(select(panel, cloth.mul(0.8), out))
+      // The laces' rungs across the panel every 9 mm, white on a sneaker.
+      if (near) out.assign(mix(out, select(sneaker, SHOE.laces, seam), select(panel, thin(z.div(0.009).fract().sub(0.5).abs().mul(0.009), 0.0025), float(0))))
+      const buckle = has(F.strap).and(legX.mul(rest.x.sign()).greaterThan(0.024)).and(z.sub(0.06).abs().lessThan(0.007)).and(y.greaterThan(0.05))
+      out.assign(select(buckle, SHOE.metal, out))
+      out.assign(select(has(F.flat).and(y.greaterThan(0.058)).and(z.greaterThan(-0.035)).and(z.lessThan(0.08)), hose, out))
+    })
+    return out
+  }) as unknown as (...inputs: Node[]) => V3
+  return paint(clothIn, styleIn, hoseIn, footprintIn)
+}
+
 function agentBuffers(view: CrowdView, agentCount: number, listLength: number) {
   return {
     pos: storage(view.pos, 'vec4', agentCount).toReadOnly(),
@@ -513,7 +579,7 @@ export class CrowdView {
    * The figure word, the face word and the wardrobe word per agent (look.ts packFigure: the eight body sliders' steps;
    * packFace: the seven face sliders' steps and the hair style; packWardrobe: the layer, the trim and the scarf; read
    * only where the look word says a look is worn), then the rig slot word, then the genome's words 4 to 15 (look.ts
-   * packGenome: the skin word, the cloth word, and spare words that stay zero): FIGURE_QUADS quads, sixteen u32 per agent, written
+   * packGenome: the skin word, the cloth word, the accessory word, and spare words that stay zero): FIGURE_QUADS quads, sixteen u32 per agent, written
    * beside the look word. Page-only like it: the worker's passes never bind it, the cull never reads it, no pedestrian
    * moves for it. One buffer for all of them: the vertex stage binds seven storage buffers already, of the eight
    * WebGPU promises every device.
@@ -862,7 +928,7 @@ export class CrowdView {
     const word = uint(vLookHi.add(0.5)).shiftLeft(uint(16)).bitOr(uint(vLookLo.add(0.5)))
     const custom = word.bitAnd(uint(1)).equal(uint(1))
     const field = (s: LookSlot): U1 => word.shiftRight(uint(LOOK_FIELD[s][1])).bitAnd(uint((1 << LOOK_FIELD[s][2]) - 1))
-    // The genome's words 4 to 7 (look.ts LOOK_FIELD: the skin word, then the cloth word), the person's second quad of crowd.figure,
+    // The genome's words 4 to 7 (look.ts LOOK_FIELD: the skin word, then the cloth word, the accessory word), the person's second quad of crowd.figure,
     // flat: one person's four integers in every fragment (an integer varying is never interpolated). Read only where
     // the look word says a look is worn: the hash's people leave them zero.
     const genome = varying(b.figure.element(b.lists.element(instanceIndex.add(uint(listBase))).mul(uint(FIGURE_QUADS)).add(uint(1))), 'vAgentGenome').setInterpolation('flat')
@@ -912,6 +978,8 @@ export class CrowdView {
     bottom = select(custom, ownBottom, bottom)
     shirt = select(custom, ownShirt, shirt)
     shoes = select(custom, ownShoes, shoes)
+    // The shoe's colour before its style is painted on it: a boot's shaft is this cloth too (below).
+    const shoeCloth = shoes.toVar() as unknown as V3
     // The wardrobe word the vertex stage resolved (look.ts LOOK_FIELD's word 3): the layer owns the top's dye (the
     // look's top index, or the hash's top link over this body's palette length, read from the coats under a coat: as
     // look.ts lookOptions offers them), the trim is matching (the top's cloth) or one of the trim cloths, the scarf one
@@ -961,9 +1029,30 @@ export class CrowdView {
     const onLegBone = rig.x.greaterThan(BONE.THIGH_L - 0.5).and(rig.x.lessThan(BONE.FOOT_R + 0.5))
     const hemAt = variant === 3 ? float(-1) : select(lowIs(TROUSER_CUT.cropped), float(LOWER_PAINT.croppedHem), select(lowIs(TROUSER_CUT.culottes), float(LOWER_PAINT.culottesHem), float(-1)))
     const ankle = slotIs(SLOT.BOTTOM).and(onLegBone).and(positionGeometry.y.lessThan(hemAt))
+    // The accessory word (look.ts LOOK_FIELD's word 6), the look's or the hash's from the colours' chain as lookFromSeed
+    // draws it: the shoe's style (a little over half the street's, one of the body's eight entries), and on the near
+    // body, the only one with glasses, a face to pin and a wrist drawn close enough to see, the frames' finish (half of
+    // the glasses: no glasses, no rims to paint, so the frames need no test of their own), the watch (never the
+    // tourbillon on the street) and the lapel pin (never the rank pin; under shirt sleeves the jacket is off and the pin
+    // goes with it, so the shader needs no test of the layer).
+    const streetFootwear = uint(FOOTWEAR_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.footwearPick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15))
+    const footwear = select(custom, gene(LOOK_FIELD.footwear), select(h(LOOK_HASHED_COLOUR.footwear).greaterThanEqual(LOOK_ODDS.footwear), streetFootwear, uint(0))).toVar() as unknown as U1
+    const frames = near ? select(custom, gene(LOOK_FIELD.frames), select(h(LOOK_HASHED_COLOUR.frames).greaterThanEqual(LOOK_ODDS.frames), uint(h(LOOK_HASHED_COLOUR.framesPick).mul(WARDROBE.frames.length - 1 - 0.001)).add(uint(1)), uint(0))).toVar() as unknown as U1 : uint(0)
+    const watchLink = near ? h(LOOK_HASHED_COLOUR.watch) : float(0)
+    const watch = near ? select(custom, gene(LOOK_FIELD.watch), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSmart), uint(WATCH.smartwatch),
+      select(watchLink.greaterThanEqual(LOOK_ODDS.watchLeather), uint(WATCH.leather), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSteel), uint(WATCH.steel), uint(WATCH.none))))).toVar() as unknown as U1 : uint(0)
+    const pinLink = near ? h(LOOK_HASHED_COLOUR.lapelPin) : float(0)
+    const lapelPin = near ? select(custom, gene(LOOK_FIELD.lapelPin), select(pinLink.greaterThanEqual(LOOK_ODDS.pinFlower), uint(LAPEL_PIN.flower),
+      select(pinLink.greaterThanEqual(LOOK_ODDS.pinBar), uint(LAPEL_PIN.bar), uint(LAPEL_PIN.none)))).toVar() as unknown as U1 : uint(0)
+    // A boot's shaft (look.ts FOOTWEAR_FEATURES shaft) up the leg where it is bare: the skirt suit's hose, or below
+    // cropped trousers and culottes (full-length trousers hide it, as they would), to above the ankle or, the knee
+    // boot's, to just below the knee (humanoid.ts LANDMARK.knee 0.5). It covers a prosthetic shin and its finish too.
+    const footwearHas = (set: number) => uint(set).shiftRight(footwear).bitAnd(uint(1)).equal(uint(1))
+    const bootTop = select(footwearHas(FOOTWEAR_FEATURES.kneeShaft), float(0.46), float(0.16))
+    const booted = footwearHas(FOOTWEAR_FEATURES.shaft).and(onLegBone).and(positionGeometry.y.lessThan(bootTop)).and(slotIs(SLOT.LEGWEAR).or(ankle))
     const armHere = slotIs(SLOT.SKIN).and(boneIs(BONE.HAND_R).and(limb(PROSTHETIC.leftArm, PROSTHETIC.bothArms)).or(boneIs(BONE.HAND_L).and(limb(PROSTHETIC.rightArm, PROSTHETIC.bothArms))))
     const legHere = slotIs(SLOT.LEGWEAR).and(positionGeometry.y.lessThan(0.46)).or(ankle)
-      .and(boneIs(BONE.SHIN_R).and(limb(PROSTHETIC.leftLeg, PROSTHETIC.bothLegs)).or(boneIs(BONE.SHIN_L).and(limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs))))
+      .and(boneIs(BONE.SHIN_R).and(limb(PROSTHETIC.leftLeg, PROSTHETIC.bothLegs)).or(boneIs(BONE.SHIN_L).and(limb(PROSTHETIC.rightLeg, PROSTHETIC.bothLegs)))).and(booted.not())
     const limbHere = armHere.or(legHere)
     const weave = step(0.5, positionGeometry.x.add(positionGeometry.z).mul(140).fract()).add(step(0.5, positionGeometry.y.mul(140).fract())).mod(2)
     const fin = (k: number) => finish.equal(uint(k))
@@ -1081,8 +1170,31 @@ export class CrowdView {
     const seam = near ? select(closed.and(onTrunk), thin(rest.y.sub(1.44).abs(), 0.003), float(0)) : float(0)
     const stitched = mix(tailoredJacket.mul(float(1).add(rib)), tailoredJacket.mul(0.45),
       quilting.max(pockets).max(lapelEdge).max(seam).max(select(zip, thin(rest.x.abs(), 0.007), float(0))).max(select(closure, thin(rest.x.sub(sideLine).abs(), 0.006), float(0))))
+    // The steel and the gold tone a watch and a pin are made of (look.ts FRAME_FINISH: the frames' gold tone and navy).
+    const steel = vec3(0.62, 0.62, 0.64)
+    const goldTone = vec3(FRAME_FINISH[FRAMES.goldTone][0], FRAME_FINISH[FRAMES.goldTone][1], FRAME_FINISH[FRAMES.goldTone][2])
+    // The lapel pin (look.ts LAPEL_PIN) on the wearer's left at 1.42 m, halfway across the lapel wherever the cut puts it
+    // (notch, peak, shawl and double-breasted lapels alike); a cut with no lapel to speak of (closed, a waistcoat's, a
+    // cardigan's) wears it at the breast. Plain shapes, no emblem: a gold disc with a ring, a silver bar, a flower of five
+    // petals with a gold centre. The near body's alone. The lapel runs from the V's edge (`half`) out to `half` plus its
+    // width. Where the V closes above the pin (the double-breasted coat's, at 1.43) `half` is below zero at 1.42 and the
+    // front starts at the centre line instead, so the pin sits halfway between that line and the lapel's edge: whole, and
+    // on the one side.
+    let pinHere: ReturnType<typeof onTrunk.and> = uint(0).equal(uint(1))
+    let pinColour: V3 = stitched
+    if (near) {
+      const pinAt = select(lapelWidth.greaterThan(0.02), vec2(side.sub(half.max(0).add(half).add(lapelWidth).mul(0.5)), rest.y.sub(1.42)), vec2(rest.x.sub(0.075), rest.y.sub(1.42)))
+      const pinR = pinAt.length()
+      const pinIs = (k: number) => lapelPin.equal(uint(k))
+      const shape = pinIs(LAPEL_PIN.rank).and(pinR.lessThan(0.0065))
+        .or(pinIs(LAPEL_PIN.bar).and(pinAt.x.abs().lessThan(0.009)).and(pinAt.y.abs().lessThan(0.002)))
+        .or(pinIs(LAPEL_PIN.flower).and(pinR.lessThan(atan(pinAt.y, pinAt.x).mul(5).cos().mul(0.002).add(0.007))))
+      pinHere = front.and(inV.not()).and(rest.x.sub(centre).greaterThan(0)).and(shape)
+      pinColour = select(pinIs(LAPEL_PIN.rank), mix(goldTone, goldTone.mul(0.55), thin(pinR.sub(0.004).abs(), 0.001)),
+        select(pinIs(LAPEL_PIN.bar), steel, select(pinR.lessThan(0.002), goldTone, SHOE.cream)))
+    }
     const jacket = select(vestArm.or(cropped), shirt, select(lining, topCloth.mul(0.55), select(buckle, vec3(0.62, 0.6, 0.55), select(belt, beltCloth,
-      select(buttons, topCloth.mul(0.35).add(0.02), select(zip.and(rest.x.abs().lessThan(0.0035)), vec3(0.52, 0.52, 0.54), stitched))))))
+      select(buttons, topCloth.mul(0.35).add(0.02), select(zip.and(rest.x.abs().lessThan(0.0035)), vec3(0.52, 0.52, 0.54), select(pinHere, pinColour, stitched)))))))
     // The lower cut's lines, from the rest position as the jacket's are (its shapes are the vertex stage's: crowdBody.ts
     // bodyGarment). The trousers, each half about its own leg's axis: a pressed crease down the front and the back,
     // pleats from the waist, turn-ups at the hem, a satin side stripe or a piped seam down the outside, the cropped
@@ -1091,6 +1203,38 @@ export class CrowdView {
     // the high waist's seam, the flared skirt's folds. The fine lines are the near body's.
     const leather = vec3(0.09, 0.07, 0.06)
     const metal = vec3(0.62, 0.6, 0.55)
+    // The skirt suit's hose, and the sock or the bare ankle below cropped trousers and culottes (one link, one colour):
+    // a flat shows it over its low sides too.
+    const hose = mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11)))
+    // A boot's shaft in the shoe's cloth, with a seam at its top and the lace-up boot's laces up its front (the near body's).
+    const shinX = rest.x.sub(rest.x.sign().mul(LANDMARK.hipX))
+    const bootColour = near
+      ? mix(mix(shoeCloth, shoeCloth.mul(0.6), thin(rest.y.sub(bootTop).abs(), 0.003)), shoeCloth.mul(0.45),
+        select(footwearHas(FOOTWEAR_FEATURES.laces).and(rest.z.greaterThan(0.03)).and(shinX.abs().lessThan(0.01)), thin(rest.y.div(0.009).fract().sub(0.5).abs().mul(0.009), 0.0025), float(0)))
+      : shoeCloth
+    // The watch (look.ts WATCH) round the person's own left wrist (HAND_R, +x): a band below the wrist's ring (0.92)
+    // and the sleeve's end (0.935), above where the bag's handle is held (0.8), and the case on the hand's outer edge, the
+    // side the street sees: round (a little larger for the tourbillon), or the smartwatch's dark glass. The near body's
+    // alone; it is painted over a prosthetic hand as over the skin.
+    let watchHere: ReturnType<typeof onTrunk.and> = uint(0).equal(uint(1))
+    let watchColour: V3 = skinShown
+    if (near) {
+      const wy = rest.y.sub(0.905)
+      const watchIs = (k: number) => watch.equal(uint(k))
+      const smart = watchIs(WATCH.smartwatch)
+      const size = select(watchIs(WATCH.tourbillon), float(0.012), float(0.011))
+      const r = vec2(rest.z, wy).length()
+      const face = rest.x.greaterThan(0.226).and(smart.and(rest.z.abs().lessThan(0.012)).and(wy.abs().lessThan(0.013)).or(smart.not().and(r.lessThan(size))))
+      const dial = smart.not().and(r.lessThan(size.mul(0.75)))
+      watchHere = watch.notEqual(uint(WATCH.none)).and(slotIs(SLOT.SKIN)).and(boneIs(BONE.HAND_R)).and(wy.abs().lessThan(0.007).or(face))
+      const navy = vec3(FRAME_FINISH[FRAMES.navy][0], FRAME_FINISH[FRAMES.navy][1], FRAME_FINISH[FRAMES.navy][2])
+      const strap = select(watchIs(WATCH.steel), steel, select(watchIs(WATCH.tourbillon), vec3(0.06, 0.05, 0.05), select(watchIs(WATCH.leather), leather, vec3(0.07, 0.07, 0.075))))
+      const caseColour = select(watchIs(WATCH.tourbillon), goldTone, select(smart, vec3(0.02, 0.02, 0.025), steel))
+      // The tourbillon's movement shows through its navy dial below the centre, in steel.
+      const dialColour = select(watchIs(WATCH.tourbillon), select(vec2(rest.z, wy.add(0.004)).length().lessThan(0.0025), steel, navy),
+        select(watchIs(WATCH.leather), SHOE.cream, vec3(0.9, 0.89, 0.86)))
+      watchColour = select(face, select(dial, dialColour, caseColour), strap)
+    }
     let bottomShown: V3
     let lowMarks: ReturnType<typeof onTrunk.and>
     let stripe: ReturnType<typeof onTrunk.and>
@@ -1134,10 +1278,10 @@ export class CrowdView {
       // The belt on the seat, and on the thighs' tops where they stand out of it at the hips (the suit's sits that low).
       const belt = lowIs(TROUSER_CUT.belted).and(waistShown).and(onTrunk.or(onLegBone)).and(rest.y.sub(JACKET_HEM[variant] - 0.018).abs().lessThan(0.016))
       const buckle = belt.and(rest.z.greaterThan(0)).and(rest.x.abs().lessThan(0.018))
-      const ankleCloth = mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11)))
-      // Below the culottes' hem the leg narrows back to the calf: the hem's shadowed inside, then the leg.
+      const ankleCloth = hose
+      // Below the culottes' hem the leg narrows back to the calf: the hem's shadowed inside, then the leg (or a boot's shaft).
       const inside = ankle.and(lowIs(TROUSER_CUT.culottes)).and(rest.y.greaterThan(LOWER_PAINT.culottesInside))
-      bottomShown = select(ankle, select(inside, woven.mul(0.3), select(legHere, limbColour, ankleCloth)), select(buckle, metal, select(belt, leather, select(stripe, bottom.mul(0.7), turnedCloth))))
+      bottomShown = select(ankle, select(inside, woven.mul(0.3), select(booted, bootColour, select(legHere, limbColour, ankleCloth))), select(buckle, metal, select(belt, leather, select(stripe, bottom.mul(0.7), turnedCloth))))
       lowMarks = ankle.or(belt)
     }
     // The high waist's top seam, over the trousers' cloth up the trunk.
@@ -1147,24 +1291,34 @@ export class CrowdView {
     // with a sheen of their own set it (WEAVE_SHEEN), and the rest keep the slot's; a shawl collar's facing and a
     // waistcoat's lining are satin.
     const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt)))
-    const cutMarks = vestArm.or(cropped).or(belt).or(buttons).or(zip.and(rest.x.abs().lessThan(0.0035)))
+    const cutMarks = vestArm.or(cropped).or(belt).or(buttons).or(zip.and(rest.x.abs().lessThan(0.0035))).or(pinHere)
     const shownWeave = select(onBottom, select(lowMarks, uint(255), bottomWeave), select(outer.and(inV.or(shirtCollar).not())
       .and(lapel.or(collar).or(cuff).and(trimAt.notEqual(uint(0))).not()).and(cutMarks.not()).and(lining.not()), topWeave, uint(0)))
     const satin = outer.and(lining.or(cutIs(CUT.shawl).and(lapel.or(collar)).and(inV.or(shirtCollar).not()))).or(stripe)
     const sheen = select(satin, float(0.45), WEAVE_SHEEN.reduce((r: F1, [k, value]) => select(shownWeave.equal(uint(k)), float(value), r), float(-1))).toVar() as unknown as F1
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
     const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
-    const legwear = variant === 3 ? mix(wornSkin, vec3(0.08, 0.07, 0.07), step(0.55, h(11))) : bottom
+    const legwear = variant === 3 ? hose : bottom
     const device = vec3(0.17, 0.175, 0.18)
     const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
-    const frame = vec3(0.05, 0.05, 0.055)
+    // The glasses' frame (look.ts FRAMES): black as before, or the finish chosen, a tortoiseshell mottled and a browline's
+    // lower rim steel below its black brow (the rims are two bars: humanoid.ts, 1.6705 to 1.6735 and 1.6885 to 1.6915).
+    // The far body has no glasses, so it keeps the one colour.
+    const finishOf = (k: number): V3 => vec3(FRAME_FINISH[k][0], FRAME_FINISH[k][1], FRAME_FINISH[k][2])
+    const tortoise = mix(finishOf(FRAMES.tortoiseshell), vec3(TORTOISE_LIGHT[0], TORTOISE_LIGHT[1], TORTOISE_LIGHT[2]),
+      step(0.3, rest.x.mul(900).sin().mul(rest.y.mul(700).add(rest.x.mul(300)).sin())))
+    const byFinish = [FRAMES.tortoiseshell, FRAMES.steel, FRAMES.goldTone, FRAMES.navy, FRAMES.burgundy, FRAMES.clear].reduceRight(
+      (others: V3, k) => select(frames.equal(uint(k)), k === FRAMES.tortoiseshell ? tortoise : finishOf(k), others), vec3(0.05, 0.05, 0.055) as V3)
+    const frame = near ? select(frames.equal(uint(FRAMES.browline)).and(rest.y.lessThan(1.681)), finishOf(FRAMES.steel), byFinish) : vec3(0.05, 0.05, 0.055)
     // The eyes: their whites, an iris the hash picks (the words have no room for it), and the lips a shade of the skin.
     const white = vec3(0.88, 0.86, 0.84)
     const iris = pick(PALETTE.iris, h(LOOK_HASHED_COLOUR.iris))
     const lip = wornSkin.mul(vec3(0.82, 0.55, 0.55))
     // The turtleneck's knit up the neck (the trunk's skin), under a jacket or a coat.
     const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk)
-    const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(armHere, limbColour, skinShown)), hairShown, bottomShown, shoes, accent, prop, select(legHere, limbColour, legwear), frame, white, iris, lip, scarf, fabric, device]
+    // The shoe's style over its colour (the plain shoe as it was).
+    shoes = footwearPaint(shoeCloth, footwear, hose, footprint, near)
+    const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(watchHere, watchColour, select(armHere, limbColour, skinShown))), hairShown, bottomShown, shoes, accent, prop, select(booted, bootColour, select(legHere, limbColour, legwear)), frame, white, iris, lip, scarf, fabric, device]
     const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8, 0.4]
     let color: V3 = slots[slots.length - 1]
     let roughness: F1 = float(rough[rough.length - 1])
@@ -1178,15 +1332,18 @@ export class CrowdView {
     // Declared once at the top of the stage instead, before any branch, every later read is the variable: the links,
     // the skin and the hair as painted, the colour. Each paint still pays for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), wornSkin, greyed, wornHair, skinShown, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
     }) as unknown as (...inputs: Node[]) => V3
     m.colorNode = declared(...shared)
-    // A prosthetic's finish has its own sheen: chrome is a metal, carbon a satin, matte and a cover the skin's.
-    const chrome = limbHere.and(fin(2))
-    m.roughnessNode = select(chrome, float(0.22), select(limbHere.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
+    // A prosthetic's finish has its own sheen: chrome is a metal, carbon a satin, matte and a cover the skin's. A watch
+    // worn over a prosthetic hand is drawn in the watch's colours, so it keeps the skin slot's sheen as it does on a hand
+    // of skin (a boot's shaft takes a prosthetic shin out of the finish the same way: legHere). The far body has no watch.
+    const limbShown = near ? limbHere.and(watchHere.not()) : limbHere
+    const chrome = limbShown.and(fin(2))
+    m.roughnessNode = select(chrome, float(0.22), select(limbShown.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
     m.metalnessNode = select(chrome, float(0.85), float(0))
     // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
     if (this.matrixMode) applyMatrixMode(m, this.matrixMode)

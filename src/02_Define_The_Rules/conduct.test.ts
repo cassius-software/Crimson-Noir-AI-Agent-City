@@ -168,6 +168,13 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   assert.deepEqual([...WARDROBE.hairStyle].slice(0, 5), ['short', 'long', 'bob', 'bun', 'bald'])
   assert.equal(WARDROBE.hairStyle.length, 32)
   assert.deepEqual([...WARDROBE.headwear], ['none', 'hijab', 'turban', 'head wrap', 'kippah', 'durag', 'beanie', 'flat cap'])
+  // 14A: paint on existing meshes, plain shapes, no emblem, nothing carried. The shoe's style, the glasses' frames,
+  // the watch on the wrist and the pin on the lapel are colours on the shoe, the rims, the hand and the jacket: no
+  // piece is added, and the pins are a disc, a bar and a flower, never a badge of anything.
+  assert.deepEqual([...WARDROBE.footwear], ['plain', 'lace-up', 'cap toe', 'wingtip', 'loafer', 'buckle strap', 'two-tone', 'sneaker', 'flat', 'ankle boot', 'lace-up boot', 'knee boot'])
+  assert.deepEqual([...WARDROBE.frames], ['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline'])
+  assert.deepEqual([...WARDROBE.watch], ['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch'])
+  assert.deepEqual([...WARDROBE.lapelPin], ['none', 'rank pin', 'silver bar', 'buttonhole flower'])
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)

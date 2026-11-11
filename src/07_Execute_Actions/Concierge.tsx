@@ -23,7 +23,7 @@
  * below the centre and above the HUD's bottom-centre prompts; phone upright, the band under the header and
  * minimap (clear of the on-screen keyboard); phone in landscape, bottom-centre between the thumbs.
  */
-import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { ORC_NOTICE } from '../02_Define_The_Rules/degrees.ts'
 import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from '../05_Observe_Environment/profile.ts'
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
@@ -131,6 +131,15 @@ const CHIP_AT = {
  *  reach lower, as a readout with a device line does on an upright phone, but always ending above the touch buttons
  *  (where both cannot hold it stands over a panel, which takes no taps, never over a button). */
 const CHIP_TOP = {
+  /** On a short touch screen in landscape while the first walk's card is up between the thumbs (onboarding/FirstWalk.tsx
+   *  AT.between, `beside` here): CHIP_AT.shortTouch's own top, unless the walk card's band, from 10.5 rem under the top
+   *  inset down to the HUD's chips at the foot (--hud-foot, Hud.tsx), is short of 8 rem (a large text size, a short
+   *  screen, captions or a shop's chip at the foot). Then the chip moves up to the top row, over the HUD's header and
+   *  readout, which take no taps, and the walk's card rises to stand under it. Both read the same band through the
+   *  same step (0 while the band holds 8 rem, else the screen's height), so they agree without a word between them;
+   *  the step reads the HUD's foot latched at its highest (--hud-foot-peak, footPeak.ts), so captions coming and going
+   *  never flip the chip from under a thumb. The chip publishes its foot as --chip-bottom for the card. */
+  walk: 'max(max(0.75rem, env(safe-area-inset-top)), calc(min(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem)) - clamp(0px, calc((8rem - calc(calc(100dvh / var(--ui-zoom, 1)) - max(0.75rem, env(safe-area-inset-top)) - 10.5rem - max(max(0.75rem, env(safe-area-inset-bottom)), calc(calc(var(--hud-foot-peak, var(--hud-foot, 0px)) / var(--ui-zoom, 1)) + 0.5rem)))) * 10000), 100vh)))',
   foot: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 7.5rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
   driving: 'min(max(calc(max(0.75rem, env(safe-area-inset-top)) + 11.75rem), calc(calc(var(--hud-bottom, 0px) / var(--ui-zoom, 1)) + 0.5rem)), calc(calc(100dvh / var(--ui-zoom, 1)) - calc(var(--touch-top, 0px) / var(--ui-zoom, 1)) - 2.5rem))',
 } as const
@@ -532,12 +541,16 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const compact = small || overlay
   const layout = !compact ? 'wide' : short ? 'short' : 'tall'
   // The chip under the minimap publishes its foot as --chip-bottom, and upright on foot the HUD's toasts start below
-  // it rather than pass under it. A ref callback (a new one when the top changes), cleaned up when the chip goes.
-  const chipTop = layout === 'wide' || (layout === 'short' && overlay && landscape) ? null : CHIP_TOP[layout === 'tall' && driving ? 'driving' : 'foot']
+  // it rather than pass under it; sideways during the first walk the walk's card stands under it (CHIP_TOP.walk). A
+  // ref callback (a new one when the top changes), cleaned up when the chip goes.
+  const sideways = layout === 'short' && overlay && landscape
+  const chipTop = layout === 'wide' || sideways ? null : CHIP_TOP[layout === 'tall' && driving ? 'driving' : 'foot']
+  const walkTop = sideways && beside && !driving ? CHIP_TOP.walk : null
+  const footOf = chipTop ?? walkTop
   const chipRef = useCallback((el: HTMLElement | null) => {
-    if (!el || !chipTop) return
+    if (!el || !footOf) return
     const root = document.documentElement.style
-    const publish = () => root.setProperty('--chip-bottom', `calc(${chipTop} + ${Math.round(el.offsetHeight)}px)`)
+    const publish = () => root.setProperty('--chip-bottom', `calc(${footOf} + ${Math.round(el.offsetHeight)}px)`)
     publish()
     const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
     watch?.observe(el)
@@ -545,7 +558,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
       watch?.disconnect()
       root.removeProperty('--chip-bottom')
     }
-  }, [chipTop])
+  }, [footOf])
 
   if (!visible) return null
 
@@ -560,7 +573,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const pending = !name && !skipped
     const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
-    const style = chipTop ? { top: chipTop } : undefined
+    // shortTouch's other measures read --chip-top, so the walk's top replaces that, not `top`.
+    const style: CSSProperties | undefined = chipTop ? { top: chipTop } : walkTop ? ({ '--chip-top': walkTop } as CSSProperties) : undefined
     return (
       <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (

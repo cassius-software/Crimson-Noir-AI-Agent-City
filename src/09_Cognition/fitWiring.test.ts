@@ -9,10 +9,12 @@
  * stays a pure rule that imports only localCompute.ts (this machine's check included) and asks no server itself; the
  * router is the module that uses it; and the operator's and the bridge's askSet both take 'vram'. In the Windows app,
  * App asks the shell for the GPUs' memory once (desktopShell.ts shellGpuMemory over src-tauri/src/gpu.rs), judges it
- * by modelFit.ts figureFromAdapters, and hands it to the same router alone, below the address's figure.
+ * by modelFit.ts figureFromAdapters, and hands it to the same router alone, below the address's figure. The larger
+ * context the router may ask of Ollama (modelFit.ts widen) is handed to the Ollama client alone, with each answer.
  * What breaks if it is removed? The launcher's vram= could stop reaching the router, the onboarding's router could
  * start sizing a model of its own, a wrapper could hide setVram so `ask vram` says no provider grows with the GPU, or
- * the pure rule could start asking a server or judging what is on this machine by itself, with no test going red.
+ * the pure rule could start asking a server or judging what is on this machine by itself, or a chat-format client
+ * could be handed Ollama's context, with no test going red.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -36,6 +38,7 @@ const APP = read('../App.tsx')
 const APP_CODE = code(APP)
 const MODEL_FIT = read('./modelFit.ts')
 const ROUTER = read('./router.ts')
+const LOCAL_CODE = code(read('./localCompute.ts'))
 const OPERATOR = read('../07_Execute_Actions/operator.ts')
 const BRIDGE = read('../07_Execute_Actions/terminal/bridge.ts')
 /** The optional setters both wrappers bind to the mind they wrap (the engine puts them in front of the router). */
@@ -102,4 +105,15 @@ test('the operator\'s askSet and the bridge\'s both take \'vram\', and the mind\
   assert.ok(union(BRIDGE, /\baskSet\(key: ([^,]+), value: string\): string$/m).includes("'vram'"), 'bridge.ts askSet')
   assert.match(OPERATOR, /^ {2}setVram\?\(value: string\): string$/m, 'Mind.setVram: absent on a mind that sizes nothing')
   assert.match(OPERATOR, /if \(key === 'vram'\) \{\n\s+if \(!mind\.setVram\) throw new Error\('no model provider on this page grows with the GPU'\)\n\s+return mind\.setVram\(value\)\n\s+\}/)
+})
+
+test('the context the router asks for reaches the Ollama client alone, worked out once as each answer is sent; modelFit.ts still imports only localCompute.ts', () => {
+  const c = code(ROUTER)
+  const flown = between(c, '  const flown = async (s: Flight | null, m: Mind, req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {', '\n  }\n')
+  assert.match(flown, /^ {6}return await ollama\.answer\(req, onPiece, s\.ctx\)$/m, 'at the context its flight is noted at')
+  assert.equal(count(c, /\.answer\([^)]*, s\.ctx\)/g), 1, 'one call hands a context')
+  assert.equal(count(c, /\bollama\.answer\(/g), 1, 'every Ollama answer goes through flown')
+  assert.doesNotMatch(LOCAL_CODE, /\bcontextFor\b/, 'the client asks the router for nothing as it sends')
+  for (const p of ['llamacpp', 'openai']) assert.doesNotMatch(between(c, `  const ${p} = createLocalCompute({`, '\n'), /context/i, p)
+  assert.deepEqual(specifiers(MODEL_FIT), ['./localCompute.ts'])
 })

@@ -109,7 +109,7 @@ const CORE = [
   { name: 'captions', usage: 'captions [on|off]', summary: 'closed captions for every sound: engines, signals, speech, pings (view-only)' },
   { name: 'haptics', usage: 'haptics [on|off]', summary: "controller rumble and phone vibration: the guardrails' feel and a check's tap (the triggers' resistance stays)" },
   { name: 'ping', usage: 'ping [go|look|gather|wait|clear]', summary: 'mark where you look for your swarm (view-only; shown on the minimap and captioned; Q); alone, the marks standing' },
-  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoes, tie, eyewear, bag, cup)" },
+  { name: 'look', usage: 'look [show [<agent>]|<slot> <n|name>|preset <name>|build <name>|face <name>|garment <name>|code <code>|random [<seed>]|reset]', summary: "your look from the crowd's wardrobe (body, build, height, mass, muscle, shoulders, hips, legs, posture, head, face shape, skin, vitiligo, freckles, hair, curl, headwear, facial hair, hearing devices, prosthetic, garments, cuts, top, weaves, trouser and skirt cuts, bottom, shirt, shoe style, shoes, tie, lapel pin, eyewear, frames, watch, bag, cup)" },
   { name: 'agent', usage: 'agent [new <name>|<name> pronouns|role|voice|look|name <value...>|hire <name> [<skill>]|dismiss <name>|forget <name>|voices]', summary: 'your own agents: name, pronouns, role, voice and look; hire one into a pedestrian with a skill (they answer ask and say as themselves)' },
   { name: 'sloane', usage: 'sloane [on|off|voice <name>|voices|say <text...>]', summary: "the concierge's spoken voice: the speech provider's voice at your own head when say has one, else the browser's offline voice" },
   { name: 'mic', usage: 'mic [on|off]', summary: "the microphone: the HUD's pill, the on-device voice detector and barge-in over Sloane; open as the city starts unless you muted it, and mute releases the device (V, the right stick's click, the pill, the touch Menu)" },
@@ -209,7 +209,8 @@ export const LOOK_SLOT_ARGS = [
   'body', 'height', 'mass', 'muscle', 'shoulders', 'hips', 'legs', 'posture', 'head', 'brow', 'jaw', 'chin', 'cheek', 'nose', 'eyes', 'lips',
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'shoes', 'tie', 'scarf', 'eyewear', 'bag', 'cup',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
+  'eyewear', 'frames', 'watch', 'bag', 'cup',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -288,6 +289,10 @@ const ARGS: Record<string, readonly string[]> = {
   'look hearing': ['cochlear implant', 'cochlear implants', 'hearing aids', 'implant and aid', 'none'],
   'look prosthetic': ['both arms', 'both legs', 'left arm', 'left leg', 'none', 'right arm', 'right leg'],
   'look prostheticFinish': ['carbon', 'chrome', 'matte', 'skin-matched'],
+  'look footwear': ['ankle boot', 'buckle strap', 'cap toe', 'flat', 'knee boot', 'lace-up', 'lace-up boot', 'loafer', 'plain', 'sneaker', 'two-tone', 'wingtip'],
+  'look frames': ['black', 'browline', 'burgundy', 'clear', 'gold tone', 'navy', 'steel', 'tortoiseshell'],
+  'look watch': ['leather strap', 'none', 'smartwatch', 'steel three-hand', 'tourbillon chronograph'],
+  'look lapelPin': ['buttonhole flower', 'none', 'rank pin', 'silver bar'],
   'look topWeave': LOOK_WEAVE_ARGS,
   'look bottomWeave': ['matching', ...LOOK_WEAVE_ARGS].sort(),
   'look undertone': ['cool', 'neutral', 'olive', 'warm'],

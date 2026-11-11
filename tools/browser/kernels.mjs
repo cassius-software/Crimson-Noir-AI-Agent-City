@@ -13,7 +13,8 @@
  *   node tools/browser/kernels.mjs [--chrome /path/to/chrome] [--agents 8000]
  *
  * The kernels are assembled from the TypeScript source as the tests do (Node strips the types; the `?raw` import is
- * a hook), over the procedural city's geometry at `--agents` pedestrians (the phone default). The exit code is 1 when a
+ * a hook, which hands over each shader without its comments, as the build does), over the procedural city's geometry
+ * at `--agents` pedestrians (the phone default). The exit code is 1 when a
  * pass is refused (the browser's words and the pass are printed, with the reason: WebGPU's validation or the GPU's own
  * compiler), when a module has a compilation message, or when the device reports an uncaptured error meanwhile.
  * What breaks if it is removed? A change to crowd.wgsl or a way file that only the fallback kernels compile wrong is
@@ -24,12 +25,14 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { Browser, findChrome, loopbackOnly, SOFTWARE_WEBGPU } from './cdp.mjs'
+import { leanWgsl } from '../../src/01_Initialize_World/leanWgsl.node.ts'
 
-// Vite's `?raw` import, for Node: the file as a default-exported string (as crowdCompute.test.ts does).
+// Vite's `?raw` import, for Node: the file as a default-exported string, without its comments, which is the text the
+// build ships (vite.config.ts leanShaders, the same leanWgsl): what compiles here is what a phone is handed.
 registerHooks({
   load(url, context, nextLoad) {
     if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
-    const text = readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8')
+    const text = leanWgsl(readFileSync(fileURLToPath(url.slice(0, -'?raw'.length)), 'utf8'))
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })

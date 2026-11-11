@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Shoe styles, frames, a watch and a lapel pin.** The look genome's word 6 becomes the accessory word
+  (`src/03_Spawn_Agents/look.ts` LOOK_FIELD, bits 0 to 14; bits 15 and up are spare and refused): a shoe style
+  (twelve: plain, lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot,
+  knee boot), the glasses' frames (eight finishes, black first), a watch (none, steel three-hand, tourbillon
+  chronograph, leather strap, smartwatch) and a lapel pin (none, rank pin, silver bar, buttonhole flower). Option 0 of
+  each is as before: every preset, every bare look and every hashed look without them packs word 6 to zero and keeps
+  its code, and a stored record without the four keys still validates. All four are fragment paint on meshes the
+  crowd already draws (`crowd.ts` `footwearPaint`, a boot's shaft up the bare leg, the watch on the left wrist over the
+  skin or a prosthetic hand, the pin on the left lapel, the frames' finish on the rims): no piece, mesh, varying or
+  uniform is added, and the vertex stages (but for one generated buffer name) and the shadow pass are unchanged. The hashed crowd draws them from new links
+  of the colours' chain (38 to 43), as `lookFromSeed` does: a little over half the street wears a shoe style (one of
+  its body's eight), about 28% a watch, half of those in glasses a frame other than black, about 3% a pin, and the street
+  never wears the tourbillon or the rank pin. The card gains the Shoe style, Lapel pin, Frames and Watch rows (Shoes is
+  now Shoe colour; the pin's row leaves in shirt sleeves and the frames' without glasses), the console `look footwear
+  wingtip`, `look watch smartwatch`, `look frames`, `look lapelPin`, and a look code with the accessory word is
+  forty-nine symbols (`-XXXXXXXX-XXXXXXXX-XXXXX` after the head). The watch shop's steel three-hand watch, tourbillon
+  chronograph and rank lapel pin (lines 129 to 131) go on sale; the umbrella and the headphones stay on order. The
+  shader budget holds (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near fragment stage, the
+  pantsuit's, goes from 200,360 to 221,913 characters and the worst far one from 159,904 to 173,039, against 225,000;
+  the shadow fragment stays at 1,105.
+
 - **The microphone pill, an on-device voice detector and barge-in over Sloane.** A pill under the HUD's header
   (`07_Execute_Actions/Hud.tsx` `MicPill`) reads the microphone's state (Mic off, Listening with a live meter of the
   room, Hearing you, Speaking while Sloane talks over it, Muted, or why it could not open) and is a button: a press,
@@ -1638,6 +1659,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   mode is not seen (type `ask vram` there). CI proves the page's side in Node (the rule, the order of figures, a fake
   shell that answers oddly, refuses or hangs, and the launcher's sum and rounding) and compiles the app on Windows; no
   Windows machine ran it.
+- **Ollama's context and answer length grow on measurement, for the visit.** Under `auto` with the GPUs' memory given
+  and Ollama in the generate format, an answer cut at its 2,048-token limit on a model auto chose, measured all on
+  the GPU at 8,192 tokens of context (Ollama's own `context_length`, v0.10.0 and later), fast enough to write the
+  longer answer in 5 minutes, and with room under the figure less 2 GB, doubles that model's context once, to 16,384,
+  with answers of up to a quarter of it (4,096). The first answer there is measured (one more `GET /api/ps`): split,
+  all on the processor, slower than 5 tokens a second, refused by Ollama, or failing in Ollama after some of the
+  answer arrived goes back to 8,192 for the visit and does not grow again (a refusal or a failure goes back whatever
+  setting changed meanwhile; a refusal of an ask's first answer before any of it arrives answers that ask once more
+  at 8,192, its one retry, unless a setting changed or a stop came with it; a failure partway is not answered again,
+  since its text was shown; a first wait that runs out with the model split or on the processor goes back too),
+  and a smaller context Ollama reports (the one it was trained on), with the model all on the GPU and not slow
+  there, is used when above 8,192. The moved model's retry and the answer after a new look, when at a larger context, are measured and go back
+  the same way, with no answer after them; Ollama not answering there leaves the context. Each answer's context is
+  worked out once, as it is sent, and its body, its measurement and what counts as an answer at that context all
+  take that one; an answer that ends after the figure has gone is not measured. It never sets a model aside by
+  itself, and only measurements at 8,192 are kept, so the step up is decided as without it (a moved model that will
+  not load at the larger context is set aside only once it fails at 8,192 too, so later); what `/api/ps` says once
+  any answer to that model at another context ran since the measured one was sent, measured or not, is no
+  measurement; nothing of it is kept between visits, and `ask vram` starts it over. The `fit` row gains a clause
+  once a context grew. Without a figure, in the chat format, for the operator's own model and under
+  `ask provider ollama`, every request is today's, byte for byte. The quarter, 32,768 at most, one doubling a visit,
+  the 1 GB least cost and the 5 minutes are starting values. CI proves it in Node against a fake Ollama; no
+  real GPU or real Ollama ran it.
 
 ### Removed
 
@@ -1672,14 +1716,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   words for the driver ("This device's graphics driver couldn't build the crowd": update Chrome and the phone's
   system software; on an iPhone, iOS, whose graphics come with it), names the adapter when the boot fails before the
   engine stands, and its details carry the driver's words, the kernel it refused and the worker's uncaptured GPU
-  errors; `hardware` at the console names the kernel that runs on a row of its own. `crowdCompute.test.ts` pins every pass of every kernel within the default limits (bindings a
-  stage, workgroup size and storage, the uniform, every buffer and every dispatch at the largest crowd), the narrow
+  errors; `hardware` at the console names the kernel that runs on a row of its own. `crowdCompute.test.ts` pins every
+  pass of every kernel within the default limits (bindings a stage, workgroup size and storage, the uniform, every
+  buffer and every dispatch at the largest crowd), the narrow
   kernel as the full module at half the width, the light kernel's drops and keeps, and the ladder with its messages;
   `bootFailure.test.ts` and `commands.test.ts` pin the card's words and the console's row. The browser job now
   compiles every rung's five passes under Chrome's software WebGPU as well (`tools/browser/kernels.mjs`, `checks.sh
   page-kernels`), the evidence the fallback kernels keep compiling where no runner has a phone's GPU. Whether that
   phone's driver accepts the narrower or the light kernel is not known until it is tried on one; if it refuses them
   all, the card now shows what it said. Manual: When the city cannot start or stops.
+- **The page no longer ships its shaders' comments.** The `.wgsl` files are imported as text, so the single file
+  carried every comment in them, and the crowd's shaders twice (the page's bundle and the physics worker's): about
+  83 KB that no GPU reads. With the light kernel's file, the phone layouts and the context growth together the page
+  came out 8 KB over its byte budget (`tools/verify/page_dist.mjs`); rather than raise the budget, the build now
+  hands over each shader without its comments (`vite.config.ts` `leanShaders` in the page's plugin list and the
+  workers', `src/01_Initialize_World/leanWgsl.node.ts`; the dev server serves the same text). Only a comment's text
+  and the spaces before it go: every line keeps its number, so a compilation message on the recovery card still
+  names the file's line, and each file's licence header stays word for word. `leanWgsl.test.ts` pins every shader
+  line by line against its source, WGSL's comment rules (nested blocks, every line break the language has) and the
+  plugin in both lists; `tools/browser/kernels.mjs` compiles that same text in the browser job.
+- **The first walk's card on phones.** Upright, the card stood over Sloane's name question on every first run (390 ×
+  844), and held sideways it was squeezed into a strip 30 to 50 px tall above the thumbs, over her chip. Now
+  (`onboarding/FirstWalk.tsx`): anywhere but the wide side-by-side place it steps aside while her card is open; upright
+  it stays under her chip (`--chip-bottom`) and above the buttons; sideways it stands between the stick and the buttons
+  (`--touch-left`), above the HUD's chips at the foot (`--hud-foot`, published by the compact HUD and by the hidden
+  HUD's captions). Where that band is short of 8 rem (a large text size, captions or a shop's chip at the foot),
+  Sloane's chip moves up to the top row and the card rises under it over the HUD's header and readout, both reading
+  one CSS step (`Concierge.tsx` `CHIP_TOP.walk`) on the foot latched at its highest until the window changes size
+  (`footPeak.ts`), so captions coming and going never move them. At the wheel sideways the card steps aside (the
+  car's buttons fill the band) while Sloane still says its lines, and the touch Menu's sheet now opens over the card
+  (`TouchControls.tsx`, z 1060). The browser smoke's new `walkphone` scenario checks all of it on an iPhone: the card
+  away during her question, clear of her chip, the minimap, the foot chips and every touch control upright, at
+  874 × 402, 844 × 390 and 667 × 375 sideways and at 125 % and 175 % text, under the Menu's sheet, the latch held and
+  let go, and the wheel both ways; it fails three ways on the old layout. A real phone is unverified.
 - **Craft show red to port and green to starboard, and planes bank into their turns.** A craft's body has its right
   side on +z under the view's yaw (`craftView.ts`), but the drone's and the plane's red light sat on +z, and a plane
   rolled its outer wing down through a turn. The side lights move to their own sides (the new ferry's too), the bank

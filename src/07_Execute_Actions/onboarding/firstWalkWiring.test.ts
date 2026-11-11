@@ -113,15 +113,19 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   assert.match(concierge, /return `\(min-width: \$\{Math\.round\(BESIDE_ROOM_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
   for (const src of [concierge, card]) assert.match(src, /const room = besideRoom\(zoom\)\n\s+const roomy = useSyncExternalStore\(room\.subscribe, room\.matches, room\.server\)/)
   assert.equal(app.match(/zoom=\{access\.scale \/ 100\}/g)?.length, 2, 'App hands both cards the same zoom')
-  assert.match(card, /const shown = visible && !\(crowded && !termOpen && !overlay && !compact && !roomy\)/)
+  // Side by side only in the wide place with room for both: on a phone, a small window or a window small only at the
+  // zoom, Sloane's open card takes the band the walk's card stands in (her short and tall layouts), so it steps aside.
+  assert.match(card, /const besideHers = !overlay && !compact && !squeezed && roomy/)
+  assert.match(card, /const heard = visible && !\(crowded && !termOpen && !besideHers\)\n/)
+  assert.match(card, /const shown = heard && !\(between && driving\)\n/)
   // A window small only at the text size's zoom puts the card at the foot (not a sliver under the zoomed readout); it is
   // the compact query itself at 100 %, and still steps aside for Sloane's card, which stays in the window's centre.
   assert.match(card, /return `\(max-width: \$\{Math\.round\(639 \* z\)\}px\), \(max-height: \$\{Math\.round\(499 \* z\)\}px\)`/)
   assert.match(card, /const SMALL = mediaStore\('\(max-width: 639px\), \(max-height: 499px\)'\)/)
-  assert.match(card, /const at = termOpen \? AT\.console : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
-  // A hint that comes while the card is away is let go, never spoken late (closing a doorstep card can pass the stage
-  // in the same commit that shows the card again); an ask or the passed line waits for the card.
-  assert.match(card, /if \(!beat \|\| beat\.id === said\.current\) return\s*(?:\/\/[^\n]*\s*)*if \(!shown\) \{ if \(beat\.kind === 'hint'\) said\.current = beat\.id; return \}\s*said\.current = beat\.id\s*sayRef\.current\?\.\(beat\.text\)/)
+  assert.match(card, /const at = termOpen \? AT\.console : between \? AT\.between : overlay \? AT\.touch : compact \|\| squeezed \? AT\.compact : AT\.wide/)
+  // A hint that comes while the card is away (not heard) is let go, never spoken late (closing a doorstep card can pass
+  // the stage in the same commit that shows the card again); an ask or the passed line waits for the card.
+  assert.match(card, /if \(!beat \|\| beat\.id === said\.current\) return\s*(?:\/\/[^\n]*\s*)*if \(!heard\) \{ if \(beat\.kind === 'hint'\) said\.current = beat\.id; return \}\s*said\.current = beat\.id\s*sayRef\.current\?\.\(beat\.text\)/)
   // The measures agree: Sloane's column ends short of the walk's card (its right inset plus its width), and at the
   // query's width it still has at least the 22 rem her centred column never went under.
   const walkRight = Number(/wide: 'right-\[max\(([\d.]+)rem/.exec(card)?.[1])
@@ -133,6 +137,75 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   assert.ok(past >= walkWidth + 0.5, `${past} rem clears the ${walkWidth} rem card with a gap`)
   const room = Number(/export const BESIDE_ROOM_PX = (\d+)$/m.exec(concierge)?.[1]) / 16
   assert.ok(room - left - inset - past >= 22, `${room - left - inset - past} rem left for Sloane at ${room} rem`)
+})
+
+test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways it stands between the thumbs above the HUD\'s chips', () => {
+  const app = read('../../App.tsx')
+  const hud = read('../Hud.tsx')
+  const concierge = read('../Concierge.tsx')
+  const card = read('./FirstWalk.tsx')
+  const place = (name: string) => new RegExp(`\\b${name}: '([^']+)'`).exec(card)?.[1] ?? ''
+  // Sloane's chip publishes where it ends in her tall layouts (lower at the wheel): the walk's card stops short of it.
+  assert.match(concierge, /--chip-bottom/)
+  for (const name of ['touch', 'compact']) {
+    assert.match(place(name), /max-h-\[[^\]]*max\(calc\(max\(0\.75rem,env\(safe-area-inset-top\)\)_\+_8\.75rem\),calc\(var\(--chip-bottom,0px\)_\+_0\.5rem\)\)/, `${name} keeps under the minimap row and her chip`)
+  }
+  // Sideways (a short landscape screen, Concierge's short layout): no room above the thumbs, so the card stands
+  // between them, left of the buttons' left edge and right of the stick's zone, above the HUD's chips at the foot.
+  assert.match(card, /const SIDEWAYS = mediaStore\('\(orientation: landscape\) and \(max-height: 499px\)'\)/)
+  assert.match(card, /const between = overlay && sideways && !termOpen/)
+  const between = place('between')
+  assert.match(between, /^left-\[calc\(env\(safe-area-inset-left,0px\)_\+_calc\(12\.5rem_\/_var\(--ui-zoom,1\)\)\)\]/, 'right of the stick and its gaps (unzoomed)')
+  assert.ok(between.includes(' right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] '), 'left of the buttons (window pixels, unzoomed) and of the minimap\'s column (7 rem under a 0.75 rem frame)')
+  // Its top: the 10.5 rem line under the header, the readout and her chip; where the band from there to the HUD's chips
+  // at the foot is short of 8 rem, the line steps up to her chip's foot, the chip having moved to the top row by the
+  // same step (Concierge's CHIP_TOP.walk). Its foot above the HUD's chips, unless that leaves less than its padding and
+  // border: then it comes down over them rather than grow up over her chip. The same foot in the height.
+  const FOOT = 'max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem))'
+  const VH = 'calc(100dvh_/_var(--ui-zoom,1))'
+  const TOP = 'max(0.75rem,env(safe-area-inset-top))'
+  // The step reads the foot latched at its highest (footPeak.ts), so captions coming and going cannot flip it.
+  const PEAK_FOOT = FOOT.replace('var(--hud-foot,0px)', 'var(--hud-foot-peak,var(--hud-foot,0px))')
+  const STEP = `clamp(0px,calc((8rem_-_calc(${VH}_-_${TOP}_-_10.5rem_-_${PEAK_FOOT}))_*_10000),100vh)`
+  const LINE = `max(max(${TOP},calc(var(--chip-bottom,0px)_+_0.5rem)),calc(${TOP}_+_10.5rem_-_${STEP}))`
+  const BOTTOM = `max(0px,min(${FOOT},calc(${VH}_-_${LINE}_-_1.875rem)))`
+  assert.ok(between.includes(` bottom-[${BOTTOM}] `), 'above the HUD\'s chips, never growing up over her chip')
+  assert.ok(between.endsWith(` max-h-[calc(${VH}_-_${LINE}_-_${BOTTOM})]`), 'under the header, the readout and her chip, or under her chip on the top row')
+  // Sloane's side: the same step, written for an inline style, from shortTouch's own top up to the top row, only while
+  // the walk's card is up on foot (at the wheel that card steps aside); it replaces --chip-top, which her other measures
+  // read, and is published as --chip-bottom for the card.
+  const flat = (x: string) => x.replace(/[\s_]/g, '')
+  const walkTop = /\n  walk: '([^']+)',\n/.exec(concierge)?.[1] ?? ''
+  const shortTop = /\[--chip-top:([^\]]+)\]/.exec(concierge)?.[1] ?? ''
+  assert.ok(shortTop.length > 0 && walkTop.length > 0)
+  assert.equal(flat(walkTop), flat(`max(${TOP},calc(${shortTop}_-_${STEP}))`), 'her top row and the card\'s line step on one band')
+  assert.match(concierge, /const sideways = layout === 'short' && overlay && landscape\n/)
+  assert.match(concierge, /const walkTop = sideways && beside && !driving \? CHIP_TOP\.walk : null\n\s+const footOf = chipTop \?\? walkTop\n/)
+  assert.match(concierge, /root\.setProperty\('--chip-bottom', `calc\(\$\{footOf\} \+ \$\{Math\.round\(el\.offsetHeight\)\}px\)`\)/)
+  assert.match(concierge, /: walkTop \? \(\{ '--chip-top': walkTop \} as CSSProperties\) : undefined/)
+  assert.match(app, /beside=\{walking && fw\.card !== null\}/, 'her chip hears the walk\'s card is up')
+  // The HUD publishes the top of its compact chips at the foot, from the screen's foot, and takes it away with them.
+  assert.match(hud, /const foot = Math\.round\(window\.innerHeight - el\.getBoundingClientRect\(\)\.top\)\n\s+root\.setProperty\('--hud-foot', `\$\{foot\}px`\)/)
+  assert.match(hud, /root\.removeProperty\('--hud-foot'\)/)
+  // And the latch the step reads: raised with each foot published, let go only when the window changes size.
+  assert.match(hud, /const next = nextFootPeak\(footPeak, sizeOf\(\), foot\)\n\s+if \(next !== footPeak\) root\.setProperty\('--hud-foot-peak', `\$\{next\.peak\}px`\)/)
+  assert.match(hud, /window\.addEventListener\('resize', \(\) => \{\n\s+if \(footPeak\?\.size === sizeOf\(\)\) return\n\s+footPeak = null\n\s+root\.removeProperty\('--hud-foot-peak'\)/)
+  assert.doesNotMatch(hud.slice(hud.indexOf('return () => {', hud.indexOf('function publishFoot'))), /^\s+root\.removeProperty\('--hud-foot-peak'\)/m, 'a stack going does not let the latch go')
+  assert.match(hud, /<div ref=\{publishFoot\} className="absolute bottom-0 left-1\/2 [^"]*" data-hud="foot">\s*\{captionStrip\}/)
+  // With the HUD hidden its captions stay (an access surface H does not put away), and so does the foot they publish.
+  assert.equal(hud.match(/ref=\{publishFoot\}/g)?.length, 2, 'the HUD\'s stack and the hidden HUD\'s captions')
+  assert.match(hud, /\{captionStrip && <div ref=\{publishFoot\} className="[^"]*" data-hud="foot">\{captionStrip\}<\/div>\}/)
+  // At the wheel sideways the car's buttons fill the band: the card steps aside until the visitor is on foot.
+  assert.match(app, /<FirstWalkCard\b[^>]*\bdriving=\{hud\.input\.mode === 'vehicle'\}/, 'the walk\'s card hears the wheel')
+  // Meanwhile Sloane still says each line: the car ends one stage and the next stage's ask is heard at the wheel.
+  // (heard, not shown: the effect's let-go above reads heard, so a line at the wheel is spoken, not dropped)
+  assert.doesNotMatch(card.slice(card.indexOf('const said = useRef'), card.indexOf('if (!shown) return null')), /\bshown\b/)
+  assert.match(card, /\}, \[beat, heard\]\)/)
+  // The touch Menu's sheet stands over the walk's card (the Ring-0 stage sends the visitor to it), under the onboarding.
+  const touch = read('../../04_Connect_Hardware/TouchControls.tsx')
+  const sheet = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\] select-none" style=\{ROOT_STYLE\}>\n\s+<div\n\s+aria-hidden/.exec(touch)?.[1])
+  const walkZ = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\]">/.exec(card)?.[1])
+  assert.ok(sheet > walkZ && sheet < 1100, `the Menu's sheet (${sheet}) over the walk's card (${walkZ}), under the onboarding (1100)`)
 })
 
 test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {
