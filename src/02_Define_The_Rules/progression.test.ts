@@ -560,6 +560,11 @@ test('the seal finds one flipped bit anywhere; validation refuses a record out o
 })
 
 test('property: thousands of seeded checks, rerolls, trainings, purchases and rests at home keep every field in range and the seal whole', () => {
+  // Every step that does nothing (op 9, or a reroll, increase or rest refused) gains XP instead, so the runs climb to
+  // the levels where the legendary gate, the level 20 boosts and the XP stop live; the counts below keep it so.
+  let runs = 0
+  let high = 0
+  let top = 0
   forAll('progression', { seed: 0x5eed, runs: 200 }, (g) => ({ seed: g.int(-0x80000000, 0x7fffffff), steps: Array.from({ length: 60 }, () => [g.int(0, 10), g.int(0, 7), g.int(0, 2000)]) }), ({ seed, steps }) => {
     const r = newRecord(seed)
     let last: Check | null = null
@@ -568,9 +573,14 @@ test('property: thousands of seeded checks, rerolls, trainings, purchases and re
       else if (op === 6 && last && !whyNoReroll(r, last)) last = reroll(r, last)
       else if (op === 7 && !whyNoIncrease(r, s)) train(r, s)
       else if (op === 8) buy(r, (['look', 'property', 'furniture'] as const)[s % 3], n % 64, 1 + (n % 20), n)
-      else if (op === 9) gainXp(r, n)
-      else if (!whyNoRest(r, s % 4)) homeRest(r, s % 4)
+      else if (op === 10 && !whyNoRest(r, s % 4)) homeRest(r, s % 4)
+      else gainXp(r, n)
       assert.equal(whyInvalid(r), null, `after op ${op}`)
     }
+    runs++
+    if (r[AT.level] >= 15) high++
+    if (r[AT.level] === MAX_LEVEL) top++
   })
+  assert.ok(high * 4 >= runs, `${high} of ${runs} runs reach level 15, not a quarter`)
+  assert.ok(top * 50 >= runs, `${top} of ${runs} runs reach level ${MAX_LEVEL}, not one in 50`)
 })
