@@ -15,6 +15,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sky floors.** In the city, the Crimson Tower Penthouse and the Crown Spire Sky-Mansion each have a floor up their
+  tower: a 15.6 m square room with clear glass on four sides (seed 1337: 193.8 m and 228.0 m up). The home's card
+  offers Go up inside the home and Go down upstairs, by keyboard, mouse, pad or touch. Visitors may ride, and only the
+  owner furnishes. The floor is furnished like the home below, with its own pieces, caps, floor finish, Rest and Staff,
+  and a staged floor while the deed is not yours. It is saved in this browser under `civic-simulation:home-sky:v1`,
+  with the home record unchanged. A post upstairs saves the staff record as version 2, which an older build shows no
+  posts from and never overwrites. The ride waits outside a network room, whose replay would put you back. There are
+  no sky floors in Lakefront Metro. The physics worker and the network room build the floor from the same city boxes.
+  Covered by unit tests and the `homes` smoke scenario, whose headless browser run is CI's.
 - **Staff at home.** The furnishing view's fifth tab, Staff, posts your own agents (the roster's names) at the agent
   workstations standing in a home you own. Each stands at the workstation's seat facing its screen, in their body
   and their top's colour, at their height, in every visit until stood down, and steps away while hired (their disc
