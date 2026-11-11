@@ -151,6 +151,12 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /Or start Ollama, LM Studio or a llama\.cpp server on this computer and ask again/)
   assert.match(card, /in OLLAMA_ORIGINS/, 'a page Ollama refuses by default says how to allow it')
   assert.match(card, /const open = view === 'goal' && \(!dialogue\.brief \|\| dialogue\.brief\.chat === true\)/, 'words heard while the conversation is open are its next turn')
+  // A second message never cuts short a reply still on its way (a model loading in this page for it would load again):
+  // the next turn waits for it, or for the person's own Stop, and the chip opens the conversation as it stands.
+  assert.match(card, /if \(dialogue\.brief\?\.chat && replying\) return/)
+  assert.match(card, /disabled=\{replying\}/)
+  assert.match(card, /data-action="stop"/)
+  assert.match(card, /if \(replying && dialogue\.brief\?\.chat\) \{\n\s*open\('goal'\)/)
 })
 
 test('App: the card gets Sloane\'s conversation, the picker and the browser\'s refusal; the rewording waits for a model file to be loaded', () => {

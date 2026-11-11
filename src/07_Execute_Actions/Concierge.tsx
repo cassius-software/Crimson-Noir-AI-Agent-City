@@ -69,8 +69,9 @@ interface Dialogue { whys: FiveWhys | null; step: WhyStep | null; brief: Brief |
 /** Lanes shown under a brief before "and N more". */
 const TEAM_ROWS = 6
 
-/** How a reply in the conversation stands (onboarding/voice.ts ChatResult, and `waiting` while it streams in). */
-type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'failed'
+/** How a reply in the conversation stands (onboarding/voice.ts ChatResult, `waiting` while it streams in, and `stopped`
+ *  by the person's Stop). */
+type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'failed' | 'stopped'
 /** The reply on the card: which ask it answers, how it stands, the words so far, and why it failed (a router's reason). */
 interface Talk { readonly id: number; readonly state: TalkState; readonly text: string; readonly why: string }
 /** Turns of the conversation kept for the visit (the model is shown the last of them, voice.ts CHAT_TURNS). */
@@ -91,6 +92,7 @@ function talkLine(t: Talk | null): string {
     case 'slow': return 'The model took too long to answer. Ask again, or try something shorter.'
     case 'held': return 'I won’t repeat what the model answered: it didn’t pass the city’s screen. Ask me something else.'
     case 'failed': return 'The model couldn’t answer this time. Ask again in a moment.'
+    case 'stopped': return 'Stopped. Say something else, or ask again.'
   }
 }
 const NO_GOAL: Dialogue = { whys: null, step: null, brief: null, applied: [] }
@@ -352,6 +354,14 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const askAgain = () => {
     if (turnsRef.current.at(-1)?.who === 'you') askTurns(turnsRef.current)
   }
+  /** The person's Stop: the ask ends (a model loading in this page for it stops loading, as any stop of an answer does). */
+  const stopTalk = () => {
+    setAsking(null)
+    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
+  }
+  /** A reply still on its way: the next turn waits for it or for Stop, so a second message never cuts short a model
+   *  that is still loading for the first (a new ask would end that load and start it again). */
+  const replying = talk?.state === 'waiting'
   /** The brief on the clipboard, or shown to copy by hand where the clipboard is out of reach. */
   const [copied, setCopied] = useState<'no' | 'yes' | 'shown'>('no')
   /** Bumped whenever a card opens or a question changes: restarts the settle timer and the focus effect. */
@@ -461,6 +471,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     onGoalSent?.(goalText)
   }
   const reply = (text: string) => {
+    if (dialogue.brief?.chat && replying) return
     if (dialogue.whys && dialogue.step) {
       dialogue.whys.answer(text)
       advance(dialogue.whys, dialogue.applied)
@@ -490,6 +501,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const openGoal = () => {
     focusNext.current = true
+    // A conversation whose reply is still on its way is opened again as it stands, not ended by a fresh prompt.
+    if (replying && dialogue.brief?.chat) {
+      open('goal')
+      onGoal?.()
+      return
+    }
     setDraft('')
     setDialogue(NO_GOAL)
     setCopied('no')
@@ -817,7 +834,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
 
           {view === 'goal' && brief?.chat && (
             <div className={gap} data-chat={talk?.state ?? 'none'}>
-              {talk?.state === 'waiting' && !talk.text && <p className={`text-[12px] leading-tight ${muted}`}>Thinking…</p>}
+              {replying && (
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {!talk.text && <span className={`text-[12px] leading-tight ${muted}`}>Thinking…</span>}
+                  <button type="button" onClick={stopTalk} className={link} data-action="stop">Stop</button>
+                </div>
+              )}
               {talk?.state === 'none' && (
                 <div data-no-model>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -841,7 +863,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   )}
                 </div>
               )}
-              {(talk?.state === 'slow' || talk?.state === 'failed' || talk?.state === 'held') && (
+              {(talk?.state === 'slow' || talk?.state === 'failed' || talk?.state === 'held' || talk?.state === 'stopped') && (
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   {talk.state !== 'held' && <button type="button" onClick={askAgain} className={link} data-action="ask-again">Ask again</button>}
                   {talk.why && <span className={`min-w-0 text-[11px] leading-snug break-words ${muted}`}>{talk.why}</span>}
@@ -863,7 +885,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   dir="auto"
                   className={`min-w-0 flex-1 rounded-xl border px-3 py-2 outline-none ${compact ? 'text-[16px]' : 'text-[14px]'} ${field}`}
                 />
-                <button type="submit" className={`shrink-0 rounded-xl px-3.5 py-2 text-[13px] font-semibold ${primary}`}>
+                <button type="submit" disabled={replying} className={`shrink-0 rounded-xl px-3.5 py-2 text-[13px] font-semibold disabled:opacity-50 ${primary}`}>
                   Send{family === 'keyboard' && <span aria-hidden className="ml-1.5 opacity-60">↵</span>}
                 </button>
                 <button type="button" onClick={backOut} className={`shrink-0 px-1 py-2 text-[12px] ${muted} hover:underline`}>
