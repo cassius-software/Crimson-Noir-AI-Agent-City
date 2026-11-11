@@ -91,6 +91,11 @@
  * - walkhome: the same stage through a home: Sloane names the homes in the keyboard's words, the home's chip is clear of
  *   the walk's card, B opens the doorstep card and the walk's card steps aside, nothing is bought, and Esc puts the
  *   card away and passes the stage;
+ * - walkphone: the first walk on an iPhone: the walk's card steps aside while Sloane asks the name, then stands clear of
+ *   her chip, the minimap and every touch control held upright, between the thumbs held sideways at three phone
+ *   sizes (above a shop's Browse chip), under her chip moved up to the top row where that band is short (125 % in the
+ *   shop, 175 %), under the touch Menu's sheet, below her chip at the wheel upright, and away at the wheel sideways
+ *   until the visitor is on foot again;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -126,7 +131,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,lakefront,homes,furnish,rest,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -2146,6 +2151,166 @@ const SCENARIOS = {
         'walkhome: Esc puts the doorstep card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
       check((await credits()) === c0 && ((await p.eval('window.__SIM__.snapshot().customer.ownedHomes')) & 1) === 0, 'walkhome: reading the deed bought nothing', `credits ${c0} -> ${await credits()}`)
       p.health('walkhome')
+    } finally { await p.b.close() }
+  },
+
+  /**
+   * The first walk's card on a phone (onboarding/FirstWalk.tsx's touch and between places): it steps aside while
+   * Sloane's open card takes the band it stands in, keeps under the minimap row and her chip and above the buttons held
+   * upright, stands between the stick and the buttons above the HUD's chips held sideways (the 38 px sliver it was
+   * above the thumbs there) or, where that band is short, under her chip moved up to the top row, lies under the touch
+   * Menu's sheet, and steps aside at the wheel sideways, where the car's buttons fill that band.
+   */
+  async walkphone(chrome, origin) {
+    const p = await open(chrome, { mobile: true })
+    try {
+      const view = async (width, height, settle = true) => {
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true, screenOrientation: height > width ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } })
+        if (!settle) return
+        await p.frames(3)
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      // Every box the card must keep clear of: Sloane's open card or chip, the minimap, the HUD's chips at the foot and
+      // each touch control but the look area (the right half of the screen, under everything).
+      const boxes = () => p.eval(`(() => {
+        const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom) } : null }
+        const others = [['sloane', document.querySelector('aside[data-concierge]')], ['chip', document.querySelector('[data-concierge="chip"]')], ['minimap', document.querySelector('[data-hud="minimap"]')], ['foot', document.querySelector('[data-hud="foot"]')],
+          ...[...document.querySelectorAll('[data-touch]')].filter((e) => e.getAttribute('data-touch') !== 'look').map((e) => [e.getAttribute('data-touch'), e])]
+        return { w: innerWidth, h: innerHeight, walk: box(document.querySelector('[data-walk]')), others: others.map(([k, e]) => ({ k, ...box(e) })).filter((o) => o.l !== undefined) } })()`)
+      // A tap where a thumb would put it (a touch screen's buttons answer the pointer, not a click): on the shown button
+      // `which` picks (a page function of the button), or the one whose words are `which`, scrolled to first (the Menu's
+      // sheet scrolls on a short screen).
+      const tapOn = async (which, id) => {
+        const pick = typeof which === 'string' ? `(b) => b.textContent.trim() === ${JSON.stringify(which)}` : which.pick
+        const c = await p.waitFor(`(() => { const b = [...document.querySelectorAll('button')].find((b) => (${pick})(b) && b.getBoundingClientRect().width > 0); if (!b) return null; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`, 10_000).catch(() => null)
+        if (!c) return false
+        await p.touch('touchStart', [[c[0], c[1], id]])
+        await p.touch('touchEnd', [])
+        return true
+      }
+      const MENU = { pick: `(b) => b.getAttribute('aria-label') === 'Menu'` }
+      const TEXT_SIZE = { pick: `(b) => b.textContent.trim().startsWith('Text size')` }
+      const textSize = () => p.eval(`window.getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim()`)
+      // The touch Menu's Text size item, pressed until the text is at `scale` (it keeps the sheet open), then shut.
+      const setText = async (scale) => {
+        if (!(await tapOn(MENU, 40)) || !(await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false))) return false
+        for (let i = 0; i < 5 && (await textSize()) !== String(scale / 100); i++) { await tapOn(TEXT_SIZE, 41 + i); await p.frames(2) }
+        await tapOn(MENU, 47)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+        await p.frames(3)
+        await new Promise((r) => setTimeout(r, 400))
+        return (await textSize()) === String(scale / 100)
+      }
+      // The card scrolls when its words outrun the band (as on every phone): its button is scrolled to, then hit-tested.
+      const reachable = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return false; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!e && b.contains(e) })()`)
+      const meets = (a, o) => a.r > o.l + 1 && a.l < o.r - 1 && a.b > o.t + 1 && a.t < o.b - 1
+      const clear = (m) => !m.walk ? ['no card'] : [
+        ...(m.walk.l < -1 || m.walk.t < -1 || m.walk.r > m.w + 1 || m.walk.b > m.h + 1 ? [`off screen ${JSON.stringify(m.walk)}`] : []),
+        ...m.others.filter((o) => meets(m.walk, o)).map((o) => `over ${o.k}`),
+      ]
+      await view(390, 844, false)
+      await p.goto(`${origin}/?${LIGHT}&tutorial=1`)
+      await p.booted()
+      await p.waitFor(`!document.querySelector('.boot-veil')`, 30_000).catch(() => {})
+      // Upright, Sloane's name question opens with the walk and takes the band above the thumbs: the walk's card waits.
+      const asking = await p.waitFor(`!!document.querySelector('aside[data-concierge="ask"]')`, 30_000).then(() => true, () => false)
+      await p.frames(3)
+      const away = await p.eval(`!document.querySelector('[data-walk]')`)
+      await p.shot('walk-phone-ask')
+      check(asking && away, 'walkphone: upright, the walk\'s card steps aside while Sloane asks the name', `asking ${asking}, card away ${away}`)
+      // Skip; once her card has settled into the chip the walk's card is back, clear of everything it shares the screen with.
+      await p.eval(`(() => { const s = [...document.querySelectorAll('aside[data-concierge] button')].find((b) => b.textContent.trim() === 'Skip'); if (s) s.click() })()`)
+      const back = await p.waitFor(`!document.querySelector('aside[data-concierge]') && !!document.querySelector('[data-walk-show]')`, 20_000).then(() => true, () => false)
+      const upright = await boxes()
+      check(back && clear(upright).length === 0, 'walkphone: once her card settles, the walk\'s card is back upright, clear of her chip, the minimap and every touch control', `${JSON.stringify(upright.walk)} ${clear(upright).join(', ')}`)
+      await p.shot('walk-phone-upright')
+      // Sideways at three phone sizes, standing in a shop so the HUD's chips at the foot are up (its Browse chip; the
+      // captions are silent under audio=0): between the stick and the buttons, above those chips, tall enough to read.
+      const shop = await p.eval(`window.__SIM__.shops()[0]`)
+      await p.eval(`window.__SIM__.teleport(${shop.fitting.x}, ${shop.fitting.z}, 0)`)
+      await p.waitFor(`!!document.querySelector('[data-hint="shop"]')`, 20_000).catch(() => {})
+      const sideways = []
+      const sidewaysAt = async (label, need) => {
+        const m = await boxes()
+        const bad = clear(m)
+        for (const k of need) if (!m.others.some((o) => o.k === k)) bad.push(`missing ${k}`)
+        if (m.walk && m.walk.b - m.walk.t < 120) bad.push(`${m.walk.b - m.walk.t} px tall`)
+        if (!(await reachable())) bad.push('its button is covered or gone')
+        sideways.push(`${label} ${bad.length ? bad.join(', ') : `${m.walk.l}..${m.walk.r} x ${m.walk.t}..${m.walk.b}`}`)
+      }
+      for (const [w, h] of [[IPHONE.width, IPHONE.height], [844, 390], [667, 375]]) {
+        await view(w, h)
+        await sidewaysAt(`${w}x${h}`, ['chip', 'minimap', 'foot', 'stick'])
+      }
+      await p.shot('walk-phone-sideways')
+      // The latch on the HUD's foot (footPeak.ts): the foot grown by a stand-in for two caption lines leaves the band
+      // short, so her chip moves up to the top row and the card under it; the foot shrinking back (the lines expiring)
+      // leaves both where they are, so they never jump from under a thumb; a new window size lets the latch go.
+      await view(IPHONE.width, IPHONE.height)
+      const chipTopNow = () => p.eval(`(() => { const c = document.querySelector('[data-concierge="chip"]'); return c ? Math.round(c.getBoundingClientRect().top) : null })()`)
+      const settle = async () => { await p.frames(3); await new Promise((r) => setTimeout(r, 400)) }
+      const lowChip = await chipTopNow()
+      await p.eval(`(() => { const f = document.querySelector('[data-hud="foot"]'); if (!f) return; const d = document.createElement('div'); d.id = 'smoke-lines'; d.style.cssText = 'height:64px;width:8px'; f.prepend(d) })()`)
+      await settle()
+      const raisedChip = await chipTopNow()
+      const raised = await boxes()
+      await p.eval(`document.getElementById('smoke-lines')?.remove()`)
+      await settle()
+      const heldChip = await chipTopNow()
+      const heldWalk = (await boxes()).walk
+      await view(844, 390)
+      await view(IPHONE.width, IPHONE.height)
+      const lowAgain = await chipTopNow()
+      check(lowChip > 100 && raisedChip !== null && raisedChip < 40 && clear(raised).length === 0 && heldChip === raisedChip && heldWalk?.t === raised.walk?.t && lowAgain === lowChip,
+        'walkphone: a taller foot moves her chip up and the card under it, a shorter one leaves them there, and a new window size lets go',
+        `chip top ${lowChip} -> ${raisedChip} (card ${JSON.stringify(raised.walk)} ${clear(raised).join(', ')}) -> ${heldChip} (card top ${heldWalk?.t}) -> ${lowAgain} after a new size`)
+      // The touch Menu opens over the card (the Ring-0 stage sends the visitor to it): every item, scrolled to, is on top.
+      await view(IPHONE.width, IPHONE.height)
+      let sheet = 'did not open'
+      if (await tapOn(MENU, 39) && await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)) {
+        sheet = await p.eval(`(() => { const items = [...document.querySelectorAll('[role="menu"] button')]; const under = items.filter((b) => { b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + Math.min(24, r.width / 2), r.top + r.height / 2); return !e || !b.contains(e) }); return under.length ? 'under: ' + under.map((b) => b.textContent.trim()).join(', ') : items.length + ' items on top' })()`)
+        await tapOn(MENU, 38)
+        await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => {})
+      }
+      check(/items on top/.test(sheet), 'walkphone: held sideways, the touch Menu opens over the walk\'s card', sheet)
+      // Larger text, from the Menu's Text size. Where the band between the thumbs is short of 8 rem (in the shop at 125 %,
+      // its Browse chip at the foot; anywhere at 175 % on a phone this short), Sloane's chip moves up to the top row and
+      // the card rises over the HUD's header and readout to stand under it: her chip stays on screen and clear.
+      const chipTop = () => p.eval(`(() => { const c = document.querySelector('[data-concierge="chip"]'); return c ? Math.round(c.getBoundingClientRect().top) : null })()`)
+      const at125 = await setText(125)
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 125 % (${at125}, her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
+      const at175 = await setText(175)
+      await sidewaysAt(`${IPHONE.width}x${IPHONE.height} at 175 % (${at175}, her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
+      await view(667, 375)
+      await sidewaysAt(`667x375 at 175 % (her chip at ${await chipTop()} px)`, ['chip', 'minimap', 'foot', 'stick'])
+      await p.shot('walk-phone-large-text')
+      await view(IPHONE.width, IPHONE.height)
+      const at100 = await setText(100)
+      check(!sideways.some((x) => /over|off|tall|covered|no card|missing|false/.test(x)) && at100, 'walkphone: held sideways, the walk\'s card stands between the thumbs above the HUD\'s chips, or, where that band is short, under Sloane\'s chip moved up to the top row, clear of everything, its button reachable and on top', sideways.join('; '))
+      // At the wheel: sideways the car's buttons fill the band, so the card steps aside; upright it keeps under her chip.
+      await view(IPHONE.width, IPHONE.height)
+      const car = await p.eval(nearestCarParked(0))
+      let inCar = false
+      if (car >= 0) {
+        await p.waitFor(`Math.abs(window.__SIM__.engine.sim.state.poses[${car} * 28 + 8]) < 0.2`, 60_000).catch(() => {})
+        for (const [ox, oz] of SIDES) {
+          await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
+          if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
+        }
+        if (await tapOn('Enter car', 31)) inCar = await p.waitFor(`window.__SIM__.snapshot().input.mode === 'vehicle'`, 20_000).then(() => true, () => false)
+      }
+      if (inCar) {
+        await p.frames(3)
+        const parked = await p.eval(`!document.querySelector('[data-walk]')`)
+        await view(390, 844)
+        const wheel = await boxes()
+        await p.shot('walk-phone-wheel')
+        await view(IPHONE.width, IPHONE.height)
+        await tapOn('Exit car', 32)
+        const out = await p.waitFor(`window.__SIM__.snapshot().input.mode !== 'vehicle' && !!document.querySelector('[data-walk-show]')`, 20_000).then(() => true, () => false)
+        check(parked && clear(wheel).length === 0 && out, 'walkphone: at the wheel the card steps aside held sideways, keeps under her chip and above the car\'s buttons upright, and is back on foot', `sideways away ${parked}; upright ${JSON.stringify(wheel.walk)} ${clear(wheel).join(', ')}; back on foot ${out}`)
+      } else check(false, 'walkphone: the Enter car button enters the nearest car', `car ${car}`)
+      p.health('walkphone')
     } finally { await p.b.close() }
   },
 

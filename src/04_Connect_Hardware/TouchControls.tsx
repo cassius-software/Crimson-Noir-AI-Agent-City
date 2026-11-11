@@ -442,10 +442,11 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
         bottom: unzoom(Math.max(8, window.innerHeight - at.top + 12)),
         maxHeight: `calc((${Math.round(at.top - 12)}px - max(12px, env(safe-area-inset-top, 0px))) / var(--ui-zoom, 1))`,
       }
-  // Its own layer above the HUD cards and the Concierge (z-30), below the console: an open sheet must not hide under the
-  // Concierge on a short landscape screen.
+  // Its own layer above the HUD cards, the Concierge (z-30) and the first walk's card (z-[1050], onboarding/FirstWalk.tsx,
+  // whose Ring-0 stage sends the visitor here), below the onboarding (z-[1100]) and the console: an open sheet must not
+  // hide under a card on a short landscape screen, and its backdrop closes it on a tap anywhere else, a card included.
   return (
-    <div className="ui-zoom pointer-events-none absolute inset-0 z-40 select-none" style={ROOT_STYLE}>
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-[1060] select-none" style={ROOT_STYLE}>
       <div
         aria-hidden
         className={`${CONTROL} absolute inset-0`}

@@ -29,6 +29,7 @@ import type { HudPing, HudProgress, Light, SipocSnapshot } from '../05_Observe_E
 import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
+import { nextFootPeak, type FootPeak } from './footPeak.ts'
 import { credits, itemById } from './storeCatalog.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
@@ -76,6 +77,46 @@ function publishPanels(el: HTMLDivElement | null) {
     root.removeProperty('--hud-bottom')
     root.removeProperty('--hud-row-bottom')
     root.removeProperty('--hud-right')
+  }
+}
+
+/** Where the compact layout's chips at the foot begin (the captions, the shop's chip, the speedometer of a phone held
+ *  sideways at the wheel; with the HUD hidden, the captions alone), for the first walk's card (onboarding/FirstWalk.tsx),
+ *  which stands above them between a sideways phone's thumbs: --hud-foot is the height from the screen's foot to the
+ *  top of the stack, in window pixels. A ref callback on the stack, so it is published while the stack is on screen and
+ *  taken away when it goes (React runs the old stack's cleanup before the new one's ref when H swaps them). */
+let footPeak: FootPeak | null = null
+/** Lets the latch go when the window changes size, before any stack republishes (installed once, ahead of theirs). */
+let footSized = false
+function sizeOf(): string { return `${window.innerWidth}x${window.innerHeight}` }
+/** Also --hud-foot-peak (footPeak.ts): the highest foot since the window took its size, which the first walk's band
+ *  reads to choose its place, so captions coming and going cannot flip it. */
+function publishFoot(el: HTMLDivElement | null) {
+  if (!el) return
+  const root = document.documentElement.style
+  if (!footSized) {
+    footSized = true
+    window.addEventListener('resize', () => {
+      if (footPeak?.size === sizeOf()) return
+      footPeak = null
+      root.removeProperty('--hud-foot-peak')
+    })
+  }
+  const publish = () => {
+    const foot = Math.round(window.innerHeight - el.getBoundingClientRect().top)
+    root.setProperty('--hud-foot', `${foot}px`)
+    const next = nextFootPeak(footPeak, sizeOf(), foot)
+    if (next !== footPeak) root.setProperty('--hud-foot-peak', `${next.peak}px`)
+    footPeak = next
+  }
+  const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+  publish()
+  watch?.observe(el)
+  window.addEventListener('resize', publish)
+  return () => {
+    watch?.disconnect()
+    window.removeEventListener('resize', publish)
+    root.removeProperty('--hud-foot')
   }
 }
 
@@ -508,7 +549,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
           {(captureHint || enterPrompt || shopChip || homeChip || (driving && short) || captionStrip) && (
-            <div className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2">
+            <div ref={publishFoot} className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2" data-hud="foot">
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
@@ -529,7 +570,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {micPill}
             {rc?.listening && micChip}
           </div>
-          {captionStrip && <div className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2">{captionStrip}</div>}
+          {captionStrip && <div ref={publishFoot} className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2" data-hud="foot">{captionStrip}</div>}
         </div>
       )}
 

@@ -389,9 +389,10 @@ record (the progression engine's, kept in this browser), so the console's `progr
 - **On sale now.** The tailor's six overcoats, seven contrast trims, seven scarves and a silk tie; the atelier's smart
   eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
   carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
-  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase.
-  Lines that need slots the wardrobe does not have yet (the tattoo designs and inks, watches, the lapel pin, the
-  umbrella, headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. The design house's seven property
+  Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
+  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin. Lines that need slots
+  the wardrobe does not have yet (the tattoo designs and inks, the umbrella, headphones) are listed as on order and go
+  on sale when the wardrobe's update adds those slots. The design house's seven property
   deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
   credits) are on sale (see Homes and Furnishing). A furniture line you own says **Place it at home (B)**, and so does
   the line the card says when you buy one. A deed whose price would leave you less than the cheapest furniture on sale
@@ -1040,9 +1041,14 @@ has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) t
 shows it (there is no city to walk).
 
 - **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
-  stick and the buttons on a phone, and at the foot of the screen while the console is open. On a wide screen from
-  960 px across, Sloane's own open card (her name question, a goal) stands to its left rather than under it; in a
-  narrower window the walk's card steps aside while hers is open and comes back when she settles into her chip. It names the stage (1 of
+  stick and the buttons and under her chip on a phone held upright, between the stick and the buttons on a phone held
+  sideways (above the captions and a shop's chip at the foot), and at the foot of the screen while the console is
+  open. On a wide screen from 960 px across, Sloane's own open card (her name question, a goal) stands to its left
+  rather than under it; anywhere else the walk's card steps aside while hers is open and comes back when she settles
+  into her chip. Sideways, where the band between the thumbs is too short for it (large text, or the foot's chips
+  taking the room), her chip moves up to the top row and the card stands under it over the HUD's header and readout;
+  it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
+  lines) and comes back when you get out. It names the stage (1 of
   7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
@@ -1147,17 +1153,19 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  thirty-four slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the eighteen dress slots (skin, age,
-  undertone, vitiligo, freckles, hair style, hair colour, layer, top, trim, bottom, shirt, shoes, tie, scarf, eyewear, bag, cup), every
-  one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
+  forty-nine slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the thirty-three dress slots (skin, age,
+  undertone, vitiligo, freckles, hair style, curl, hair colour, headwear, headwear colour, facial hair, hearing
+  devices, prosthetic, prosthetic finish, layer, cut, top, top weave, trim, bottom cut, bottom, bottom weave, shirt,
+  shoe style, shoes, tie, scarf, lapel pin, eyewear, frames, watch, bag, cup), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
   they cannot drift), the ninth hair colour the shader mixes in, and the sliders' steps. The height is 32 steps from 1.50 m to 2.05 m; mass, muscle,
   shoulders, hips, leg length, posture and the seven face sliders are sixteen steps each; the head and the age
   eight. The module ships no colour, piece or body of its own, so nothing stored, typed or shared can dress anyone
   in anything the crowd does not wear today: `validateLook` accepts nothing but an object with those slots, each
-  within its body's options (the genome's later slots, vitiligo and freckles, may be left out and read as none). A
+  within its body's options (the genome's later slots, vitiligo, freckles and the accessory word's four among them,
+  may be left out and read as none). A
   look kept before the layers existed (twenty-nine slots) is upgraded on the way
   in with the jacket, a matching trim and no scarf (`upgradeFaceLook`); one kept before the face existed (twenty
   slots) with the base face, the middle age and a neutral undertone, its hair style carried (`upgradeFigureLook`);
@@ -1261,6 +1269,26 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   wrap and button-front): each sets the cut and the weave and keeps your colours. Only the ones your body wears are
   listed, and the console refuses a skirt on a trouser body. About one pedestrian in three wears a lower cut. At the
   console: `look bottomCut midi`, `look garment wide-leg trousers`.
+- **Shoes, frames, a watch and a lapel pin.** A **Shoe style** row sits above the **Shoe colour** row: plain (as every
+  shoe was), lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot and
+  knee boot, painted on the shoe in its own colour (the laces, a toe cap, a wing's line and its perforations up close,
+  a loafer's saddle, a strap and its buckle, a cream upper, a sneaker's white sole, a flat's low sides showing the
+  hose or the sock). A boot's shaft shows up the leg where the leg shows: under the skirt, and below cropped trousers
+  and culottes; full-length trousers hide it, as they would. The ankle boots stop above the ankle and the knee boot
+  just below the knee, over a prosthetic shin as over the hose. **Frames** finish the glasses: black (as every pair
+  was), tortoiseshell, steel, gold tone, navy, burgundy, clear and browline (a black brow over a steel lower rim); the
+  row shows only while glasses are worn, and the silhouette's rims wear the finish. The **Watch** is on the left
+  wrist: none, a steel three-hand, a tourbillon chronograph (a gold case, its movement showing through a navy dial),
+  a leather strap or a smartwatch; it is drawn over a prosthetic hand as over the skin. The **Lapel pin** is on the
+  left lapel, or at the breast where the cut has no lapel to speak of: none, a rank pin (a plain gold disc with a
+  ring), a silver bar or a buttonhole flower. The pins are plain shapes with no emblem, and the row leaves the card in
+  shirt sleeves, with the jacket. All four are paint on the shoe, the rims, the hand and the jacket the crowd already
+  draws: no piece is added. The far crowd shows the shoe styles and the boots; the frames, the watch and the pin are
+  the near body's. On the street a little over half the pedestrians wear a shoe style (one of their body's eight),
+  a little over one in four a watch (steel, leather or a smartwatch, never the tourbillon), half of those in glasses frames
+  other than black, and about one in thirty-five a silver bar or a flower on the lapel (never the rank pin): the
+  tourbillon and the rank pin are the watch shop's. At the console: `look footwear wingtip`, `look watch smartwatch`,
+  `look frames tortoiseshell`, `look lapelPin silver bar`.
 - **The four words.** `packLook` folds the body, the pieces, the colours, the age and the undertone into one
   unsigned 32-bit word (bit 6 says the hair is long, written from the style; the top bit is spare), `packFigure`
   the eight body sliders into a second, `packFace` the seven face sliders and the hair style into a third and
@@ -1273,10 +1301,11 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the physics worker. Those four are the first of a **look genome** of sixteen words (`LOOK_WORDS`): word 4, the skin
   word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
   the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
-  weave, the bottom's and the outer layer's cut; words 6 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
+  weave, the bottom's and the outer layer's cut; word 6, the accessory word, holds the shoe's style, the frames, the
+  watch and the lapel pin in its low fifteen bits; words 7 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
   same look with them zero, and the crowd draws it the same. `crowd.figure` holds sixteen words a person (the
   figure, face and wardrobe words, the rig slot word, then the genome's words 4 to 15); the fragment stage reads the
-  skin and cloth words through one flat varying. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
+  skin, cloth and accessory words through one flat varying, and the vertex stage never reads the accessory word. `lookFromSeed(i)` reproduces, bit for bit, the choice the crowd's hash makes for agent `i`,
   sliders, face, hair style, age, undertone, layer, trim and scarf included (the hashed crowd draws its stature
   from a per-body range, men 1.64 m to 2.00 m and women 1.55 m to 1.87 m, and every other slider over its whole
   range; a woman's hair that is not short is long, a bob or a bun in thirds, one man in twenty-five is bald), so an
@@ -1286,9 +1315,10 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
 - **Codes and presets.** A look code is twenty-eight symbols, `XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX`, from an alphabet
   without I, L, O and U, carrying the four words and a CRC-8 over them: it can be written down and shared, and
   `parseLookCode` ignores case, the dashes and spaces and refuses any single mistyped symbol. A look whose genome's
-  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut) adds a tail carrying those words up to the
-  last that is not zero, with its own check: eight symbols for the skin word alone, `-XXXXXXXX`, fifteen with the
-  cloth word, `-XXXXXXXX-XXXXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
+  later words are not all zero (a Monk tone, vitiligo, freckles, a weave, a cut, a shoe style, a watch) adds a tail
+  carrying those words up to the last that is not zero, with its own check: eight symbols for the skin word alone,
+  `-XXXXXXXX`, fifteen with the cloth word, `-XXXXXXXX-XXXXXXX`, twenty-one with the accessory word,
+  `-XXXXXXXX-XXXXXXXX-XXXXX`. Its head's check then covers every word, so the head cut off alone is refused rather than
   read as the look in an older tone; a look without them keeps the very code it always had. A twenty-one-symbol
   code from before the layers, a fifteen-symbol code from before the face, and an eight-symbol code from before the
   sliders, still read, upgraded the same way as a stored look. Eight named presets, two per body (navy suit,
@@ -1649,8 +1679,8 @@ while you type.
   worker re-checks (see Pings and the rally).
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
-  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `shoes`, `tie`, `scarf`, `eyewear`, `bag`,
-  `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
+  `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `footwear`, `shoes`,
+  `tie`, `scarf`, `lapelPin`, `eyewear`, `frames`, `watch`, `bag`, `cup`; a height takes a step or metres, `look height 1.80`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
   `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
@@ -2361,13 +2391,19 @@ any of them.
   not running, so the sentence says it may be either, and names vLLM's flag when nothing answered at its port.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
-  that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
-  a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
+  that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). The one
+  exception is Ollama under `auto` with the GPUs' memory given: after an answer cut at that limit, a model measured
+  all on the GPU may get twice the context, with answers of up to a quarter of it, for the rest of the visit (How
+  big a model auto gives Ollama, below); the client never asks for more than 32,768 tokens and 8,192 of answer.
+  Running a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
   (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
-  or `ask api` changed since). Under `auto`, an
+  or `ask api` changed since). When an ask's first answer goes at a larger context and Ollama refuses it before any
+  of it arrives, the ask is answered once more at 8,192, unless a setting changed since it was sent or a stop came
+  with the refusal; an answer that was itself the ask's one more (the moved model's retry, or the answer after a new
+  look) is not asked again (below). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
@@ -2418,7 +2454,8 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
   - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
     one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
-    much of it is on the GPU.
+    much of it is on the GPU. None follows an answer that ends after the figure has gone (the Windows app's reading
+    is read at each ask).
   - Once a measurement shows the model at least partly on the GPU, auto gives Ollama the largest text model it lists
     whose need fits the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
     loaded-to-weights ratio measured on this server.
@@ -2429,17 +2466,75 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   - A model auto moved to that Ollama will not load (its failure before anything arrives) is set aside for the visit,
     and the same ask is answered once more by the model auto picks next. The model it would have used anyway is not
     answered twice: that failure is the ask's.
+  - **The context and the answer grow, for this visit.** Each visit starts every model at 8,192 tokens of context
+    and answers of up to 2,048. After an answer cut at that limit (Ollama says `length`), auto doubles that model's
+    context once, to 16,384, with answers of up to a quarter of it (4,096), when all of these hold:
+    - the answer counted at least 32 tokens at a pace that writes the longer answer within 5 minutes (about 13.7
+      tokens a second for 4,096);
+    - the newest measurement of the model at 8,192 this visit (one still under way is waited for) was all on the GPU,
+      and Ollama's `/api/ps` said it runs at 8,192 (its `context_length`, which Ollama reports since v0.10.0, so an
+      older Ollama never grows);
+    - what was loaded plus what doubling costs (what was loaded beyond the weights, at least 1 GB) fits the figure
+      less 2 GB;
+    - the model is still the one auto answers with after that measurement (a bigger model comes first), and it has
+      not grown this visit.
+
+    A new context makes Ollama load the model again (read from Ollama's source, not timed). The first answer at the
+    larger context is measured, with one more `GET /api/ps`:
+    - all on the GPU and not slower than 5 tokens a second (over at least 32): it stays;
+    - split, all on the processor, or slower than that: back to 8,192 for the rest of the visit, also when its first
+      wait runs out split or on the processor (Ollama plans where a model goes before it loads it; read from its
+      source, not timed); nothing loaded after two first waits ran out there: back too (nothing loaded after answers that
+      came says nothing, however often);
+    - refused by Ollama before any of it arrives: back, and the same ask is answered once more at 8,192. That is the
+      ask's one retry: the moved model's retry above and a new look do not follow it. A settings change while that
+      answer runs drops its measurement, and one before the refusal means no retry (it still goes back, and the
+      model is not set aside);
+    - failing in Ollama after some of the answer arrived: back, whatever changed since it was sent, and that failure
+      is the ask's (the text already shown is never written again);
+    - the moved model's retry above, when the model it goes to grew, goes at that model's context, and so does the
+      answer after a new look when Ollama had stopped answering; either is measured there (a first wait that runs out
+      counts toward the two, a stall is too slow); refused there or failing partway, that context goes back, and the
+      failure is the ask's (that answer was its one more). A stop that lands with a refusal learns nothing;
+    - Ollama not answering, or refusing this page, at the larger context is not the context's failure: it stays, and
+      the ask looks again as before;
+    - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
+      uses that one when it is above 8,192 and the model ran there all on the GPU and not slow (12,288 gives answers
+      of up to 3,072, measured at its next answer, with two first waits of its own), else stays at 8,192, and either
+      way it does not grow again. Split, on the processor or slow there sends it back as above.
+
+    None of this counts toward the two visits, and only measurements at 8,192 are kept, so the step up is decided as
+    without it. A context's failure never sets a model aside by itself, so a moved model that will not load at the
+    larger context is set aside only once it fails at 8,192 too: a refusal there is answered once more at 8,192 rather
+    than by the next model down (set aside one ask later), and nothing loaded after two first waits sends only the
+    context back. A model whose larger context went back does not grow again that visit, and a measurement of an
+    answer sent at an older context says nothing of the one in use. Nor is what `/api/ps` says once an answer to that
+    model at another context was under way, or ended, since the measured one was sent (Ollama may have loaded the
+    model again for it) a measurement at all, at 8,192 or above. That is any answer the router sent to Ollama,
+    measured or not: one sent before the figure arrived, under `ask provider ollama`, or in the chat format (which
+    sends no context, so Ollama chooses its own); an answer to another model does not count. Two answers in flight at
+    once can do this: the console sends one ask at a time, but Sloane's rewording of a goal goes through the same
+    router while an ask runs. Nothing of the context is kept between
+    visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192 of answer; with one
+    doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
-  back); another provider.
+  back); another provider. Nor a context above 32,768 or more than one step a visit, and no larger context for the
+  model you chose, in the chat format, under another provider (`ask provider ollama` included), or for the model
+  kept in this page: each of those sends exactly what it sent before the context could grow.
 - **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
   why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
-  measures afresh`).
+  measures afresh`). Once a context grew it also says what became of it: grown and measured at the next answer,
+  measured at that context, the trained context Ollama reported, or back to 8,192 and why. Until then the row is as
+  before.
 - **An older build of the page** (read from its code, not run) answers with the model auto last moved to, as if it
   had picked it, until `ask model <name>` or until Ollama no longer lists it, and drops what was measured at its next
   save.
 - **Starting values, not measured on a big GPU:** the 2 GB kept free (1 GB is llama.cpp's own margin per GPU, 1 GB for
-  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor.
+  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor; for the
+  context, the answer as a quarter of it (today's 2,048 of 8,192), 32,768 tokens at most, one doubling a visit, 1 GB
+  as the least a doubling costs, and 5 minutes (the first wait) as the longest the longer answer may take at the pace
+  measured.
 - **A datacenter box.** Run the city on the box: the launcher reads its GPUs, which then draw the city as well as run
   the model. Or keep the page on your computer and forward Ollama's port over SSH (OpenSSH, in PowerShell or any
   shell): `ssh -N -o ExitOnForwardFailure=yes -L 11434:127.0.0.1:11434 <user>@<box>`, then `ask vram <the box's GB>`
@@ -2450,8 +2545,23 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   fake Ollama (`router.fit.test.ts`: no change without a figure, growth, the misfit, the ratio, the processor-only
   case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
   late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
-  auto`, the operator's own model, the paths asked, what is kept), the readers
-  (`localCompute.test.ts`), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
+  auto`, the operator's own model, the paths asked, what is kept; and for the context: the growth and its one step,
+  growth on a model already measured at 8,192 that visit, the room exactly at the budget and a byte over, a split,
+  the processor, the pace of 4.99 and 5.00, a refusal and its one retry measured at 8,192, a failure partway with
+  none, the trained context, the first waits, nothing loaded after answers that were not first waits, `ask vram`, a
+  settings change before and during the retry, a settings change before a refusal or a failure partway (back, no
+  retry, the moved model kept), the moved model's retry at a grown context (refused, failing partway, its first wait
+  running out with nothing loaded or with the model loaded, a stall), Ollama gone at a grown context and the answer
+  after the look, a stop landing with a refusal, an answer from an older context landing late, a reading taken while
+  or after an answer at another context ran (measured or not: before the figure, under `ask provider ollama`, in the
+  chat format) and not after another model's, the first waits at the trained context, a cut answer landing after a
+  look found nothing, a look begun as an answer is sent (the answer goes, and is measured, at the context it was
+  noted at), the figure gone before an answer or a retry ends (no `/api/ps`), the chat format after a look, the answer after a
+  look at 8,192 counting as an answer at its context, a settings change during a cut answer's measurement, the newest
+  measurement at 8,192 deciding, a moved model growing by its own weights, the model settled first, the same step up
+  and the same kept measurements with and without growth, today's requests byte for byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
+  back once auto is the provider again), the readers
+  (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
   4 GB card at DXGI's lower reading),
   and the Windows app's reading over a fake shell (`desktopShell.test.ts`: a list taken, anything else, a refusal or
@@ -2459,7 +2569,10 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
   real split model, real ratios and paces, whether 2 GB is enough, `nvidia-smi` on a NixOS `PATH`, the amdgpu files
   on an integrated GPU, DXGI's answer on a real Windows machine (the app is built on Windows by CI, never run there),
-  and a tunnel's delay.
+  and a tunnel's delay. For the context, no real Ollama has grown one: not verified are real cache sizes, how long the
+  reload takes, `context_length` on a real split model, a vision model whose projector may be missing from `/api/ps`
+  (inferred from Ollama's source), `OLLAMA_NUM_PARALLEL` above 1, a quantised cache, the MLX runners, how Ollama v0.10
+  to v0.12 reload above the trained context, and how long real long answers take.
 
 #### The prompt-prefix page table
 
@@ -4259,11 +4372,12 @@ the production page finds no physics object in the page and has every crafted me
 
 **Auto's Ollama model by the GPU (unreleased).**
 - **In Node, on every CI run:** `modelFit.test.ts`, `router.fit.test.ts`, the new `localCompute`, `commands`,
-  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama).
+  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama), the
+  context and the answer growing included.
 - **In a browser, on every CI run:** the `actions` scenario, with `vram=24` in the address: the `fit` row,
   `ask vram 16`, the refusal of 5000, and `ask vram auto`.
-- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and the Windows app's DXGI reading on a
-  real Windows machine (built by CI, not run).
+- **Not verified:** a real GPU, a real Ollama (growing a context included), the NixOS probe on hardware, and the
+  Windows app's DXGI reading on a real Windows machine (built by CI, not run).
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.
