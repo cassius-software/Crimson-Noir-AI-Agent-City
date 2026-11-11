@@ -335,6 +335,15 @@ test('lookStore: its own key, a look within the wardrobe round-trips as a v5 rec
   const marked = validateLook({ ...look, skin: 17, vitiligo: 3, freckles: 2 })!
   assert.equal(saveLook(marked, store), true)
   assert.deepEqual(loadLook(store), marked)
+  // Every slot at its longest value, every tattoo zone inked with the longest numbers: the record stays far under the
+  // length past which a stored value is taken for corruption (lookStore.ts RAW_MAX), so a tattooed look is kept.
+  const rawMax = Number(/const RAW_MAX = (\d+)/.exec(read('../05_Observe_Environment/lookStore.ts'))![1])
+  assert.equal(rawMax, 2048)
+  const tattooed = validateLook({ ...LOOK_PRESETS[1].look, skin: 17, tattooHand: 64, tattooHandR: 63, tattooNeck: 62, tattooNape: 61, tattooInk: 7, footwear: 11, watch: 4 })!
+  assert.ok(tattooed, 'a fully tattooed look is a look')
+  assert.equal(saveLook(tattooed, store), true)
+  assert.ok(store.map.get(LOOK_KEY)!.length < rawMax, `${store.map.get(LOOK_KEY)!.length} characters`)
+  assert.deepEqual(loadLook(store), tattooed)
   // A look kept before the skin word (v 4, the thirty-two slots of the four words): worn as it was, no vitiligo, no freckles.
   const v4: Record<string, number> = {}
   for (const s of LOOK_V4_SLOTS) v4[s] = LOOK_PRESETS[6].look[s]

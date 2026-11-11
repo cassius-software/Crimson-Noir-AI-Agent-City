@@ -107,6 +107,12 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'watch': return 'Watch'
     case 'bag': return 'Bag'
     case 'cup': return 'Cup'
+    // The tattoo zones by the person's own side (tattoo.ts TATTOO_ZONES' labels), and the one ink of them all.
+    case 'tattooHand': return 'Left hand'
+    case 'tattooHandR': return 'Right hand'
+    case 'tattooNeck': return 'Neck'
+    case 'tattooNape': return 'Nape'
+    case 'tattooInk': return 'Ink'
   }
 }
 

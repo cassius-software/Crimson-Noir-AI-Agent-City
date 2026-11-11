@@ -11,8 +11,9 @@
  * keeper (progress.ts createProgress) buys a line once, takes its price from the record, sets its bit and keeps both
  * across a reload, and refuses with the first reason; a new operator claims the free loft and is told the level the
  * brownstone and each piece of furniture need, and a keeper at those levels buys them; a keeper that refuses leaves no
- * bit; the atelier's four limbs are on sale, each the limb, side and finish its name says; the 14A screen passes every
- * name.
+ * bit; the atelier's four limbs are on sale, each the limb, side and finish its name says; the ink studio's twelve
+ * designs are the wardrobe's first twelve, in order, and its two inks the wardrobe's gold leaf and luminescent; the 14A
+ * screen passes every name.
  * What breaks if it is removed? A shop could sell a line twice, sell a line nobody can wear, take credits for nothing,
  * or set a bit another thread's line means.
  */
@@ -20,6 +21,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SHOP_KINDS } from '../01_Initialize_World/storefronts.ts'
 import { LOOK_PRESETS, LOOK_SLOTS, PROSTHETIC, WARDROBE, validateLook } from '../03_Spawn_Agents/look.ts'
+import { TATTOO_INK, TATTOO_MOTIFS } from '../03_Spawn_Agents/tattoo.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { AT, MAX_LEVEL as PROGRESSION_MAX_LEVEL, PURCHASE, STARTING_CREDITS, UNLOCK_SPACE } from '../02_Define_The_Rules/progression.ts'
 import { createProgress } from './progress.ts'
@@ -159,6 +161,30 @@ test('the atelier\'s four limbs are on sale, each setting the wardrobe\'s limb a
       assert.equal(worn.prosthetic, limb, `${name} on the ${p.name}`)
       assert.equal(worn.prostheticFinish, fin, `${name} on the ${p.name}`)
     }
+  }
+})
+
+test('the ink studio\'s twelve designs are the wardrobe\'s designs 1 to 12, in catalogue order, on order until the forearm has its slot; its two inks are the wardrobe\'s gold leaf and luminescent, on sale now that the wardrobe has the ink', () => {
+  // A design line wears `tattooForearm: i + 1`, so its design is the wardrobe's id i + 1 by construction (tattoo.ts).
+  const motifs = [
+    'olive branch', 'fibonacci spiral', 'braided rope band', 'circuit trace', 'star chart', 'scalloped arc band',
+    'origami cranes', 'soundwave band', 'compass rose', 'botanical vine', 'euler identity', 'ocean wave band',
+  ]
+  const designs = itemsOf('inkStudio').filter((i) => i.group === 'Designs')
+  assert.deepEqual(designs.map((i) => i.id), Array.from({ length: 12 }, (_, i) => 48 + i), 'lines 48 to 59')
+  for (const [i, line] of designs.entries()) {
+    assert.deepEqual(line.wear, { tattooForearm: i + 1 }, line.name)
+    assert.equal(TATTOO_MOTIFS[line.wear!.tattooForearm - 1].name, motifs[i], `${line.name} is the wardrobe's ${motifs[i]}`)
+    assert.equal(WARDROBE.tattoo[line.wear!.tattooForearm], motifs[i])
+    assert.equal(onSale(line), false, `${line.name} waits for the forearm's slot`)
+  }
+  // The inks: each line's value is the wardrobe's ink its name says, and wearing one sets the ink alone.
+  for (const [id, ink, name] of [[64, TATTOO_INK.goldLeaf, 'gold leaf'], [65, TATTOO_INK.luminescent, 'luminescent']] as const) {
+    const line = itemById(id)!
+    assert.deepEqual(line.wear, { tattooInk: ink })
+    assert.equal(WARDROBE.tattooInk[ink], name, `${line.name} is the wardrobe's ${name}`)
+    assert.ok(onSale(line), `${line.name} is on sale`)
+    for (const p of LOOK_PRESETS) assert.deepEqual(wearItem(p.look, line), { ...p.look, tattooInk: ink }, `${line.name} on the ${p.name} sets the ink alone`)
   }
 })
 

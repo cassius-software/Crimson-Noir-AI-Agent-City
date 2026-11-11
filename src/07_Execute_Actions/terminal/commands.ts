@@ -211,6 +211,7 @@ export const LOOK_SLOT_ARGS = [
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
   'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'watch', 'bag', 'cup',
+  'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
