@@ -15,6 +15,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
+  checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
+  Kept in progression record word 40 with no layout change; refused in a network room with furnishing; the chip,
+  `progress` and each check line say when it applies.
 - **Shoe styles, frames, a watch and a lapel pin.** The look genome's word 6 becomes the accessory word
   (`src/03_Spawn_Agents/look.ts` LOOK_FIELD, bits 0 to 14; bits 15 and up are spare and refused): a shoe style
   (twelve: plain, lace-up, cap toe, wingtip, loafer, buckle strap, two-tone, sneaker, flat, ankle boot, lace-up boot,

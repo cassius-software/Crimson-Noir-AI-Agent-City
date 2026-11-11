@@ -460,16 +460,29 @@ The card that opens inside a home you own is where you furnish it (`07_Execute_A
 at the right, on a phone a sheet over the lower half, so the room stays in view above it. The camera leaves your head
 for a point under the ceiling a few metres from the cursor, looking down at it, and your look comes back when the card
 closes. In a network room the card shows the deed instead, with the reason ("Furnishing waits until you leave the
-shared room: it replays your walk and does not know your furniture"), and switches to furnishing by itself once you
-leave the room. Walking out of the home or putting on a headset closes the card.
+shared room: it replays your walk and does not know your furniture"), and resting waits too; a rest already taken
+keeps applying there. The card switches to furnishing by itself once you leave the room. Walking out of the home or
+putting on a headset closes the card.
 
-- **Three tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
+- **Four tabs.** **Furniture** lists Lintel & Lumen's nine lines: the executive desk, the six-screen console, the
   holographic city table, the sectional sofa, the bookcase, the espresso and juice bar, the grand piano, the
   hydroponic green wall and the agent workstation. A line you own says how many stand in this home out of its cap
   ("2/6 placed"); one you do not says its price and offers **Order**, through the same purchase gate as the design
   house, or says why the gate refuses ("needs level 3"). A line is bought once and serves every home you own.
   **Floor** (polished concrete, oak boards, limestone) and **Walls** (glass, exposed brick, oak panelling, limestone,
-  board-formed concrete, blackened steel) are free.
+  board-formed concrete, blackened steel) are free. **Rest** is a rest at home (below).
+- **Rest.** The Rest tab says what a rest gives here, or why not now, and, in a home whose deed can add to checks, how
+  many kinds of furniture stand there. Enter, Space, the pad's south button or the **Rest** button rests: a hero point
+  (up to three), a new round, and a bonus on the next 30 checks, said under the plan ("Rested: hero 2 of 3, a new
+  round, and +2 to every check for the next 30 checks"). The bonus is the lower of two: the home's, by its deed's
+  level (+1 from a level 3 deed, +2 from 9, +3 from 17, so the Micro-Loft gives none, the Brownstone and the Timber
+  Loft up to +1, the Penthouse and the Villa up to +2, the Estate and the Sky-Mansion up to +3), and its comfort's, by
+  how many different lines stand in it now (+1 from one kind, +2 from three, +3 from five; copies of a line count
+  once, and a piece not placed here or picked up and in hand does not count until it is put down). While a rest lasts
+  another waits for its 30 checks, unless a home gives a higher bonus, which then takes its place; a rest that gave no
+  bonus runs its 30 checks too. Every check counts, at the console or in the city; a refused check and a hero point's
+  reroll do not. Nothing runs down with time or while you are away, and a reload keeps it. Resting is offered exactly
+  where furnishing is: inside a home you own, on foot, out of a headset and out of a network room.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -501,10 +514,11 @@ leave the room. Walking out of the home or putting on a headset closes the card.
 |---|---|---|---|---|
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
+| Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
 | Previous / next piece | Q / E | click in the strip | left / right shoulder | ◀ ▶, or tap in the strip |
-| Tabs | 1 / 2 / 3 | the tab | left / right trigger | the tab |
+| Tabs | 1 / 2 / 3 / 4 | the tab | left / right trigger | the tab |
 | Choose a finish (Floor or Walls) | ← → or Q / E | the swatch | left / right shoulder | the swatch |
 | Undo | Z or Ctrl+Z | Undo | View | Undo |
 | Turn the camera | C | View | right stick left / right | View |
@@ -2004,8 +2018,15 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
 - **Levels.** Each level from 2 brings a skill increase (`progress train <skill>`: expert any time, master from level
   7, legendary from 15) and a resolve; levels 5, 10, 15 and 20 bring four attribute boosts, to the attributes behind
   the skills used most (a boost at +4 or more counts half).
-- **Hero points.** One at the start of every session at least; `progress reroll` spends one on the last check that
-  was not a critical success. The better of the two results pays; nothing is taken back.
+- **Hero points.** One at the start of every session at least, and a rest at home gives one; `progress reroll` spends
+  one on the last check that was not a critical success. The better of the two results pays; nothing is taken back.
+- **Rest at home.** In a home you own, the home card's Rest tab rests (see Furnishing): a hero point, a new round, and
+  for the next 30 checks an item bonus of up to +3 on every check (none from the Micro-Loft or a home with no
+  furniture standing), the lower of the home's (by its deed's level: +1 from 3, +2 from 9, +3 from 17) and its
+  comfort's (by the kinds of furniture standing there: +1 from 1, +2 from 3, +3 from 5). Each check line shows it
+  (`Optics and cinema: 12 +5 +1 prepared = 18 vs DC 14, success`), `progress` says how much and for how many more
+  checks, and `progress table` states the rule. It is kept in the record, so a reload keeps it, and nothing runs down
+  while you are away; `progress reset --yes` ends it.
 - **Credits** buy the wardrobe, the properties and their furniture through one gate: the credits are debited and the
   unlock set in the same record and the same save, so a purchase never takes the credits without the item.
 - **What earns.** At the console: `noir`, `r0` and `run` for computers, the robots' commands for robotics,
@@ -2023,7 +2044,7 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
   quieter than the recruitment cue from anyone near enough to be asked over, it waits for a cue or a ping still
   sounding, and one that starts over it fades it out. A hero point's reroll that stayed a success is not cued again. The chip, under the
   status chips at the top left, reads `Level 3 · 420 of 1,000 XP · 1,250 credits · hero 2 · ◆◆◇ ↺` (◆ an action left,
-  ◇ one spent, ↺ the reaction ready), and for four seconds after a check which degree, in which skill and what it
+  ◇ one spent, ↺ the reaction ready; `· prepared +2` at the end while a rest at home adds to checks), and for four seconds after a check which degree, in which skill and what it
   paid, with one soft ring around it (none when the system asks for reduced motion). On a phone it shows only for
   those four seconds, and not at all held in landscape. A check the city earns makes no toast: the chip and the
   chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,

@@ -7,7 +7,8 @@
  * words it says (the plan's verdict words and each furniture line's short name), the left stick's repeat (stickStep)
  * and how a card button got the focus (FocusOrigin). Kept apart from the card's markup so Node runs it as the page does
  * (furnishVisit.test.ts): a piece picked up goes back where it was, a press on no cell does nothing, a held diagonal
- * repeats on the plan's timer, and Enter places after a mouse click on a button.
+ * repeats on the plan's timer, and Enter places after a mouse click on a button. Its fourth tab is a rest at home: Place
+ * there asks the host to rest (RestHooks), which says what it gave, and edits nothing.
  * Every committed edit (a piece placed, picked up, moved, removed, a finish, Clear, Undo) goes to the host as the whole
  * record (homeStore.ts withHome and layoutOf: the placed pieces first, then those not placed here). A piece picked up
  * leaves the home until it is placed again; Undo, switching line or closing the card puts it back at its place in the
@@ -36,10 +37,24 @@ export interface FurnishHooks {
   blocked(home: number): Uint8Array
   pickCell(clientX: number, clientY: number): { c: number; r: number } | null
   canvas(): HTMLCanvasElement | null
+  /** A rest at home through the page's keeper (App); absent, the Rest tab says it is not offered. */
+  rest?: RestHooks
 }
 
-/** The furnishing view's tabs, in order: 1, 2 and 3 on the keyboard, the pad's triggers step through them. */
-export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls'] as const)
+/**
+ * A rest at home, as the host offers it (App over the page's keeper, progress.ts restOffer and restTake): the words
+ * for home `home` now (why not, null when it may, and the lines the Rest tab shows), and the rest itself, which
+ * answers with the sentence the reason line says.
+ */
+export interface RestHooks {
+  offer(home: number): { readonly why: string | null; readonly lines: readonly string[] }
+  take(home: number): string
+}
+
+/** The furnishing view's tabs, in order: 1 to 4 on the keyboard, the pad's triggers step through them. */
+export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest'] as const)
+/** The Rest tab: Place there rests (RestHooks) instead of placing. */
+export const REST_TAB = 3
 
 /** How many committed edits Undo can take back in one visit. */
 export const UNDO_STEPS = 20
@@ -274,6 +289,10 @@ export class Visit {
     if (under) { this.pickUp(under); return }
     this.say(hand && verdict ? verdictWords(verdict, hand.id) : 'Nothing here to pick up: choose a piece in the strip')
   }
+  /** Rest here (the Rest tab's Place): the host rests and says what it gave, or why not; nothing in the home changes. */
+  rest(): void {
+    this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')
+  }
   /** Take the piece picked up out of the home, or the piece under the cursor. */
   remove(): void {
     if (this.lifted) {
@@ -373,7 +392,7 @@ export class Visit {
   run(a: Act): void {
     if (typeof a === 'string') {
       switch (a) {
-        case 'place': this.place(); return
+        case 'place': if (this.tab === REST_TAB) this.rest(); else this.place(); return
         case 'rotate': this.rotate(); return
         case 'remove': this.remove(); return
         case 'undo': this.undo(); return
