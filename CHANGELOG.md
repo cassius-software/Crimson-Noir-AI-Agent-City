@@ -46,10 +46,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`SHADOW_SHADERS_REPORT=1`, `shadowShaders.test.ts`): the worst near main fragment stage, the suit's, is 183,728
   characters (the pantsuit's 183,551), under the 225,000 target the test now asserts for every near body; the far
   fragments (at most 139,888), the vertex stages (at most 54,921) and the shadow fragment (1,101) are as after the
-  hash change below. `dist/index.html` grows by 31,608 bytes, from 12,005,697 to 12,037,305; the limit in
-  `tools/verify/page_dist.mjs` is unchanged. Unverified: no GPU's WGSL compiler has built the tattoo code yet (the WGSL
-  host runs it as JavaScript and three builds it in Node); the browser screenshots of the studio's mirror are still to be
-  taken.
+  hash change below. `dist/index.html` grows by 31,608 bytes, from 12,012,112 to 12,043,720; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. In the browser on the software WebGPU adapter (SwiftShader), Chrome's WGSL
+  compiler builds the tattoo code (the desktop smoke passes), and pictures of the ink studio's mirror show the designs
+  on both hands, the neck and the nape, the eight inks, the halo on the lightest and deepest skins, and the cover by a
+  prosthetic arm, a turtleneck and a full beard. Unverified: no hardware GPU has compiled or drawn it yet.
 
 - **Rest at home.** The furnishing view gains a Rest tab: a hero point, a new round, and an item bonus on the next 30
   checks, +1 from a level 3 deed, +2 from 9, +3 from 17, capped by the kinds of furniture standing there (1, 3, 5).
