@@ -69,9 +69,10 @@ import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
 import { homePlaced } from './07_Execute_Actions/homeView.ts'
 import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
-import { loadProfile, type Profile } from './05_Observe_Environment/profile.ts'
+import { loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
+import { loadProfile, seedFromName, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { changeLook, describeLook, LOOK_SLOTS, lookFromSeed, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { changeLook, describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -792,6 +793,22 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   // deeds are owned (bit i: home i) is kept as state too, so an owner's card asks the engine for its furnishing view.
   const [homes, setHomes] = useState<HomeRecord>(loadHomes)
   const homesRef = useRef<HomeRecord>(homes)
+  // Who of the player's own agents stands at which workstation (staffStore.ts), read once at mount; postsRef is the
+  // furnishing hooks' view of it, and every change is saved in this browser at once.
+  const [posts, setPosts] = useState<StaffRecord>(loadStaff)
+  const postsRef = useRef<StaffRecord>(posts)
+  const commitStaff = useCallback((next: StaffRecord): null => { postsRef.current = next; setPosts(next); saveStaff(next); return null }, [])
+  // The posts the engine draws and lists: only names on the roster (a renamed or forgotten agent's post is drawn by
+  // nobody, and the next post lets it go), each in the agent's look (their seed's while they have none), standing
+  // there unless hired now.
+  useEffect(() => {
+    engine?.setStaff(posts.flatMap((p) => {
+      const id = roster.get(p.name)
+      if (!id) return []
+      const look = id.look ?? lookFromSeed(seedFromName(id.name))
+      return [{ ...p, name: id.name, present: id.agent === null, body: look.body, ink: lookSwatch(look, 'top') ?? 0x3f4652, scale: heightScale(look) }]
+    }))
+  }, [engine, posts, agents, roster])
   const [ownedDeeds, setOwnedDeeds] = useState(() => ownedHomes(keeper))
   const [veilDone, setVeilDone] = useState(false)
   // A Ring-0 kernel panic: the engine is halted and the reason is shown over everything.
@@ -928,6 +945,16 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
       offer: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return restOffer(pageProgress(), r.level, r.kinds) },
       take: (home: number) => { const r = restInputs(home, homesRef.current, keeper); return engine.furnishRefusal(home) ?? restTake(pageProgress(), r.level, r.kinds) },
     },
+    // Staffing the workstations: the roster's names and where each is posted, and a post or stand-down saved in this
+    // browser (staffStore.ts) only where the engine allows furnishing (the card posts only at a workstation it sees
+    // standing, from the same record and lines the engine draws).
+    staff: {
+      agents: () => roster.list().map((a) => ({ name: a.name, out: a.agent !== null, post: postOf(postsRef.current, a.name) })),
+      post: (home: number, c: number, r: number, name: string) => engine.furnishRefusal(home) ?? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))),
+      standDown: (home: number, c: number, r: number) => engine.furnishRefusal(home) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
+    },
+    // roster (made once with the shell) and commitStaff (no deps) never change, so the hooks stay keyed on these two.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   } : null), [engine, keeper])
   // A deed's row at the design house: Visit (Go home once owned) takes the avatar to the home's doorstep, and says why
   // when it cannot; the row says where the home stands. The store card closes by itself once the avatar is out of the shop.

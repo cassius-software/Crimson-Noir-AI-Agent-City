@@ -107,8 +107,9 @@ export interface Shape {
   /** At most four boxes, none above PIECE_TOP. */
   readonly boxes: readonly ShapeBox[]
   /**
-   * Where slice 3's worker will stand, in the piece's cells, or null. A piece with one keeps its seat (the cells of its
-   * footprint its solid leaves walkable) reserved: nothing else may use those cells, and they are never cut off.
+   * Where a posted agent stands at the piece (stationOf), in the piece's cells, or null. A piece with one keeps its seat
+   * (the cells of its footprint its solid leaves walkable) reserved: nothing else may use those cells, and they are
+   * never cut off.
    */
   readonly station: readonly [number, number] | null
 }
@@ -232,6 +233,23 @@ export function rotateBox(rect: Rect, w: number, d: number, rot: number): Rect {
   const [a0, b0] = turn(rect[0], rect[1], w, d, rot), [a1, b1] = turn(rect[2], rect[3], w, d, rot)
   return [Math.min(a0, a1), Math.min(b0, b1), Math.max(a0, a1), Math.max(b0, b1)]
 }
+
+/**
+ * Where a piece's posted agent stands and which way they face, in the room frame (u toward the doorway, v across, m),
+ * or null for a piece with no station or not well formed: the shape's station turned with the piece, facing the cell
+ * behind it (the piece's back). For line 168 at turn 0 that is the edge between its two seat cells, facing the screen.
+ */
+export function stationOf(p: Piece): { u: number; v: number; fu: number; fv: number } | null {
+  const s = shapeOfPiece(p)
+  if (!s?.station) return null
+  const [x, y] = s.station
+  const [c0, r0] = rotateBox([x, y, x, y], s.w, s.d, p.rot)
+  const [c1, r1] = rotateBox([x, y - 1, x, y - 1], s.w, s.d, p.rot)
+  return { u: -GRID_HALF + (p.r + r0) * CELL, v: -GRID_HALF + (p.c + c0) * CELL, fu: r1 - r0, fv: c1 - c0 }
+}
+
+/** The pieces of `placed` with a station (the workstations), in reading order: back row first, then left to right. */
+export const stationsIn = (placed: readonly Piece[]): Piece[] => placed.filter((p) => stationOf(p)).sort((a, b) => a.r - b.r || a.c - b.c)
 
 /** A piece's footprint, or null when it is not a well-formed piece. */
 export function footprint(p: Piece): Footprint | null {

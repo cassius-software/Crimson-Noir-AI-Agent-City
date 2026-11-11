@@ -8,16 +8,18 @@
  * and how a card button got the focus (FocusOrigin). Kept apart from the card's markup so Node runs it as the page does
  * (furnishVisit.test.ts): a piece picked up goes back where it was, a press on no cell does nothing, a held diagonal
  * repeats on the plan's timer, and Enter places after a mouse click on a button. Its fourth tab is a rest at home: Place
- * there asks the host to rest (RestHooks), which says what it gave, and edits nothing.
+ * there asks the host to rest (RestHooks), which says what it gave, and edits nothing. Its fifth, Staff, posts one of
+ * the player's own agents at the workstation under the cursor through the host (StaffHooks), or stands them down; that
+ * is no furniture edit and not on Undo.
  * Every committed edit (a piece placed, picked up, moved, removed, a finish, Clear, Undo) goes to the host as the whole
  * record (homeStore.ts withHome and layoutOf: the placed pieces first, then those not placed here). A piece picked up
  * leaves the home until it is placed again; Undo, switching line or closing the card puts it back at its place in the
  * saved order, so the home is drawn as it was before. Undo takes back 20 edits.
  * What breaks if it is removed? The card has nothing to furnish with: no cursor, no piece in hand, no edit, no Undo.
  */
-import { DEPTH, GRID } from '../02_Define_The_Rules/homeGrid.ts'
+import { CELL, DEPTH, GRID, GRID_HALF } from '../02_Define_The_Rules/homeGrid.ts'
 import {
-  FLOORS, SHAPE_IDS, WALLS, canPlace, cellIndex, fitLayout, pieceCells, shapeOf, type Piece, type Verdict,
+  FLOORS, SHAPE_IDS, WALLS, canPlace, cellIndex, fitLayout, pieceCells, shapeOf, stationOf, stationsIn, type Piece, type Verdict,
 } from '../02_Define_The_Rules/homeLayout.ts'
 import { finishOf, layoutOf, withHome, type HomeLayout, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import type { Draft } from './homeView.ts'
@@ -39,6 +41,8 @@ export interface FurnishHooks {
   canvas(): HTMLCanvasElement | null
   /** A rest at home through the page's keeper (App); absent, the Rest tab says it is not offered. */
   rest?: RestHooks
+  /** Staffing the workstations through the host (App); absent, the Staff tab says it is not offered. */
+  staff?: StaffHooks
 }
 
 /**
@@ -51,10 +55,27 @@ export interface RestHooks {
   take(home: number): string
 }
 
-/** The furnishing view's tabs, in order: 1 to 4 on the keyboard, the pad's triggers step through them. */
-export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest'] as const)
+/** One of the player's own agents as the Staff tab lists them: the roster's name, whether hired now, and where posted (or null). */
+export interface StaffAgent { readonly name: string; readonly out: boolean; readonly post: { readonly home: number; readonly c: number; readonly r: number } | null }
+
+/**
+ * Staffing a home's workstations, as the host offers it (App over staffStore.ts, the roster and the engine): the
+ * agents, and a post or a stand-down, each answering null when done or the sentence why not.
+ */
+export interface StaffHooks {
+  agents(): readonly StaffAgent[]
+  post(home: number, c: number, r: number, name: string): string | null
+  standDown(home: number, c: number, r: number): string | null
+}
+
+/** The furnishing view's tabs, in order: 1 to 5 on the keyboard, the pad's triggers step through them. */
+export const TABS = Object.freeze(['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'] as const)
 /** The Rest tab: Place there rests (RestHooks) instead of placing. */
 export const REST_TAB = 3
+/** The Staff tab: Place there posts the agent chosen at the workstation under the cursor, Remove stands them down. */
+export const STAFF_TAB = 4
+const NO_AGENTS = "No agents of your own yet: name one in the wardrobe's Agents tab, or type agent new and a name in the console"
+const NOT_STAFFED = 'Staffing is not offered here'
 
 /** How many committed edits Undo can take back in one visit. */
 export const UNDO_STEPS = 20
@@ -112,6 +133,7 @@ export type Act =
   | { order: number }
   | { floor: number }
   | { wall: number }
+  | { agent: string }
 
 /**
  * One step Undo takes back: the home's layout before an edit, the piece then picked up and its place in the saved
@@ -160,6 +182,8 @@ export class Visit {
   view: 0 | 1 | 2 | 3 = 0
   /** What the last press did, in words, until the cursor or the piece changes; then the reason line says the verdict. */
   said = ''
+  /** The agent chosen in the Staff tab (a roster name), or null for the first not posted. */
+  agent: string | null = null
   readonly undoSteps: Step[] = []
   record: HomeRecord
   blocked: Uint8Array
@@ -193,6 +217,7 @@ export class Visit {
   }
   /** The piece in hand at the cursor: the one picked up, else the chosen line; null for none. */
   hand(): Piece | null {
+    if (this.tab === STAFF_TAB) return null
     const id = this.lifted ? this.lifted.id : this.sel
     return id === null ? null : Object.freeze({ id, c: this.cursor.c, r: this.cursor.r, rot: this.rot })
   }
@@ -276,6 +301,7 @@ export class Visit {
   }
   /** Place the piece in hand where it fits; else pick up the piece under the cursor; else say why not. */
   place(): void {
+    if (this.tab === STAFF_TAB) { this.post(); return }
     const fit = this.fit()
     const hand = this.hand()
     const verdict = this.verdict(fit)
@@ -293,8 +319,79 @@ export class Visit {
   rest(): void {
     this.say(this.io.hooks.rest?.take(this.home) ?? 'Resting is not offered here')
   }
+  /** The workstations standing here (pieces with a station), in reading order: back row first, then left to right. */
+  stations(fit = this.fit()): Piece[] {
+    return stationsIn(fit.placed)
+  }
+  /** The workstation under the cursor and its number here (from 1), or null. */
+  station(fit = this.fit()): { p: Piece; n: number } | null {
+    const at = cellIndex(this.cursor.c, this.cursor.r), list = this.stations(fit)
+    const i = list.findIndex((p) => pieceCells(p).cells.includes(at))
+    return i < 0 ? null : { p: list[i], n: i + 1 }
+  }
+  /** The host's agents, read afresh; none without staff hooks. */
+  staffAgents(): readonly StaffAgent[] {
+    return this.io.hooks.staff?.agents() ?? []
+  }
+  /** Who is posted at workstation `p` of this home, or null. */
+  who(p: Piece): StaffAgent | null {
+    return this.staffAgents().find((a) => a.post?.home === this.home && a.post.c === p.c && a.post.r === p.r) ?? null
+  }
+  /** The agent chosen: the one picked while listed, else the first not posted, else the first; null with none. */
+  inHand(): string | null {
+    const list = this.staffAgents()
+    return list.find((a) => a.name === this.agent)?.name ?? list.find((a) => !a.post)?.name ?? list[0]?.name ?? null
+  }
+  /** The next or previous agent (Q, E, the shoulders), or one by name (a tap in the strip). */
+  pickAgent(d: 1 | -1 | string): void {
+    const list = this.staffAgents()
+    if (typeof d === 'string') this.agent = d
+    else if (list.length > 0) { const i = list.findIndex((a) => a.name === this.inHand()); this.agent = list[(i + d + list.length) % list.length].name }
+    this.quiet()
+  }
+  /** The workstation under the cursor and its number, or why the Staff tab cannot act there (no hooks, no workstation). */
+  private staffAt(fit = this.fit()): { p: Piece; n: number } | string {
+    return !this.io.hooks.staff ? NOT_STAFFED : this.station(fit) ?? `Nothing to staff at ${placeWords(this.home, this.cursor)}: move onto a workstation`
+  }
+  /** Post the agent chosen at the workstation under the cursor (the Staff tab's Place), through the host. */
+  post(): void {
+    const d = this.staffAt(), name = this.inHand()
+    if (typeof d === 'string') { this.say(d); return }
+    if (!name) { this.say(NO_AGENTS); return }
+    const me = this.staffAgents().find((a) => a.name === name)!, was = this.who(d.p)
+    if (was?.name === name) { this.say(`${name} is already at workstation ${d.n}`); return }
+    this.say(this.io.hooks.staff!.post(this.home, d.p.c, d.p.r, name) ?? `${name} is at workstation ${d.n} now${was ? `; ${was.name} is free` : ''}${me.out ? '; out with you until you part' : ''}`)
+  }
+  /** Stand down whoever is at the workstation under the cursor (the Staff tab's Remove), through the host. */
+  standDown(): void {
+    const d = this.staffAt()
+    if (typeof d === 'string') { this.say(d); return }
+    const was = this.who(d.p)
+    if (!was) { this.say(`Nobody is at workstation ${d.n}`); return }
+    this.say(this.io.hooks.staff!.standDown(this.home, d.p.c, d.p.r) ?? `${was.name} left workstation ${d.n}`)
+  }
+  /** What the reason line says in the Staff tab while nothing was just said. */
+  staffLine(): string {
+    const fit = this.fit(), d = this.staffAt(fit)
+    if (d === NOT_STAFFED) return d
+    if (this.stations(fit).length === 0) return 'No workstation stands here yet: place one in the Furniture tab'
+    if (typeof d === 'string') return d
+    const name = this.inHand(), who = this.who(d.p)?.name ?? null
+    if (!name) return NO_AGENTS
+    return `Workstation ${d.n} at ${placeWords(this.home, d.p)}: ${who ? `${who} is here` : 'free'}; ${who === name ? 'Stand down frees it' : `Post puts ${name} here`}`
+  }
+  /** Each agent posted here as the plan marks them: the station's point in cells and their initial. */
+  staffMarks(): { x: number; y: number; initial: string }[] {
+    const out: { x: number; y: number; initial: string }[] = []
+    for (const p of this.stations()) {
+      const a = this.who(p), s = a && stationOf(p)
+      if (a && s) out.push({ x: (s.v + GRID_HALF) / CELL, y: (s.u + GRID_HALF) / CELL, initial: [...a.name][0].toUpperCase() })
+    }
+    return out
+  }
   /** Take the piece picked up out of the home, or the piece under the cursor. */
   remove(): void {
+    if (this.tab === STAFF_TAB) { this.standDown(); return }
     if (this.lifted) {
       const p = this.lifted
       this.commit(null, null)
@@ -308,6 +405,7 @@ export class Visit {
     this.say(`${nameOf(under.id)} removed`)
   }
   rotate(): void {
+    if (this.tab === STAFF_TAB) return
     if (!this.hand()) { this.say('Nothing in hand to turn: choose a piece in the strip'); return }
     this.rot = (this.rot + 1) & 3
     this.quiet()
@@ -326,6 +424,7 @@ export class Visit {
   }
   /** The next or previous piece (the lines owned, in catalogue order; all nine while none is), or finish in its tab. */
   cycle(d: 1 | -1): void {
+    if (this.tab === STAFF_TAB) { this.pickAgent(d); return }
     const f = finishOf(this.record, this.home)
     if (this.tab === 1) { this.setFinish((f.floor + d + FLOORS.length) % FLOORS.length, undefined); return }
     if (this.tab === 2) { this.setFinish(undefined, (f.wall + d + WALLS.length) % WALLS.length); return }
@@ -416,6 +515,7 @@ export class Visit {
     else if ('order' in a) this.order(a.order)
     else if ('floor' in a) this.setFinish(a.floor, undefined)
     else if ('wall' in a) this.setFinish(undefined, a.wall)
+    else if ('agent' in a) this.pickAgent(a.agent)
   }
   /** Someone stepping onto or off the cells by a piece changes what may go there ('you'): the pad's loop asks a few times a second. */
   refreshBlocked(): void {

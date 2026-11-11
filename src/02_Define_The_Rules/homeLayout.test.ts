@@ -10,7 +10,9 @@
  * apron, never cut off a workstation's seat, and never refuse a removal. Someone standing inside a piece that is not
  * yet solid is never ringed in (400 more seeded runs take the piece away and find them a way out), and people standing
  * by only ever add refusals. The seven show homes fit their own homes, and comfortOf counts the kinds of furniture
- * standing in a home (a rest at home's comfort). No
+ * standing in a home (a rest at home's comfort). A workstation's station (where a posted agent stands, stationOf) turns
+ * with the piece, lies on the edge between its two seat cells and faces the desk; stationsIn lists workstations in
+ * reading order. No
  * two boxes of a home (the shell, the fill block, the planters, the floor overlay, the wall panels and a full layout)
  * share a face in the same plane facing the same way, in every home, facing every way; and every name passes the 14A
  * screen.
@@ -32,7 +34,7 @@ import { APRON, CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, backEdge, cell
 import {
   CEILING, COVER, DEFAULT_FINISH, DOORWAY, FINISHES, FLOORS, FURNITURE_BASE, GLASS, HOME_STAGING, OVERLAY, PANEL, PIECE_INSET, PIECE_TOP, SHAPES, SHAPE_IDS,
   SOLID_FROM, SOLID_MAX, VERDICTS, WALLS, canPlace, cellAt, cellIndex, cellsNear, comfortOf, fitLayout, floorOverlay, footprint, pieceCells, reach, renderBoxes,
-  rotateBox, shapeOf, solidBox, solidOf, wallPanels, type Piece, type Rect, type RoomBox, type Verdict,
+  rotateBox, shapeOf, solidBox, solidOf, stationOf, stationsIn, wallPanels, type Piece, type Rect, type RoomBox, type Verdict,
 } from './homeLayout.ts'
 
 const close = (a: number, b: number, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} != ${b}`)
@@ -776,4 +778,40 @@ test('every line and finish name passes the 14A screen, is unarmed, names no rea
     assert.doesNotMatch(name, /matri/i)
   }
   assert.doesNotMatch(SHAPES[165].name, /\b(?:wine|beer|cocktail|liquor|spirits?|whisk(?:e)?y|vodka|gin|rum)\b/i, 'the bar is coffee and juice')
+})
+
+test('stationOf turns with the piece: on the edge between the two seat cells, facing the desk', () => {
+  // Line 168 at (10, 20): u toward the doorway, v across, in the room frame (probed: the station is [1, 1.5] in its own cells).
+  const want = [
+    { u: -GRID_HALF + 21.5 * CELL, v: -GRID_HALF + 11 * CELL, fu: -1, fv: 0 },
+    { u: -GRID_HALF + 21 * CELL, v: -GRID_HALF + 10.5 * CELL, fu: 0, fv: 1 },
+    { u: -GRID_HALF + 20.5 * CELL, v: -GRID_HALF + 11 * CELL, fu: 1, fv: 0 },
+    { u: -GRID_HALF + 21 * CELL, v: -GRID_HALF + 11.5 * CELL, fu: 0, fv: -1 },
+  ]
+  for (let rot = 0; rot < 4; rot++) {
+    const p = P(168, 10, 20, rot)
+    const s = stationOf(p)
+    assert.ok(s, `turn ${rot}`)
+    close(s.u, want[rot].u)
+    close(s.v, want[rot].v)
+    assert.deepEqual([s.fu, s.fv], [want[rot].fu, want[rot].fv], `turn ${rot} faces the desk`)
+    // Three quarters of a cell ahead is a cell the desk blocks; a quarter of a cell to either side is one of the two
+    // seat cells, so the station is on the edge between them, in the middle of the seat row.
+    const at = (du: number, dv: number) => { const cell = cellAt(s.u + du * CELL, s.v + dv * CELL); return cell ? cellIndex(cell.c, cell.r) : -1 }
+    const { blocked, seat } = pieceCells(p)
+    assert.ok(blocked.includes(at(s.fu * 0.75, s.fv * 0.75)), `turn ${rot}: the desk ahead`)
+    const left = at(s.fv * 0.25, -s.fu * 0.25), right = at(-s.fv * 0.25, s.fu * 0.25)
+    assert.ok(left !== right && seat.includes(left) && seat.includes(right), `turn ${rot}: on the edge between the two seat cells`)
+  }
+})
+
+test('stationOf is null for lines without a station and for malformed pieces; stationsIn lists workstations in reading order', () => {
+  for (const id of SHAPE_IDS) if (id !== 168) assert.equal(stationOf(P(id, 10, 20)), null, `line ${id}`)
+  assert.equal(stationOf(P(168, 10, 20, 4)), null)
+  assert.equal(stationOf(P(168, 1.5, 20)), null)
+  assert.equal(stationOf(P(168, 10, 20, -1)), null)
+  assert.equal(stationOf(P(999, 10, 20)), null)
+  const list = [P(164, 2, 16), P(168, 10, 20), P(168, 4, 24), P(168, 4, 20)]
+  assert.deepEqual(stationsIn(list), [P(168, 4, 20), P(168, 10, 20), P(168, 4, 24)], 'back row first, then left to right')
+  assert.deepEqual(stationsIn(HOME_STAGING[6]).map((p) => p.c), [4, 7], 'the sky-mansion\'s two')
 })

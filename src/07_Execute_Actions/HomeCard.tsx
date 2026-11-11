@@ -13,10 +13,11 @@
  *
  * For the owner it is where the home is furnished, unless the engine says why not yet: in a network room, which replays
  * the walk and knows nothing of the furniture, the deed view says so (leaving the home or putting on a headset closes
- * the card: App). The furnishing view has four tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
+ * the card: App). The furnishing view has five tabs: the furniture (all nine of Lintel & Lumen's lines, each owned one
  * with how many of its cap stand here, each other one with its price and Order, through the same shopkeeper's gate, or
  * the gate's reason; and the pieces the saved layout keeps that are not placed here, with Clear), the floor and the
- * walls (free finishes), and Rest (a rest at home, in the host's words). Under them is the home's floor plan, 32 by 32
+ * walls (free finishes), Rest (a rest at home, in the host's words), and Staff (the player's own agents posted at the
+ * workstations here, through the host). Under them is the home's floor plan, 32 by 32
  * cells (02_Define_The_Rules/homeGrid.ts): the back at the top and the doorway at the bottom under an arrow, only this
  * home's own rows (a smaller home a shorter plan), the apron in front of the doorway hatched, every piece in its
  * finish's colour with its initial, a workstation's seat dotted, the people standing in the home as dots, and the
@@ -48,7 +49,7 @@ import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
 import { TOUCH } from '../04_Connect_Hardware/touchLayout.ts'
 import { finishOf, freshHomes, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import {
-  FocusOrigin, REST_TAB, STICK, TABS, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
+  FocusOrigin, REST_TAB, STAFF_TAB, STICK, TABS, Visit, clamp, nameOf, placeWords, stickStep, verdictWords, type Act, type FurnishHooks, type StickState,
 } from './furnishVisit.ts'
 import { CITY_LINES, type Draft } from './homeView.ts'
 import { padEdges, padsFor, readPads, usePadNav } from './padNav.ts'
@@ -158,6 +159,7 @@ const GLASS_COLOUR = '#bfdbfe'
 const PLAN = Object.freeze({
   floor: '#f1f5f9', floorDark: '#1e293b', line: 'rgba(15,23,42,0.08)', lineDark: 'rgba(255,255,255,0.08)',
   hatch: '#94a3b8', person: '#f59e0b', cursor: '#0ea5e9', ok: '#16a34a', bad: '#dc2626', door: '#0d9488',
+  staff: '#7c3aed',
 })
 /** The band under the plan where the doorway's arrow stands, px. */
 const DOOR_BAND = 14
@@ -174,8 +176,8 @@ const PAD_ACT: Readonly<Record<number, Act>> = Object.freeze({
 
 /**
  * The furnishing view's action for a key press: the arrows or W A S D move the cursor (Shift: four cells), Enter or
- * Space places (or picks up; in the Rest tab, rests), R turns, Delete, Backspace or X removes, Q and E change the piece,
- * 1 2 3 4 the tab, Z or Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish
+ * Space places (or picks up; in the Rest tab, rests; in the Staff tab, posts), R turns, Delete, Backspace or X removes
+ * (in the Staff tab, stands down), Q and E change the piece (in the Staff tab, the agent), 1 to 5 the tab, Z or Ctrl+Z undoes, C turns the camera. In the Floor and Walls tabs ← and → choose the finish
  * instead. Never H (the HUD's) nor ` (the console's), never Esc or B (the card's close listener has those), and no
  * chord but Ctrl (or Cmd) + Z.
  * Null: not this view's key, so the page gets it.
@@ -201,6 +203,7 @@ function keyAct(e: KeyboardEvent, tab: number): Act | null {
     case 'Digit2': return { tab: 1 }
     case 'Digit3': return { tab: 2 }
     case 'Digit4': return { tab: 3 }
+    case 'Digit5': return { tab: 4 }
     case 'KeyC': return 'view'
     default: return null
   }
@@ -239,6 +242,9 @@ interface PlanScene {
   cursor: { c: number; r: number }
   blocked: Uint8Array
   dark: boolean
+  /** The agents posted here (Visit.staffMarks), and the workstation under the cursor in the Staff tab. */
+  staff: readonly { x: number; y: number; initial: string }[]
+  seat: Piece | null
 }
 
 /** Fills piece `p`'s cells: those its solid blocks in `colour`, the walkable rest fainter, a seat dotted, and its initial. */
@@ -307,6 +313,16 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     ctx.arc(x * s, y * s, Math.max(2.5, s * 0.32), 0, Math.PI * 2)
     ctx.fill()
   }
+  // The agents posted here: a violet disc with their initial at the station.
+  ctx.font = `700 ${Math.max(8, Math.floor(s * 0.8))}px system-ui, sans-serif`
+  for (const m of o.staff) {
+    ctx.fillStyle = PLAN.staff
+    ctx.beginPath()
+    ctx.arc(m.x * s, m.y * s, Math.max(4, s * 0.55), 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(m.initial, m.x * s, m.y * s)
+  }
   // The piece in hand where it would go, and the cursor round its footprint (one cell with nothing in hand).
   const colour = o.hand === null ? PLAN.cursor : o.ok ? PLAN.ok : PLAN.bad
   if (o.hand) {
@@ -314,7 +330,7 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     drawPiece(ctx, o.hand, s, colour, o.dark)
     ctx.globalAlpha = 1
   }
-  const f = (o.hand && footprint(o.hand)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }
+  const f = (o.hand && footprint(o.hand)) ?? (o.seat && footprint(o.seat)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }
   ctx.strokeStyle = colour
   ctx.lineWidth = 2
   ctx.strokeRect(f.c * s + 1, f.r * s + 1, f.cols * s - 2, f.rows * s - 2)
@@ -371,6 +387,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
   const fit = visit.fit()
   const hand = visit.hand()
   const verdict = visit.verdict(fit)
+  const staffTab = visit.tab === STAFF_TAB, seat = staffTab ? visit.station(fit) : null
   const under = hand ? null : visit.pieceAt(fit.placed, visit.cursor.c, visit.cursor.r)
   const finish = finishOf(visit.record, home)
   const counts = new Map<number, number>()
@@ -379,7 +396,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
   const cell = Math.max(9, Math.floor(Math.min(width - 40, 384) / GRID))
   const where = placeWords(home, visit.cursor)
   const reason = visit.said
-    || (hand && verdict ? `${nameOf(hand.id)} at ${where}: ${verdictWords(verdict, hand.id)}`
+    || (staffTab ? visit.staffLine() : hand && verdict ? `${nameOf(hand.id)} at ${where}: ${verdictWords(verdict, hand.id)}`
       : under ? `${nameOf(under.id)} at ${where}: Place picks it up, Remove takes it out`
         : `Nothing in hand at ${where}: choose a piece in the strip`)
   const { c, r } = visit.cursor
@@ -530,10 +547,12 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
     }
   }, [visit])
   useEffect(() => {
-    drawPlan(planRef.current, { home, cell, placed: fit.placed, hand, ok, cursor: { c, r }, blocked: visit.blocked, dark })
+    drawPlan(planRef.current, { home, cell, placed: fit.placed, hand, ok, cursor: { c, r }, blocked: visit.blocked, dark, staff: visit.staffMarks(), seat: seat?.p ?? null })
   })
 
   const restId = `home-rest-${home}`
+  const staffId = `home-staff-${home}`
+  const inHandName = visit.inHand()
   const swatch = (colour: string) => <span aria-hidden="true" className={`inline-block h-5 w-5 shrink-0 rounded-full border ${t.rule}`} style={{ background: colour }} />
   const undoOff = visit.undoSteps.length === 0
   return (
@@ -548,7 +567,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         data-placed={fit.placed.length}
         data-view={view}
       >
-        <div role="tablist" aria-label="Furnish or rest" className="mt-2 flex flex-wrap" style={GAP}>
+        <div role="tablist" aria-label="Furnish, rest or staff" className="mt-2 flex flex-wrap" style={GAP}>
           {TABS.map((name, i) => (
             <button
               key={name}
@@ -640,6 +659,28 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
           </div>
         )}
 
+        {staffTab && (
+          <div id={staffId} className="mt-3" data-staff>
+            <div role="group" className="flex overflow-x-auto pb-1" style={GAP} aria-label="Your agents" data-agents>
+              {visit.staffAgents().map((a) => (
+                <button
+                  key={a.name}
+                  type="button"
+                  onClick={() => visit.run({ agent: a.name })}
+                  aria-pressed={inHandName === a.name}
+                  aria-label={`${a.name}: ${a.post ? 'posted' : 'free'}${a.out ? ', out with you' : ''}`}
+                  className={`${BUTTON} shrink-0 border px-3 ${inHandName === a.name ? t.pillOn : t.pill}`}
+                  data-action="agent"
+                  data-touch
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
+            <p className={`mt-2 text-[12px] leading-snug ${t.muted}`}>Posted agents stand there between visits, and step away while out with you.</p>
+          </div>
+        )}
+
         {fit.stored.length > 0 && (
           <div className={`mt-3 flex flex-wrap items-center rounded-2xl border px-3 py-2 ${t.rule}`} style={GAP} data-stored={fit.stored.length}>
             <span className="min-w-0 flex-1 text-[12px] leading-snug">
@@ -661,15 +702,15 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
       </div>
 
       <div role="toolbar" aria-label="Furnishing" className={`flex flex-wrap items-center border-t px-5 pt-3 ${t.rule}`} style={GAP}>
-        <button type="button" onClick={() => visit.run('prev')} aria-label={visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
-        <button type="button" onClick={() => visit.run('next')} aria-label={visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
+        <button type="button" onClick={() => visit.run('prev')} aria-label={staffTab ? 'Previous agent (Q)' : visit.tab === 1 || visit.tab === 2 ? 'Previous finish (Q)' : 'Previous piece (Q)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="prev" data-touch>◀</button>
+        <button type="button" onClick={() => visit.run('next')} aria-label={staffTab ? 'Next agent (E)' : visit.tab === 1 || visit.tab === 2 ? 'Next finish (E)' : 'Next piece (E)'} className={`${BUTTON} border ${t.pill}`} style={TARGET} data-action="next" data-touch>▶</button>
         <button type="button" onClick={() => visit.run('rotate')} aria-label="Rotate the piece (R)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="rotate" data-touch>Rotate</button>
         {visit.tab === REST_TAB ? (
           <button type="button" onClick={() => visit.run('place')} aria-label="Rest here (Enter)" aria-describedby={restId} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="rest" data-touch>Rest</button>
         ) : (
-          <button type="button" onClick={() => visit.run('place')} aria-label={hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>Place</button>
+          <button type="button" onClick={() => visit.run('place')} aria-label={staffTab ? `Post ${inHandName ?? 'an agent'} here (Enter)` : hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} aria-describedby={staffTab ? staffId : undefined} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>{staffTab ? 'Post' : 'Place'}</button>
         )}
-        <button type="button" onClick={() => visit.run('remove')} aria-label="Remove the piece (Delete)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>Remove</button>
+        <button type="button" onClick={() => visit.run('remove')} aria-label={staffTab ? 'Stand down (Delete)' : 'Remove the piece (Delete)'} className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>
         <button type="button" onClick={() => visit.run('undo')} disabled={undoOff} aria-label="Undo (Z)" className={`${BUTTON} border px-3 ${undoOff ? `${t.off} cursor-not-allowed` : t.pill}`} style={TARGET} data-action="undo" data-touch>Undo</button>
         <button type="button" onClick={() => visit.run('view')} aria-label="Turn the camera (C)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="view" data-touch>View</button>
         <button type="button" onClick={onClose} aria-label="Done (Esc)" className={`${BUTTON} px-4 font-semibold ${t.primary}`} style={TARGET} data-action="done" data-touch>Done</button>

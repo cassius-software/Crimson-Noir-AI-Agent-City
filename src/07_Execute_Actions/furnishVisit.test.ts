@@ -8,7 +8,9 @@
  * nothing, and one on a piece removes that piece; the left stick moves once, again after 300 ms and then every 120 ms,
  * and a diagonal held with the stick's own noise moves no faster; Enter and Space press a button reached with Tab, and
  * place over one a mouse left focused (homeCard.test.ts holds the card to wiring these, and the browser smoke test
- * clicks View with a real mouse and presses Enter); and in the Rest tab Place rests through the host and edits nothing.
+ * clicks View with a real mouse and presses Enter); in the Rest tab Place rests through the host and edits nothing; and
+ * in the Staff tab Place posts the chosen agent at the workstation under the cursor through the host, Remove stands them
+ * down, Q and E choose the agent, and none of it is a furniture edit or on Undo.
  * What breaks if it is removed? Closing the card could leave a different layout from the one the owner had, a right
  * click on a wall could remove some other piece, a diagonal could race the cursor across the room, and Enter after a
  * click could press Remove again instead of placing, with nothing to say so but a person furnishing.
@@ -18,14 +20,14 @@ import { test } from 'node:test'
 import { DEPTH, GRID, HOME_PIECES } from '../02_Define_The_Rules/homeGrid.ts'
 import { canPlace, fitLayout, type Piece } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import { FocusOrigin, REST_TAB, STICK, TABS, Visit, stickStep, type FurnishHooks, type RestHooks, type StickState } from './furnishVisit.ts'
+import { FocusOrigin, REST_TAB, STAFF_TAB, STICK, TABS, Visit, stickStep, type FurnishHooks, type RestHooks, type StaffAgent, type StaffHooks, type StickState } from './furnishVisit.ts'
 import type { Shopkeeper } from './shopkeeper.ts'
 import { GATE } from './storeCatalog.ts'
 
 const BOOKCASE = 164, SOFA = 163, TABLE = 162
 
-/** A visit to home `home` over `record`, with the lines in `owned` owned (and the host's rest, if any); what it hands the host is kept in `sent`. */
-function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest?: RestHooks) {
+/** A visit to home `home` over `record`, with the lines in `owned` owned (and the host's rest and staff, if any); what it hands the host is kept in `sent`. */
+function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest?: RestHooks, staff?: StaffHooks) {
   const lines = new Set(owned)
   const sent: HomeRecord[] = []
   const drafts: unknown[] = []
@@ -35,7 +37,7 @@ function visitOf(home: number, record: HomeRecord, owned: Iterable<number>, rest
   } as unknown as Shopkeeper
   const hooks: FurnishHooks = {
     refusal: () => null, begin: () => {}, setDraft: (d) => { drafts.push(d) }, blocked: () => new Uint8Array(GRID * GRID),
-    pickCell: () => null, canvas: () => null, rest,
+    pickCell: () => null, canvas: () => null, rest, staff,
   }
   const v = new Visit(home, record, { keeper, onRecord: (r) => sent.push(r), hooks, onClose: () => {}, changed: () => {} })
   const owns = (id: number) => lines.has(id)
@@ -219,8 +221,8 @@ test('Enter and Space press a button reached with Tab, and stay Place over a but
   assert.equal(o.byKeys(done), true, 'Tab during a press')
 })
 
-test('the Rest tab: { tab: 3 } and tabPrev from Furniture reach it; Place there asks hooks.rest.take with the home and says its words, committing no edit; with no rest hook it says resting is not offered; in the Furniture tab Place still places', () => {
-  assert.deepEqual([...TABS], ['Furniture', 'Floor', 'Walls', 'Rest'])
+test('the Rest tab: { tab: 3 } and tabPrev twice from Furniture reach it; Place there asks hooks.rest.take with the home and says its words, committing no edit; with no rest hook it says resting is not offered; in the Furniture tab Place still places', () => {
+  assert.deepEqual([...TABS], ['Furniture', 'Floor', 'Walls', 'Rest', 'Staff'])
   assert.equal(REST_TAB, 3)
   const home = 1
   const asked: number[] = []
@@ -231,7 +233,9 @@ test('the Rest tab: { tab: 3 } and tabPrev from Furniture reach it; Place there 
   const { v, sent, drawn } = visitOf(home, freshHomes(), [BOOKCASE], rest)
   assert.equal(v.tab, 0)
   v.run('tabPrev')
-  assert.equal(v.tab, REST_TAB, 'the triggers wrap round to it')
+  assert.equal(v.tab, STAFF_TAB, 'the triggers wrap round to Staff')
+  v.run('tabPrev')
+  assert.equal(v.tab, REST_TAB, 'and back to Rest')
   v.run({ tab: 0 })
   v.run({ tab: 3 })
   assert.equal(v.tab, REST_TAB)
@@ -243,6 +247,8 @@ test('the Rest tab: { tab: 3 } and tabPrev from Furniture reach it; Place there 
   assert.equal(v.undoSteps.length, 0, 'nothing for Undo')
   assert.deepEqual(v.cursor, cursor)
   assert.equal(v.lifted, null)
+  v.run('tabNext')
+  assert.equal(v.tab, STAFF_TAB, 'on to Staff')
   v.run('tabNext')
   assert.equal(v.tab, 0, 'and on round to Furniture')
   // In the Furniture tab Place places the bookcase in hand, and never asks the host to rest.
@@ -257,4 +263,180 @@ test('the Rest tab: { tab: 3 } and tabPrev from Furniture reach it; Place there 
   bare.v.run('place')
   assert.equal(bare.v.said, 'Resting is not offered here')
   assert.equal(bare.sent.length, 0)
+})
+
+const WORKSTATION = 168
+
+/** A host's staffing (App's, over the roster and staffStore.ts) in memory: who is posted where, and every call. */
+function staffOf(names: readonly string[], out: readonly string[] = []) {
+  const posts = new Map<string, { home: number; c: number; r: number }>()
+  const calls: unknown[][] = []
+  let refuse: string | null = null
+  const hooks: StaffHooks = {
+    agents: (): StaffAgent[] => names.map((name) => ({ name, out: out.includes(name), post: posts.get(name) ?? null })),
+    post: (home, c, r, name) => {
+      calls.push(['post', home, c, r, name])
+      if (refuse) return refuse
+      for (const [n, p] of posts) if (p.home === home && p.c === c && p.r === r) posts.delete(n)
+      posts.set(name, { home, c, r })
+      return null
+    },
+    standDown: (home, c, r) => {
+      calls.push(['standDown', home, c, r])
+      if (refuse) return refuse
+      for (const [n, p] of posts) if (p.home === home && p.c === c && p.r === r) posts.delete(n)
+      return null
+    },
+  }
+  return { hooks, posts, calls, refuse: (why: string | null) => { refuse = why } }
+}
+
+/** The Brownstone (home 1) with two workstations side by side on row 20 and a bookcase, every line owned. */
+function staffedHome(names: readonly string[], out: readonly string[] = []) {
+  const home = 1
+  const record = withHome(freshHomes(), home, layoutOf(1, 1, [{ id: BOOKCASE, c: 2, r: 16, rot: 0 }, { id: WORKSTATION, c: 10, r: 20, rot: 0 }, { id: WORKSTATION, c: 4, r: 20, rot: 0 }], []))
+  const staff = staffOf(names, out)
+  const visit = visitOf(home, record, [BOOKCASE, WORKSTATION], undefined, staff.hooks)
+  return { ...visit, staff, home }
+}
+
+test('the Staff tab: { tab: 4 } and tabPrev from Furniture reach it; Place posts the chosen agent at the workstation under the cursor through hooks.staff and says so; no furniture edit, nothing on Undo, nothing in hand', () => {
+  assert.equal(STAFF_TAB, 4)
+  assert.equal(TABS[STAFF_TAB], 'Staff')
+  const { v, sent, staff, home } = staffedHome(['Mara', 'Theo'])
+  v.run('tabPrev')
+  assert.equal(v.tab, STAFF_TAB)
+  v.run({ tab: 0 })
+  v.run({ tab: STAFF_TAB })
+  assert.equal(v.hand(), null, 'no piece in hand, so no ghost and no verdict')
+  assert.equal(v.verdict(), null)
+  assert.deepEqual(v.stations().map((p) => p.c), [4, 10], 'numbered in reading order')
+  v.moveTo(11, 21)
+  assert.equal(v.station()?.n, 2, 'any cell of the workstation counts')
+  v.run('place')
+  assert.deepEqual(staff.calls, [['post', home, 10, 20, 'Mara']], 'the first agent not posted, at the workstation\'s own cell')
+  assert.equal(v.said, 'Mara is at workstation 2 now')
+  assert.equal(sent.length, 0, 'no furniture edit')
+  assert.equal(v.undoSteps.length, 0, 'nothing for Undo')
+  // A press on the cursor's cell posts too (a second tap on the plan); the next agent not posted is now in hand.
+  v.moveTo(4, 20)
+  assert.equal(v.inHand(), 'Theo')
+  v.run({ press: { c: 4, r: 20 } })
+  assert.equal(v.said, 'Theo is at workstation 1 now')
+  assert.deepEqual(v.staffMarks().map((m) => m.initial), ['T', 'M'], 'both marked on the plan')
+})
+
+test('Q and E choose the agent, { agent } chooses by name; Remove stands down; Rotate turns nothing in the Staff tab', () => {
+  const { v, staff, home } = staffedHome(['Mara', 'Theo', 'Ines'])
+  v.run({ tab: STAFF_TAB })
+  assert.equal(v.inHand(), 'Mara')
+  v.run('next')
+  assert.equal(v.inHand(), 'Theo')
+  v.run('prev')
+  v.run('prev')
+  assert.equal(v.inHand(), 'Ines', 'round from the first to the last')
+  v.run({ agent: 'Theo' })
+  assert.equal(v.inHand(), 'Theo')
+  v.moveTo(10, 20)
+  v.run('place')
+  assert.equal(staff.posts.get('Theo')?.c, 10)
+  const rot = v.rot
+  v.run('rotate')
+  assert.equal(v.rot, rot, 'workstations turn in the Furniture tab')
+  v.run('remove')
+  assert.deepEqual(staff.calls.at(-1), ['standDown', home, 10, 20])
+  assert.equal(v.said, 'Theo left workstation 2')
+  assert.equal(staff.posts.has('Theo'), false)
+  // A right press stands down where it lands, as Remove does.
+  v.run({ press: { c: 10, r: 20 } })
+  v.run({ removeAt: { c: 10, r: 21 } })
+  assert.equal(v.said, 'Theo left workstation 2')
+})
+
+test('what a post says: whoever stood there is freed, an agent out with the player stays away, already there, nobody there, the host\'s refusal word for word', () => {
+  const { v, staff } = staffedHome(['Mara', 'Theo'], ['Theo'])
+  v.run({ tab: STAFF_TAB })
+  v.moveTo(10, 20)
+  v.run('place')
+  assert.equal(v.said, 'Mara is at workstation 2 now')
+  assert.equal(v.inHand(), 'Theo', 'with none chosen, the next agent not posted is in hand')
+  v.run({ agent: 'Mara' })
+  v.run('place')
+  assert.equal(v.said, 'Mara is already at workstation 2')
+  v.run({ agent: 'Theo' })
+  v.run('place')
+  assert.equal(v.said, 'Theo is at workstation 2 now; Mara is free; out with you until you part')
+  v.moveTo(4, 20)
+  v.run('remove')
+  assert.equal(v.said, 'Nobody is at workstation 1')
+  staff.refuse('Furnishing happens inside the home: walk in first')
+  v.run('place')
+  assert.equal(v.said, 'Furnishing happens inside the home: walk in first', 'the host\'s words, as they come')
+  v.moveTo(10, 20)
+  v.run('remove')
+  assert.equal(v.said, 'Furnishing happens inside the home: walk in first')
+  assert.equal(staff.posts.get('Theo')?.c, 10, 'refused: nothing changed')
+  // Off any workstation, and with no agents at all.
+  v.moveTo(20, 24)
+  v.run('place')
+  assert.equal(v.said, 'Nothing to staff at column 21, row 9: move onto a workstation')
+  const lone = staffedHome([])
+  lone.v.run({ tab: STAFF_TAB })
+  lone.v.moveTo(10, 20)
+  lone.v.run('place')
+  assert.match(lone.v.said, /^No agents of your own yet: name one in the wardrobe's Agents tab/)
+  assert.equal(lone.staff.calls.length, 0)
+})
+
+test('the reason line in the Staff tab comes from staffLine; picking up a staffed workstation in the Furniture tab is a furniture edit as before', () => {
+  const { v, staff, sent } = staffedHome(['Mara', 'Theo'])
+  v.run({ tab: STAFF_TAB })
+  v.moveTo(10, 21)
+  assert.equal(v.staffLine(), 'Workstation 2 at column 11, row 5: free; Post puts Mara here')
+  v.run('place')
+  assert.equal(v.staffLine(), 'Workstation 2 at column 11, row 5: Mara is here; Post puts Theo here')
+  v.run({ agent: 'Mara' })
+  assert.equal(v.staffLine(), 'Workstation 2 at column 11, row 5: Mara is here; Stand down frees it')
+  v.moveTo(20, 24)
+  assert.equal(v.staffLine(), 'Nothing to staff at column 21, row 9: move onto a workstation')
+  // In the Furniture tab the workstation picks up as any piece; the post stays with its cell (the host keeps it).
+  v.run({ tab: 0 })
+  v.moveTo(10, 20)
+  const before = sent.length
+  v.run('place')
+  assert.equal(sent.length, before + 1, 'picked up: a furniture edit')
+  assert.match(v.said, /^Workstation picked up: Place puts it down, Undo puts it back$/)
+  assert.equal(staff.posts.get('Mara')?.c, 10, 'the post kept')
+  v.run('undo')
+  assert.equal(v.stations().length, 2, 'back where it stood')
+  // A home without a workstation says where to get one.
+  const bare = visitOf(1, freshHomes(), [WORKSTATION], undefined, staffOf(['Mara']).hooks)
+  bare.v.run({ tab: STAFF_TAB })
+  assert.equal(bare.v.staffLine(), 'No workstation stands here yet: place one in the Furniture tab')
+})
+
+test('without staff hooks the Staff tab says staffing is not offered and changes nothing', () => {
+  const home = 1
+  const record = withHome(freshHomes(), home, layoutOf(1, 1, [{ id: WORKSTATION, c: 10, r: 20, rot: 0 }], []))
+  const { v, sent } = visitOf(home, record, [WORKSTATION])
+  v.run({ tab: STAFF_TAB })
+  v.moveTo(10, 20)
+  assert.equal(v.staffLine(), 'Staffing is not offered here')
+  v.run('place')
+  assert.equal(v.said, 'Staffing is not offered here')
+  v.run('remove')
+  assert.equal(v.said, 'Staffing is not offered here')
+  assert.equal(sent.length, 0)
+  assert.deepEqual(v.staffAgents(), [])
+  assert.equal(v.inHand(), null)
+  v.run('next')
+  assert.equal(v.inHand(), null, 'no agent to step to')
+})
+
+test('staffMarks puts each posted agent\'s initial at the workstation\'s station, in cells', () => {
+  const { v } = staffedHome(['mara', 'Theo'])
+  v.run({ tab: STAFF_TAB })
+  v.moveTo(10, 20)
+  v.run('place')
+  assert.deepEqual(v.staffMarks(), [{ x: 11, y: 21.5, initial: 'M' }], 'the edge between the two seat cells, in the middle of the seat row')
 })
