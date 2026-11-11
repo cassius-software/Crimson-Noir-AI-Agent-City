@@ -71,7 +71,8 @@ export interface HardwareReport {
   /** The governor's automatic range and where the profile started it. */
   tiers: { min: number; max: number; start: number; startLabel: string }
   /** Lanes (pedestrians) the realm simulates, the class's default for this machine, and the adapter's ceiling. */
-  lanes: { simulated: number; default: number; ceiling: number }
+  /** `kernel`: the crowd kernel the worker runs (simProtocol.ts SimMeta.crowdKernel); absent reads as the full one. */
+  lanes: { simulated: number; default: number; ceiling: number; kernel?: 'full' | 'narrow' | 'lite' | 'none' }
   /** Frame times of the governor's window, ms; n = 0 before the first frame. */
   frames: { p50: number; p95: number; p99: number; n: number; windowMs: number }
   host: 'browser' | 'native'

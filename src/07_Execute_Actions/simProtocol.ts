@@ -216,6 +216,12 @@ export interface SimMeta {
    * region's that came in SimInit.workplaces, none in a surveyed region or without a crowd. A read-out for the page.
    */
   rooms: number
+  /**
+   * The crowd kernel the worker's sensor runs (03_Spawn_Agents/crowdCompute.ts CrowdKernel): 'full'; 'narrow' (the same
+   * at half the workgroup) or 'lite' (the light one) where this GPU's own shader compiler refused the full simulate pass
+   * (crowdSim.ts); 'none' without a crowd.
+   */
+  crowdKernel: 'full' | 'narrow' | 'lite' | 'none'
 }
 
 /**

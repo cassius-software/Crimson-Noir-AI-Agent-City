@@ -1619,7 +1619,8 @@ test('the workday\'s dice: a share of the crowd that gives each station about WO
 
 test('the shader carries the same numbers: ROOM_*, WORK_* and the workday in crowd.wgsl', async () => {
   const { readFileSync } = await import('node:fs')
-  const src = readFileSync(new URL('../03_Spawn_Agents/crowd.wgsl', import.meta.url), 'utf8')
+  // The full kernel: crowd.wgsl and its way file (crowdWay.wgsl: roomWay and the last stretch, mirrored below too).
+  const src = ['crowd.wgsl', 'crowdWay.wgsl'].map((f) => readFileSync(new URL(`../03_Spawn_Agents/${f}`, import.meta.url), 'utf8')).join('\n')
   for (const name of ['fn containRoom(', 'fn contain(', 'fn roomOf(', 'fn workerSlot(', 'fn onDuty(', 'fn towardCorner(', 'fn commuteCorner(', 'fn targetCorner(', 'fn doorFront(', 'rooms: array<Room, ROOM_SLOTS>', 'routes: array<vec4u, ROUTE_VEC4S>']) {
     assert.ok(src.includes(name), name)
   }

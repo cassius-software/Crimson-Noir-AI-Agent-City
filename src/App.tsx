@@ -644,7 +644,7 @@ function App() {
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={mentored} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
 }
 
 /**
@@ -698,9 +698,9 @@ interface SpeakerLink { sound(): boolean; source: { voice: SpeechVoice; out: Con
 /** The most "Walk for me" keeps walking for, wall-clock ms (the stage's three metres end it long before on any ordinary frame). */
 const SHOW_WALK_MS = 60_000
 
-function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess }: {
+function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {
   options: Options; plan: MapPlan; mentored: boolean; walk: boolean; voice: Voice; speaker: ConciergeSpeaker; link: SpeakerLink
-  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void
+  access: AccessSettings; prefersMore: boolean; onAccess: (next: AccessSettings, whole?: boolean) => void; adapterHint?: string
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // The city's element (a model file dropped on it is kept, on a desktop) and the hidden file input the picker opens.
@@ -717,7 +717,8 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const [termOpen, setTermOpen] = useState(false)
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
-  const [adapter, setAdapter] = useState('')
+  // The adapter's line: the first visit's probe (adapterHint) until the engine's own device names it (onStage, Engine.create).
+  const [adapter, setAdapter] = useState(adapterHint)
   // Why the boot failed (whatever was thrown, words from bootFailure.ts classify), or null while nothing has.
   const [error, setError] = useState<{ cause: unknown } | null>(null)
   // What the boot is doing, for the veil's 'Still starting' line (bootFailure.ts BOOT_STAGE).
@@ -1232,7 +1233,13 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     }
     const onResize = () => engine?.resize()
 
-    const onStage = (st: keyof typeof BOOT_STAGE) => { if (!cancelled) setStage(BOOT_STAGE[st]) }
+    // The adapter's line comes with the stage that learnt it (engine.ts: once the page's device stands), so a card for a
+    // boot that fails after that names the GPU.
+    const onStage = (st: keyof typeof BOOT_STAGE, adapter?: string) => {
+      if (cancelled) return
+      setStage(BOOT_STAGE[st])
+      if (adapter) setAdapter(adapter)
+    }
     loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then(
       (e) => {
         if (cancelled) {

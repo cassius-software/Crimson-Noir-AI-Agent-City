@@ -1005,7 +1005,7 @@ export class Engine {
     this.setFurnishings(freshHomes(), 0, 0)
   }
 
-  static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage) => void = () => {}): Promise<Engine> {
+  static async create(canvas: HTMLCanvasElement, requested: EngineOptions, onStage: (stage: BootStage, adapter?: string) => void = () => {}): Promise<Engine> {
     onStage('gpu')
     // A Peak candidate's three writes GPU timestamps (governor.ts peakCandidate; the Peak rule's evidence, gpuSample):
     // decided from the adapter line before three is made, by the same profile the city takes below.
@@ -1021,7 +1021,9 @@ export class Engine {
       return requested.post && clampPlayers(requested.players) > 1 && msaaCandidate(h, profileDevice(h, requested.lite), requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
     }
     const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf, splitSamplesOf)
-    onStage('world')
+    // The adapter's line goes with the stage: a boot that fails after this (the physics worker's crowd, the shaders) can
+    // then name the GPU on its card, where before the card said "adapter unknown" until an engine stood.
+    onStage('world', gpu.adapterInfo)
     // A boot that fails partway lets go of what it took: the page's GPU device (releaseGpu) and the physics worker, so
     // the recovery card is not left over a device and a worker still running, and the worker's own later rejection is
     // never unhandled. A loss of the device while the city is built fails the boot as a graphics reset.
@@ -3279,7 +3281,7 @@ export class Engine {
       hardware: (): HardwareReport => ({
         class: this.hardware, profile: this.profile, adapter: this.adapter, limits: this.gpu.limits,
         tiers: { ...governor.range(), start: this.profile.startTier, startLabel: knobsOf(this.profile.startTier).label },
-        lanes: { simulated: this.options.agents, default: defaultLanes(this.profile, this.hardware, this.gpu.limits), ceiling: laneCeiling(this.gpu.limits) },
+        lanes: { simulated: this.options.agents, default: defaultLanes(this.profile, this.hardware, this.gpu.limits), ceiling: laneCeiling(this.gpu.limits), kernel: this.sim.meta.crowdKernel },
         frames: governor.percentiles(),
         host: this.options.host, cores: this.hints.cores, memoryGb: this.hints.memoryGb,
       }),

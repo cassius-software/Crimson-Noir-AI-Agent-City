@@ -14,6 +14,8 @@ import { KERNEL, SIGNAL, WALK_START, YIELD_SAVE } from '../02_Define_The_Rules/c
 import { cityWgsl, CITY_GEOMETRY, CITY_SIZE, type StreetGeometry } from '../01_Initialize_World/city.ts'
 import { cityStreetGrid, packStreets, spawnSegment, STREET_VEC4S, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import crowdSource from './crowd.wgsl?raw'
+import crowdWay from './crowdWay.wgsl?raw'
+import crowdWayLite from './crowdWayLite.wgsl?raw'
 import { MAX_CARS, type CrowdStepInput } from './crowdSensor.ts'
 import { ACTIVITY, INTERVIEW_DISTANCE, RECRUIT_SLOTS, SUMMON_ACCEPT, TETHER_PACE, TRAIL, type OperatorTrail } from './skills.ts'
 import { PHYSICS_LAYER, packGlobalState, type GlobalState } from '../01_Initialize_World/globalState.ts'
@@ -196,11 +198,12 @@ export function corridorReach(c: CarState): number {
   return Math.hypot(c.halfLength, half) + Math.min((2 * rhoK) / k, KERNEL.range * rhoK) + 0.01
 }
 
-function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<StreetGeometry>): string {
+function header(agentCount: number, flow: FlowPlacement, geometry: Readonly<StreetGeometry>, kernel: CrowdKernel): string {
   const f = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const quota = agentQuota(agentCount)
   return [
     cityWgsl(geometry),
+    `const AGENT_WG: u32 = ${CROWD_WORKGROUP[kernel]}u;`,
     `const GRID_CELL: f32 = ${f(GRID_CELL)};`,
     `const GRID_ORIGIN_X: f32 = ${f(geometry.originX + GRID_ORIGIN)};`,
     `const GRID_ORIGIN_Z: f32 = ${f(geometry.originZ + GRID_ORIGIN)};`,
@@ -278,11 +281,27 @@ export function geometryOf(streets: StreetGrid): StreetGeometry {
 }
 
 /**
- * The complete WGSL module: shared constants from the CPU (the flow grid's placement and the street geometry among
- * them), then crowd.wgsl. The page's cull compiles it with the city's geometry: the cull reads no street.
+ * The crowd kernels, in the order a worker tries them (crowdSim.ts create) when the full simulate pass is refused for
+ * anything but an error in the WGSL itself (a GPU's own shader compiler, as some phones' give the crowd; a pipeline rule):
+ * - 'full': crowd.wgsl with crowdWay.wgsl, the room and lot routing whole, the agent passes 128 invocations a workgroup;
+ * - 'narrow': the same module, the agent passes 64 a workgroup, for a GPU whose register file seats fewer threads of a
+ *   kernel this size than a workgroup of 128 asks for (a phone GPU's, where a workgroup must fit one core);
+ * - 'lite': crowdWayLite.wgsl in the way file's place, the routing the straight line (round the first piece in its
+ *   way by a corner), 64 a workgroup.
+ * Everything else, the First-Law sensing above all, is the same crowd.wgsl in all three.
  */
-export function crowdShader(agentCount: number, flow: FlowPlacement = NO_FLOW, geometry: Readonly<StreetGeometry> = CITY_GEOMETRY): string {
-  return header(agentCount, flow, geometry) + crowdSource
+export type CrowdKernel = 'full' | 'narrow' | 'lite'
+export const CROWD_KERNELS: readonly CrowdKernel[] = Object.freeze(['full', 'narrow', 'lite'])
+/** Invocations a workgroup of the agent passes (binAgents, spawn, simulate, cull), by kernel: the `AGENT_WG` the header declares. */
+export const CROWD_WORKGROUP: Readonly<Record<CrowdKernel, number>> = Object.freeze({ full: 128, narrow: 64, lite: 64 })
+
+/**
+ * The complete WGSL module: shared constants from the CPU (the flow grid's placement, the street geometry and the
+ * kernel's workgroup width among them), then crowd.wgsl, then the kernel's way file. The page's cull compiles it with
+ * the city's geometry and the full kernel: the cull reads no street, and no way.
+ */
+export function crowdShader(agentCount: number, flow: FlowPlacement = NO_FLOW, geometry: Readonly<StreetGeometry> = CITY_GEOMETRY, kernel: CrowdKernel = 'full'): string {
+  return header(agentCount, flow, geometry, kernel) + crowdSource + '\n' + (kernel === 'lite' ? crowdWayLite : crowdWay)
 }
 
 export type PassName = 'clearGrid' | 'binAgents' | 'spawn' | 'simulate' | 'cull'

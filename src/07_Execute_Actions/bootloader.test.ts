@@ -112,7 +112,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   assert.match(app, /const \[options\] = useState\(readOptions\)/, 'read once')
   // The console shell mounts before the onboarding or the city is even considered: nothing of either reaches it.
   assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell \/>/)
-  assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} mentored=\{mentored\} walk=\{walk\} voice=\{voice\} speaker=\{speaker\} link=\{link\} access=\{access\} prefersMore=\{prefersMore\} onAccess=\{onAccess\} \/>/)
+  assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} mentored=\{mentored\} walk=\{walk\} voice=\{voice\} speaker=\{speaker\} link=\{link\} access=\{access\} prefersMore=\{prefersMore\} onAccess=\{onAccess\} adapterHint=\{probe\?\.ok \? probe\.info : ''\} \/>/)
   const tty = between(app, 'function TtyShell() {', 'function App() {')
   assert.match(tty, /<Terminal bridge=\{TTY_BRIDGE\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
   assert.match(tty, /bg-black/)
@@ -123,7 +123,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the offline brid
   assert.match(reboot, /url\.searchParams\.delete\('boot'\)/)
   assert.match(reboot, /window\.location\.assign\(url\.toString\(\)\)/)
   // The engine's useEffect lives in the GUI shell, the only one that reads the canvas.
-  const gui = between(app, 'function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess }: {', 'export default App')
+  const gui = between(app, "function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {", 'export default App')
   assert.ok(gui.includes('Engine.create(canvas, { ...options, region }, onStage)'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
   assert.match(gui, /<Terminal ref=\{termRef\} bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} onLine=\{fw\.line\} \/>/)
