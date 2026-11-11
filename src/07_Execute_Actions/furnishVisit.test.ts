@@ -390,7 +390,7 @@ test('what a post says: whoever stood there is freed, an agent out with the play
   assert.equal(lone.staff.calls.length, 0)
 })
 
-test('the reason line in the Staff tab comes from staffLine; picking up a staffed workstation in the Furniture tab is a furniture edit as before', () => {
+test('the reason line in the Staff tab comes from staffLine; picking up a staffed workstation in the Furniture tab is a furniture edit as before, and says who waits for it', () => {
   const { v, staff, sent } = staffedHome(['Mara', 'Theo'])
   v.run({ tab: STAFF_TAB })
   v.moveTo(10, 21)
@@ -400,21 +400,73 @@ test('the reason line in the Staff tab comes from staffLine; picking up a staffe
   v.run({ agent: 'Mara' })
   assert.equal(v.staffLine(), 'Workstation 2 at column 11, row 5: Mara is here; Stand down frees it')
   v.moveTo(20, 24)
-  assert.equal(v.staffLine(), 'Nothing to staff at column 21, row 9: move onto a workstation')
-  // In the Furniture tab the workstation picks up as any piece; the post stays with its cell (the host keeps it).
+  assert.equal(v.staffLine(), 'Nothing to staff at column 21, row 9: move onto a workstation to post Mara')
+  // Off a workstation Q and E are still heard: the line names the agent chosen.
+  v.run('next')
+  assert.equal(v.said, '')
+  assert.equal(v.staffLine(), 'Nothing to staff at column 21, row 9: move onto a workstation to post Theo')
+  // In the Furniture tab the workstation picks up as any piece; the post stays with its cell (the host keeps it), and
+  // the line says who waits for it.
   v.run({ tab: 0 })
   v.moveTo(10, 20)
   const before = sent.length
   v.run('place')
   assert.equal(sent.length, before + 1, 'picked up: a furniture edit')
-  assert.match(v.said, /^Workstation picked up: Place puts it down, Undo puts it back$/)
+  assert.equal(v.said, 'Workstation picked up: Place puts it down, Undo puts it back; Mara waits until it is back in its place')
   assert.equal(staff.posts.get('Mara')?.c, 10, 'the post kept')
   v.run('undo')
   assert.equal(v.stations().length, 2, 'back where it stood')
-  // A home without a workstation says where to get one.
-  const bare = visitOf(1, freshHomes(), [WORKSTATION], undefined, staffOf(['Mara']).hooks)
+  // Nobody posted there: the line as for any piece.
+  v.moveTo(4, 20)
+  v.run('place')
+  assert.equal(v.said, 'Workstation picked up: Place puts it down, Undo puts it back')
+  v.run('undo')
+  // A home without a workstation says where to get one, and names the agent chosen; with no agents, just where.
+  const bare = visitOf(1, freshHomes(), [WORKSTATION], undefined, staffOf(['Mara', 'Theo']).hooks)
   bare.v.run({ tab: STAFF_TAB })
-  assert.equal(bare.v.staffLine(), 'No workstation stands here yet: place one in the Furniture tab')
+  assert.equal(bare.v.staffLine(), 'No workstation stands here yet: place one in the Furniture tab to post Mara')
+  bare.v.run('next')
+  assert.equal(bare.v.staffLine(), 'No workstation stands here yet: place one in the Furniture tab to post Theo')
+  const none = visitOf(1, freshHomes(), [WORKSTATION], undefined, staffOf([]).hooks)
+  none.v.run({ tab: STAFF_TAB })
+  assert.equal(none.v.staffLine(), 'No workstation stands here yet: place one in the Furniture tab')
+})
+
+test('in the Staff tab a press on any cell of the workstation under the cursor posts, and so does a tap on its row while pressed; a press elsewhere moves the cursor', () => {
+  const { v, staff, home } = staffedHome(['Mara', 'Theo'])
+  v.run({ tab: STAFF_TAB })
+  // A finger's first tap lands on one cell of workstation 2, the second on its neighbour: the second posts.
+  v.run({ press: { c: 11, r: 21 } })
+  assert.deepEqual(v.cursor, { c: 11, r: 21 })
+  assert.equal(staff.calls.length, 0, 'the first tap only moves the cursor')
+  v.run({ press: { c: 10, r: 21 } })
+  assert.deepEqual(staff.calls, [['post', home, 10, 20, 'Mara']])
+  assert.equal(v.said, 'Mara is at workstation 2 now')
+  assert.deepEqual(v.cursor, { c: 11, r: 21 }, 'the cursor stays')
+  // The row's tap is a press at the workstation's own cell: with the cursor on another of its cells (the row pressed),
+  // it posts the agent chosen.
+  v.run({ agent: 'Theo' })
+  assert.equal(v.station()?.n, 2)
+  v.run({ press: { c: 10, r: 20 } })
+  assert.deepEqual(staff.calls.at(-1), ['post', home, 10, 20, 'Theo'])
+  assert.equal(v.said, 'Theo is at workstation 2 now; Mara is free')
+  // A press on another workstation, or off any, only moves the cursor.
+  const n = staff.calls.length
+  v.run({ press: { c: 5, r: 21 } })
+  assert.deepEqual(v.cursor, { c: 5, r: 21 })
+  v.run({ press: { c: 20, r: 24 } })
+  assert.deepEqual(v.cursor, { c: 20, r: 24 })
+  assert.equal(staff.calls.length, n, 'nothing posted')
+  // Off any workstation, a press on the cursor's own cell says why not, as Place does.
+  v.run({ press: { c: 20, r: 24 } })
+  assert.match(v.said, /^Nothing to staff at column 21, row 9: move onto a workstation$/)
+  // In the Furniture tab a press on another cell of the piece under the cursor still moves the cursor.
+  v.run({ tab: 0 })
+  v.moveTo(10, 20)
+  const sent = v.undoSteps.length
+  v.run({ press: { c: 11, r: 21 } })
+  assert.deepEqual(v.cursor, { c: 11, r: 21 })
+  assert.equal(v.undoSteps.length, sent, 'nothing picked up')
 })
 
 test('without staff hooks the Staff tab says staffing is not offered and changes nothing', () => {
@@ -440,7 +492,17 @@ test('staffMarks puts each posted agent\'s initial at the workstation\'s station
   v.run({ tab: STAFF_TAB })
   v.moveTo(10, 20)
   v.run('place')
-  assert.deepEqual(v.staffMarks(), [{ x: 11, y: 21.5, initial: 'M' }], 'the edge between the two seat cells, in the middle of the seat row')
+  assert.deepEqual(v.staffMarks(), [{ x: 11, y: 21.5, initial: 'M', out: false }], 'the edge between the two seat cells, in the middle of the seat row')
+  // An agent out with the player is marked as out (the plan draws that disc faded).
+  const away = staffedHome(['Mara', 'Theo'], ['Theo'])
+  away.v.run({ tab: STAFF_TAB })
+  away.v.moveTo(4, 20)
+  away.v.run({ agent: 'Theo' })
+  away.v.run('place')
+  away.v.moveTo(10, 20)
+  away.v.run({ agent: 'Mara' })
+  away.v.run('place')
+  assert.deepEqual(away.v.staffMarks().map((m) => [m.initial, m.out]), [['T', true], ['M', false]])
 })
 
 test('the strip says where each agent is: Free, Workstation N here, another home\'s name, Workstation moved or put away, and out with you while hired', () => {

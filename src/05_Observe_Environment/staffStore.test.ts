@@ -4,20 +4,22 @@
 /**
  * Why does this file exist? It pins how the player's own agents stay posted at their homes' workstations between visits
  * (staffStore.ts): a record round-trips exactly; nothing stored, no storage, storage that throws, junk and another
- * version all read as nobody posted and never throw; each entry is checked on its own (a bad one dropped, the rest
- * kept), the first post for a name (any case) and for a workstation wins, and at most twelve are kept, the roster's
- * own limit; a post moves an agent, frees the workstation's agent and lets go of names no longer on the roster, while a
- * load never drops a well-formed post; every record is frozen; and every storage call sits inside a try.
+ * version all read as nobody posted and never throw, and a newer build's record is never written over; each entry is
+ * checked on its own (a bad one dropped, the rest kept), the first post for a name (any case) and for a workstation
+ * wins, and at most twelve are kept, the roster's own limit; a post moves an agent, frees the workstation's agent and
+ * lets go of names no longer on the roster, while a load never drops a well-formed post; a rename carries the post and
+ * a forget lets it go; every record is frozen; and every storage call sits inside a try.
  * What breaks if it is removed? A hand-edited or damaged entry could throw at boot or post a name the roster never
- * screened, two agents could share a workstation, or a save could be lost without the page knowing.
+ * screened, two agents could share a workstation, a newer build's posts could be lost to an older tab, a new agent
+ * could take over a forgotten one's workstation, or a save could be lost without the page knowing.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { ROSTER_MAX } from '../08_Swarm/roster.ts'
+import { ROSTER_MAX, Roster } from '../08_Swarm/roster.ts'
 import type { ProfileStore } from './profile.ts'
 import {
-  NO_STAFF, RAW_MAX, STAFF_KEY, STAFF_MAX, STAFF_VERSION, clearStaff, loadStaff, postAt, postOf, postTo, saveStaff, standDownAt, type StaffRecord,
+  NO_STAFF, RAW_MAX, STAFF_KEY, STAFF_MAX, STAFF_VERSION, carry, clearStaff, loadStaff, postAt, postOf, postTo, saveStaff, standDownAt, type StaffRecord,
 } from './staffStore.ts'
 
 function memory(): ProfileStore & { map: Map<string, string>; sets: number } {
@@ -29,13 +31,15 @@ const throwing: ProfileStore = { getItem: () => { throw new Error('denied') }, s
 /** A store holding `value` under the key. */
 const holding = (value: string) => { const m = memory(); m.map.set(STAFF_KEY, value); return m }
 const stored = (posts: unknown, v: unknown = 1) => JSON.stringify({ v, posts })
-const names = (rec: StaffRecord) => rec.map((p) => `${p.name}@${p.home}:${p.c},${p.r}`)
+/** The record a list of stored entries loads as. */
+const postsOf = (posts: unknown) => loadStaff(holding(stored(posts)))
+const names = (rec: StaffRecord) => rec.posts.map((p) => `${p.name}@${p.home}:${p.c},${p.r}`)
 
-test('loads nobody from nothing, from junk, from another version and from storage that throws', () => {
+test('loads nobody from nothing, from junk, from an older or malformed version and from storage that throws', () => {
   assert.equal(loadStaff(null), NO_STAFF, 'no storage')
   assert.equal(loadStaff(memory()), NO_STAFF, 'nothing saved')
   assert.equal(loadStaff(throwing), NO_STAFF, 'storage that throws')
-  for (const raw of ['', 'x'.repeat(RAW_MAX + 1), '{', '[]', '[["Mara",1,10,20]]', 'null', '7', '"text"', JSON.stringify({ v: 1 }), stored('Mara'), stored([['Mara', 1, 10, 20]], 2), stored([['Mara', 1, 10, 20]], 0), stored([['Mara', 1, 10, 20]], '1')]) {
+  for (const raw of ['', 'x'.repeat(RAW_MAX + 1), '{', '[]', '[["Mara",1,10,20]]', 'null', '7', '"text"', JSON.stringify({ v: 1 }), stored('Mara'), stored([['Mara', 1, 10, 20]], 0), stored([['Mara', 1, 10, 20]], '1'), stored([['Mara', 1, 10, 20]], '2')]) {
     assert.deepEqual(loadStaff(holding(raw)), NO_STAFF, `nobody from ${raw.slice(0, 40)}`)
   }
   assert.equal(STAFF_VERSION, 1)
@@ -54,7 +58,7 @@ test('a record round-trips exactly, and a save writes only what reads back the s
   // A record that would not load back the same (a name the store refuses) is never written; nor without storage, nor
   // when the store throws.
   const before = store.sets
-  assert.equal(saveStaff([{ name: 'Two words', home: 1, c: 2, r: 20 }], store), false)
+  assert.equal(saveStaff({ posts: [{ name: 'Two words', home: 1, c: 2, r: 20 }], newer: false }, store), false)
   assert.equal(store.sets, before, 'nothing written')
   assert.equal(saveStaff(rec, null), false)
   assert.equal(saveStaff(rec, throwing), false)
@@ -80,7 +84,7 @@ test('entries are checked one by one: a bad one is dropped, the rest kept; the f
   assert.equal(STAFF_MAX, ROSTER_MAX)
   const many = Array.from({ length: 15 }, (_, i) => [`Agent${i}`, i % 7, i, 30])
   const kept = loadStaff(holding(stored(many)))
-  assert.equal(kept.length, STAFF_MAX)
+  assert.equal(kept.posts.length, STAFF_MAX)
   assert.deepEqual(names(kept).at(-1), 'Agent11@4:11,30')
 })
 
@@ -108,11 +112,81 @@ test('a post moves an agent, frees the workstation\'s agent and lets go of names
   assert.deepEqual(names(standDownAt(rec, 3, 0, 0)), names(rec))
 })
 
+test('a newer build\'s record reads as nobody posted and is never written over; every change keeps that it was', () => {
+  for (const v of [2, 1.5, 99]) {
+    const store = holding(stored([['Mara', 1, 10, 20], ['Theo', 2, 4, 20]], v))
+    const raw = store.map.get(STAFF_KEY)
+    const rec = loadStaff(store)
+    assert.deepEqual(rec, { posts: [], newer: true }, `v ${v}`)
+    assert.ok(Object.isFrozen(rec) && Object.isFrozen(rec.posts))
+    // The first post or stand-down in this build: refused, nothing written, the newer posts kept.
+    const posted = postTo(rec, 'Ivy', 3, 2, 20, ['Ivy'])
+    assert.equal(posted.newer, true, 'postTo keeps newer')
+    assert.equal(standDownAt(posted, 3, 2, 20).newer, true, 'standDownAt keeps newer')
+    assert.equal(carry(posted, ['Ivy'], ['Iva'])?.newer, true, 'carry keeps newer')
+    assert.equal(saveStaff(posted, store), false)
+    assert.equal(saveStaff(standDownAt(posted, 3, 2, 20), store), false)
+    assert.equal(store.sets, 0, 'setItem never called')
+    assert.equal(store.map.get(STAFF_KEY), raw, 'the newer record stands')
+  }
+  // This build's own records are not newer.
+  assert.equal(NO_STAFF.newer, false)
+  assert.equal(postTo(NO_STAFF, 'Mara', 1, 10, 20, ['Mara']).newer, false)
+})
+
+test('carry follows a rename in place and lets a forgotten agent\'s post go; a hire, an add, a change of case or no change gives null', () => {
+  const roster = ['Mara', 'Theo', 'Ines']
+  const rec = postTo(postTo(NO_STAFF, 'Mara', 1, 10, 20, roster), 'Theo', 1, 4, 20, roster)
+  // Renamed in place (roster.ts keeps the record's place): the post follows the new name, nothing else moves.
+  const renamed = carry(rec, roster, ['Mira', 'Theo', 'Ines'])
+  assert.deepEqual(names(renamed!), ['Mira@1:10,20', 'Theo@1:4,20'])
+  // Forgotten (spliced out, the rest in order): that post goes, wherever the agent stood in the list.
+  assert.deepEqual(names(carry(rec, roster, ['Theo', 'Ines'])!), ['Theo@1:4,20'])
+  assert.deepEqual(names(carry(rec, roster, ['Mara', 'Ines'])!), ['Mara@1:10,20'])
+  // So a new agent given a forgotten agent's name starts free.
+  const forgot = carry(rec, roster, ['Theo', 'Ines'])!
+  assert.equal(postOf(forgot, 'Mara'), null)
+  assert.equal(carry(forgot, ['Theo', 'Ines'], ['Theo', 'Ines', 'Mara']), null, 'a new agent changes nothing')
+  // Nothing to write: no change, a hire (same names), an agent added, a change of case only, two changed at once, two
+  // gone at once, an agent with no post renamed or forgotten.
+  assert.equal(carry(rec, roster, roster), null)
+  assert.equal(carry(rec, roster, [...roster, 'Noor']), null)
+  assert.equal(carry(rec, roster, ['MARA', 'Theo', 'Ines']), null)
+  assert.equal(carry(rec, roster, ['Mira', 'Teo', 'Ines']), null)
+  assert.equal(carry(rec, roster, ['Ines']), null)
+  assert.equal(carry(rec, roster, ['Mara', 'Ines', 'Theo']), null, 'a reorder is not a forget')
+  assert.equal(carry(rec, roster, ['Mara', 'Theo', 'Ivy']), null, 'Ines had no post')
+  assert.equal(carry(rec, roster, ['Mara', 'Theo']), null, 'nor here')
+  // A stale post already under the new name gives way to the renamed agent's own.
+  const stale = postsOf([['Mira', 2, 4, 24], ['Mara', 1, 10, 20]])
+  assert.deepEqual(names(carry(stale, ['Mara'], ['Mira'])!), ['Mira@1:10,20'])
+  // Over the real roster, as App's effect runs it on each change (roster.ts keeps a renamed record's place and splices
+  // out a forgotten one): the rename keeps the post, the forget lets it go, and a new Mara starts free.
+  const book = new Roster(null)
+  book.add('Mara')
+  book.add('Theo')
+  let seen = book.list().map((a) => a.name)
+  let kept = postTo(NO_STAFF, 'Mara', 1, 10, 20, seen)
+  const change = (): StaffRecord | null => { const after = book.list().map((a) => a.name), next = carry(kept, seen, after); seen = after; if (next) kept = next; return next }
+  book.set('Mara', 'name', 'Mira')
+  assert.ok(change())
+  assert.deepEqual(names(kept), ['Mira@1:10,20'], 'renamed: still posted')
+  book.bind('Theo', 17)
+  assert.equal(change(), null, 'a hire changes nothing')
+  book.remove('Mira')
+  assert.ok(change())
+  book.add('Mara')
+  assert.equal(change(), null, 'a new agent changes nothing')
+  assert.equal(postOf(kept, 'Mara'), null, 'the new Mara is free')
+  assert.deepEqual(kept.posts, [])
+})
+
 test('every record is frozen, down to each post', () => {
   const rec = postTo(postTo(NO_STAFF, 'Mara', 1, 10, 20, ['Mara', 'Theo']), 'Theo', 1, 4, 20, ['Mara', 'Theo'])
-  for (const r of [NO_STAFF, rec, standDownAt(rec, 1, 4, 20), loadStaff(holding(stored([['Mara', 1, 10, 20]])))]) {
+  for (const r of [NO_STAFF, rec, standDownAt(rec, 1, 4, 20), carry(rec, ['Mara', 'Theo'], ['Mira', 'Theo'])!, carry(rec, ['Mara', 'Theo'], ['Theo'])!, loadStaff(holding(stored([['Mara', 1, 10, 20]])))]) {
     assert.ok(Object.isFrozen(r))
-    for (const p of r) assert.ok(Object.isFrozen(p))
+    assert.ok(Object.isFrozen(r.posts))
+    for (const p of r.posts) assert.ok(Object.isFrozen(p))
   }
 })
 

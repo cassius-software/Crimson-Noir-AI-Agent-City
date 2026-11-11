@@ -69,7 +69,7 @@ import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
 import { homePlaced } from './07_Execute_Actions/homeView.ts'
 import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/homeStore.ts'
-import { loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
+import { carry, loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
 import { loadProfile, seedFromName, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
 import { changeLook, describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
@@ -211,11 +211,14 @@ function restInputs(home: number, record: HomeRecord, keeper: Shopkeeper): { lev
 }
 
 /**
- * Why workstation (c, r) of home `home` cannot be staffed now: the engine's furnishing gate, or no workstation standing
- * there as the engine lists them (engine.homeSeats); null when it can.
+ * Why workstation (c, r) of home `home` cannot be staffed now: the engine's furnishing gate, a record a newer build saved
+ * (staffStore.ts never writes over it), or no workstation standing there as the engine lists them (engine.homeSeats);
+ * null when it can.
  */
-function staffRefusal(engine: Engine, home: number, c: number, r: number): string | null {
-  return engine.furnishRefusal(home) ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')
+function staffRefusal(engine: Engine, home: number, c: number, r: number, rec: StaffRecord): string | null {
+  return engine.furnishRefusal(home)
+    ?? (rec.newer ? 'Staff was saved by a newer version of the city: reload the page to post or stand down' : null)
+    ?? (engine.homeSeats.some((s) => s.home === home && s.c === c && s.r === r) ? null : 'No workstation stands there now')
 }
 
 /**
@@ -806,11 +809,19 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
   const [posts, setPosts] = useState<StaffRecord>(loadStaff)
   const postsRef = useRef<StaffRecord>(posts)
   const commitStaff = useCallback((next: StaffRecord): null => { postsRef.current = next; setPosts(next); saveStaff(next); return null }, [])
-  // The posts the engine draws and lists: only names on the roster (a renamed or forgotten agent's post is drawn by
-  // nobody, and the next post lets it go), each in the agent's look (their seed's while they have none), standing
-  // there unless hired now.
+  // A rename keeps the agent's post and a forget lets it go (staffStore.ts carry); a hire or a new agent changes nothing.
+  const namesRef = useRef(agents.map((a) => a.name))
   useEffect(() => {
-    engine?.setStaff(posts.flatMap((p) => {
+    const after = agents.map((a) => a.name), next = carry(postsRef.current, namesRef.current, after)
+    namesRef.current = after
+    if (next) commitStaff(next)
+  }, [agents, commitStaff])
+  // The posts the engine draws and lists: only names on the roster (a post whose name is not, say one another tab
+  // renamed, is drawn by nobody until the next post lets it go), each in the agent's body and top's colour (their
+  // seed's look while they have none) at their height, standing there unless hired now. The engine keeps its list when
+  // nothing in it changed.
+  useEffect(() => {
+    engine?.setStaff(posts.posts.flatMap((p) => {
       const id = roster.get(p.name)
       if (!id) return []
       const look = id.look ?? lookFromSeed(seedFromName(id.name))
@@ -959,9 +970,9 @@ function GuiShell({ options, plan, mentored, walk, voice, speaker, link, access,
     staff: {
       agents: () => roster.list().map((a) => ({ name: a.name, out: a.agent !== null, post: postOf(postsRef.current, a.name) })),
       homeName: (home: number) => engine.homes.find((h) => h.home === home)?.name ?? 'another home',
-      post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r)
+      post: (home: number, c: number, r: number, name: string) => staffRefusal(engine, home, c, r, postsRef.current)
         ?? (roster.get(name) ? commitStaff(postTo(postsRef.current, name, home, c, r, roster.list().map((a) => a.name))) : `No agent called ${name} on your roster`),
-      standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
+      standDown: (home: number, c: number, r: number) => staffRefusal(engine, home, c, r, postsRef.current) ?? commitStaff(standDownAt(postsRef.current, home, c, r)),
     },
     // roster (made once with the shell) and commitStaff (no deps) never change, so the hooks stay keyed on these two.
     // eslint-disable-next-line react-hooks/exhaustive-deps

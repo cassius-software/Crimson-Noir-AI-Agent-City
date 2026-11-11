@@ -627,7 +627,8 @@ export class Engine {
   private homeStaff: readonly StaffPost[] = Object.freeze([])
   /** The posted agents drawn at their workstations (staffView.ts): the page's alone, never in the realm or the crowd. */
   private readonly staffView = new StaffView()
-  /** homeSeats as built when the homes were last drawn (redrawHomes), so a read between draws costs nothing. */
+  /** homeSeats as last built, and what it was built from (by identity), so a read between changes costs nothing. */
+  private seatsFrom: readonly unknown[] = []
   private seats: readonly HomeSeat[] = Object.freeze([])
   /**
    * Per property index, the solids last sent to the realm ('home') as text: '' for none (the realm starts with no set),
@@ -1976,9 +1977,11 @@ export class Engine {
   /**
    * The player's own agents posted at the homes' workstations (App over staffStore.ts and the roster): each post's home,
    * workstation cell, whether they stand there now (not while hired) and how they are dressed. The page alone draws
-   * them (staffView.ts) and homeSeats lists them; the realm never hears of them, so nothing is sent.
+   * them (staffView.ts) and homeSeats lists them; the realm never hears of them, so nothing is sent. The same posts
+   * again (a roster edit that touches none) keep the list as it was, so homeSeats stays the same array.
    */
   setStaff(posts: readonly StaffPost[]): void {
+    if (JSON.stringify(posts.slice(0, STAFF_VIEW.max)) === JSON.stringify(this.homeStaff)) return
     this.homeStaff = Object.freeze(posts.slice(0, STAFF_VIEW.max))
     this.redrawHomes()
   }
@@ -2048,8 +2051,20 @@ export class Engine {
     if (this.disposed) return
     const d = this.draft, draft = d && this.furnishHome !== null && d.home === this.furnishHome ? d : null
     this.world.setHomes(homeInstances(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, { room: this.netRoom, base: this.homeBase, draft }))
-    this.seats = homeSeats(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, { room: this.netRoom, base: this.homeBase })
-    this.staffView.set(staffFigures(this.seats, this.homeStaff))
+    this.staffView.set(staffFigures(this.seatList(), this.homeStaff))
+  }
+
+  /**
+   * The workstations homeSeats lists, built again only when the furnishing, the owned deeds, the owned lines, the posts
+   * or the room changed (by identity); the owner's draft moving while furnishing changes none of them.
+   */
+  private seatList(): readonly HomeSeat[] {
+    const from = [this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, this.netRoom]
+    if (from.some((v, i) => v !== this.seatsFrom[i])) {
+      this.seatsFrom = from
+      this.seats = homeSeats(this.homes, this.homeRecord, this.homeDeeds, this.homeLines, this.homeStaff, { room: this.netRoom, base: this.homeBase })
+    }
+    return this.seats
   }
 
   /**
@@ -3108,11 +3123,11 @@ export class Engine {
    * Every workstation (line 168) standing in a home the player owns, read-only (homeView.ts HomeSeat): kind, name and
    * door fit the team runner's rooms (08_Swarm/team.ts TeamRoom), door being the home's arrival on the sidewalk lane;
    * then the home, the workstation's number and cell, where its agent stands (inside the lot) and who is posted there.
-   * None in a network room or once the city has stopped. The same frozen list until the homes are drawn again (the
-   * furnishing, the deeds, the lines, the posts or the room changed, or the owner's draft moved while furnishing).
+   * None in a network room or once the city has stopped. The same frozen list until the furnishing, the owned deeds,
+   * the owned lines, the posts or the room change, so a reader can compare by identity.
    */
   get homeSeats(): readonly HomeSeat[] {
-    return this.halted || this.disposed ? Object.freeze([]) : this.seats
+    return this.halted || this.disposed ? Object.freeze([]) : this.seatList()
   }
 
   /** Why the realm no longer stands (the Ring-0 audit's panic, else a halt's reason), or null while it does: the team runner's `panic`. */

@@ -491,10 +491,12 @@ putting on a headset closes the card.
   first, then left to right), each with who stands at it ("Workstation 1 · Mara", or "· Nobody"); a screen reader
   also hears its column and row. Choose an agent (Q / E, the pad's shoulders, or a tap) and move the cursor onto a
   workstation, or tap its row in the list; the line under the plan says which workstation it is, who stands at it,
-  and what Post would do. Then press Enter, Space, the pad's south button or **Post** (or tap the row again). From
-  then on they stand at that workstation, in their own look, facing its screen, in every visit, until you stand them
-  down (Delete, Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet
-  disc and their initial, and in this tab a screen reader hears how many of the workstations here are staffed.
+  and what Post would do (off a workstation, which agent is chosen). Then press Enter, Space, the pad's south button
+  or **Post** (or tap the workstation or its row again). From then on they stand at that workstation, in their body
+  and their top's colour, at their height, facing its screen, in every visit, until you stand them down (Delete,
+  Backspace, X, the pad's west button or **Stand down**). The plan marks each posted agent with a violet disc and
+  their initial, faded while they are out with you, and in this tab a screen reader hears how many of the
+  workstations here are staffed.
   Workstations turn in the Furniture tab (Rotate says so here). Posting and standing down work exactly where
   furnishing does.
   - Posting an agent who is posted elsewhere moves them, and the line says from where ("Mara is at workstation 2 now
@@ -505,8 +507,10 @@ putting on a headset closes the card.
     nothing and do no work. Staffing changes no check, no rest and no credit.
   - Who stands where is saved in this browser by the agent's name (`civic-simulation:staff:v1`). A post is kept while
     its workstation is moved or put away or the deed is not yours, and the agent is back when a workstation stands in
-    that place again. An agent renamed or forgotten is no longer drawn there, and their post is let go the next time
-    you post anyone. Staffing is not on Undo; Stand down undoes a post.
+    that place again; picking up a staffed workstation in the Furniture tab says who waits for it. Renaming an agent
+    keeps their post; forgetting an agent lets their post go, so a new agent given that name starts free. If a newer
+    version of the city saved who stands where, this page shows nobody posted and never writes over it: Post and
+    Stand down ask you to reload the page. Staffing is not on Undo; Stand down undoes a post.
 - **The plan.** Under the tabs is the home's floor plan, 32 cells of 0.78 m across: the back wall at the top, the
   doorway at the bottom under an arrow, only this home's own rows (a shallower home has a shorter plan), and the cells
   in front of the doorway hatched, since nothing ever stands there. Each piece is drawn in its finish's colour with
@@ -539,7 +543,7 @@ putting on a headset closes the card.
 | Move the cursor | arrows or W A S D (Shift: four cells) | point at the plan, or click a cell in the room | d-pad, or the left stick (again after 300 ms, then every 120 ms) | tap a cell on the plan or in the room |
 | Place, or pick up the piece under the cursor | Enter or Space | left click on the cursor's cell | south (A) | tap the cursor's cell again, or Place |
 | Rest (Rest tab) | Enter or Space | Rest | south (A) | Rest |
-| Post an agent (Staff tab) | Enter or Space | Post, left click on the cursor's cell, or click the workstation's row twice | south (A) | Post, or tap the workstation or its row twice |
+| Post an agent (Staff tab) | Enter or Space | Post, click the workstation under the cursor, or click its row twice | south (A) | Post, or tap the workstation or its row twice |
 | Rotate | R | wheel | north (Y) | Rotate |
 | Remove | Delete, Backspace or X | right click on the piece | west (X) | Remove |
 | Stand down (Staff tab) | Delete, Backspace or X | Stand down, or right click | west (X) | Stand down |

@@ -473,11 +473,11 @@ test('the Staff tab: a strip of the player\'s agents with where each is, and a l
   assert.ok(src.includes('{visit.staffAgents().map((a) => { const at = visit.whereIs(a)'), 'where each agent is, in the visit\'s words')
   const agent = buttonsIn(src).find((b) => b.includes('data-action="agent"'))
   assert.ok(agent, 'an agent button')
-  for (const part of ['onClick={() => visit.run({ agent: a.name })}', 'aria-pressed={inHandName === a.name}', 'aria-label={`${a.name}: ${at}`}', '${BUTTON}', 'data-touch']) {
+  for (const part of ['onClick={() => visit.run({ agent: a.name })}', 'aria-pressed={inHandName === a.name}', 'aria-label={`${a.name}: ${at}`}', '${BUTTON}', 'data-name={a.name}', 'data-touch']) {
     assert.ok(agent.includes(part), `the agent button: ${part}`)
   }
-  assert.ok(src.includes('data-touch > <span className="block font-semibold">{a.name}</span> <span className="block text-[12px]">{at}</span> </button>'),
-    'its text label is the name over where the agent is, as its aria-label says')
+  assert.ok(src.includes('data-touch > <span className="block font-semibold">{a.name}</span> <span className="block text-[12px]" data-where>{at}</span> </button>'),
+    'its text label is the name over where the agent is (data-where), as its aria-label says')
   // The list: one button per workstation here in reading order, a tap moving the cursor onto it (a second posts, as any
   // press on the cursor's cell), the one under the cursor pressed.
   assert.ok(src.includes('<div role="group" className="mt-2 grid grid-cols-2" style={GAP} aria-label="Workstations here" data-stations> {visit.stations(fit).map((p, i) => { const who = visit.who(p)?.name ?? \'Nobody\''))
@@ -486,6 +486,8 @@ test('the Staff tab: a strip of the player\'s agents with where each is, and a l
   for (const part of [
     'onClick={() => visit.run({ press: { c: p.c, r: p.r } })}', 'aria-pressed={seat?.n === i + 1}', 'aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}',
     'data-seat={`${p.c},${p.r}`}', '${BUTTON}', 'data-touch',
+    // A 24-letter name (roster.ts NAME_MAX) wraps inside its half of the row instead of spilling past the card's edge.
+    '${BUTTON} min-w-0 break-words border',
   ]) {
     assert.ok(station.includes(part), `the workstation button: ${part}`)
   }
@@ -493,10 +495,10 @@ test('the Staff tab: a strip of the player\'s agents with where each is, and a l
   // The toolbar: Post and Stand down are Place's and Remove's own buttons (the data-action list is unchanged), named for their keys.
   const toolbar = src.slice(src.indexOf('<div role="toolbar"'), src.indexOf('</div>', src.indexOf('<div role="toolbar"')))
   const place = buttonsIn(toolbar).find((b) => b.includes('data-action="place"'))!
-  assert.ok(place.includes("aria-label={staffTab ? `Post ${inHandName ?? 'an agent'} here (Enter)` : hand"))
+  assert.ok(place.includes("aria-label={staffTab ? (inHandName ? `Post ${inHandName} at the workstation under the cursor (Enter)` : 'Post (Enter)') : hand"))
   assert.ok(place.includes('aria-describedby={staffTab ? staffId : undefined}'))
   assert.ok(toolbar.includes("data-action=\"place\" data-touch>{staffTab ? 'Post' : 'Place'}</button>"))
-  assert.ok(toolbar.includes("aria-label={staffTab ? 'Stand down (Delete)' : 'Remove the piece (Delete)'}"))
+  assert.ok(toolbar.includes("aria-label={staffTab ? 'Stand down the agent at this workstation (Delete)' : 'Remove the piece (Delete)'}"))
   assert.ok(toolbar.includes("data-action=\"remove\" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>"))
   // The plan: each posted agent's disc and initial, and the cursor round the workstation under it; its label counts the
   // workstations staffed in the Staff tab.
@@ -504,13 +506,20 @@ test('the Staff tab: a strip of the player\'s agents with where each is, and a l
   assert.ok(src.includes('the cursor at ${where}${staffTab ? `; ${visit.staffMarks().length} of ${visit.stations(fit).length} workstations staffed` : \'\'}`}'))
   assert.ok(src.includes('const f = (o.hand && footprint(o.hand)) ?? (o.seat && footprint(o.seat)) ?? { c: o.cursor.c, r: o.cursor.r, cols: 1, rows: 1 }'))
   assert.ok(src.includes('staff: \'#7c3aed\','))
+  // An agent out with the player is a faded disc, so the plan never shows someone the room shows empty; the alpha is
+  // put back before the piece in hand is drawn.
+  const marks = src.slice(src.indexOf('for (const m of o.staff) {'), src.indexOf('// The piece in hand'))
+  assert.ok(marks.length > 0, 'the marks come before the piece in hand')
+  assert.ok(marks.includes('ctx.globalAlpha = m.out ? 0.45 : 1 ctx.fillStyle = PLAN.staff'))
+  assert.ok(marks.includes('} ctx.globalAlpha = 1'), 'and back to full after the marks')
   // The card and the visit never reach the store or the roster: the host's hooks answer for them.
   assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(src), 'nothing of the store or the roster in the card')
   assert.ok(!/from '[^']*(?:staffStore|roster)\.ts'|from '\.\.\/08_Swarm/.test(visit), 'nor in the visit')
   assert.ok(!/loadStaff|saveStaff|localStorage/.test(src + visit), 'neither reads nor writes the browser\'s store')
   const words = [
-    'Your agents', 'Workstations here', 'Workstation', 'Nobody', ' workstations staffed', 'Previous agent (Q)', 'Next agent (E)', 'Post', 'an agent', ' here (Enter)',
-    'Stand down (Delete)', 'Stand down', 'Posted agents stand there between visits, and step away while out with you.', 'Furnish, rest or staff', 'Staff',
+    'Your agents', 'Workstations here', 'Workstation', 'Nobody', ' workstations staffed', 'Previous agent (Q)', 'Next agent (E)', 'Post', ' at the workstation under the cursor (Enter)', 'Post (Enter)',
+    'Stand down the agent at this workstation (Delete)', 'Stand down',
+    'Choose an agent, move the cursor onto a workstation and press Post. They stand at it between visits, and step away while they are out with you.', 'Furnish, rest or staff', 'Staff',
     'Free', ' · out with you', 'Workstation moved or put away', 'Workstations turn in the Furniture tab', ' (moved from ',
   ]
   for (const w of words) {
@@ -568,14 +577,28 @@ test('every sentence staffing can say passes the card\'s screen', () => {
       v.moveTo(11, first + 1)
       v.run('place')
       note()
+      // Q and E off a workstation, then a staffed workstation picked up in the Furniture tab (who waits for it).
+      v.moveTo(20, first + 3)
+      for (const d of ['next', 'prev'] as const) { v.run(d); note() }
+      v.run({ tab: 0 })
+      v.moveTo(10, first)
+      v.run('place')
+      note()
+      v.run('undo')
     }
   }
   // The host's own refusals (App.tsx), with each name.
   const app = read('../App.tsx')
-  assert.ok(app.includes("'No workstation stands there now'") && app.includes('`No agent called ${name} on your roster`'))
+  const newer = 'Staff was saved by a newer version of the city: reload the page to post or stand down'
+  assert.ok(app.includes("'No workstation stands there now'") && app.includes('`No agent called ${name} on your roster`') && app.includes(`'${newer}'`))
   said.add('No workstation stands there now')
+  said.add(newer)
   for (const name of names) said.add(`No agent called ${name} on your roster`)
-  for (const kind of [/\(moved from workstation \d\)/, /\(moved from [A-Z]/, /^Workstation moved or put away/, / · out with you$/, /^Free$/, /^Workstations turn in the Furniture tab$/]) {
+  for (const kind of [
+    /\(moved from workstation \d\)/, /\(moved from [A-Z]/, /^Workstation moved or put away/, / · out with you$/, /^Free$/, /^Workstations turn in the Furniture tab$/,
+    /^Workstation picked up: .*; [A-Z]\w+ waits until it is back in its place$/, /^Nothing to staff at .*: move onto a workstation to post [A-Z]/,
+    /^No workstation stands here yet: place one in the Furniture tab to post [A-Z]/,
+  ]) {
     assert.ok([...said].some((t) => kind.test(t)), `among them: ${kind}`)
   }
   assert.ok(said.size >= 20, `${said.size} sentences`)

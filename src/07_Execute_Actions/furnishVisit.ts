@@ -298,7 +298,8 @@ export class Visit {
     this.commit({ placed: fit.placed.filter((x) => x !== p), stored: fit.stored }, p, fit.placed.indexOf(p))
     this.rot = p.rot
     this.cursor = { c: p.c, r: p.r }
-    this.say(`${nameOf(p.id)} picked up: Place puts it down, Undo puts it back`)
+    const w = shapeOf(p.id)?.station ? this.who(p) : null
+    this.say(`${nameOf(p.id)} picked up: Place puts it down, Undo puts it back${w ? `; ${w.name} waits until it is back in its place` : ''}`)
   }
   /** Place the piece in hand where it fits; else pick up the piece under the cursor; else say why not. */
   place(): void {
@@ -395,18 +396,20 @@ export class Visit {
   staffLine(): string {
     const fit = this.fit(), d = this.staffAt(fit)
     if (d === NOT_STAFFED) return d
-    if (this.stations(fit).length === 0) return 'No workstation stands here yet: place one in the Furniture tab'
-    if (typeof d === 'string') return d
-    const name = this.inHand(), who = this.who(d.p)?.name ?? null
+    // Off a workstation the line still names the agent chosen, so Q and E are heard wherever the cursor is.
+    const name = this.inHand(), to = name ? ` to post ${name}` : ''
+    if (this.stations(fit).length === 0) return `No workstation stands here yet: place one in the Furniture tab${to}`
+    if (typeof d === 'string') return d + to
+    const who = this.who(d.p)?.name ?? null
     if (!name) return NO_AGENTS
     return `Workstation ${d.n} at ${placeWords(this.home, d.p)}: ${who ? `${who} is here` : 'free'}; ${who === name ? 'Stand down frees it' : `Post puts ${name} here`}`
   }
-  /** Each agent posted here as the plan marks them: the station's point in cells and their initial. */
-  staffMarks(): { x: number; y: number; initial: string }[] {
-    const out: { x: number; y: number; initial: string }[] = []
+  /** Each agent posted here as the plan marks them: the station's point in cells, their initial, and whether out with the player. */
+  staffMarks(): { x: number; y: number; initial: string; out: boolean }[] {
+    const out: { x: number; y: number; initial: string; out: boolean }[] = []
     for (const p of this.stations()) {
       const a = this.who(p), s = a && stationOf(p)
-      if (a && s) out.push({ x: (s.v + GRID_HALF) / CELL, y: (s.u + GRID_HALF) / CELL, initial: [...a.name][0].toUpperCase() })
+      if (a && s) out.push({ x: (s.v + GRID_HALF) / CELL, y: (s.u + GRID_HALF) / CELL, initial: [...a.name][0].toUpperCase(), out: a.out })
     }
     return out
   }
@@ -484,9 +487,14 @@ export class Visit {
     this.tab = (i + TABS.length) % TABS.length
     this.quiet()
   }
-  /** A press on a cell (the plan or the city): on the cursor's cell it places (or picks up); elsewhere the cursor goes there. */
+  /**
+   * A press on a cell (the plan or the city): on the cursor's cell it places (or picks up); elsewhere the cursor goes
+   * there. In the Staff tab a press on any cell of the workstation under the cursor posts, as Place does there.
+   */
   press(cell: { c: number; r: number } | null): void {
     if (!cell) return
+    const d = this.tab === STAFF_TAB ? this.station() : null
+    if (d && pieceCells(d.p).cells.includes(cellIndex(cell.c, cell.r))) { this.post(); return }
     if (cell.c === this.cursor.c && cell.r === this.cursor.r) this.place()
     else this.moveTo(cell.c, cell.r)
   }

@@ -243,7 +243,7 @@ interface PlanScene {
   blocked: Uint8Array
   dark: boolean
   /** The agents posted here (Visit.staffMarks), and the workstation under the cursor in the Staff tab. */
-  staff: readonly { x: number; y: number; initial: string }[]
+  staff: readonly { x: number; y: number; initial: string; out: boolean }[]
   seat: Piece | null
 }
 
@@ -313,9 +313,10 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     ctx.arc(x * s, y * s, Math.max(2.5, s * 0.32), 0, Math.PI * 2)
     ctx.fill()
   }
-  // The agents posted here: a violet disc with their initial at the station.
+  // The agents posted here: a violet disc with their initial at the station, faded while they are out with the player.
   ctx.font = `700 ${Math.max(8, Math.floor(s * 0.8))}px system-ui, sans-serif`
   for (const m of o.staff) {
+    ctx.globalAlpha = m.out ? 0.45 : 1
     ctx.fillStyle = PLAN.staff
     ctx.beginPath()
     ctx.arc(m.x * s, m.y * s, Math.max(4, s * 0.55), 0, Math.PI * 2)
@@ -323,6 +324,7 @@ function drawPlan(el: HTMLCanvasElement | null, o: PlanScene): void {
     ctx.fillStyle = '#ffffff'
     ctx.fillText(m.initial, m.x * s, m.y * s)
   }
+  ctx.globalAlpha = 1
   // The piece in hand where it would go, and the cursor round its footprint (one cell with nothing in hand).
   const colour = o.hand === null ? PLAN.cursor : o.ok ? PLAN.ok : PLAN.bad
   if (o.hand) {
@@ -673,10 +675,11 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
                     aria-label={`${a.name}: ${at}`}
                     className={`${BUTTON} shrink-0 border px-3 text-left leading-tight ${inHandName === a.name ? t.pillOn : t.pill}`}
                     data-action="agent"
+                    data-name={a.name}
                     data-touch
                   >
                     <span className="block font-semibold">{a.name}</span>
-                    <span className="block text-[12px]">{at}</span>
+                    <span className="block text-[12px]" data-where>{at}</span>
                   </button>
                 )
               })}
@@ -691,7 +694,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
                     onClick={() => visit.run({ press: { c: p.c, r: p.r } })}
                     aria-pressed={seat?.n === i + 1}
                     aria-label={`Workstation ${i + 1}, ${placeWords(home, p)}: ${who}`}
-                    className={`${BUTTON} border px-3 text-left leading-tight ${seat?.n === i + 1 ? t.pillOn : t.pill}`}
+                    className={`${BUTTON} min-w-0 break-words border px-3 text-left leading-tight ${seat?.n === i + 1 ? t.pillOn : t.pill}`}
                     data-action="station"
                     data-seat={`${p.c},${p.r}`}
                     data-touch
@@ -701,7 +704,7 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
                 )
               })}
             </div>
-            <p className={`mt-2 text-[12px] leading-snug ${t.muted}`}>Posted agents stand there between visits, and step away while out with you.</p>
+            <p className={`mt-2 text-[12px] leading-snug ${t.muted}`}>Choose an agent, move the cursor onto a workstation and press Post. They stand at it between visits, and step away while they are out with you.</p>
           </div>
         )}
 
@@ -732,9 +735,9 @@ function Furnisher({ home, keeper, record, onRecord, hooks, pad, padFrom, width,
         {visit.tab === REST_TAB ? (
           <button type="button" onClick={() => visit.run('place')} aria-label="Rest here (Enter)" aria-describedby={restId} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="rest" data-touch>Rest</button>
         ) : (
-          <button type="button" onClick={() => visit.run('place')} aria-label={staffTab ? `Post ${inHandName ?? 'an agent'} here (Enter)` : hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} aria-describedby={staffTab ? staffId : undefined} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>{staffTab ? 'Post' : 'Place'}</button>
+          <button type="button" onClick={() => visit.run('place')} aria-label={staffTab ? (inHandName ? `Post ${inHandName} at the workstation under the cursor (Enter)` : 'Post (Enter)') : hand ? `Place the ${nameOf(hand.id)} (Enter)` : 'Pick up the piece under the cursor (Enter)'} aria-describedby={staffTab ? staffId : undefined} className={`${BUTTON} px-4 font-semibold ${t.buy}`} style={TARGET} data-action="place" data-touch>{staffTab ? 'Post' : 'Place'}</button>
         )}
-        <button type="button" onClick={() => visit.run('remove')} aria-label={staffTab ? 'Stand down (Delete)' : 'Remove the piece (Delete)'} className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>
+        <button type="button" onClick={() => visit.run('remove')} aria-label={staffTab ? 'Stand down the agent at this workstation (Delete)' : 'Remove the piece (Delete)'} className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="remove" data-touch>{staffTab ? 'Stand down' : 'Remove'}</button>
         <button type="button" onClick={() => visit.run('undo')} disabled={undoOff} aria-label="Undo (Z)" className={`${BUTTON} border px-3 ${undoOff ? `${t.off} cursor-not-allowed` : t.pill}`} style={TARGET} data-action="undo" data-touch>Undo</button>
         <button type="button" onClick={() => visit.run('view')} aria-label="Turn the camera (C)" className={`${BUTTON} border px-3 ${t.pill}`} style={TARGET} data-action="view" data-touch>View</button>
         <button type="button" onClick={onClose} aria-label="Done (Esc)" className={`${BUTTON} px-4 font-semibold ${t.primary}`} style={TARGET} data-action="done" data-touch>Done</button>
