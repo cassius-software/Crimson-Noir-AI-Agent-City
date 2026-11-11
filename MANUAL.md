@@ -4142,8 +4142,14 @@ the three warnings), the Nix page
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
-Peak for a few frames).
-`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list and the flake's shape.
+Peak for a few frames). The workflow's `vm` job boots the Ollama option in a NixOS VM under KVM
+(`nix build .#vmTests.x86_64-linux.ollama`, `tools/nix/ollama-test.nix`; `nix flake check` does not run it, and the job
+fails, saying so, on a runner without KVM): the flake's module with `acceleration = "cpu"` and one `extraOrigins`
+entry, checked for `ollama.service` coming up, listening on `127.0.0.1:11434` and nowhere else, starting with no
+models, answering `/api/tags` with 200 to the launcher's origin (`http://127.0.0.1:4180`) and to the extra origin and
+with 403 to another, and running with `OLLAMA_ORIGINS` set.
+`src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
+the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
 files in a temporary folder (a connector folder skipped), and `--check` reading nothing; no real GPU was probed.
 By hand, in a Linux container (Ubuntu 24.04, not NixOS) running as root, so with `--no-sandbox` and the software
@@ -4155,9 +4161,9 @@ compositor Chromium named the window `chrome-127.0.0.1__-AgentCity`, the name of
 run as an ordinary user where user namespaces are switched off, Nix's Chromium stopped at start and the launcher printed
 its hint. Not verified, and needing a real NixOS
 desktop: a hardware GPU (radv, ANV or NVIDIA), Chromium's own sandbox (every run here had it off), a desktop shell
-matching the window to its menu entry and icon, the DualSense rules, Ollama's service running (no build of it starts in
-CI, so Vulkan, ROCm or CUDA inside its sandboxed unit on a real GPU is untried), and heat over a long session. The
-`aarch64-linux` outputs are declared but neither built nor evaluated by CI.
+matching the window to its menu entry and icon, the DualSense rules, Ollama's GPU builds (Vulkan, ROCm or CUDA inside
+its sandboxed unit on a real GPU; CI's VM runs the CPU build with no GPU and no model) and its service on a real
+machine, and heat over a long session. The `aarch64-linux` outputs are declared but neither built nor evaluated by CI.
 
 ## When the city cannot start or stops
 

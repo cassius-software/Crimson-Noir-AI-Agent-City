@@ -1522,8 +1522,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   an `OLLAMA_ORIGINS` set elsewhere. It works without the city's own `enable`. CI evaluates it in `nix flake check` on
   the pinned NixOS 26.05: loopback, the Vulkan, CPU and default builds, the graphics driver for
   Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the integrated GPU only
-  when asked for, the system's own settings winning, the three warnings. Nothing starts Ollama in CI: the service on a
-  real GPU is untried.
+  when asked for, the system's own settings winning, the three warnings. The service on a real GPU is untried.
+- **NixOS: the Ollama option booted in CI.** The nix workflow's new `vm` job builds `vmTests.x86_64-linux.ollama`
+  (`tools/nix/ollama-test.nix`), a NixOS VM under KVM with the flake's module, the CPU build and one extra origin, and
+  checks that `ollama.service` comes up on `127.0.0.1:11434` only, starts with no models, answers `/api/tags` with 200
+  to the launcher's origin and the extra one and 403 to another, and runs with `OLLAMA_ORIGINS`. It is outside
+  `nix flake check`, and fails on a runner without KVM. GPU builds and a real machine stay unverified.
 
 ### Changed
 
