@@ -1523,6 +1523,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The page is about 2.9 MB smaller.** The physics engine's WebAssembly (Rapier's compatibility module, 3.3 MB of
+  code) rode in the page as plain base64, 4.4 MB of text and about a third of the file. The build now stores it
+  deflated, about 1.5 MB as base64, and the physics worker inflates it with the browser's own DecompressionStream as
+  Rapier starts, the way the in-page model's runtime already rides (`vite.config.ts` `rapierDeflate`, `deflateRapier`
+  and `INFLATE_HELPER`). The inflater checks the size it gets back, and a Rapier upgrade that moved its
+  initialisation, carried two, or carried bytes that are not WebAssembly stops the build instead of shipping a page
+  whose physics cannot start. `dist/index.html` went from 14,806,761 bytes to 11,951,109; the page size limit in
+  `tools/verify/page_dist.mjs` is unchanged. `src/rapierDeflate.test.ts` deflates the installed package, runs the
+  page's inflater in Node and gets the package's module back byte for byte, and checks the built page carries no
+  plain copy; the browser smoke boots, walks and drives on it.
 - **The prosthetics atelier sells its four limbs.** They were on order, waiting for limb slots the wardrobe gained
   under other names (`prosthetic` and `prostheticFinish`, `look.ts` PROSTHETIC and WARDROBE.prostheticFinish). Each
   line now sets the limb and its finish, and its name says the side: the brushed-titanium right arm (chrome), the
