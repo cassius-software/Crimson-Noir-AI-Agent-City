@@ -1974,17 +1974,22 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.ok(lite[1].startsWith('adapter   arm / bifrost / Mali-G52') && lite[1].endsWith('...'), lite[1])
   assert.equal(lite[2], 'limits    bind 1.5 GiB  buffer 1 GiB  workgroup 512 wide  512 invocations')
   assert.equal(lite[3], 'lanes     512 simulated  (2500 default for a phone, 60000 ceiling)')
-  // The crowd kernel the worker runs, after the lanes: nothing for the full one, the rung for a GPU that refused it.
+  // The crowd kernel the worker runs, a seventh row: none for the full one, the rung for a GPU that refused it, within
+  // the readout's 80 columns (a suffix on the lanes row ran to 135).
   const kernel = (k: 'full' | 'narrow' | 'lite' | 'none') => formatHardware({
     class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, adapter: 'arm / Mali-G52 MC2',
     limits: { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 },
     tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000, kernel: k },
     frames: { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 }, host: 'browser', cores: 6, memoryGb: undefined,
-  })[3]
-  assert.equal(kernel('full'), 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)')
-  assert.equal(kernel('none'), 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)')
-  assert.equal(kernel('narrow'), 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)  narrow crowd workgroups (this GPU refused the full kernel at 128)')
-  assert.equal(kernel('lite'), 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)  light crowd kernel (this GPU refused the full one)')
+  })
+  for (const k of ['full', 'none', 'narrow', 'lite'] as const) {
+    assert.equal(kernel(k)[3], 'lanes     8000 simulated  (8000 default for a phone, 60000 ceiling)', k)
+    for (const l of kernel(k)) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), `${k}: ${l}`)
+  }
+  assert.equal(kernel('full').length, 6)
+  assert.equal(kernel('none').length, 6)
+  assert.equal(kernel('narrow')[6], 'crowd     narrow kernel: 64-wide workgroups (this GPU refused the full one)')
+  assert.equal(kernel('lite')[6], 'crowd     light kernel: straight-line routing (this GPU refused the full one)')
   assert.equal(lite[4], 'frames    p50 41.20 ms  p95 55.25 ms  p99 120.50 ms  (3 frames in 0.2 s)')
   assert.equal(lite[5], 'machine   threads unknown  4 GB reported  native shell')
   for (const l of [...phone, ...lite]) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), l)

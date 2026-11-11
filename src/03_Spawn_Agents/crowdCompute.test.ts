@@ -889,6 +889,11 @@ test('the narrow kernel is the full module at half the workgroup; the light kern
     assert.ok(f.has(dropped), `the full kernel reaches ${dropped}`)
     assert.ok(!l.has(dropped), `the light kernel has no ${dropped}`)
   }
+  // The light room way tests the straight line against each piece (hitsBox) and rounds the first in its way by a
+  // corner: a line square into a face is refused whole by the containment, which would hold a recruit on a table.
+  const liteWay = functions(lite).get('roomWay')!.body
+  assert.ok(/hitsBox\(me, goal - me, lo, hi\)/.test(liteWay) && /ROOM_PAD \+ ROOM_ROUND/.test(liteWay) && /hitsBox\(me, q - me, lo, hi\)/.test(liteWay), 'the light roomWay skirts the first piece in its way by a corner in sight')
+  assert.ok(!/trail|clearOfFurniture|walled|ROOM_AISLE/.test(liteWay), 'and nothing of the full one\'s trail, aisles or glass')
   // The same two functions, signature for signature, so crowd.wgsl calls either.
   for (const name of ['roomWay', 'lastStretch']) assert.deepEqual(functions(lite).get(name)!.params, functions(full).get(name)!.params, name)
   // What the light kernel sheds, by source reachable from simulate (the measure before a compiler inlines it, when the
@@ -899,7 +904,7 @@ test('the narrow kernel is the full module at half the workgroup; the light kern
   assert.ok(ratio >= 0.8 && ratio <= 0.9, `the light kernel is ${(ratio * 100).toFixed(0)}% of the full one`)
 })
 
-test('a GPU whose own compiler refuses the full simulate pass gets the narrow kernel, then the light one, with the refusals kept; every rung refused, or WebGPU refusing the module, fails with the browser\'s words, the pass and the compiler messages', async () => {
+test('a GPU whose own compiler refuses the full simulate pass gets the narrow kernel, then the light one, with the refusals kept (a refusal Safari reports as validation too); every rung refused, or the WGSL itself refused, fails with the browser\'s words, the pass and the compiler messages', async () => {
   const warned: string[] = []
   const warn = console.warn
   console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(' ')) }
@@ -910,7 +915,7 @@ test('a GPU whose own compiler refuses the full simulate pass gets the narrow ke
     const narrow = await CrowdSim.create(d1 as unknown as GPUDevice, AGENTS)
     assert.equal(narrow.kernel, 'narrow')
     assert.deepEqual(d1.modules.map(kernelOf), ['full', 'narrow'])
-    assert.deepEqual(warned, ["[crowd] the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full)); the full kernel at narrow workgroups runs"])
+    assert.deepEqual(warned, ["[crowd] the full kernel at narrow workgroups runs: refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full))"])
     narrow.step(simInput())
     await d1.flush()
     assert.ok(narrow.readout, 'the narrow crowd steps and reads back')
@@ -921,7 +926,7 @@ test('a GPU whose own compiler refuses the full simulate pass gets the narrow ke
     const lite = await CrowdSim.create(d1b as unknown as GPUDevice, AGENTS)
     assert.equal(lite.kernel, 'lite')
     assert.deepEqual(d1b.modules.map(kernelOf), ['full', 'narrow', 'lite'])
-    assert.deepEqual(warned, ["[crowd] the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full)) and the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (narrow)); the light kernel runs"])
+    assert.deepEqual(warned, ["[crowd] the light kernel runs: refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (full)), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED (narrow))"])
     lite.step(simInput())
     await d1b.flush()
     assert.ok(lite.readout, 'the light crowd steps and reads back')
@@ -934,17 +939,41 @@ test('a GPU whose own compiler refuses the full simulate pass gets the narrow ke
     assert.equal(every.message, "crowd.wgsl pipeline compilation failed: the GPU's own compiler refused the full kernel (crowd.wgsl simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN), the light kernel (crowd.wgsl (light kernel) simulate: refused by the GPU's own compiler (internal error): CreateComputePipelines failed with VK_ERROR_UNKNOWN)")
     assert.equal(kindOf(every, { secure: true }), 'compiler')
     assert.deepEqual(d2.modules.map(kernelOf), ['full', 'narrow', 'lite'])
-    // WebGPU's validation refusing a pass is the module's fault: no second kernel, the browser's words, and the module's
-    // compiler messages with the line quoted (a line number into the assembled module, header and all, names nothing alone).
+    // Safari reports its Metal compiler's refusal as validation (WebKit's createComputePipelineAsync rejects every backing
+    // failure so): a validation refusal with no error of the module's own climbs the ladder the same way.
+    warned.length = 0
+    const safari = new MockDevice()
+    safari.refuse = (entry, code) => (entry === 'simulate' && kernelOf(code) === 'full' ? { reason: 'validation', message: 'Compute library failed to compile' } : null)
+    const metal = await CrowdSim.create(safari as unknown as GPUDevice, AGENTS)
+    assert.equal(metal.kernel, 'narrow')
+    assert.deepEqual(warned, ['[crowd] the full kernel at narrow workgroups runs: refused the full kernel (crowd.wgsl simulate: failed WebGPU validation: Compute library failed to compile)'])
+    warned.length = 0
+    // Every rung refused so: a validation failure (the browser's class), every rung's words kept.
+    const safariAll = new MockDevice()
+    safariAll.refuse = (entry) => (entry === 'simulate' ? { reason: 'validation', message: 'Compute library failed to compile' } : null)
+    const metalAll = await CrowdSim.create(safariAll as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
+    assert.ok(metalAll)
+    assert.equal(metalAll.message, 'crowd.wgsl pipeline validation failed: WebGPU refused the full kernel (crowd.wgsl simulate: failed WebGPU validation: Compute library failed to compile), the full kernel at narrow workgroups (crowd.wgsl (narrow workgroups) simulate: failed WebGPU validation: Compute library failed to compile), the light kernel (crowd.wgsl (light kernel) simulate: failed WebGPU validation: Compute library failed to compile)')
+    assert.equal(kindOf(metalAll, { secure: true }), 'shader')
+    assert.deepEqual(safariAll.modules.map(kernelOf), ['full', 'narrow', 'lite'])
+    // An error of the module's own (WebGPU's validation of the WGSL, with its compiler messages) is the module's fault on
+    // every rung: no second kernel, the browser's words, and the messages with the line quoted (a line number into the
+    // assembled module, header and all, names nothing alone).
     const d3 = new MockDevice()
     d3.refuse = (entry) => (entry === 'binAgents' ? { reason: 'validation', message: 'Entry point "binAgents" uses binding 5 as read-write storage' } : null)
     const line = moduleOf('full').split('\n').findIndex((l) => l.startsWith('fn binAgents(')) + 1
     d3.compilation = [{ type: 'error', lineNum: line, linePos: 4, offset: 0, length: 9, message: 'no such thing' }, { type: 'warning', lineNum: 0, linePos: 0, offset: 0, length: 0, message: 'a word to the wise' }]
     const refused = await CrowdSim.create(d3 as unknown as GPUDevice, AGENTS).then(() => null, (e: Error) => e)
     assert.ok(refused)
-    assert.equal(refused.message, `crowd.wgsl pipeline validation failed: crowd.wgsl binAgents: failed WebGPU validation: Entry point "binAgents" uses binding 5 as read-write storage; compiler messages: error at line ${line}:4: no such thing "fn binAgents(@builtin(global_invocation_id) gid: vec3u) {" | warning: a word to the wise`)
+    assert.equal(refused.message, `crowd.wgsl pipeline validation failed: WebGPU refused the full kernel (crowd.wgsl binAgents: failed WebGPU validation: Entry point "binAgents" uses binding 5 as read-write storage; compiler messages: error at line ${line}:4: no such thing "fn binAgents(@builtin(global_invocation_id) gid: vec3u) {" | warning: a word to the wise)`)
     assert.equal(kindOf(refused, { secure: true }), 'shader')
-    assert.equal(d3.modules.length, 1, 'no second rung for a validation refusal')
+    assert.equal(d3.modules.length, 1, 'no second rung for an error of the module\'s own')
+    // A warning alone is not the module's error: the ladder climbs.
+    const d3w = new MockDevice()
+    d3w.refuse = (entry, code) => (entry === 'simulate' && kernelOf(code) === 'full' ? { reason: 'validation', message: 'x' } : null)
+    d3w.compilation = [{ type: 'warning', lineNum: 0, linePos: 0, offset: 0, length: 0, message: 'a word to the wise' }]
+    assert.equal((await CrowdSim.create(d3w as unknown as GPUDevice, AGENTS)).kernel, 'narrow')
+    warned.length = 0
     // A refusal after the passes compiled (a buffer the device has no memory for, a bind group it refuses) comes out of its
     // own scope with its filter, instead of a first step that dispatches nothing.
     const d4 = new MockDevice()
@@ -953,7 +982,7 @@ test('a GPU whose own compiler refuses the full simulate pass gets the narrow ke
     const d5 = new MockDevice()
     d5.scopeErrors = { validation: '[BindGroup "crowd.simulate"] binding 14 is not a texture' }
     await assert.rejects(CrowdSim.create(d5 as unknown as GPUDevice, AGENTS), { message: 'crowd.wgsl pipeline validation failed: [BindGroup "crowd.simulate"] binding 14 is not a texture' })
-    assert.equal(warned.length, 1, 'only the fallback warns')
+    assert.equal(warned.length, 0, 'a failure does not warn; only a rung that runs')
     assert.equal(kindOf(new Error('crowd.wgsl could not be set up on this GPU: out-of-memory: no memory'), { secure: true }), 'other', 'a scope refusal is not the compiler\'s')
   } finally {
     console.warn = warn

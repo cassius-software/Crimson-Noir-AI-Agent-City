@@ -159,11 +159,12 @@ export class CrowdSim implements CrowdSensor {
   /**
    * Compiles the passes (gpuPipelines.ts compilePasses: the browser's own words for a refusal, the module's compiler
    * messages with them), builds the buffers and places every pedestrian. A pass WebGPU's validation refuses is the
-   * WGSL's fault, or a browser's, and fails the crowd with those words. A pass this GPU's own shader compiler refuses
-   * (an internal error: the driver would not build the full simulate kernel, as some phones' will not) is tried again
-   * down the ladder of kernels (crowdCompute.ts CROWD_KERNELS): the same module at half the workgroup, then the light
-   * kernel (crowdWayLite.wgsl): the same sensing, containment and contact, a simpler way for someone asked over;
-   * `kernel` says which runs. Every rung refused, the crowd fails with all the refusals.
+   * WGSL's fault, or a browser's, and fails the crowd with those words. Any other refusal of the full kernel (this
+   * GPU's own shader compiler would not build it, as some phones' will not: an internal error in Chrome, one Safari
+   * reports as validation; a pipeline rule) is tried again down the ladder of kernels (crowdCompute.ts
+   * CROWD_KERNELS): the same module at half the workgroup, then the light kernel (crowdWayLite.wgsl): the same
+   * sensing, containment and contact, a simpler way for someone asked over; `kernel` says which runs. Every rung
+   * refused, the crowd fails with all the refusals.
    * With a flow grid, the field's solver too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device,
    * else the CPU's, the same field. With a street window (streets.ts: a generated region's), the shader is compiled
    * for the window's corner and street widths and the window's segments are what the people walk; without one, the
@@ -179,20 +180,28 @@ export class CrowdSim implements CrowdSensor {
     const compile = (kernel: CrowdKernel) => compilePasses(device, KERNEL_LABEL[kernel], crowdShader(agentCount, placement, geometry, kernel), SIM_PASSES)
     let compiled: CompiledPasses<PassName> | null = null
     let kernel: CrowdKernel = 'full'
-    const refused: string[] = []
+    const refusals: { rung: CrowdKernel; error: ShaderRefusedError }[] = []
     for (const rung of CROWD_KERNELS) {
       try {
         compiled = await compile(rung)
         kernel = rung
         break
       } catch (e) {
-        // WebGPU's own refusal (validation: the WGSL, or the browser) is the same on every rung: it ends here, with its words.
-        if (!(e instanceof ShaderRefusedError) || e.reason !== 'internal') throw new Error(`crowd.wgsl pipeline validation failed: ${messageOf(e)}`)
-        refused.push(`${KERNEL_WORDS[rung]} (${e.message})`)
+        if (!(e instanceof ShaderRefusedError)) throw new Error(`crowd.wgsl pipeline validation failed: ${messageOf(e)}`)
+        refusals.push({ rung, error: e })
+        // A refusal carrying the module's own WGSL errors is the module's fault, the same on every rung: it ends here.
+        // Any other (the GPU's own compiler, reported as internal by Chrome and as validation by Safari; a pipeline
+        // rule) is tried a rung down, and every refusal stays in the record.
+        if (e.wgslErrors) break
       }
     }
-    if (!compiled) throw new Error(`crowd.wgsl pipeline compilation failed: the GPU's own compiler refused ${refused.join(', ')}`)
-    if (refused.length) console.warn(`[crowd] the GPU's own compiler refused ${refused.join(' and ')}; ${KERNEL_WORDS[kernel]} runs`)
+    const words = refusals.map((r) => `${KERNEL_WORDS[r.rung]} (${r.error.message})`).join(', ')
+    if (!compiled) {
+      throw new Error(refusals.some((r) => r.error.reason === 'internal')
+        ? `crowd.wgsl pipeline compilation failed: the GPU's own compiler refused ${words}`
+        : `crowd.wgsl pipeline validation failed: WebGPU refused ${words}`)
+    }
+    if (refusals.length) console.warn(`[crowd] ${KERNEL_WORDS[kernel]} runs: refused ${words}`)
     // The buffers, the bind groups and the spawn under every error scope: a buffer refused for memory or a bind group
     // refused by validation is a failure with its own words, not a first step that dispatches nothing.
     const { value: crowd, errors } = await withErrorScopes(device, () => {

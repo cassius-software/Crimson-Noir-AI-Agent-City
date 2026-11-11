@@ -3916,16 +3916,18 @@ bar and no reload of their own, so the page carries its own way out.
 - **A GPU whose own compiler refuses the crowd.** The crowd's compute passes are compiled asynchronously
   (`src/01_Initialize_World/gpuPipelines.ts`), so a refusal comes with the browser's own words and the module's
   compilation messages, and says whether WebGPU refused the shader (the page's or the browser's fault) or the GPU's
-  own compiler did (an internal error: the driver would not build the kernel, as a phone's can with the full
-  simulate pass). On the second, the physics worker climbs down a ladder of crowd kernels (`crowdCompute.ts`
-  `CROWD_KERNELS`): the same kernel at 64-wide workgroups instead of 128, then the light kernel
-  (`crowdWayLite.wgsl` in the place of `crowdWay.wgsl`), in which someone asked over indoors or onto a lot walks a
-  straight line round the furniture and through the door instead of following the operator's trail and searching
-  the lot's corners; the First-Law sensing, the contact, the containment, the detour round standing cars, the commute
-  and the flocking are the same on every rung. `hardware` at the console names the kernel that runs. Every rung
-  refused, the card reads "This device’s graphics driver couldn’t build the crowd" (update the browser and the phone's
-  system software, which carries the driver), and its details hold the driver's words for each rung, the adapter and
-  the worker's uncaptured GPU errors. The browser CI job compiles every rung under Chrome's software WebGPU
+  own compiler did (the driver would not build the kernel, as a phone's can with the full simulate pass: an internal
+  error in Chrome, one Safari reports as validation). On anything but an error in the WGSL itself, the physics
+  worker climbs down a ladder of crowd kernels (`crowdCompute.ts` `CROWD_KERNELS`), keeping every refusal: the same
+  kernel at 64-wide workgroups instead of 128, then the light kernel (`crowdWayLite.wgsl` in the place of
+  `crowdWay.wgsl`), in which someone asked over indoors walks the straight line, or round the first piece of
+  furniture in its way by a corner, and onto a lot walks the straight line, instead of following the operator's
+  trail and searching the lot's corners; the First-Law sensing, the contact, the containment, the detour round
+  standing cars, the commute and the flocking are the same on every rung. `hardware` at the console names the kernel
+  that runs, on a `crowd` row of its own. Every rung refused, the card reads "This device’s graphics driver couldn’t
+  build the crowd" (update the browser and the phone's system software, which carries the driver; on an iPhone, iOS
+  alone, whose graphics come with it), and its details hold the driver's words for each rung, the adapter and the
+  worker's uncaptured GPU errors. The browser CI job compiles every rung under Chrome's software WebGPU
   (`tools/browser/kernels.mjs`); no CI runner has a phone's GPU, so which rung a given phone accepts is learned on it.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
   named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which

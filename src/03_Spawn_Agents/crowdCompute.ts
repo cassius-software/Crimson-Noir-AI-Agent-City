@@ -281,12 +281,13 @@ export function geometryOf(streets: StreetGrid): StreetGeometry {
 }
 
 /**
- * The crowd kernels, in the order a worker tries them (crowdSim.ts create) when a GPU's own shader compiler refuses the
- * full simulate pass (an internal error, as some phones' drivers give the crowd):
+ * The crowd kernels, in the order a worker tries them (crowdSim.ts create) when the full simulate pass is refused for
+ * anything but an error in the WGSL itself (a GPU's own shader compiler, as some phones' give the crowd; a pipeline rule):
  * - 'full': crowd.wgsl with crowdWay.wgsl, the room and lot routing whole, the agent passes 128 invocations a workgroup;
  * - 'narrow': the same module, the agent passes 64 a workgroup, for a GPU whose register file seats fewer threads of a
  *   kernel this size than a workgroup of 128 asks for (a phone GPU's, where a workgroup must fit one core);
- * - 'lite': crowdWayLite.wgsl in the way file's place, the routing straight lines, 64 a workgroup.
+ * - 'lite': crowdWayLite.wgsl in the way file's place, the routing the straight line (round the first piece in its
+ *   way by a corner), 64 a workgroup.
  * Everything else, the First-Law sensing above all, is the same crowd.wgsl in all three.
  */
 export type CrowdKernel = 'full' | 'narrow' | 'lite'

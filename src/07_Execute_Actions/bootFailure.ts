@@ -73,7 +73,7 @@ export const WEBGPU_LINE = `${BRAND.name} needs WebGPU: a current Chrome, Edge o
 /** Which iPhones iOS 26 runs on: the ones that can have Safari 26. */
 const IOS26 = 'iOS 26 runs on iPhone 11, iPhone SE (2nd generation) and newer'
 
-const CODES: readonly FailureKind[] = ['insecure', 'no-api', 'no-adapter', 'compat-only', 'device', 'worker-gpu', 'wasm', 'shader', 'gpu-reset', 'stalled']
+const CODES: readonly FailureKind[] = ['insecure', 'no-api', 'no-adapter', 'compat-only', 'device', 'worker-gpu', 'wasm', 'shader', 'compiler', 'gpu-reset', 'stalled']
 
 /** The messages the page has shown, matched when an error carries no code (first match wins). */
 const KNOWN: readonly [RegExp, FailureKind][] = [
@@ -394,10 +394,13 @@ function words(kind: FailureKind, env: Env, p: Platform): Omit<Failure, 'kind' |
     case 'compiler':
       return w('This device’s graphics driver couldn’t build the crowd', [
         'The browser’s WebGPU accepted the crowd’s shader, but the GPU’s own compiler refused to build it; its words are in the details, with the kernel it refused.',
-        phone
-          ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the ${p.os === 'ios' ? device : 'phone'}’s system software (the graphics driver comes with it), ${again}.`
-          : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
-        'The city also tried narrower workgroups and its lighter crowd kernel; the details say whether those were refused as well.',
+        // Every browser on iOS is WebKit, and its graphics come with the system: there is no Chrome there to update.
+        p.os === 'ios'
+          ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
+          : phone
+            ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
+            : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
+        'For the crowd’s simulate pass the city also tried narrower workgroups and its lighter kernel; the details name each refusal.',
       ])
     case 'gpu-reset':
       return w('The graphics device was reset', [

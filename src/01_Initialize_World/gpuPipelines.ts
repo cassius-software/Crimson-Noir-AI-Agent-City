@@ -11,8 +11,9 @@
  * GPUPipelineError instead: its `reason` says whether WebGPU refused the shader (validation: the WGSL, or a
  * browser too old for it) or the GPU's compiler did (internal), and its message is the browser's. The module's own
  * compilation messages (getCompilationInfo: Tint's line and column, with the source line quoted) go with it. A
- * caller tells the two apart: a validation refusal is a bug to show, an internal one is a GPU to give a lighter
- * kernel (03_Spawn_Agents/crowdSim.ts). Pure apart from the device calls; the Node tests drive it with mocks.
+ * caller tells the two apart: a refusal with the WGSL's own errors in it is a bug to show, any other a GPU to give a
+ * lighter kernel (03_Spawn_Agents/crowdSim.ts; Safari reports its Metal compiler's refusals as validation, so the
+ * reason alone does not say). Pure apart from the device calls; the Node tests drive it with mocks.
  * What breaks if it is removed? A phone whose driver refuses the crowd's simulate kernel shows a card that blames
  * "a previous error", and nothing on it says what the driver said.
  */
@@ -26,6 +27,12 @@ export class ShaderRefusedError extends Error {
   readonly entryPoint: string
   readonly reason: RefusalReason
   readonly compilation: readonly string[]
+  /**
+   * Whether the module's own compilation messages hold an error: the WGSL's fault (or a browser too old for it), the
+   * same on any device. Without one, the refusal is the pipeline's: a rule it breaks, or the GPU's own compiler, which
+   * Chrome reports as internal and Safari as validation (WebKit rejects every backing failure with reason 'validation').
+   */
+  readonly wgslErrors: boolean
   constructor(module: string, entryPoint: string, reason: RefusalReason, message: string, compilation: readonly string[] = []) {
     super(`${module} ${entryPoint}: ${reason === 'validation' ? 'failed WebGPU validation' : reason === 'internal' ? "refused by the GPU's own compiler (internal error)" : 'refused for no reason given'}: ${message}${compilation.length ? `; compiler messages: ${compilation.join(' | ')}` : ''}`)
     this.name = 'ShaderRefusedError'
@@ -33,6 +40,7 @@ export class ShaderRefusedError extends Error {
     this.entryPoint = entryPoint
     this.reason = reason
     this.compilation = compilation
+    this.wgslErrors = compilation.some((line) => /^error\b/.test(line))
   }
 }
 

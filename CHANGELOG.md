@@ -1537,17 +1537,19 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the shader (validation) or the GPU's own compiler did (internal), in the browser's words, with the module's
   compilation messages (line, column and the source line quoted); the crowd's buffers, bind groups and spawn stand
   under validation, out-of-memory and internal scopes at once (the page's cull and the flow field's solver the same).
-  When the GPU's own compiler refuses the full simulate pass, `crowdSim.ts` climbs down a ladder of kernels
-  (`crowdCompute.ts` `CROWD_KERNELS`): the same module at 64-wide workgroups (a phone GPU's core seats fewer threads
-  of a kernel this size than a workgroup of 128 asks for), then the light kernel, `crowdWayLite.wgsl` in the place of
-  `crowdWay.wgsl` (new: the room and lot routing moved out of `crowd.wgsl`, the functions unchanged), which walks
-  someone asked over indoors or onto a lot by a straight line, round the furniture and through the door, instead of
-  the trail following and the lot-corner search; the First-Law sensing, the contact, the containment, the detour
-  round standing cars, the commute and the flocking are the same `crowd.wgsl` on every rung. The recovery card has
-  its own words for the driver ("This device's graphics driver couldn't build the crowd": update Chrome and the
-  phone's system software), names the adapter when the boot fails before the engine stands, and its details carry
-  the driver's words, the kernel it refused and the worker's uncaptured GPU errors; `hardware` at the console names
-  the kernel that runs. `crowdCompute.test.ts` pins every pass of every kernel within the default limits (bindings a
+  When the full simulate pass is refused for anything but an error in the WGSL itself (the GPU's own compiler, which
+  Chrome reports as an internal error and Safari as validation; a pipeline rule), `crowdSim.ts` climbs down a ladder
+  of kernels (`crowdCompute.ts` `CROWD_KERNELS`), every refusal kept for the record: the same module at 64-wide
+  workgroups (a phone GPU's core seats fewer threads of a kernel this size than a workgroup of 128 asks for), then
+  the light kernel, `crowdWayLite.wgsl` in the place of `crowdWay.wgsl` (new: the room and lot routing moved out of
+  `crowd.wgsl`, the functions unchanged), which walks someone asked over indoors by the straight line, or round the
+  first piece of furniture in its way by a corner, and onto a lot by the straight line, instead of the trail
+  following and the lot-corner search; the First-Law sensing, the contact, the containment, the detour round
+  standing cars, the commute and the flocking are the same `crowd.wgsl` on every rung. The recovery card has its own
+  words for the driver ("This device's graphics driver couldn't build the crowd": update Chrome and the phone's
+  system software; on an iPhone, iOS, whose graphics come with it), names the adapter when the boot fails before the
+  engine stands, and its details carry the driver's words, the kernel it refused and the worker's uncaptured GPU
+  errors; `hardware` at the console names the kernel that runs on a row of its own. `crowdCompute.test.ts` pins every pass of every kernel within the default limits (bindings a
   stage, workgroup size and storage, the uniform, every buffer and every dispatch at the largest crowd), the narrow
   kernel as the full module at half the width, the light kernel's drops and keeps, and the ladder with its messages;
   `bootFailure.test.ts` and `commands.test.ts` pin the card's words and the console's row. The browser job now

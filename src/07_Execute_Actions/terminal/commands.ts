@@ -519,7 +519,8 @@ export function formatQuality(q: QualityState): string {
 /**
  * The `hardware` readout: six rows of fixed columns, ASCII only, at most 80 columns each (an adapter line longer than
  * that is cut). The class and the profile that gave it, the adapter and its limits, the lanes, the governor's frame-time
- * percentiles with how many frames they stand on, and what the browser said of the machine.
+ * percentiles with how many frames they stand on, and what the browser said of the machine; a seventh row, the crowd
+ * kernel, where this GPU refused the full one (simProtocol.ts SimMeta.crowdKernel).
  */
 export function formatHardware(h: HardwareReport): string[] {
   const p = h.profile, t = h.tiers, f = h.frames, l = h.limits
@@ -531,9 +532,11 @@ export function formatHardware(h: HardwareReport): string[] {
     row('class', `${h.class}  profile ${p.lite ? 'lite' : p.mobile ? 'phone' : p.gpuClass}  start ${t.start} ${t.startLabel}  tiers ${t.min}..${t.max}`),
     row('adapter', adapter),
     row('limits', `bind ${bytes(l.maxStorageBufferBindingSize)}  buffer ${bytes(l.maxBufferSize)}  workgroup ${count(l.maxComputeWorkgroupSizeX)} wide  ${count(l.maxComputeInvocationsPerWorkgroup)} invocations`),
-    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)${h.lanes.kernel === 'narrow' ? '  narrow crowd workgroups (this GPU refused the full kernel at 128)' : h.lanes.kernel === 'lite' ? '  light crowd kernel (this GPU refused the full one)' : ''}`),
+    row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)`),
     row('frames', frames),
     row('machine', `${threads}  ${memory}  ${h.host === 'native' ? 'native shell' : 'browser tab'}`),
+    ...(h.lanes.kernel === 'narrow' ? [row('crowd', 'narrow kernel: 64-wide workgroups (this GPU refused the full one)')]
+      : h.lanes.kernel === 'lite' ? [row('crowd', 'light kernel: straight-line routing (this GPU refused the full one)')] : []),
   ]
 }
 
