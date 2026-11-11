@@ -15,6 +15,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Sloane holds a conversation.** Small talk and a question nothing in the city maps to ("how's it going", "who are
+  you", "what is the meaning of life?") used to fall through to the two scouts and a "Nothing maps to that directly"
+  line, and no model was ever asked to converse: the only request was a 4 s rewording of that line. The planner now
+  reads them as talk (`src/06_Make_Decisions/intent.ts` Brief.chat: nobody sent, nothing applied, no why asked), and
+  the card puts them to the page's mind as Sloane (`src/07_Execute_Actions/onboarding/voice.ts` sloaneChat: Sloane's
+  framing and the last eight turns, the reply streamed, every partial screened by `admitWords`, cut and stopped at an
+  `ACTION:` line, no deadline of its own beyond the router's). The field stays open for the next turn, where a goal is
+  still a goal. With no model answering, Sloane says so plainly and offers **Choose a model file** (the Menu's picker,
+  now reachable on a computer without the console), the local-server route with the `OLLAMA_ORIGINS` note, and **Ask
+  again**. The "Company" note no longer says nobody holds a conversation. `chat.test.ts` and new cases in
+  `intent.test.ts` cover it; the conversation's quality and speed with a real model are not verified in CI.
+
 - **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
   (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
   hand, the neck and the nape at seven bits each, and one ink at three; bit 31 is the shader's street flag, which no
@@ -1810,6 +1822,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **Sloane's rewording no longer kills the model loading in this page.** The brief's 4 s rewording asked the page's
+  mind, and an answer's stop ends the load it started (`src/09_Cognition/inPage.ts`), so with a model file kept and not
+  yet loaded every brief began a load and killed it at 4 s. The rewording now asks nothing while that model is still to
+  be loaded (`InPageMind.loaded()`, checked in `src/App.tsx`); the planner's sentence stands meanwhile.
 
 - **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
   an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid

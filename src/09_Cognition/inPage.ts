@@ -101,6 +101,8 @@ export interface InPageMind extends Mind {
   keep(files: readonly File[], onProgress?: (done: number, total: number) => void): Promise<KeptModel>
   forget(name?: string): Promise<string>  // a console line
   load(): Promise<string>                 // clears the crash guard and the failed mark, loads now; a console line
+  /** The chosen file is in the runtime now, so an answer starts without a load (asks nothing, makes no runtime). */
+  loaded(): boolean
   unload(): Promise<string>
   setGpu(mode: GpuMode): GpuMode
   log(): readonly string[]
@@ -847,6 +849,8 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       if (removed === 0) return 'no model file is kept in this page'
       return n ? `forgot ${n}: it is no longer kept in this page` : `forgot ${removed} model file${removed === 1 ? '' : 's'}: none is kept in this page now`
     },
+
+    loaded: (): boolean => current !== null && model !== null && current.name === model && runtime !== null && runtime.loaded(),
 
     load: async (): Promise<string> => {
       // The operator's word to try again: a crash mark and a failed load are cleared.

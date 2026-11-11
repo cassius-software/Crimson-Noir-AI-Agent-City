@@ -1231,3 +1231,22 @@ test('its settings: its own slice of the router\'s store, garbage tolerated, wri
   refused.settings.save = () => { throw new Error('quota') }
   assert.equal(refused.mind.setThink?.(true), true, 'a store that refuses keeps the setting for the visit')
 })
+
+test('loaded(): true only while the chosen file is in the runtime, so Sloane\'s rewording never asks (and so never stops) a load', async () => {
+  const h = await harness()
+  assert.equal(h.mind.loaded(), false, 'chosen, not loaded: an answer would load it first')
+  const gate = deferred<{ gpu: boolean; ms: number }>()
+  h.r.onLoad = () => gate.promise
+  const loading = h.mind.load()
+  await flush()
+  assert.equal(h.mind.loaded(), false, 'still loading')
+  gate.resolve({ gpu: false, ms: 900 })
+  await loading
+  assert.equal(h.mind.loaded(), true)
+  assert.equal(h.r.loads.length, 1, 'asking loaded() loads nothing')
+  await h.mind.unload()
+  assert.equal(h.mind.loaded(), false)
+  const none = await harness({ models: [], settings: null })
+  assert.equal(none.mind.loaded(), false, 'nothing chosen')
+  assert.equal(none.r.loads.length, 0)
+})

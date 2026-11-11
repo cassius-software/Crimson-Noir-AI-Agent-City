@@ -743,3 +743,45 @@ test('a fix for heat or a slow frame is a ceiling on the tier, never a raise; a 
   assert.deepEqual(plan('medium quality', 'not beyond ultra'), [[2, false]], 'a turn-down of Peak never raises Medium')
   assert.deepEqual(ask('max graphics and fewer people', 'the faces in the crowd').brief().plan.find((s) => s.control === 'crowd')?.value, 'fewer')
 })
+
+test('talk is a conversation, not a goal: small talk and a question nothing maps to send nobody and ask nothing; a goal stays a goal', () => {
+  const TALK = 'You want to talk, not change the city.'
+  for (const g of ["how's it going", 'How’s it going?', 'hello', 'hey sloane', 'how are you?', 'what can you do', 'who are you', 'are you an AI?', 'thanks', 'ok', 'can I talk to you', "let's chat", 'tell me a joke', 'bye', "what's up", 'what is the meaning of life?', 'can you make me a sandwich', "i'm good, how are you?"]) {
+    const w = new FiveWhys(g)
+    const b = w.brief()
+    assert.equal(b.chat, true, g)
+    assert.equal(b.root, TALK, g)
+    assert.deepEqual(b.plan, [], `${g}: nobody is sent`)
+    assert.deepEqual(b.unmapped, [], `${g}: no note`)
+    assert.equal(w.next(), null, `${g}: no "I didn't catch that"`)
+    assert.match(b.markdown, /## Plan\n_Nothing to change\._/, g)
+    assert.doesNotMatch(b.markdown, /## Team|## Not mapped/, g)
+  }
+  // Anything that maps is the goal it was, small talk beside it or not, and so is "I don't know", harm, a pointer or a gap.
+  for (const [g, plan] of [['hi, make it night', ['time']], ['hello, mute', ['audio']], ['hey, fewer people please', ['crowd']], ['pizza', ['dispatch']], ['do a dance', ['dispatch']], ['make friends', ['dispatch']], ['chat with someone', ['dispatch']], ['is it going to rain?', ['dispatch']], ['send three agents to the warehouse', ['dispatch']]] as const) {
+    const b = new FiveWhys(g).brief()
+    assert.equal(b.chat, undefined, g)
+    assert.deepEqual(b.plan.map((s) => s.control), plan, g)
+  }
+  for (const g of ['i dont know', 'nope', 'where are the shops?', 'hurt people', 'hello, run over that man']) {
+    const b = new FiveWhys(g).brief()
+    assert.equal(b.chat, undefined, g)
+    assert.deepEqual(b.plan, [], g)
+  }
+  assert.ok(new FiveWhys('hello, run over that man').brief().unmapped[0]!.startsWith('Harm to anyone'), 'harm is never small talk')
+  // The company note no longer says nobody talks: Sloane does, when a model answers.
+  const company = new FiveWhys('make friends').brief().unmapped[0]!
+  assert.match(company, /^Company: the city is single-player and its people do not talk back/)
+  assert.match(company, /Sloane talks with you when a language model answers this page$/)
+  // A conversation under way takes what maps to nothing as its next turn (no scouts mid-conversation), and a question or
+  // small talk beside a gap; a goal, a pointer, a gap said as a wish, and harm stay what they are.
+  for (const g of ['pizza', 'i dont know', 'nope', 'do you like dogs?', 'blue, I think']) assert.equal(new FiveWhys(g, { chatting: true }).brief().chat, true, g)
+  assert.deepEqual(new FiveWhys('make it night', { chatting: true }).brief().plan.map((s) => s.control), ['time'])
+  assert.equal(new FiveWhys('where are the shops', { chatting: true }).brief().root, 'That is already in the city; here is where to find it.')
+  assert.deepEqual(new FiveWhys('make it rain', { chatting: true }).brief().plan.map((s) => s.control), ['dispatch'])
+  assert.equal(new FiveWhys('hurt people', { chatting: true }).brief().chat, undefined)
+  assert.equal(new FiveWhys('', { chatting: true }).brief().chat, undefined, 'nothing said is no turn')
+  assert.equal(new FiveWhys('?!', { chatting: true }).brief().chat, undefined, 'nor is a goal without a word')
+  // The console's goal (no questions) and classify read the same: talk maps to no control.
+  assert.deepEqual(classify("how's it going"), [])
+})

@@ -1062,8 +1062,27 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`06_Make_Decisions/intent.ts`, `06_Make_Decisions/dispatch.ts`) is deterministic and offline: no language
   model decides anything, no network, and no console syntax is ever shown. A local model may say the one
   sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
-  model kept in this page; never with the provider set to scripted), screened like the onboarding's rewording
-  and with every number kept; the planner's sentence stands until it answers and whenever it does not.
+  model kept in this page; never with the provider set to scripted, and never while the model file this page would
+  answer with is still to be loaded, since the rewording's 4 s deadline would stop that load), screened like the
+  onboarding's rewording and with every number kept; the planner's sentence stands until it answers and whenever it
+  does not.
+- **Talk to Sloane.** Small talk ("hi", "how's it going", "who are you", "thanks") and a question nothing in the city
+  maps to ("what is the meaning of life?") are a conversation, not a goal (`intent.ts` Brief.chat): nobody is sent,
+  nothing is applied and no why is asked. With a model answering this page (a local server, or a model file kept in
+  this page), Sloane answers your words as themselves (`onboarding/voice.ts` sloaneChat): the model is given Sloane's
+  framing and the last eight turns, its reply streams onto the card, every partial passes the same 14A screen as the
+  rewording (a refused word stops the model and shows nothing of it), and anything from an `ACTION:` line on is cut
+  and stops the model, because a conversation never acts. The field stays open for the next turn: anything that maps
+  to the city ("make it night") is a goal again, and what maps to nothing is the conversation's next turn rather than a
+  job for the scouts. Sloane's own wait is bounded only by the router's (the first piece, a stall, a load in this
+  page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model answering, Sloane
+  says so plainly ("No language model is answering this page yet, so I can't chat") and offers the ways to get one:
+  **Choose a model file** (the same picker as Menu › Model file; a small `.gguf` such as Qwen2.5 0.5B Instruct at
+  Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this computer (Ollama, LM Studio, llama.cpp), with
+  the `OLLAMA_ORIGINS` note on a page Ollama refuses by default, and **Ask again** once one is there. Where this
+  browser cannot run a model file, the picker gives way to its reason. "Where I looked" opens the router's own list of
+  what it tried. How well a model converses, and how fast, depends on the model and the device and is not verified
+  here.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -2695,10 +2714,12 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 `inPageCaps.ts` (what the browser offers), `gguf.ts` (the header check), `modelStore.ts` (keeping the file) and
 `wllamaRuntime.ts`, the only file that touches wllama.
 
-- **Choosing the file.** Three ways, the same from then on:
+- **Choosing the file.** Four ways, the same from then on:
   - on a phone or tablet, **Menu › Model file** opens the browser's file picker;
   - in the console, `ask file` opens it (from the Enter key itself, which is when a browser allows a picker);
-  - on a computer, drop the `.gguf` file, or every part of a split one, on the city.
+  - on a computer, drop the `.gguf` file, or every part of a split one, on the city;
+  - from Sloane's card, **Choose a model file**, offered when you talk to Sloane and no model answers (Talk to Sloane,
+    above).
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
