@@ -19,17 +19,19 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { PROGRAM, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
-import { BESIDE_ROOM_QUERY } from '../Concierge.tsx'
+import { besideRoom } from '../Concierge.tsx'
 import { CONCIERGE_NAME } from './script.ts'
 
-/** Where the card stands (full class strings, so Tailwind sees them). The HUD's wide readout is 18 rem wide and about
- *  14 rem tall under a 1.25 rem frame; the compact frame is 0.75 rem with the minimap row 8.75 rem tall; the touch stick's
- *  zone is 11.5 rem tall and the buttons' top edge is --touch-top (TouchControls.tsx); the console is 45 dvh tall. */
+/** Where the card stands (full class strings, so Tailwind sees them). The card is inside the text size's zoom
+ *  (index.css `.ui-zoom`), like the HUD it keeps clear of: the HUD's wide readout is 18 rem wide and about 14 rem tall
+ *  under a 1.25 rem frame; the compact frame is 0.75 rem with the minimap row 8.75 rem tall. What is not zoomed is
+ *  divided by --ui-zoom: the window's height (dvh), the touch buttons' top edge (--touch-top, window pixels;
+ *  TouchControls.tsx) and the stick's zone (11.5 rem of the unzoomed touch layer), and the console's 45 dvh. */
 const AT = {
-  wide: 'right-[max(1.25rem,env(safe-area-inset-right))] top-[calc(max(1.25rem,env(safe-area-inset-top))+16rem)] w-[20rem] max-h-[calc(100dvh_-_max(1.25rem,env(safe-area-inset-top))_-_16rem_-_7.5rem)]',
-  compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
-  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(var(--touch-top,10.5rem),11.5rem)+0.5rem)] mx-auto max-w-[28rem] max-h-[calc(100dvh_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(var(--touch-top,10.5rem),11.5rem)_-_1rem)]',
-  console: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-[28rem] max-h-[calc(55dvh_-_4rem)]',
+  wide: 'right-[max(1.25rem,env(safe-area-inset-right))] top-[calc(max(1.25rem,env(safe-area-inset-top))+16rem)] w-[20rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-top))_-_16rem_-_7.5rem)]',
+  compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
+  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_8.75rem_-_max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_-_1rem)]',
+  console: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-[28rem] max-h-[calc(calc(55dvh_/_var(--ui-zoom,1))_-_4rem)]',
 } as const
 
 /** A media query as a stable external store (the HUD's and the Concierge's compact query). */
@@ -47,8 +49,22 @@ function mediaStore(query: string) {
   }
 }
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
-/** Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query). */
-const ROOMY = mediaStore(BESIDE_ROOM_QUERY)
+/**
+ * SMALL at the text size's zoom: the window, measured in the zoom's pixels, is a small screen's. The wide place under
+ * the HUD's readout is 24.75 rem down a window of zoomed rem, so at 200 % a laptop's 800 or 864 px leave the card a
+ * sliver; there it takes the compact place at the foot instead (over the HUD, which at that zoom fills the window).
+ * At 100 % it is SMALL itself. One store per zoom.
+ */
+const SQUEEZED = new Map<number, ReturnType<typeof mediaStore>>()
+export function squeezedQuery(zoom: number): string {
+  const z = Math.max(1, zoom)
+  return `(max-width: ${Math.round(639 * z)}px), (max-height: ${Math.round(499 * z)}px)`
+}
+function squeezedAt(zoom: number): ReturnType<typeof mediaStore> {
+  let store = SQUEEZED.get(zoom)
+  if (!store) SQUEEZED.set(zoom, (store = mediaStore(squeezedQuery(zoom))))
+  return store
+}
 
 export interface FirstWalkCardProps {
   /** Shown (pass false while the boot veil covers the page or the city is halted). */
@@ -70,12 +86,19 @@ export interface FirstWalkCardProps {
   onSay?(text: string): void
   /** Sloane's own card is open (Concierge onOpen): in a wide window under 60 rem across, too narrow for the two side by side, this card steps aside until hers closes. */
   crowded?: boolean
+  /** The text size's zoom (access.ts scale / 100): the 60 rem are zoomed rem (Concierge.tsx besideRoom). */
+  zoom?: number
 }
 
-export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false }: FirstWalkCardProps): JSX.Element | null {
+export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false, zoom = 1 }: FirstWalkCardProps): JSX.Element | null {
   const compact = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
-  const roomy = useSyncExternalStore(ROOMY.subscribe, ROOMY.matches, ROOMY.server)
-  /** On screen: shown, and not stepping aside for Sloane's open card in a wide window too narrow for both. */
+  const tight = squeezedAt(zoom)
+  const squeezed = useSyncExternalStore(tight.subscribe, tight.matches, tight.server)
+  // Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query, at the same zoom).
+  const room = besideRoom(zoom)
+  const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
+  /** On screen: shown, and not stepping aside for Sloane's open card in a wide window too narrow for both (a window
+   *  small only at the zoom is still a wide one to her card, which stands in its centre: this one steps aside there). */
   const shown = visible && !(crowded && !termOpen && !overlay && !compact && !roomy)
   /** How many of the whys are unfolded (reset with the stage). */
   const [whys, setWhys] = useState(0)
@@ -96,64 +119,68 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   if (!shown) return null
 
   const line = beat && beat.stage === card.stage ? beat.text : card.ask
-  const at = termOpen ? AT.console : overlay ? AT.touch : compact ? AT.compact : AT.wide
+  const at = termOpen ? AT.console : overlay ? AT.touch : compact || squeezed ? AT.compact : AT.wide
   const exitStage = card.stage === 'exam'
   return (
-    <section
-      role="region"
-      aria-label={`Your first walk, ${card.index} of ${card.count}: ${card.title}`}
-      data-walk={card.stage}
-      data-walk-index={card.index}
-      className={`noir-panel absolute z-[1050] flex flex-col gap-2.5 overflow-y-auto overscroll-contain p-3.5 font-noir-text text-noir-titanium-200 antialiased ${at}`}
-    >
-      <header className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-noir-crimson" aria-hidden="true" />
-        <span className="noir-label">Your first walk</span>
-        <span className="ml-auto text-[12px] tabular-nums text-noir-titanium-400">{card.index} of {card.count}</span>
-      </header>
-      <div className="flex gap-1" aria-hidden="true">
-        {Array.from({ length: card.count }, (_, i) => (
-          <span key={i} className={`h-1 flex-1 rounded-full ${i < card.index - 1 ? 'bg-noir-titanium-400' : i === card.index - 1 ? 'bg-noir-crimson' : 'bg-noir-titanium-800'}`} />
-        ))}
-      </div>
-      <h2 className="text-[17px] font-semibold leading-[22px] text-noir-titanium-100">{card.title}</h2>
-      <p className="text-[15px] leading-5 text-noir-titanium-100" aria-live="polite" data-walk-line>
-        <span className="text-noir-titanium-400">{CONCIERGE_NAME}: </span>{line}
-      </p>
-      <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>
-
-      {exitStage && (
-        <div className="flex flex-col gap-1.5">
-          <pre className="overflow-x-auto rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 font-noir-mono text-[12px] leading-[18px] text-noir-titanium-100" aria-label="The program">
-            {PROGRAM.map((l, i) => <div key={i}>noir {l}</div>)}
-          </pre>
-          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Type the program">
-            {PROGRAM.map((l, i) => (
-              <button key={i} type="button" onClick={() => onType(`noir ${l}`)} className="noir-button" data-walk-line-button={i + 1}>Line {i + 1}</button>
-            ))}
-            <button type="button" onClick={onRun} className="noir-button is-active" data-walk-run>Run</button>
-          </div>
-          <div className="flex gap-3 text-[12px] text-noir-titanium-400" aria-live="polite" data-walk-doors>
-            <span data-door="seal">{exam.seal ? '✓' : '○'} seal</span>
-            <span data-door="swarm">{exam.swarm ? '✓' : '○'} swarm</span>
-            <span data-door="city">○ city</span>
-          </div>
+    // The text size's zoom (index.css .ui-zoom) on a layer of its own over the whole screen, which lets the city's
+    // pointer through; the card takes it back.
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-[1050]">
+      <section
+        role="region"
+        aria-label={`Your first walk, ${card.index} of ${card.count}: ${card.title}`}
+        data-walk={card.stage}
+        data-walk-index={card.index}
+        className={`noir-panel pointer-events-auto absolute flex flex-col gap-2.5 overflow-y-auto overscroll-contain p-3.5 font-noir-text text-noir-titanium-200 antialiased ${at}`}
+      >
+        <header className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-noir-crimson" aria-hidden="true" />
+          <span className="noir-label">Your first walk</span>
+          <span className="ml-auto text-[12px] tabular-nums text-noir-titanium-400">{card.index} of {card.count}</span>
+        </header>
+        <div className="flex gap-1" aria-hidden="true">
+          {Array.from({ length: card.count }, (_, i) => (
+            <span key={i} className={`h-1 flex-1 rounded-full ${i < card.index - 1 ? 'bg-noir-titanium-400' : i === card.index - 1 ? 'bg-noir-crimson' : 'bg-noir-titanium-800'}`} />
+          ))}
         </div>
-      )}
+        <h2 className="text-[17px] font-semibold leading-[22px] text-noir-titanium-100">{card.title}</h2>
+        <p className="text-[15px] leading-5 text-noir-titanium-100" aria-live="polite" data-walk-line>
+          <span className="text-noir-titanium-400">{CONCIERGE_NAME}: </span>{line}
+        </p>
+        <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>
 
-      {whys > 0 && (
-        <ol className="flex flex-col gap-1.5 text-[13px] leading-[18px] text-noir-titanium-200" aria-label="The five whys" data-walk-whys={whys}>
-          {card.whys.slice(0, whys).map((w, i) => <li key={i} className="border-l-2 border-noir-titanium-800 pl-2.5">{w}</li>)}
-        </ol>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        {whys < card.whys.length && (
-          <button type="button" onClick={() => setWhys((n) => n + 1)} className="noir-button" data-walk-why>{whys === 0 ? 'Why?' : 'And why?'}</button>
+        {exitStage && (
+          <div className="flex flex-col gap-1.5">
+            <pre className="overflow-x-auto rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 font-noir-mono text-[12px] leading-[18px] text-noir-titanium-100" aria-label="The program">
+              {PROGRAM.map((l, i) => <div key={i}>noir {l}</div>)}
+            </pre>
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Type the program">
+              {PROGRAM.map((l, i) => (
+                <button key={i} type="button" onClick={() => onType(`noir ${l}`)} className="noir-button" data-walk-line-button={i + 1}>Line {i + 1}</button>
+              ))}
+              <button type="button" onClick={onRun} className="noir-button is-active" data-walk-run>Run</button>
+            </div>
+            <div className="flex gap-3 text-[12px] text-noir-titanium-400" aria-live="polite" data-walk-doors>
+              <span data-door="seal">{exam.seal ? '✓' : '○'} seal</span>
+              <span data-door="swarm">{exam.swarm ? '✓' : '○'} swarm</span>
+              <span data-door="city">○ city</span>
+            </div>
+          </div>
         )}
-        <button type="button" onClick={onShow} className="noir-button" data-walk-show>{card.show}</button>
-      </div>
-      <p className="text-[11px] leading-4 text-noir-titanium-600">No skip: the city opens when the program on the last card has run.</p>
-    </section>
+
+        {whys > 0 && (
+          <ol className="flex flex-col gap-1.5 text-[13px] leading-[18px] text-noir-titanium-200" aria-label="The five whys" data-walk-whys={whys}>
+            {card.whys.slice(0, whys).map((w, i) => <li key={i} className="border-l-2 border-noir-titanium-800 pl-2.5">{w}</li>)}
+          </ol>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {whys < card.whys.length && (
+            <button type="button" onClick={() => setWhys((n) => n + 1)} className="noir-button" data-walk-why>{whys === 0 ? 'Why?' : 'And why?'}</button>
+          )}
+          <button type="button" onClick={onShow} className="noir-button" data-walk-show>{card.show}</button>
+        </div>
+        <p className="text-[11px] leading-4 text-noir-titanium-600">No skip: the city opens when the program on the last card has run.</p>
+      </section>
+    </div>
   )
 }

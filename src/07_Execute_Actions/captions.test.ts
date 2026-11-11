@@ -466,5 +466,5 @@ test('wiring: the soundscape reports every sound to one listener, the engine fee
   const hud = read('./Hud.tsx')
   assert.match(hud, /role="status" aria-live="polite"/)
   assert.match(hud, /const captions = c\.captions/)
-  assert.ok(hud.includes('{!visible && (recChip || rc?.listening || captionStrip) && ('), 'shown with the HUD hidden, like the MIC chip')
+  assert.ok(hud.includes('{!visible && (recChip || micPill || rc?.listening || captionStrip) && ('), 'shown with the HUD hidden, like the microphone pill')
 })

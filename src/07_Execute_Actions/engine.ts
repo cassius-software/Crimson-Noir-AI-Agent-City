@@ -107,7 +107,8 @@ import {
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
 import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewports.ts'
-import { buildPost, type AmbientOcclusion, type CinemaPost } from './postfx.ts'
+import { buildPost, type AmbientOcclusion, type CinemaPost, type VisionUniform } from './postfx.ts'
+import { visionMatrix, visionWord, type Vision } from './access.ts'
 import { createGhost, type GhostView } from './ghost.ts'
 import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
 import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
@@ -541,6 +542,9 @@ export class Engine {
   /** The cinema camera's pacer and post uniforms (both null with ?cinema=0: every animation frame is drawn). */
   private readonly pacer: FramePacer | null
   private readonly cinema: CinemaPost | null
+  /** The colour-vision filter's matrix at the end of the post chain (postfx.ts; 07_Execute_Actions/access.ts sets it through setVision). */
+  private readonly vision: VisionUniform
+  private visionMode: Vision = 'none'
   /** The span the pedestrians' motion vectors cover (crowd.ts CrowdView.frameSeconds). */
   private readonly crowdFrameSeconds: UniformNode<'float', number>
   /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
@@ -782,6 +786,11 @@ export class Engine {
    */
   onRally: ((request: RallyRequest) => void) | null = null
   /**
+   * The host's microphone switch (App.tsx: 04_Connect_Hardware/microphone.ts toggle), called once per press of V, the
+   * right stick's click (R3) or the touch Menu's item. Null: the press goes nowhere. The engine never opens a microphone.
+   */
+  onMute: (() => void) | null = null
+  /**
    * The host's: a shop's catalogue asked for (E or B on foot inside shop `index`, with no car in reach to take the E).
    * Null: nothing opens.
    */
@@ -866,7 +875,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     start: { x: number; z: number }
     homes: readonly PageHome[]
@@ -898,6 +907,7 @@ export class Engine {
     this.post = p.post
     this.volumetrics = p.volumetrics
     this.cinema = p.cinema
+    this.vision = p.vision
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
     this.crowdGaze = p.crowdGaze
@@ -1177,7 +1187,7 @@ export class Engine {
       const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
       const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
         buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples, ao: aoBuilt })
-      let { pipeline: post, volumetrics, cinema, ao, release } = chainOf(sceneSamples)
+      let { pipeline: post, volumetrics, cinema, vision, ao, release } = chainOf(sceneSamples)
 
       const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight)
       gpu.renderer.setSize(w, h, false)
@@ -1212,7 +1222,7 @@ export class Engine {
           console.warn(`[aa] the 4x scene pass failed WebGPU validation (${refused.message}); the chain is rebuilt at 1x`)
           release()
           sceneSamples = 0
-          ;({ pipeline: post, volumetrics, cinema, ao, release } = chainOf(sceneSamples))
+          ;({ pipeline: post, volumetrics, cinema, vision, ao, release } = chainOf(sceneSamples))
           gpu.device.pushErrorScope('validation')
           post.render()
           const retry = await gpu.device.popErrorScope()
@@ -1241,7 +1251,7 @@ export class Engine {
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets, start: spawn,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
@@ -2366,8 +2376,9 @@ export class Engine {
   private applyTier(): void {
     const q = this.quality
     const k = q.mask(q.governor.knobs())
-    // Ghost view lives in the post chain: while it is on, the chain runs at every tier (unless ?post=0 forbids it).
-    if (this.ghost.on && this.options.post) k.post = true
+    // Ghost view and the colour-vision filter live in the post chain: while either is on, the chain runs at every tier
+    // (unless the page turned the chain off: ?post=0, the lite profile, a split screen).
+    if ((this.ghost.on || this.visionMode !== 'none') && this.options.post) k.post = true
     // The post chain presents one image; a headset wants two eyes, so it is off while presenting (xrSession.ts). The
     // clustered lamps bin into the viewport of the render they are computed for (cityLights.ts); a headset's two eyes
     // are drawn by three's own XR path, which is not that render, so under a headset the lamps are emissive only.
@@ -2401,6 +2412,9 @@ export class Engine {
     // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
     input.poll(dt)
+    // The microphone's mute (V, the right stick's click) is a privacy switch that nothing holds back, an action card's
+    // shield included: taken before a home's card drains the rest.
+    const mute = input.take('mute')
     // A home's doorstep card holds the avatar still: whatever the poll queued (a pad's edges queue even while the host
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
@@ -2428,6 +2442,7 @@ export class Engine {
       if (line.startsWith('on:') || (line === 'off' && this.views.length === 1 && !this.rig.headset && this.options.post)) this.deed('optics')
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
+    if (mute) this.onMute?.()
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
@@ -2923,6 +2938,34 @@ export class Engine {
     const at = cam.position
     return wallsBetween(this.world.boxes, { x: at.x, y: at.y, z: at.z }, { x, y: SPEECH.height, z })
   }
+
+  /**
+   * The colour-vision filter (07_Execute_Actions/access.ts): the post chain's last matrix, a daltonisation for a protan,
+   * deutan or tritan viewer, or the identity for 'none'. View-only. Returns the word the console prints.
+   */
+  setVision(mode: Vision): string {
+    this.visionMode = mode
+    this.vision.value.set(...visionMatrix(mode))
+    if (!this.disposed) this.applyTier()
+    const blocked = mode === 'none' ? null : this.visionBlocked()
+    return blocked ?? visionWord(mode)
+  }
+
+  /**
+   * Why the colour-vision filter cannot be drawn now, or null when it can: it is the post chain's last matrix, and the
+   * chain is off under a headset, while the screen is split, under the lite profile and with ?post=0 (setVision keeps it
+   * on at every other tier).
+   */
+  visionBlocked(): string | null {
+    if (this.rig.headset) return 'needs the post-processing chain, which is off under a headset'
+    if (this.views.length > 1) return 'needs the post-processing chain, which is off while the screen is split'
+    if (!this.options.post && this.options.lite) return 'needs the post-processing chain, which the lite profile turned off (?lite=0 keeps it)'
+    if (!this.options.post) return 'needs the post-processing chain, which ?post=0 turned off'
+    return null
+  }
+
+  /** The colour-vision filter in force. */
+  get visionFilter(): Vision { return this.visionMode }
 
   /** Closed captions on or off (view-only; the soundscape keeps sounding). Returns the status line the console prints. */
   setCaptions(on: boolean): string {

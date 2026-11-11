@@ -21,8 +21,8 @@
  * motion blur or a tone curve.
  */
 import {
-  Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type NodeFrame, type PassNode,
-  type PerspectiveCamera, type Scene, type UniformNode, type WebGPURenderer,
+  Matrix3, Matrix4, NoToneMapping, RenderPipeline, SRGBColorSpace, type Mesh, type Node, type NodeBuilder, type NodeFrame,
+  type PassNode, type PerspectiveCamera, type Scene, type UniformNode, type WebGPURenderer,
 } from 'three/webgpu'
 import {
   Fn, If, exp2, float, getNormalFromDepth, length, luminance, max, min, mix, mrt, output, pass, renderOutput, sample,
@@ -71,6 +71,9 @@ export function filmResponse(c: Node<'vec3'>): Node<'vec3'> {
 export function pickMotion(material: unknown, resorted: ReadonlySet<unknown>, cameraOnly: Node<'vec2'>): Node<'vec2'> {
   return resorted.has(material) ? cameraOnly : (velocity as unknown as Node<'vec2'>)
 }
+
+/** The colour-vision filter's matrix (access.ts visionMatrix), the identity until the host sets one. */
+export type VisionUniform = UniformNode<'mat3', Matrix3>
 
 /**
  * The ambient occlusion's fixed tuning. Starting values, judged on the software adapter's pictures only:
@@ -125,6 +128,7 @@ export interface PostChain {
   pipeline: RenderPipeline
   volumetrics: Volumetrics
   cinema: CinemaPost | null
+  vision: VisionUniform
   /** The ambient occlusion, where the boot built it. */
   ao: AmbientOcclusion | null
   release: () => void
@@ -191,10 +195,14 @@ export function buildPost(
   const pipeline = new RenderPipeline(renderer)
   pipeline.outputColorTransform = false
   const vignette = float(1).sub(smoothstep(0.55, 1.2, length(screenUV.sub(0.5)).mul(1.4)).mul(0.3))
+  // The colour-vision filter (access.ts): one 3×3 over the finished, display-referred frame, the identity unless the
+  // host sets a protan, deutan or tritan daltonisation. After the ghost, so its colours are moved with the frame's.
+  const vision: VisionUniform = uniform(new Matrix3())
   // Last of all, over the finished (shuttered, graded, anti-aliased) frame: ghost view, when the page has one.
   const finish = (fxaaImage: Node): Node => {
     const image = fxaaImage as unknown as Node<'vec4'>
-    return ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
+    const over = ghost && ghostPass ? ghostComposite(image, ghostPass.getTextureNode('output'), ghost) : image
+    return vec4(vision.mul(over.rgb).clamp(), over.a)
   }
   // Every node that owns a render target, for release(): RenderPipeline.dispose frees its own quad's material alone.
   const owners: { dispose(): void }[] = [scenePass, ...(ghostPass ? [ghostPass] : []), ...(ao ? [ao.node] : [])]
@@ -218,7 +226,7 @@ export function buildPost(
     const smooth = fxaa(renderOutput(vec4(lit, 1)))
     owners.push(rays, glow, smooth.textureNode)
     pipeline.outputNode = finish(smooth)
-    return { pipeline, volumetrics, cinema: null, ao, release }
+    return { pipeline, volumetrics, cinema: null, vision, ao, release }
   }
 
   const volumetrics = createVolumetrics()
@@ -252,5 +260,5 @@ export function buildPost(
   const smooth = fxaa(renderOutput(vec4(filmResponse(filtered), 1), NoToneMapping, SRGBColorSpace))
   owners.push(rays, shutter, glow, smooth.textureNode)
   pipeline.outputNode = finish(smooth)
-  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, ao, release }
+  return { pipeline, volumetrics, cinema: { shutter, nd, exposure, previousViewProjection }, vision, ao, release }
 }

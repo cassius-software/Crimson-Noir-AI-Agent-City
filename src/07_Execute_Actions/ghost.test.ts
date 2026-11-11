@@ -265,7 +265,7 @@ test('buildPost: the ghost is laid over the finished frame: nothing of it is und
 test('the engine keeps the post chain on while ghost view shows (it lives there), unless ?post=0 forbids it', () => {
   const src = readFileSync(new URL('./engine.ts', import.meta.url), 'utf8')
   const tier = src.slice(src.indexOf('  private applyTier(): void {'), src.indexOf('  frame(nowMs: number): void {'))
-  assert.match(tier, /if \(this\.ghost\.on && this\.options\.post\) k\.post = true/)
+  assert.match(tier, /if \(\(this\.ghost\.on \|\| this\.visionMode !== 'none'\) && this\.options\.post\) k\.post = true/, 'and while a colour-vision filter is chosen (it is the chain\'s last matrix)')
   assert.ok(tier.indexOf('k.post = true') < tier.indexOf('applyQuality(k'), 'forced before the knobs are applied')
   const setGhost = src.slice(src.indexOf('  setGhost(on: boolean): string {'), src.indexOf('  /** Enter the nearest car'))
   assert.match(setGhost, /this\.ghost\.setOn\(on\)\s+this\.applyTier\(\)/)

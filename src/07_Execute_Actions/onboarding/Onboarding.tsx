@@ -173,7 +173,7 @@ export function Onboarding({ seed, onDone, port, voice = scriptedVoice(), speake
   const progress = failed ? 'The city could not be built; the first one will open instead.' : stage ? `${STAGE_WORDS[stage]}${stage === 'ready' ? '.' : '…'}` : 'Getting ready…'
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="onboarding-title" data-onboarding={step} className="absolute inset-0 z-[1100] flex overflow-y-auto bg-noir-ink px-4 py-6 font-noir-text text-noir-titanium-200 antialiased">
+    <div role="dialog" aria-modal="true" aria-labelledby="onboarding-title" data-onboarding={step} className="ui-zoom absolute inset-0 z-[1100] flex overflow-y-auto bg-noir-ink px-4 py-6 font-noir-text text-noir-titanium-200 antialiased">
       <div className="noir-panel m-auto flex w-full max-w-md flex-col gap-4 p-4 sm:p-6">
         <header className="flex items-center gap-3">
           <MonolithLogo size={28} title="" />
