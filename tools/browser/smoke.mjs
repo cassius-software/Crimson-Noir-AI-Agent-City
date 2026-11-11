@@ -135,6 +135,8 @@
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
  * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
+ * `--shard i/n` runs only part i of n of those scenarios (shard.mjs: split by how long each took in CI), as CI's
+ * browser jobs do.
  * Needs `npm run build`.
  * What breaks if it is removed? Nothing at runtime; the page loses its only end-to-end check in a browser, and with it
  * the proof that the city renders and that every control reaches the avatar.
@@ -146,6 +148,7 @@ import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Browser, findChrome, loopbackOnly, SOFTWARE_WEBGPU, watchTargets } from './cdp.mjs'
 import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
+import { parseShard, shardOf } from './shard.mjs'
 import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
 import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
@@ -161,6 +164,8 @@ const arg = (name) => {
 }
 const OUT = arg('out') ?? mkdtempSync(join(tmpdir(), 'agent-city-smoke-out-'))
 const ONLY = arg('only')?.split(',').map((s) => s.trim()).filter(Boolean)
+/** The part of the scenarios this run takes (`--shard i/n`, shard.mjs), or null for all of them. */
+const SHARD = arg('shard') === undefined ? null : parseShard(arg('shard'))
 /** The software adapter renders a few frames a second: everything here waits on the page's own state, never on time. */
 const BOOT_MS = Number(arg('boot-ms') ?? 240_000)
 
@@ -3064,8 +3069,11 @@ async function main() {
   console.log(`shots    ${OUT}`)
   const { server, origin, port } = await serve()
   try {
-    for (const [name, run] of Object.entries(SCENARIOS)) {
-      if (ONLY && !ONLY.includes(name)) continue
+    const names = Object.keys(SCENARIOS).filter((name) => !ONLY || ONLY.includes(name))
+    const chosen = SHARD ? shardOf(names, SHARD.i, SHARD.n) : names
+    if (SHARD) console.log(`shard    ${SHARD.i}/${SHARD.n}: ${chosen.join(', ') || 'none'}`)
+    for (const name of chosen) {
+      const run = SCENARIOS[name]
       const t0 = Date.now()
       try { await run(chrome, origin, port) } catch (e) { check(false, `${name}: ran to the end`, e instanceof Error ? e.message.slice(0, 400) : String(e)) }
       console.log(`      ${name}: ${((Date.now() - t0) / 1000).toFixed(0)} s`)
