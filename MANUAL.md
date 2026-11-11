@@ -2345,13 +2345,19 @@ any of them.
   not running, so the sentence says it may be either, and names vLLM's flag when nothing answered at its port.
 - **Bounded.** Every request to a local server asks for a context of 8,192 tokens and an answer of at most 2,048
   (the Ollama format is the one that bounds the context). A model's own maximum can be far larger, and a server
-  that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). Running
-  a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
+  that sizes its memory to it can fail before the first word (seen here: a 4B model asking for 20.5 GB). The one
+  exception is Ollama under `auto` with the GPUs' memory given: after an answer cut at that limit, a model measured
+  all on the GPU may get twice the context, with answers of up to a quarter of it, for the rest of the visit (How
+  big a model auto gives Ollama, below); the client never asks for more than 32,768 tokens and 8,192 of answer.
+  Running a model beside the city costs frame rate, and the quality governor drops the tier to compensate.
 - **What it cannot do.** It sends nothing unless you type `ask`, and nothing polls in the background. With the GPUs'
   memory given, an answer from Ollama under auto may be followed by one more request on this machine, `GET /api/ps`
   (which models Ollama has loaded and how much of each sits on the GPU), at most one for each answer, and preceded
   by one `GET /api/tags` when auto found Ollama without its list of sizes (found in the chat format, or `ask server`
-  or `ask api` changed since). Under `auto`, an
+  or `ask api` changed since). When an ask's first answer goes at a larger context and Ollama refuses it before any
+  of it arrives, the ask is answered once more at 8,192, unless a setting changed since it was sent or a stop came
+  with the refusal; an answer that was itself the ask's one more (the moved model's retry, or the answer after a new
+  look) is not asked again (below). Under `auto`, an
   ask with nothing found yet, an ask whose server stops answering before any of its answer arrived, and `ask` alone
   first ask the three model servers above for their lists of models, and with them up to three more at the newer
   default addresses (9931, 8000 and 30000, or a provider's old default once it is set to one of these), all on this machine,
@@ -2402,7 +2408,8 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   - A model whose weights alone are more than the figure is never chosen while a smaller one is listed.
   - The first answer of each model in a visit, an answer slower than 5 tokens a second over at least 32 tokens, and
     one that ran out of time, are each followed by one `GET /api/ps`: how much the loaded model takes in all and how
-    much of it is on the GPU.
+    much of it is on the GPU. None follows an answer that ends after the figure has gone (the Windows app's reading
+    is read at each ask).
   - Once a measurement shows the model at least partly on the GPU, auto gives Ollama the largest text model it lists
     whose need fits the figure less 2 GB. Need is that model's own measured size, else its weights times the largest
     loaded-to-weights ratio measured on this server.
@@ -2413,17 +2420,75 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   - A model auto moved to that Ollama will not load (its failure before anything arrives) is set aside for the visit,
     and the same ask is answered once more by the model auto picks next. The model it would have used anyway is not
     answered twice: that failure is the ask's.
+  - **The context and the answer grow, for this visit.** Each visit starts every model at 8,192 tokens of context
+    and answers of up to 2,048. After an answer cut at that limit (Ollama says `length`), auto doubles that model's
+    context once, to 16,384, with answers of up to a quarter of it (4,096), when all of these hold:
+    - the answer counted at least 32 tokens at a pace that writes the longer answer within 5 minutes (about 13.7
+      tokens a second for 4,096);
+    - the newest measurement of the model at 8,192 this visit (one still under way is waited for) was all on the GPU,
+      and Ollama's `/api/ps` said it runs at 8,192 (its `context_length`, which Ollama reports since v0.10.0, so an
+      older Ollama never grows);
+    - what was loaded plus what doubling costs (what was loaded beyond the weights, at least 1 GB) fits the figure
+      less 2 GB;
+    - the model is still the one auto answers with after that measurement (a bigger model comes first), and it has
+      not grown this visit.
+
+    A new context makes Ollama load the model again (read from Ollama's source, not timed). The first answer at the
+    larger context is measured, with one more `GET /api/ps`:
+    - all on the GPU and not slower than 5 tokens a second (over at least 32): it stays;
+    - split, all on the processor, or slower than that: back to 8,192 for the rest of the visit, also when its first
+      wait runs out split or on the processor (Ollama plans where a model goes before it loads it; read from its
+      source, not timed); nothing loaded after two first waits ran out there: back too (nothing loaded after answers that
+      came says nothing, however often);
+    - refused by Ollama before any of it arrives: back, and the same ask is answered once more at 8,192. That is the
+      ask's one retry: the moved model's retry above and a new look do not follow it. A settings change while that
+      answer runs drops its measurement, and one before the refusal means no retry (it still goes back, and the
+      model is not set aside);
+    - failing in Ollama after some of the answer arrived: back, whatever changed since it was sent, and that failure
+      is the ask's (the text already shown is never written again);
+    - the moved model's retry above, when the model it goes to grew, goes at that model's context, and so does the
+      answer after a new look when Ollama had stopped answering; either is measured there (a first wait that runs out
+      counts toward the two, a stall is too slow); refused there or failing partway, that context goes back, and the
+      failure is the ask's (that answer was its one more). A stop that lands with a refusal learns nothing;
+    - Ollama not answering, or refusing this page, at the larger context is not the context's failure: it stays, and
+      the ask looks again as before;
+    - Ollama reports a smaller context than asked (it runs a model at most at the context it was trained on): auto
+      uses that one when it is above 8,192 and the model ran there all on the GPU and not slow (12,288 gives answers
+      of up to 3,072, measured at its next answer, with two first waits of its own), else stays at 8,192, and either
+      way it does not grow again. Split, on the processor or slow there sends it back as above.
+
+    None of this counts toward the two visits, and only measurements at 8,192 are kept, so the step up is decided as
+    without it. A context's failure never sets a model aside by itself, so a moved model that will not load at the
+    larger context is set aside only once it fails at 8,192 too: a refusal there is answered once more at 8,192 rather
+    than by the next model down (set aside one ask later), and nothing loaded after two first waits sends only the
+    context back. A model whose larger context went back does not grow again that visit, and a measurement of an
+    answer sent at an older context says nothing of the one in use. Nor is what `/api/ps` says once an answer to that
+    model at another context was under way, or ended, since the measured one was sent (Ollama may have loaded the
+    model again for it) a measurement at all, at 8,192 or above. That is any answer the router sent to Ollama,
+    measured or not: one sent before the figure arrived, under `ask provider ollama`, or in the chat format (which
+    sends no context, so Ollama chooses its own); an answer to another model does not count. Two answers in flight at
+    once can do this: the console sends one ask at a time, but Sloane's rewording of a goal goes through the same
+    router while an ask runs. Nothing of the context is kept between
+    visits, and `ask vram` starts it over. The client takes at most 32,768 tokens and 8,192 of answer; with one
+    doubling a visit, auto asks at most 16,384 and 4,096 in this build.
 - **Never:** a model Ollama does not already list (nothing is downloaded); a cloud model (`kimi-k3` has only a cloud
   tag); the model you chose (`ask model <name>`: it is measured and shown, never replaced; `ask model auto` hands it
-  back); another provider.
+  back); another provider. Nor a context above 32,768 or more than one step a visit, and no larger context for the
+  model you chose, in the chat format, under another provider (`ask provider ollama` included), or for the model
+  kept in this page: each of those sends exactly what it sent before the context could grow.
 - **The `fit` row** under `ask` says the figure and where it came from, what was measured, which model answers and
   why, how to keep another (`ask model <name>`) and, after anything was dropped, how to start again (`ask vram …
-  measures afresh`).
+  measures afresh`). Once a context grew it also says what became of it: grown and measured at the next answer,
+  measured at that context, the trained context Ollama reported, or back to 8,192 and why. Until then the row is as
+  before.
 - **An older build of the page** (read from its code, not run) answers with the model auto last moved to, as if it
   had picked it, until `ask model <name>` or until Ollama no longer lists it, and drops what was measured at its next
   save.
 - **Starting values, not measured on a big GPU:** the 2 GB kept free (1 GB is llama.cpp's own margin per GPU, 1 GB for
-  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor.
+  the city), 5 tokens a second over 32 tokens, two visits, a second per 200 MB, and the launcher's 4 GB floor; for the
+  context, the answer as a quarter of it (today's 2,048 of 8,192), 32,768 tokens at most, one doubling a visit, 1 GB
+  as the least a doubling costs, and 5 minutes (the first wait) as the longest the longer answer may take at the pace
+  measured.
 - **A datacenter box.** Run the city on the box: the launcher reads its GPUs, which then draw the city as well as run
   the model. Or keep the page on your computer and forward Ollama's port over SSH (OpenSSH, in PowerShell or any
   shell): `ssh -N -o ExitOnForwardFailure=yes -L 11434:127.0.0.1:11434 <user>@<box>`, then `ask vram <the box's GB>`
@@ -2434,8 +2499,23 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   fake Ollama (`router.fit.test.ts`: no change without a figure, growth, the misfit, the ratio, the processor-only
   case, one dropped step a visit, the two visits and the way back, the waits, the retry, a measurement that lands
   late or is dropped and asked again, a stop while one is under way, the chat format then the generate one, `ask model
-  auto`, the operator's own model, the paths asked, what is kept), the readers
-  (`localCompute.test.ts`), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
+  auto`, the operator's own model, the paths asked, what is kept; and for the context: the growth and its one step,
+  growth on a model already measured at 8,192 that visit, the room exactly at the budget and a byte over, a split,
+  the processor, the pace of 4.99 and 5.00, a refusal and its one retry measured at 8,192, a failure partway with
+  none, the trained context, the first waits, nothing loaded after answers that were not first waits, `ask vram`, a
+  settings change before and during the retry, a settings change before a refusal or a failure partway (back, no
+  retry, the moved model kept), the moved model's retry at a grown context (refused, failing partway, its first wait
+  running out with nothing loaded or with the model loaded, a stall), Ollama gone at a grown context and the answer
+  after the look, a stop landing with a refusal, an answer from an older context landing late, a reading taken while
+  or after an answer at another context ran (measured or not: before the figure, under `ask provider ollama`, in the
+  chat format) and not after another model's, the first waits at the trained context, a cut answer landing after a
+  look found nothing, a look begun as an answer is sent (the answer goes, and is measured, at the context it was
+  noted at), the figure gone before an answer or a retry ends (no `/api/ps`), the chat format after a look, the answer after a
+  look at 8,192 counting as an answer at its context, a settings change during a cut answer's measurement, the newest
+  measurement at 8,192 deciding, a moved model growing by its own weights, the model settled first, the same step up
+  and the same kept measurements with and without growth, today's requests byte for byte with no figure, in the chat format, for your own model and under `ask provider ollama`, and the grown context
+  back once auto is the provider again), the readers
+  (`localCompute.test.ts`: `context_length`, the body at each context, the chat format untouched), the launcher's probe on a stubbed `nvidia-smi` and a temporary folder of driver files
   (`desktopLauncher.test.ts`, which also checks the Windows app sums and rounds as the launcher does, and counts a
   4 GB card at DXGI's lower reading),
   and the Windows app's reading over a fake shell (`desktopShell.test.ts`: a list taken, anything else, a refusal or
@@ -2443,7 +2523,10 @@ prints decimal GB, so its 142GB is 132.2 GB here.
   from `vram=24`, `ask vram 16`, a refusal and `ask vram auto`. Not verified: any real GPU, Ollama's `/api/ps` on a
   real split model, real ratios and paces, whether 2 GB is enough, `nvidia-smi` on a NixOS `PATH`, the amdgpu files
   on an integrated GPU, DXGI's answer on a real Windows machine (the app is built on Windows by CI, never run there),
-  and a tunnel's delay.
+  and a tunnel's delay. For the context, no real Ollama has grown one: not verified are real cache sizes, how long the
+  reload takes, `context_length` on a real split model, a vision model whose projector may be missing from `/api/ps`
+  (inferred from Ollama's source), `OLLAMA_NUM_PARALLEL` above 1, a quantised cache, the MLX runners, how Ollama v0.10
+  to v0.12 reload above the trained context, and how long real long answers take.
 
 #### The prompt-prefix page table
 
@@ -4243,11 +4326,12 @@ the production page finds no physics object in the page and has every crafted me
 
 **Auto's Ollama model by the GPU (unreleased).**
 - **In Node, on every CI run:** `modelFit.test.ts`, `router.fit.test.ts`, the new `localCompute`, `commands`,
-  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama).
+  `operator`, `fitWiring` and `desktopLauncher` tests (as listed under How big a model auto gives Ollama), the
+  context and the answer growing included.
 - **In a browser, on every CI run:** the `actions` scenario, with `vram=24` in the address: the `fit` row,
   `ask vram 16`, the refusal of 5000, and `ask vram auto`.
-- **Not verified:** a real GPU, a real Ollama, the NixOS probe on hardware, and the Windows app's DXGI reading on a
-  real Windows machine (built by CI, not run).
+- **Not verified:** a real GPU, a real Ollama (growing a context included), the NixOS probe on hardware, and the
+  Windows app's DXGI reading on a real Windows machine (built by CI, not run).
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.

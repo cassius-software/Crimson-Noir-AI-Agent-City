@@ -1638,6 +1638,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   mode is not seen (type `ask vram` there). CI proves the page's side in Node (the rule, the order of figures, a fake
   shell that answers oddly, refuses or hangs, and the launcher's sum and rounding) and compiles the app on Windows; no
   Windows machine ran it.
+- **Ollama's context and answer length grow on measurement, for the visit.** Under `auto` with the GPUs' memory given
+  and Ollama in the generate format, an answer cut at its 2,048-token limit on a model auto chose, measured all on
+  the GPU at 8,192 tokens of context (Ollama's own `context_length`, v0.10.0 and later), fast enough to write the
+  longer answer in 5 minutes, and with room under the figure less 2 GB, doubles that model's context once, to 16,384,
+  with answers of up to a quarter of it (4,096). The first answer there is measured (one more `GET /api/ps`): split,
+  all on the processor, slower than 5 tokens a second, refused by Ollama, or failing in Ollama after some of the
+  answer arrived goes back to 8,192 for the visit and does not grow again (a refusal or a failure goes back whatever
+  setting changed meanwhile; a refusal of an ask's first answer before any of it arrives answers that ask once more
+  at 8,192, its one retry, unless a setting changed or a stop came with it; a failure partway is not answered again,
+  since its text was shown; a first wait that runs out with the model split or on the processor goes back too),
+  and a smaller context Ollama reports (the one it was trained on), with the model all on the GPU and not slow
+  there, is used when above 8,192. The moved model's retry and the answer after a new look, when at a larger context, are measured and go back
+  the same way, with no answer after them; Ollama not answering there leaves the context. Each answer's context is
+  worked out once, as it is sent, and its body, its measurement and what counts as an answer at that context all
+  take that one; an answer that ends after the figure has gone is not measured. It never sets a model aside by
+  itself, and only measurements at 8,192 are kept, so the step up is decided as without it (a moved model that will
+  not load at the larger context is set aside only once it fails at 8,192 too, so later); what `/api/ps` says once
+  any answer to that model at another context ran since the measured one was sent, measured or not, is no
+  measurement; nothing of it is kept between visits, and `ask vram` starts it over. The `fit` row gains a clause
+  once a context grew. Without a figure, in the chat format, for the operator's own model and under
+  `ask provider ollama`, every request is today's, byte for byte. The quarter, 32,768 at most, one doubling a visit,
+  the 1 GB least cost and the 5 minutes are starting values. CI proves it in Node against a fake Ollama; no
+  real GPU or real Ollama ran it.
 
 ### Removed
 
