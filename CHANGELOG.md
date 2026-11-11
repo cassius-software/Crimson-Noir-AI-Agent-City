@@ -37,7 +37,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the software WebGPU adapter (SwiftShader) show the rolled sleeves in a jacket and in shirt sleeves, four inks on the
   forearms, the halo on the deepest skin, sleeves down and a coat hiding the designs, a prosthetic left arm taking its
   bared forearm, and vitiligo going on up the bared skin. Five more, taken by pressing the studio card's own buttons,
-  show the twelve designs on sale, the coat's hint on every row, and Try on rolling the sleeves for the mirror. Unverified: no hardware GPU has compiled or drawn it yet.
+  show the twelve designs on sale, the coat's hint on every row, and Try on rolling the sleeves for the mirror.
+  Unverified: no hardware GPU has compiled or drawn it yet.
 
 - **Tattoos on the hands, the neck and the nape, in eight inks.** The look genome's word 7 becomes the tattoo word
   (`src/03_Spawn_Agents/look.ts` LOOK_FIELD): a design (0 for none, or one of sixty-four) on the left hand, the right
