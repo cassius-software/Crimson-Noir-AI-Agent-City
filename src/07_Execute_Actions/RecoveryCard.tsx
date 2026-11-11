@@ -79,7 +79,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
       aria-labelledby={title}
       aria-describedby={body}
       data-failure={failure.kind}
-      className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/70 font-sans text-sm"
+      className="ui-zoom fixed inset-0 z-[10001] flex items-center justify-center bg-black/70 font-sans text-sm"
       style={SAFE_PADDING}
     >
       <div className="max-h-full w-full max-w-xl overflow-y-auto overscroll-contain rounded-2xl border border-white/70 bg-white/90 p-5 text-slate-900 shadow-2xl backdrop-blur-xl sm:p-6">
@@ -128,7 +128,7 @@ export function LockScreen({ reason }: { reason: string }): JSX.Element {
   usePadNav(root)
   useEnterRestarts()
   return (
-    <div ref={root} role="alertdialog" aria-live="assertive" className="absolute inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black font-mono text-sm text-slate-200" style={SAFE_PADDING}>
+    <div ref={root} role="alertdialog" aria-live="assertive" className="ui-zoom absolute inset-0 z-[10000] flex items-center justify-center overflow-y-auto bg-black font-mono text-sm text-slate-200" style={SAFE_PADDING}>
       <div className="max-w-2xl">
         <div className="text-xs tracking-[0.3em] text-rose-400">[RING-0 FATAL]</div>
         <div className="mt-3 text-2xl font-semibold text-white">SYSTEM LOCKED</div>

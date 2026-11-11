@@ -9,16 +9,20 @@
  * focus, the d-pad moves focus between the screen's buttons. A press is an edge: a button already held when the screen
  * appears, or when its pad first shows up (a browser shows a page a pad only once one of its buttons is pressed, so
  * the A that pressed 'Open the console' can be the one that reveals it on the next page), does nothing until it is let
- * go, so the A that was driving a car cannot restart the city by accident. The
+ * go, so the A that was driving a car cannot restart the city by accident. With one hand on the pad (access.ts `pad`,
+ * written onto <html> as data-pad) the shared centre button, start, does what that hand's side cannot: it presses for
+ * the left hand (the d-pad moves), it moves focus for the right (A presses). Never a shoulder: L1 and R1 are that
+ * hand's glance, which a card waiting for the OK leaves live. The
  * keyboard needs nothing here: the screens focus their first button, and Enter presses a focused button natively.
  * The same edge rule, for any buttons a screen names (padEdges), serves a card with more than A and the d-pad to read,
  * such as the home card's furnishing controls.
  * What breaks if it is removed? A player with only a pad has no way out of a failed boot or a halted city.
  */
 import { useEffect, type RefObject } from 'react'
+import type { PadHand } from '../04_Connect_Hardware/gamepad.ts'
 
-/** Standard-mapping buttons read here: A, then the d-pad (up, down, left, right). */
-export const PAD = Object.freeze({ a: 0, up: 12, down: 13, left: 14, right: 15 })
+/** Standard-mapping buttons read here: A, the d-pad (up, down, left, right), and start, which either hand reaches. */
+export const PAD = Object.freeze({ a: 0, up: 12, down: 13, left: 14, right: 15, start: 9 })
 
 /** What one poll of the pads asks for. */
 export type PadAction = 'press' | 'next' | 'previous' | null
@@ -26,8 +30,9 @@ export type PadAction = 'press' | 'next' | 'previous' | null
 /** The part of a Gamepad read here. */
 interface PadLike { buttons: readonly { pressed: boolean }[] }
 
-/** The buttons padStep reads: A and the d-pad. */
+/** The buttons padStep reads: A and the d-pad, and start too with one hand (it does what that hand's side cannot). */
 const STEP_BUTTONS: readonly number[] = Object.freeze([PAD.a, PAD.up, PAD.down, PAD.left, PAD.right])
+const ONE_HAND_BUTTONS: readonly number[] = Object.freeze([...STEP_BUTTONS, PAD.start])
 
 /**
  * Pure. The given standard-mapping `buttons` held across every pad now (as "pad:button", and each pad present as
@@ -54,14 +59,24 @@ export function padEdges(prev: ReadonlySet<string>, pads: readonly (PadLike | nu
 }
 
 /**
- * Pure. The buttons held across every pad now (padEdges, for A and the d-pad), and the action this poll asks for: a
- * button counts only on the poll it goes down (it was not held at the previous poll) on a pad that was there at the
- * previous poll, A before the d-pad.
+ * Pure. The buttons held across every pad now (padEdges, for A and the d-pad, and start with one hand), and the action
+ * this poll asks for: a button counts only on the poll it goes down (it was not held at the previous poll) on a pad
+ * that was there at the previous poll, A before the d-pad. One `hand` adds start: it presses for the left hand, it
+ * moves on for the right (a hand chosen while start is held counts that start once). Both hands read what they did
+ * before padEdges.
  */
-export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[]): { held: Set<string>; action: PadAction } {
-  const { held, down } = padEdges(prev, pads, STEP_BUTTONS)
-  const action: PadAction = down.has(PAD.a) ? 'press' : down.has(PAD.down) || down.has(PAD.right) ? 'next' : down.has(PAD.up) || down.has(PAD.left) ? 'previous' : null
+export function padStep(prev: ReadonlySet<string>, pads: readonly (PadLike | null | undefined)[], hand: PadHand = 'both'): { held: Set<string>; action: PadAction } {
+  const { held, down } = padEdges(prev, pads, hand === 'both' ? STEP_BUTTONS : ONE_HAND_BUTTONS)
+  const press = down.has(PAD.a) || (hand === 'left' && down.has(PAD.start))
+  const next = down.has(PAD.down) || down.has(PAD.right) || (hand === 'right' && down.has(PAD.start))
+  const action: PadAction = press ? 'press' : next ? 'next' : down.has(PAD.up) || down.has(PAD.left) ? 'previous' : null
   return { held, action }
+}
+
+/** The pad hand the accessibility settings chose (access.ts applyAccess writes it onto <html> as data-pad), else both. */
+function pageHand(): PadHand {
+  const v = typeof document !== 'undefined' ? document.documentElement.dataset.pad : undefined
+  return v === 'left' || v === 'right' ? v : 'both'
 }
 
 /**
@@ -91,7 +106,7 @@ export function usePadNav(root: RefObject<HTMLElement | null>, active = true, ac
     let raf = 0
     let prev: Set<string> | null = null
     const poll = () => {
-      const { held, action } = padStep(prev ?? new Set(), padsFor(readPads(), accept))
+      const { held, action } = padStep(prev ?? new Set(), padsFor(readPads(), accept), pageHand())
       const first = prev === null
       prev = held
       const el = root.current

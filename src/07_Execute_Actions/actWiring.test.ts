@@ -84,10 +84,10 @@ test('the card: an alertdialog with data-act over the console and under the reco
   assert.match(root, /data-act=\{act\.seq\}/)
   assert.match(root, /aria-labelledby=\{title\}/)
   assert.doesNotMatch(root, /aria-modal/, 'the console beneath stays usable')
-  assert.match(root, /className="pointer-events-none fixed inset-0 z-\[10000\] /, 'the root lets the pointer through to the city')
+  assert.match(root, /className="ui-zoom pointer-events-none fixed inset-0 z-\[10000\] /, 'the root lets the pointer through to the city')
   assert.match(CARD, /<div className="pointer-events-auto w-full max-w-sm /, 'only the card takes taps')
   assert.match(read('./terminal/Terminal.tsx'), /\.r0-root\{position:absolute;top:0;left:0;right:0;z-index:9999;/, 'over the console')
-  assert.match(RECOVERY, /className="fixed inset-0 z-\[10001\] /, 'under the recovery card')
+  assert.match(RECOVERY, /className="ui-zoom fixed inset-0 z-\[10001\] /, 'under the recovery card')
   // Refuse first in DOM order (a pad's south face button presses the first button when none is focused), both min-h-11.
   const buttons = [...CARD.matchAll(/<button [\s\S]*?>(Refuse|Allow)<\/button>/g)]
   assert.deepEqual(buttons.map((m) => m[1]), ['Refuse', 'Allow'])
@@ -159,13 +159,13 @@ test('content: everything the card, the HUD line and the toasts show passes 14A,
   assert.doesNotMatch(CARD, /!['"]/, 'no exclamation mark in a literal')
 })
 
-test('the input shield: a second flag beside suspend that drops the pad\'s edges after the mapper read and makes press() a no-op; keys untouched', () => {
+test('the input shield: a second flag beside suspend that drops the pad\'s edges after the mapper read and makes press() a no-op (but the mute); keys untouched', () => {
   assert.match(INPUT, /^ {2}shielded = false$/m)
   assert.match(INPUT, /shield\(on: boolean\): void \{\n\s+this\.shielded = on\n\s+\}/)
   const poll = between(INPUT, '  poll(dt: number): void {', '  /** Virtual stick')
-  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n\s+if \(this\.shielded\) edges = 0 \/\/[^\n]*\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
+  assert.match(poll, /edges = this\.mapper\.read\(pads, this\.pad\)\n\s+\}\n\s+edges \|= this\.readXr\(\) \/\/[^\n]*\n(?:\s+\/\/[^\n]*\n)+\s+if \(this\.shielded\) edges &= PAD_EDGE\.mute\n\s+if \(edges & PAD_EDGE\.interact\) this\.queued\.add\('interact'\)/, 'after the mapper reads, the pad\'s and the headset\'s (their held bits advance), before any edge is queued')
   assert.equal(poll.match(/this\.shielded/g)?.length, 1)
-  assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded\) return\n\s+this\.queued\.add\(action\)\n\s+\}/)
+  assert.match(INPUT, /press\(action: Action\): void \{\n\s+if \(this\.shielded && action !== 'mute'\) return\n\s+this\.queued\.add\(action\)\n\s+\}/, 'the microphone\'s mute, a privacy switch, is never held back')
   const keyboard = between(INPUT, "on(document, 'keydown', (e) => {", "on(document, 'keyup'")
   assert.doesNotMatch(keyboard, /shielded/, 'the keyboard is untouched: E still ends the proposal')
   assert.match(keyboard, /if \(this\.suspended \|\| isEditableTarget\(target\)\) return/, 'the console\'s own guard, unchanged')

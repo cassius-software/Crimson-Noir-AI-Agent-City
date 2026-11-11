@@ -54,8 +54,18 @@ export const PAD_TUNING = {
   press: 0.5,
 } as const
 
+/**
+ * Which hand holds the pad (07_Execute_Actions/access.ts `pad`): both, or one. With one hand its stick moves and steers,
+ * and looks while that side's shoulder (L1 or R1) is held; its trigger is the pedal on that side (the left hand's
+ * throttle is the d-pad's up, the right hand's brake the west face button); the centre buttons are shared (select is
+ * the run latch, start a ping); that stick's click is the mute. The left hand keeps the d-pad (down enters a car, left
+ * and right move the clock) and has no reset or handbrake; the right hand keeps the face buttons (south enters, north
+ * resets, east is the handbrake) and has no clock keys.
+ */
+export type PadHand = 'both' | 'left' | 'right'
+
 /** Edge bits returned by PadMapper.read(). */
-export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16 } as const
+export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16, mute: 32 } as const
 
 /**
  * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
@@ -363,8 +373,16 @@ export class PadMapper {
   used = false
   /** Any input beyond the dead zones during the last read. */
   active = false
-  /** L3 run latch: on with an L3 click, off with another click or when the left stick returns to centre. */
+  /**
+   * L3 run latch: on with an L3 click, off with another click or when the left stick returns to centre. With one hand
+   * (select latches it, so the thumb has just left the stick) it ends only once the stick has walked after the latch
+   * and come home, and a glance (the stick looking under the shoulder) leaves it as it is.
+   */
   running = false
+  /** One hand: the stick has walked since the run was latched. */
+  private runMoved = false
+  /** The layout read (PadHand): both hands unless the host sets one. */
+  hand: PadHand = 'both'
   /**
    * Family of the standard pad used most recently; when that pad goes away, of a pad still connected; null
    * before any pad has produced input and once every pad is gone.
@@ -391,7 +409,7 @@ export class PadMapper {
   read(pads: ArrayLike<GamepadLike | null | undefined> | null, out: Analog): number {
     zeroAnalog(out)
     this.seen.fill(0)
-    let edges = 0, count = 0, any = false, bestMove = 0, bestLook = 0, l3 = false
+    let edges = 0, count = 0, any = false, bestMove = 0, bestStick = 0, bestLook = 0, l3 = false
     let firstPad: GamepadLike | null = null, lastPad: GamepadLike | null = null
     const dz = PAD_TUNING.stickDeadzone, v = this.v
     const n = pads ? pads.length : 0
@@ -406,16 +424,30 @@ export class PadMapper {
       firstPad ??= p
       const slot = p.index & (SLOTS - 1)
       this.seen[slot] = 1
-      const ax = p.axes
-      radialDeadzone(ax[0] ?? 0, ax[1] ?? 0, dz, v)
-      const move = v.x * v.x + v.y * v.y
+      const ax = p.axes, b = p.buttons
+      // One hand needs that side's stick and buttons. A pad without the standard mapping has them all only in the
+      // kernel's order ('evdev'), and its d-pad only where a hat sits on axes 6 and 7. Elsewhere only the first six
+      // buttons are read (no d-pad, no centre buttons). Without a d-pad the left hand keeps its stick and its L1 glance,
+      // and south opens a door (the only door button left to it); the right hand keeps its layout where its stick is read
+      // ('evdev', 'four-axis') and reads with both hands where it is not, so a one-handed setting never leaves such a pad
+      // unable to move or open a door.
+      const layout = standard ? null : this.generic.layoutOf(p.index)
+      const partial = !standard && layout !== 'evdev'
+      const dpadless = partial || (layout === 'evdev' && raw.axes.length < 8)
+      const hand = !partial || this.hand === 'left' || (this.hand === 'right' && layout === 'four-axis') ? this.hand : 'both'
+      // One hand (PadHand): its stick moves, and looks instead while that side's shoulder is held.
+      const lookHeld = hand === 'left' ? isPressed(b[PAD.l1]) : hand === 'right' ? isPressed(b[PAD.r1]) : false
+      radialDeadzone((hand === 'right' ? ax[2] : ax[0]) ?? 0, (hand === 'right' ? ax[3] : ax[1]) ?? 0, dz, v)
+      const stick = v.x * v.x + v.y * v.y
+      if (stick > bestStick) bestStick = stick
+      const move = lookHeld ? 0 : stick
       if (move > bestMove) { bestMove = move; out.moveX = v.x; out.moveY = -v.y; out.steer = -v.x }
-      radialDeadzone(ax[2] ?? 0, ax[3] ?? 0, dz, v)
-      const look = v.x * v.x + v.y * v.y
+      if (hand === 'both') radialDeadzone(ax[2] ?? 0, ax[3] ?? 0, dz, v)
+      const look = hand === 'both' ? v.x * v.x + v.y * v.y : lookHeld ? stick : 0
       // Radial quadratic curve: fine control near the centre, full rate at the rim in every direction.
       if (look > bestLook) { const m = Math.sqrt(look); bestLook = look; out.lookX = v.x * m; out.lookY = -v.y * m }
-      const b = p.buttons
-      const brake = triggerValue(b[PAD.l2]), throttle = triggerValue(b[PAD.r2])
+      const brake = hand === 'right' ? (isPressed(b[PAD.west]) ? 1 : 0) : triggerValue(b[PAD.l2])
+      const throttle = hand === 'left' ? (isPressed(b[PAD.up]) ? 1 : 0) : triggerValue(b[PAD.r2])
       if (throttle > out.throttle) out.throttle = throttle
       if (brake > out.brake) out.brake = brake
       let bits = 0
@@ -428,15 +460,30 @@ export class PadMapper {
       if (!standard && !this.before[slot]) this.prev[slot] = bits
       const rising = (bits & ~this.prev[slot]) >>> 0
       this.prev[slot] = bits
-      if (rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
-      if (rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
-      if (rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
-      if (rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
-      // The right shoulder: a ping, reachable with the thumbs on the sticks, walking or steering.
-      if (rising & ((1 << PAD.r1) | PADDLE_RIGHT)) edges |= PAD_EDGE.ping
-      if (rising & ((1 << PAD.l3) | PADDLE_LEFT)) l3 = true
-      if (bits & (1 << PAD.east)) out.handbrake = true
-      if (bits !== 0 || move > 0 || look > 0 || throttle > 0 || brake > 0) {
+      if (hand === 'both') {
+        if (rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
+        if (rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
+        if (rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
+        if (rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
+        // The right shoulder: a ping, reachable with the thumbs on the sticks, walking or steering.
+        if (rising & ((1 << PAD.r1) | PADDLE_RIGHT)) edges |= PAD_EDGE.ping
+        if (rising & ((1 << PAD.l3) | PADDLE_LEFT)) l3 = true
+        // The right stick's click: the microphone's mute, a thumb that never leaves the stick (L3 is the run latch).
+        if (rising & (1 << PAD.r3)) edges |= PAD_EDGE.mute
+        if (bits & (1 << PAD.east)) out.handbrake = true
+      } else {
+        // One hand: the centre buttons are shared, the rest sits on that hand's side (PadHand).
+        if (rising & (1 << (hand === 'left' ? PAD.down : PAD.south))) edges |= PAD_EDGE.interact
+        if (hand === 'left' && dpadless && rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
+        if (hand === 'right' && rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
+        if (hand === 'left' && rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
+        if (hand === 'left' && rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
+        if (rising & (1 << PAD.start)) edges |= PAD_EDGE.ping
+        if (rising & (1 << PAD.select)) l3 = true
+        if (rising & (1 << (hand === 'left' ? PAD.l3 : PAD.r3))) edges |= PAD_EDGE.mute
+        if (hand === 'right' && bits & (1 << PAD.east)) out.handbrake = true
+      }
+      if (bits !== 0 || stick > 0 || look > 0 || throttle > 0 || brake > 0) {
         any = true
         lastPad = p
         this.lastSlot = slot
@@ -444,12 +491,14 @@ export class PadMapper {
     }
     for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
     this.before.set(this.seen)
-    if (l3) this.running = !this.running
-    else if (bestMove === 0) this.running = false
+    if (l3) { this.running = !this.running; this.runMoved = false }
+    else if (this.hand === 'both') { if (bestMove === 0) this.running = false }
+    else if (bestMove > 0) this.runMoved = true
+    else if (bestStick === 0 && this.runMoved) this.running = false
     out.run = this.running
     this.active = any
     if (any) this.used = true
-    if (count === 0) { this.used = false; this.running = false; this.lastSlot = -1 }
+    if (count === 0) { this.used = false; this.running = false; this.runMoved = false; this.lastSlot = -1 }
     this.trackFamily(lastPad, firstPad)
     return edges
   }

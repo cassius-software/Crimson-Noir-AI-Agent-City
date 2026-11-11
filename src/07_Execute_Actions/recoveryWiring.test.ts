@@ -49,6 +49,18 @@ test('padStep: A presses, the d-pad moves focus, and only a button that goes dow
   assert.equal(padStep(appeared.held, [pad(PAD.a)]).action, null, 'still held: nothing')
   assert.equal(padStep(padStep(appeared.held, [pad()]).held, [pad(PAD.a)]).action, 'press', 'let go and pressed: a press')
   assert.equal(padStep(there, [pad(), pad(), pad(PAD.a)]).action, null, 'a third pad arriving with A down: nothing')
+  // One hand: start, the shared centre button, does what that hand's side cannot; the shoulders (its glance) never act.
+  assert.equal(padStep(there, [pad(PAD.start)]).action, null, 'both hands: start is nothing here')
+  assert.equal(padStep(there, [pad(PAD.start)], 'left').action, 'press', 'the left hand presses with start (its d-pad moves)')
+  assert.equal(padStep(there, [pad(PAD.down)], 'left').action, 'next')
+  assert.equal(padStep(there, [pad(PAD.start)], 'right').action, 'next', 'the right hand moves on with start (A presses)')
+  assert.equal(padStep(there, [pad(PAD.a)], 'right').action, 'press')
+  for (const hand of ['left', 'right'] as const) for (const shoulder of [4, 5]) assert.equal(padStep(there, [pad(shoulder)], hand).action, null, `${hand} hand: a glance with ${shoulder === 4 ? 'L1' : 'R1'} neither presses nor moves`)
+  assert.equal(padStep(padStep(there, [pad(PAD.start)], 'left').held, [pad(PAD.start)], 'left').action, null, 'held start: an edge, like A')
+  // The hook reads the page's hand on every poll.
+  assert.match(read('./padNav.ts'), /padStep\(prev \?\? new Set\(\), padsFor\(readPads\(\), accept\), pageHand\(\)\)/)
+  assert.match(read('./padNav.ts'), /document\.documentElement\.dataset\.pad\b[\s\S]{0,80}v === 'left' \|\| v === 'right' \? v : 'both'/, 'the hand is the one access.ts writes on <html data-pad>; anything else is both hands')
+  assert.match(read('./access.ts'), /root\.dataset\.pad = s\.pad/, 'and access.ts writes it')
   // usePadNav: the first poll only learns what is held, so the A that was driving cannot restart the city.
   assert.match(read('./padNav.ts'), /const first = prev === null[\s\S]*if \(!first && action && el\)/)
 })
