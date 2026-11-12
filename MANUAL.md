@@ -1160,7 +1160,8 @@ shows it (there is no city to walk).
   turns the view, as the first stage asks. Folding is not closing: the strip has no close either, and the walk still
   ends only when the console's program has run. Open, it stands under Sloane's chip and above the captions and a
   shop's chip; where that band is short of 7 rem it ends above the buttons, over those chips; and where even that is
-  short (beside a car or at the wheel on a short phone) it stands above her chip, over the HUD's header and the strip.
+  short (beside a car or at the wheel on a short phone) it stands above her chip, over the HUD's header, the strip and
+  the minimap.
   It never covers her chip, which the stages ask you to tap. A tablet keeps the whole card. Sideways, where the band between the thumbs is too short for it (large text, or the foot's chips
   taking the room), her chip moves up to the top row and the card stands under it over the HUD's header and readout;
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its

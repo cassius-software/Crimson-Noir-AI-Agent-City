@@ -2750,14 +2750,15 @@ const SCENARIOS = {
           if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
         }
         // Beside the car on the Android page upright (360 x 552) the Enter car button stands above the Menu, so the band
-        // under her chip is short: the open card stands above her chip instead, over the HUD's header and the strip,
-        // never over her chip (the stages ask for a tap on it) nor a control, and takes its own touches there.
+        // under her chip is short: the open card stands above her chip instead, over the HUD's header, the strip and the
+        // minimap (none takes a touch while it is open: it keeps its own), never over her chip (the stages ask for a tap
+        // on it) nor a control.
         await view(360, 552)
         if (await p.eval(`document.querySelector('[data-walk-strip]')?.getAttribute('aria-expanded') === 'false'`)) await tapOn({ pick: `(b) => b.hasAttribute('data-walk-strip')` }, 30)
         await p.waitFor(`!!document.querySelector('[data-walk]')`, 5_000).catch(() => {})
         await p.frames(2)
         const beside = await boxes()
-        const near = !beside.walk ? ['no card'] : beside.others.filter((o) => o.k !== 'strip' && meets(beside.walk, o)).map((o) => `over ${o.k}`)
+        const near = !beside.walk ? ['no card'] : beside.others.filter((o) => o.k !== 'strip' && o.k !== 'minimap' && meets(beside.walk, o)).map((o) => `over ${o.k}`)
         if (!(await p.eval(`[...document.querySelectorAll('[data-touch]')].some((b) => b.textContent.trim() === 'Enter car' && b.getBoundingClientRect().width > 0)`))) near.push('no Enter car button')
         if (beside.walk && (beside.walk.t < -1 || beside.walk.b > beside.h + 1)) near.push(`off screen ${JSON.stringify(beside.walk)}`)
         const chipBox = beside.others.find((o) => o.k === 'chip')

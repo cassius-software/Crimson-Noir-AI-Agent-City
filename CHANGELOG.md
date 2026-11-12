@@ -1789,7 +1789,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   folds at the next touch outside it, after ten metres on the move or on getting into a car (at the wheel a new line is
   spoken, told to a screen reader beside the strip, and the strip's dot pulses). It stands under Sloane's chip above
   the HUD's chips at the foot, or above the controls alone where that band is short, or above her chip, over the HUD's
-  header, where even that is short (beside a car, at the wheel): never over her chip (`--chip-head`, published by
+  header and minimap, where even that is short (beside a car, at the wheel): never over her chip (`--chip-head`, published by
   `Concierge.tsx`). It has no close and no skip, folded or open, and the walk still ends only in the console. The
   captions and a shop's or a home's chip stand above the stick and left of the buttons (`--touch-stick-top`, published
   by `TouchControls.tsx`), each caption wrapping to two lines, and one message at a time stands under her chip. At the
