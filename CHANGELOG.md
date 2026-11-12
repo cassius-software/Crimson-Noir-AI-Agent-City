@@ -1859,6 +1859,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A start whose GPU goes away while the crowd is built starts again on the light kernel, instead of stopping at
+  "Instance dropped in popErrorScope".** A Mali-G52 phone showed "init: Instance dropped in popErrorScope" on the
+  card: Chrome's words for an error scope popped after its GPU process has gone, which takes every WebGPU device of
+  the page with it (the physics worker's and the page's own). A kernel the driver refuses leaves the device alive and
+  the ladder steps down in place; a kernel the driver dies on cannot be stepped past, and the old code read the dead
+  device's rejections as one more refusal. Now `gpuPipelines.ts` asks the device whether it was lost before a failed
+  compile counts as a refusal (`lossOf`, `DeviceLostError`; `withErrorScopes` pops every scope it pushed when the
+  build throws), the worker stops at the kernel it was building and tells the page (`kernel-lost`; every ladder step
+  is posted before the compile it announces), and the page remembers what it learnt of this GPU in this browser
+  (`crowdKernelMemory.ts`, new: a refusal moves the next start to the next rung; a loss to the light kernel; the light
+  kernel's own loss to none for an hour, a day once twice running; one loss is asked about again a day later, a
+  refusal a week later; the record holds only for the same kernels, user agent and adapter). After a loss under a
+  kernel the page starts again by itself, once, with `?kernel=lite` (new address word: `lite`, `narrow`, `full`),
+  waiting first for the browser to hand out a GPU again (`gpuDevice.ts` `gpuBack`); it never does so twice in two
+  minutes, never when the address named the kernel, never when it would be the GPU's third loss in five minutes, and
+  never where the browser keeps nothing for the page.
+  New cards: "The browser’s graphics stopped while building the crowd" (Restart goes to the lighter kernel), "The
+  crowd keeps stopping this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
+  inside that time asks for no adapter), and "The browser has paused graphics for this page" for Chrome's own pause
+  after two losses within two minutes (measured in Chromium 153; it used to read as a device with no adapter). A boot
+  that fails gives its worker up at once (`simClient.ts` `SimBootHooks.signal`), a device handed over already lost is
+  no kernel's fault, and a loss while the page was hidden blames none. The card's details line now names the web
+  copy's build (`tools/web/pwa.mjs` stamps the page with it) and, where the browser offers them, the phone's real
+  model and versions; `hardware` says why a lighter kernel runs. CI's browser job kills Chrome's GPU process as the
+  worker asks for the full kernel (the city then stands on the light one, remembered, the address clean) and again
+  under the light kernel (the no-kernel card, then a start that asks for no adapter), under software WebGPU;
+  `crowdKernelMemory.test.ts`, `gpuPipelines.test.ts`, `bootFailure.test.ts`, `realmBoot.test.ts` and
+  `recoveryWiring.test.ts` pin the rules, the words and the wiring. Whether the phone's driver survives the light
+  kernel is not known until it is tried there. Manual: When the city cannot start or stops.
 - **The first walk's way out works from wherever you stand.** `spawn_subagents` asked only people within 5 m, and its
   loop stopped at the first skill nobody near knew (Robotics), so the exit program answered a swarm of 0 and
   `unlock_city` refused. The walk's own workplace stage leaves the visitor inside a room, where nobody can be asked

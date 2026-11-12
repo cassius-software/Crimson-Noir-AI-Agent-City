@@ -19,7 +19,7 @@ import {
   CROWD_WORKGROUP, CULL_EASE, CULL_PASSES, CULL_READBACK_SIZE, crowdShader, packCullParams, PARAMS_SIZE, PASS_BINDINGS, sanitizeCull, VARIANTS,
   type CullInput, type CullSettings, type PassName, type SharedBuffers,
 } from './crowdCompute.ts'
-import { compilePasses, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
+import { compilePasses, DeviceLostError, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
 
 interface Staging { buffer: GPUBuffer; busy: boolean; frame: number }
 
@@ -96,9 +96,11 @@ export class CrowdCull {
     try {
       compiled = await compilePasses(device, 'crowd.wgsl', crowdShader(agentCount), CULL_PASSES)
     } catch (e) {
+      // The page's device lost under the compile is a graphics reset, in its own words (bootFailure.ts), not a refusal.
+      if (e instanceof DeviceLostError) throw e
       throw new Error(`crowd.wgsl cull pipeline ${e instanceof ShaderRefusedError && e.reason === 'internal' ? 'compilation' : 'validation'} failed: ${e instanceof Error ? e.message : String(e)}`)
     }
-    const { value: crowd, errors } = await withErrorScopes(device, () => new CrowdCull(device, shared, drawTemplate, agentCount, settings, compiled))
+    const { value: crowd, errors } = await withErrorScopes(device, () => new CrowdCull(device, shared, drawTemplate, agentCount, settings, compiled), 'building the crowd\'s cull')
     if (errors.length) throw new Error(`crowd.wgsl cull pipeline validation failed: ${scopedMessage(errors)}`)
     return crowd
   }

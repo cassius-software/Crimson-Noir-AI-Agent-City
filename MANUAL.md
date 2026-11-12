@@ -169,6 +169,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
 | `?lite=1`, `?lite=0` | Forces the lite profile on any device, or keeps it off one the profile would make lite (default: the device profile decides; see Autoscaling) |
+| `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
 | `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
@@ -4349,6 +4350,41 @@ bar and no reload of their own, so the page carries its own way out.
   alone, whose graphics come with it), and its details hold the driver's words for each rung, the adapter and the
   worker's uncaptured GPU errors. The browser CI job compiles every rung under Chrome's software WebGPU
   (`tools/browser/kernels.mjs`); no CI runner has a phone's GPU, so which rung a given phone accepts is learned on it.
+- **A GPU that goes away while the crowd is built.** A refusal leaves the device alive; a driver that crashes or
+  hangs on a kernel does not: the browser ends its GPU process, and every WebGPU device of the page is lost at once,
+  the physics worker's with the page's own. Chrome then answers a pipeline still compiling with "A valid external
+  Instance reference no longer exists." and an error scope popped afterwards with "Instance dropped in
+  popErrorScope", which is what an older build put on its card. The compile now asks the device whether it was lost
+  before it reads a failure as a refusal (`gpuPipelines.ts` `lossOf`, `DeviceLostError`), and the worker never tries
+  the next rung on a dead device: it tells the page which kernel was being built and fails as `kernel-lost`. The page
+  keeps what it learnt in this browser (`src/03_Spawn_Agents/crowdKernelMemory.ts`, one record in localStorage, held
+  to the kernels' own fingerprint, the user agent and the adapter): after a refusal the next rung; after a loss the
+  light kernel, skipping the narrow one; after the light kernel's own loss nothing, for an hour (a day once it went
+  down twice running). One loss is asked about once more a day later, a refusal after a week, and a refusal whose
+  words name memory is not kept. The page then **starts again by itself, once**, with `?kernel=lite` in its address,
+  after waiting for the browser to hand out a GPU again (the veil stays up meanwhile, and its "Still starting" line,
+  where it shows, names the step as "starting again with a lighter crowd"); the mentor's choice, the hour and the
+  sound carry over, and once the city stands the word is taken out of the address again. It does not restart itself
+  when the kernel came from the address, when it already restarted within the last two minutes, when the GPU was
+  already lost once in the last five, or where the browser keeps nothing for the page (it could not count its
+  restarts): the card comes instead, "The browser’s graphics stopped while building the crowd", whose Restart goes
+  to the lighter kernel. After the lightest kernel's loss the card reads "The crowd keeps stopping this device’s
+  graphics" and says how long the GPU is left alone; its Restart goes to the address without `?kernel=`, a start
+  inside that time asks the browser for no adapter at all (each try would cost every tab its graphics), and
+  `?kernel=full` asks for everything again. Where the browser kept no record, the card says instead that a restart
+  asks the GPU again. A loss while the page was hidden is the phone taking the GPU back, blamed on no kernel. Chrome itself hands a page no GPU for a while after two losses within two minutes
+  (measured in Chromium 153: no adapter for the page or its worker until about two minutes after the first loss, and
+  a page's own reload does not lift it): the card then reads "The browser has paused graphics for this page" and
+  says to wait, where it used to say the device had no adapter. `hardware` names why a lighter kernel runs ("a
+  heavier one took this GPU down", "the address asked for it" or "this GPU refused the full one"). The browser CI job
+  kills Chrome's GPU process as the worker asks for the full kernel and again under the light one
+  (`tools/browser/smoke.mjs`, the `fail` scenario), under software WebGPU; whether a given phone's driver survives
+  the light kernel is learned on that phone.
+- **The details line names the build and the device.** Under Details, the line to copy now carries the web copy's
+  build (the twelve characters the published page is stamped with, `tools/web/pwa.mjs`, the same as its cache's name),
+  so a card from an older cached copy can be told from the current one, and, where the browser offers them, the
+  phone's real model, system version and browser version (`navigator.userAgentData`): Chrome on Android reports
+  "Android 10; K" and a version ending in `.0.0.0` in its user agent whatever the phone is.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
   named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which
   runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode

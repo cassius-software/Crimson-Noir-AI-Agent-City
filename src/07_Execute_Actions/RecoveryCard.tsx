@@ -14,15 +14,20 @@
  * What breaks if it is removed? A failed boot is a bare message with nothing to press, and a halted city a black
  * screen with no control.
  */
-import { useEffect, useId, useRef, type JSX, type RefObject } from 'react'
+import { useEffect, useId, useRef, useState, type JSX, type RefObject } from 'react'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
-import { detailsLine, type Failure } from './bootFailure.ts'
+import { detailsLine, deviceHints, pageBuild, type Failure, type UaData } from './bootFailure.ts'
 import { usePadNav } from './padNav.ts'
 
-/** Restart: the page again from the top, the way the console's `boot` does it (a reload, never a remount). */
-function restart(): void {
-  window.location.reload()
+/**
+ * Restart: the page again from the top, the way the console's `boot` does it (a reload, never a remount). `href`: the
+ * address to start again at instead (bootFailure.ts Failure.restartHref: the lighter crowd kernel asked for), taking
+ * this page's place in the history.
+ */
+function restart(href?: string | null): void {
+  if (href) window.location.replace(href)
+  else window.location.reload()
 }
 
 /** The mouse back to the player (the city may have held it in pointer lock), then focus on the first button. */
@@ -38,17 +43,17 @@ function useTakeFocus(first: RefObject<HTMLButtonElement | null>): void {
  * may have been clicked away from the button). A focused button and Details take Enter natively; the console beneath
  * leaves keys aimed at the screen alone (Terminal.tsx).
  */
-function useEnterRestarts(active = true): void {
+function useEnterRestarts(active = true, href: string | null = null): void {
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Enter' || e.repeat || isEditableTarget(e.target) || (e.target instanceof HTMLElement && e.target.closest('button, summary'))) return
       e.preventDefault()
-      restart()
+      restart(href)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active])
+  }, [active, href])
 }
 
 const BUTTON = 'min-h-11 rounded-xl px-4 py-2 text-sm font-semibold outline-none focus-visible:ring-4 focus:ring-4'
@@ -67,10 +72,18 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
   const openRef = useRef<HTMLButtonElement>(null)
   const title = useId(), body = useId()
   const openIn = failure.openIn ?? null
+  const restartHref = failure.restartHref ?? null
   useTakeFocus(openIn ? openRef : restartRef)
   usePadNav(root)
-  useEnterRestarts()
-  const line = detailsLine(adapter, typeof navigator === 'undefined' ? '' : navigator.userAgent)
+  useEnterRestarts(true, restartHref)
+  // The device as the browser names it beyond the user agent (the real Android version, the model), once it answers.
+  const [hints, setHints] = useState('')
+  useEffect(() => {
+    let shown = true
+    void deviceHints(typeof navigator === 'undefined' ? null : (navigator as Navigator & { userAgentData?: UaData }).userAgentData).then((h) => { if (shown) setHints(h) })
+    return () => { shown = false }
+  }, [])
+  const line = detailsLine(adapter, typeof navigator === 'undefined' ? '' : navigator.userAgent, pageBuild(), hints)
   return (
     <div
       ref={root}
@@ -99,7 +112,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
               {openIn.label}
             </button>
           )}
-          <button ref={restartRef} type="button" autoFocus={!openIn} onClick={restart} className={`${BUTTON} ${openIn ? 'border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white ring-slate-400 hover:bg-slate-700'}`}>
+          <button ref={restartRef} type="button" autoFocus={!openIn} onClick={() => restart(restartHref)} className={`${BUTTON} ${openIn ? 'border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white ring-slate-400 hover:bg-slate-700'}`}>
             Restart
           </button>
           <button type="button" onClick={onConsole} className={`${BUTTON} border border-slate-300 bg-white text-slate-900 ring-slate-300 hover:bg-slate-100`}>
@@ -137,7 +150,7 @@ export function LockScreen({ reason }: { reason: string }): JSX.Element {
           The Ring-0 audit found a broken invariant after the physics step. Physics and rendering are halted and the
           hardware bus has been disconnected. Restart to start the city again.
         </div>
-        <button ref={restartRef} type="button" autoFocus onClick={restart} className={`${BUTTON} mt-6 border border-slate-500 bg-slate-900 font-mono text-white ring-rose-400/60 hover:bg-slate-800`}>
+        <button ref={restartRef} type="button" autoFocus onClick={() => restart()} className={`${BUTTON} mt-6 border border-slate-500 bg-slate-900 font-mono text-white ring-rose-400/60 hover:bg-slate-800`}>
           Restart
         </button>
       </div>
@@ -160,7 +173,7 @@ export function StillStarting({ onConsole, stage }: { onConsole(): void; stage?:
     <div ref={root} role="status" className="absolute inset-x-4 bottom-6 flex flex-col items-center gap-3 font-sans text-sm text-slate-300 sm:bottom-10">
       <p className="text-center">Still starting{stage ? `: ${stage}` : ''}… a slow GPU can take a few minutes.</p>
       <div className="flex flex-wrap justify-center gap-2">
-        <button ref={restartRef} type="button" onClick={restart} className={`${BUTTON} border border-white/25 bg-white/10 text-white ring-white/40 hover:bg-white/20`}>
+        <button ref={restartRef} type="button" onClick={() => restart()} className={`${BUTTON} border border-white/25 bg-white/10 text-white ring-white/40 hover:bg-white/20`}>
           Restart
         </button>
         <button type="button" onClick={onConsole} className={`${BUTTON} border border-white/25 bg-transparent text-slate-200 ring-white/40 hover:bg-white/10`}>

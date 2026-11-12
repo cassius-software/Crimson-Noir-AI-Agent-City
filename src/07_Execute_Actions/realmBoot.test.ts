@@ -77,6 +77,69 @@ test('SimClient.create rejects with the worker\'s code on the Error; the old wor
   await assert.rejects(q, /physics worker failed to start: Uncaught ReferenceError: WebAssembly is not defined/)
 })
 
+test('SimClient.create tells the boot the crowd\'s ladder and the moment the world stands, and a boot that gives up stops the worker where it is', async () => {
+  // The ladder as the worker tells it, then 'ready' (the crowd's first reading is in), each before the first state.
+  const heard: string[] = []
+  const p = SimClient.create(INIT as never, false, {
+    ladder: (step) => { heard.push(`${step.rung} ${step.step}`) },
+    ready: (meta) => { heard.push(`ready ${meta.agents}`) },
+  })
+  const w = workers[workers.length - 1]
+  w.onmessage?.({ data: { t: 'crowdKernel', rung: 'full', step: 'trying' } })
+  w.onmessage?.({ data: { t: 'crowdKernel', rung: 'full', step: 'refused', words: 'no' } })
+  w.onmessage?.({ data: { t: 'crowdKernel', rung: 'narrow', step: 'running' } })
+  w.onmessage?.({ data: { t: 'ready', meta: META } as FromWorker })
+  assert.deepEqual(heard, ['full trying', 'full refused', 'narrow running', 'ready 256'])
+  w.onmessage?.({ data: state(0) })
+  await p
+  // A listener that throws does not stop the boot it is told about.
+  const errors: unknown[] = []
+  const said = console.error
+  console.error = (...a: unknown[]) => { errors.push(a[0]) }
+  try {
+    const q = SimClient.create(INIT as never, false, { ladder: () => { throw new Error('listener bug') }, ready: () => { throw new Error('another') } })
+    const v = workers[workers.length - 1]
+    v.onmessage?.({ data: { t: 'crowdKernel', rung: 'full', step: 'trying' } })
+    v.onmessage?.({ data: { t: 'ready', meta: META } as FromWorker })
+    v.onmessage?.({ data: state(0) })
+    assert.ok(await q)
+    assert.equal(errors.length, 2)
+  } finally {
+    console.error = said
+  }
+  // The boot failed elsewhere (the page's own device lost): the worker is stopped, the promise rejects, and nothing it
+  // had still to say is heard.
+  const gaveUp = new AbortController()
+  const late: string[] = []
+  const r = SimClient.create(INIT as never, false, { signal: gaveUp.signal, ladder: (step) => { late.push(step.step) } })
+  const u = workers[workers.length - 1]
+  u.onmessage?.({ data: { t: 'crowdKernel', rung: 'full', step: 'trying' } })
+  gaveUp.abort()
+  await assert.rejects(r, /the boot was given up before the physics worker was ready/)
+  assert.equal(u.terminated, true)
+  u.onmessage?.({ data: { t: 'crowdKernel', rung: 'full', step: 'lost', words: 'gone' } })
+  u.onmessage?.({ data: { t: 'ready', meta: META } as FromWorker })
+  assert.deepEqual(late, ['trying'])
+  assert.equal(u.posted.filter((m) => (m as { t?: string }).t === 'step').length, 0, 'no step is asked of a worker given up')
+  // Given up before it began: no init is sent at all.
+  const before = new AbortController()
+  before.abort()
+  const t = SimClient.create(INIT as never, false, { signal: before.signal })
+  const x = workers[workers.length - 1]
+  await assert.rejects(t, /the boot was given up/)
+  assert.equal(x.terminated, true)
+  assert.equal(x.posted.length, 0)
+  // Given up after the client stood: nothing happens here (the engine closes the client itself).
+  const after = new AbortController()
+  const s = SimClient.create(INIT as never, false, { signal: after.signal })
+  const y = workers[workers.length - 1]
+  y.onmessage?.({ data: { t: 'ready', meta: META } as FromWorker })
+  y.onmessage?.({ data: state(0) })
+  await s
+  after.abort()
+  assert.equal(y.terminated, false)
+})
+
 test('a fault before anyone listens is held, refuses the boot, and reaches onPanic once listen() is called', async () => {
   const { client, w } = await booted()
   assert.equal(client.fault, null)
@@ -111,6 +174,18 @@ test('the worker codes its own failures and does without the optional routing co
   assert.match(src, /throw coded\('worker-gpu', 'no WebGPU adapter inside the physics worker'\)/)
   assert.match(src, /if \(typeof WebAssembly !== 'object'\) return Promise\.reject\(coded\('wasm', /)
   assert.match(src, /try \{\n\s*\/\/ oxlint-disable-next-line react\/rules-of-hooks[^\n]*\n\s*useRoutingCore\(createRoutingCore\(\)\)\n\s*\} catch/, 'the routing core may fail without stopping the worker')
+  // A crowd device lost under a kernel (crowdSim.ts KernelLostError), or before the crowd's first reading (simCore.ts
+  // SensingLostError: the kernel's first dispatch): the page is told which kernel first, then the realm fails as
+  // 'kernel-lost', the code the page's next start goes lighter on (crowdKernelMemory.ts).
+  assert.match(src, /if \(e instanceof KernelLostError\) \{\n\s+ladder\(e\.rung, 'lost', e\.loss\.message\)\n\s+throw coded\('kernel-lost', words\)\n\s+\}/)
+  assert.match(src, /if \(!\(e instanceof SensingLostError\) \|\| e\.destroyed\) throw e\n\s+ladder\(e\.kernel, 'lost', e\.message\)\n\s+throw coded\('kernel-lost', e\.message\)/, 'a device destroyed on purpose is no kernel\'s loss')
+  // A device handed over already lost was lost under no kernel: said in plain words (a reset on the card), before any rung is told.
+  assert.match(src, /const born = await lossOf\(device\)\n\s+if \(born\) throw new Error\(`GPU device lost \(\$\{born\.reason\}\) as the physics worker was given it: /)
+  assert.ok(src.indexOf('const born = await lossOf(device)') < src.indexOf('CrowdSim.create(device, agents'), 'asked before the crowd is built')
+  // Every step of the ladder goes to the page as it happens, 'trying' before the compile it announces: a GPU process
+  // that dies under a kernel takes the page's device with it, and the page must already know which kernel it was.
+  assert.match(src, /CrowdSim\.create\(device, agents, grid, streets, rooms, \{ from, note: \(rung, step, words\) => ladder\(rung, step, words\) \}\)/)
+  assert.match(src, /scope\.postMessage\(\{ t: 'crowdKernel', rung, step, /)
 })
 
 test('the crowd\'s first-reading window: 10 s of the worker running; a suspension counts for a quarter second', () => {

@@ -40,7 +40,7 @@
  */
 import { Frustum, Matrix4, Quaternion, Vector3, type PerspectiveCamera, type RenderPipeline, type UniformNode, type Vector4 } from 'three/webgpu'
 import { BRAND } from '../brand.ts'
-import { GRAPHICS_RESET } from './bootFailure.ts'
+import { GRAPHICS_RESET, gpuPaused, noteGpuLoss, recentGpuLosses } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
@@ -70,7 +70,10 @@ import { CrowdView, FIGURE_QUADS } from '../03_Spawn_Agents/crowd.ts'
 import { heightScale, LOOK_NONE, LOOK_WORDS, packGenome, packLook, unpackGenome, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
-import { packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
+import { kernelSourcesKey, packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
+import { KERNEL_WORDS, type CrowdKernel } from '../03_Spawn_Agents/crowdSensor.ts'
+import { heldNone, kernelLostFailure, kernelNoneFailure, KernelWatch, pageKernelStore } from '../03_Spawn_Agents/crowdKernelMemory.ts'
+import { LOSS_GRACE_MS, lossOf, processGone, type DeviceLoss } from '../01_Initialize_World/gpuPipelines.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { PULSE, pulseLevel, type HalOutputs } from '../04_Connect_Hardware/hal.ts'
@@ -103,7 +106,7 @@ import { SimClient } from './simClient.ts'
 import { RobotBridge, type BridgeMode } from '../04_Connect_Hardware/robotLink.ts'
 import { applyWalk, requestWalk, type ScriptedWalk } from './scriptedWalk.ts'
 import {
-  doorOf, ENTER_RANGE, footWish, MODES, PERSON, POSE, RIG_SLOTS, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
+  doorOf, ENTER_RANGE, failureCode, footWish, MODES, PERSON, POSE, RIG_SLOTS, RUN, type CarBodyState, type DriveControls, type Door, type FootControls, type PlayerControls,
   type SimCommand, type StepState,
 } from './simProtocol.ts'
 import { readControls } from './controls.ts'
@@ -215,6 +218,12 @@ export interface EngineOptions {
    */
   peak?: boolean
   /**
+   * The first crowd kernel asked of the worker's GPU (?kernel=full|narrow|lite, 03_Spawn_Agents/crowdSensor.ts
+   * CROWD_KERNELS); absent: what the page remembers of this GPU (crowdKernelMemory.ts), else the full one. The page
+   * sets it itself for the one restart after a kernel took the GPU down.
+   */
+  kernel?: CrowdKernel
+  /**
    * The scene's multisampling (?msaa=1 on, ?msaa=0 off; absent: the device profile decides, governor.ts msaaCandidate):
    * whether the post chain's scene pass draws 4 samples a pixel (split screen: the renderer's own frame), decided at boot.
    */
@@ -253,6 +262,12 @@ const LIGHTBAR = { rest: 0xe8203a, limited: 0xd89a2a, thump: 0xffffff } as const
  * script's interact()), earns nothing.
  */
 const DOOR_DEED_MS = 1500
+/**
+ * How long a boot whose own GPU device was lost waits for the physics worker to say whether its device went too, ms
+ * (Engine.create): a driver reset takes the two a moment apart, and the worker's word names the crowd kernel it was
+ * building. Paid only on a loss that is not the browser's GPU process going, which says it all at once.
+ */
+const WORKER_WORD_MS = 1000
 /** Longest simulated time one step request carries when the worker fell behind, s. */
 const MAX_STEP_DT = 0.1
 /** How often the pedestrians' positions are copied out of the crowd frames for SimControls.crowd.positions, ms. */
@@ -550,6 +565,18 @@ export class Engine {
   private visionMode: Vision = 'none'
   /** The span the pedestrians' motion vectors cover (crowd.ts CrowdView.frameSeconds). */
   private readonly crowdFrameSeconds: UniformNode<'float', number>
+  /**
+   * Why the crowd runs a kernel below the full one (the console's `hardware`): this GPU refused the ones above, now or
+   * on an earlier start; a heavier one took the GPU down on an earlier start (crowdKernelMemory.ts); or the address
+   * asked for it (?kernel=). Null on the full kernel.
+   */
+  private readonly kernelWhy: 'refused' | 'lost' | 'asked' | null
+  /**
+   * The address asked for the crowd kernel that runs (?kernel=) and the page's own record of this GPU says the same
+   * (crowdKernelMemory.ts): the address's word adds nothing, and the page that put it there for its own restart may
+   * take it off again (App.tsx), so a link copied from here does not hold another device to this one's kernel.
+   */
+  readonly kernelKept: boolean
   /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
   private readonly crowdGaze: UniformNode<'vec4', Vector4>
   /** The realm's rig stream into the crowd's rig poses (crowd.ts CrowdView.rigs): the fallen wear their rigs. */
@@ -884,7 +911,7 @@ export class Engine {
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
-    hardware: HardwareClass; hints: DeviceHints
+    hardware: HardwareClass; hints: DeviceHints; kernelWhy: 'refused' | 'lost' | 'asked' | null; kernelKept: boolean
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     start: { x: number; z: number }
@@ -920,6 +947,8 @@ export class Engine {
     this.vision = p.vision
     this.pacer = p.cinema ? new FramePacer(CINEMA.fps) : null
     this.crowdFrameSeconds = p.crowdFrameSeconds
+    this.kernelWhy = p.kernelWhy
+    this.kernelKept = p.kernelKept
     this.crowdGaze = p.crowdGaze
     this.crowdRigs = p.crowdRigs
     this.ghost = p.ghost
@@ -999,6 +1028,8 @@ export class Engine {
     // (bootFailure.ts haltClass), and the host shows the recovery card. Its own destroy() (dispose) is not a loss.
     void p.gpu.device.lost.then((info) => {
       if (this.disposed || info.reason === 'destroyed') return
+      // The browser counts its GPU process going, and after two in two minutes hands the page none: the page keeps count too.
+      if (processGone(info.message)) noteGpuLoss()
       this.errors.push(`device lost: ${info.message}`)
       this.halt(`${GRAPHICS_RESET} the page's GPU device was lost (${info.reason}): ${info.message || 'no message'}`)
     })
@@ -1022,7 +1053,20 @@ export class Engine {
       const h = readDeviceHints(line)
       return requested.post && clampPlayers(requested.players) > 1 && msaaCandidate(h, profileDevice(h, requested.lite), requested.msaa, requested.pixelRatio) ? MSAA.samples : 0
     }
-    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf, splitSamplesOf)
+    // Every crowd kernel took this GPU down a short while ago (crowdKernelMemory.ts heldNone): nothing is asked of it,
+    // not even a device. The record is read with no adapter to match, because there may be none to have: a browser
+    // that lost the GPU twice in two minutes hands the page no adapter for the next two.
+    const where = { sources: kernelSourcesKey(), ua: typeof navigator === 'undefined' ? '' : navigator.userAgent }
+    const held = heldNone(pageKernelStore(), where, requested.kernel ?? null, Date.now())
+    if (held) throw kernelNoneFailure(held, Date.now())
+    // No adapter after two losses in two minutes is that pause (bootFailure.ts gpuPaused), not a GPU the browser has
+    // no WebGPU for: said so, with the wait, where 'no-adapter' would send the player to update a phone that is fine.
+    const paused = (what: string): WebGPUUnavailableError | null => (gpuPaused(recentGpuLosses(), Date.now())
+      ? new WebGPUUnavailableError('gpu-paused', `The browser handed ${what} no GPU adapter after the GPU was lost twice within two minutes; it hands one out again by itself, about two minutes after the first loss.`)
+      : null)
+    const gpu = await createRenderer(canvas, requested.pixelRatio, requested.profile, peakOf, splitSamplesOf).catch((e: unknown) => {
+      throw (e instanceof WebGPUUnavailableError && e.code === 'no-adapter' ? paused('the page') : null) ?? e
+    })
     // The adapter's line goes with the stage: a boot that fails after this (the physics worker's crowd, the shaders) can
     // then name the GPU on its card, where before the card said "adapter unknown" until an engine stood.
     onStage('world', gpu.adapterInfo)
@@ -1036,12 +1080,62 @@ export class Engine {
     const boot: { lost: GPUDeviceLostInfo | null; hidden: boolean } = { lost: null, hidden: document.hidden }
     const onVisibility = (): void => { if (document.hidden) boot.hidden = true }
     document.addEventListener('visibilitychange', onVisibility)
-    void gpu.device.lost.then((info) => { if (info.reason !== 'destroyed') boot.lost = info })
+    // What this start asks the worker's GPU for, and what is learnt of it on the way (crowdKernelMemory.ts): a kernel
+    // this GPU refused before is not compiled again, and one that took the GPU down is not asked of it again.
+    const kernels = new KernelWatch(pageKernelStore(), { ...where, adapter: gpu.adapterInfo }, requested.kernel ?? null)
+    /** The realm stands (the worker's world is built, its crowd's first reading in): a loss from here on is no kernel's. */
+    let realmUp = false
+    // A boot that fails gives its worker up (SimClient.create): nothing is built, and nothing heard, under the card.
+    const abandon = new AbortController()
+    // The worker has said how its own build ended (its kernel lost, its world ready, or a failure): see `gone` below.
+    let saidNow: () => void = () => {}
+    const workerSaid = new Promise<void>((resolve) => { saidNow = resolve })
+    // The boot's failure for a loss of the page's device. When the browser's GPU process goes, every device of the page
+    // goes with it, the worker's too, and the kernel the worker was building is what the page was asking of the GPU:
+    // the page keeps where the next start begins and says so ('kernel-lost', or 'kernel-none' after the lightest).
+    // A loss of the page's device alone blames no kernel (the worker says so itself when its own went), and is a reset.
+    let counted = false
+    /** The browser's GPU process went (its words): counted once per boot, as the browser counts it (noteGpuLoss). */
+    const count = (words: string): void => {
+      if (counted || !processGone(words)) return
+      counted = true
+      noteGpuLoss()
+    }
+    const lossError = (l: DeviceLoss): Error => {
+      count(l.message)
+      const verdict = realmUp ? null : kernels.pageLost(`GPU device lost (${l.reason}): ${l.message || 'no message'}`, !boot.hidden, processGone(l.message))
+      return verdict
+        ? kernelLostFailure(verdict, kernels.plan)
+        : new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`, boot.hidden)
+    }
+    /** A loss that is one: a device destroyed on purpose (releaseGpu) is nobody's. */
+    const liveLoss = (l: DeviceLoss | null): DeviceLoss | null => (l && l.reason !== 'destroyed' ? l : null)
+    // The loss fails the boot at once where it waits longest (alive): for the worker, and for three's compile, which
+    // never settles on a dead device (its pipeline promises reject unheard). Anything else that fails once the device is
+    // lost is reported as the loss too (the catch below): a scope popped after the GPU process went rejects with
+    // "Instance dropped in popErrorScope", which names nothing.
+    let lostNow: (e: Error) => void = () => {}
+    let over = false
+    const gone = new Promise<never>((_, reject) => { lostNow = reject })
+    gone.catch(() => {})
+    void gpu.device.lost.then(async (info) => {
+      // Once the boot is over (the engine stands and keeps its own watch on the device, or the boot failed), a loss
+      // is not this boot's to count or report.
+      if (info.reason === 'destroyed' || over) return
+      boot.lost = info
+      // The page's device went for a reason of its own (not the GPU process's words) while the worker builds a kernel: a
+      // driver that reset takes the worker's device a moment apart, and the worker then names its kernel itself. Its word
+      // is waited for, briefly, so the one event is not a plain reset or a kernel's loss by which message came first.
+      if (!realmUp && kernels.building && !processGone(info.message)) await Promise.race([workerSaid, new Promise((resolve) => setTimeout(resolve, WORKER_WORD_MS))])
+      lostNow(lossError(info))
+    })
+    const alive = <T>(work: Promise<T>): Promise<T> => Promise.race([work, gone])
     const stillThere = (): void => {
-      const l = boot.lost
-      if (l) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built (${l.reason}): ${l.message || 'no message'}`, boot.hidden)
+      if (boot.lost) throw lossError(boot.lost)
     }
     try {
+      // The same record of 'none', now matched to this adapter (heldNone above read it before there was one).
+      if (kernels.plan.from === null && kernels.memory) throw kernelNoneFailure(kernels.memory, Date.now())
       // The device profile first: it decides the starting tier and, unless the page said (?crowd, ?cars), how many
       // pedestrians and cars the physics realm simulates (the GPU buffers are sized for them at boot; the governor scales
       // how many are drawn). ?lite overrides its lite flag either way.
@@ -1127,7 +1221,42 @@ export class Engine {
         ...(craftBoxes && craftBoxes.length > 0 && { craftBoxes }),
         ...(shopLots.length > 0 && { shops: shopLots }),
         ...(homeLots.length > 0 && { homes: homeLots }),
+        ...(kernels.plan.from && kernels.plan.from !== 'full' && { crowdKernel: kernels.plan.from }),
+      }, undefined, {
+        signal: abandon.signal,
+        ladder: (step) => {
+          kernels.note(step, !boot.hidden)
+          if (step.step === 'refused' || step.step === 'lost') console.warn(`[crowd] ${KERNEL_WORDS[step.rung]} ${step.step === 'lost' ? 'took the GPU down' : 'was refused by this GPU'}: ${step.words ?? 'no message'}`)
+          if (step.step === 'lost') saidNow()
+        },
+        // The worker's world stands, its crowd's first reading in: the kernel that runs is what the page remembers of
+        // this GPU from here (crowdKernelMemory.ts stood), and a loss after this is no kernel's.
+        ready: (meta) => {
+          realmUp = true
+          kernels.stood(meta.crowdKernel)
+          saidNow()
+        },
       })
+      // A worker whose crowd device was lost under a kernel (simProtocol.ts 'kernel-lost') fails the boot as the page's
+      // own loss does: the kernel is kept against this GPU when the page was in front, a reset when it was not. A worker
+      // that failed any other way while the GPU went from under the page (its adapter refused, its device handed over
+      // lost) failed of that loss: the page's own device says so, a moment later at most, and the loss is what is said.
+      const realm = simBoot.then((sim) => sim, async (e: unknown) => {
+        saidNow()
+        if (failureCode(e) !== 'kernel-lost') {
+          const loss = boot.lost ?? liveLoss(await lossOf(gpu.device, LOSS_GRACE_MS))
+          if (loss) throw lossError(loss)
+          // The worker was handed no adapter while the browser withholds the GPU from this site: the pause, not a
+          // browser without WebGPU in workers (the worker's blob: address stays paused even after the browser's own reload).
+          throw (failureCode(e) === 'worker-gpu' ? paused('the physics worker') : null) ?? e
+        }
+        const words = e instanceof Error ? e.message : String(e)
+        count(words)
+        const last = kernels.last
+        const verdict = kernels.verdict ?? (last ? kernels.lost(last.rung, words, !boot.hidden) : null)
+        throw verdict ? kernelLostFailure(verdict, kernels.plan) : new WebGPUUnavailableError('gpu-reset', `The GPU device was lost while the city was built: ${words}`, boot.hidden)
+      })
+      realm.catch(() => {})
 
       // Start on the tier the device profile suggests (or the one the URL pins), before anything compiles:
       // the first applyQuality decides which shadow variant the materials are built with. Under the cinema camera the
@@ -1169,7 +1298,7 @@ export class Engine {
 
       const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
       onStage('physics')
-      const sim = await simBoot
+      const sim = await alive(realm)
       if (sim.meta.agents !== options.agents) throw new Error(`the physics worker simulates ${sim.meta.agents} pedestrians, the page draws ${options.agents}`)
       const view = new FleetView(sim.meta.kind, sim.meta.paint, world.night, world.matrixMode.globalState)
       view.sync(sim.state.poses)
@@ -1209,7 +1338,7 @@ export class Engine {
       // Compile off the critical path, then draw once so three allocates every storage buffer the
       // compute passes share (crowd state, draw lists, indirect draw arguments).
       onStage('shaders')
-      await gpu.renderer.compileAsync(world.scene, world.camera)
+      await alive(gpu.renderer.compileAsync(world.scene, world.camera))
       onStage('frame')
       // Draw once on BOTH paths (direct and post), so a later quality step that toggles post never compiles a
       // pipeline mid-game; the boot veil hides these frames. They draw inside a validation scope: a draw the browser's
@@ -1261,8 +1390,18 @@ export class Engine {
       // device lost since the first frame does too: neither may become a city that stands still.
       if (sim.fault !== null) throw new Error(sim.fault)
       stillThere()
+      // Why the crowd runs below the full kernel, for the console: a loss remembered (whether the record or the page's
+      // own restart address asked for the kernel it left; a record of 'none' whose hold has passed is one too: every
+      // kernel was lost here, none refused), the address's own word, a refusal.
+      const ran = sim.meta.crowdKernel
+      const remembered = kernels.memory !== null && kernels.memory.from === ran && ran === kernels.plan.from
+      const wasNone = kernels.memory?.from === 'none' && kernels.plan.by === 'memory'
+      const kernelWhy = ran === 'full' || ran === 'none' ? null
+        : (remembered || wasNone) && kernels.memory?.why === 'lost' ? 'lost'
+          : kernels.plan.by === 'address' && ran === kernels.plan.from ? 'asked' : 'refused'
+      const kernelKept = kernels.plan.by === 'address' && remembered
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options, kernelWhy, kernelKept,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets, start: spawn,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
@@ -1282,14 +1421,21 @@ export class Engine {
       if (start) engine.input.yaw = yawFacing(start.heading)
       return engine
     } catch (e) {
+      // The boot is over: a worker still building its world is stopped where it is, and one that stood is closed.
+      abandon.abort()
       void simBoot?.then((s) => s.terminate(), () => {})
+      // Whatever else failed as the page's device was lost failed because it was lost, and the device may say so a
+      // moment after the failure does (asked before the device is let go: releaseGpu destroys it): the loss is what is said.
+      const loss = e instanceof WebGPUUnavailableError ? null : boot.lost ?? liveLoss(await lossOf(gpu.device, LOSS_GRACE_MS))
       releaseGpu(gpu)
       // gpuBufferOf names a loss three saw before the page's own handler ran: the same reset, hidden or not.
       if (e instanceof WebGPUUnavailableError && e.code === 'gpu-reset' && !e.background && boot.hidden) {
         throw new WebGPUUnavailableError('gpu-reset', e.message, true)
       }
+      if (loss) throw lossError(loss)
       throw e
     } finally {
+      over = true
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }
@@ -3345,7 +3491,7 @@ export class Engine {
       hardware: (): HardwareReport => ({
         class: this.hardware, profile: this.profile, adapter: this.adapter, limits: this.gpu.limits,
         tiers: { ...governor.range(), start: this.profile.startTier, startLabel: knobsOf(this.profile.startTier).label },
-        lanes: { simulated: this.options.agents, default: defaultLanes(this.profile, this.hardware, this.gpu.limits), ceiling: laneCeiling(this.gpu.limits), kernel: this.sim.meta.crowdKernel },
+        lanes: { simulated: this.options.agents, default: defaultLanes(this.profile, this.hardware, this.gpu.limits), ceiling: laneCeiling(this.gpu.limits), kernel: this.sim.meta.crowdKernel, ...(this.kernelWhy && { kernelWhy: this.kernelWhy }) },
         frames: governor.percentiles(),
         host: this.options.host, cores: this.hints.cores, memoryGb: this.hints.memoryGb,
       }),
