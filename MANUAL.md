@@ -47,7 +47,11 @@ asks the gateway nothing; once it has found the gateway it keeps it for the visi
 used only when the gateway stops answering or `ask` alone looks again. The local model providers and `say` talk only
 to a model server and a speech server on this same machine, and only when asked (see The model providers, Speech and
 Networking). A model file you keep in the page itself (`ask provider inpage`) runs inside the page and talks to
-nothing at all, on a page that is served rather than opened from a file (see A model in this page). It needs WebGPU:
+nothing at all, on a page that is served rather than opened from a file (see A model in this page). The web copy on
+GitHub Pages also asks the site it came from for one thing, the small model it serves beside the page: its manifest
+when Sloane's card first says no model answers, and the model itself only when you tap **Get the model**, to keep in
+this browser (A model in this page, The site's model). `dist/index.html` itself carries no model and asks for none.
+The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
 - **iPhone, iPad and Mac:** Safari 26.
@@ -1089,12 +1093,22 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   away is shown and said when it opens. Sloane's own wait is bounded only by the router's (the first piece, a stall, a
   load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model
   answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
-  ways to get one: **Choose a model file** (the same picker as Menu › Model file; a small `.gguf` such as Qwen2.5 0.5B
-  Instruct at Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this computer (Ollama, LM Studio,
-  llama.cpp), with the `OLLAMA_ORIGINS` note on a page Ollama refuses by default (anything but localhost, 127.0.0.1 or
-  0.0.0.0), and **Ask again** once one is there. Where this browser cannot run a model file, the picker gives way to its
-  reason. "Where I looked" opens the router's own list of what it tried. How well a model converses, and how fast,
-  depends on the model and the device and is not verified here.
+  ways to get one. On the web copy the first is the model that site serves beside the page, in one tap: **Get the
+  model · 379 MB** (the size is on the button before anything is downloaded), or **Use the model kept here** once this
+  browser keeps it. The tap downloads Qwen2.5 0.5B Instruct once from the site the page came from, checks it against
+  the size and SHA-256 the page was built with, keeps it in this browser exactly as a picked file is kept, and chooses
+  it (A model in this page, The site's model). While it comes, a line and a bar show the megabytes and then the copy
+  into the page, and **Stop** ends the download and keeps nothing; a download that ends short says why on the card.
+  Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
+  the first answer takes longer". Where nothing serves that model beside the page (the Windows app, `dist/index.html`
+  opened from a file or from a local server, the NixOS launcher and the flake), or where this browser cannot run a
+  model in the page, no such button shows. Then **Choose a model file** (the same picker as Menu › Model file; a small
+  `.gguf` such as Qwen2.5 0.5B Instruct at Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this
+  computer (Ollama, LM Studio, llama.cpp), with the `OLLAMA_ORIGINS` note on a page Ollama refuses by default
+  (anything but localhost, 127.0.0.1 or 0.0.0.0), and **Ask again** once one is there. Where this browser cannot run a
+  model file, the picker gives way to its reason. "Where I looked" opens the router's own list of what it tried. How
+  well a model converses, and how fast, depends on the model and the device and is not verified here, for the site's
+  model as for any other.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -2419,9 +2433,11 @@ them that answers (`auto`):
   planner's classifier, `06_Make_Decisions/intent.ts`), so the browser smoke drives the whole path with no model;
   standing in for another provider it never proposes, and a stand-in's line is refused besides.
 
-No model and no model server ships with the product: you run your own, bring your own key, or keep your own model
-file in the page (the page carries the runtime for one, never a model), and the city works exactly the same without
-any of them.
+No model server ships with the product, and the page file carries no model: you run your own server, bring your own
+key, or keep a model file in the page (the page carries the runtime for one, never a model). The one exception is the
+web copy on GitHub Pages, which serves one small model beside its page for a visitor to download in a tap on Sloane's
+card (A model in this page, The site's model); the Windows app, the launcher, the flake and the release builds carry
+none. The city works exactly the same without any of them.
 
 - **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
   whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
@@ -2745,18 +2761,23 @@ server's.
 The `inpage` provider answers with a model file you choose: a GGUF file (the format llama.cpp reads), kept in the
 browser's own storage for this page on this device, and run inside the page by llama.cpp compiled to WebAssembly
 (wllama 3.8.1, built from llama.cpp b11364, pinned in `third_party/wllama/3.8.1/` and carried inside the page file).
-It needs no model server, no address and no network, and nothing it does leaves the page. It is how a phone, which
-runs no model server, gets a model of its own. The page carries the runtime, never a model: the file is yours, under
-its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below),
-`inPageCaps.ts` (what the browser offers), `gguf.ts` (the header check), `modelStore.ts` (keeping the file) and
+It needs no model server and no address, and once the file is kept nothing it does leaves the page. It is how a
+phone, which runs no model server, gets a model of its own. The page file carries the runtime, never a model: a file
+you choose is yours, under its own licence. The web copy on GitHub Pages also serves one small model beside its page,
+Qwen2.5 0.5B Instruct, which a visitor with no model of their own gets in one tap on Sloane's card (The site's model,
+below); `dist/index.html`, the Windows app, the launcher, the flake and the release builds carry none. The parts:
+`09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
+`gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
 
-- **Choosing the file.** Four ways, the same from then on:
+- **Choosing the file.** Five ways, the same from then on:
   - on a phone or tablet, **Menu › Model file** opens the browser's file picker;
   - in the console, `ask file` opens it (from the Enter key itself, which is when a browser allows a picker);
   - on a computer, drop the `.gguf` file, or every part of a split one, on the city;
   - from Sloane's card, **Choose a model file**, offered when you talk to Sloane and no model answers (Talk to Sloane,
-    above).
+    above);
+  - on the web copy, from Sloane's card, **Get the model · 379 MB**: the site's model (below), downloaded rather than
+    picked, then kept and chosen as a picked file is.
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
@@ -2767,6 +2788,52 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
   ask. From the Menu or a drop, what happened is a toast titled "Model file"; from the console, a `file` row. Where
   this page cannot run the model (Which browsers, below), nothing is kept: the Menu has no Model file item, and `ask
   file` or a drop says why without opening the picker or copying anything.
+- **The site's model** (`09_Cognition/siteModel.ts`, `tools/web/siteModel.mjs`). The web copy serves one model beside
+  its page, so a visitor with no model server and no model file can still talk to Sloane: Qwen2.5 0.5B Instruct at
+  Q4_K_M (`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`, 397,808,192 bytes, about 0.4 GB), a GGUF file quantized with an
+  importance matrix by bartowski from the Qwen team's own weights (Apache-2.0, Copyright 2024 Alibaba Cloud;
+  `third_party/qwen2.5-0.5b-instruct/` holds its licence, its notice and its SHA-256). The page is built with its pin
+  (`SITE_MODEL`: the file's name, its size and its SHA-256). The web workflow (`.github/workflows/web.yml`) fetches
+  that file from Hugging Face at a pinned revision whenever its cache, keyed by the whole pin, does not hold it
+  (GitHub drops a cache entry unused for 7 days), checks its size and
+  SHA-256 against the pin on every publish, cached or not, and puts it in `models/` beside the page with
+  `manifest.json`, `LICENSE` and `NOTICE`. A file that fails the check fails the publish, so the copy already
+  published stays up; `tools/web/siteModel.mjs place` refuses any folder but the web copy, so `dist/` never gets a
+  model. On the page:
+  - nothing is asked at boot. When Sloane's card first says no model answers, the page asks for `models/manifest.json`
+    once a visit (again later only if the site could not be reached or answered with an error), and offers the model
+    only when the manifest names exactly the pin the page was built with. Only the web copy asks (the page that names
+    a web app manifest): there is no offer, and no request, where this browser cannot run a model in the page (an
+    iPhone today), on `dist/index.html` however it is opened or served, or on a page not served over http or https;
+  - the tap checks, in this order: that this browser can run a model in the page, that no file is being kept already,
+    whether this browser keeps the model already (then it is only chosen, and nothing is downloaded), that the device's
+    limits admit it (How large a model, below), and that the page's storage has room for it with 64 MB spare. Only
+    then is it downloaded, so nothing comes that could not be kept or run here. While it downloads, a pick from the
+    Menu, a drop or `ask file` is refused (it says to wait for the download or stop it on Sloane's card) and keeps
+    nothing, so neither copy throws the other away;
+  - it comes only from a `models/` file beside the page on the page's own site (`siteModel.ts siteUrl`: never the
+    origin's root, which on GitHub Pages is another site), through the page's guarded fetch, outside the browser's
+    HTTP cache. It is counted and hashed with SHA-256 as it streams (`02_Define_The_Rules/integrity.ts
+    sha256Stream`), refused the moment it runs past the pinned size, and becomes a file only once every byte has
+    arrived and the hash is the pin's. A short or broken download, a different file or an HTTP error (a 429 says too
+    many downloads for now) keeps nothing, and the card says why;
+  - it is then kept and chosen exactly as a picked file is (the header check, the copy into the page's storage, the
+    provider `inpage`, a computer's load at once), and the card asks the last turn again. **Stop** ends the download;
+    the copy into the page, once begun, runs to its end;
+  - the service worker leaves `models/` to the network (On an iPhone, below), so its cache holds no second copy: the
+    page's storage keeps the one.
+
+  A `dist-web/` you build and serve yourself (the Tailscale way) has no model beside it unless you put one there the
+  same way, after `npm run build:web`: `node tools/web/siteModel.mjs place --from <folder holding the file> --out
+  dist-web` (`check --from <folder>` only checks it). Every full download counts against the site's bandwidth: GitHub
+  Pages has a soft limit of 100 GB a month, about 250 full downloads of this model, so after a publish the web
+  workflow only reads the served manifest and the size the site reports for the model, and never downloads the model
+  itself. What is verified: the pin, the manifest, the address rule, the checked download (a flipped byte, a short
+  body, a long one, a broken connection, an HTTP error, a stop) and the placing, in `siteModel.test.ts`,
+  `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the browser smoke's `sitemodel` scenario drives the tap in
+  Chrome against a web copy served from this machine, with a tiny model standing in under a swapped pin. Not
+  verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
+  well and how fast this model converses, and any real phone or GPU.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
   later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.
@@ -2886,11 +2953,15 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 - **Privacy.** Nothing about the model leaves the page. The runtime is inside the page file and is checked against its
   pinned sha256 in the page before it runs; the model is read from the page's own storage; wllama's download paths and
   its compatibility build, which would come from a CDN, are switched off and never called, which
-  `10_Network/airgap.test.ts` pins. The runtime's workers are made from `blob:` URLs and live under the page's
+  `10_Network/airgap.test.ts` pins. On the web copy the page makes two requests of its own for the site's model, both
+  GETs to the site the page came from and neither carrying anything of yours (no prompt, no key, no file): the
+  manifest, once a visit, when Sloane's card first says no model answers, and the model itself, only when you tap for
+  it (The site's model, above). The runtime's workers are made from `blob:` URLs and live under the page's
   Content-Security-Policy, which admits no host but the page's own and this machine. The kept files and their settings
   stay in this browser's storage for the page's origin, readable by whatever can read that origin's storage: on the
   public web copy that origin, `cassius-software.github.io`, is shared by every Pages site of the organization (On an
-  iPhone, The shared address), and that applies to models kept there too. The cloud fallback never moves this model's
+  iPhone, The shared address), and that applies to models kept there too, the site's model included (its SHA-256 is
+  checked as it arrives, not each time it is loaded from storage). The cloud fallback never moves this model's
   prompts to the gateway: its row reads `off: the model in this page is never moved to the gateway`.
 
 ### The swarm orchestrator (`swarm`)
@@ -2917,9 +2988,9 @@ surface (`bridge.operator.swarm.run(goal)`) from a voice line.
   or a model running in this page), `BudgetWithinQuota` (at most 8 steps, a goal of 600 characters, a prompt of 6,000,
   an answer of 12,000 and 24,576 tokens a run) and `ProvenanceChained` (the audit chain verifies before every step).
   Every one is a rule over text, settings and counts, applied the same way every time; `swarm guardrails` prints them.
-  They are not a proof about a model, and they do not look inside one: no model and no weights ship with the product,
-  so there is nothing to inspect or clamp. The screen is a lexicon, as it is for `ask`; the model's own judgement
-  under the conduct core is the second layer.
+  They are not a proof about a model, and they do not look inside one: the page carries no weights, and the one model
+  the web copy serves beside it is run exactly as published, so there is nothing here to inspect or clamp. The
+  screen is a lexicon, as it is for `ask`; the model's own judgement under the conduct core is the second layer.
 - **The audit trail.** Every plan, step, answer, refusal, stop and end is an entry: its kind, the step and role,
   the SHA-256 of what went in and what came out, the hash of the exact system prompt the model was given, the
   invariants that refused it, and one line of note; each entry's hash is the SHA-256 of its canonical body followed
@@ -3771,13 +3842,13 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
-| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), and the one adapter over wllama |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `siteModel.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), the one model the web copy serves beside the page (its pin, its manifest and its download, checked as it streams), and the one adapter over wllama |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts`, `robotRelay.node.ts`, `sparkplugHost.node.ts`, `sparkplug.ts`, `mqttCodec.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws; the robots' loopback relay (`npm run serve:robots`: the page's one socket and the robots' peers, a second gate on every setpoint, a Sparkplug B host application over MQTT when a broker is named) and the Sparkplug B and MQTT codecs both ends share |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
 | native/routing | `lib.rs`, `layout.rs`, `math.rs`, `tests.rs`, `verify.rs` (Kani proof harnesses, `cfg(kani)` only) | The track arithmetic in dependency-free Rust, built to WebAssembly as `06_Make_Decisions/routing.wasm.ts`; its layout is defined once in each language and the two are proved equal |
 | tools/native | `build-wasm.mjs`, `wllama-pack.mjs` | Builds both crates for `wasm32-unknown-unknown` with the checkout mapped to one fixed prefix (so the bytes are the same on any machine, and no module carries a builder's directory) and writes the generated modules with their sizes and SHA-256; pins the in-page model runtime from the npm package into `third_party/wllama/3.8.1/` (`npm run native:wllama`: the module gzipped, its sums and its import list) |
-| tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py`, `page_dist.mjs` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin (and the pinned in-page runtime held to its sums and reviewed imports), the routing core's LLVM IR call scan; one command, run before every release bake and in CI; and the check of the built page (one file, its size budget, no model, only reviewed hosts) |
+| tools/verify | `fvps.sh`, `fvps_smt.py`, `wasm_airgap.py`, `page_dist.mjs` | The formal verification step (Phase 18): the Kani harnesses, the Z3 theorems, the WebAssembly air gap and export pin (and the pinned in-page runtime held to its sums and reviewed imports), the routing core's LLVM IR call scan; one command, run before every release bake and in CI; and the check of the built page (one file, its size budget, no model in `dist/`, only reviewed hosts) |
 | tools/sandbox | `probe.sh`, `verify.mjs` | The zero-trust sandbox's escape probes (egress, daemon sockets, workspace-file execution, privilege, credentials) and the experiment that runs them contained, in a weakened control and beside the checks, on every pull request (`docs/zero-trust-sandbox.md`) |
 | tools/selfheal | `agent.mjs`, `checks.sh`, `failures.mjs`, `ast.mjs`, `sandbox.mjs`, `planner.mjs`, `Dockerfile.sandbox` | The self-healing agent (Phase 18): the named checks, failure parsers, syntax-tree loci, the network-off sandbox, the planners (built-in remedies, then Claude) and the bounded remediation loop that opens `selfheal-*` pull requests and never merges |
 
@@ -4071,8 +4142,11 @@ https: the Files app only previews `dist/index.html`, and the page served over p
 by `tools/web/pwa.mjs`:
 - a manifest (`manifest.webmanifest`: the name, full screen, black) and the home-screen icon, which the page's
   head names; its content policy gains `manifest-src 'self'` so the browser may read the manifest, and nothing else;
-- a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit. From then on the city
-  starts with no network at all, airplane mode included. **The host decides which build runs, and the copy delivers
+- a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit, except anything
+  under `models/` (the site's model, its manifest and its licence, which the web workflow adds beside the page and
+  which it leaves to the network: the page keeps a model it downloads in its own storage, so the cache holds no
+  second 0.4 GB copy, and a load of `models/LICENSE` is the licence, not the city). From then on the city starts with
+  no network at all, airplane mode included. **The host decides which build runs, and the copy delivers
   it.** On each launch the worker asks the host for one small file (`build.txt`, the published build's name, some
   forty bytes; never kept, and never taken from the browser's cache) and waits two seconds at most. The same name as
   its copy, no answer in time, a phone that says it is offline, or anything else the host sends: the copy answers and
@@ -4122,7 +4196,12 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   tested, and only while it is still main's tip, so during a burst of merges it publishes once, after the last one's
   ci passes, and never a commit ci has not passed. Actions > web > Run workflow publishes main by hand, without
   waiting for ci. The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
-  the address (the repository and its releases are public already). GitHub serves the files and runs nothing.
+  the address (the repository and its releases are public already). GitHub serves the files and runs nothing. Each
+  publish also puts the site's model in `models/` beside the page (A model in this page, The site's model): fetched
+  from Hugging Face at its pinned revision, kept in the workflow's cache by its pin, and checked against the pin's
+  size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
+  After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
+  only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
@@ -4131,17 +4210,19 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
 
 What the phone copy keeps, and what it cannot have yet:
 - **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
-  host (which only serves these files) and to the phone's own `localhost`, nowhere else.
+  host (which only serves these files, the site's model in `models/` among them, fetched only when you tap for it on
+  Sloane's card) and to the phone's own `localhost`, nowhere else.
 - **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
   model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
-  `ask`'s runtime row names what is missing, Sloane speaks from her script with the phone's own voices, and `ask`
-  answers from the script. Menu › Model file still keeps a file there, which cannot run until Safari can: there is
-  no reason to choose one on an iPhone yet. Chrome 137 or later on an Android phone runs a small model in the page
-  (not yet tried on a real phone).
+  `ask`'s runtime row names what is missing, Sloane speaks from their script with the phone's own voices, and `ask`
+  answers from the script. The Menu offers no Model file there, and Sloane's card offers no download of the site's
+  model, since neither could run until Safari can. Chrome 137 or later on an Android phone runs a small model in the
+  page, and on the web copy gets the site's model in one tap on Sloane's card (neither yet tried on a real phone).
 - **The shared address.** `cassius-software.github.io` is one origin for every Pages site of the organization, and any
   of them could read what this one saves in the browser, a model key typed into the console and the model files kept
-  in the page included. Publish other Pages sites under the organization only if you trust them, or use the Tailscale
-  way.
+  in the page included, the site's model once it is downloaded among them (it is checked against its pin as it
+  arrives, not each time it is loaded). Publish other Pages sites under the organization only if you trust them, or
+  use the Tailscale way.
 - **Storage.** A site added to the home screen keeps its storage; Safari may clear a site visited only in a tab after
   weeks unused.
 
@@ -4154,8 +4235,8 @@ bytes it is answered by the copy itself with no second load, the same build over
 load runs (isolated, then kept by its own worker, the older copy dropped), and with the host stopped the city starts
 from the phone's copy of that build with its touch controls. `src/webApp.test.ts` holds the policy change, the icons,
 the registration at the page's load and the service worker's answers against a scripted host and a clock the test
-turns (every deadline, refusal, pace and query string, and a newer worker's install waiting for a launch's page);
-`src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
+turns (every deadline, refusal, pace and query string, a newer worker's install waiting for a launch's page, and
+`models/` left to the network), and the placing of the site's model beside the web copy only; `src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
 iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a service worker in
 Safari on the copy and on a page streamed from the host, Safari ending a page whose download was given up so that it
 loads again, Safari's own look for a newer worker a second into a launch and its locks between two workers, and heat
@@ -4522,10 +4603,11 @@ reset and a real pad.
   as `.wgsl` files ride in it without their comments (`vite.config.ts` `leanShaders`,
   `01_Initialize_World/leanWgsl.node.ts`: about 83 KB less, since the crowd's shaders are in the page's bundle and in
   the physics worker's); every line keeps its number, so a compilation message still names the file's line, and each
-  file's licence header stays. The page carries
-  no model and never will: a model is the operator's own file, kept in their browser. The build checks the embedded
+  file's licence header stays. `dist/index.html` carries no model and never will: a model is a file kept in the
+  browser, the operator's own or the one the web copy serves beside its page (`dist-web/models/`, put there after the
+  build by `tools/web/siteModel.mjs`, which refuses any folder but the web copy). The build checks the embedded
   runtime against its pinned sha256 and against the npm package's, and the page checks it again before it runs.
-- **Network.** The page sends nothing off this machine, by construction, in three layers
+- **Network.** The page sends nothing off this machine but to its own site, by construction, in three layers
   (`02_Define_The_Rules/airgap.ts`). The gate: `loopbackOnly` is the one definition of "this machine" (http, https, ws
   or wss to `localhost`, `127.0.0.0/8` or `[::1]`, with no credentials), and every client (the model providers,
   speech, the room client) asks it, or an alias of it, before anything is sent. The guard: `main.tsx` calls
@@ -4536,18 +4618,22 @@ reset and a real pad.
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
   allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry
-  point does not install the guard first. The page opens no connection at boot and polls nothing; the Claude provider
+  point does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
+  only requests off this machine go to its own site, for the model served beside the page, and only when Sloane's
+  card needs it (`App.tsx siteFetch`, held by `09_Cognition/siteModel.ts siteUrl` to a `models/` file beside the page:
+  the manifest once a visit, the model only on a tap; the airgap test allowlists that one call site); the Claude provider
   needs a gateway on this machine (`http://localhost:8089`); `net join` reaches a host on this machine. What the guard
   cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm from an
   iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`. Most of it
   is closed by the Content-Security-Policy `index.html` now carries: nothing loads from or connects to any host but
-  this machine, for the page and for the iframes and blob workers it could create (`connect-src` names only loopback;
-  `frame-src`, `object-src`, `form-action` and `base-uri` are `'none'`). Navigation and the browser's own speech
-  recognition stay open, and the audit says so. Nothing of the network reaches the physics realm but a robot's
-joint frames and the setpoints the page admitted through the peripheral gate (see Robots). The in-page model
-  asks the gate nothing, because it addresses nothing: its runtime runs in workers wllama makes from `blob:` URLs,
-  where the guard is not installed, so the policy those workers inherit is what holds them, and the adapter never
-  calls wllama's download paths (`airgap.test.ts` pins it; the audit has the row).
+  the page's own and this machine, for the page and for the iframes and blob workers it could create (`connect-src`
+  names only the page's own origin and loopback; `frame-src`, `object-src`, `form-action` and `base-uri` are
+  `'none'`). Navigation and the browser's own speech recognition stay open, and the audit says so. Nothing of the
+  network reaches the physics realm but a robot's joint frames and the setpoints the page admitted through the
+  peripheral gate (see Robots). The in-page model asks the gate nothing, because it addresses nothing: its runtime
+  runs in workers wllama makes from `blob:` URLs, where the guard is not installed, so the policy those workers
+  inherit is what holds them, and the adapter never calls wllama's download paths (`airgap.test.ts` pins it; the
+  audit has the row).
 - **Integrity.** Inter-agent communication is hashed (`02_Define_The_Rules/integrity.ts`): the swarm's memory is
   a SHA-256 chain, an ask records the hash of the system prompt it sent, and every message between the page and a
   room host is sealed with an HMAC-SHA256 over its canonical body and sequence number, keyed by the session

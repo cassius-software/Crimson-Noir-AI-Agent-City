@@ -1682,6 +1682,52 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `chat.test.ts` and new cases in `intent.test.ts` cover it; the conversation's quality and speed with a real model
   are not verified in CI.
 
+- **A model for Sloane in one tap, on the web copy.** A fresh visitor to the web copy on GitHub Pages had to find a
+  model file or start a model server before Sloane could say a word. The web copy now serves one small model beside its
+  page, Qwen2.5 0.5B Instruct at Q4_K_M (`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`, 397,808,192 bytes, bartowski's
+  quantization with an importance matrix of the Qwen team's Apache-2.0 weights, Copyright 2024 Alibaba Cloud), and
+  Sloane's card offers it when no model answers: **Get the model · 379 MB**, or **Use the model kept here** once the
+  browser keeps it. The page is built with its pin (`src/09_Cognition/siteModel.ts` SITE_MODEL: the file's name, size
+  and SHA-256, and the Hugging Face repository and revision it comes from). The manifest beside the model
+  (`models/manifest.json`) is asked once a visit (again only after the site could not be reached or answered with an
+  error), when the card first needs it, never at boot, and only on the web copy (a page that names a web app manifest)
+  where the browser can run a model in the page; the model is offered only when the manifest
+  names exactly the pin. The tap (`src/App.tsx`, the site host over `siteFetch`, the one fetch of the page's own site,
+  under the installed air gap, which admits the page's own origin as `connect-src 'self'` does) refuses, in this order,
+  a browser that cannot run a model, a keep already running, a copy already kept (then it only chooses it), the device's
+  limits (`inPagePlan.ts` fits) and the storage's room (`modelStore.ts`, new `roomRefusal`), and only then downloads the
+  model from a `models/` file beside the page (`siteUrl`), counted and hashed as it streams
+  (`src/02_Define_The_Rules/integrity.ts`, new `sha256Stream`), refused the moment it runs past the pinned size, and
+  made a file only once whole and matching. It is then kept exactly as a picked file is (`keepPicked`: the copy, the
+  provider `inpage`, the model chosen, a desktop's load at once). The card (`src/07_Execute_Actions/Concierge.tsx`)
+  shows the megabytes and a progress bar, **Stop** while it downloads, the reason if it ends short, and then asks the
+  last turn again by itself ("Starting the model… the first answer takes longer"). The service worker
+  (`tools/web/pwa.mjs`) leaves `models/` to the network, so its cache holds no second 0.4 GB copy and `models/LICENSE`
+  is the licence, not the city. `tools/web/siteModel.mjs` (`pin`, `check --from`, `place --from --out`) puts the model
+  beside the web copy only (a folder whose page names no web app manifest is refused), checked while it is copied, with
+  `manifest.json`, `LICENSE` and `NOTICE` beside it; the web workflow (`.github/workflows/web.yml`) runs it after
+  `npm run build:web` on every publish, with the file fetched from Hugging Face at the pinned revision on a cache miss and
+  kept in the Actions cache by the pin, and after the deploy only notes the served manifest and the model's
+  `Content-Length`, never downloading it; the new `site-model.yml` fetches and checks the pin on a pull request that
+  touches it. The model's licence, notice and hash are recorded in `third_party/qwen2.5-0.5b-instruct/`; the weights are
+  not in the repository, and `dist/` (the single page file), the Windows app, the flake and the release builds still
+  carry no model (`tools/verify/page_dist.mjs` checks `dist/` exactly as before, and `nix.yml`'s comparison of
+  `dist/index.html` is unaffected); the self-heal sandbox leaves `dist-web/` out of its copy, as it leaves `dist/`.
+  `src/09_Cognition/siteModel.test.ts` (the pin against `SHA256SUMS`, `siteUrl`, the manifest, the checked download: a
+  flipped byte, a short body, a long one, a broken connection, an HTTP error, a stop), `integrity.test.ts`
+  (`sha256Stream` split any way gives the one digest), `webApp.test.ts` (the worker leaves `models/` alone, the
+  workflow's pin and order, the placing and its refusals), `chat.test.ts` (the card's offer, progress, Stop and
+  asked-again turn, and the order of the host's refusals), `inPageWiring.test.ts` (the copy's progress told to the card)
+  and an `airgap.test.ts` allowlist entry for the one `siteUrl` fetch cover it, and the browser smoke gains a
+  `sitemodel` scenario (`tools/browser/smoke.mjs`) that drives the tap in Chrome with a tiny model placed under a
+  swapped pin, and a flipped byte refused. `MANUAL.md` (Talk to Sloane, A model in this page, On an iPhone, Constraints,
+  and each place that said no model ships), the README, `NOTICE.md`, `LICENSE` section 4, `docs/ip-audit.md`,
+  `docs/zero-trust-audit.md` and `page_dist.mjs`'s comment say what is served and record the model as a third-party
+  component, and the console's `swarm guardrails` no longer says no model ships. Every full download counts against the
+  site's bandwidth: GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads. Not verified: a real
+  download from GitHub Pages (its compression, the Content-Type it serves the file with, 429s), the real model's
+  conversation quality and speed, and any real phone or GPU.
+
 ### Changed
 
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**

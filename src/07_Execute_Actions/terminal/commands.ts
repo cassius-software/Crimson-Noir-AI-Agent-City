@@ -1824,7 +1824,7 @@ const HANDLERS: Record<Name, Handler> = {
           sys('Every step passes these before a model is asked and after it answers; a failure ends the run and is written to the audit trail:'),
           ...INVARIANT_LINES.map(([name, law, text]) => out(`  ${name.padEnd(22)}${law.padEnd(12)}${text}`)),
           sys(`quota: ${q.agents} roles, ${q.steps} steps, a goal of ${q.goalChars} characters, a prompt of ${q.promptChars}, an answer of ${q.answerChars}, ${q.tokens} tokens a run`),
-          sys('These are rules over text, settings and counts, applied the same way every time; they are not a proof about a model, and no model ships to inspect.'),
+          sys('These are rules over text, settings and counts, applied the same way every time; they are not a proof about a model, and they never look inside one.'),
         ],
       }
     }

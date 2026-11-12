@@ -92,6 +92,28 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: The single-file build, made installable (manifest, icons, offline service worker)
         run: npm run build:web
+      # The site's model (src/09_Cognition/siteModel.ts SITE_MODEL), served beside the page so a visitor can get it in a
+      # tap on Sloane's card: fetched from Hugging Face at the pinned revision whenever the cache, keyed by the whole
+      # pin, lacks it, and checked against the pin's size and SHA-256 on every publish, cached or not. A file that fails
+      # the check is never cached and fails the run, so the copy already published (with its model) stays up.
+      - id: model
+        name: The site's model, by the page's own pin
+        run: node tools/web/siteModel.mjs pin >> "$GITHUB_OUTPUT"
+      - id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/site-model
+          key: ${{ steps.model.outputs.key }}
+      - name: The site's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/site-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/site-model/$FILE"
+      - name: The site's model beside the page (dist-web/models/ only), checked against the pin
+        run: node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out dist-web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-web
@@ -129,3 +151,28 @@ jobs:
       - id: deployment
         if: steps.tip.outputs.deploy == 'true'
         uses: actions/deploy-pages@v4
+      # A look at what the site now serves, without downloading the model (a full download would count against the
+      # site's monthly bandwidth on every publish): the manifest, and the model's size as the site reports it. It only
+      # notes what it finds; the publish has already happened.
+      - name: The site serves the model (its manifest and its size; a note only)
+        if: steps.tip.outputs.deploy == 'true'
+        env:
+          PAGE: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          for i in 1 2 3 4 5 6; do
+            manifest=$(curl -sSf "${PAGE}models/manifest.json" 2>/dev/null) && break
+            sleep 20
+          done
+          if [ -z "$manifest" ]; then
+            echo "::warning::${PAGE}models/manifest.json is not served yet"
+            exit 0
+          fi
+          file=$(printf '%s' "$manifest" | sed -n 's/.*"file":"\([^"]*\)".*/\1/p')
+          bytes=$(printf '%s' "$manifest" | sed -n 's/.*"bytes":\([0-9]*\).*/\1/p')
+          head=$(curl -sSfI -H 'Accept-Encoding: identity' "${PAGE}models/${file}" 2>/dev/null | tr -d '\r') || true
+          length=$(printf '%s\n' "$head" | sed -n 's/^[Cc]ontent-[Ll]ength: *//p' | tail -n 1)
+          if [ "$length" = "$bytes" ]; then
+            echo "::notice::${file} is served, ${length} bytes, as the manifest says"
+          else
+            echo "::warning::${file}: the site reports ${length:-no} Content-Length; the manifest says ${bytes}"
+          fi

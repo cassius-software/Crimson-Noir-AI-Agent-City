@@ -12,6 +12,7 @@ src-tauri/target
 dist
 dist-ssr
 dist-pilot
+dist-web
 **/__pycache__
 # A developer's local AI tooling, at any depth, whatever an allowlist line above admits (tools/selfheal/sandbox.mjs AI_TOOLING)
 **/.claude
