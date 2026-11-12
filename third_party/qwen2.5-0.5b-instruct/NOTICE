@@ -1,0 +1,32 @@
+Qwen2.5 0.5B Instruct (Q4_K_M GGUF): the model the web copy serves beside the page
+==================================================================================
+
+This directory records the one model the web copy of Crimson Noir: Agent City serves beside its page, so a visitor
+with no model of their own can talk to Sloane. The model's weights are NOT in this repository and NOT in the page
+file (dist/index.html), the Windows app or any release build: the web workflow (.github/workflows/web.yml, through
+tools/web/siteModel.mjs) fetches the file below from Hugging Face at the pinned revision whenever its cache (keyed by
+the pin) does not hold it, and on every publish of the web copy refuses it unless its size and SHA-256 are exactly
+these, and puts it in the published folder as
+models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf, with this NOTICE and LICENSE beside it. The page fetches it from its own
+site only when the visitor taps for it, checks the same size and SHA-256 (src/09_Cognition/siteModel.ts SITE_MODEL),
+and keeps it in the visitor's browser.
+
+  Qwen2.5-0.5B-Instruct-Q4_K_M.gguf   397808192 bytes, sha256 6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653
+  (SHA256SUMS beside this file has the same line)
+
+Where it comes from
+-------------------
+
+- The model: Qwen2.5-0.5B-Instruct, by the Qwen team, Alibaba Cloud. Licence: Apache License 2.0. Copyright 2024
+  Alibaba Cloud. The licence text is LICENSE beside this file: the Apache License 2.0 with that copyright line, as the
+  Qwen repositories on Hugging Face (Qwen/Qwen2.5-0.5B-Instruct and Qwen/Qwen2.5-0.5B-Instruct-GGUF) carry it.
+  Neither repository has a NOTICE file.
+- The file: a GGUF conversion of those weights quantized to Q4_K_M with an importance matrix by bartowski, published
+  as bartowski/Qwen2.5-0.5B-Instruct-GGUF on Hugging Face, revision 41ba88dbac95fed2528c92514c131d73eb5a174b
+  (quantized with llama.cpp release b3772; the repository names its licence as apache-2.0 and carries no licence file
+  of its own). Under section 4(b) of the licence: the file is that conversion of Qwen's weights (format and numeric
+  precision changed by the quantization); Crimson Noir: Agent City serves it exactly as published and changes nothing
+  in it.
+
+The model remains under its own licence, not under the product's licence. "Qwen" is a name of Alibaba Cloud, used
+here only to say which model this is.

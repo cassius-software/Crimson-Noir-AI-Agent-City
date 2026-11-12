@@ -84,9 +84,9 @@ test('deeds and furniture are on sale (furnishing opened its kind); without a ki
   // Without furniture's kind a piece is on order again (as it was before furnishing), and without the deeds' a deed is.
   assert.ok(furniture.every((f) => !onSale(f, LOOK_SLOTS, new Set<ItemKind>(['deed']))))
   assert.ok(deeds.every((d) => !onSale(d, LOOK_SLOTS, new Set<ItemKind>())))
-  // A kind in the open set never puts a worn line on sale: those answer to the wardrobe alone.
-  const waiting = CATALOGUE.find((i) => i.kind === 'wear' && !onSale(i))!
-  assert.equal(onSale(waiting, LOOK_SLOTS, new Set<ItemKind>(['wear', 'deed', 'furniture'])), false)
+  // A kind in the open set never puts a worn line on sale: those answer to the wardrobe alone (here one without the umbrella).
+  const noUmbrella = LOOK_SLOTS.filter((s) => s !== 'umbrella')
+  assert.equal(onSale(itemById(132)!, noUmbrella, new Set<ItemKind>(['wear', 'deed', 'furniture'])), false)
   // The cheapest piece on sale (the design house's warning on a deed's row measures against it) is the bookcase.
   assert.equal(cheapestOnSale('furniture'), 1100)
   assert.equal(itemById(164)?.name, 'Floor-to-ceiling bookcase')
@@ -116,21 +116,26 @@ test('every worn line on sale dresses every preset body in a valid look; a deed 
       assert.ok(wearing(worn, i), `${i.name} on the ${p.name} does not show as worn`)
     }
   }
-  // A line on order goes on sale the moment the wardrobe has its slots (the first such line today: the umbrella, 132).
-  const waiting = CATALOGUE.find((i) => i.kind === 'wear' && !onSale(i))!
-  assert.equal(waiting.id, 132)
-  assert.equal(onSale(waiting), false)
-  assert.equal(onSale(waiting, [...LOOK_SLOTS, ...Object.keys(waiting.wear!)]), true)
+  // Every worn line is on sale: the umbrella and the headphones (132, 133) were the last on order. A line is on order
+  // while the wardrobe lacks one of its slots, and goes on sale the moment the wardrobe has them.
+  assert.deepEqual(CATALOGUE.filter((i) => i.kind === 'wear' && !onSale(i)).map((i) => i.id), [])
+  for (const id of [132, 133]) {
+    const line = itemById(id)!
+    const without = LOOK_SLOTS.filter((s) => !Object.hasOwn(line.wear!, s))
+    assert.equal(onSale(line, without), false, `${line.name} on order without its slot`)
+    assert.equal(onSale(line, [...without, ...Object.keys(line.wear!)]), true)
+  }
 })
 
-test('the horologist sells the watches and the rank pin now the wardrobe has the accessory word; the umbrella and the headphones stay on order', () => {
-  for (const id of [129, 130, 131]) assert.ok(onSale(itemById(id)!), `${itemById(id)!.name} is on sale`)
-  for (const id of [132, 133]) assert.ok(!onSale(itemById(id)!), `${itemById(id)!.name} is on order`)
+test('the horologist sells the watches, the rank pin, the umbrella and the headphones now the wardrobe has the accessory word\'s slots for them', () => {
+  for (const id of [128, 129, 130, 131, 132, 133]) assert.ok(onSale(itemById(id)!), `${itemById(id)!.name} is on sale`)
   // The lines' values are the wardrobe's names for what they sell, and wearing one sets that slot alone.
   assert.equal(WARDROBE.watch[itemById(129)!.wear!.watch], 'steel three-hand')
   assert.equal(WARDROBE.watch[itemById(130)!.wear!.watch], 'tourbillon chronograph')
   assert.equal(WARDROBE.lapelPin[itemById(131)!.wear!.lapelPin], 'rank pin')
-  for (const id of [129, 130, 131]) {
+  assert.equal(WARDROBE.umbrella[itemById(132)!.wear!.umbrella], 'folding')
+  assert.equal(WARDROBE.headphones[itemById(133)!.wear!.headphones], 'over-ear', 'acoustic headphones are over-ear')
+  for (const id of [129, 130, 131, 132, 133]) {
     const i = itemById(id)!
     const [slot, value] = Object.entries(i.wear!)[0]
     for (const p of LOOK_PRESETS) {
@@ -262,7 +267,8 @@ test('the try-on: an ink on a look with no design showing borrows the olive bran
   for (const i of CATALOGUE.filter((line) => !isInkLine(line))) {
     for (const p of LOOK_PRESETS) assert.deepEqual(previewItem(p.look, i), wearItem(p.look, i), `${i.name} on the ${p.name}`)
   }
-  assert.equal(previewItem(LOOK_PRESETS[0].look, itemById(132)!), null, 'the umbrella is on order')
+  assert.deepEqual(previewItem(LOOK_PRESETS[0].look, itemById(132)!), { ...LOOK_PRESETS[0].look, umbrella: 1 }, 'the umbrella is on sale and previews as worn')
+  assert.equal(previewItem(LOOK_PRESETS[0].look, { ...itemById(132)!, wear: { heel: 1 } }), null, 'a line on order (a slot the wardrobe lacks) previews as nothing')
   // Buying wears wearItem's look through the keeper: the ink alone, never the borrowed design.
   const k = createShopkeeper({ purse: { level: () => MAX_LEVEL, credits: () => 0, owns: () => true, canBuy: () => GATE.owned, buy: () => GATE.owned, subscribe: () => () => {} } })
   assert.deepEqual(k.wear(64, LOOK_PRESETS[0].look), { ...LOOK_PRESETS[0].look, tattooInk: TATTOO_INK.goldLeaf })
@@ -281,7 +287,8 @@ test('whyOf says why in words', () => {
   assert.match(whyOf(coat, GATE.credits, 10), /640 more credits/)
   assert.equal(whyOf(coat, GATE.bought, 9999), 'for sale')
   assert.equal(whyOf(coat, GATE.owned, 0), 'owned')
-  assert.match(whyOf(itemById(132)!, GATE.unavailable, 0), /on order/)
+  assert.match(whyOf({ ...itemById(132)!, wear: { heel: 1 } }, GATE.unavailable, 0), /on order/, 'a worn line with a slot the wardrobe lacks')
+  assert.equal(whyOf(itemById(132)!, GATE.unavailable, 0), 'not for sale', 'the umbrella is on sale, so an unavailable one is refused, not on order')
   assert.equal(whyOf(itemById(48)!, GATE.unavailable, 0), 'not for sale', 'the forearm\'s designs are on sale, so an unavailable one is refused, not on order')
   assert.equal(whyOf(itemById(160)!, GATE.unavailable, 0), 'not for sale', 'furniture is on sale too, so an unavailable piece is refused, not on order')
   assert.match(whyOf(itemById(160)!, GATE.level, 0), /needs level 3/)
@@ -328,10 +335,10 @@ test('the progression keeper behind the shopkeeper: a new operator\'s level and 
   const worn = k.wear(24, look)
   assert.ok(worn && wearing(worn, tie))
   assert.equal(k.rows('tailor', worn).find((row) => row.item.id === 24)?.worn, true)
-  // Refused with the reason, nothing taken: above the level, on order, no such line.
+  // Refused with the reason, nothing taken: above the level, above the purse, no such line.
   assert.equal(k.buy(5).verdict, GATE.level)
   assert.equal(k.buy(48).verdict, GATE.credits, 'the forearm\'s designs are on sale, above a new operator\'s purse')
-  assert.equal(k.buy(132).verdict, GATE.unavailable)
+  assert.equal(k.buy(133).verdict, GATE.level, 'the headphones are on sale, above a new operator\'s level')
   assert.equal(k.buy(160).verdict, GATE.level, 'furniture is on sale, above a new operator\'s level')
   assert.equal(k.buy(4242).verdict, GATE.unavailable)
   assert.equal(k.purse.credits(), STARTING_CREDITS - tie.price)

@@ -44,57 +44,106 @@ export function utf8(input: string | Uint8Array): Uint8Array {
   return typeof input === 'string' ? new TextEncoder().encode(input) : input
 }
 
-/** The SHA-256 digest of `input` (a string is UTF-8 encoded), 32 bytes. */
-export function sha256Bytes(input: string | Uint8Array): Uint8Array {
-  const msg = utf8(input)
-  const len = msg.length
-  // Padding (§5.1.1): a 1 bit, zeros, then the length in bits as 64 bits big-endian, to a whole number of blocks.
-  const padded = new Uint8Array(Math.ceil((len + 9) / BLOCK) * BLOCK)
-  padded.set(msg)
-  padded[len] = 0x80
-  const view = new DataView(padded.buffer)
-  const bits = len * 8
-  view.setUint32(padded.length - 8, Math.floor(bits / 0x100000000))
-  view.setUint32(padded.length - 4, bits >>> 0)
+/** One block of SHA-256's compression (§6.2.2) into the running hash `h`, read from `view` at `off`; `w` is scratch. */
+function compress(h: Uint32Array, w: Uint32Array, view: DataView, off: number): void {
+  for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4)
+  for (let i = 16; i < 64; i++) {
+    const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)
+    const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)
+    w[i] = w[i - 16] + s0 + w[i - 7] + s1
+  }
+  let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7]
+  for (let i = 0; i < 64; i++) {
+    const s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
+    const ch = (e & f) ^ (~e & g)
+    const t1 = (hh + s1 + ch + K[i] + w[i]) >>> 0
+    const s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
+    const maj = (a & b) ^ (a & c) ^ (b & c)
+    const t2 = (s0 + maj) >>> 0
+    hh = g
+    g = f
+    f = e
+    e = (d + t1) >>> 0
+    d = c
+    c = b
+    b = a
+    a = (t1 + t2) >>> 0
+  }
+  h[0] += a
+  h[1] += b
+  h[2] += c
+  h[3] += d
+  h[4] += e
+  h[5] += f
+  h[6] += g
+  h[7] += hh
+}
+
+/** A SHA-256 fed piece by piece: `update` takes the bytes in order (any split), `digest` gives the 32 bytes of all of
+ *  them and ends it. For input too large to hold at once, such as a model file hashed as it arrives
+ *  (09_Cognition/siteModel.ts); the digest is the same as `sha256Bytes` over the whole input, however it was split. */
+export interface Sha256Stream {
+  update(bytes: Uint8Array): void
+  digest(): Uint8Array
+}
+
+/** A new piece-by-piece SHA-256 (see `Sha256Stream`). */
+export function sha256Stream(): Sha256Stream {
   const h = Uint32Array.from(H0)
   const w = new Uint32Array(64)
-  for (let off = 0; off < padded.length; off += BLOCK) {
-    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4)
-    for (let i = 16; i < 64; i++) {
-      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)
-      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)
-      w[i] = w[i - 16] + s0 + w[i - 7] + s1
-    }
-    let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7]
-    for (let i = 0; i < 64; i++) {
-      const s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)
-      const ch = (e & f) ^ (~e & g)
-      const t1 = (hh + s1 + ch + K[i] + w[i]) >>> 0
-      const s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)
-      const maj = (a & b) ^ (a & c) ^ (b & c)
-      const t2 = (s0 + maj) >>> 0
-      hh = g
-      g = f
-      f = e
-      e = (d + t1) >>> 0
-      d = c
-      c = b
-      b = a
-      a = (t1 + t2) >>> 0
-    }
-    h[0] += a
-    h[1] += b
-    h[2] += c
-    h[3] += d
-    h[4] += e
-    h[5] += f
-    h[6] += g
-    h[7] += hh
+  const tail = new Uint8Array(BLOCK)
+  const tailView = new DataView(tail.buffer)
+  let held = 0
+  let total = 0
+  let done = false
+  return {
+    update(bytes) {
+      if (done) throw new Error('sha256Stream: update after digest')
+      total += bytes.length
+      let at = 0
+      if (held > 0) {
+        const take = Math.min(BLOCK - held, bytes.length)
+        tail.set(bytes.subarray(0, take), held)
+        held += take
+        at = take
+        if (held < BLOCK) return
+        compress(h, w, tailView, 0)
+        held = 0
+      }
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      for (; at + BLOCK <= bytes.length; at += BLOCK) compress(h, w, view, at)
+      if (at < bytes.length) {
+        tail.set(bytes.subarray(at), 0)
+        held = bytes.length - at
+      }
+    },
+    digest() {
+      if (done) throw new Error('sha256Stream: digest twice')
+      done = true
+      // Padding (§5.1.1): a 1 bit, zeros, then the length in bits as 64 bits big-endian, to a whole number of blocks.
+      tail.fill(0, held)
+      tail[held] = 0x80
+      if (held + 9 > BLOCK) {
+        compress(h, w, tailView, 0)
+        tail.fill(0)
+      }
+      const bits = total * 8
+      tailView.setUint32(BLOCK - 8, Math.floor(bits / 0x100000000))
+      tailView.setUint32(BLOCK - 4, bits >>> 0)
+      compress(h, w, tailView, 0)
+      const out = new Uint8Array(DIGEST_BYTES)
+      const ov = new DataView(out.buffer)
+      for (let i = 0; i < 8; i++) ov.setUint32(i * 4, h[i])
+      return out
+    },
   }
-  const out = new Uint8Array(DIGEST_BYTES)
-  const ov = new DataView(out.buffer)
-  for (let i = 0; i < 8; i++) ov.setUint32(i * 4, h[i])
-  return out
+}
+
+/** The SHA-256 digest of `input` (a string is UTF-8 encoded), 32 bytes. */
+export function sha256Bytes(input: string | Uint8Array): Uint8Array {
+  const s = sha256Stream()
+  s.update(utf8(input))
+  return s.digest()
 }
 
 /** Bytes as lower-case hex. */

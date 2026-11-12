@@ -7,13 +7,16 @@
  * runs it after the build): `node tools/verify/page_dist.mjs [DIR]` (DIR defaults to dist) exits 1 unless
  *   - DIR holds exactly index.html: the product is one self-contained file, and nothing else may ship beside it (a
  *     chunk split out of the bundle, an asset Vite copied, a model);
- *   - no .gguf file is anywhere in DIR: a model is the operator's own file, kept in their browser, never shipped;
+ *   - no .gguf file is anywhere in DIR: the page carries no model. A model is a file kept in the browser, the
+ *     operator's own or the one the web copy serves beside its page, which tools/web/siteModel.mjs puts in
+ *     dist-web/models/ after the build (it refuses any folder but the web copy) and which never reaches DIR;
  *   - index.html is at most MAX_BYTES (the size measured with the in-page model runtime embedded, plus 3%), so a page
  *     that grows on a phone's connection does so on purpose, with this number raised in review;
  *   - the http(s) hosts the page names are exactly the reviewed list below (loopback aside): a new address anywhere in
  *     the page (code, a string, a licence text) is read and added here, or removed, before it ships. The page reaches
- *     none of them by itself (index.html's policy allows no host but this machine); these are links, licence texts and
- *     the dead download paths of wllama, which the adapter never calls;
+ *     none of them by itself (index.html's policy allows no host but the page's own and this machine); these are
+ *     links, licence texts and the dead download paths of wllama, which the adapter never calls. The web copy's model
+ *     is fetched by a path relative to the page (09_Cognition/siteModel.ts siteUrl), so it names no host here;
  *   - when the page carries the pinned in-page runtime (third_party/wllama/<version>/wllama.wasm.gz, as base64 byte
  *     for byte), it also carries that directory's NOTICE in full, and names the hosts that come with it.
  * What breaks if it is removed? A second file, a model or an unreviewed address could reach dist/ and ship unnoticed,

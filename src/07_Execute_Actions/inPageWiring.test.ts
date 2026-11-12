@@ -135,8 +135,10 @@ test('the Menu: a Model file item that calls the host inside its click handler, 
 })
 
 test('App: a file picked or dropped is kept, chosen, and the inpage provider answers; a desktop loads it at once, a phone only when asked', () => {
-  const keep = between(CITY, '        const keepPicked = async (files: readonly File[]): Promise<string> => {', '\n        }\n')
+  const keep = between(CITY, '        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void): Promise<string> => {', '\n        }\n')
   before(keep, 'kept = await inPage.keep(files, (done, total) => {', 'local.setProvider(\'inpage\')', 'chosen only once it is kept')
+  // The site's model (siteModel.ts) is kept through this same path, its copy's progress told to Sloane's card as well.
+  assert.match(keep, /keepLine = `keeping the model file in this page \$\{[^\n]*\n\s+onCopy\?\.\(done, total\)/)
   before(keep, 'local.setProvider(\'inpage\')', 'local.setModel(kept.name)', 'the provider, then its model')
   assert.match(keep, /keepLine = `keeping the model file in this page \$\{/, 'the copy\'s progress on the HUD\'s line')
   assert.match(keep, /\} finally \{\n\s+keeping = false\n\s+keepLine = null\n\s+\}/, 'the line is cleared however the copy ends')

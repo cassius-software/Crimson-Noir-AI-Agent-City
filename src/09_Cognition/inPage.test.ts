@@ -1231,3 +1231,27 @@ test('its settings: its own slice of the router\'s store, garbage tolerated, wri
   refused.settings.save = () => { throw new Error('quota') }
   assert.equal(refused.mind.setThink?.(true), true, 'a store that refuses keeps the setting for the visit')
 })
+
+test('cold(): an answer would load first while the file it would run is not in the runtime; asking loads nothing', async () => {
+  const h = await harness()
+  assert.equal(h.mind.cold(false), true, 'chosen, not loaded: an answer would load it first')
+  const gate = deferred<{ gpu: boolean; ms: number }>()
+  h.r.onLoad = () => gate.promise
+  const loading = h.mind.load()
+  await flush()
+  assert.equal(h.mind.cold(false), true, 'still loading')
+  gate.resolve({ gpu: false, ms: 900 })
+  await loading
+  assert.equal(h.mind.cold(false), false)
+  assert.equal(h.mind.cold(true), false)
+  assert.equal(h.r.loads.length, 1, 'asking cold() loads nothing')
+  await h.mind.unload()
+  assert.equal(h.mind.cold(false), true)
+  // Files kept, none chosen: auto runs none (not cold), the inpage provider runs the newest (cold until it is in).
+  const unchosen = await harness({ settings: JSON.stringify({ model: null, think: false, gpu: 'auto' }) })
+  assert.equal(unchosen.mind.cold(false), false, 'auto never runs a file nobody chose')
+  assert.equal(unchosen.mind.cold(true), true, 'the inpage provider would load the newest')
+  const none = await harness({ models: [], settings: null })
+  assert.equal(none.mind.cold(true), false, 'nothing kept')
+  assert.equal(none.r.loads.length + unchosen.r.loads.length, 0)
+})

@@ -15,6 +15,49 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **An umbrella and headphones.** The look genome's accessory word (word 6) gains the umbrella at bits 15 and 16
+  (none, as before; folding; walking; open) and the headphones at 17 and 18 (none, as before; over-ear; on-ear;
+  earbuds). Bits 19 and 20 stay held for the heel; 29 to 31 are spare and refused. Option 0 of each is as before, so
+  every chosen look keeps its code. Both are new meshes on the near body (`src/03_Spawn_Agents/humanoid.ts`
+  `umbrellaTubes`, `headphoneTubes`): a furled umbrella in the person's right hand, its tip down, swinging with the arm
+  as a bag does; an open one held up in the same hand, the arm still as with a cup, its black canopy over the crown
+  (skinned to the chest); and charcoal cups and a band, or a bud and a stem, at the ears. The umbrella takes the cup's
+  hand: a chosen cup is left off under one (`look.ts` `lookMask`) and comes back when it goes, and the card's Cup row
+  leaves while one is carried. Their six pieces are coded, not bits of the piece mask, which has no room: the near
+  vertex stage reads what is carried from `faceB.w` and tests pieces 24 to 29 against it (`crowdBody.ts`), and
+  `look.ts` `lookWears` answers for them the same way. The far body carries neither. The street draws them on the
+  pieces' chain's links 27 and 28, in the shader and in `lookFromSeed` alike: one free hand in twenty a folding
+  umbrella and one a walking one (never open, and never with a cup), and of the heads with no headwear and no hearing
+  device three in a hundred on-ear headphones, two and a half over-ear and one and a half earbuds. The watch shop's
+  folding umbrella and acoustic (over-ear) headphones, lines 132 and 133, go on sale, so every line in the catalogue is
+  on sale. The card gets Umbrella and Headphones rows, its outline draws both and widens its box to an open canopy, and
+  the console takes `look umbrella open` and `look headphones earbuds`. The near bodies grow from 1,851 to 1,931
+  vertices to 2,248 to 2,328 (the test's budget is now 2,350 vertices and 4,150 triangles). The shader budget holds: the worst
+  near main fragment stage is 196,596 characters (was 196,260; the target is 225,000), the near main vertex stage
+  59,159 (was 55,352) and the far stages within 1,040 characters of what they were. `dist/index.html`
+  grows by 5,367 bytes, from 12,032,798 to 12,038,165; the limit in `tools/verify/page_dist.mjs` is unchanged. Fourteen looks in the watch shop's mirror, on the software
+  WebGPU adapter (SwiftShader), show the three umbrellas, the open one on the tallest and the shortest figures and in
+  the hand close up, the cup left off under one, the three headphones, and the over-ear pair over long hair, over an
+  afro (which hides most of it) and with glasses. Unverified: no hardware GPU has compiled or drawn it yet.
+- **A shoe's finish, a tie's style and a bag's.** The look genome's accessory word (word 6) gains the shoe's finish at
+  two bits (21 and 22: leather, as before; polished; patent; suede), the tie's style at three (23 to 25: plain, as
+  before; repp stripe; pin dot; foulard; knit; satin; check; tie bar) and the bag's at three (26 to 28: briefcase, as
+  before; brass clasps; carbon twill; aluminium; canvas; quilted; pebble grain; saddle stitched). Bits 15 to 20 stay
+  held for the umbrella, the headphones and the heel; 29 to 31 are spare and refused. Option 0 of each is as before,
+  so every chosen look keeps its code. All three are paint and sheen on the near body's shoe, tie and bag in
+  `src/03_Spawn_Agents/crowd.ts`: a finish sets the shoe's roughness and shade (`look.ts` `SHOE_FINISH_ROUGHNESS`,
+  `SHOE_FINISH_SHADE`; a boot's shaft too); the tie's patterns are drawn from the rest position, on the suit alone, the
+  one body with a tie; the bag gets its clasps, weave, ribs, trim, quilting, grain or stitch, and an aluminium case is
+  a metal. The far body keeps all three as before. The street draws them on the colours' chain's links 49 to 55 (54 is
+  skipped: it truncates to the pieces' 32), in the shader and in `lookFromSeed` alike, and never carries carbon twill
+  or aluminium. The player's own hashed look (seed 0) now wears polished shoes and a canvas bag, so its code grows a
+  tail. The card shows Shoe finish, Tie style (on the suit, with a tie) and Bag style (with a bag) rows, and the console
+  takes `look shoeFinish patent`, `look tieStyle repp stripe` and `look bagStyle carbon twill`. The shader budget holds:
+  the worst near main fragment stage is 196,260 characters (was 183,909; the target is 225,000), and the far ones are
+  unchanged. `dist/index.html` grows by 5,280 bytes, from 12,026,332 to 12,031,612; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Twenty-two looks in the watch shop's mirror, on the software WebGPU
+  adapter (SwiftShader), show the four finishes on cap-toe shoes, a patent knee boot, a suede ankle boot, the eight tie
+  styles and the eight bag styles. Unverified: no hardware GPU has compiled or drawn it yet.
 - **Bare legs and tattoos on the calf and the ankle.** The look genome's cloth word gains the legs (word 5, bits 18
   and 19: as hashed, as before; bare; sheer; opaque) and the second tattoo word a design (0 for none, or one of
   sixty-four) on the left calf and the right ankle at seven bits each (word 8, bits 14 to 27; bits 28 to 31 spare and
@@ -1665,6 +1708,69 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   traffic). This is what the checks are, not a result. Ollama on a real machine, and its cloud setting on one that can
   reach ollama.com, stay unverified.
 
+- **Sloane holds a conversation.** Small talk and a question nothing in the city maps to ("how's it going", "who are
+  you", "what is the meaning of life?") used to fall through to the two scouts and a "Nothing maps to that directly"
+  line, and no model was ever asked to converse: the only request was a 4 s rewording of that line. The planner now
+  reads a message that is talk and nothing else, and such a question, as talk (`src/06_Make_Decisions/intent.ts`
+  Brief.chat: nobody sent, nothing applied, no why asked); a talk word beside a goal, an "I don't know" beside a thanks,
+  a request worded as a question, a question about the city's whereabouts and a wish to send someone read as before.
+  The card puts talk to the page's mind as Sloane (`src/07_Execute_Actions/onboarding/voice.ts` sloaneChat): the
+  person's words through the 14A prompt screen first (refused words reach no model), Sloane's framing and the last
+  eight turns, the reply streamed in whole words through `admitWords`, cut and stopped at the first action line as
+  `actions.ts` reads one (new `actionCut`), no deadline of its own beyond the router's. The field stays open for the
+  next turn, where a goal is still a goal; while a reply is on its way the next message waits, with **Stop**. With no
+  model answering, Sloane says so plainly and offers **Choose a model file** (the Menu's picker, now reachable on a
+  computer without the console), the local-server route with the `OLLAMA_ORIGINS` note, and **Ask again**. The
+  "Company" note no longer says nobody holds a conversation, and covers talk aimed at anyone but Sloane.
+  `chat.test.ts` and new cases in `intent.test.ts` cover it; the conversation's quality and speed with a real model
+  are not verified in CI.
+
+- **A model for Sloane in one tap, on the web copy.** A fresh visitor to the web copy on GitHub Pages had to find a
+  model file or start a model server before Sloane could say a word. The web copy now serves one small model beside its
+  page, Qwen2.5 0.5B Instruct at Q4_K_M (`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`, 397,808,192 bytes, bartowski's
+  quantization with an importance matrix of the Qwen team's Apache-2.0 weights, Copyright 2024 Alibaba Cloud), and
+  Sloane's card offers it when no model answers: **Get the model · 379 MB**, or **Use the model kept here** once the
+  browser keeps it. The page is built with its pin (`src/09_Cognition/siteModel.ts` SITE_MODEL: the file's name, size
+  and SHA-256, and the Hugging Face repository and revision it comes from). The manifest beside the model
+  (`models/manifest.json`) is asked once a visit (again only after the site could not be reached or answered with an
+  error), when the card first needs it, never at boot, and only on the web copy (a page that names a web app manifest)
+  where the browser can run a model in the page; the model is offered only when the manifest
+  names exactly the pin. The tap (`src/App.tsx`, the site host over `siteFetch`, the one fetch of the page's own site,
+  under the installed air gap, which admits the page's own origin as `connect-src 'self'` does) refuses, in this order,
+  a browser that cannot run a model, a keep already running, a copy already kept (then it only chooses it), the device's
+  limits (`inPagePlan.ts` fits) and the storage's room (`modelStore.ts`, new `roomRefusal`), and only then downloads the
+  model from a `models/` file beside the page (`siteUrl`), counted and hashed as it streams
+  (`src/02_Define_The_Rules/integrity.ts`, new `sha256Stream`), refused the moment it runs past the pinned size, and
+  made a file only once whole and matching. It is then kept exactly as a picked file is (`keepPicked`: the copy, the
+  provider `inpage`, the model chosen, a desktop's load at once). The card (`src/07_Execute_Actions/Concierge.tsx`)
+  shows the megabytes and a progress bar, **Stop** while it downloads, the reason if it ends short, and then asks the
+  last turn again by itself ("Starting the model… the first answer takes longer"). The service worker
+  (`tools/web/pwa.mjs`) leaves `models/` to the network, so its cache holds no second 0.4 GB copy and `models/LICENSE`
+  is the licence, not the city. `tools/web/siteModel.mjs` (`pin`, `check --from`, `place --from --out`) puts the model
+  beside the web copy only (a folder whose page names no web app manifest is refused), checked while it is copied, with
+  `manifest.json`, `LICENSE` and `NOTICE` beside it; the web workflow (`.github/workflows/web.yml`) runs it after
+  `npm run build:web` on every publish, with the file fetched from Hugging Face at the pinned revision on a cache miss and
+  kept in the Actions cache by the pin, and after the deploy only notes the served manifest and the model's
+  `Content-Length`, never downloading it; the new `site-model.yml` fetches and checks the pin on a pull request that
+  touches it. The model's licence, notice and hash are recorded in `third_party/qwen2.5-0.5b-instruct/`; the weights are
+  not in the repository, and `dist/` (the single page file), the Windows app, the flake and the release builds still
+  carry no model (`tools/verify/page_dist.mjs` checks `dist/` exactly as before, and `nix.yml`'s comparison of
+  `dist/index.html` is unaffected); the self-heal sandbox leaves `dist-web/` out of its copy, as it leaves `dist/`.
+  `src/09_Cognition/siteModel.test.ts` (the pin against `SHA256SUMS`, `siteUrl`, the manifest, the checked download: a
+  flipped byte, a short body, a long one, a broken connection, an HTTP error, a stop), `integrity.test.ts`
+  (`sha256Stream` split any way gives the one digest), `webApp.test.ts` (the worker leaves `models/` alone, the
+  workflow's pin and order, the placing and its refusals), `chat.test.ts` (the card's offer, progress, Stop and
+  asked-again turn, and the order of the host's refusals), `inPageWiring.test.ts` (the copy's progress told to the card)
+  and an `airgap.test.ts` allowlist entry for the one `siteUrl` fetch cover it, and the browser smoke gains a
+  `sitemodel` scenario (`tools/browser/smoke.mjs`) that drives the tap in Chrome with a tiny model placed under a
+  swapped pin, and a flipped byte refused. `MANUAL.md` (Talk to Sloane, A model in this page, On an iPhone, Constraints,
+  and each place that said no model ships), the README, `NOTICE.md`, `LICENSE` section 4, `docs/ip-audit.md`,
+  `docs/zero-trust-audit.md` and `page_dist.mjs`'s comment say what is served and record the model as a third-party
+  component, and the console's `swarm guardrails` no longer says no model ships. Every full download counts against the
+  site's bandwidth: GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads. Not verified: a real
+  download from GitHub Pages (its compression, the Content-Type it serves the file with, 429s), the real model's
+  conversation quality and speed, and any real phone or GPU.
+
 ### Changed
 
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
@@ -1951,6 +2057,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   than naming all sixteen. The walk stays uncloseable. The browser smoke's `walk` scenario now runs the program from
   where the workplace stage leaves the visitor, checks that nobody within earshot could be asked over there, and reads
   the swarm back with `lanes`.
+
 - **A phone whose GPU refuses the crowd's kernel gets a lighter one, and a card that says what the GPU said.** Chrome on
   an Android phone (a Mali-G52) stopped at the boot with "crowd.wgsl pipeline validation failed: [Invalid
   ComputePipeline "crowd.simulate"] is invalid due to a previous error. - While Validating GetBindGroupLayout (0)". Not
@@ -2254,6 +2361,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   north ridge, point by point; every piece's length; the water's area) and by the built page rendered in a headless
   Chrome on the software WebGPU adapter: asphalt and the double yellow line to the horizon where pavement and lawn
   were, the lake beside the causeway. A laptop's own picture is unverified. `docs/stutter-and-depth.md` §4.
+
+- **Sloane's rewording no longer kills the model loading in this page.** The brief's 4 s rewording asked the page's
+  mind, and an answer's stop ends the load it started (`src/09_Cognition/inPage.ts`), so with a model file kept and not
+  yet loaded every brief began a load and killed it at 4 s. The rewording now asks nothing while that model is still to
+  be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
+  planner's sentence stands meanwhile.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

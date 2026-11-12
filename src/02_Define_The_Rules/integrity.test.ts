@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It proves the integrity law (integrity.ts) against the published vectors: SHA-256 over
- * the empty string, "abc", the two-block message and a million "a"s (FIPS 180-4), HMAC-SHA256 over the RFC 4231
+ * the empty string, "abc", the two-block message and a million "a"s (FIPS 180-4), the same digest fed piece by piece
+ * however the input is split (sha256Stream, which hashes a model file as it arrives), HMAC-SHA256 over the RFC 4231
  * cases (short, block-sized and over-block keys, the truncated case); and, since the Node host signs with node:crypto
  * while the page can only use this file, that the two agree bit for bit over many seeded inputs of every length
  * class. The canonical form is proven order-independent and strict about what is plain data; a seal verifies, and
@@ -14,7 +15,7 @@
 import assert from 'node:assert/strict'
 import { createHash, createHmac } from 'node:crypto'
 import { test } from 'node:test'
-import { canonical, DIGEST_HEX, hmacSha256, isDigest, opened, sameDigest, seal, sha256, sha256Bytes, verify } from './integrity.ts'
+import { canonical, DIGEST_HEX, hex, hmacSha256, isDigest, opened, sameDigest, seal, sha256, sha256Bytes, sha256Stream, verify } from './integrity.ts'
 
 const bytes = (n: number, fill: number): Uint8Array => new Uint8Array(n).fill(fill)
 
@@ -31,6 +32,41 @@ test('SHA-256: the FIPS 180-4 vectors, over strings and over bytes', () => {
     const m = bytes(n, 0x61)
     assert.equal(sha256(m), createHash('sha256').update(m).digest('hex'), `${n} bytes`)
   }
+})
+
+test('SHA-256 piece by piece (a model file hashed as it arrives): the same digest however the input is split, and done once', () => {
+  const fed = (pieces: readonly Uint8Array[]): string => {
+    const s = sha256Stream()
+    for (const p of pieces) s.update(p)
+    return hex(s.digest())
+  }
+  assert.equal(fed([]), sha256(''), 'nothing fed is the empty input')
+  assert.equal(fed([new Uint8Array(0), new Uint8Array(0)]), sha256(''))
+  // A million "a"s in odd pieces (FIPS 180-4), and pieces that straddle every block boundary.
+  const million = bytes(1_000_000, 0x61)
+  const odd: Uint8Array[] = []
+  for (let at = 0, k = 1; at < million.length; at += k, k = (k * 7 + 3) % 1013 + 1) odd.push(million.subarray(at, Math.min(million.length, at + k)))
+  assert.equal(fed(odd), 'cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0')
+  let seed = 7
+  const next = (): number => (seed = (seed * 1103515245 + 12345) >>> 0)
+  for (let n = 0; n <= 300; n++) {
+    const m = Uint8Array.from({ length: n }, () => next() & 0xff)
+    const pieces: Uint8Array[] = []
+    for (let at = 0; at < n;) {
+      const k = next() % 70
+      pieces.push(m.subarray(at, at + k))
+      at += k
+    }
+    assert.equal(fed(pieces), createHash('sha256').update(m).digest('hex'), `${n} bytes in ${pieces.length} pieces`)
+  }
+  // A piece that is a view into a larger buffer is read from its own offset.
+  const big = Uint8Array.from({ length: 200 }, (_, i) => i)
+  assert.equal(fed([big.subarray(3, 90), big.subarray(90, 177)]), createHash('sha256').update(big.subarray(3, 177)).digest('hex'))
+  const s = sha256Stream()
+  s.update(bytes(5, 1))
+  s.digest()
+  assert.throws(() => s.update(bytes(1, 1)), /update after digest/)
+  assert.throws(() => s.digest(), /digest twice/)
 })
 
 test('HMAC-SHA256: the RFC 4231 cases', () => {
