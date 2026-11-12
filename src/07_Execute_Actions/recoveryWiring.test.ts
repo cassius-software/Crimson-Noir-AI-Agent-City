@@ -177,7 +177,7 @@ test('a GPU lost while the city loaded in the background: the boot says so, and 
   assert.match(create, /hidden: document\.hidden \}/, 'hidden when the boot began')
   assert.match(create, /const onVisibility = \(\): void => \{ if \(document\.hidden\) boot\.hidden = true \}/, 'or at any time during it')
   assert.match(create, /new WebGPUUnavailableError\('gpu-reset', `The GPU device was lost while the city was built[^`]*`, boot\.hidden\)/)
-  assert.match(create, /\} finally \{\n\s+document\.removeEventListener\('visibilitychange', onVisibility\)/)
+  assert.match(create, /\} finally \{\n\s+over = true\n\s+document\.removeEventListener\('visibilitychange', onVisibility\)/)
   // three draws nothing on a lost device, so the first missing buffer is the reset too (world.ts gpuBufferOf).
   assert.match(read('../01_Initialize_World/world.ts'), /_isDeviceLost === true\) \{\n\s+throw new WebGPUUnavailableError\('gpu-reset'/)
   assert.match(APP, /if \(!cancelled && err instanceof WebGPUUnavailableError && err\.code === 'gpu-reset' && err\.background\) unwatch = reloadWhenVisible\(true\)/)
@@ -186,14 +186,23 @@ test('a GPU lost while the city loaded in the background: the boot says so, and 
 })
 
 test('the cards: Restart reloads the page and has focus; Open the console is the ?boot=tty shell', () => {
-  assert.match(CARD, /function restart\(\): void \{\n\s+window\.location\.reload\(\)\n\}/, 'a reload, never a remount')
+  // A reload, never a remount; or, after a crowd kernel took the GPU down, the page's address with the lighter kernel
+  // asked for (bootFailure.ts Failure.restartHref), in this page's place in the history.
+  assert.match(CARD, /function restart\(href\?: string \| null\): void \{\n\s+if \(href\) window\.location\.replace\(href\)\n\s+else window\.location\.reload\(\)\n\}/, 'a reload, never a remount')
+  assert.doesNotMatch(CARD, /onClick=\{restart\}/, 'a click\'s event is never handed to restart as an address')
   for (const [name, from, to] of [['RecoveryCard', 'export function RecoveryCard', 'export function LockScreen'], ['LockScreen', 'export function LockScreen', 'export function StillStarting']]) {
     const c = CARD.slice(CARD.indexOf(from), CARD.indexOf(to))
-    assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus(?:=\{!openIn\})? onClick=\{restart\}/, `${name}: Restart, focused`)
+    assert.match(c, /<button ref=\{restartRef\} type="button" autoFocus(?:=\{!openIn\})? onClick=\{\(\) => restart\((?:restartHref)?\)\}/, `${name}: Restart, focused`)
     assert.match(c, /useTakeFocus\((?:openIn \? openRef : )?restartRef\)/, `${name}: focused again after mount, the mouse let go`)
-    assert.match(c, /usePadNav\(root\)\n\s+useEnterRestarts\(\)/, `${name}: a pad's A and Enter`)
+    assert.match(c, /usePadNav\(root\)\n\s+useEnterRestarts\((?:true, restartHref)?\)/, `${name}: a pad's A and Enter`)
     assert.match(c, /role="alertdialog"/, `${name}: announced`)
   }
+  // Only the recovery card has somewhere else to go: the lock screen and the veil's line reload the page as it is.
+  const recovery = CARD.slice(CARD.indexOf('export function RecoveryCard'), CARD.indexOf('export function LockScreen'))
+  assert.match(recovery, /const restartHref = failure\.restartHref \?\? null/)
+  assert.match(recovery, /onClick=\{\(\) => restart\(restartHref\)\}/)
+  assert.match(recovery, /useEnterRestarts\(true, restartHref\)/)
+  assert.equal(CARD.slice(CARD.indexOf('export function LockScreen')).includes('restartHref'), false)
   const card = CARD.slice(CARD.indexOf('export function RecoveryCard'), CARD.indexOf('export function LockScreen'))
   assert.match(card, /onClick=\{onConsole\}[^>]*>\s*Open the console/)
   assert.match(card, /\{failure\.webgpuLine && </, 'the WebGPU line only where WebGPU is what is missing')
@@ -209,7 +218,7 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
   assert.match(card, /<button ref=\{restartRef\} type="button" autoFocus=\{!openIn\}/)
   assert.equal(card.match(/type="button" autoFocus/g)?.length, 2, 'Open in Chrome and Restart, never both at once')
   // Enter restarts from anywhere but a field, a focused button (which takes it natively) or Details (which opens).
-  assert.match(CARD, /e\.target\.closest\('button, summary'\)\)\) return\n\s+e\.preventDefault\(\)\n\s+restart\(\)/)
+  assert.match(CARD, /e\.target\.closest\('button, summary'\)\)\) return\n\s+e\.preventDefault\(\)\n\s+restart\(href\)/)
 })
 
 test('the console shell: a way back to the city a pad or a finger can press, and the console leaves its keys alone', () => {
@@ -223,7 +232,40 @@ test('the console shell: a way back to the city a pad or a finger can press, and
 
 test('App: the card on a failed boot and on every halt but a Ring-0 audit, which keeps its lock screen', () => {
   assert.match(APP, /const \[error, setError\] = useState<\{ cause: unknown \} \| null>\(null\)/)
-  assert.match(APP, /\(err: unknown\) => \{\n\s+setError\(\{ cause: err \}\)\n/, 'whatever Engine.create threw, classified by the card')
+  // Whatever Engine.create threw is classified by the card, save the one failure the page answers itself: a crowd kernel
+  // that took the GPU down while a lighter one is left, and only when this start's kernel was not the address's own word
+  // (KernelResetError.auto), so the page restarts once, with the lighter kernel in its address, and never again from there.
+  const failed = APP.slice(APP.indexOf('      (err: unknown) => {'), APP.indexOf('    return () => {\n      cancelled = true'))
+  // And never twice in one tab within the note's time (noteKernelRestart: a host that dropped the kernel from the address).
+  assert.match(failed, /const lighter = !cancelled && err instanceof KernelResetError && err\.auto \? kernelRestartAddress\(window\.location\.href, err\.lighter\) : null\n\s+if \(lighter && recentGpuLosses\(\)\.length < 2 && noteKernelRestart\(\{ mentored: mentoredRef\.current, startHour: options\.startHour, audio: options\.audio \}\)\) \{/,
+    'and never into what could be the browser\'s third GPU crash in five minutes (the engine counted this loss already)')
+  // It goes once the browser hands out a GPU again, or after the wait's limit regardless; the veil says what it waits for.
+  assert.match(failed, /setStage\(BOOT_STAGE\.lighter\)/)
+  assert.match(failed, /void Promise\.race\(\[gpuBack\(navigator\.gpu\), new Promise\(\(resolve\) => window\.setTimeout\(resolve, GPU_BACK_FOR_MS \+ KERNEL_RESTART_GRACE_MS\)\)\]\)\.then\(go, go\)\n\s+return\n\s+\}\n\s+setError\(\{ cause: err \}\)\n/, 'every other failure straight to the card')
+  assert.match(failed, /const go = \(\): void => \{\n\s+if \(!going\) return\n\s+going = false\n\s+card = window\.setTimeout\(\(\) => \{ if \(!cancelled\) setError\(\{ cause: err \}\) \}, KERNEL_RESTART_GRACE_MS\)\n\s+window\.location\.replace\(lighter\)\n\s+\}/, 'once; the card after all, should the browser not go')
+  assert.match(failed, /unwatch = \(\) => \{ going = false; window\.clearTimeout\(card\) \}/, 'a page torn down meanwhile goes nowhere')
+  assert.equal((failed.match(/window\.location\.(?:replace|reload|assign)\(/g) ?? []).length, 1, 'the one restart the failure handler makes')
+  // The note: this tab's session storage, read back by the page it becomes; a fresh one refuses a second restart.
+  const note = APP.slice(APP.indexOf('function noteKernelRestart('), APP.indexOf('/**', APP.indexOf('function noteKernelRestart(')))
+  assert.match(note, /if \(kernelRestartNote\(\)\) return false\n\s+try \{\n\s+sessionStorage\.setItem\(KERNEL_RESTART_KEY, JSON\.stringify\(\{ \.\.\.note, at: Date\.now\(\) \} satisfies KernelRestartNote\)\)\n\s+\} catch \{[^}]*\}\n\s+return kernelRestartNote\(\) !== null/, 'only a note that reads back lets the page restart itself')
+  assert.match(APP, /return parseKernelRestart\(sessionStorage\.getItem\(KERNEL_RESTART_KEY\), Date\.now\(\)\)/)
+  // What a first visit held only in the page's memory crosses the restart: the hour, the sound, Sloane's mentoring.
+  // Decided once, as the page loads, and only while the address still names the kernel the restart asked for.
+  assert.match(APP, /const \[resumed\] = useState\(\(\) => \(options\.kernel \? kernelRestartNote\(\) : null\)\)/)
+  assert.match(APP, /mentored=\{watched\} restarted=\{resumed !== null\}/)
+  assert.match(APP, /: resumed \? \{ \.\.\.options, startHour: resumed\.startHour, audio: resumed\.audio \} : options/)
+  assert.match(APP, /const watched = mentored \|\| \(outcome === null && resumed\?\.mentored === true\)/)
+  assert.match(APP, /mentored=\{watched\}/)
+  // The restart's ?kernel= comes off the address once the city is up and the page's own record says the same: a link
+  // copied from there would hold another device to this one's kernel.
+  // Whether this page is the restarted one was settled as it loaded, not by a clock read again after a slow boot.
+  assert.match(APP, /const restartedRef = useRef\(restarted\)/)
+  assert.match(APP, /if \(e\.kernelKept && restartedRef\.current\) dropKernelWord\(\)/)
+  const drop = APP.slice(APP.indexOf('function dropKernelWord('), APP.indexOf('/**', APP.indexOf('function dropKernelWord(')))
+  assert.match(drop, /url\.searchParams\.delete\('kernel'\)\n\s+window\.history\.replaceState\(window\.history\.state, '', url\.toString\(\)\)/, 'in place: nothing loads')
+  assert.match(drop, /\} catch \{/)
+  assert.match(ENGINE, /const kernelKept = kernels\.plan\.by === 'address' && remembered/)
+  assert.match(ENGINE, /const remembered = kernels\.memory !== null && kernels\.memory\.from === ran && ran === kernels\.plan\.from/)
   assert.match(APP, /const failure = error !== null \? classify\(error\.cause, env\) : locked !== null && haltClass\(locked\) !== 'audit' \? explainHalt\(locked, env\) : null/)
   assert.match(APP, /\{failure === null && locked !== null && <LockScreen reason=\{locked\} \/>\}/)
   assert.match(APP, /\{failure && <RecoveryCard failure=\{failure\} adapter=\{adapter\} onConsole=\{toConsole\} \/>\}/)
@@ -263,6 +305,47 @@ test('App: a first visit is probed before the onboarding; ?boot=tty never is', (
   assert.ok(app.indexOf('firstScreen(') < app.indexOf('<Onboarding '), 'before the onboarding')
 })
 
+test('engine: a GPU lost while the worker builds a crowd kernel is that kernel\'s loss only on evidence, and the record changes only at a verdict or once the realm stands', () => {
+  const create = ENGINE.slice(ENGINE.indexOf('  static async create('), ENGINE.indexOf('  /** The minimap'))
+  // What this start asks for is read before anything is asked of the GPU: a record of 'none' asks nothing.
+  // A record of 'none' that still holds stops the start before a device is even asked for (read with no adapter to match).
+  assert.match(create, /const where = \{ sources: kernelSourcesKey\(\), ua: typeof navigator === 'undefined' \? '' : navigator\.userAgent \}\n\s+const held = heldNone\(pageKernelStore\(\), where, requested\.kernel \?\? null, Date\.now\(\)\)\n\s+if \(held\) throw kernelNoneFailure\(held, Date\.now\(\)\)/)
+  assert.ok(create.indexOf('const held = heldNone(') < create.indexOf('await createRenderer('), 'before the renderer')
+  assert.match(create, /const kernels = new KernelWatch\(pageKernelStore\(\), \{ \.\.\.where, adapter: gpu\.adapterInfo \}, requested\.kernel \?\? null\)/)
+  const guard = create.indexOf('if (kernels.plan.from === null && kernels.memory) throw kernelNoneFailure(kernels.memory, Date.now())')
+  assert.ok(guard >= 0 && guard < create.indexOf('simBoot = SimClient.create({'), 'before the worker is started')
+  // No adapter (the page's, or the worker's) while the browser withholds the GPU after two losses is the pause, with its wait.
+  assert.match(create, /const paused = \(what: string\): WebGPUUnavailableError \| null => \(gpuPaused\(recentGpuLosses\(\), Date\.now\(\)\)\n\s+\? new WebGPUUnavailableError\('gpu-paused', /)
+  assert.match(create, /await createRenderer\(canvas, requested\.pixelRatio, requested\.profile, peakOf, splitSamplesOf\)\.catch\(\(e: unknown\) => \{\n\s+throw \(e instanceof WebGPUUnavailableError && e\.code === 'no-adapter' \? paused\('the page'\) : null\) \?\? e\n\s+\}\)/)
+  assert.match(create, /throw \(failureCode\(e\) === 'worker-gpu' \? paused\('the physics worker'\) : null\) \?\? e/)
+  // The page counts the browser's GPU process going as the browser does: once per boot, and once more for a running
+  // city. The boot's own watch ends with the boot, so a loss of a standing city is the engine's alone to count.
+  assert.match(create, /void gpu\.device\.lost\.then\(async \(info\) => \{\n(?:\s+\/\/[^\n]*\n)*\s+if \(info\.reason === 'destroyed' \|\| over\) return\n/)
+  assert.match(create, /\} finally \{\n\s+over = true\n\s+document\.removeEventListener\('visibilitychange', onVisibility\)/)
+  assert.match(create, /const count = \(words: string\): void => \{\n\s+if \(counted \|\| !processGone\(words\)\) return\n\s+counted = true\n\s+noteGpuLoss\(\)\n\s+\}/)
+  assert.match(create, /const lossError = \(l: DeviceLoss\): Error => \{\n\s+count\(l\.message\)/)
+  assert.match(ENGINE, /if \(this\.disposed \|\| info\.reason === 'destroyed'\) return\n(?:\s+\/\/[^\n]*\n)*\s+if \(processGone\(info\.message\)\) noteGpuLoss\(\)/)
+  assert.match(create, /\.\.\.\(kernels\.plan\.from && kernels\.plan\.from !== 'full' && \{ crowdKernel: kernels\.plan\.from \}\),/)
+  // The page's own loss blames the kernel under construction only when the browser's words are its GPU process going
+  // (every device at once); a loss of the page's device alone waits, briefly, for the worker's own word.
+  assert.match(create, /const verdict = realmUp \? null : kernels\.pageLost\(`GPU device lost \(\$\{l\.reason\}\): \$\{l\.message \|\| 'no message'\}`, !boot\.hidden, processGone\(l\.message\)\)/)
+  assert.match(create, /if \(info\.reason === 'destroyed' \|\| over\) return\n\s+boot\.lost = info\n(?:\s+\/\/[^\n]*\n)*\s+if \(!realmUp && kernels\.building && !processGone\(info\.message\)\) await Promise\.race\(\[workerSaid, new Promise\(\(resolve\) => setTimeout\(resolve, WORKER_WORD_MS\)\)\]\)\n\s+lostNow\(lossError\(info\)\)/)
+  assert.match(ENGINE, /const WORKER_WORD_MS = 1000\n/)
+  // The worker's ladder is heard with whether the page stayed in front; its 'lost' and its 'ready' end the wait above.
+  assert.match(create, /ladder: \(step\) => \{\n\s+kernels\.note\(step, !boot\.hidden\)\n[\s\S]*?if \(step\.step === 'lost'\) saidNow\(\)\n\s+\},/)
+  // The realm stands at the worker's 'ready' (the crowd's first reading is in): from there no kernel is blamed, and
+  // only there is a kernel that runs written down or the record forgotten.
+  assert.match(create, /ready: \(meta\) => \{\n\s+realmUp = true\n\s+kernels\.stood\(meta\.crowdKernel\)\n\s+saidNow\(\)\n\s+\},/)
+  // A worker that failed any other way as the GPU went from under the page failed of the loss.
+  assert.match(create, /if \(failureCode\(e\) !== 'kernel-lost'\) \{\n\s+const loss = boot\.lost \?\? liveLoss\(await lossOf\(gpu\.device, LOSS_GRACE_MS\)\)\n\s+if \(loss\) throw lossError\(loss\)\n/)
+  assert.match(create, /throw verdict \? kernelLostFailure\(verdict, kernels\.plan\) : new WebGPUUnavailableError\('gpu-reset', `The GPU device was lost while the city was built: \$\{words\}`, boot\.hidden\)/, 'hidden: a background reset, restarted on return, and nothing kept')
+  // Neither promise the boot races is ever left unhandled.
+  assert.match(create, /gone\.catch\(\(\) => \{\}\)/)
+  assert.match(create, /realm\.catch\(\(\) => \{\}\)/)
+  assert.match(create, /const sim = await alive\(realm\)/)
+  assert.match(create, /const liveLoss = \(l: DeviceLoss \| null\): DeviceLoss \| null => \(l && l\.reason !== 'destroyed' \? l : null\)/, 'the device the boot itself lets go is nobody\'s loss')
+})
+
 test('engine: a lost page device halts as a graphics reset; the first frame draws in a validation scope; a failed boot lets go', () => {
   const ctor = ENGINE.slice(ENGINE.indexOf('void p.gpu.device.lost.then('), ENGINE.indexOf('  static async create('))
   assert.match(ctor, /if \(this\.disposed \|\| info\.reason === 'destroyed'\) return/, 'its own destroy() is not a loss')
@@ -272,7 +355,10 @@ test('engine: a lost page device halts as a graphics reset; the first frame draw
   // drawn, so never compiled.
   assert.match(create, /gpu\.device\.pushErrorScope\('validation'\)\n\s+gpu\.renderer\.render\(world\.scene, world\.camera\)\n\s+const invalid = await gpu\.device\.popErrorScope\(\)\n\s+stillThere\(\)\n\s+if \(invalid\) throw new Error\(`the first frame failed WebGPU validation: \$\{invalid\.message\}`\)\n\s+if \(options\.post\) \{\n\s+gpu\.device\.pushErrorScope\('validation'\)\n\s+post\.render\(\)\n\s+const refused = await gpu\.device\.popErrorScope\(\)\n\s+stillThere\(\)/)
   assert.match(create, /\} else if \(refused\) throw new Error\(`the first frame failed WebGPU validation: \$\{refused\.message\}`\)/)
-  assert.match(create, /\} catch \(e\) \{\n\s+void simBoot\?\.then\(\(s\) => s\.terminate\(\), \(\) => \{\}\)\n\s+releaseGpu\(gpu\)\n[\s\S]*?\n\s+throw e\n\s+\} finally \{/)
+  // A failed boot gives its worker up where it is (one still building under the card), closes one that stood, asks the
+  // device whether it was lost before letting it go (releaseGpu destroys it), and reports a loss as the loss.
+  assert.match(create, /\} catch \(e\) \{\n(?:\s+\/\/[^\n]*\n)*\s+abandon\.abort\(\)\n\s+void simBoot\?\.then\(\(s\) => s\.terminate\(\), \(\) => \{\}\)\n(?:\s+\/\/[^\n]*\n)*\s+const loss = e instanceof WebGPUUnavailableError \? null : boot\.lost \?\? liveLoss\(await lossOf\(gpu\.device, LOSS_GRACE_MS\)\)\n\s+releaseGpu\(gpu\)\n[\s\S]*?\n\s+if \(loss\) throw lossError\(loss\)\n\s+throw e\n\s+\} finally \{/)
+  assert.match(create, /signal: abandon\.signal,/)
   assert.ok(create.indexOf('try {') < create.indexOf('buildWorld('), 'everything after the device is inside the try')
   assert.match(ENGINE, /releaseGpu\(this\.gpu\)/, 'dispose lets go the same way')
 })

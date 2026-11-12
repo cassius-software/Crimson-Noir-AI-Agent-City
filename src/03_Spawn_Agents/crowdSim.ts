@@ -10,15 +10,17 @@
  * Ring-0 flags (sticky on the GPU until reported), every car's hazard distances, and the pedestrians' render
  * state, which the page receives as a copy to draw; it keeps its own copy of where everyone stands and what they
  * are doing, so the realm checks a recruitment request against its own readings, never the page's. The operator's
- * summons ride in each step's uniform. A lost device is recorded so the simulation can halt.
+ * summons ride in each step's uniform. A lost device is recorded so the simulation can halt; one lost while the
+ * crowd is built (the driver took the GPU down compiling a kernel) is a KernelLostError naming the kernel, which the
+ * page remembers so its next start asks this GPU for a lighter one (crowdKernelMemory.ts).
  * What breaks if it is removed? Nobody walks, and the Ring-0 Bouncer is blind to pedestrians.
  */
 import {
-  CROWD_KERNELS, CROWD_WORKGROUP, crowdShader, decodeHazard, FLOW_BINDING, geometryOf, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, MAX_CARS, packSimParams, PARAMS_SIZE,
+  CROWD_KERNELS, CROWD_WORKGROUP, crowdShader, decodeHazard, FLOW_BINDING, geometryOf, GRID_CAP, GRID_CELLS, HAZARD_NONE, HAZARD_SLOTS, KERNEL_WORDS, MAX_CARS, packSimParams, PARAMS_SIZE,
   PASS_BINDINGS, RENDER_FLOATS, SIM_PASSES, SIM_READ_HAZARDS, SIM_READ_RENDER, simReadbackSize, STATS_FLAGS, STATS_SIZE,
   type CrowdKernel, type PassName,
 } from './crowdCompute.ts'
-import { compilePasses, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
+import { compilePasses, DeviceLostError, lossOf, scopedMessage, ShaderRefusedError, withErrorScopes, type CompiledPasses } from '../01_Initialize_World/gpuPipelines.ts'
 import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput } from './crowdSensor.ts'
 import { OperatorTrail } from './skills.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
@@ -39,8 +41,42 @@ const now = (): number => (typeof performance === 'undefined' ? Date.now() : per
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 /** The module's label by kernel: what a refusal names (gpuPipelines.ts ShaderRefusedError) and what the pipelines' labels stem from. */
 const KERNEL_LABEL: Readonly<Record<CrowdKernel, string>> = Object.freeze({ full: 'crowd.wgsl', narrow: 'crowd.wgsl (narrow workgroups)', lite: 'crowd.wgsl (light kernel)' })
-/** The kernels in words, for the console and the card. */
-const KERNEL_WORDS: Readonly<Record<CrowdKernel, string>> = Object.freeze({ full: 'the full kernel', narrow: 'the full kernel at narrow workgroups', lite: 'the light kernel' })
+
+/** What the ladder is doing with a rung: about to compile it, refused by the GPU, or the crowd stands on it. */
+export type KernelStep = 'trying' | 'refused' | 'running'
+
+/** How create() starts its ladder, and who hears it move. */
+export interface CrowdStart {
+  /**
+   * The first rung asked of this GPU (crowdCompute.ts CROWD_KERNELS), 'full' by default: a rung further down where
+   * the page remembers that a kernel above it was refused here, or took the GPU down (crowdKernelMemory.ts).
+   */
+  from?: CrowdKernel
+  /**
+   * Hears each rung before it is compiled, when it is refused (with the browser's words for the refusal: the page
+   * keeps a refusal unless they name memory, crowdKernelMemory.ts), and once the crowd is built on it.
+   */
+  note?: (rung: CrowdKernel, step: KernelStep, words?: string) => void
+}
+
+/**
+ * The crowd's device was lost while kernel `rung` was built: compiled, or given its buffers, bind groups and flow
+ * field. Whether the kernel did it cannot be known from here (a driver that crashed in its compiler and a phone
+ * that took the GPU back look the same); the page decides (crowdKernelMemory.ts). `refused`: the rungs this GPU's
+ * compiler had refused before, in words, '' for none.
+ */
+export class KernelLostError extends Error {
+  readonly rung: CrowdKernel
+  readonly loss: DeviceLostError
+  readonly refused: string
+  constructor(rung: CrowdKernel, loss: DeviceLostError, refused = '') {
+    super(`crowd.wgsl: ${loss.message}${refused ? ` (before that this GPU refused ${refused})` : ''}`)
+    this.name = 'KernelLostError'
+    this.rung = rung
+    this.loss = loss
+    this.refused = refused
+  }
+}
 
 export class CrowdSim implements CrowdSensor {
   readonly agentCount: number
@@ -164,7 +200,10 @@ export class CrowdSim implements CrowdSensor {
    * reports as validation; a pipeline rule) is tried again down the ladder of kernels (crowdCompute.ts
    * CROWD_KERNELS): the same module at half the workgroup, then the light kernel (crowdWayLite.wgsl): the same
    * sensing, containment and contact, a simpler way for someone asked over; `kernel` says which runs. Every rung
-   * refused, the crowd fails with all the refusals.
+   * refused, the crowd fails with all the refusals. The ladder starts at `start.from` and tells `start.note` each
+   * step. A device lost under a rung (gpuPipelines.ts DeviceLostError: the GPU process gone as the driver compiled,
+   * or as the buffers and the flow field were made) ends the ladder there as a KernelLostError: a dead device
+   * refuses every kernel at once, which is no verdict on any of them.
    * With a flow grid, the field's solver too: the GPU's (flowFieldGpu.ts) when its pipelines validate on this device,
    * else the CPU's, the same field. With a street window (streets.ts: a generated region's), the shader is compiled
    * for the window's corner and street widths and the window's segments are what the people walk; without one, the
@@ -172,30 +211,40 @@ export class CrowdSim implements CrowdSensor {
    * of its window), one person in WORK.oneIn has a station in one and commutes to it; over a window, by the route
    * table to each room.
    */
-  static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null, rooms: readonly Workplace[] | null = null): Promise<CrowdSim> {
+  static async create(device: GPUDevice, agentCount: number, grid: FlowGrid | null = null, streets: StreetGrid | null = null, rooms: readonly Workplace[] | null = null, start: CrowdStart = {}): Promise<CrowdSim> {
     const [lo, hi] = AGENTS_RANGE
     if (!(Number.isInteger(agentCount) && agentCount >= lo && agentCount <= hi)) throw new Error(`agents must be ${lo}–${hi}, got ${agentCount}`)
     const placement = grid ? { originX: grid.originX, originZ: grid.originZ, cell: grid.cell } : undefined
     const geometry = streets ? geometryOf(streets) : undefined
     const compile = (kernel: CrowdKernel) => compilePasses(device, KERNEL_LABEL[kernel], crowdShader(agentCount, placement, geometry, kernel), SIM_PASSES)
     let compiled: CompiledPasses<PassName> | null = null
-    let kernel: CrowdKernel = 'full'
+    const first = Math.max(0, CROWD_KERNELS.indexOf(start.from ?? 'full'))
+    let kernel: CrowdKernel = CROWD_KERNELS[first]
     const refusals: { rung: CrowdKernel; error: ShaderRefusedError }[] = []
-    for (const rung of CROWD_KERNELS) {
+    const refused = (): string => refusals.map((r) => `${KERNEL_WORDS[r.rung]} (${r.error.message})`).join(', ')
+    for (const rung of CROWD_KERNELS.slice(first)) {
+      // A device already lost before a rung is asked of it was not lost under that rung (a device born into a GPU
+      // process that had just gone, as after a restart that follows a crash): a plain loss, no kernel's.
+      const gone = await lossOf(device)
+      if (gone) throw new DeviceLostError(`about to build ${KERNEL_WORDS[rung]}`, gone.reason, gone.message)
+      start.note?.(rung, 'trying')
       try {
         compiled = await compile(rung)
         kernel = rung
         break
       } catch (e) {
+        // The device went as this rung compiled: no rung below is asked of a dead device (it would refuse them all).
+        if (e instanceof DeviceLostError) throw new KernelLostError(rung, e, refused())
         if (!(e instanceof ShaderRefusedError)) throw new Error(`crowd.wgsl pipeline validation failed: ${messageOf(e)}`)
         refusals.push({ rung, error: e })
+        start.note?.(rung, 'refused', e.message)
         // A refusal carrying the module's own WGSL errors is the module's fault, the same on every rung: it ends here.
         // Any other (the GPU's own compiler, reported as internal by Chrome and as validation by Safari; a pipeline
         // rule) is tried a rung down, and every refusal stays in the record.
         if (e.wgslErrors) break
       }
     }
-    const words = refusals.map((r) => `${KERNEL_WORDS[r.rung]} (${r.error.message})`).join(', ')
+    const words = refused()
     if (!compiled) {
       throw new Error(refusals.some((r) => r.error.reason === 'internal')
         ? `crowd.wgsl pipeline compilation failed: the GPU's own compiler refused ${words}`
@@ -204,11 +253,12 @@ export class CrowdSim implements CrowdSensor {
     if (refusals.length) console.warn(`[crowd] ${KERNEL_WORDS[kernel]} runs: refused ${words}`)
     // The buffers, the bind groups and the spawn under every error scope: a buffer refused for memory or a bind group
     // refused by validation is a failure with its own words, not a first step that dispatches nothing.
+    const lostUnder = (e: unknown): never => { throw e instanceof DeviceLostError ? new KernelLostError(kernel, e, words) : e }
     const { value: crowd, errors } = await withErrorScopes(device, () => {
       const c = new CrowdSim(device, agentCount, grid, streets, rooms, compiled, kernel)
       c.#spawn()
       return c
-    })
+    }, `setting up ${KERNEL_WORDS[kernel]}`).catch(lostUnder)
     if (errors.length) {
       throw new Error(errors.every((e) => e.filter === 'validation')
         ? `crowd.wgsl pipeline validation failed: ${scopedMessage(errors)}`
@@ -218,10 +268,13 @@ export class CrowdSim implements CrowdSensor {
       try {
         crowd.#solver = await FlowFieldGpu.create(device, grid, crowd.#flowTexture)
       } catch (e) {
+        // A field the GPU refuses is solved on the CPU; a device lost under it leaves no crowd to solve one for.
+        if (e instanceof DeviceLostError) lostUnder(e)
         console.warn(`[crowd] the flow field is solved on the CPU: ${e instanceof Error ? e.message : String(e)}`)
         crowd.#solver = cpuFlowSolver(grid, (solution) => writeFlowTexture(device, crowd.#flowTexture, grid, solution))
       }
     }
+    start.note?.(kernel, 'running')
     return crowd
   }
 

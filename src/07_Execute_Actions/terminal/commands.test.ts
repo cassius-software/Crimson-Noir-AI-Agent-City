@@ -1976,10 +1976,10 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.equal(lite[3], 'lanes     512 simulated  (2500 default for a phone, 60000 ceiling)')
   // The crowd kernel the worker runs, a seventh row: none for the full one, the rung for a GPU that refused it, within
   // the readout's 80 columns (a suffix on the lanes row ran to 135).
-  const kernel = (k: 'full' | 'narrow' | 'lite' | 'none') => formatHardware({
+  const kernel = (k: 'full' | 'narrow' | 'lite' | 'none', why?: 'refused' | 'lost' | 'asked') => formatHardware({
     class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, adapter: 'arm / Mali-G52 MC2',
     limits: { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 },
-    tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000, kernel: k },
+    tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000, kernel: k, ...(why && { kernelWhy: why }) },
     frames: { p50: 0, p95: 0, p99: 0, n: 0, windowMs: 0 }, host: 'browser', cores: 6, memoryGb: undefined,
   })
   for (const k of ['full', 'none', 'narrow', 'lite'] as const) {
@@ -1990,6 +1990,13 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.equal(kernel('none').length, 6)
   assert.equal(kernel('narrow')[6], 'crowd     narrow kernel: 64-wide workgroups (this GPU refused the full one)')
   assert.equal(kernel('lite')[6], 'crowd     light kernel: straight-line routing (this GPU refused the full one)')
+  // Why, where the engine says: a heavier kernel took this GPU down on an earlier start, or the address asked (?kernel=).
+  assert.equal(kernel('lite', 'refused')[6], kernel('lite')[6])
+  assert.equal(kernel('lite', 'lost')[6], 'crowd     light kernel: straight-line routing (a heavier one took this GPU down)')
+  assert.equal(kernel('lite', 'asked')[6], 'crowd     light kernel: straight-line routing (the address asked for it)')
+  assert.equal(kernel('narrow', 'asked')[6], 'crowd     narrow kernel: 64-wide workgroups (the address asked for it)')
+  for (const why of ['lost', 'asked'] as const) for (const k of ['narrow', 'lite'] as const) for (const l of kernel(k, why)) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), `${k} ${why}: ${l}`)
+  assert.equal(kernel('full', 'asked').length, 6, 'the full kernel has no row, whoever asked')
   assert.equal(lite[4], 'frames    p50 41.20 ms  p95 55.25 ms  p99 120.50 ms  (3 frames in 0.2 s)')
   assert.equal(lite[5], 'machine   threads unknown  4 GB reported  native shell')
   for (const l of [...phone, ...lite]) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), l)
@@ -2250,27 +2257,30 @@ test('look: the look worn (or a pedestrian\'s), a slot by number or name, a pres
   assert.deepEqual(complete('look bottomWeave '), [...new Set([...lookOptions(0, 'bottomWeave'), ...lookOptions(1, 'bottomWeave')].map((o) => o.name))].sort().map((n) => `look bottomWeave ${n}`), 'the bottom\'s weaves: matching on a suit, plain on chinos')
 })
 
-test('look tattoos: the six zones complete the designs by name, the ink its eight and the sleeves full or rolled, the lists are the wardrobe\'s; a design, a 1-based number, none, an ink and the sleeves reach the host as typed', () => {
+test('look tattoos: the eight zones complete the designs by name, the ink its eight, the sleeves full or rolled and the legs as hashed, bare, sheer or opaque, the lists are the wardrobe\'s; a design, a 1-based number, none, an ink, the sleeves and the legs reach the host as typed', () => {
   // The lists the console offers are the wardrobe's own (look.ts and tattoo.ts, which the console must not import).
   assert.deepEqual([...LOOK_TATTOO_ARGS], [...WARDROBE.tattoo].sort(), 'none and the sixty-four designs by their names')
   assert.deepEqual([...LOOK_INK_ARGS], [...WARDROBE.tattooInk].sort(), 'the eight inks by their names')
   assert.equal(LOOK_TATTOO_ARGS.length, 65)
-  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooForearm', 'tattooForearmR'] as const) {
+  for (const slot of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooForearm', 'tattooForearmR', 'tattooCalf', 'tattooAnkleR'] as const) {
     assert.deepEqual(complete(`look ${slot} `), [...WARDROBE.tattoo].sort().map((n) => `look ${slot} ${n}`), slot)
     assert.deepEqual(complete(`look ${slot} `), lookOptions(0, slot).map((o) => `look ${slot} ${o.name}`).sort(), `${slot}: the card's options`)
   }
   assert.deepEqual(complete('look tattooInk '), lookOptions(0, 'tattooInk').map((o) => `look tattooInk ${o.name}`).sort())
   assert.deepEqual(complete('look sleeves '), ['look sleeves full', 'look sleeves rolled'])
   assert.deepEqual(complete('look sleeves '), lookOptions(0, 'sleeves').map((o) => `look sleeves ${o.name}`).sort(), 'sleeves: the card\'s options')
+  assert.deepEqual(complete('look legwear '), ['look legwear as hashed', 'look legwear bare', 'look legwear opaque', 'look legwear sheer'])
+  assert.deepEqual(complete('look legwear '), lookOptions(3, 'legwear').map((o) => `look legwear ${o.name}`).sort(), 'legs: the card\'s options')
+  assert.deepEqual(complete('look leg'), ['look legs', 'look legwear'], 'the leg slider and the legs\' cover')
   // The manual's examples: a name is completed whole, so both designs that start "com" are offered.
   assert.deepEqual(complete('look tattooHand com'), ['look tattooHand comet', 'look tattooHand compass rose'])
   assert.deepEqual(complete('look tattooInk g'), ['look tattooInk gold leaf', 'look tattooInk grey wash'])
   assert.deepEqual(complete('look tattooNape n'), ['look tattooNape nautilus shell', 'look tattooNape nested diamonds', 'look tattooNape nested triangles', 'look tattooNape none'])
-  assert.deepEqual(complete('look t'), ['look tattooForearm', 'look tattooForearmR', 'look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
+  assert.deepEqual(complete('look t'), ['look tattooAnkleR', 'look tattooCalf', 'look tattooForearm', 'look tattooForearmR', 'look tattooHand', 'look tattooHandR', 'look tattooInk', 'look tattooNape', 'look tattooNeck', 'look tie', 'look top', 'look topWeave', 'look trim'])
   // Past a space typed inside a name, nothing more is offered (the words before the last are no key of the table).
   assert.deepEqual(complete('look tattooHand compass r'), [])
   const b = fake()
-  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor', 'look sleeves rolled', 'look tattooForearm circuit trace']) run(l, b, [])
+  for (const l of ['look tattooHand compass rose', 'look tattooHand 10', 'look tattooNape none', 'look tattooInk gold leaf', 'look tattoohandr anchor', 'look sleeves rolled', 'look tattooForearm circuit trace', 'look legwear sheer', 'look tattooCalf 12']) run(l, b, [])
   assert.deepEqual(b.look.changes, [
     { kind: 'slot', slot: 'tattooHand', value: 'compass rose' },
     { kind: 'slot', slot: 'tattooHand', value: '10' },
@@ -2279,6 +2289,8 @@ test('look tattoos: the six zones complete the designs by name, the ink its eigh
     { kind: 'slot', slot: 'tattooHandR', value: 'anchor' },
     { kind: 'slot', slot: 'sleeves', value: 'rolled' },
     { kind: 'slot', slot: 'tattooForearm', value: 'circuit trace' },
+    { kind: 'slot', slot: 'legwear', value: 'sheer' },
+    { kind: 'slot', slot: 'tattooCalf', value: '12' },
   ])
   assert.deepEqual(texts(run('look tattooNeck', b, [])), ['usage: look tattooNeck <n|name>'])
   // The help's summary names them.

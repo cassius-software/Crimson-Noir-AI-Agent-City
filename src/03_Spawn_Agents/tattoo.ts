@@ -93,6 +93,13 @@ export const TATTOO_SLEEVE = Object.freeze({
 })
 
 /**
+ * The legs' zones (the left calf's and the right ankle's bits in a zone set, crowdTattoo.ts tatZones): a passer-by of
+ * the skirt suit's whose drawn designs reach them goes bare-legged (crowd.ts's leg rule, look.ts lookFromSeed), so the
+ * designs show; the trouser bodies keep the hash's legs.
+ */
+export const TATTOO_LEG_ZONES = TATTOO_ZONES.reduce((bits, z, i) => (z.slot === 'tattooCalf' || z.slot === 'tattooAnkleR' ? bits | (1 << i) : bits), 0)
+
+/**
  * How the head's skin splits between the neck and the nape: below `top` only; at or behind `napeZ` it is the nape,
  * otherwise below `neckTop` (the chin ring) the neck, and above that neither, so a nape design never reaches the chin.
  */

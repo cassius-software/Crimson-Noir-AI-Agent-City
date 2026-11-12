@@ -32,6 +32,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `chat.test.ts` and new cases in `intent.test.ts` cover it; the conversation's quality and speed with a real model
   are not verified in CI.
 
+- **Bare legs and tattoos on the calf and the ankle.** The look genome's cloth word gains the legs (word 5, bits 18
+  and 19: as hashed, as before; bare; sheer; opaque) and the second tattoo word a design (0 for none, or one of
+  sixty-four) on the left calf and the right ankle at seven bits each (word 8, bits 14 to 27; bits 28 to 31 spare and
+  refused). Option 0 of each is as before, so every earlier look keeps its code. The legs are a veil over the skin
+  (`src/03_Spawn_Agents/crowd.ts` `veil`): as hashed, the old link (about one in two in dark hose or a dark sock);
+  bare, none; sheer, the skin 35% of the way to the hose's dark (`look.ts` `LEGWEAR_VEIL`); opaque, all of it. It sets
+  the skirt suit's hose and the sock or the bare ankle below cropped trousers and culottes, on the near and the far
+  body alike. Where a leg shows bare or sheer the skin's slot goes to the ink (`inkSlot`), so the calf and the ankle
+  take their designs there, dimmed under sheer legs as the colour is, never on a prosthetic shin, under a boot's shaft
+  or under the culottes' inside band. A skirt-suit passer-by whose drawn designs reach the calf or the ankle goes
+  bare-legged, in the shader (`crowdTattoo.ts` `tatZones` against `tattoo.ts` `TATTOO_LEG_ZONES`) and in
+  `lookFromSeed` alike: `tattoo.test.ts` finds the two agree on all of 20,000 seeds, 132 of them bare-legged. The card
+  shows all eight tattoo zones and a Legs row (for the skirt suit and below cropped trousers and culottes; full-length
+  trousers hide the legs), and its outline's skirt-suit legs follow the choice; a zone's note says what covers it
+  ("the trousers cover it", "the boots cover it", "opaque legs cover it", "covered by the limb"). The console takes
+  `look legwear bare` and `look tattooAnkleR anchor`. The shader budget holds: the worst near main fragment stage is
+  183,846 characters (was 185,605) and the worst far one 142,706 (was 142,122). `dist/index.html` grows by 1,971
+  bytes, from 12,004,143 to 12,006,114; the limit in `tools/verify/page_dist.mjs` is unchanged. Fifteen pictures of the
+  ink studio's mirror on the software WebGPU adapter (SwiftShader) show the calf's design on bare legs, dimmed under
+  sheer legs and hidden under opaque ones and under the hash's dark hose, white ink on the deepest skin, gold leaf, the
+  bare ankle below cropped trousers, full-length trousers and boots covering the designs, a prosthetic left leg taking
+  the calf, and option 0 as before. The mirror draws the player's body with its left leg only, as it already did on
+  main, so the right ankle's design is not pictured. Unverified: no hardware GPU has compiled or drawn it yet.
 - **Rolled sleeves and tattoos on the forearms.** The look genome's cloth word gains the sleeves (word 5, bits 16 and
   17: full, as before, or rolled) and word 8 becomes the second tattoo word: a design (0 for none, or one of
   sixty-four) on the left and the right forearm at seven bits each, its other bits spare and refused. Option 0 of each
@@ -1859,6 +1882,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
   planner's sentence stands meanwhile.
 
+- **A start whose GPU goes away while the crowd is built starts again on the light kernel, instead of stopping at
+  "Instance dropped in popErrorScope".** A Mali-G52 phone showed "init: Instance dropped in popErrorScope" on the
+  card: Chrome's words for an error scope popped after its GPU process has gone, which takes every WebGPU device of
+  the page with it (the physics worker's and the page's own). A kernel the driver refuses leaves the device alive and
+  the ladder steps down in place; a kernel the driver dies on cannot be stepped past, and the old code read the dead
+  device's rejections as one more refusal. Now `gpuPipelines.ts` asks the device whether it was lost before a failed
+  compile counts as a refusal (`lossOf`, `DeviceLostError`; `withErrorScopes` pops every scope it pushed when the
+  build throws), the worker stops at the kernel it was building and tells the page (`kernel-lost`; every ladder step
+  is posted before the compile it announces), and the page remembers what it learnt of this GPU in this browser
+  (`crowdKernelMemory.ts`, new: a refusal moves the next start to the next rung; a loss to the light kernel; the light
+  kernel's own loss to none for an hour, a day once twice running; one loss is asked about again a day later, a
+  refusal a week later; the record holds only for the same kernels, user agent and adapter). After a loss under a
+  kernel the page starts again by itself, once, with `?kernel=lite` (new address word: `lite`, `narrow`, `full`),
+  waiting first for the browser to hand out a GPU again (`gpuDevice.ts` `gpuBack`); it never does so twice in two
+  minutes, never when the address named the kernel, never when it would be the GPU's third loss in five minutes, and
+  never where the browser keeps nothing for the page.
+  New cards: "The browser’s graphics stopped while building the crowd" (Restart goes to the lighter kernel), "The
+  crowd keeps stopping this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
+  inside that time asks for no adapter), and "The browser has paused graphics for this page" for Chrome's own pause
+  after two losses within two minutes (measured in Chromium 153; it used to read as a device with no adapter). A boot
+  that fails gives its worker up at once (`simClient.ts` `SimBootHooks.signal`), a device handed over already lost is
+  no kernel's fault, and a loss while the page was hidden blames none. The card's details line now names the web
+  copy's build (`tools/web/pwa.mjs` stamps the page with it) and, where the browser offers them, the phone's real
+  model and versions; `hardware` says why a lighter kernel runs. CI's browser job kills Chrome's GPU process as the
+  worker asks for the full kernel (the city then stands on the light one, remembered, the address clean) and again
+  under the light kernel (the no-kernel card, then a start that asks for no adapter), under software WebGPU;
+  `crowdKernelMemory.test.ts`, `gpuPipelines.test.ts`, `bootFailure.test.ts`, `realmBoot.test.ts` and
+  `recoveryWiring.test.ts` pin the rules, the words and the wiring. Whether the phone's driver survives the light
+  kernel is not known until it is tried there. Manual: When the city cannot start or stops.
 - **The first walk's way out works from wherever you stand.** `spawn_subagents` asked only people within 5 m, and its
   loop stopped at the first skill nobody near knew (Robotics), so the exit program answered a swarm of 0 and
   `unlock_city` refused. The walk's own workplace stage leaves the visitor inside a room, where nobody can be asked

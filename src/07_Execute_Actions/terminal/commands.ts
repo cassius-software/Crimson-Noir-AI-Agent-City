@@ -212,6 +212,7 @@ export const LOOK_SLOT_ARGS = [
   'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'watch', 'bag', 'cup',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
+  'legwear', 'tattooCalf', 'tattooAnkleR',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -332,6 +333,9 @@ const ARGS: Record<string, readonly string[]> = {
   'look sleeves': ['full', 'rolled'],
   'look tattooForearm': LOOK_TATTOO_ARGS,
   'look tattooForearmR': LOOK_TATTOO_ARGS,
+  'look legwear': ['as hashed', 'bare', 'opaque', 'sheer'],
+  'look tattooCalf': LOOK_TATTOO_ARGS,
+  'look tattooAnkleR': LOOK_TATTOO_ARGS,
   progress: ['reroll', 'reset', 'table', 'train'],
   'progress train': ['commerce', 'computers', 'optics', 'piloting', 'robotics', 'security', 'swarm', 'voice'],
   'progress reset': ['--yes'],
@@ -573,7 +577,8 @@ export function formatQuality(q: QualityState): string {
  * The `hardware` readout: six rows of fixed columns, ASCII only, at most 80 columns each (an adapter line longer than
  * that is cut). The class and the profile that gave it, the adapter and its limits, the lanes, the governor's frame-time
  * percentiles with how many frames they stand on, and what the browser said of the machine; a seventh row, the crowd
- * kernel, where this GPU refused the full one (simProtocol.ts SimMeta.crowdKernel).
+ * kernel, where the crowd runs below the full one (simProtocol.ts SimMeta.crowdKernel), with why: this GPU refused the
+ * full one, a heavier one took the GPU down on an earlier start, or the address asked (?kernel=).
  */
 export function formatHardware(h: HardwareReport): string[] {
   const p = h.profile, t = h.tiers, f = h.frames, l = h.limits
@@ -588,9 +593,14 @@ export function formatHardware(h: HardwareReport): string[] {
     row('lanes', `${count(h.lanes.simulated)} simulated  (${count(h.lanes.default)} default for a ${h.class}, ${count(h.lanes.ceiling)} ceiling)`),
     row('frames', frames),
     row('machine', `${threads}  ${memory}  ${h.host === 'native' ? 'native shell' : 'browser tab'}`),
-    ...(h.lanes.kernel === 'narrow' ? [row('crowd', 'narrow kernel: 64-wide workgroups (this GPU refused the full one)')]
-      : h.lanes.kernel === 'lite' ? [row('crowd', 'light kernel: straight-line routing (this GPU refused the full one)')] : []),
+    ...(h.lanes.kernel === 'narrow' ? [row('crowd', `narrow kernel: 64-wide workgroups (${kernelWhy(h.lanes.kernelWhy)})`)]
+      : h.lanes.kernel === 'lite' ? [row('crowd', `light kernel: straight-line routing (${kernelWhy(h.lanes.kernelWhy)})`)] : []),
   ]
+}
+
+/** Why the crowd runs below the full kernel, in the `hardware` row's words (the row stays within 80 columns). */
+function kernelWhy(why: HardwareReport['lanes']['kernelWhy']): string {
+  return why === 'lost' ? 'a heavier one took this GPU down' : why === 'asked' ? 'the address asked for it' : 'this GPU refused the full one'
 }
 
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */
