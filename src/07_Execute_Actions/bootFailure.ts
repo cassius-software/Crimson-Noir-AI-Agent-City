@@ -261,8 +261,9 @@ export function explainHalt(reason: string, env: Env): Failure {
 export const BUILD_META = 'agent-city-build'
 
 /**
- * The published build this page is, where it says (the web copy: twelve hex digits of the page's hash, the same that
- * name its offline cache), '' anywhere else (a file, the Windows app, a local preview). Guarded: no document, no word.
+ * The published build this page is, where it says (the web copy: its build word, twelve hex digits over everything
+ * published, tools/web/pwa.mjs buildWord; the same that name its offline cache), '' anywhere else (a file, the
+ * Windows app, a local preview). Guarded: no document, no word.
  */
 export function pageBuild(): string {
   try {
