@@ -717,7 +717,7 @@ const PROBES: readonly Probe[] = [
     // An answer that emptied the frame (a goal with nothing to map is a dispatch, never a redirect), or harm, or "I don't know".
     ask: (f) => ({
       question: f.flag === 'harm'
-        ? 'Nothing here can hurt anyone — every car stops for people, always. Would you rather look around, change how the city looks, or how it runs?'
+        ? 'Nothing here can hurt anyone — cars stop for people, and the one you drive passes through them without touching anyone, always. Would you rather look around, change how the city looks, or how it runs?'
         : f.flag === 'unsure'
           ? 'No pressure. Would you rather look around, change how the city looks, or how it runs?'
           : 'I didn’t catch that. Would you rather look around, change how the city looks, or how it runs?',
@@ -1019,7 +1019,7 @@ function stepFor(h: Hyp, f: Frame): PlanStep | null {
     case 'cars': return typeof h.value === 'string' && CARS_LABEL[h.value] ? step(CARS_LABEL[h.value], false) : null
     case 'district': return typeof h.value === 'string' && h.value in DISTRICTS ? step(`Make for ${place(h.value)}, ${DISTRICTS[h.value as District]}`, false) : null
     case 'walk':
-      if (f.tags.has('crossing')) return step('Cross wherever you like: every car stops for people', false)
+      if (f.tags.has('crossing')) return step('Cross wherever you like: cars stop for people, and a driven car passes through without touching you', false)
       if (h.value === 'run') return step('Pick up the pace on foot', false)
       if (h.value === 'explore') return step('Wander on foot and see what you find', false)
       return step('Set off on foot', false)
@@ -1189,7 +1189,7 @@ export class FiveWhys {
       if (s) plan.push(s)
     }
     const unmapped: Unmapped[] = []
-    if (f.flag === 'harm') unmapped.push({ label: 'Harm to anyone: not something this city can do. Every car stops for people, and nothing here can hurt anyone', modules: [] })
+    if (f.flag === 'harm') unmapped.push({ label: 'Harm to anyone: not something this city can do. Cars stop for people, the car you drive passes through them without touching them, and nothing here can hurt anyone', modules: [] })
     unmapped.push(...f.unmapped)
     const root = rootOf(f)
     return {

@@ -80,10 +80,11 @@ export function primeElapsed(elapsed: number, last: number, now: number): number
   return elapsed + Math.min(Math.max(0, now - last), PRIME_GAP_MS)
 }
 /**
- * Beyond this age (s) a crowd reading is not trusted at all: every car is fed a person at the bumper and holds
- * until the sensor answers again. Younger readings are shortened continuously (#feedHazards).
+ * Beyond this age (s) a crowd reading is not trusted at all: every car is fed a person at the bumper, and every car
+ * nobody sits in holds until the sensor answers again (and a car left with its passage keeps it: vehicles.ts
+ * PASSAGE_SETTLE outlasts this). Younger readings are shortened continuously (#feedHazards).
  */
-const CROWD_STALE_S = 1.0
+export const CROWD_STALE_S = 1.0
 /**
  * A summons the crowd has not taken this long after it was sent, s, was not heard: the person had stepped onto a
  * crosswalk or out of earshot in the moment the request crossed the realms. They are let go.
@@ -1182,7 +1183,8 @@ export class SimCore {
    * - "nobody" only ever meant nobody within KERNEL.range: past the latency the envelope absorbs, it is a reading
    *   at the range, aged like any other (someone just beyond it can have closed in).
    * A stale reading therefore only ever brings a person nearer. A car moved (recover) since the reading, a reading
-   * whose dispatch is no longer on record, or a sensor silent for CROWD_STALE_S vouches for nobody: the car holds.
+   * whose dispatch is no longer on record, or a sensor silent for CROWD_STALE_S vouches for nobody: the car holds
+   * (unless a person is seated in it: that car is not held for people at all).
    * Without a crowd (tests) nobody is sensed. Debug overrides apply last.
    */
   #feedHazards(): void {
@@ -1199,7 +1201,7 @@ export class SimCore {
       this.#hazardBehind.fill(Infinity)
       this.#crowdAgeMs = null
     } else if (this.#simTime - r.time > CROWD_STALE_S) {
-      // The sensor has not answered for too long: nobody can be vouched for, so every car holds.
+      // The sensor has not answered for too long: nobody can be vouched for, so every car nobody sits in holds.
       this.#hazardAhead.fill(0)
       this.#hazardBehind.fill(0)
       this.#crowdAgeMs = (this.#simTime - r.time) * 1000

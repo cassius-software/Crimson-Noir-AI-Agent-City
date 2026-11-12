@@ -24,6 +24,7 @@ import { MAX_CARS, type CrowdReadout, type CrowdSensor, type CrowdStepInput } fr
 import { COLLISION } from '../02_Define_The_Rules/collision.ts'
 import { PERSON_ID_BASE, SHOVE_CLOSING, shapeSpec } from './ragdollRealm.ts'
 import { SimCore, type StepInput } from './simCore.ts'
+import { CAR, PASSAGE_CLEAR } from './vehicles.ts'
 import { createSimHost } from './simHost.ts'
 import { POSE, RIG_POSE, RIG_SEGMENTS, RIG_SLOTS, RIG_STATES, type FromWorker, type SimInit } from './simProtocol.ts'
 
@@ -46,6 +47,8 @@ class FakeCrowd implements CrowdSensor {
   readonly activity: Uint8Array
   /** Every figure's facing as the GPU reads it back (pos.w); NaN: none. */
   readonly heading: Float32Array
+  /** Per car, whether the last step said it passes through people (CarState.passage). */
+  passage: boolean[] = []
   #frame: Float32Array | null = null
   constructor(agents = AGENTS) {
     this.agentCount = agents
@@ -54,6 +57,7 @@ class FakeCrowd implements CrowdSensor {
     this.heading = new Float32Array(agents).fill(NaN)
   }
   step(input: CrowdStepInput): void {
+    this.passage = input.cars.map((c) => c.passage === true)
     this.readout = {
       seq: input.seq, time: input.time - input.dt, hazardsAhead: Float32Array.from(this.ahead), hazardsBehind: Float32Array.from(this.behind),
       stats: { nudges: 0, waiting: 0, crossing: 0, retreating: 0, working: 0 }, xz: Float32Array.from(this.xz), activity: Uint8Array.from(this.activity),
@@ -331,6 +335,54 @@ test('a car driven at a seated rig: the Sanctuary flips its shapes, no panic, th
   // The sidesteps leave nothing behind: once the car is gone the rig sits where it sat (measured: 6 mm).
   assert.ok(rig.slid < 0.05, `after the car the seated rig slid ${rig.slid.toFixed(3)} m in a second`)
   console.log(`[ragdollRealm] a car at 12 m/s through a seated rig: ${rig.flips} flips, speed within ${worst.toFixed(3)} m/s of open road, end within ${Math.abs(rig.z - open.z).toFixed(3)} m, no panic`)
+})
+
+test('a car its driver left stays a passage while a seated rig\'s legs or head reach it, though its pelvis is clear', async () => {
+  const c = await core({ debug: true })
+  const { step, crowd, sim } = c
+  // Player 1 sits in car 0 and gets out of it, the crowd reading someone in it, so it keeps its passage; then it is
+  // moved well away from where the shove will be (no rig is built near a car that passes through people).
+  step({ cmds: [{ c: 'dbgMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: OPEN.x + 3.5, z: OPEN.z, heading: 0 }] })
+  for (let k = 0; k < 60; k++) step()
+  assert.equal(step({ cmds: [{ c: 'interact' }] }).driving, 0)
+  for (let k = 0; k < 10; k++) step()
+  assert.equal(crowd.passage[0], true, 'seated')
+  crowd.ahead[0] = 0
+  assert.equal(step({ cmds: [{ c: 'interact' }] }).driving, -1)
+  step({ cmds: [{ c: 'recover', i: 0, x: OPEN.x + 3.5, z: OPEN.z - 40, heading: 0 }] })
+  for (let k = 0; k < 120; k++) step()
+  assert.equal(crowd.passage[0], true, 'left among people: still a passage')
+  // A shove, and the rig sits.
+  const at = { x: OPEN.x + 6, z: OPEN.z + 10 }
+  let s = shove(crowd, step, 1, 2, 2.6, at)
+  for (let i = 0; i < 10 * 60 && slots(s.rigs!)[0]?.state !== 'seated'; i++) s = step()
+  assert.equal(slots(s.rigs!)[0]?.state, 'seated')
+  // How far its body lies from its pelvis, from the stream (each shape's centre, a foot at its sole, plus its radius):
+  // the car is put down with its flank between that and the pelvis alone, so only the body's reach keeps the passage.
+  const seg = (j: number) => RIG_POSE.segments + j * RIG_POSE.segmentStride
+  const pelvis = { x: s.rigs![seg(0)], z: s.rigs![seg(0) + 2] }
+  let body = 0
+  for (let j = 0; j < RIG_POSE.segmentCount; j++) body = Math.max(body, Math.hypot(s.rigs![seg(j)] - pelvis.x, s.rigs![seg(j) + 2] - pelvis.z) + shapeSpec(j).radius)
+  assert.ok(body > 0.3, `the seated body reaches ${body.toFixed(2)} m from its pelvis`)
+  const gap = PASSAGE_CLEAR + body / 2
+  crowd.ahead[0] = Infinity
+  s = step({ cmds: [{ c: 'recover', i: 0, x: pelvis.x + CAR.halfWidth + gap, z: pelvis.z, heading: 0 }] })
+  // While the rig sits (until the realm hands them back to the crowd; the stream keeps drawing them a while after).
+  const handed = crowd.handedBack.length
+  let seated = 0
+  while (slots(s.rigs!)[0]?.state === 'seated' && crowd.handedBack.length === handed && seated < 10 * 60) {
+    s = step()
+    seated++
+    assert.equal(crowd.passage[0], true, `the rig's body reaches the car, its pelvis ${gap.toFixed(2)} m from the flank (step ${seated})`)
+  }
+  assert.ok(seated > 20, `the rig sat on beside the car for ${seated} steps`)
+  assert.equal(sim.halted, false, sim.panic ?? '')
+  // Once the crowd has them back, nobody is in or against the car: ordinary again.
+  for (let i = 0; i < 20 * 60 && slots(s.rigs!).length > 0; i++) s = step()
+  assert.equal(slots(s.rigs!).length, 0, 'handed back')
+  for (let i = 0; i < 3 * 60 && crowd.passage[0]; i++) s = step()
+  assert.equal(crowd.passage[0], false, 'nobody in or against it: ordinary')
+  assert.equal(sim.halted, false, sim.panic ?? '')
 })
 
 test('blind, the Sanctuary off, a car driven at a seated rig: the Ring-0 audit halts the realm naming the rig\'s person', async () => {

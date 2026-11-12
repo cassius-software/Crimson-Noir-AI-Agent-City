@@ -1782,17 +1782,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   pedestrians in its corridor and then skips the contact push, the stagger, the step back and the yield for it (a
   negative corridor reach in the car's slot marks it, `crowdCompute.ts` `packCrowdParams`); the Sanctuary still flips
   every person it is about to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig
-  beside it. The pass outlives the seat: a car left rolling or among people goes on passing until it stands at rest
-  with nobody within 0.6 m of it. Scripted (`intent`), AI-driven and parked cars stop for people as before, and with
+  beside it. The pass outlives the seat, but only on a car left parked: a car left rolling or among people goes on
+  passing until it has stood 1.25 s (`PASSAGE_SETTLE`, longer than any crowd reading is used for, so the reading that
+  frees it was taken on straight wheels) at rest with nobody within 0.6 m of it, a fallen pedestrian's legs and head
+  included (`ragdollRealm.ts` `peopleInto` gives each rig a reach); a car an AI or a script takes is ordinary at once.
+  Scripted (`intent`), AI-driven and parked cars stop for people as before, and with
   the Sanctuary switched off the First Law holds the seated car too. The Ring-0 audit still halts the realm for a
   solid person inside any moving footprint, the seated car's included; only its unguarded-approach check is waived,
   and only while the kernel's own record carries both the seated ruling and the occupant. Tests: `laws.test.ts`
   (the seated ruling is the ruling with nobody about, over random readings), `ring0.fuzz.test.ts` (seated, impact and
-  unguarded properties), `vehicles.test.ts`, `sanctuary.test.ts` (an avatar passed through at 3, 14 and 30 m/s, never
+  unguarded properties), `vehicles.test.ts` (the seat's lapse, the passage of a car left parked, its settling time, a
+  reach, no reading, an AI taking it), `ragdollRealm.test.ts` (a left car stays a passage while a seated rig's body
+  reaches it though its pelvis is clear), `sanctuary.test.ts` (an avatar passed through at 3, 14 and 30 m/s, never
   moved, never nudged), `wgslHost.test.ts` (the shader senses them and pushes, staggers and turns back nobody),
-  `simCore.test.ts` and `simPlayers.test.ts` (players passed through at 144, 60 and 20 frames a second; a scripted car
-  beside the seated one still stops for the player in its lane). The first walk's fleet card, the manual's ethical
-  kernel ("The car you sit in") and the blueprint say so. Unverified: nobody has driven it on a phone or a GPU yet,
+  `simCore.test.ts` and `simPlayers.test.ts` (players passed through at 144, 60 and 20 frames a second; in the same
+  steps a scripted car stops short of one player while the car another player sits in passes through a third). The
+  first walk's fleet card, Sloane's answer to harm, the README, the manual's ethical kernel ("The car you sit in") and
+  the blueprint say so. `dist/index.html` grows by 2,327 bytes, from 12,059,574 to 12,061,901; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Unverified: nobody has driven it on a phone or a GPU yet,
   and the shader change has run only in the WGSL host the tests use.
 
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**

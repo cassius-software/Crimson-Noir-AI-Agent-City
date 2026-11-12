@@ -8,9 +8,9 @@
  * every state finite, no vehicle past the velocity cap, every vehicle inside the world slab, no solid
  * person inside a moving vehicle's footprint, and no moving vehicle closing on a solid person inside its
  * standoff while its applied command is anything but an emergency stop (the Bouncer's stop, which a car with a
- * person seated at its wheel is not given, laws.ts: that one car is audited for the footprint alone, and through it
- * nobody solid may ever be); and, over the scheduled craft stream
- * (the trains, drones and planes that have no body and no Bouncer), every value finite and every craft at or
+ * person seated at its wheel is not given, laws.ts: that one car is audited for the footprint alone, and nobody
+ * solid may ever be inside it while it moves, nor touch it while it closes on them); and, over the scheduled craft
+ * stream (the trains, drones and planes that have no body and no Bouncer), every value finite and every craft at or
  * above the floor of the corridor that keeps it away from people. A violation is a kernel panic:
  * the engine severs the hardware bridge, halts, and `kernelPanic` throws out of the frame. The 1.85 m
  * radius of the operator's directive is kept as a watched perimeter (counted, never panicked): measured

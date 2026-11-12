@@ -1010,10 +1010,12 @@ only additions and four single-line widenings (two imports, one type, one event 
   Tests: `simCore.test.ts` "rally: refused for a point inside a building lot ...", `skillsRally.test.ts`. (2) `reset`
   could put a car down beside a player on foot (audit invariant 8), unreachable with one avatar and reachable with
   four. Fix in `simCore.ts`: `#clearOfPeople` guards `reset` as it guards `recover`. Test: `simPlayers.test.ts`
-  "adversarial: player 2 drives at player 0 standing in the lane and the Bouncer holds; one car cannot be taken by
-  two players in a step; a reset is refused beside a player on foot; infinite controls are no control". **Attacks
-  that held** (kept as tests): infinite controls for a player on foot and one at the wheel; player 2 at full throttle
-  at player 0 standing 35 m ahead (held over 1 m short); two players taking the same parked car in one step; a rally
+  "adversarial: player 2 drives at player 0 standing in the lane and passes through them untouched; one car cannot be
+  taken by two players in a step; a reset is refused beside a player on foot; infinite controls are no control".
+  **Attacks that held** (kept as tests): infinite controls for a player on foot and one at the wheel; player 2 at full
+  throttle at player 0 standing 35 m ahead (held over 1 m short; superseded on 2026-11-12: the car player 2 sits in
+  now passes through player 0 untouched, with player 0 shielded and never moved, and a scripted car still holds short
+  of a player, "a scripted car beside a seated one ..."); two players taking the same parked car in one step; a rally
   at 11.9 m, after a dismiss, for an Interviewing recruit, onto the road, with the operator in a car; a spawn inside
   a lot; four players over a surveyed region ("adversarial: a surveyed region takes spawns too ...").
 - *The page wirings, first pass* (`bd700b8` to `f5765d5`). Checks as above, plus: no new page-to-worker path (the

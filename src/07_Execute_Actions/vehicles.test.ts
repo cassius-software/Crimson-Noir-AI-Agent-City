@@ -17,7 +17,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { GROUND_COLLIDERS, Physics, RAPIER } from './physics.ts'
-import { ackermann, CAR, corridorDistance, Fleet, type Vehicle, CAR_TUNE_RANGE } from './vehicles.ts'
+import { ackermann, CAR, corridorDistance, Fleet, PASSAGE_SETTLE, type Vehicle, CAR_TUNE_RANGE } from './vehicles.ts'
+import { CROWD_STALE_S } from './simCore.ts'
 import { MODES, POSE } from './simProtocol.ts'
 import { Driver } from '../06_Make_Decisions/traffic.ts'
 import { TrackDriver } from '../06_Make_Decisions/trackDriver.ts'
@@ -472,7 +473,7 @@ test('the car a person is seated in is held by none of it: not ahead, not behind
   assert.deepEqual({ ...v.lastCommand }, { throttle: 0, brake: 0, steer: CAR.maxSteer })
 })
 
-test('the seat lapses with the first think() that finds no drive() for it; the passage outlives it until the car stands clear', async () => {
+test('the seat lapses with the first think() that finds no drive() for it, and a car nobody sits in that nobody left parked is ordinary at once', async () => {
   const { fleet, step } = await rig()
   const v = pick(fleet, false)
   v.mode = 'player'
@@ -485,6 +486,7 @@ test('the seat lapses with the first think() that finds no drive() for it; the p
     step()
   }
   assert.equal(fleet.seated(v), true, 'renewed every frame')
+  assert.equal(fleet.passes(v), true)
   // A frame with no drive(): nobody at the wheel any more. A person 2 m ahead: held like any car, at once.
   ahead[v.index] = 2
   fleet.setPersonHazards(ahead, behind)
@@ -493,12 +495,42 @@ test('the seat lapses with the first think() that finds no drive() for it; the p
   assert.equal(fleet.seated(v), false)
   assert.equal(fleet.bouncer.counts[1], law1 + 1, 'the stale re-vet stops it for the person')
   assert.equal(v.lastCommand.brake, KERNEL.maxBrake)
-  assert.equal(fleet.passes(v), true, 'still rolling: still passing through people')
+  assert.equal(fleet.passes(v), false, 'nobody sits in it and nobody left it parked: ordinary to the crowd at once')
+  assert.equal(fleet.crowdStates()[v.index].passage, false)
+  assert.equal(fleet.footprints()[v.index].passage, false)
   // A script's command for the same car is ruled like any other: held.
   fleet.drive(v, { throttle: 1, brake: 0, steer: 0 }, false)
   assert.equal(v.lastCommand.throttle, 0)
-  // It stops with someone inside its footprint: the passage stands however long it stands there.
+  // Seated again, then a script's command for it: the seat and the passage end with that command.
+  fleet.drive(v, { throttle: 0, brake: KERNEL.maxBrake, steer: 0 }, false, true)
+  assert.equal(fleet.passes(v), true)
+  fleet.drive(v, { throttle: 0, brake: KERNEL.maxBrake, steer: 0 }, false)
+  assert.equal(fleet.seated(v), false)
+  assert.equal(fleet.passes(v), false, 'a script has it: ordinary at once')
+})
+
+test('a car left parked goes on passing through people: while anyone is in or against it, a lying body\'s limbs included, and for PASSAGE_SETTLE at least; an AI that takes it turns it ordinary', async () => {
+  const { fleet, step } = await rig()
+  const v = pick(fleet, false)
+  v.mode = 'player'
+  place(fleet, step, v, TRACK_X, 0, Math.PI / 2)
+  const ahead = new Float32Array(fleet.vehicles.length).fill(Infinity)
+  const behind = new Float32Array(fleet.vehicles.length).fill(Infinity)
+  fleet.setPersonHazards(ahead, behind)
+  for (let t = 0; t < 2; t += H) {
+    fleet.drive(v, { throttle: 1, brake: 0, steer: 0.4 }, false, true)
+    fleet.think(H, 0)
+    step()
+  }
+  assert.ok(fleet.speed(v) > 3, 'rolling')
+  // Its driver gets out of the rolling car (simCore.ts #interact parks it), someone 2 m ahead: it goes on passing.
   v.mode = 'parked'
+  ahead[v.index] = 2
+  fleet.setPersonHazards(ahead, behind)
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), true, 'left rolling: still passing through people')
+  assert.equal(v.lastCommand.steer, 0, 'the parked car\'s wheels are straightened in the same frame')
+  // It stops with someone inside its footprint: the passage stands however long it stands there.
   ahead[v.index] = 0; behind[v.index] = 0
   fleet.setPersonHazards(ahead, behind)
   for (let t = 0; t < 4; t += H) { fleet.think(H, 0); step() }
@@ -509,18 +541,60 @@ test('the seat lapses with the first think() that finds no drive() for it; the p
   fleet.setPersonHazards(ahead, behind)
   fleet.think(H, 0)
   assert.equal(fleet.passes(v), true)
-  // An avatar on foot against its flank: still a passage. Clear of it: ordinary again.
-  const at = fleet.position(v)
-  ahead[v.index] = Infinity
+  // No reading at all (not a number) vouches for nobody: still a passage.
+  ahead[v.index] = Number.NaN; behind[v.index] = Number.NaN
   fleet.setPersonHazards(ahead, behind)
-  fleet.setAvatar(at.x, at.z + CAR.halfWidth + 0.3, true)
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), true, 'no reading')
+  ahead[v.index] = Infinity; behind[v.index] = Infinity
+  fleet.setPersonHazards(ahead, behind)
+  // An avatar on foot against its flank: still a passage. A lying body whose pelvis is clear but whose head reaches
+  // under the flank: still a passage. Clear of both: ordinary again.
+  const at = fleet.position(v), side = { x: Math.cos(fleet.heading(v)), z: -Math.sin(fleet.heading(v)) }
+  const beside = (d: number) => ({ x: at.x + side.x * (CAR.halfWidth + d), z: at.z + side.z * (CAR.halfWidth + d) })
+  fleet.setAvatar(beside(0.3).x, beside(0.3).z, true)
   fleet.think(H, 0)
   assert.equal(fleet.passes(v), true, 'someone against its side')
-  fleet.setAvatar(at.x, at.z + CAR.halfWidth + 3, true)
+  fleet.setPeople([{ ...beside(3), present: true }, { ...beside(1), present: true, reach: 0.9 }])
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), true, 'a lying body\'s head under its flank, its pelvis a metre out')
+  fleet.setPeople([{ ...beside(3), present: true }, { ...beside(1), present: true, reach: Number.NaN }])
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), true, 'a reach that is not a number')
+  fleet.setPeople([{ ...beside(3), present: true }, { ...beside(1), present: true, reach: 0.2 }])
   fleet.think(H, 0)
   assert.equal(fleet.passes(v), false, 'standing, nobody in or against it')
   assert.equal(fleet.crowdStates()[v.index].passage, false)
   assert.equal(fleet.footprints()[v.index].passage, false)
+
+  // Left standing clear of everyone from the first frame: it still waits PASSAGE_SETTLE, since the readings in flight
+  // were taken on the wheels it was left with, and a turned corridor misses a sliver of the crowd's contact margin.
+  const leave = (steer: number) => {
+    v.mode = 'player'
+    fleet.drive(v, { throttle: 0, brake: KERNEL.maxBrake, steer }, false, true)
+    fleet.think(H, 0)
+    v.mode = 'parked'
+  }
+  leave(0.6)
+  let t = 0
+  for (; t + H < PASSAGE_SETTLE; t += H) {
+    fleet.think(H, 0)
+    assert.equal(fleet.passes(v), true, `left ${t.toFixed(3)} s ago: not yet`)
+  }
+  for (let k = 0; k < 3; k++) fleet.think(H, 0)
+  assert.equal(fleet.passes(v), false, `stood ${PASSAGE_SETTLE} s and more, clear: ordinary`)
+  assert.ok(PASSAGE_SETTLE > CROWD_STALE_S + 0.2, 'longer than any reading is used for')
+
+  // Left among people, then an AI takes it: ordinary at once, as an AI's car is (the Bouncer holds it for them).
+  leave(0)
+  ahead[v.index] = 0; behind[v.index] = 0
+  fleet.setPersonHazards(ahead, behind)
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), true)
+  v.mode = 'ai'
+  fleet.think(H, 0)
+  assert.equal(fleet.passes(v), false, 'an AI has it: ordinary at once')
+  assert.equal(fleet.crowdStates()[v.index].passage, false)
 })
 
 /** Chassis rectangle to a standing person's capsule (radius 0.3 m), metres; negative = overlap. */

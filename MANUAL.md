@@ -1600,8 +1600,11 @@ anywhere in the product.
     them, then skips the contact for a car marked as passing); the Sanctuary still flips every person it is about
     to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig in its way.
   - It does not wait on the crowd's readings at all, so a silent sensor or a `recover` does not hold it either.
-  - The pass outlives the seat. Leave the car rolling, or among people, and it keeps passing until it stands at
-    rest with nobody within 0.6 m of it, ahead, behind or beside; only then is it solid for people again.
+  - The pass outlives the seat. Leave the car rolling, or among people, and it keeps passing until it has stood
+    parked for 1.25 s (longer than any crowd reading is used for, so the reading that frees it was taken of the car
+    parked, on straight wheels) and stands at rest with nobody within 0.6 m of it, ahead, behind or beside, a fallen
+    pedestrian's legs and head counted as well as where they sit; only then is it solid for people again. A car an
+    AI or a script takes from there is ordinary at once, as their cars always are.
   - The Ring-0 audit checks it like any car: a solid person inside its moving footprint is a kernel panic. Only the
     unguarded-approach check is waived, and only while both the seated ruling and its occupant are on the car's
     record.

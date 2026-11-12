@@ -3,8 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the First Law's last line of defence inside Rapier. The bouncer
- * (laws.ts) brakes every car for a person in its path, but a person can step out closer than any car can
- * stop. Before every world.step() the sanctuary sweeps each moving vehicle's footprint over the coming
+ * (laws.ts) brakes every car nobody sits in for a person in its path, but a person can step out closer than any
+ * car can stop. Before every world.step() the sanctuary sweeps each moving vehicle's footprint over the coming
  * step; the moment one would reach a person, that person's collider flips from Solid to Sensor in the same
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle

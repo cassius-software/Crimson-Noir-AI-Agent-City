@@ -369,14 +369,29 @@ export class RagdollRealm {
     }
   }
 
-  /** Appends one person per rig (its pelvis) to `out` from index `from` for the Fleet (setPeople); returns the new length. */
+  /**
+   * Appends one person per rig (its pelvis) to `out` from index `from` for the Fleet (setPeople); returns the new length.
+   * Each carries its `reach`: how far across the ground its body lies from the pelvis (the farthest end of any of its
+   * thirteen shapes, a foot's sole included), so a car left among people stays a passage while a lying rig's head or
+   * legs are under it, though its pelvis is clear (vehicles.ts #standsClear).
+   */
   peopleInto(out: Person[], from: number, present: boolean): number {
     let k = from
     for (const s of this.#slots) {
       if (!s.rig) continue
       const p = s.rig.bodies.pelvis.translation(this.#at)
-      const q = out[k] ?? (out[k] = { x: 0, z: 0, present: false })
-      q.x = p.x; q.z = p.z; q.present = present
+      const px = p.x, pz = p.z
+      let reach = 0
+      for (const shape of s.shapes) {
+        const c = shape.person.body.translation(this.#at)
+        reach = Math.max(reach, Math.hypot(c.x - px, c.z - pz) + shape.spec.halfHeight + shape.spec.radius)
+        if (shape.spec.foot) {
+          const f = this.#shapeAt(shape)
+          reach = Math.max(reach, Math.hypot(f.x - px, f.z - pz) + shape.spec.radius)
+        }
+      }
+      const q = out[k] ?? (out[k] = { x: 0, z: 0, present: false, reach: 0 })
+      q.x = px; q.z = pz; q.present = present; q.reach = reach
       k++
     }
     return k

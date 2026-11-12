@@ -15,10 +15,13 @@
  * One car is ruled apart: the one a person is seated in (source 'seated'). It is not held for people, because it
  * cannot touch one. No person's body ever pairs with a chassis (collision.ts), the crowd takes no push, no stagger
  * and no step back from that car (03_Spawn_Agents/crowd.wgsl), the Sanctuary shields whoever it reaches and moves
- * nobody for it (07_Execute_Actions/sanctuary.ts), and the Ring-0 audit still halts the realm if its footprint ever
- * holds a solid person (ring0.ts IMPACT). Carrying out that person's instruction therefore breaks no First Law, and
- * the Second Law stands for them. Every other car (an AI driver's, a parked one, one a script or the operator's
- * console drives with nobody in it) is stopped for a person in its path exactly as before.
+ * nobody for it (07_Execute_Actions/sanctuary.ts), and the Ring-0 audit still halts the realm (ring0.ts IMPACT) if a
+ * solid person stands inside its footprint (grown by RING0.contactMargin) while it moves faster than
+ * RING0.movingSpeed (0.5 m/s), or touches it while it closes on them faster than that. A standing car can hold a
+ * person who walked into it; that is harmless, since no chassis ever pairs with a person. Carrying out the seated
+ * person's instruction therefore breaks no First Law, and the Second Law stands for them. Every other car (an AI
+ * driver's, a parked one, one a script or the operator's console drives with nobody in it) is stopped for a person in
+ * its path exactly as before.
  * What breaks if it is removed? Nothing stops a car nobody sits in from driving into a person.
  */
 import { KERNEL } from './civic.ts'

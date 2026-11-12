@@ -476,21 +476,59 @@ test('a seated car passes through a player standing in it and one ahead of it at
 test('a scripted car beside a seated one still stops for the player in its lane: the seat is the realm\'s word, never a mode', async () => {
   const { sim, poses, step } = await core(true)
   const lane = OPEN.x, carZ = OPEN.z - 30
+  // Car 1 in the next lane, 5 m over and 10 m back, so its door is out of car 0's reach; its pose follows car 0's.
+  const lane1 = OPEN.x + 5, car1Z = carZ - 10, C1 = POSE.stride
+  // Car 0 parked in the lane facing +z with player 0 25 m up it; car 1 parked in the next lane facing +z with player 2
+  // beside it and player 3 25 m up that lane; player 1 far off.
   step({ cmds: [
-    { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 200, player: 1 }, { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 220, player: 2 },
-    { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 240, player: 3 },
-    { c: 'setMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z: carZ, heading: 0 }, { c: 'teleport', x: lane, z: carZ + 25 },
+    { c: 'teleport', x: OPEN.x + 40, z: OPEN.z - 200, player: 1 },
+    { c: 'setMode', i: 0, mode: 'parked' }, { c: 'recover', i: 0, x: lane, z: carZ, heading: 0 },
+    { c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: lane1, z: car1Z, heading: 0 },
+    { c: 'teleport', x: lane1 - 2.5, z: car1Z, player: 2 }, { c: 'teleport', x: lane1, z: car1Z + 25, player: 3 },
+    { c: 'teleport', x: lane, z: carZ + 25 },
   ] })
   for (let i = 0; i < 60; i++) step()
-  // Car 0 in mode 'player' by a script's intent, nobody in it: the First Law holds it short of player 0.
-  let s = step()
-  for (let i = 0; i < 600; i++) s = step({ cmds: [{ c: 'intent', i: 0, throttle: 1, brake: 0, steer: 0 }] })
-  assert.equal(sim.halted, false, sim.panic ?? '')
+  let s = step({ cmds: [{ c: 'interact', player: 2 }] })
+  assert.deepEqual(s.drivings, [-1, -1, 1, -1], 'player 2 sits in car 1, and nobody sits in car 0')
+  for (let i = 0; i < 10; i++) s = step()
+  const at0 = { x: s.avatar.x, z: s.avatar.z }, at3 = { x: s.avatars[3].x, z: s.avatars[3].z }
+  assert.ok(Math.abs(at0.x - lane) < 0.1 && Math.abs(at0.z - (carZ + 25)) < 0.1, 'player 0 stands in car 0\'s lane')
+  assert.ok(Math.abs(at3.x - lane1) < 0.1 && Math.abs(at3.z - (car1Z + 25)) < 0.1, 'player 3 stands in car 1\'s lane')
+  // The same steps drive both: car 0 on a script's intent with nobody in it, car 1 on player 2's own controls at full
+  // throttle until its rear is 5 m past player 3, then braked to a stand.
+  const go = [IDLE_PLAYER, { foot: STILL, drive: { steer: 0, fwd: 1, back: 0, handbrake: false } }, IDLE_PLAYER]
+  const brake = [IDLE_PLAYER, { foot: STILL, drive: { steer: 0, fwd: 0, back: 1, handbrake: false } }, IDLE_PLAYER]
+  const hold = [IDLE_PLAYER, { foot: STILL, drive: { steer: 0, fwd: 0, back: 0, handbrake: true } }, IDLE_PLAYER]
+  let top = 0, throttle = Infinity, shielded = false, past = false, both = false
+  for (let i = 0; i < 600; i++) {
+    past ||= poses[C1 + POSE.z] - CAR.halfLength > at3.z + 5
+    const players = !past ? go : poses[C1 + POSE.speed] > 0.6 ? brake : hold
+    s = step({ players, cmds: [{ c: 'intent', i: 0, throttle: 1, brake: 0, steer: 0 }] })
+    assert.equal(sim.halted, false, sim.panic ?? '')
+    if (past) continue
+    top = Math.max(top, poses[C1 + POSE.speed])
+    throttle = Math.min(throttle, poses[C1 + POSE.throttle])
+    if (Math.abs(poses[C1 + POSE.z] - at3.z) < CAR.halfLength + 0.3) shielded ||= s.avatars[3].sensor
+    // One step with both cars in mode 'player', car 0 held off its script's full throttle and car 1 on full throttle.
+    both ||= MODES[poses[POSE.mode]] === 'player' && MODES[poses[C1 + POSE.mode]] === 'player' &&
+      poses[POSE.throttle] === 0 && poses[C1 + POSE.throttle] === 1
+  }
+  // Car 0, with nobody in it: held short of player 0 by the First Law.
   const gap = s.avatar.z - (poses[POSE.z] + CAR.halfLength)
-  assert.ok(gap > 1.0, `held short of player 0: ${gap.toFixed(2)} m`)
-  assert.ok(Math.abs(poses[POSE.speed]) < 0.2)
+  assert.ok(gap > 1.0, `car 0 held short of player 0: ${gap.toFixed(2)} m`)
+  assert.ok(Math.abs(poses[POSE.speed]) < 0.2, `car 0 stands (${poses[POSE.speed].toFixed(2)} m/s)`)
   assert.ok(s.kernel.last.startsWith('First Law'), s.kernel.last)
-  assert.equal(s.kernel.audit.panic, null)
+  assert.ok(both, 'in one step, both cars in mode player: car 0 held, car 1 on full throttle')
+  // Car 1, with player 2 seated in it, in the same steps: never held, full throttle through player 3, nobody moved.
+  assert.ok(past, `car 1 passed player 3 (its rear at z=${(poses[C1 + POSE.z] - CAR.halfLength).toFixed(1)})`)
+  assert.ok(top > 8, `car 1 was never held (top ${top.toFixed(1)} m/s)`)
+  assert.equal(throttle, 1, 'car 1 kept full throttle until it was past player 3')
+  assert.ok(shielded, 'player 3 was a sensor while car 1 was in them')
+  assert.ok(Math.hypot(s.avatars[3].x - at3.x, s.avatars[3].z - at3.z) < 0.05, 'player 3 was not moved')
+  assert.ok(Math.hypot(s.avatar.x - at0.x, s.avatar.z - at0.z) < 0.05, 'player 0 was not moved')
+  assert.ok(Math.abs(poses[C1 + POSE.speed]) < 0.2, `car 1 braked to a stand (${poses[C1 + POSE.speed].toFixed(2)} m/s)`)
+  assert.deepEqual(s.drivings, [-1, -1, 1, -1], 'player 2 still sits in car 1')
+  assert.equal(s.kernel.audit.panic, null, 'no Ring-0 panic')
 })
 
 test('a reset rights the car of the player it names: player 1\'s at the wheel, nobody\'s for a player on foot, a bad player refused', async () => {

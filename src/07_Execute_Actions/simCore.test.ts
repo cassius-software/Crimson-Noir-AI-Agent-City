@@ -7,7 +7,7 @@
  * plain data only; the page's controls are clamped (a run is the fastest walk, the wheel and pedals stay in
  * range); a script's walk (sim.avatar.walk) moves the avatar for its time, overriding the keys only while it lasts,
  * and no faster than a run; the crowd's hazard readings reach the Bouncer, aged on the realm's own clock so a stale reading only
- * brings a person nearer and a silent sensor makes every car hold; the crowd is fed the realm's own cars, avatar
+ * brings a person nearer and a silent sensor makes every car nobody sits in hold; the crowd is fed the realm's own cars, avatar
  * and clock; entering and leaving a car happen in the realm and come back as events; the fault-injection
  * commands are refused unless the worker was built for ?debug; malformed, unknown or flooding commands are
  * counted and dropped; the Ring-0 audit runs in the realm right after the substeps and halts it for good on an
