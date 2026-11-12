@@ -91,9 +91,13 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
 /**
  * Lite, tier -1: below Minimal for entry-level phone GPUs (DeviceProfile.lite). It is not in TIERS, so ?quality=0…4, the
  * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
- * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
+ * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a smaller crowd draw than Minimal, spent
+ * where a small screen can show it: everyone within maxDistance (crowdDensity 1) and nobody beyond, a wall less than
+ * half as far as Minimal's. A person 80 m off is a few pixels at this resolution; the same share of the draw kept as a
+ * lottery out to there (15 % to 80 m, as Lite first shipped) left a street two people wide and the rest appearing from
+ * nothing at 14 m. The drawn count stays a step under Minimal's by the table's own rule (governor.test.ts).
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 1, lodDistance: 8, nearRadius: 6, maxDistance: 45, textureSize: 64, lampLights: 0 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 

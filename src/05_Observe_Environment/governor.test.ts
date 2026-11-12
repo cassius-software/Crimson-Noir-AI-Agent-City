@@ -137,16 +137,24 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
   assert.ok(Object.isFrozen(LITE))
   assert.deepEqual({ ...LITE }, {
     label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0,
-    crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0,
+    crowdDensity: 1, lodDistance: 8, nearRadius: 6, maxDistance: 45, textureSize: 64, lampLights: 0,
   })
   // The same rules as the table, one step further down.
   const min = TIERS[0]
   assert.ok(LITE.renderScale >= 0.5 && LITE.crowdDensity > 0)
   assert.ok(LITE.nearRadius <= LITE.lodDistance && LITE.lodDistance < LITE.maxDistance)
   assert.ok(FBM_SIZES.includes(LITE.textureSize))
-  for (const k of ['renderScale', 'crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'lampLights'] as const) assert.ok(LITE[k] <= min[k], `Lite.${k} <= Minimal.${k}`)
+  for (const k of ['renderScale', 'lodDistance', 'nearRadius', 'maxDistance', 'textureSize', 'lampLights'] as const) assert.ok(LITE[k] <= min[k], `Lite.${k} <= Minimal.${k}`)
   assert.equal(LITE.lampLights, 0, 'a lite boot builds no clustered lighting (world.ts LITE_WORLD), so Lite lights no lamp')
-  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + k.crowdDensity + k.maxDistance / 1000 + k.shadowMapSize / 8192 + k.textureSize / 1024
+  // The crowd is the table's rule, by the same model of the GPU cull: the step down to Lite culls the drawn crowd by 15 %
+  // or more. Not knob by knob: Lite draws everyone inside a wall less than half as far as Minimal's (a person 80 m off
+  // is a few pixels of a lite phone's frame), where Minimal keeps a fifth of the people out to 110 m.
+  assert.equal(LITE.crowdDensity, 1, 'no lottery on Lite: nobody appears from nothing at the edge of nearRadius')
+  assert.ok(LITE.maxDistance <= 0.5 * min.maxDistance, 'a wall less than half as far as Minimal\'s')
+  const drawn = crowdDrawn(LITE), drawnMin = crowdDrawn(min)
+  assert.ok(drawn <= 0.85 * drawnMin, `the step Minimal → Lite culls ≥ 15 %: ${drawn} of ${drawnMin}`)
+  assert.ok(drawn >= 0.5 * drawnMin, `and no more than half: a street on Lite has people on it (${drawn} of ${drawnMin})`)
+  const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + crowdDrawn(k) / drawnMin + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(LITE) < cost(min), 'Lite is strictly less work than Minimal')
   assert.ok(!new Set(TIERS.map((t) => t.label)).has(LITE.label))
 })

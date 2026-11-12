@@ -1197,7 +1197,10 @@ export class Engine {
       // shore wall. A surveyed region has no window and none of it.
       const transit = pack && layout && streets && hollow ? regionTransit(hollow.pack, layout, streets) : null
       const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The lots whose floors the window's painted light shows lit (region/paintedLight.ts): the workplaces', whose
+      // ceilings hang real fixtures wherever lamps are lit, and the shops' and the homes', which have none.
+      const interiors = hollow ? [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))] : []
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit, interiors } : null, lite ? LITE_WORLD : FULL_WORLD)
       // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
       // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
       // VTOL routes and racetrack as the page does.
