@@ -175,6 +175,11 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   assert.deepEqual([...WARDROBE.frames], ['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline'])
   assert.deepEqual([...WARDROBE.watch], ['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch'])
   assert.deepEqual([...WARDROBE.lapelPin], ['none', 'rank pin', 'silver bar', 'buttonhole flower'])
+  // The same for the finishes: the shoe's leather, the tie's pattern or clip and the bag's make are paint on the shoe,
+  // the tie and the bag the body already has, and no pattern is anyone's colours or emblem.
+  assert.deepEqual([...WARDROBE.shoeFinish], ['leather', 'polished', 'patent', 'suede'])
+  assert.deepEqual([...WARDROBE.tieStyle], ['plain', 'repp stripe', 'pin dot', 'foulard', 'knit', 'satin', 'check', 'tie bar'])
+  assert.deepEqual([...WARDROBE.bagStyle], ['briefcase', 'brass clasps', 'carbon twill', 'aluminium', 'canvas', 'quilted', 'pebble grain', 'saddle stitched'])
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)

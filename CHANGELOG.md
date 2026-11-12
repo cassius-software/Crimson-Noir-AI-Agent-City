@@ -15,6 +15,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A shoe's finish, a tie's style and a bag's.** The look genome's accessory word (word 6) gains the shoe's finish at
+  two bits (21 and 22: leather, as before; polished; patent; suede), the tie's style at three (23 to 25: plain, as
+  before; repp stripe; pin dot; foulard; knit; satin; check; tie bar) and the bag's at three (26 to 28: briefcase, as
+  before; brass clasps; carbon twill; aluminium; canvas; quilted; pebble grain; saddle stitched). Bits 15 to 20 stay
+  held for the umbrella, the headphones and the heel; 29 to 31 are spare and refused. Option 0 of each is as before,
+  so every chosen look keeps its code. All three are paint and sheen on the near body's shoe, tie and bag in
+  `src/03_Spawn_Agents/crowd.ts`: a finish sets the shoe's roughness and shade (`look.ts` `SHOE_FINISH_ROUGHNESS`,
+  `SHOE_FINISH_SHADE`; a boot's shaft too); the tie's patterns are drawn from the rest position, on the suit alone, the
+  one body with a tie; the bag gets its clasps, weave, ribs, trim, quilting, grain or stitch, and an aluminium case is
+  a metal. The far body keeps all three as before. The street draws them on the colours' chain's links 49 to 55 (54 is
+  skipped: it truncates to the pieces' 32), in the shader and in `lookFromSeed` alike, and never carries carbon twill
+  or aluminium. The player's own hashed look (seed 0) now wears polished shoes and a canvas bag, so its code grows a
+  tail. The card shows Shoe finish, Tie style (on the suit, with a tie) and Bag style (with a bag) rows, and the console
+  takes `look shoeFinish patent`, `look tieStyle repp stripe` and `look bagStyle carbon twill`. The shader budget holds:
+  the worst near main fragment stage is 196,260 characters (was 183,909; the target is 225,000), and the far ones are
+  unchanged. `dist/index.html` grows by 5,280 bytes, from 12,026,332 to 12,031,612; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Twenty-two looks in the watch shop's mirror, on the software WebGPU
+  adapter (SwiftShader), show the four finishes on cap-toe shoes, a patent knee boot, a suede ankle boot, the eight tie
+  styles and the eight bag styles. Unverified: no hardware GPU has compiled or drawn it yet.
 - **Bare legs and tattoos on the calf and the ankle.** The look genome's cloth word gains the legs (word 5, bits 18
   and 19: as hashed, as before; bare; sheer; opaque) and the second tattoo word a design (0 for none, or one of
   sixty-four) on the left calf and the right ankle at seven bits each (word 8, bits 14 to 27; bits 28 to 31 spare and

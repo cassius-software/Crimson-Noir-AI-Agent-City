@@ -29,6 +29,7 @@ import {
   CUT, CUT_STREET, CUT_STREET_PACKED, garmentOf, LOOK_GARMENTS, lookGarment, lookWears, TIELESS_CUTS, withGarment,
   BOTTOM_CUT_STREET, BOTTOM_CUT_STREET_PACKED, LOOK_LOWER_GARMENTS, SKIRT_CUT, TROUSER_CUT, lookLowerGarment, lowerGarmentFits, lowerGarmentOf,
   FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET, FOOTWEAR_STREET_PACKED, FRAME_FINISH, FRAMES, LAPEL_PIN, TORTOISE_LIGHT, WATCH,
+  BAG_STREET, BAG_STREET_PACKED, BAG_STYLE, BAG_STYLE_ROUGHNESS, SHOE_FINISH, SHOE_FINISH_ROUGHNESS, SHOE_FINISH_SHADE, SHOE_FINISH_STREET, SHOE_FINISH_STREET_PACKED, TIE_STYLE,
   LEGWEAR, LOOK_STREET_FLAG, PROSTHETIC, SLEEVES, streetTattoos, tattooCover,
   type Look, type LookBody, type LookSlot,
 } from './look.ts'
@@ -86,7 +87,7 @@ const BASE_FACE = Object.freeze({ brow: 8, jaw: 8, chin: 8, cheek: 8, nose: 8, e
 /** The wardrobe slots of an upgraded look: the jacket, a matching trim, no scarf. */
 const BASE_WARDROBE = Object.freeze({ layer: 0, trim: 0, scarf: 0 })
 /** The genome's later slots of a look kept before them: no vitiligo, no freckles. */
-const BASE_GENOME = Object.freeze({ vitiligo: 0, freckles: 0, curl: 0, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, topWeave: 0, bottomWeave: 0, cut: 0, bottomCut: 0, footwear: 0, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
+const BASE_GENOME = Object.freeze({ vitiligo: 0, freckles: 0, curl: 0, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, topWeave: 0, bottomWeave: 0, cut: 0, bottomCut: 0, footwear: 0, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0, shoeFinish: 0, tieStyle: 0, bagStyle: 0 })
 
 // --- The catalogue is the crowd's ------------------------------------------------------------------------------
 
@@ -165,10 +166,10 @@ test('the bodies, the piece bits, the grey, the hash chains, the odds, the hashe
   assert.equal(new Set(links).size, links.length, 'a link each')
   for (const k of links) assert.ok(k === 7 || k >= 9, `link ${k} is free of the pieces (1-5), the height (6) and the idle phase (8)`)
   // The hashed age, undertone and iris: the fragment chain's free links (1-6 and 9-12 are the colours).
-  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37, footwear: 38, footwearPick: 39, frames: 40, framesPick: 41, watch: 42, lapelPin: 43, tattoo: 44, tattooZones: 45, tattooFirst: 46, tattooSecond: 47, tattooInk: 48 })
+  assert.deepEqual(LOOK_HASHED_COLOUR, { age: 7, undertone: 8, iris: 13, trim: 14, scarfCloth: 15, trimCloth: 16, vitiligo: 17, vitiligoPattern: 18, freckles: 19, frecklesDensity: 20, marks: 21, headwearCloth: 24, curl: 25, facialHair: 26, facialHairStyle: 31, prosthetic: 28, prostheticLimb: 29, prostheticFinish: 30, weave: 32, weavePick: 33, cut: 34, cutPick: 35, bottomCut: 36, bottomCutPick: 37, footwear: 38, footwearPick: 39, frames: 40, framesPick: 41, watch: 42, lapelPin: 43, tattoo: 44, tattooZones: 45, tattooFirst: 46, tattooSecond: 47, tattooInk: 48, shoeFinish: 49, shoeFinishPick: 50, tieStyle: 51, tieStylePick: 52, bagStyle: 53, bagStylePick: 55 })
   const colourLinks = [...Object.values(LOOK_HASHED_COLOUR), LOOK_HASHED_COLOUR.marks + 1, LOOK_HASHED_COLOUR.marks + 2]
   for (const k of colourLinks) assert.ok(k === 7 || k === 8 || k >= 13, `colour link ${k} is free of the colours (1-6, 9-12)`)
-  assert.equal(new Set(colourLinks).size, 37, 'a link each, the marks\' offset three of them')
+  assert.equal(new Set(colourLinks).size, 43, 'a link each, the marks\' offset three of them')
   // The tattoos: one person in five carries ink, on the colours' chain's links 44 to 48; its ink's thresholds.
   assert.deepEqual([LOOK_ODDS.tattoo, LOOK_ODDS.inkGrey, LOOK_ODDS.inkIndigo, LOOK_ODDS.inkRed, LOOK_ODDS.inkGreen, LOOK_ODDS.inkWhite], [0.8, 0.7, 0.84, 0.91, 0.95, 0.98])
   assert.ok(CROWD.includes('h(LOOK_HASHED_COLOUR.age).mul(WARDROBE.ageSteps - 1).add(0.5).floor()).div(WARDROBE.ageSteps - 1)'))
@@ -207,7 +208,7 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     body: 4, height: 32, mass: 16, muscle: 16, shoulders: 16, hips: 16, legs: 16, posture: 16, head: 8,
     brow: 16, jaw: 16, chin: 16, cheek: 16, nose: 16, eyes: 16, lips: 16,
     skin: 18, age: 8, undertone: 4, vitiligo: 7, freckles: 4, hairStyle: 32, curl: 13, headwear: 8, headwearColour: 8, facialHair: 7, hearing: 5, prosthetic: 7, prostheticFinish: 4, topWeave: 16, bottomWeave: 16, bottomCut: 16, hairColour: 9, tie: 2, eyewear: 2, bag: 2, cup: 2, layer: 3, cut: 16, trim: 8, scarf: 8,
-    footwear: 12, frames: 8, watch: 5, lapelPin: 4,
+    footwear: 12, frames: 8, watch: 5, lapelPin: 4, shoeFinish: 4, tieStyle: 8, bagStyle: 8,
     tattooHand: 65, tattooHandR: 65, tattooNeck: 65, tattooNape: 65, tattooInk: 8, sleeves: 2, tattooForearm: 65, tattooForearmR: 65, legwear: 4, tattooCalf: 65, tattooAnkleR: 65,
   }
   assert.deepEqual(sizes(0), { ...common, top: 7, bottom: 8, shirt: 6, shoes: 3 })
@@ -242,11 +243,14 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     assert.deepEqual(lookOptions(b, 'frames').map((o) => o.name), ['black', 'tortoiseshell', 'steel', 'gold tone', 'navy', 'burgundy', 'clear', 'browline'])
     assert.deepEqual(lookOptions(b, 'watch').map((o) => o.name), ['none', 'steel three-hand', 'tourbillon chronograph', 'leather strap', 'smartwatch'])
     assert.deepEqual(lookOptions(b, 'lapelPin').map((o) => o.name), ['none', 'rank pin', 'silver bar', 'buttonhole flower'])
+    assert.deepEqual(lookOptions(b, 'shoeFinish').map((o) => o.name), ['leather', 'polished', 'patent', 'suede'])
+    assert.deepEqual(lookOptions(b, 'tieStyle').map((o) => o.name), ['plain', 'repp stripe', 'pin dot', 'foulard', 'knit', 'satin', 'check', 'tie bar'])
+    assert.deepEqual(lookOptions(b, 'bagStyle').map((o) => o.name), ['briefcase', 'brass clasps', 'carbon twill', 'aluminium', 'canvas', 'quilted', 'pebble grain', 'saddle stitched'])
     // The tattoo word's slots: every zone offers none and the sixty-four designs by id; the ink is a swatch.
     for (const s of ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape'] as const) assert.deepEqual(lookOptions(b, s), [{ name: 'none', hex: null }, ...TATTOO_MOTIFS.map((m) => ({ name: m.name, hex: null }))])
     assert.deepEqual(lookOptions(b, 'tattooInk'), TATTOO_INKS.map((i) => ({ name: i.name, hex: i.hex })))
-    for (const s of ['tie', 'eyewear', 'bag', 'cup', 'hairStyle', 'undertone', 'layer', 'vitiligo', 'freckles', 'curl', 'headwear', 'footwear', 'frames', 'watch', 'lapelPin'] as const) {
-      assert.equal(lookOptions(b, s)[0].name, s === 'hairStyle' ? 'short' : s === 'undertone' ? 'neutral' : s === 'layer' ? 'jacket' : s === 'curl' ? 'as styled' : s === 'footwear' ? 'plain' : s === 'frames' ? 'black' : 'none')
+    for (const s of ['tie', 'eyewear', 'bag', 'cup', 'hairStyle', 'undertone', 'layer', 'vitiligo', 'freckles', 'curl', 'headwear', 'footwear', 'frames', 'watch', 'lapelPin', 'shoeFinish', 'tieStyle', 'bagStyle'] as const) {
+      assert.equal(lookOptions(b, s)[0].name, s === 'hairStyle' ? 'short' : s === 'undertone' ? 'neutral' : s === 'layer' ? 'jacket' : s === 'curl' ? 'as styled' : s === 'footwear' || s === 'tieStyle' ? 'plain' : s === 'frames' ? 'black' : s === 'shoeFinish' ? 'leather' : s === 'bagStyle' ? 'briefcase' : 'none')
       assert.ok(lookOptions(b, s).every((x) => x.hex === null))
     }
     assert.equal(lookOptions(b, 'hairStyle').length, 32)
@@ -256,17 +260,17 @@ test('slot sizes: the pinned counts, every colour option a palette swatch, the p
     assert.deepEqual([lookOptions(b, 'height')[0].name, lookOptions(b, 'height')[31].name], ['1.50 m', '2.05 m'])
     assert.deepEqual([lookOptions(b, 'mass')[0].name, lookOptions(b, 'mass')[15].name, lookOptions(b, 'head')[7].name, lookOptions(b, 'nose')[15].name, lookOptions(b, 'age')[7].name], ['1', '16', '8', '16', '8'])
   }
-  assert.equal(LOOK_SLOTS.length, 60)
+  assert.equal(LOOK_SLOTS.length, 63)
   assert.deepEqual(LOOK_SLOTS.slice(0, 9), ['body', ...LOOK_BODY_SLIDERS])
   assert.deepEqual(LOOK_SLOTS.slice(9, 16), [...LOOK_FACE_SLIDERS])
   assert.deepEqual(LOOK_SLOTS.slice(16, 21), ['skin', 'age', 'undertone', 'vitiligo', 'freckles'], 'the skin\'s slots together')
   assert.deepEqual(LOOK_SLOTS.slice(21, 26), ['hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour'], 'the hair\'s slots and what is worn over it together')
   assert.deepEqual(LOOK_SLOTS.slice(26, 30), ['facialHair', 'hearing', 'prosthetic', 'prostheticFinish'], 'the person\'s own: facial hair, hearing devices, a limb')
-  assert.deepEqual(LOOK_SLOTS.slice(30, 49), ['layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin', 'eyewear', 'frames', 'watch', 'bag', 'cup'], 'the layer and its cut before the top it dyes, each cloth\'s weave after it, the trim after the top, the lower cut before the bottom, the shoe\'s style before its colour, the pin with the neckwear, the frames after the glasses')
-  assert.deepEqual(LOOK_SLOTS.slice(49, 54), ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk'], 'the tattoo word\'s zones in its order, then their one ink')
-  assert.deepEqual(LOOK_SLOTS.slice(54, 57), ['sleeves', 'tattooForearm', 'tattooForearmR'], 'the sleeves, then the forearms they bare')
-  assert.deepEqual(LOOK_SLOTS.slice(57, 60), ['legwear', 'tattooCalf', 'tattooAnkleR'], 'the legs, then the calf and the ankle they show')
-  assert.deepEqual([...LOOK_GENOME_SLOTS], ['vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish', 'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin', 'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR', 'legwear', 'tattooCalf', 'tattooAnkleR'])
+  assert.deepEqual(LOOK_SLOTS.slice(30, 52), ['layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'shoeFinish', 'tie', 'tieStyle', 'scarf', 'lapelPin', 'eyewear', 'frames', 'watch', 'bag', 'bagStyle', 'cup'], 'the layer and its cut before the top it dyes, each cloth\'s weave after it, the trim after the top, the lower cut before the bottom, the shoe\'s style before its colour and its finish after, the tie\'s style after the tie, the pin with the neckwear, the frames after the glasses, the bag\'s style after the bag')
+  assert.deepEqual(LOOK_SLOTS.slice(52, 57), ['tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk'], 'the tattoo word\'s zones in its order, then their one ink')
+  assert.deepEqual(LOOK_SLOTS.slice(57, 60), ['sleeves', 'tattooForearm', 'tattooForearmR'], 'the sleeves, then the forearms they bare')
+  assert.deepEqual(LOOK_SLOTS.slice(60, 63), ['legwear', 'tattooCalf', 'tattooAnkleR'], 'the legs, then the calf and the ankle they show')
+  assert.deepEqual([...LOOK_GENOME_SLOTS], ['vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish', 'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin', 'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR', 'legwear', 'tattooCalf', 'tattooAnkleR', 'shoeFinish', 'tieStyle', 'bagStyle'])
   assert.deepEqual([...LOOK_V4_SLOTS], LOOK_SLOTS.filter((s) => !(LOOK_GENOME_SLOTS as readonly string[]).includes(s)))
   assert.equal(LOOK_V4_SLOTS.length, 32)
   assert.deepEqual([...LOOK_V3_SLOTS], LOOK_V4_SLOTS.filter((s) => s !== 'layer' && s !== 'trim' && s !== 'scarf'))
@@ -332,7 +336,7 @@ test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bi
     assert.ok(largest <= 1 << (width + (high ? high[2] : 0)), `${slot}: ${largest} options in ${width} bits${high ? ` and ${high[2]} high` : ''}`)
     claim(slot, word, shift, width)
     if (high) claim(`${slot} (high)`, ...high)
-    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : slot === 'layer' || slot === 'trim' || slot === 'scarf' ? 3 : slot === 'topWeave' || slot === 'bottomWeave' || slot === 'cut' || slot === 'bottomCut' ? 5 : slot === 'footwear' || slot === 'frames' || slot === 'watch' || slot === 'lapelPin' ? 6 : slot === 'tattooHand' || slot === 'tattooHandR' || slot === 'tattooNeck' || slot === 'tattooNape' || slot === 'tattooInk' ? 7 : slot === 'tattooForearm' || slot === 'tattooForearmR' || slot === 'tattooCalf' || slot === 'tattooAnkleR' ? 8 : slot === 'sleeves' || slot === 'legwear' ? 5 : (LOOK_GENOME_SLOTS as readonly string[]).includes(slot) ? 4 : 0
+    const expected = (LOOK_BODY_SLIDERS as readonly string[]).includes(slot) ? 1 : (LOOK_FACE_SLIDERS as readonly string[]).includes(slot) || slot === 'hairStyle' ? 2 : slot === 'layer' || slot === 'trim' || slot === 'scarf' ? 3 : slot === 'topWeave' || slot === 'bottomWeave' || slot === 'cut' || slot === 'bottomCut' ? 5 : slot === 'footwear' || slot === 'frames' || slot === 'watch' || slot === 'lapelPin' || slot === 'shoeFinish' || slot === 'tieStyle' || slot === 'bagStyle' ? 6 : slot === 'tattooHand' || slot === 'tattooHandR' || slot === 'tattooNeck' || slot === 'tattooNape' || slot === 'tattooInk' ? 7 : slot === 'tattooForearm' || slot === 'tattooForearmR' || slot === 'tattooCalf' || slot === 'tattooAnkleR' ? 8 : slot === 'sleeves' || slot === 'legwear' ? 5 : (LOOK_GENOME_SLOTS as readonly string[]).includes(slot) ? 4 : 0
     assert.equal(word, expected, `${slot} is in word ${expected}`)
     assert.equal(word >= 4, (LOOK_GENOME_SLOTS as readonly string[]).includes(slot), `${slot}: the genome's later words hold its later slots alone`)
   }
@@ -346,7 +350,8 @@ test('LOOK_FIELD: sixteen words; the look word\'s bit 0 is the valid flag and bi
   assert.deepEqual(LOOK_FIELD.legwear, [5, 18, 2], 'the cloth word\'s legs, after the sleeves')
   assert.deepEqual([...used[5]].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => i), 'the cloth word\'s low twenty bits; the rest spare')
   assert.deepEqual([LOOK_FIELD.footwear, LOOK_FIELD.frames, LOOK_FIELD.watch, LOOK_FIELD.lapelPin], [[6, 0, 5], [6, 5, 4], [6, 9, 3], [6, 12, 3]], 'the accessory word: the shoe\'s style, the frames, the watch, the pin')
-  assert.deepEqual([...used[6]].sort((a, b) => a - b), Array.from({ length: 15 }, (_, i) => i), 'the accessory word\'s low fifteen bits; bits 15 to 31 are the next slice\'s')
+  assert.deepEqual([LOOK_FIELD.shoeFinish, LOOK_FIELD.tieStyle, LOOK_FIELD.bagStyle], [[6, 21, 2], [6, 23, 3], [6, 26, 3]], 'then the shoe\'s finish, the tie\'s style and the bag\'s, from bit 21')
+  assert.deepEqual([...used[6]].sort((a, b) => a - b), [...Array.from({ length: 15 }, (_, i) => i), ...Array.from({ length: 8 }, (_, i) => 21 + i)], 'the accessory word\'s low fifteen bits and 21 to 28; 15 to 20 are held for the umbrella, the headphones and the heel, 29 to 31 spare')
   assert.deepEqual([LOOK_FIELD.tattooHand, LOOK_FIELD.tattooHandR, LOOK_FIELD.tattooNeck, LOOK_FIELD.tattooNape, LOOK_FIELD.tattooInk], [[7, 0, 7], [7, 7, 7], [7, 14, 7], [7, 21, 7], [7, 28, 3]], 'the tattoo word: the left hand, the right hand, the neck, the nape, the ink')
   assert.deepEqual([...used[7]].sort((a, b) => a - b), Array.from({ length: 31 }, (_, i) => i), 'the tattoo word\'s low thirty-one bits')
   assert.ok(!used[7].has(31), 'bit 31: the street flag, the shader\'s and never a field\'s')
@@ -842,6 +847,11 @@ test('lookFromSeed is deterministic, always wearable, body = seed mod 4, and the
     assert.equal(look.watch, wrist >= Math.fround(0.93) ? 4 : wrist >= Math.fround(0.84) ? 3 : wrist >= Math.fround(0.72) ? 1 : 0)
     const lapel = hc(43)
     assert.equal(look.lapelPin, look.layer === LAYER.shirt ? 0 : lapel >= Math.fround(0.98) ? 3 : lapel >= Math.fround(0.96) ? 2 : 0)
+    // The shoe's finish on 49, one of the body's four on 50; a tie's style on 51, any of the seven on 52; a bag's on 53,
+    // one of the street's eight on 55 (54 truncates to the pieces' 32).
+    assert.equal(look.shoeFinish, hc(49) >= Math.fround(0.5) ? SHOE_FINISH_STREET[look.body][idx(hc(50), 4)] : 0)
+    assert.equal(look.tieStyle, look.tie === 1 && hc(51) >= Math.fround(0.5) ? 1 + idx(hc(52), 7) : 0)
+    assert.equal(look.bagStyle, look.bag === 1 && hc(53) >= Math.fround(0.55) ? BAG_STREET[idx(hc(55), 8)] : 0)
     // The tattoo word: a carrier on the colours' 44 (one in five), the zone set on 45, the set's first zone's design on
     // 46 and its second's on 47 (always a design after the studio's twelve), the ink on 48; the look holds the hands,
     // the neck, the nape, the forearms, the calf and the ankle, and the ink only where one of them is inked; a forearm
@@ -873,10 +883,10 @@ test('the two hash chains never share a link: no colour link the fragment reads 
 })
 
 test('lookFromSeed is pinned for the player\'s slot and the first agents, and its odds match the crowd\'s', () => {
-  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 12, age: 6, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 7, headwear: 0, headwearColour: 0, facialHair: 5, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, cut: 0, top: 1, topWeave: 0, trim: 2, bottomCut: 0, bottom: 0, bottomWeave: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0, footwear: 0, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
-  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 9, age: 3, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 0, curl: 9, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, cut: 0, top: 4, topWeave: 12, trim: 0, bottomCut: 0, bottom: 0, bottomWeave: 0, shirt: 3, shoes: 0, tie: 0, scarf: 2, eyewear: 0, bag: 1, cup: 0, footwear: 3, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
-  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 11, age: 4, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, cut: 0, top: 5, topWeave: 0, trim: 0, bottomCut: 5, bottom: 3, bottomWeave: 0, shirt: 4, shoes: 3, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0, footwear: 7, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
-  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 12, age: 2, undertone: 0, vitiligo: 0, freckles: 0, hairStyle: 2, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, cut: 10, top: 4, topWeave: 9, trim: 0, bottomCut: 1, bottom: 2, bottomWeave: 0, shirt: 1, shoes: 0, tie: 0, scarf: 7, eyewear: 1, bag: 0, cup: 0, footwear: 0, frames: 6, watch: 1, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
+  assert.deepEqual(lookFromSeed(0), { body: 0, height: 26, mass: 11, muscle: 4, shoulders: 0, hips: 8, legs: 8, posture: 8, head: 4, brow: 4, jaw: 4, chin: 5, cheek: 13, nose: 14, eyes: 14, lips: 2, skin: 12, age: 6, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 7, headwear: 0, headwearColour: 0, facialHair: 5, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, cut: 0, top: 1, topWeave: 0, trim: 2, bottomCut: 0, bottom: 0, bottomWeave: 0, shirt: 2, shoes: 0, tie: 0, scarf: 0, eyewear: 0, bag: 1, cup: 0, footwear: 0, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0, shoeFinish: 1, tieStyle: 0, bagStyle: 4 })
+  assert.deepEqual(lookFromSeed(1), { body: 1, height: 28, mass: 8, muscle: 14, shoulders: 4, hips: 15, legs: 12, posture: 5, head: 1, brow: 7, jaw: 11, chin: 15, cheek: 15, nose: 9, eyes: 4, lips: 4, skin: 9, age: 3, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 0, curl: 9, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 1, layer: 0, cut: 0, top: 4, topWeave: 12, trim: 0, bottomCut: 0, bottom: 0, bottomWeave: 0, shirt: 3, shoes: 0, tie: 0, scarf: 2, eyewear: 0, bag: 1, cup: 0, footwear: 3, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0, shoeFinish: 3, tieStyle: 0, bagStyle: 5 })
+  assert.deepEqual(lookFromSeed(2), { body: 2, height: 11, mass: 15, muscle: 12, shoulders: 4, hips: 4, legs: 3, posture: 2, head: 7, brow: 15, jaw: 2, chin: 2, cheek: 11, nose: 12, eyes: 1, lips: 6, skin: 11, age: 4, undertone: 2, vitiligo: 0, freckles: 0, hairStyle: 1, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, cut: 0, top: 5, topWeave: 0, trim: 0, bottomCut: 5, bottom: 3, bottomWeave: 0, shirt: 4, shoes: 3, tie: 0, scarf: 0, eyewear: 0, bag: 0, cup: 0, footwear: 7, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0, shoeFinish: 0, tieStyle: 0, bagStyle: 0 })
+  assert.deepEqual(lookFromSeed(3), { body: 3, height: 18, mass: 1, muscle: 4, shoulders: 10, hips: 2, legs: 1, posture: 10, head: 3, brow: 12, jaw: 9, chin: 8, cheek: 9, nose: 14, eyes: 7, lips: 6, skin: 12, age: 2, undertone: 0, vitiligo: 0, freckles: 0, hairStyle: 2, curl: 4, headwear: 0, headwearColour: 0, facialHair: 0, hearing: 0, prosthetic: 0, prostheticFinish: 0, hairColour: 6, layer: 0, cut: 10, top: 4, topWeave: 9, trim: 0, bottomCut: 1, bottom: 2, bottomWeave: 0, shirt: 1, shoes: 0, tie: 0, scarf: 7, eyewear: 1, bag: 0, cup: 0, footwear: 0, frames: 6, watch: 1, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0, shoeFinish: 2, tieStyle: 0, bagStyle: 0 })
   const n = 20000
   const rate = (pick: (l: Look) => number, from = 0, step = 1) => {
     let sum = 0, count = 0
@@ -943,10 +953,16 @@ test('lookFromSeed is pinned for the player\'s slot and the first agents, and it
   // entries as often as it is listed; a watch on about one wrist in four; half the glasses in a finish of their own; a
   // pin on a few jackets and coats; and never the tourbillon or the rank pin, which are the watch shop's.
   const shod = BODIES.map(() => new Map<number, number>())
-  let watches = 0, glasses = 0, finished = 0, pins = 0
+  const finishes = BODIES.map(() => new Map<number, number>())
+  const bagStyles = new Map<number, number>()
+  let watches = 0, glasses = 0, finished = 0, pins = 0, ties = 0, styledTies = 0, bags = 0
   for (let s = 0; s < n; s++) {
     const l = lookFromSeed(s)
     shod[l.body].set(l.footwear, (shod[l.body].get(l.footwear) ?? 0) + 1)
+    finishes[l.body].set(l.shoeFinish, (finishes[l.body].get(l.shoeFinish) ?? 0) + 1)
+    if (l.tie === 1) { ties++; if (l.tieStyle > 0) styledTies++ } else assert.equal(l.tieStyle, 0, 'no tie style without a tie')
+    if (l.bag === 1) { bags++; bagStyles.set(l.bagStyle, (bagStyles.get(l.bagStyle) ?? 0) + 1) } else assert.equal(l.bagStyle, 0, 'no bag style without a bag')
+    assert.ok(l.bagStyle !== BAG_STYLE.carbon && l.bagStyle !== BAG_STYLE.aluminium, `seed ${s}: the street carries no carbon twill or aluminium`)
     if (l.watch > 0) watches++
     if (l.eyewear === 1) { glasses++; if (l.frames > 0) finished++ }
     if (l.lapelPin > 0) pins++
@@ -962,6 +978,15 @@ test('lookFromSeed is pinned for the player\'s slot and the first agents, and it
   near(watches / n, 1 - LOOK_ODDS.watchSteel, 'a watch', 0.01)
   near(finished / glasses, 1 - LOOK_ODDS.frames, 'a frame finish, of those with glasses')
   near(pins / n, (1 - LOOK_ODDS.pinBar) * (1 - LOOK_ODDS.shirtSleeves), 'a lapel pin', 0.01)
+  // The finishes: half the shoes on every body, each of its entries as often as it is listed; half the ties, the
+  // seven styles about evenly; a little under half the bags, BAG_STREET's entries as often as they are listed.
+  for (const b of BODIES) {
+    const of = (f: number) => (finishes[b].get(f) ?? 0) / (n / 4)
+    near(1 - of(0), 1 - LOOK_ODDS.shoeFinish, `${LOOK_BODIES[b]}'s finished shoes`, 0.02)
+    for (const f of new Set(SHOE_FINISH_STREET[b])) near(of(f), (SHOE_FINISH_STREET[b].filter((x) => x === f).length / 4) * (1 - LOOK_ODDS.shoeFinish), `${LOOK_BODIES[b]} in finish ${f}`, 0.02)
+  }
+  near(styledTies / ties, 1 - LOOK_ODDS.tieStyle, 'a tie\'s style, of those with a tie', 0.03)
+  for (const k of new Set(BAG_STREET)) near((bagStyles.get(k) ?? 0) / bags, (BAG_STREET.filter((x) => x === k).length / 8) * (1 - LOOK_ODDS.bagStyle), `bag style ${k}, of those with a bag`, 0.015)
 })
 
 /** Words that would name a people or their dress: no cloth, cut or garment carries one. */
@@ -1170,9 +1195,9 @@ test('the lower garments: twenty, twelve pairs of trousers and eight skirts, nam
 // --- The accessory word --------------------------------------------------------------------------------------
 
 /** The accessory word's slots (word 6): the shoe's style, the frames' finish, the watch, the lapel pin. */
-const ACCESSORIES = ['footwear', 'frames', 'watch', 'lapelPin'] as const satisfies readonly LookSlot[]
+const ACCESSORIES = ['footwear', 'frames', 'watch', 'lapelPin', 'shoeFinish', 'tieStyle', 'bagStyle'] as const satisfies readonly LookSlot[]
 /** A look with the accessory word's slots, and the tattoo word's after them, all at 0: what it was before they existed. */
-const unadorned = (look: Look): Look => ({ ...look, footwear: 0, frames: 0, watch: 0, lapelPin: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
+const unadorned = (look: Look): Look => ({ ...look, footwear: 0, frames: 0, watch: 0, lapelPin: 0, shoeFinish: 0, tieStyle: 0, bagStyle: 0, tattooHand: 0, tattooHandR: 0, tattooNeck: 0, tattooNape: 0, tattooInk: 0, sleeves: 0, tattooForearm: 0, tattooForearmR: 0, legwear: 0, tattooCalf: 0, tattooAnkleR: 0 })
 /** A code's symbols, the dashes left out. */
 const symbolCount = (code: string): number => code.replaceAll('-', '').length
 
@@ -1187,7 +1212,7 @@ test('the accessory word\'s option 0 is as before: every preset, every bare look
   for (const p of LOOK_PRESETS) for (const slot of ACCESSORIES) assert.equal(p.look[slot], 0, `${p.name} wears no ${slot}`)
   // The codes pinned above, written before the accessory word existed, read back as they did.
   assert.deepEqual(parseLookCode('0B00144-S63RGY0-3RGY4R0-0000036'), LOOK_PRESETS[0].look)
-  assert.deepEqual(parseLookCode('0P20HH8-S2409F8-9EXNA40-000027V-00M0W0E3'), lookFromSeed(0))
+  assert.deepEqual(parseLookCode('0P20HH8-S2409F8-9EXNA40-000027V-00M0W0E3'), { ...lookFromSeed(0), shoeFinish: 0, tieStyle: 0, bagStyle: 0 }, 'the player\'s hashed look as it was before the finishes')
   // A record kept before the accessory word (no key for any of its slots) reads as the look with them at 0.
   const kept: Record<string, number> = { ...lookFromSeed(1) }
   for (const slot of ACCESSORIES) delete kept[slot]
@@ -1220,13 +1245,14 @@ test('the accessory word round-trips every option of its four slots on every bod
   assert.match(code, /^[0-9A-HJKMNP-TV-Z]{7}-[0-9A-HJKMNP-TV-Z]{7}-[0-9A-HJKMNP-TV-Z]{7}-[0-9A-HJKMNP-TV-Z]{7}-[0-9A-HJKMNP-TV-Z]{8}-[0-9A-HJKMNP-TV-Z]{8}-[0-9A-HJKMNP-TV-Z]{5}$/, code)
   assert.equal(symbolCount(code), 49)
   // Every slot at its last option together still round-trips.
-  const all = validateLook({ ...zero(3), footwear: 11, frames: 7, watch: 4, lapelPin: 3 })!
+  const all = validateLook({ ...zero(3), footwear: 11, frames: 7, watch: 4, lapelPin: 3, shoeFinish: 3, tieStyle: 7, bagStyle: 7 })!
   assert.deepEqual(parseLookCode(formatLookCode(all)), all)
-  assert.equal(packGenome(all)[6], 11 | (7 << 5) | (4 << 9) | (3 << 12))
+  assert.equal(packGenome(all)[6], (11 | (7 << 5) | (4 << 9) | (3 << 12) | (3 << 21) | (7 << 23) | (7 << 26)) >>> 0)
   // A bit of word 6 past the fields (a later slice's, or a forgery) is refused, as an older reader refuses this slice's.
   const forged = [...packGenome(chronograph)]
   forged[6] = (forged[6] | (1 << 15)) >>> 0
   assert.equal(unpackGenome(forged), null, 'bit 15 is no field\'s yet')
+  for (const bit of [20, 29, 31]) assert.equal(unpackGenome([...packGenome(zero(0)).slice(0, 6), (1 << bit) >>> 0]), null, `bit ${bit} is no field's`)
   assert.equal(unpackGenome([...packGenome(zero(0)).slice(0, 6), 1 << 31]), null)
   // Each slot past its options is refused, in the record and in the word.
   for (const slot of ACCESSORIES) assert.equal(withLookSlot(zero(1), slot, lookSize(1, slot)), null, `${slot} past its options`)
@@ -1235,6 +1261,7 @@ test('the accessory word round-trips every option of its four slots on every bod
   // A body change keeps them: every body has the same lists.
   assert.deepEqual(withLookSlot(all, 'body', 0)!.footwear, 11)
   assert.deepEqual(withLookSlot(all, 'body', 0)!.lapelPin, 3)
+  assert.deepEqual([withLookSlot(all, 'body', 1)!.shoeFinish, withLookSlot(all, 'body', 1)!.tieStyle, withLookSlot(all, 'body', 1)!.bagStyle], [3, 7, 7])
 })
 
 test('the accessory tables: the street\'s shoe styles are styles, packed as crowd.ts reads them; each style its own set of features, the plain shoe none; the black frame the crowd\'s own; the names say what each is', () => {
@@ -1269,6 +1296,30 @@ test('the accessory tables: the street\'s shoe styles are styles, packed as crow
   assert.deepEqual(Object.values(FRAMES), WARDROBE.frames.map((_, i) => i), 'FRAMES names the list in order')
   assert.deepEqual(Object.values(WATCH), WARDROBE.watch.map((_, i) => i), 'WATCH names the list in order')
   assert.deepEqual(Object.values(LAPEL_PIN), WARDROBE.lapelPin.map((_, i) => i), 'LAPEL_PIN names the list in order')
+  assert.deepEqual(Object.values(SHOE_FINISH), WARDROBE.shoeFinish.map((_, i) => i), 'SHOE_FINISH names the list in order')
+  assert.deepEqual(Object.values(TIE_STYLE), WARDROBE.tieStyle.map((_, i) => i), 'TIE_STYLE names the list in order')
+  assert.deepEqual(Object.values(BAG_STYLE), WARDROBE.bagStyle.map((_, i) => i), 'BAG_STYLE names the list in order')
+  // The finishes' and the bag styles' option 0 keep the slot's own sheen and colour, as before (crowd.ts rough[]: the
+  // shoes' 0.35, the prop's 0.45), and the street's lists are styles, packed as crowd.ts reads them.
+  assert.equal(SHOE_FINISH_ROUGHNESS.length, WARDROBE.shoeFinish.length)
+  assert.equal(SHOE_FINISH_SHADE.length, WARDROBE.shoeFinish.length)
+  assert.equal(BAG_STYLE_ROUGHNESS.length, WARDROBE.bagStyle.length)
+  assert.deepEqual([SHOE_FINISH_ROUGHNESS[0], SHOE_FINISH_SHADE[0], BAG_STYLE_ROUGHNESS[0]], [0.35, 1, 0.45])
+  assert.ok(CROWD.includes('const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45,'), 'crowd.ts\'s shoe and prop roughness, the same')
+  assert.ok(SHOE_FINISH_ROUGHNESS[SHOE_FINISH.patent] < SHOE_FINISH_ROUGHNESS[SHOE_FINISH.polished] && SHOE_FINISH_ROUGHNESS[SHOE_FINISH.polished] < SHOE_FINISH_ROUGHNESS[0] && SHOE_FINISH_ROUGHNESS[0] < SHOE_FINISH_ROUGHNESS[SHOE_FINISH.suede], 'patent shines most, suede not at all')
+  for (const b of BODIES) {
+    assert.equal(SHOE_FINISH_STREET[b].length, 4)
+    for (const [i, f] of SHOE_FINISH_STREET[b].entries()) {
+      assert.ok(f >= 1 && f < WARDROBE.shoeFinish.length, `${LOOK_BODIES[b]}: a finish, not the leather (${f})`)
+      assert.equal((SHOE_FINISH_STREET_PACKED[b] >>> (4 * i)) & 15, f)
+    }
+  }
+  assert.equal(BAG_STREET.length, 8)
+  for (const [i, k] of BAG_STREET.entries()) {
+    assert.ok(k >= 1 && k !== BAG_STYLE.carbon && k !== BAG_STYLE.aluminium, `a street style (${k})`)
+    assert.equal((BAG_STREET_PACKED >>> (4 * i)) & 15, k)
+  }
+  assert.deepEqual([...SHOE_FINISH_STREET_PACKED, BAG_STREET_PACKED], [0x2111, 0x3133, 0x1321, 0x3122, 0x76654411])
   assert.ok(Object.isFrozen(FOOTWEAR_STREET) && Object.isFrozen(FRAME_FINISH) && Object.isFrozen(FOOTWEAR_FEATURES))
   // Named for what they are: never a people, never a place, never a maker.
   for (const slot of ACCESSORIES) {
@@ -1401,7 +1452,7 @@ test('the tattoo catalogue: sixty-four designs, eight families of eight, ids 1 t
   assert.deepEqual(TATTOO_ZONES.map((z) => z.label), ['Left hand', 'Right hand', 'Neck', 'Nape', 'Left forearm', 'Right forearm', 'Left calf', 'Right ankle'])
   assert.deepEqual(TATTOO_ZONES.map((z) => z.bone), [BONE.HAND_R, BONE.HAND_L, BONE.HEAD, BONE.HEAD, BONE.FOREARM_R, BONE.FOREARM_L, BONE.SHIN_R, BONE.SHIN_L])
   assert.deepEqual(TATTOO_ZONES.map((z) => z.slice), [1, 1, 1, 1, 2, 2, 3, 3])
-  assert.deepEqual(TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => z.slot), [...LOOK_SLOTS.slice(49, 53), ...LOOK_SLOTS.slice(55, 57), ...LOOK_SLOTS.slice(58, 60)], 'every zone is the wardrobe\'s: the hands, the neck, the nape, the forearms, the calf and the ankle')
+  assert.deepEqual(TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => z.slot), [...LOOK_SLOTS.slice(52, 56), ...LOOK_SLOTS.slice(58, 60), ...LOOK_SLOTS.slice(61, 63)], 'every zone is the wardrobe\'s: the hands, the neck, the nape, the forearms, the calf and the ankle')
   // The frames (zone order): the hands planar on their front face, the rest round an axis; each square inside its ring.
   assert.equal(TATTOO_FRAMES.length, 8)
   assert.deepEqual(TATTOO_FRAMES.map((f) => [f.axisX, f.centreY, f.half, f.radius, f.reps]), [
@@ -1790,20 +1841,23 @@ test('a look code is twenty-eight symbols "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX", and
   assert.equal(codes.size, new Set(looks.map((l) => packGenome(l).join(':'))).size, 'distinct looks give distinct codes')
   assert.equal(formatLookCode(withSlot(zero(0), 'shoes', 3)), '', 'nothing outside the wardrobe has a code')
   assert.equal(formatLookCode(LOOK_PRESETS[0].look), '0B00144-S63RGY0-3RGY4R0-0000036', 'a look of the four words keeps the code it always had')
-  assert.equal(formatLookCode(lookFromSeed(0)), '0P20HH8-S2409F8-9EXNA40-000027V-00M0W0E3')
+  assert.equal(formatLookCode(lookFromSeed(0)), '0P20HH8-S2409F8-9EXNA40-000025K-00A0E040-0000020G-0003J', 'the player\'s hashed look, its shoes polished and its bag canvas')
+  // The same look before the accessory word's finishes, a tail of the skin word alone.
+  const skinTail = { ...lookFromSeed(0), shoeFinish: 0, tieStyle: 0, bagStyle: 0 }
+  assert.equal(formatLookCode(skinTail), '0P20HH8-S2409F8-9EXNA40-000027V-00M0W0E3')
   // A tail is checked on its own and binds the head: one symbol changed anywhere, the head alone, a zero last word, a
   // nonzero lead bit or a length no tail has is refused.
-  const code = formatLookCode(lookFromSeed(0)).replaceAll('-', '')
+  const code = formatLookCode(skinTail).replaceAll('-', '')
   for (let i = 0; i < code.length; i++) for (const ch of ALPHABET) if (ch !== code[i]) assert.equal(parseLookCode(code.slice(0, i) + ch + code.slice(i + 1)), null, `${i} -> ${ch}`)
   assert.equal(parseLookCode(code.slice(0, 28)), null, 'the head cut off alone is not read as an older tone')
   for (let cut = 29; cut < code.length; cut++) assert.equal(parseLookCode(code.slice(0, cut)), null, `cut at ${cut}`)
-  const genome = packGenome(lookFromSeed(0))
+  const genome = packGenome(skinTail)
   const headOf = (ws: number[], check: number) => symbolsOf((BigInt(ws[0]) << 104n) | (BigInt(ws[1]) << 72n) | (BigInt(ws[2]) << 40n) | (BigInt(ws[3]) << 8n) | BigInt(check), 28)
   const twoWords = [...genome.slice(0, 5), 0]
   const padded = symbolsOf((BigInt(twoWords[4]) << 40n) | BigInt(crc8(twoWords.slice(4))), 15)
   assert.equal(parseLookCode(headOf(twoWords, crc8(twoWords)) + padded), null, 'a zero last word: one look, one code')
   const tailOf = (lead: bigint) => symbolsOf(lead | (BigInt(genome[4]) << 8n) | BigInt(crc8(genome.slice(4, 5))), 8)
-  assert.deepEqual(parseLookCode(headOf(genome, crc8(genome.slice(0, 5))) + tailOf(0n)), lookFromSeed(0))
+  assert.deepEqual(parseLookCode(headOf(genome, crc8(genome.slice(0, 5))) + tailOf(0n)), skinTail)
   assert.equal(code.length - 28, 8, 'one word and its check are forty bits: eight symbols, no lead bits')
   const forged = [...genome.slice(0, 4), (genome[4] | (1 << 31)) >>> 0]
   assert.equal(parseLookCode(headOf(forged, crc8(forged)) + symbolsOf((BigInt(forged[4]) << 8n) | BigInt(crc8(forged.slice(4))), 8)), null, 'a bit of the skin word no field holds')
