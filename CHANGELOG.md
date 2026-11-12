@@ -1984,7 +1984,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   is now everyone within 45 m and nobody beyond (`governor.ts` `LITE`: density 1, draw distance 45 m, was 0.15 and
   80 m), so nobody appears from nothing at 14 m; by the tests' own model of the GPU cull it draws 74% of what Minimal
   draws (it drew 37%), still a step under Minimal (`governor.test.ts` restates the rule as the drawn count, not knob by
-  knob). No new render or compute pipeline, no change to the crowd kernels (the phone's kernel memory keeps its key),
+  knob). A lite boot draws the same crowd on Minimal, the top of its automatic range (`governor.ts` `liteCrowd`), so
+  the one step up the governor can take it adds pixels and never thins the street round the visitor. With no lamp
+  lit (a lite boot, a headset, the day) the real light's focus is now off every map (`world.ts` `NO_REAL_LIGHT`): left
+  where the first update put it with a radius of 0, the pools' fade cut a disc a metre or two wide out of the painted
+  pools there for the whole session, on a lite boot right where the visitor started, in the procedural city too. No new render or compute pipeline, no change to the crowd kernels (the phone's kernel memory keeps its key),
   one 680×680 RGBA texture with mips (about 2.4 MB); `dist/index.html` grows by 4,650 bytes, from 12,059,574 to
   12,064,224, the limit in `tools/verify/page_dist.mjs` unchanged. Tests: `paintedLight.test.ts` (new) holds the bake
   to hand-worked scenes and to the metropolis as the page builds it (every lamp head over a lit pool, every crossing

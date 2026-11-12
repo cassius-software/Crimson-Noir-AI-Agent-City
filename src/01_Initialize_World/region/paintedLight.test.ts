@@ -95,10 +95,19 @@ test('a lamp paints its pool under its head', () => {
 test('two pools that meet brighten each other and never pass full', () => {
   // The two lamps facing each other across a street: heads 5 m apart.
   const south: [number, number, number] = [2210, 3203.9, Math.PI], north: [number, number, number] = [2210, 3196.1, 0]
-  const one = bakePaintedLight(scene({ lamps: [south] })), both = bakePaintedLight(scene({ lamps: [south, north] }))
+  const one = bakePaintedLight(scene({ lamps: [south] })), other = bakePaintedLight(scene({ lamps: [north] }))
+  const both = bakePaintedLight(scene({ lamps: [south, north] }))
   const mid = paintAt(both, 2210, 3200)[0]
   assert.ok(mid > paintAt(one, 2210, 3200)[0] + 0.1, 'the road between two heads is brighter than under one')
-  assert.ok(both.data.every((b, i) => i % 4 !== 0 || b <= 255))
+  // Screened, texel by texel: 1 − (1 − a)(1 − b), not their sum (which would pass full where two pools of a half meet).
+  let screened = 0
+  for (let i = 0; i < both.data.length; i += 4) {
+    const a = one.data[i] / 255, b = other.data[i] / 255
+    if (a === 0 && b === 0) { assert.equal(both.data[i], 0); continue }
+    near(both.data[i] / 255, 1 - (1 - a) * (1 - b), 1.5 / 255, `texel ${i / 4}`)
+    if (a > 0.3 && b > 0.3) screened++
+  }
+  assert.ok(screened > 20, `the two pools overlap where both are bright (${screened} texels), so the screen is tested`)
   // Twelve lamps on one spot still read full, not past it (a byte cannot, but the sum must not wrap either).
   const many = bakePaintedLight(scene({ lamps: Array.from({ length: 12 }, () => south) }))
   near(paintAt(many, 2210, 3202.5)[0], 1, 0.01, 'twelve pools on one spot')

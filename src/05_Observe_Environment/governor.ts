@@ -102,6 +102,18 @@ export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shad
 export const LITE_TIER = -1
 
 /**
+ * The knobs a lite boot draws at: on Lite and on Minimal (the whole of a lite profile's automatic range, tierRange) the
+ * crowd is Lite's, everyone within its wall; every other knob is the tier's own. Minimal keeps a fifth of the people
+ * out to 110 m, so a step up from Lite would thin the street round the visitor to put dots on the horizon, against
+ * the table's rule that a step up only adds: on a lite boot it adds pixels, and the people stay. A tier above Minimal
+ * (only a hand's pin reaches one: a lite profile's automatic range stops at Minimal) draws the table's own crowd.
+ */
+export function liteCrowd(k: QualityKnobs): QualityKnobs {
+  if (k.label !== LITE.label && k.label !== TIERS[0].label) return k
+  return { ...k, crowdDensity: LITE.crowdDensity, lodDistance: LITE.lodDistance, nearRadius: LITE.nearRadius, maxDistance: LITE.maxDistance }
+}
+
+/**
  * Peak, tier 5: above Ultra for big GPUs. It is not in TIERS (as Lite is not), so TOP, every one-argument tierRange and
  * every index the tests pin keep their meaning; knobsOf reads it. Ultra drawn at 1.25 times the resolution on each side,
  * about 1.56 times the pixels (quality.ts keeps the drawing buffer within the device's largest 2D texture), Ultra's

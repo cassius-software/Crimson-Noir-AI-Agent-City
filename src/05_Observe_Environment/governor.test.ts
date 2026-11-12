@@ -17,7 +17,7 @@ import { vec2 } from 'three/tsl'
 import { readFileSync } from 'node:fs'
 import {
   BIG_ADAPTER, CARS_DEFAULT, CROWD_DEFAULT, DEFAULT_LIMITS, GOVERNOR_RINGS, Governor, LANES, LANE_BYTES, LANE_RANGE, LITE, LITE_TIER, PEAK, PEAK_TIER, TIERS, classifyHardware, defaultAgents, defaultCars, defaultLanes,
-  knobsOf, degradeBudgetMs, estimateRefreshHz, laneCeiling, nativeHost, peakCandidate, profileDevice, readAdapterLimits, readDeviceHints, tierRange, type AdapterLimits, type DeviceHints,
+  knobsOf, degradeBudgetMs, estimateRefreshHz, laneCeiling, liteCrowd, nativeHost, peakCandidate, profileDevice, readAdapterLimits, readDeviceHints, tierRange, type AdapterLimits, type DeviceHints,
   type QualityKnobs,
 } from './governor.ts'
 import { FRAME_RING, FrameClock } from './telemetry.ts'
@@ -157,6 +157,26 @@ test('tiers: Lite is tier -1, below Minimal and outside the table; knobsOf reads
   const cost = (k: QualityKnobs) => k.renderScale + Number(k.shadows) + Number(k.post) + Number(k.volumetrics) + crowdDrawn(k) / drawnMin + k.shadowMapSize / 8192 + k.textureSize / 1024
   assert.ok(cost(LITE) < cost(min), 'Lite is strictly less work than Minimal')
   assert.ok(!new Set(TIERS.map((t) => t.label)).has(LITE.label))
+})
+
+test('tiers: a lite boot draws Lite\'s crowd on Minimal too, so its one automatic step up adds pixels and keeps the people; a tier above Minimal draws its own', () => {
+  const crowd = (k: QualityKnobs) => [k.crowdDensity, k.lodDistance, k.nearRadius, k.maxDistance]
+  const min = TIERS[0]
+  assert.deepEqual({ ...liteCrowd(LITE) }, { ...LITE })
+  const minOnLite = liteCrowd(min)
+  assert.deepEqual(crowd(minOnLite), crowd(LITE), 'Minimal on a lite boot draws Lite\'s crowd')
+  for (const k of Object.keys(min) as (keyof QualityKnobs)[]) {
+    if (!['crowdDensity', 'lodDistance', 'nearRadius', 'maxDistance'].includes(k)) assert.equal(minOnLite[k], min[k], `and Minimal's own ${k}`)
+  }
+  assert.ok(minOnLite.renderScale > LITE.renderScale, 'the step up still adds pixels')
+  assert.ok(Object.isFrozen(min), 'the table itself is untouched')
+  for (let t = 1; t < TIERS.length; t++) assert.equal(liteCrowd(TIERS[t]), TIERS[t], `${TIERS[t].label} draws its own crowd`)
+  assert.equal(liteCrowd(PEAK), PEAK)
+  // A lite profile's automatic range is exactly the two tiers whose crowd is Lite's: the governor never takes it to a
+  // tier that draws another crowd (a tier above is a hand's pin).
+  const range = tierRange({ mobile: true, gpuClass: 'mobile', startTier: LITE_TIER, lite: true })
+  assert.deepEqual([range.min, range.max], [LITE_TIER, 0])
+  assert.equal(crowdDrawn(minOnLite), crowdDrawn(LITE), 'the same people drawn')
 })
 
 test('tiers: Peak sits above the table like Lite', () => {

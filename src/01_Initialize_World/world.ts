@@ -206,6 +206,9 @@ export interface World {
   furniture: Furniture
   /** 0 by day, 1 at night: drives window, shop, lamp and signal-head emission. */
   night: UniformNode<'float', number>
+  /** Where the real lamp light reaches (materials.ts RealLight): the painted pools fade out inside it. With no lamp lit
+   *  (a lite boot, a headset, a tier that lights none, the day) its focus is NO_REAL_LIGHT, so every pool is painted. */
+  realLight: RealLight
   /** Seconds on the shared signal clock (drivers and pedestrians read the same value). */
   signalClock: UniformNode<'float', number>
   /**
@@ -312,6 +315,14 @@ export const LITE_WORLD: Readonly<WorldDetail> = Object.freeze({
 
 /** How far the focus moves before the lit lamps are chosen again, m (world.ts placeLampLights). */
 export const RESELECT_M = 3
+
+/**
+ * The real light's focus while no lamp is lit, engine metres on both axes: far off every map, so the painted pools'
+ * fade round it (materials.ts groundMaterial, regionWorld.ts paintedGlow) is whole everywhere. Left at the place of the
+ * last choice with a radius of 0, the fade still cut a disc a metre or two wide out of the pools there, for good: on a
+ * lite boot (which never lights a lamp) right where the visitor started.
+ */
+export const NO_REAL_LIGHT = 1e6
 
 /**
  * The glow of a lit city on whatever stands in it, on a night without real lamp light (a lite boot, a headset, a tier
@@ -695,7 +706,8 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     const want = nightness > 0.002 ? litLamps : 0
     if (want !== placedCount || (want > 0 && (fx - placedX) ** 2 + (fz - placedZ) ** 2 > RESELECT_M * RESELECT_M)) {
       realLight.radius.value = Math.sqrt(nearestLamps(lampHeads, fx, fz, want, nearest, lampScratch))
-      realLight.focus.value.set(fx, fz)
+      if (want > 0) realLight.focus.value.set(fx, fz)
+      else realLight.focus.value.set(NO_REAL_LIGHT, NO_REAL_LIGHT)
       for (let n = 0; n < lampLights.length; n++) {
         const l = lampLights[n]
         if (n < nearest.length) {
@@ -775,5 +787,5 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const setTextureSize = (size: number) => { fbm.setSize(size) }
   const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
 
-  return { scene, camera, boxes, furniture, night, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, setHomes, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, night, realLight, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, setHomes, region: regionScene, dissolve, update }
 }

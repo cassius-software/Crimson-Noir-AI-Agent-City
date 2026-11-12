@@ -42,7 +42,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { buildWorld, CITY_GLOW, FULL_WORLD, LITE_WORLD } = await import('../01_Initialize_World/world.ts')
+const { buildWorld, CITY_GLOW, FULL_WORLD, LITE_WORLD, NO_REAL_LIGHT } = await import('../01_Initialize_World/world.ts')
 const { CityLightsNode, FIXTURE, LAMP } = await import('../01_Initialize_World/cityLights.ts')
 const { SHADOW_TAPS, SUN_SHADOW } = await import('../01_Initialize_World/sunShadow.ts')
 const { workplaces } = await import('../01_Initialize_World/interiors.ts')
@@ -549,6 +549,25 @@ test('a night no real lamp lights gains the city\'s glow on its fill: a lite boo
   withoutProbe(() => lite.update(23, 0, 320, 320))
   close(fillOf(lite.scene).sky, none.sky, 'a lite night')
   close(fillOf(lite.scene).ground, none.ground, 'a lite night')
+})
+
+test('the painted pools fade only round lit lamps: with none lit (a lite boot, a tier that lights none, the day) the real light\'s focus is off every map', () => {
+  const world = buildWorld(offlineRenderer(), SEED)
+  const real = () => ({ x: world.realLight.focus.value.x, z: world.realLight.focus.value.y, r: world.realLight.radius.value })
+  const at = (hour: number, lamps: number, x = 320, z = 320) => { world.setLampLights(lamps); withoutProbe(() => world.update(hour, 0, x, z)); return real() }
+  const lit = at(23, 32)
+  assert.deepEqual([lit.x, lit.z], [320, 320], 'round the focus while lamps are lit')
+  assert.ok(lit.r > 10 && lit.r < 80, `out to the farthest lit lamp (${lit.r} m)`)
+  for (const [what, r] of [['no lamp lit', at(23, 0)], ['the day', at(12, 32, 900, 900)]] as const) {
+    assert.deepEqual([r.x, r.z, r.r], [NO_REAL_LIGHT, NO_REAL_LIGHT, 0], `${what}: off every map, a radius of 0`)
+  }
+  assert.deepEqual([at(23, 32, 400, 300).x, real().z], [400, 300], 'and back round the focus at night')
+  // The fade is a smoothstep from 1 m to 1.5 m round the focus at a radius of 0: off the map, no texel of any map is in it.
+  assert.ok(NO_REAL_LIGHT > 1e5 && Math.fround(NO_REAL_LIGHT) === NO_REAL_LIGHT, 'far, and exact in a shader\'s float')
+  const lite = buildWorld(offlineRenderer(), SEED, null, LITE_WORLD)
+  lite.setLampLights(128)
+  withoutProbe(() => lite.update(23, 0, 320, 320))
+  assert.deepEqual([lite.realLight.focus.value.x, lite.realLight.focus.value.y, lite.realLight.radius.value], [NO_REAL_LIGHT, NO_REAL_LIGHT, 0], 'a lite boot never lights a lamp')
 })
 
 test('the lakefront metropolis lights its rooms: four fixtures a room under the ceiling, the lamps of its street window clustered', () => {

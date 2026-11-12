@@ -3490,7 +3490,8 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a smaller
     crowd draw spent nearby (everyone within 45 m, detailed bodies within 8 m, nobody beyond: no lottery, so nobody
     appears from nothing a few metres off). Its automatic range is Lite to Minimal, so it never reaches a tier that
-    needs post or shadows;
+    needs post or shadows, and on Minimal it keeps Lite's crowd (a step up adds pixels, not people far off in place of
+    people near);
   - simulates 2,500 pedestrians and 12 cars unless `?crowd` or `?cars` says (a region's street window still caps the
     cars);
   - boots a lighter city, decided before anything compiles: the post chain capped off as with `?post=0` and never
