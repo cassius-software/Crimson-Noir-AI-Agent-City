@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { PIECE, SLOT, faceRings, silhouetteRings, type SilhouetteRing } from '../03_Spawn_Agents/humanoid.ts'
 import {
-  FRAME_FINISH, LAYER, LOOK_BODY_SLIDERS, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
+  FRAME_FINISH, LAYER, LEGWEAR, LEGWEAR_VEIL, LOOK_BODY_SLIDERS, TROUSER_CUT, LOOK_BUILDS, LOOK_FACE_SHAPES, LOOK_FACE_SLIDERS, LOOK_GARMENTS, LOOK_PRESETS, LOOK_SLOTS, bodyShapeOf, buildOf, faceShapeNameOf, faceShapeOf,
   LOOK_LOWER_GARMENTS, formatLookCode, garmentOf, lookFromSeed, lookOptions, lookSwatch, lookWears, lowerGarmentFits, lowerGarmentOf, matchingSwatch, parseLookCode,
   tattooCover, withBuild, withFaceShape, withGarment, withLookSlot,
   type Look, type LookBody, type LookFaceSlider, type LookSlider, type LookSlot,
@@ -119,6 +119,9 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'tattooForearm': return 'Left forearm'
     case 'tattooForearmR': return 'Right forearm'
     case 'sleeves': return 'Sleeves'
+    case 'legwear': return 'Legs'
+    case 'tattooCalf': return 'Left calf'
+    case 'tattooAnkleR': return 'Right ankle'
   }
 }
 
@@ -157,7 +160,9 @@ function themeOf(dark: boolean): Theme {
 
 /**
  * What paints each slot of the silhouette: the look's own colour where it holds one; where the shader hashes it (the
- * tie's cloth, the bag's leather, the hose) a quiet neutral, so the card never claims a colour the street may not show.
+ * tie's cloth, the bag's leather, the hose as hashed) a quiet neutral, so the card never claims a colour the street may
+ * not show. The skirt suit's legs follow the look's legwear: the skin bare, the neutral over it sheer (as crowd.ts veils
+ * it), the neutral opaque.
  */
 function silhouettePaint(look: Look): string[] {
   const own = (slot: LookSlot, fallback: number) => hex6(lookSwatch(look, slot) ?? fallback)
@@ -171,7 +176,9 @@ function silhouettePaint(look: Look): string[] {
   out[SLOT.SHOES] = own('shoes', 0x141414)
   out[SLOT.ACCENT] = '#2b2b2e'
   out[SLOT.PROP] = '#2a2a2a'
-  out[SLOT.LEGWEAR] = look.body === 3 ? '#2a2626' : out[SLOT.BOTTOM]
+  const hose = '#2a2626'
+  const sheer = (k: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(out[SLOT.SKIN].slice(i, i + 2), 16) * (1 - k) + parseInt(hose.slice(i, i + 2), 16) * k).toString(16).padStart(2, '0')).join('')}`
+  out[SLOT.LEGWEAR] = look.body !== 3 ? out[SLOT.BOTTOM] : look.legwear === LEGWEAR.bare ? out[SLOT.SKIN] : look.legwear === LEGWEAR.sheer ? sheer(LEGWEAR_VEIL) : hose
   // The frames in their finish (look.ts FRAME_FINISH, the crowd's own linear values, as the black was): the black, #0d0d0e, as before.
   out[SLOT.FRAME] = hex6(FRAME_FINISH[look.frames].reduce((n, c) => n * 256 + Math.round(255 * c), 0))
   out[SLOT.EYE] = '#e8e2dc'
@@ -258,7 +265,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, bag and hose keep the street's own colours; shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
       </p>
     </div>
   )
@@ -317,7 +324,7 @@ function Face({ look, t }: { look: Look; t: Theme }) {
 
 // --- The tattoos -------------------------------------------------------------------------------------------------
 
-/** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck, the nape and the forearms). */
+/** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck, the nape, the forearms, the left calf and the right ankle). */
 const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => ({ ...z, slot: z.slot as LookSlot }))
 /** The slots the Tattoos section shows (the zones and the ink), never as rows of their own. */
 const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)
@@ -342,7 +349,7 @@ function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, 
     <div className={`mb-2 mt-3 border-t pt-3 ${t.rule}`} role="group" aria-label="Tattoos" data-row="tattoos">
       <div className="mb-2 flex items-baseline gap-3">
         <div className={`w-20 shrink-0 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Tattoos</div>
-        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${t.muted}`}>Shown on you in the city and in a shop's mirror. Forearms need rolled sleeves.</p>
+        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${t.muted}`}>Shown on you in the city and in a shop's mirror. Forearms need rolled sleeves; the calf and the ankle bare or sheer legs.</p>
       </div>
       <div className="mb-2 flex items-start gap-3" data-row="tattoo-zone">
         <div className={label}>Zone</div>
@@ -507,6 +514,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           if (slot === 'frames' && worn.eyewear === 0) return null
           // A coat keeps its sleeves down (its own piece covers the arm), so under a coat there are no sleeves to roll.
           if (slot === 'sleeves' && worn.layer === LAYER.coat) return null
+          // The legs show on the skirt suit and below cropped trousers and culottes; full-length trousers hide them.
+          if (slot === 'legwear' && worn.body !== 3 && worn.bottomCut !== TROUSER_CUT.cropped && worn.bottomCut !== TROUSER_CUT.culottes) return null
           // The tattoos are one section, headed where the first zone's row would be: the zones and the ink have no rows of their own.
           if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />
           if (isTattooSlot(slot)) return null
