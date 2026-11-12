@@ -83,6 +83,50 @@ The one compiled third-party binary in the repository. It is not built here and 
   4. The owner reviews the NOTICE, this section and the module's provenance before the first release that ships the
      runtime.
 
+### The model the web copy serves (`third_party/qwen2.5-0.5b-instruct/`, added 12 November 2026)
+
+The one set of model weights the product offers, so that a visitor to the web copy with no model of their own can talk
+to Sloane in one tap. It is weights, not code, and none of it is in the repository:
+
+- **What it is.** `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf` (397,808,192 bytes, sha256
+  `6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653`), as bartowski publishes it in the Hugging Face
+  repository `bartowski/Qwen2.5-0.5B-Instruct-GGUF` at revision `41ba88dbac95fed2528c92514c131d73eb5a174b`: a GGUF
+  conversion of the Qwen team's Qwen2.5-0.5B-Instruct weights (Alibaba Cloud; Apache-2.0, Copyright 2024 Alibaba
+  Cloud) quantized to Q4_K_M with an importance matrix (llama.cpp release b3772, as the NOTICE beside it records).
+- **How it is held.** Never committed and never in the page. `src/09_Cognition/siteModel.ts` pins it (`SITE_MODEL`:
+  the file's name, size and SHA-256, the repository and the revision), `SHA256SUMS` beside the licence holds the same
+  line, and `siteModel.test.ts` holds the two equal. The web workflow (`.github/workflows/web.yml`) fetches the file
+  from Hugging Face at the pinned revision whenever its cache (keyed by the whole pin) does not hold it and, on every
+  publish, cached or not, `tools/web/siteModel.mjs place` checks its size and SHA-256 against the pin while copying it
+  into `dist-web/models/`, with `manifest.json`, `LICENSE` and `NOTICE` beside it; a mismatch fails the publish and
+  leaves no model behind. `place` refuses a folder that is not the web copy, so `dist/` (the single page that the
+  Windows app, the flake and the release builds carry) never gets it, and `tools/verify/page_dist.mjs` still fails a
+  `dist/` that holds a `.gguf`. `.github/workflows/site-model.yml` fetches and checks the pin on a pull request that
+  touches it. The page itself downloads the file from its own site only when a visitor taps for it, and checks the
+  same size and hash as it streams before anything is kept.
+- **The texts.** `LICENSE` is the Apache License 2.0 with Qwen's copyright line ("Copyright 2024 Alibaba Cloud") in
+  its appendix, the form Qwen's repositories carry. `NOTICE` says what the file is, where it comes from and at which
+  revision, that it is a quantization of Qwen's weights, and that the product serves it unchanged; `SHA256SUMS` is
+  its one hash line. The web workflow serves `LICENSE` and `NOTICE` beside the model as `models/LICENSE` and
+  `models/NOTICE`. `NOTICE.md` (in its shipped part, a paragraph under "Third-party software" and the trademark
+  paragraph; in its operator notes, item 14) and `LICENSE` section 4 name the model and this directory.
+- **Open points, for the owner before a release.**
+  1. `LICENSE` was reconstructed from the canonical Apache-2.0 text with Qwen's copyright line added; it was not
+     compared byte for byte with the copy in Qwen's own repository (`Qwen/Qwen2.5-0.5B-Instruct`), because Hugging
+     Face was not reachable from the build container. Compare it once, and on the same visit confirm the NOTICE's
+     statements about the repositories (neither Qwen repository has a NOTICE file; bartowski's names its licence as
+     apache-2.0 and has no licence file of its own; the llama.cpp release b3772).
+  2. The file served is a third party's quantization, not a file the Qwen team publishes. Section 4(b) of the licence
+     asks that a modified file carry a prominent notice that it was changed; the NOTICE served beside it says the
+     format and numeric precision were changed by bartowski's quantization and that the product changes nothing
+     further. Counsel should confirm that this is enough; the alternative is to pin a GGUF file the Qwen team
+     publishes itself (`Qwen/Qwen2.5-0.5B-Instruct-GGUF`), with its own size and hash.
+  3. The web copy is served from GitHub Pages, whose soft bandwidth limit is 100 GB a month, about 250 full downloads
+     of the model; the workflow never downloads it to check the served copy. Whether the downloads stay within
+     GitHub's terms for Pages is for the owner to watch.
+  4. The owner reviews the NOTICE, this entry and the pin before the change that adds them reaches main: the web
+     workflow serves the model from the next publish of main on.
+
 ## 2. The npm dependency tree (`package-lock.json`)
 
 Checked every entry of the lockfile by its `license` field (the test does the same on every run).

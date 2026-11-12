@@ -16,7 +16,8 @@
  * - ProvenanceChained: the audit chain so far verifies, so no step runs on a record that has been tampered with.
  * What this is and is not: every check here is a rule over text, settings and counts, applied the same way every
  * time (no clock, no randomness, no I/O), and the tests hold each one; it is not a proof about a model, and it does not
- * look inside one (no model and no weights ship with the product, so there are no activations to inspect or clamp).
+ * look inside one (the page carries no weights, and the one model the web copy serves beside it is run exactly as
+ * published, so there are no activations here to inspect or clamp).
  * The screen is a lexicon and is described as such in conduct.ts; the model's own judgement under the conduct core
  * is the second layer. The chain is SHA-256 over each entry's canonical body followed by the hash before it (the same
  * construction as the OS weight ledger, 10_Network/ledger.ts).

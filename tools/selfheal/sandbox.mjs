@@ -49,7 +49,7 @@ export const AI_TOOLING = ['.claude', '.cursor', '.continue', '.codeium', '.wind
 /** What is left out of the copy, at any depth: build output, dependencies the image carries, the history, Nix's
  *  result links and direnv cache (links into a store the container does not have), local AI tooling. A trailing `*`
  *  matches any rest of the name, as tar's --exclude does. */
-export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', '.cache', '__pycache__', 'result', 'result-*', '.direnv', ...AI_TOOLING]
+export const EXCLUDE = ['.git', 'node_modules', 'target', 'dist', 'dist-ssr', 'dist-pilot', 'dist-web', '.cache', '__pycache__', 'result', 'result-*', '.direnv', ...AI_TOOLING]
 
 /** Whether a path's part is one EXCLUDE names. */
 export const excluded = (part) => EXCLUDE.some((e) => (e.endsWith('*') ? part.startsWith(e.slice(0, -1)) : part === e))

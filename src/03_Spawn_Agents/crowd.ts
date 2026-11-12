@@ -41,6 +41,8 @@ import {
   LOOK_HASHED_FACE, LOOK_HASHED_HAIR_SPLIT, LOOK_HASHED_HEADWEAR, LOOK_HASHED_LAYER, LOOK_HASHED_SCARF,
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS, BOTTOM_CUT_STREET_PACKED, SKIRT_CUT, TROUSER_CUT,
   FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN, SLEEVES, LEGWEAR, LEGWEAR_VEIL,
+  SHOE_FINISH_ROUGHNESS, SHOE_FINISH_SHADE, SHOE_FINISH_STREET_PACKED, TIE_STYLE, BAG_STYLE, BAG_STYLE_ROUGHNESS, BAG_STREET_PACKED,
+  UMBRELLA, HEADPHONES, LOOK_HASHED_UMBRELLA, LOOK_HASHED_HEADPHONES,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 import { TATTOO_INK, TATTOO_LEG_ZONES, TATTOO_SLEEVE } from './tattoo.ts'
@@ -802,6 +804,20 @@ export class CrowdView {
           .add(select(hears(HEARING.implants), float(1 << LOOK_PIECE_BIT.coilL), float(0)))
           .add(select(hears(HEARING.implant, HEARING.implants, HEARING.implantAndAid), float(1 << LOOK_PIECE_BIT.coilR), float(0)))
         : float(0))
+      // The umbrella and the headphones (look.ts LOOK_CODED_PIECE): a chosen look's from its accessory word, or on the
+      // near body the street's, drawn as lookFromSeed draws them: a furled umbrella for one in ten with no cup, headphones
+      // on a few heads with no headwear and no hearing device. bodyVertex reads them from faceB.w (the near body's alone),
+      // and an umbrella takes the cup's hand: a chosen look's cup is left off under one (look.ts lookMask).
+      const accessoryWord = genomeQuad.z
+      const chosenUmbrella = accessoryWord.shiftRight(uint(LOOK_FIELD.umbrella[1])).bitAnd(uint(3))
+      const odds3 = (link: F1, edges: readonly number[], kinds: readonly number[]): U1 =>
+        edges.reduceRight((r: U1, edge, i) => select(link.greaterThanEqual(edge), uint(kinds[i]), r), uint(0))
+      const carried = near
+        ? float(select(custom, chosenUmbrella, select(cup.greaterThan(0), uint(0), odds3(h(LOOK_HASHED_UMBRELLA), [LOOK_ODDS.umbrellaWalking, LOOK_ODDS.umbrellaFolding], [UMBRELLA.walking, UMBRELLA.folding])))
+          .bitOr(select(custom, accessoryWord.shiftRight(uint(LOOK_FIELD.headphones[1])).bitAnd(uint(3)),
+            select(hashedHeadwear.equal(uint(HEADWEAR.none)).and(hashedHearing.equal(uint(HEARING.none))),
+              odds3(h(LOOK_HASHED_HEADPHONES), [LOOK_ODDS.earbuds, LOOK_ODDS.headphonesOver, LOOK_ODDS.headphonesOnEar], [HEADPHONES.earbuds, HEADPHONES.overEar, HEADPHONES.onEar]), uint(0))).shiftLeft(uint(2))))
+        : float(0)
       const ownGrooms = ownHair.add(headwearBits).add(genomePieces)
       const hashedHead = hashedHair.add(headwearBits).add(genomePieces)
       // The eye pass alone draws the face's features (their piece bit): the shadow map does without them.
@@ -839,6 +855,7 @@ export class CrowdView {
       const tieWorn = select(custom, float(word.shiftRight(uint(2 + LOOK_PIECE_BIT.tie)).bitAnd(uint(1))), step(0.3, h(1))).mul(1 << LOOK_PIECE_BIT.tie)
       const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedHead)).add(features).add(wardrobePieces)
         .sub(select(tieless, tieWorn, float(0)))
+        .sub(select(custom.and(chosenUmbrella.notEqual(uint(0))), float(word.shiftRight(uint(2 + LOOK_PIECE_BIT.cup)).bitAnd(uint(1))).mul(1 << LOOK_PIECE_BIT.cup), float(0)))
       const slider = (slot: Exclude<LookSlider, 'height'>) => {
         const n = (slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps) - 1
         return select(custom, stepOf(slot), hashedStep(LOOK_HASHED_SLIDER[slot], n)).div(n)
@@ -855,11 +872,11 @@ export class CrowdView {
       const faceStep = (slot: LookFaceSlider) =>
         select(custom, stepOf(slot), hashedStep(LOOK_HASHED_FACE[slot], WARDROBE.sliderSteps - 1)).sub(LOOK_SLIDER_MIDDLE.slider).div(LOOK_SLIDER_MIDDLE.slider)
       const faceA = vec4(0).toVar()
-      const faceB = vec4(0).toVar()
+      const faceB = vec4(0, 0, 0, carried).toVar()
       if (near) {
         If(rig.x.greaterThan(BONE.HEAD - 0.5).and(rig.x.lessThan(BONE.HEAD + 0.5)), () => {
           faceA.assign(vec4(faceStep('brow'), faceStep('jaw'), faceStep('chin'), faceStep('cheek')))
-          faceB.assign(vec4(faceStep('nose'), faceStep('eyes'), faceStep('lips'), 0))
+          faceB.assign(vec4(faceStep('nose'), faceStep('eyes'), faceStep('lips'), carried))
         })
       }
       // The skin (crowdBody.ts): one call gives the posed position (column 0) and its normal (column 1).
@@ -1069,6 +1086,20 @@ export class CrowdView {
     const pinLink = near ? h(LOOK_HASHED_COLOUR.lapelPin) : float(0)
     const lapelPin = near ? select(custom, gene(LOOK_FIELD.lapelPin), select(pinLink.greaterThanEqual(LOOK_ODDS.pinFlower), uint(LAPEL_PIN.flower),
       select(pinLink.greaterThanEqual(LOOK_ODDS.pinBar), uint(LAPEL_PIN.bar), uint(LAPEL_PIN.none)))).toVar() as unknown as U1 : uint(0)
+    // The finishes, the near body's alone as well: the shoe's (one of the body's four on the street, SHOE_FINISH_STREET),
+    // the tie's style (any of the seven; only the suit has a tie, so the other bodies read none) and the bag's (one of
+    // BAG_STREET's, never carbon twill or aluminium). A style needs no test of the tie or the bag: without one there is
+    // no mesh to paint, as the frames need none of the glasses.
+    const shoeFinish = near ? select(custom, gene(LOOK_FIELD.shoeFinish), select(h(LOOK_HASHED_COLOUR.shoeFinish).greaterThanEqual(LOOK_ODDS.shoeFinish),
+      uint(SHOE_FINISH_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.shoeFinishPick).mul(4 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))).toVar() as unknown as U1 : uint(0)
+    const tieStyle = near && variant === 0 ? select(custom, gene(LOOK_FIELD.tieStyle), select(h(LOOK_HASHED_COLOUR.tieStyle).greaterThanEqual(LOOK_ODDS.tieStyle),
+      uint(h(LOOK_HASHED_COLOUR.tieStylePick).mul(WARDROBE.tieStyle.length - 1 - 0.001)).add(uint(1)), uint(0))).toVar() as unknown as U1 : uint(0)
+    const bagStyle = near ? select(custom, gene(LOOK_FIELD.bagStyle), select(h(LOOK_HASHED_COLOUR.bagStyle).greaterThanEqual(LOOK_ODDS.bagStyle),
+      uint(BAG_STREET_PACKED).shiftRight(uint(h(LOOK_HASHED_COLOUR.bagStylePick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))).toVar() as unknown as U1 : uint(0)
+    // A finish's value from its table (look.ts SHOE_FINISH_SHADE, SHOE_FINISH_ROUGHNESS), the leather's when there is none.
+    const byShoeFinish = (table: readonly number[]): F1 => [1, 2, 3].reduceRight((r: F1, k) => select(shoeFinish.equal(uint(k)), float(table[k]), r), float(table[0]))
+    // The shoe's colour in its finish (patent a shade deeper, suede's nap a shade lighter), for the shoe and a boot's shaft.
+    const finishedShoe = near ? shoeCloth.mul(byShoeFinish(SHOE_FINISH_SHADE)).toVar() as unknown as V3 : shoeCloth
     // A boot's shaft (look.ts FOOTWEAR_FEATURES shaft) up the leg where it is bare: the skirt suit's hose, or below
     // cropped trousers and culottes (full-length trousers hide it, as they would), to above the ankle or, the knee
     // boot's, to just below the knee (humanoid.ts LANDMARK.knee 0.5). It covers a prosthetic shin and its finish too.
@@ -1258,7 +1289,7 @@ export class CrowdView {
     // A boot's shaft in the shoe's cloth, with a seam at its top and the lace-up boot's laces up its front (the near body's).
     const shinX = rest.x.sub(rest.x.sign().mul(LANDMARK.hipX))
     const bootColour = near
-      ? mix(mix(shoeCloth, shoeCloth.mul(0.6), thin(rest.y.sub(bootTop).abs(), 0.003)), shoeCloth.mul(0.45),
+      ? mix(mix(finishedShoe, finishedShoe.mul(0.6), thin(rest.y.sub(bootTop).abs(), 0.003)), finishedShoe.mul(0.45),
         select(footwearHas(FOOTWEAR_FEATURES.laces).and(rest.z.greaterThan(0.03)).and(shinX.abs().lessThan(0.01)), thin(rest.y.div(0.009).fract().sub(0.5).abs().mul(0.009), 0.0025), float(0)))
       : shoeCloth
     // The watch (look.ts WATCH) round the person's own left wrist (HAND_R, +x): a band below the wrist's ring (0.92)
@@ -1351,10 +1382,72 @@ export class CrowdView {
     const satin = outer.and(lining.or(cutIs(CUT.shawl).and(lapel.or(collar)).and(inV.or(shirtCollar).not()))).or(stripe)
     const sheen = select(satin, float(0.45), WEAVE_SHEEN.reduce((r: F1, [k, value]) => select(shownWeave.equal(uint(k)), float(value), r), float(-1))).toVar() as unknown as F1
     // The suit's tie keeps the hash's cloth; the other bodies' accent is the shirt. The skirt suit's hose is the hash's.
-    const accent = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
+    const tieCloth = variant === 0 ? pick(PALETTE.ties, h(5)) : shirt
+    // The tie's style (look.ts TIE_STYLE) on the suit's tie, from the rest position (humanoid.ts tieTube: 1.5 m down to
+    // 1.1 m, 3 to 5 cm across): a repp's bars rising to the wearer's left, a pin dot, a foulard's small diamonds, a knit's
+    // ribs across, a check, and a tie bar's steel clip at 1.3 m; satin is a sheen alone. A pattern's second colour is a
+    // light shade of the tie's own. The near suit's alone: the far body, and the bodies without a tie, keep the cloth.
+    let accent: V3 = tieCloth
+    let tieRough: F1 = float(0.6)
+    if (near && variant === 0) {
+      const tieIs = (k: number) => tieStyle.equal(uint(k))
+      const light = mix(tieCloth, SHOE.cream, 0.55)
+      // The distance from a coordinate to the nearest of a repeat's centres.
+      const toCentre = (t: F1, step: number): F1 => t.div(step).add(0.5).fract().sub(0.5).abs().mul(step)
+      const repp = thin(toCentre(rest.y.sub(rest.x), 0.014), 0.005)
+      const dots = thin(vec2(toCentre(rest.x, 0.006), toCentre(rest.y, 0.006)).length(), 0.0018)
+      const diamonds = thin(toCentre(rest.x, 0.011).add(toCentre(rest.y, 0.011)), 0.004)
+      const check = thin(toCentre(rest.x, 0.01), 0.0025).max(thin(toCentre(rest.y, 0.01), 0.0025)).mul(0.6)
+      const ribs = thin(toCentre(rest.y, 0.004), 0.0016)
+      const pattern = select(tieIs(TIE_STYLE.repp), repp, select(tieIs(TIE_STYLE.pinDot), dots, select(tieIs(TIE_STYLE.foulard), diamonds, select(tieIs(TIE_STYLE.check), check, float(0)))))
+      const clip = tieIs(TIE_STYLE.tieBar).and(rest.y.sub(1.3).abs().lessThan(0.0016)).and(rest.x.abs().lessThan(0.021))
+      accent = select(clip, steel, mix(tieCloth.mul(select(tieIs(TIE_STYLE.knit), float(1).sub(ribs.mul(0.4)), float(1))), light, pattern))
+      tieRough = select(clip, float(0.25), select(tieIs(TIE_STYLE.satin), float(0.22), select(tieIs(TIE_STYLE.knit), float(0.92), float(0.6))))
+    }
     const legwear = variant === 3 ? hose : bottom
-    const device = vec3(0.17, 0.175, 0.18)
-    const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), pick(PALETTE.bags, h(12)))
+    // The devices' charcoal (the hearing devices, the headphones), and an umbrella's canopy and handle near black.
+    const charcoal = vec3(0.17, 0.175, 0.18)
+    const device = near ? select(rig.z.greaterThan(PIECE.UMBRELLA_FOLDING - 0.5).and(rig.z.lessThan(PIECE.UMBRELLA_OPEN + 0.5)), vec3(0.018, 0.018, 0.02), charcoal) : charcoal
+    // The bag's style (look.ts BAG_STYLE) on the bag in the person's left hand, from the rest position (humanoid.ts
+    // bagTube: its broad faces 4.5 cm either side of x 0.242, from 0.56 m up to 0.76 m and its length along z, the handle
+    // above): brass clasps under a flap's seam, carbon twill's woven diamonds, an aluminium case's ribs and black handle,
+    // canvas in leather trim, quilting (the jacket's diamonds), pebble grain's mottle, a cream saddle stitch round the
+    // edges. The briefcase, and the far body's bag, keep the street's leather as before.
+    const leatherBag = pick(PALETTE.bags, h(12))
+    let bag: V3 = leatherBag
+    let bagRough: F1 = float(0.45)
+    let caseMetal: ReturnType<typeof onTrunk.and> = uint(0).equal(uint(1))
+    if (near) {
+      const bagIs = (k: number) => bagStyle.equal(uint(k))
+      const length = variant >= 2 ? 0.16 : 0.19
+      const handle = rest.y.greaterThan(0.77)
+      const face = rest.x.sub(LANDMARK.shoulderX * 1.06 + 0.03).abs().greaterThan(0.03)
+      const black = vec3(0.03, 0.03, 0.032)
+      const clasp = face.and(rest.y.sub(0.727).abs().lessThan(0.008)).and(rest.z.abs().sub(0.06).abs().lessThan(0.011))
+      const flapSeam = thin(rest.y.sub(0.742).abs(), 0.0025)
+      // The parity of the cell (its sum of two floors is negative over half the bag, where a remainder can be -1).
+      const twill = rest.z.add(rest.y).div(0.005).floor().add(rest.z.sub(rest.y).div(0.005).floor()).mod(2).abs()
+      const carbon = mix(vec3(0.03, 0.03, 0.034), vec3(0.085, 0.085, 0.095), twill)
+      const ribs = thin(rest.y.sub(0.58).div(0.04).add(0.5).fract().sub(0.5).abs().mul(0.04), 0.004)
+      const aluminium = mix(vec3(0.56, 0.57, 0.6), vec3(0.3, 0.31, 0.33), ribs)
+      const trim = handle.or(rest.y.greaterThan(0.735)).or(rest.y.lessThan(0.585)).or(rest.z.abs().greaterThan(length - 0.022))
+      const canvas = vec3(0.4, 0.37, 0.28)
+      const quilt = thin(diamond(rest.z.add(rest.y)).min(diamond(rest.z.sub(rest.y))), 0.002)
+      const pebble = float(0.82).add(step(0.2, rest.z.mul(700).sin().mul(rest.y.mul(640).add(rest.z.mul(230)).sin())).mul(0.2))
+      const seamAt = rest.y.sub(0.745).abs().min(rest.y.sub(0.575).abs()).min(rest.z.abs().sub(length - 0.012).abs())
+      const stitch = face.and(seamAt.lessThan(0.0011)).and(rest.z.add(rest.y).div(0.006).fract().lessThan(0.6))
+      bag = select(bagIs(BAG_STYLE.clasps), select(clasp, goldTone, mix(leatherBag, leatherBag.mul(0.5), flapSeam)),
+        select(bagIs(BAG_STYLE.carbon), select(handle, black, carbon),
+          select(bagIs(BAG_STYLE.aluminium), select(handle, black, aluminium),
+            select(bagIs(BAG_STYLE.canvas), select(trim, leatherBag, canvas),
+              select(bagIs(BAG_STYLE.quilted), mix(leatherBag, leatherBag.mul(0.55), quilt),
+                select(bagIs(BAG_STYLE.pebble), leatherBag.mul(pebble),
+                  select(bagIs(BAG_STYLE.saddle).and(stitch), SHOE.cream, leatherBag)))))))
+      bagRough = select(bagIs(BAG_STYLE.canvas).and(trim.not()), float(BAG_STYLE_ROUGHNESS[BAG_STYLE.canvas]),
+        [BAG_STYLE.carbon, BAG_STYLE.aluminium, BAG_STYLE.quilted, BAG_STYLE.pebble].reduceRight((r: F1, k) => select(bagIs(k), float(BAG_STYLE_ROUGHNESS[k]), r), float(BAG_STYLE_ROUGHNESS[BAG_STYLE.briefcase])))
+      caseMetal = bagIs(BAG_STYLE.aluminium).and(handle.not())
+    }
+    const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), bag)
     // The glasses' frame (look.ts FRAMES): black as before, or the finish chosen, a tortoiseshell mottled and a browline's
     // lower rim steel below its black brow (the rims are two bars: humanoid.ts, 1.6705 to 1.6735 and 1.6885 to 1.6915).
     // The far body has no glasses, so it keeps the one colour.
@@ -1372,14 +1465,22 @@ export class CrowdView {
     // SKULL's first ring at 1.575), under a jacket or a coat.
     const turtleNeck = cutIs(CUT.turtleneck).and(layer.notEqual(uint(LAYER.shirt))).and(onTrunk.or(boneIs(BONE.HEAD).and(rest.y.lessThan(1.578))))
     // The shoe's style over its colour (the plain shoe as it was).
-    shoes = footwearPaint(shoeCloth, footwear, hose, footprint, near)
+    shoes = footwearPaint(finishedShoe, footwear, hose, footprint, near)
     const slots: V3[] = [worn, shirt, select(turtleNeck, knitShirt, select(watchHere, watchColour, select(armHere, limbColour, skinShown))), hairShown, bottomShown, shoes, accent, prop, select(booted, bootColour, select(legHere, limbColour, legwear)), frame, white, iris, lip, scarf, fabric, device]
     const rough = [0.82, 0.7, 0.55, 0.6, 0.8, 0.35, 0.6, 0.45, 0.6, 0.3, 0.25, 0.3, 0.5, 0.78, 0.8, 0.4]
+    // The shoe's finish, the tie's style and the bag's set their slots' sheen on the near body (the leather's, the plain
+    // tie's and the briefcase's are the slots' own, as before); a cup in the hand keeps the prop's.
+    const roughOf: F1[] = rough.map((r) => float(r))
+    if (near) {
+      roughOf[SLOT.SHOES] = byShoeFinish(SHOE_FINISH_ROUGHNESS)
+      roughOf[SLOT.ACCENT] = tieRough
+      roughOf[SLOT.PROP] = select(rig.z.greaterThan(PIECE.CUP - 0.5), float(rough[SLOT.PROP]), bagRough)
+    }
     let color: V3 = slots[slots.length - 1]
-    let roughness: F1 = float(rough[rough.length - 1])
+    let roughness: F1 = roughOf[roughOf.length - 1]
     for (let s = slots.length - 2; s >= 0; s--) {
       color = select(skinSlot.lessThan(s + 0.5), slots[s], color)
-      roughness = select(skinSlot.lessThan(s + 0.5), float(rough[s]), roughness)
+      roughness = select(skinSlot.lessThan(s + 0.5), roughOf[s], roughness)
     }
     // Where a chosen look's ink shows, for the lit inks below (the street never wears them): the skin's slot, not under
     // the turtleneck's knit, the watch, a prosthetic hand, or a full or long beard (facialPaint's cover from 1.548 up,
@@ -1397,7 +1498,7 @@ export class CrowdView {
     // shows) and the hair as painted, the shirt's, the bottom's and the top's cloths, the colour. Each paint still pays
     // for its marks under its own branches.
     // (The variables are the call's inputs, so the colour graph is still walked from colorNode: lookWiring.test.ts.)
-    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin] : []), skinSlot, veil, wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
+    const shared = [footprint, ...links.values(), cut, bottomCut, footwear, shoeCloth, ...(near ? [frames, watch, lapelPin, shoeFinish, bagStyle, finishedShoe] : []), ...(near && variant === 0 ? [tieStyle] : []), skinSlot, veil, wornSkin, ...(inked && inkShown ? [inked, inkShown] : []), greyed, wornHair, skinShown, shirt, bottom, topCloth, woven, sheen, color.toVar()] as unknown as Node[]
     const declared = Fn((nodes: Node[]) => {
       for (const n of nodes) (n as unknown as { toStack(): unknown }).toStack()
       return nodes[nodes.length - 1]
@@ -1408,8 +1509,13 @@ export class CrowdView {
     // of skin (a boot's shaft takes a prosthetic shin out of the finish the same way: legHere). The far body has no watch.
     const limbShown = near ? limbHere.and(watchHere.not()) : limbHere
     const chrome = limbShown.and(fin(2))
-    m.roughnessNode = select(chrome, float(0.22), select(limbShown.and(fin(1)), float(0.4), select(sheen.greaterThanEqual(0), sheen, roughness)))
-    m.metalnessNode = select(chrome, float(0.85), float(0))
+    // A boot's shaft in a finish of its own takes the finish's sheen (in leather it keeps the legwear's or the
+    // trousers' as before); an aluminium case is a metal.
+    const surface = select(sheen.greaterThanEqual(0), sheen, roughness)
+    const finishedSurface = near ? select(booted.and(shoeFinish.notEqual(uint(0))), byShoeFinish(SHOE_FINISH_ROUGHNESS), surface) : surface
+    m.roughnessNode = select(chrome, float(0.22), select(limbShown.and(fin(1)), float(0.4), finishedSurface))
+    const onCase = caseMetal.and(skinSlot.greaterThan(SLOT.PROP - 0.5)).and(skinSlot.lessThan(SLOT.PROP + 0.5)).and(rig.z.lessThan(PIECE.CUP - 0.5))
+    m.metalnessNode = select(chrome, float(0.85), near ? select(onCase, float(0.8), float(0)) : float(0))
     // The studio's two inks are lit (the street never wears them, so only a chosen look's can be): gold leaf has a
     // metal's sheen and luminescent a faint glow of its own colour, each as far as the ink covers where it shows
     // (inkShown, above), and the glow goes as the body goes to code. Here, after the sheen and before the rain mode's

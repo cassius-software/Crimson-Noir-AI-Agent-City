@@ -17,7 +17,7 @@
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, WALK } from './humanoid.ts'
+import { BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, UMBRELLA_OPEN, WALK } from './humanoid.ts'
 
 const TAU = Math.PI * 2
 
@@ -36,8 +36,9 @@ const LOWER_TABLE = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.sli
  * walk phase, speed); its spring-damper pose (tilt, bend, push angle, activity); `stance` = (stature as a factor of
  * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
  * posture, head, lower cut), the sliders each 0..1, the lower cut as bodyGarment reads it (the cut, 16 more under a
- * coat); `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, -),
- * each −1..1; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
+ * coat); `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, carried), the sliders each −1..1, and
+ * `carried` the near body's code for the pieces past the mask (the umbrella | the headphones << 2, look.ts
+ * LOOK_CODED_PIECE; 0 on the far body) on every vertex; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
  * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
  * world centre (x, y, z) and rotation (a quaternion) of the rig shapes the vertex's two bones hang from, read when
  * `stance.w` (the rig slot word, slot + 1) is set: a fallen pedestrian's body wears the realm's rig (bodyRig) and
@@ -349,7 +350,12 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let bone1 = u32(skin.x + 0.5);
   let weight = clamp(skin.y, 0.0, 1.0);
   let mask = u32(stance.y + 0.5);
-  if (opt != 0u && ((mask >> opt) & 1u) == 0u) {
+  // The pieces from the umbrella's on are past the mask (a float holds its bits 1 to 24): three to a slot, each worn
+  // when its slot's option in the carried code (faceB.w: the umbrella, the headphones two bits up) is its own.
+  let carry = u32(faceB.w + 0.5);
+  let coded = opt - ${PIECE.UMBRELLA_FOLDING}u;
+  let worn = select(((mask >> opt) & 1u) == 1u, ((carry >> (coded / 3u * 2u)) & 3u) == coded % 3u + 1u, opt >= ${PIECE.UMBRELLA_FOLDING}u);
+  if (opt != 0u && !worn) {
     // A piece this person does not wear (the features too, in the shadow pass): every vertex on one point, nothing rasterised.
     return mat3x3f(agent.xyz, vec3f(0.0, 1.0, 0.0), vec3f(0.0));
   }
@@ -408,6 +414,9 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   var elbowR = -(${f(WALK.elbowRest)} + ${f(WALK.elbow)} * swing * max(0.0, -sL));
   if (holdingCup) { shoulderL = ${f(WALK.cupShoulder)} + shoulderL * ${f(WALK.cupSwing)}; elbowL = ${f(WALK.cupElbow)}; }
   if (carryingBag) { shoulderR = shoulderR * ${f(WALK.bagSwing)}; elbowR = -${f(WALK.elbowRest)}; }
+  // An umbrella in the left hand (it takes the cup's): furled, the arm still as with a bag; open, held up to its shaft.
+  let umbrella = carry & 3u;
+  if (umbrella == ${UMBRELLA_OPEN}u) { shoulderL = ${f(WALK.cupShoulder)}; elbowL = ${f(WALK.cupElbow)}; } else if (umbrella != 0u) { shoulderL = shoulderL * ${f(WALK.bagSwing)}; elbowL = -${f(WALK.elbowRest)}; }
   let armL = vec4f(shoulderL, elbowL, 0.0, 0.0);
   let armR = vec4f(shoulderR, elbowR, 0.0, 0.0);
   // Idle weight shift while standing; the push's bend on top, about the push's axis.
