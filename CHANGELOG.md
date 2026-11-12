@@ -1868,7 +1868,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   anything else, and the copy answers as before; another name, and the page is streamed from the host's fixed
   `index.html` (not the address that was opened, so no query string is a download of its own), isolated like the copy,
   while the new build's own worker keeps it in the background, after the launch's own download: the worker handing the
-  page on holds a named lock until that page is over, and a newer worker's install waits for it, a minute at most
+  page on holds a named lock until that page is over, and a newer worker's install waits for it, half a minute at most
   (Safari starts that install a second into the launch, and two downloads side by side would halve what the pace rule
   sees of the link; on a first visit the page now registers its worker at its load event, for the same reason). A launch
   is not left to a bad link: the host's page must begin within four seconds, and one that then brings nothing for more
@@ -1887,7 +1887,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (the page as published, the manifest, the icons, the worker's own text), so a changed icon or worker is a new build
   with a cache of its own. No request the worker answers writes a cache. `webApp.test.ts` runs the worker against a
   scripted host that holds back a fourth unread answer as Chrome does, and a clock the test turns (every refusal,
-  deadline, pace and query string; sixty deliberate breakages of the worker and the builder each fail a test), and
+  deadline, pace and query string; sixty-four deliberate breakages of the worker and the builder each fail a test), and
   `bootWatchdog.test.ts` the page's one load again; CI's `pwa` scenario publishes a second build into the served folder,
   first over a link that goes quiet a megabyte into the page (the page loads again by itself and the copy starts), then
   over one that goes quiet in the page's first bytes (the copy answers that very load), then whole: it runs on the very

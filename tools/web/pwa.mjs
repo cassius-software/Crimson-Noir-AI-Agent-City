@@ -161,11 +161,17 @@ export const HOLD = 32_768
  * LINK_MS at most, before it downloads anything for itself. A browser starts that install by itself during the very
  * launch that found the new build (Safari a second after the page's answer begins; Chrome only once the launch's work
  * is over), and the two downloads side by side would halve what the pace rule sees of the link. It holds one way
- * only: an install that has already begun holds nothing, and a launch that starts meanwhile downloads beside it.
- * Where a browser has no such locks, or refuses one, both simply go on.
+ * only: an install that has begun, or has only begun to wait, holds nothing against a launch that starts meanwhile,
+ * which downloads beside it. Where a browser has no such locks, or refuses one, both simply go on.
+ *
+ * LINK_MS is a backstop, not a wait any launch needs: the pace rule ends the largest page the builder may publish
+ * (tools/verify/page_dist.mjs MAX_BYTES) within twenty-five seconds, given up or whole, so only something else
+ * holding the name could keep an install the full time. It is half a minute and not more because Firefox gives an
+ * install event one minute in all, this wait included: an install kept waiting that whole minute would be stopped
+ * by the browser at the moment it was let go on (src/webApp.test.ts holds both numbers together).
  */
 export const PAGE_LOCK = 'agent-city-page-download'
-export const LINK_MS = 60_000
+export const LINK_MS = 30_000
 
 /**
  * The service worker. `cache` names this build (`agent-city-<version>-<build>`), so a new build installs beside the old
@@ -248,8 +254,9 @@ function holding(over) {
   } catch { /* no lock to be had: a newer build's install may download beside this page */ }
 }
 
-/** Resolves once no launch's page is coming from the host (nobody holds the lock), or after LINK_MS, or at once
- *  where the browser has no locks or refuses one. Never rejects. */
+/** Resolves once every launch that asked for the lock before this install has had its page (a launch that asks
+ *  later downloads beside the install), or after LINK_MS, or at once where the browser has no locks or refuses one.
+ *  Never rejects. */
 async function linkFree() {
   const stop = new AbortController()
   const timer = setTimeout(() => stop.abort(), LINK_MS)

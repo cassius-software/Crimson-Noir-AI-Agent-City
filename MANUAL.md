@@ -4057,28 +4057,29 @@ by `tools/web/pwa.mjs`:
   splash shows (about 7 MB compressed), and the new build's worker downloads it a second time to keep it, after the
   launch's own download: a browser starts that worker by itself during the launch (Safari a second into it, Chrome
   once the launch's work is over), so the worker that is handing the page on holds a named lock until that page is
-  over, and a newer worker's install waits for the lock, a minute at most, before it downloads anything (where a
-  browser has no such locks the two share the link, and the pace rule below sees only the launch's part of it). On a
-  first visit, with no worker yet, the page registers one at its load event, so the copy is fetched once the page has
-  arrived. The launch is not left to a bad link: the host's page must begin within four seconds, and once begun it
-  must keep coming: a download that brings nothing for more than five seconds (the worker looks once a second),
-  breaks, or after its first four seconds has averaged less than 600 kB of page a second (about three megabits a
-  second as GitHub sends it; the whole page in some twenty seconds at the slowest pace kept) is given up, and the
-  launch starts from the copy instead. How: the worker holds back the page's first 32 kB until they have all come; a
-  download given up before that has shown the phone nothing, and the copy takes that very answer over, with no second
-  load. Given up later, the page ends where it stopped, and the page itself, finding at its load event that its script
-  never ran under a worker, loads again, once (its watchdog, which those first 32 kB carry; once a minute a tab at
-  most, and only where the browser keeps session storage for the page): the copy answers that. Should that second load
-  end the same way, the card with Restart appears. After giving a page up the worker leaves the host alone for up to
-  five minutes (its own memory, lost when the browser stops the worker, which a browser does once the worker has had
-  nothing to answer for a while: about thirty seconds in Chrome, even with the app in use; a launch after that asks
-  the host again). A page that keeps its pace is never cut off. With no copy to fall back on there is no deadline
-  either: the host's page is waited for and nothing is given up. The worker keeps a build only when the host serves
-  that build's page (it checks the page's build stamp), so a deploy caught half way, or a cache ten minutes behind,
-  cannot file the older page under the new name; it tries again at the next launch. Chrome (140 and later) may itself
-  ask the host for the opened address while it starts a worker that was not running, and discards the answer when the
-  worker gives its own: that request is the browser's, not the worker's. A phone still holding a worker from before
-  this needs one launch online to get this one, then behaves as described;
+  over, and a newer worker's install waits for the lock, half a minute at most, before it downloads anything (a launch
+  itself never waits for it, and the pace rule below ends any page well inside that time) (where a browser has no such
+  locks the two share the link, and the pace rule below sees only the launch's part of it). On a first visit, with no
+  worker yet, the page registers one at its load event, so the copy is fetched once the page has arrived. The launch
+  is not left to a bad link: the host's page must begin within four seconds, and once begun it must keep coming: a
+  download that brings nothing for more than five seconds (the worker looks once a second), breaks, or after its first
+  four seconds has averaged less than 600 kB of page a second (about three megabits a second as GitHub sends it; the
+  whole page in some twenty seconds at the slowest pace kept) is given up, and the launch starts from the copy
+  instead. How: the worker holds back the page's first 32 kB until they have all come; a download given up before that
+  has shown the phone nothing, and the copy takes that very answer over, with no second load. Given up later, the page
+  ends where it stopped, and the page itself, finding at its load event that its script never ran under a worker,
+  loads again, once (its watchdog, which those first 32 kB carry; once a minute a tab at most, and only where the
+  browser keeps session storage for the page): the copy answers that. Should that second load end the same way, the
+  card with Restart appears. After giving a page up the worker leaves the host alone for up to five minutes (its own
+  memory, lost when the browser stops the worker, which a browser does once the worker has had nothing to answer for a
+  while: about thirty seconds in Chrome, even with the app in use; a launch after that asks the host again). A page
+  that keeps its pace is never cut off. With no copy to fall back on there is no deadline either: the host's page is
+  waited for and nothing is given up. The worker keeps a build only when the host serves that build's page (it checks
+  the page's build stamp), so a deploy caught half way, or a cache ten minutes behind, cannot file the older page
+  under the new name; it tries again at the next launch. Chrome (140 and later) may itself ask the host for the opened
+  address while it starts a worker that was not running, and discards the answer when the worker gives its own: that
+  request is the browser's, not the worker's. A phone still holding a worker from before this needs one launch online
+  to get this one, then behaves as described;
 - the two cross-origin isolation headers, added by the service worker to the page it serves (a static host cannot
   send them), so from the second launch the physics realm and the page share one memory bridge, as in the Windows
   app. Where a browser does not honour headers from a service worker, the bridge uses its private buffer and nothing

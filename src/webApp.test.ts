@@ -28,6 +28,8 @@ import { BUILD_META } from './07_Execute_Actions/bootFailure.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
+const PAGE_DIST: string = '../tools/verify/page_dist.mjs'
+const { MAX_BYTES } = (await import(PAGE_DIST)) as { MAX_BYTES: number }
 const web = (await import(PWA)) as {
   APP_NAME: string
   SHORT_NAME: string
@@ -683,7 +685,7 @@ test('a page from the host that stops, breaks or crawls is given up: the copy ta
   assert.deepEqual(urls(w).slice(2, 3), [PROBE_URL], 'the next load asks the host again')
 })
 
-test('a newer build\'s install waits for a launch\'s page from the host to be over before it downloads anything, a minute at most', async () => {
+test('a newer build\'s install waits for a launch\'s page from the host to be over before it downloads anything, half a minute at most; no launch waits', async () => {
   const kept = { [CACHE]: { 'index.html': 'the build before' } }
   const NEWER = 'ba9876543210'
   const newerHost = (url: string): Answer => (url === PAGE_URL ? html(pageOf(NEWER)) : basic('x'))
@@ -729,6 +731,37 @@ test('a newer build\'s install waits for a launch\'s page from the host to be ov
     assert.deepEqual(urls(b.newer).sort(), every, `${what}: the install goes on`)
     assert.equal(held.held(web.PAGE_LOCK), false, what)
   }
+
+  // A launch never waits for the lock. A second launch while the first one's page is still coming (another tab) is
+  // answered at once, and so is one under locks that never answer.
+  const busy = lockManager()
+  const first = fedPage(), then = fedPage()
+  const pages = [first, then]
+  const two = runWorker(kept, publishing(OTHER, () => pages.shift()!.res), { locks: busy })
+  const one = (await two.request(SCOPE, { mode: 'navigate' }))!
+  first.push(web.HOLD)
+  await two.settle()
+  assert.equal(busy.held(web.PAGE_LOCK), true)
+  let answered: Response | null = null
+  void two.request(SCOPE, { mode: 'navigate' }).then((r) => { answered = r ?? null })
+  await two.settle()
+  assert.ok(answered, 'a second launch is answered while the first still holds the lock')
+  then.push(web.HOLD)
+  then.close()
+  assert.equal((await (answered as Response).arrayBuffer()).byteLength, web.HOLD, 'and its page arrives whole')
+  first.close()
+  assert.equal((await one.arrayBuffer()).byteLength, web.HOLD)
+  await Promise.all(two.waits)
+  assert.equal(busy.held(web.PAGE_LOCK), false, 'both pages over: nothing held')
+  const deaf = fedPage()
+  const never = runWorker(kept, publishing(OTHER, () => deaf.res), { locks: { request: () => new Promise(() => {}) } })
+  let heard: Response | null = null
+  void never.request(SCOPE, { mode: 'navigate' }).then((r) => { heard = r ?? null })
+  await never.settle()
+  assert.ok(heard, 'locks that never answer: the launch is answered all the same')
+  deaf.push(web.HOLD)
+  deaf.close()
+  assert.equal((await (heard as Response).arrayBuffer()).byteLength, web.HOLD, 'and its page arrives whole')
 
   // A launch that goes on and on: the install waits LINK_MS, then downloads beside it.
   const c = await beside(lockManager())
@@ -836,9 +869,13 @@ test('the build word covers everything published, the worker included, and build
     // larger one would let a page through with half a watchdog. A build refused here is mended by a smaller head.
     assert.ok(web.HOLD <= 32_768, 'HOLD may be lowered, never raised')
     // The numbers the manual and the changelog print (two and four seconds, five of silence, 600 kB a second after
-    // four, five minutes, one minute): a change here is a change to both.
+    // four, five minutes, half a minute): a change here is a change to both.
     assert.deepEqual([web.PROBE_MS, web.HEADERS_MS, web.STALL_MS, web.PACE_AFTER_MS, web.PACE, web.GIVEN_UP_MS, web.LINK_MS],
-      [2000, 4000, 5000, 4000, 600_000, 300_000, 60_000])
+      [2000, 4000, 5000, 4000, 600_000, 300_000, 30_000])
+    // An install never waits less than a launch can need, nor so long that Firefox's minute for an install is spent:
+    // the pace rule ends the largest page that may be published well inside LINK_MS.
+    assert.ok((MAX_BYTES / web.PACE) * 1000 + 5000 <= web.LINK_MS, 'the largest page, at the slowest pace kept, is over five seconds inside the wait')
+    assert.ok(web.LINK_MS <= 30_000, 'half of the minute Firefox gives an install is left to download in')
     const room = web.HOLD - Buffer.byteLength(page.slice(0, page.indexOf('</script>', page.indexOf(dog)) + '</script>'.length))
     assert.ok(room > 0, 'the page\'s watchdog ends inside the opening the worker holds back')
     writeFileSync(join(dir, 'index.html'), SOURCE.replace(dog, `<!--${'x'.repeat(room - 7)}-->${dog}`))
