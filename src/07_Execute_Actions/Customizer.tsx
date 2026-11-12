@@ -113,6 +113,8 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'bag': return 'Bag'
     case 'bagStyle': return 'Bag style'
     case 'cup': return 'Cup'
+    case 'umbrella': return 'Umbrella'
+    case 'headphones': return 'Headphones'
     // The tattoo zones by the person's own side (tattoo.ts TATTOO_ZONES' labels), and the one ink of them all.
     case 'tattooHand': return 'Left hand'
     case 'tattooHandR': return 'Right hand'
@@ -206,6 +208,9 @@ function shaded(hex: string): string {
   return hex6((c(16) << 16) | (c(8) << 8) | c(0))
 }
 
+/** The umbrella's canopy, as the crowd paints it (crowd.ts: near black). */
+const UMBRELLA_FILL = '#141416'
+
 /** Whether the look wears an optional piece of the body (the always-drawn ones have piece 0): the crowd's own mask (look.ts lookWears). */
 const wears = (look: Look, piece: number): boolean => lookWears(look, piece)
 
@@ -221,7 +226,7 @@ function bandsOf(rings: readonly SilhouetteRing[], paint: readonly string[], sha
   for (let i = 1; i < rings.length; i++) {
     const a = rings[i - 1], b = rings[i]
     if (a.tube !== b.tube) continue
-    let fill = a.piece === PIECE.CUP ? '#ece9e4' : paint[a.slot] ?? '#888'
+    let fill = a.piece === PIECE.CUP ? '#ece9e4' : a.piece >= PIECE.UMBRELLA_FOLDING && a.piece <= PIECE.UMBRELLA_OPEN ? UMBRELLA_FILL : paint[a.slot] ?? '#888'
     if (shade && a.piece === PIECE.FACE && a.slot === SLOT.SKIN) fill = shaded(fill)
     bands.push({ points: `${m(a.left)},${m(-a.y)} ${m(a.right)},${m(-a.y)} ${m(b.right)},${m(-b.y)} ${m(b.left)},${m(-b.y)}`, fill, order: b.depth })
   }
@@ -230,12 +235,17 @@ function bandsOf(rings: readonly SilhouetteRing[], paint: readonly string[], sha
 
 /**
  * One view of the body: every pair of neighbouring rings of a tube as a four-sided band between their edges, in
- * the lower ring's colour, over a ground line. Metres, y up (the SVG's y is negated), 1.2 m across, 2.2 m tall.
+ * the lower ring's colour, over a ground line. Metres, y up (the SVG's y is negated), 1.2 m across, 2.2 m tall,
+ * widened to the rings' own reach when they pass it (an open umbrella's canopy): the picture keeps its size, so the
+ * figure is drawn smaller under one.
  */
 function SilhouetteView({ rings, paint, title }: { rings: readonly SilhouetteRing[]; paint: readonly string[]; title: string }) {
   const bands = bandsOf(rings, paint, false)
+  const left = rings.reduce((v, r) => Math.min(v, r.left - 0.02), -0.6)
+  const right = rings.reduce((v, r) => Math.max(v, r.right + 0.02), 0.6)
+  const top = rings.reduce((v, r) => Math.max(v, r.y + 0.02), 2.12)
   return (
-    <svg viewBox="-0.6 -2.12 1.2 2.2" width="78" height="143" role="img" aria-label={title} data-silhouette={title.toLowerCase()}>
+    <svg viewBox={`${m(left)} ${m(-top)} ${m(right - left)} ${m(top + 0.08)}`} width="78" height="143" role="img" aria-label={title} data-silhouette={title.toLowerCase()}>
       <line x1="-0.5" y1="0" x2="0.5" y2="0" stroke="currentColor" strokeOpacity="0.25" strokeWidth="0.008" />
       {bands.map((b, i) => <polygon key={i} points={b.points} fill={b.fill} stroke={b.fill} strokeWidth="0.006" strokeLinejoin="round" />)}
     </svg>
@@ -268,7 +278,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles and finishes, the tie's and the bag's styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles and finishes, the tie's and the bag's styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline; the umbrella and the headphones show in both.`}
       </p>
     </div>
   )
@@ -518,6 +528,8 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           // A style is the tie's or the bag's: without one there is nothing to style, and only the suit wears a tie.
           if (slot === 'tieStyle' && (worn.tie === 0 || worn.body !== 0)) return null
           if (slot === 'bagStyle' && worn.bag === 0) return null
+          // An umbrella takes the cup's hand (look.ts lookMask): the cup's row comes back when the umbrella is put away.
+          if (slot === 'cup' && worn.umbrella !== 0) return null
           // A coat keeps its sleeves down (its own piece covers the arm), so under a coat there are no sleeves to roll.
           if (slot === 'sleeves' && worn.layer === LAYER.coat) return null
           // The legs show on the skirt suit and below cropped trousers and culottes; full-length trousers hide them.

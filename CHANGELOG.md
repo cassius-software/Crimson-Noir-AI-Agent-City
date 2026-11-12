@@ -15,6 +15,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **An umbrella and headphones.** The look genome's accessory word (word 6) gains the umbrella at bits 15 and 16
+  (none, as before; folding; walking; open) and the headphones at 17 and 18 (none, as before; over-ear; on-ear;
+  earbuds). Bits 19 and 20 stay held for the heel; 29 to 31 are spare and refused. Option 0 of each is as before, so
+  every chosen look keeps its code. Both are new meshes on the near body (`src/03_Spawn_Agents/humanoid.ts`
+  `umbrellaTubes`, `headphoneTubes`): a furled umbrella in the person's right hand, its tip down, swinging with the arm
+  as a bag does; an open one held up in the same hand, the arm still as with a cup, its black canopy over the crown
+  (skinned to the chest); and charcoal cups and a band, or a bud and a stem, at the ears. The umbrella takes the cup's
+  hand: a chosen cup is left off under one (`look.ts` `lookMask`) and comes back when it goes, and the card's Cup row
+  leaves while one is carried. Their six pieces are coded, not bits of the piece mask, which has no room: the near
+  vertex stage reads what is carried from `faceB.w` and tests pieces 24 to 29 against it (`crowdBody.ts`), and
+  `look.ts` `lookWears` answers for them the same way. The far body carries neither. The street draws them on the
+  pieces' chain's links 27 and 28, in the shader and in `lookFromSeed` alike: one free hand in twenty a folding
+  umbrella and one a walking one (never open, and never with a cup), and of the heads with no headwear and no hearing
+  device three in a hundred on-ear headphones, two and a half over-ear and one and a half earbuds. The watch shop's
+  folding umbrella and acoustic (over-ear) headphones, lines 132 and 133, go on sale, so every line in the catalogue is
+  on sale. The card gets Umbrella and Headphones rows, its outline draws both and widens its box to an open canopy, and
+  the console takes `look umbrella open` and `look headphones earbuds`. The near bodies grow from 1,851 to 1,931
+  vertices to 2,248 to 2,328 (the test's budget is now 2,350 vertices and 4,150 triangles). The shader budget holds: the worst
+  near main fragment stage is 196,596 characters (was 196,260; the target is 225,000), the near main vertex stage
+  59,159 (was 55,352) and the far stages within 1,040 characters of what they were. `dist/index.html`
+  grows by 5,367 bytes, from 12,032,798 to 12,038,165; the limit in `tools/verify/page_dist.mjs` is unchanged. Fourteen looks in the watch shop's mirror, on the software
+  WebGPU adapter (SwiftShader), show the three umbrellas, the open one on the tallest and the shortest figures and in
+  the hand close up, the cup left off under one, the three headphones, and the over-ear pair over long hair, over an
+  afro (which hides most of it) and with glasses. Unverified: no hardware GPU has compiled or drawn it yet.
 - **A shoe's finish, a tie's style and a bag's.** The look genome's accessory word (word 6) gains the shoe's finish at
   two bits (21 and 22: leather, as before; polished; patent; suede), the tie's style at three (23 to 25: plain, as
   before; repp stripe; pin dot; foulard; knit; satin; check; tie bar) and the bag's at three (26 to 28: briefcase, as

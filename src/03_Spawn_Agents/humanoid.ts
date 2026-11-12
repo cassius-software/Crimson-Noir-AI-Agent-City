@@ -53,12 +53,17 @@ export const SLOTS = 16
  * headwear's cloth (crowd.ts). A kippah is painted on the crown (crowd.ts), not a piece. BEARD is a long beard below
  * the chin (shorter facial hair is painted); AID_L and AID_R a hearing aid behind each ear, COIL_L and COIL_R a
  * cochlear implant's processor behind the ear with its coil on the side of the head (look.ts HEARING; device slot
- * DEVICE), each named for the person's own left (+x) or right (−x).
+ * DEVICE), each named for the person's own left (+x) or right (−x). From 24 the pieces are past the mask's bits (a
+ * float holds bits 1 to 24 exactly) and are worn by a code instead (look.ts LOOK_CODED_PIECE, crowdBody.ts bodyVertex):
+ * the umbrella in the cup's hand, furled short (UMBRELLA_FOLDING), furled long (UMBRELLA_WALKING) or open over the head
+ * (UMBRELLA_OPEN, on the chest, the arm held up to its shaft); and the headphones on the head, over-ear (HEADPHONES),
+ * on-ear (ON_EAR) or in the ears (EARBUDS). Every one is the near body's alone, in the device slot.
  */
 export const PIECE = Object.freeze({
   NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11,
   VOLUME: 12, TOP_BUN: 13, PONYTAIL: 14, WRAP: 15, TURBAN: 16, HAT: 17, BRIM: 18,
   BEARD: 19, AID_L: 20, AID_R: 21, COIL_L: 22, COIL_R: 23,
+  UMBRELLA_FOLDING: 24, UMBRELLA_WALKING: 25, UMBRELLA_OPEN: 26, HEADPHONES: 27, ON_EAR: 28, EARBUDS: 29,
 })
 
 /**
@@ -261,11 +266,17 @@ export const WALK = Object.freeze({
    */
   cycle: 1.45, strideSpeed: 0.5, lift: 0.07, roll: 0.03, kneeRest: 0.06,
   shoulder: 0.38, elbow: 0.3, elbowRest: 0.25, twist: 0.06,
-  /** Holding a cup: the left arm raised with the forearm up; carrying a bag: the right arm swings little. */
+  /**
+   * Holding a cup: the left arm raised with the forearm up; carrying a bag: the right arm swings little. A furled
+   * umbrella in the left hand stills it as a bag does; an open one holds the cup's raise without its swing.
+   */
   cupShoulder: -0.35, cupElbow: -1.6, cupSwing: 0.2, bagSwing: 0.35,
   /** The head counters the trunk's lean, in part. */
   headCounter: 0.7,
 })
+
+/** The umbrella's option that is open (look.ts UMBRELLA.open): walkAngles and the vertex stage hold the arm up for it. */
+export const UMBRELLA_OPEN = 3
 
 /** The shoe's sole about the ankle, m: the heel this far behind it, the toes this far ahead (legTubes' lowest ring). */
 export const SOLE = Object.freeze({ heel: 0.085, toe: 0.145 })
@@ -741,12 +752,14 @@ export function gazeAt(neck: readonly [number, number, number], heading: number,
 
 /**
  * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) at `speed` (m/s), for a shape's
- * factors, holding a cup (the left arm up) or carrying a bag (the right arm still), looking `gaze`'s way. Each leg
+ * factors, holding a cup (the left arm up) or carrying a bag (the right arm still), looking `gaze`'s way, with an
+ * umbrella (look.ts UMBRELLA) in the left hand: a furled one stills the arm as a bag does, an open one holds it up to
+ * the shaft at the cup's raise, without a swing (it takes the cup's hand: look.ts lookMask). Each leg
  * is solved from its foot (footAt, legSolve) in the base body's metres, the stride, the lift and the roll shrinking
  * to standing under WALK.strideSpeed; the pelvis drops what the planted leg cannot span; the arms swing with the
  * speed against the legs. Exactly what the vertex stage computes, in the same order.
  */
-export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD): WalkAngles {
+export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD, umbrella = 0): WalkAngles {
   const swing = swingOf(speed)
   const scale = scaleOf(f)
   const piv = pivotsOf(f)
@@ -771,6 +784,7 @@ export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = 
   let [shoulderR, elbowR] = arm(phase + Math.PI)
   if (cup) { shoulderL = WALK.cupShoulder + shoulderL * WALK.cupSwing; elbowL = WALK.cupElbow }
   if (bag) { shoulderR *= WALK.bagSwing; elbowR = -WALK.elbowRest }
+  if (umbrella === UMBRELLA_OPEN) { shoulderL = WALK.cupShoulder; elbowL = WALK.cupElbow } else if (umbrella !== 0) { shoulderL *= WALK.bagSwing; elbowL = -WALK.elbowRest }
   return {
     hipL: legL.hip, kneeL: legL.knee, ankleL: legL.ankle, hipR: legR.hip, kneeR: legR.knee, ankleR: legR.ankle,
     shoulderL, elbowL, shoulderR, elbowR,
@@ -1322,6 +1336,46 @@ function headTubes(): Tube[] {
     ear(-1), ear(1),
     { rings: rim(1.6705, 1.6735), segments: 12, farSegments: 6, piece: PIECE.GLASSES, nearOnly: true, head: true, depth: 4 },
     { rings: rim(1.6885, 1.6915), segments: 12, farSegments: 6, piece: PIECE.GLASSES, nearOnly: true, head: true, depth: 4 },
+    ...headphoneTubes(),
+  ]
+}
+
+/**
+ * The headphones (pieces HEADPHONES, ON_EAR, EARBUDS; slot DEVICE), on the head: each cup a pill whose rings are stacked
+ * up its face, thin across the head (the coil's way), centred on the ear; the band over the crown a thin wall lofted
+ * up from the cups, each ring a long ellipse whose ends are the band's two sides and whose middle is inside the head,
+ * so all that shows is the band a few millimetres over the hair's cap (or the skull). The earbuds a bud in the front of
+ * each ear with a short stem.
+ */
+function headphoneTubes(): Tube[] {
+  const H = BONE.HEAD, D = SLOT.DEVICE
+  const cup = (side: number, x: number, rows: readonly (readonly [number, number, number])[]): Ring[] =>
+    rows.map(([y, rx, rz]) => ({ y, x: side * x, z: -0.005, rx, rz, slot: D, bone: H }))
+  const band = (rz: number, rows: readonly (readonly [number, number])[]): Ring[] =>
+    rows.map(([y, rx]) => ({ y, z: -0.005, rx, rz, slot: D, bone: H }))
+  const over = (side: number) => cup(side, 0.122, [[1.636, 0.012, 0.016], [1.655, 0.015, 0.032], [1.685, 0.015, 0.032], [1.704, 0.012, 0.016]])
+  const on = (side: number) => cup(side, 0.119, [[1.647, 0.008, 0.012], [1.659, 0.011, 0.025], [1.681, 0.011, 0.025], [1.693, 0.008, 0.012]])
+  const bud = (side: number): Ring[] => [
+    { y: 1.664, x: side * 0.112, z: 0.006, rx: 0.006, rz: 0.006, slot: D, bone: H },
+    { y: 1.676, x: side * 0.112, z: 0.006, rx: 0.007, rz: 0.007, slot: D, bone: H },
+  ]
+  const stem = (side: number): Ring[] => [
+    { y: 1.642, x: side * 0.113, z: 0.01, rx: 0.0025, rz: 0.0025, slot: D, bone: H },
+    { y: 1.663, x: side * 0.113, z: 0.01, rx: 0.0025, rz: 0.0025, slot: D, bone: H },
+  ]
+  const piece = (p: number, rings: Ring[], segments: number, capTop: number, capBottom?: number): Tube =>
+    ({ rings, segments, farSegments: segments, capTop, capBottom, piece: p, nearOnly: true, head: true, depth: 4 })
+  return [
+    piece(PIECE.HEADPHONES, over(1), 8, 1.708, 1.632),
+    piece(PIECE.HEADPHONES, over(-1), 8, 1.708, 1.632),
+    piece(PIECE.HEADPHONES, band(0.0105, [[1.702, 0.113], [1.738, 0.106], [1.758, 0.083], [1.771, 0.055], [1.779, 0.027]]), 6, 1.783),
+    piece(PIECE.ON_EAR, on(1), 6, 1.695, 1.645),
+    piece(PIECE.ON_EAR, on(-1), 6, 1.695, 1.645),
+    piece(PIECE.ON_EAR, band(0.007, [[1.69, 0.113], [1.735, 0.105], [1.757, 0.082], [1.77, 0.055], [1.778, 0.028]]), 6, 1.782),
+    piece(PIECE.EARBUDS, bud(1), 6, 1.679, 1.661),
+    piece(PIECE.EARBUDS, bud(-1), 6, 1.679, 1.661),
+    piece(PIECE.EARBUDS, stem(1), 4, 1.663, 1.641),
+    piece(PIECE.EARBUDS, stem(-1), 4, 1.663, 1.641),
   ]
 }
 
@@ -1460,6 +1514,41 @@ function bagTube(woman: boolean): Tube {
   return { rings, segments: 8, farSegments: 4, capTop: 0.8, capBottom: 0.56, piece: PIECE.BAG }
 }
 
+/**
+ * Where the open umbrella is held, m in the rest frame: the cup's hand raised (WALK.cupShoulder, cupElbow) closes
+ * round its shaft here; and the canopy's centre under the canopy, over the head and a little forward of it.
+ */
+export const UMBRELLA_GRIP: readonly [number, number, number] = Object.freeze([-0.212, 1.31, 0.41] as [number, number, number])
+export const UMBRELLA_CANOPY: readonly [number, number, number] = Object.freeze([-0.1, 1.955, 0.15] as [number, number, number])
+
+/**
+ * The umbrella (pieces UMBRELLA_FOLDING, UMBRELLA_WALKING, UMBRELLA_OPEN; slot DEVICE, painted near black by crowd.ts),
+ * in the cup's hand. A furled one hangs from the hand along the arm, its handle in the fist: the folding umbrella short,
+ * the walking umbrella to below the knee (the arm hardly swings with either, as with a bag: WALK.bagSwing). The open one is on
+ * the chest, so it stays over the head however the arm moves: its shaft rises from where the hand holds it (the cup's
+ * raise, held still: crowdBody.ts bodyVertex) leaning in toward the head, and its canopy is a closed lens of eight
+ * panels, the underside rising from the rim to the shaft.
+ */
+function umbrellaTubes(): Tube[] {
+  const x = -LANDMARK.shoulderX * 1.06
+  const D = SLOT.DEVICE
+  const furled = (rows: readonly (readonly [number, number])[]): Ring[] => rows.map(([y, rx]) => ({ y, x, rx, slot: D, bone: BONE.HAND_L }))
+  // The open umbrella's shaft, on the line from the held hand (UMBRELLA_GRIP) to the canopy's centre (UMBRELLA_CANOPY).
+  const [gx, gy, gz] = UMBRELLA_GRIP, [cx, cy, cz] = UMBRELLA_CANOPY
+  const along = (y: number, rx: number): Ring => {
+    const t = (y - gy) / (cy - gy)
+    return { y, x: gx + (cx - gx) * t, z: gz + (cz - gz) * t, rx, slot: D, bone: BONE.CHEST }
+  }
+  const canopy = (rows: readonly (readonly [number, number])[]): Ring[] => rows.map(([y, r]) => ({ y, x: cx, z: cz, rx: r, slot: D, bone: BONE.CHEST }))
+  return [
+    { rings: furled([[0.47, 0.006], [0.51, 0.024], [0.7, 0.026], [0.73, 0.011], [0.86, 0.011]]), segments: 6, farSegments: 6, capTop: 0.862, capBottom: 0.465, piece: PIECE.UMBRELLA_FOLDING, nearOnly: true },
+    { rings: furled([[0.1, 0.003], [0.16, 0.012], [0.55, 0.028], [0.67, 0.014], [0.69, 0.007], [0.72, 0.013], [0.88, 0.013]]), segments: 6, farSegments: 6, capTop: 0.885, capBottom: 0.097, piece: PIECE.UMBRELLA_WALKING, nearOnly: true },
+    { rings: [along(1.2, 0.016), along(1.4, 0.016), along(1.405, 0.006), along(cy + 0.005, 0.006)], segments: 6, farSegments: 6, capTop: cy + 0.007, capBottom: 1.195, piece: PIECE.UMBRELLA_OPEN, nearOnly: true },
+    // From the underside's centre out to the rim, then over the top back to the tip: one closed surface, its faces out.
+    { rings: canopy([[cy, 0.014], [1.905, 0.26], [1.845, 0.45], [1.825, 0.505], [1.86, 0.47], [1.95, 0.33], [2.025, 0.16], [2.05, 0.04]]), segments: 8, farSegments: 8, capTop: 2.075, piece: PIECE.UMBRELLA_OPEN, nearOnly: true },
+  ]
+}
+
 /** The skirt: a shell from the waist to above the knee, turned with the trunk. */
 function skirtTube(): Tube {
   const rings: Ring[] = [
@@ -1495,7 +1584,7 @@ export function bodyTubes(variant: number): Tube[] {
   ]
   if (skirt) tubes.push(skirtTube())
   if (v === 0) tubes.push(tieTube(profile))
-  tubes.push(coatTube(woman), ...scarfTubes(profile))
+  tubes.push(coatTube(woman), ...scarfTubes(profile), ...umbrellaTubes())
   return tubes
 }
 

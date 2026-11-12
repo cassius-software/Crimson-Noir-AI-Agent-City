@@ -393,15 +393,17 @@ record (the progression engine's, kept in this browser), so the console's `progr
   eyewear, tinted hearing processor and four limbs (a brushed-titanium right arm, a matte carbon-fibre left arm, a
   carbon-fibre right lower leg and a skin-matched silicone left leg, each setting the wardrobe's Prosthetic and
   Prosthetic finish rows; the wardrobe sets any limb, side and finish at no cost); the watch shop's leather briefcase,
-  its two watches (the steel three-hand and the tourbillon chronograph) and its rank lapel pin; the ink studio's
+  its two watches (the steel three-hand and the tourbillon chronograph), its rank lapel pin, its folding umbrella and
+  its acoustic headphones (the wardrobe's over-ear pair); the ink studio's
   twelve forearm designs (each the wardrobe's design of the same name on the **Left forearm**, worn with the sleeves
   rolled so it shows) and its two inks (gold leaf and luminescent, each setting the wardrobe's tattoo Ink alone). A
   design a look would hide says so under its name: "A coat keeps its sleeves down", or "Covered by the limb" for a
   prosthetic left arm (`storeCatalog.ts` `coverHint`). Trying an ink on a look with no
   tattoo showing puts the olive branch on your left hand for the mirror (or on the first zone nothing covers: past a
   prosthetic arm, the cup or a turtleneck), so the ink has something to colour; buying it sets
-  the ink alone (`storeCatalog.ts` `previewItem`). Lines that need slots the wardrobe does not have yet (the umbrella,
-  headphones) are listed as on order and go on sale when the wardrobe's update adds those slots. Four of the studio's designs carry names that say what each draws (the braided rope band, the
+  the ink alone (`storeCatalog.ts` `previewItem`). Every line is on sale: the umbrella and the headphones, the last two
+  on order, went on sale when the wardrobe gained their slots (a line that needs a slot the wardrobe lacks is listed as
+  on order, with no button). Four of the studio's designs carry names that say what each draws (the braided rope band, the
   scalloped arc band, the compass rose and Euler's identity circle); their ids and the bits a purchase sets are as
   they were. The design house's seven property
   deeds (level 1 to 20, free to 4,500,000 credits) and its nine furniture lines (level 2 to 10, 1,100 to 22,000
@@ -1237,11 +1239,11 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   body (past the level-of-detail cut) leave them out, so the shadow shader and the distant crowd cost what they
   did. The iris keeps the colour the street's hash gives it (the words have no room for it).
 - **The wardrobe** (`03_Spawn_Agents/look.ts`) is the crowd's own, and closed by construction. A look is
-  sixty-three slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
-  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the forty-seven dress slots (skin, age,
+  sixty-five slots: the body, eight body sliders (height, mass, muscle, shoulders, hips, legs, posture, head),
+  seven face sliders (brow, jaw, chin, cheek, nose, eyes, lips), and the forty-nine dress slots (skin, age,
   undertone, vitiligo, freckles, hair style, curl, hair colour, headwear, headwear colour, facial hair, hearing
   devices, prosthetic, prosthetic finish, layer, cut, top, top weave, trim, bottom cut, bottom, bottom weave, shirt,
-  shoe style, shoes, shoe finish, tie, tie style, scarf, lapel pin, eyewear, frames, watch, bag, bag style, cup, the tattoos on the left hand, the
+  shoe style, shoes, shoe finish, tie, tie style, scarf, lapel pin, eyewear, frames, headphones, watch, bag, bag style, cup, umbrella, the tattoos on the left hand, the
   right hand, the neck and the nape with their one ink, the sleeves, the tattoos on the left and right forearms, the legs, and the tattoos on the left calf and the right ankle), every one an index into the crowd's catalogue: the four bodies `crowd.ts` draws (suit, smart casual, pantsuit, skirt
   suit), its eleven optional pieces (tie, bag, cup, long hair, glasses, the hair cap, a bob, a bun, the face, a
   coat, a scarf), its twenty-one colour palettes verbatim (`look.test.ts` reads them out of `crowd.ts`'s source, so
@@ -1387,6 +1389,18 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   and the skirt suit's polished or patent), half the ties a style, and a little under half the bags one, never carbon
   twill or aluminium, which are a chosen look's. At the console: `look shoeFinish patent`, `look tieStyle repp stripe`,
   `look bagStyle carbon twill`.
+- **An umbrella and headphones.** An **Umbrella** row follows the **Cup**: none, folding (furled, in the right hand,
+  the tip down and the arm swinging as with a bag), walking (a long furled one with a straight handle, carried the same
+  way) and open (held up in the right hand, the arm still as with a cup, a black canopy over the crown). The umbrella
+  takes the cup's hand: the **Cup** row leaves the card while one is carried, and the cup comes back when it goes. A
+  **Headphones** row follows the **Frames**: none, over-ear (cups over the ears and a band over the head), on-ear
+  (smaller cups and a thinner band) and earbuds (a bud and a short stem at each ear), in charcoal. Both are meshes on
+  the near body (the furled umbrella moves with the hand, the open one with the chest, the headphones with the head),
+  shown in the city, in a shop's mirror and in the card's outline, whose box widens to an open canopy; the far crowd
+  carries neither. On the street one free hand in twenty carries a folding umbrella and one a walking one, never open
+  (the city's rain is not drawn per person), and of the heads with no headwear and no hearing device about three in a
+  hundred wear on-ear headphones, two and a half over-ear and one and a half earbuds. Neither is anyone's brand. At the
+  console: `look umbrella open`, `look headphones over-ear`.
 - **Tattoos.** A design on the **Left hand**, the **Right hand**, the **Neck**, the **Nape** (the genome's word 7),
   the **Left forearm**, the **Right forearm**, the **Left calf** and the **Right ankle** (word 8; the person's own sides), and one **Ink** for all of them. There are sixty-four designs in eight families of
   eight (`03_Spawn_Agents/tattoo.ts`): flowers, stars and rays, circles and orbits, shapes, bands, spirals, sprigs and
@@ -1443,8 +1457,8 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   word, holds the skin's high bits (a Monk tone is option 8 and up), vitiligo, freckles, the hair style's high bits,
   the curl, the headwear, facial hair, hearing devices and a prosthetic; word 5, the cloth word, holds the top's
   weave, the bottom's and the outer layer's cut; word 6, the accessory word, holds the shoe's style, the frames, the
-  watch and the lapel pin in its low fifteen bits and the shoe's finish, the tie's style and the bag's in bits 21 to 28
-  (15 to 20 are held for the umbrella, the headphones and the heel); word 7, the tattoo word, holds a design (one of sixty-four, or
+  watch and the lapel pin in its low fifteen bits, the umbrella and the headphones in bits 15 to 18, and the shoe's
+  finish, the tie's style and the bag's in bits 21 to 28 (19 and 20 are held for the heel); word 7, the tattoo word, holds a design (one of sixty-four, or
   none) on each hand, the neck and the nape and their ink in its low thirty-one bits, its top bit the shader's street
   flag that no look may set; word 8 holds the designs on the two forearms, the left calf and the right ankle in its
   low twenty-eight bits (the sleeves and the legs are two bits each of word 5); words 9 to 15 are spare and must be zero. Every field of the later words is 0 for "as before", so a look of the older layouts is the
@@ -1828,7 +1842,7 @@ while you type.
 - `look` shows the look you wear, one line per slot and its code; `look show <agent>` a pedestrian's.
   `look <slot> <n|name>` sets one slot (`body`, `height`, `mass`, `muscle`, `shoulders`, `hips`, `legs`,
   `posture`, `head`, `skin`, `hairStyle`, `hairColour`, `layer`, `top`, `trim`, `bottom`, `shirt`, `footwear`, `shoes`,
-  `shoeFinish`, `tie`, `tieStyle`, `scarf`, `lapelPin`, `eyewear`, `frames`, `watch`, `bag`, `bagStyle`, `cup`, `tattooHand`, `tattooHandR`, `tattooNeck`,
+  `shoeFinish`, `tie`, `tieStyle`, `scarf`, `lapelPin`, `eyewear`, `frames`, `headphones`, `watch`, `bag`, `bagStyle`, `cup`, `umbrella`, `tattooHand`, `tattooHandR`, `tattooNeck`,
   `tattooNape`, `tattooInk`, `sleeves`, `tattooForearm`, `tattooForearmR`, `legwear`, `tattooCalf`, `tattooAnkleR`; a height takes a step or metres, `look height 1.80`; a tattoo zone a design's name, which
   Tab completes, `look tattooHand compass rose`, or `none`), `look preset <name>` one of the eight presets,
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the

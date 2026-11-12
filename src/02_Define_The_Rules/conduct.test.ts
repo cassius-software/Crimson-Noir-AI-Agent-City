@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { FORBIDDEN_WORDS, forbiddenWordIn } from '../01_Initialize_World/assets/cc0.ts'
-import { LOOK_BODIES, LOOK_PIECE_BIT, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, describeLook, lookOptions, type LookBody } from '../03_Spawn_Agents/look.ts'
+import { LOOK_BODIES, LOOK_CODED_PIECE, LOOK_PIECE_BIT, LOOK_PRESETS, LOOK_SLOTS, WARDROBE, describeLook, lookOptions, type LookBody } from '../03_Spawn_Agents/look.ts'
 import { JOINTS, SEGMENTS } from '../03_Spawn_Agents/ragdollRig.ts'
 import { ACTIVITY, SKILLS } from '../03_Spawn_Agents/skills.ts'
 import { ACTION_RULES, HINTS, VERBS, catalogueLines, parseAction } from '../06_Make_Decisions/actions.ts'
@@ -153,7 +153,7 @@ test('the city is unarmed: 14A says so in its constants, the lexicon refuses eve
   assert.match(readFileSync(`${ROOT}MANUAL.md`, 'utf8'), /There are no weapons and no violence\s+anywhere in the product/)
 })
 
-test('a person may wear or carry nothing but the closed wardrobe: four business bodies, the optional pieces (hair, headwear, the face itself, clothes and three carried things), and every option, preset and console line is unarmed', () => {
+test('a person may wear or carry nothing but the closed wardrobe: four business bodies, the optional pieces (hair, headwear, the face itself, clothes, three carried things, an umbrella and headphones), and every option, preset and console line is unarmed', () => {
   assert.deepEqual([...LOOK_BODIES], ['suit', 'smart casual', 'pantsuit', 'skirt suit'])
   // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is
   // confirmed unarmed. The hair cap, the bob and the bun are hair; the face is the features (eyes, brows, nose, lips,
@@ -180,6 +180,14 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   assert.deepEqual([...WARDROBE.shoeFinish], ['leather', 'polished', 'patent', 'suede'])
   assert.deepEqual([...WARDROBE.tieStyle], ['plain', 'repp stripe', 'pin dot', 'foulard', 'knit', 'satin', 'check', 'tie bar'])
   assert.deepEqual([...WARDROBE.bagStyle], ['briefcase', 'brass clasps', 'carbon twill', 'aluminium', 'canvas', 'quilted', 'pebble grain', 'saddle stitched'])
+  // 14A: the umbrella and the headphones are new meshes, confirmed unarmed. A folding or a walking umbrella is carried
+  // furled with its tip to the ground, and an open one is held over the head, the canopy up: never pointed at anyone.
+  // The headphones are cups and a band at the ears (or a bud in each), as the hearing devices are. Neither carries a
+  // brand or an emblem. Their pieces are coded (humanoid.ts PIECE 24 to 29, look.ts LOOK_CODED_PIECE), not bits of
+  // LOOK_PIECE_BIT, so the list above stays as it is.
+  assert.deepEqual([...WARDROBE.umbrella], ['none', 'folding', 'walking', 'open'])
+  assert.deepEqual([...WARDROBE.headphones], ['none', 'over-ear', 'on-ear', 'earbuds'])
+  assert.deepEqual({ ...LOOK_CODED_PIECE }, { umbrella: 24, headphones: 27 })
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)
