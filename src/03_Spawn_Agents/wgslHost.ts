@@ -964,7 +964,7 @@ class Codegen {
         }
         return sv('mix')
       }
-      case 'sin': case 'cos': case 'tan': case 'exp': case 'log': return { c: `fr(Math.${name}(${this.coerce(vs[0], F32)}))`, t: F32 }
+      case 'sin': case 'cos': case 'tan': case 'asin': case 'acos': case 'exp': case 'log': return { c: `fr(Math.${name}(${this.coerce(vs[0], F32)}))`, t: F32 }
       case 'atan2': return { c: `fr(Math.atan2(${this.coerce(vs[0], F32)}, ${this.coerce(vs[1], F32)}))`, t: F32 }
       case 'pow': return { c: `fr(Math.pow(${this.coerce(vs[0], F32)}, ${this.coerce(vs[1], F32)}))`, t: F32 }
       case 'select': {
