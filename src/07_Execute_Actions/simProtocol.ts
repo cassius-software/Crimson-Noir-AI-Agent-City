@@ -190,6 +190,14 @@ export interface SimInit {
    * does: meta.craft is 0 and every state's craft buffer null.
    */
   craft?: boolean
+  /**
+   * The first crowd kernel asked of the worker's GPU (03_Spawn_Agents/crowdCompute.ts CROWD_KERNELS): 'narrow' or
+   * 'lite' where the page remembers that a kernel above it was refused on this GPU or took it down
+   * (03_Spawn_Agents/crowdKernelMemory.ts), or where the address says (?kernel=). Absent: 'full'. Every kernel senses,
+   * contains and collides alike (the First Law's reading is the same crowd.wgsl in all three), so the page's word
+   * here lowers nothing the realm guards; anything but a kernel's name is refused.
+   */
+  crowdKernel?: 'full' | 'narrow' | 'lite'
 }
 
 /** Static facts about the world the worker built, sent once in `ready`. */
@@ -529,11 +537,21 @@ export interface SimJoints { t: 'joints'; buffer: SharedArrayBuffer }
 export interface SimReady { t: 'ready'; meta: SimMeta }
 export interface SimPanic { t: 'panic'; reason: string }
 /**
- * Why the realm could not start, when the worker can tell (the recovery card words it: bootFailure.ts): no WebGPU
- * inside the worker although the page has it, or no WebAssembly for Rapier.
+ * The crowd's kernel ladder moved while the realm was being built (crowdSim.ts create; sent only before `ready` or
+ * `error`): rung `rung` is about to be compiled ('trying'), was refused by this GPU's compiler ('refused'), carries the
+ * crowd ('running'), or the worker's GPU device was lost while it was built or before its first reading ('lost').
+ * `words`: the browser's own, for a refusal or a loss. The page keeps what it learns (crowdKernelMemory.ts) and, when
+ * its own device is lost in the same moment, knows which kernel the GPU was building.
  */
-export type SimFailureCode = 'worker-gpu' | 'wasm'
-export const SIM_FAILURE_CODES: readonly SimFailureCode[] = Object.freeze(['worker-gpu', 'wasm'])
+export interface SimCrowdKernel { t: 'crowdKernel'; rung: 'full' | 'narrow' | 'lite'; step: 'trying' | 'refused' | 'running' | 'lost'; words?: string }
+/**
+ * Why the realm could not start, when the worker can tell (the recovery card words it: bootFailure.ts): no WebGPU
+ * inside the worker although the page has it, no WebAssembly for Rapier, or the crowd's GPU device lost while a
+ * kernel was built on it or before the crowd's first reading ('kernel-lost': the page's next start asks for a
+ * lighter kernel).
+ */
+export type SimFailureCode = 'worker-gpu' | 'wasm' | 'kernel-lost'
+export const SIM_FAILURE_CODES: readonly SimFailureCode[] = Object.freeze(['worker-gpu', 'wasm', 'kernel-lost'])
 /** The realm could not start (`init: …`); `code` when the worker knows the class of the failure. */
 export interface SimFailure { t: 'error'; message: string; code?: SimFailureCode }
 
@@ -549,4 +567,4 @@ export function failureCode(e: unknown): SimFailureCode | undefined {
 }
 
 export type ToWorker = SimInit | SimBridge | SimJoints | StepRequest
-export type FromWorker = SimReady | StepState | SimPanic | SimFailure
+export type FromWorker = SimReady | StepState | SimPanic | SimFailure | SimCrowdKernel

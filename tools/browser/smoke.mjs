@@ -128,8 +128,11 @@
  *   (lan.test mapped to this machine over plain http), no adapter, a boot that never finishes (the 'Still starting'
  *   line, naming the step), a download cut off mid-script (the index.html watchdog), a slow download (the splash
  *   before the module has arrived), and, after a boot, the page's GPU device lost (the reset card, no reload while the page is
- *   visible), a realm halt for a lost crowd device, and a frame that throws on every frame. Where a failure is the
- *   point, the GPU-error check is left out; nothing may throw uncaught in any of them.
+ *   visible), the browser's GPU process killed as the worker asks for the crowd's full kernel (the page starts again
+ *   by itself, once, and the city stands on the light kernel, remembered; killed again under the light kernel, the
+ *   card says none is left, and the start after that asks for no adapter), a realm halt for a lost crowd device, and a
+ *   frame that throws on every frame. Where a failure is the point, the GPU-error check is left out; nothing may throw
+ *   uncaught in any of them.
  * Every scenario also fails on an exception in the page, a GPU validation error, a lost device, or the crowd's flow
  * field falling back to the CPU. Every browser can reach nothing but this machine (cdp.mjs loopbackOnly: no name
  * resolves but 127.0.0.1, and no proxy). It serves dist/ itself on 127.0.0.1 with the two isolation headers, writes a
@@ -2842,6 +2845,7 @@ const SCENARIOS = {
       ['a download cut off', () => cutOff(chrome, origin)],
       ['a slow download', () => slowDownload(chrome, origin)],
       ['the page\'s device lost after the boot', () => pageDeviceLost(chrome, origin)],
+      ['the GPU process gone while the crowd is built', () => gpuProcessLost(chrome, origin)],
       ['a realm halt for a lost crowd device', () => afterBoot(chrome, origin, 'halt',
         `window.__SIM__.engine.halt('Sensing Failure: pedestrian sensing stopped (GPU device lost (unknown): test).')`, 'gpu-reset', 'The graphics device was reset')],
       ['a frame that throws', () => afterBoot(chrome, origin, 'frame',
@@ -3064,6 +3068,90 @@ async function pageDeviceLost(chrome, origin) {
     check(halted === true, 'fail reset: the city halted (it draws nothing on a lost device)')
     await p.shot('fail-reset')
     check(p.errors.length === 0, 'fail reset: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
+  } finally { await p.b.close() }
+}
+
+/**
+ * The harness's ears on the physics worker and the page's GPU: every step of the crowd's kernel ladder as the page
+ * hears it (a second listener beside the page's own; nothing is held back or changed), and how often the page asked
+ * the browser for an adapter.
+ */
+const LADDER_EARS = `(() => {
+  window.__smokeLadder = []
+  window.__smokeAdapterAsks = 0
+  const W = window.Worker
+  window.Worker = class extends W {
+    constructor(...a) {
+      super(...a)
+      this.addEventListener('message', (e) => { const d = e.data; if (d && d.t === 'crowdKernel') window.__smokeLadder.push(d.rung + ' ' + d.step) })
+    }
+  }
+  const ask = GPU.prototype.requestAdapter
+  GPU.prototype.requestAdapter = function (...a) { window.__smokeAdapterAsks++; return ask.apply(this, a) }
+})()`
+
+/** What the page keeps of this GPU and the crowd's kernels (crowdKernelMemory.ts), as a page expression. */
+const KERNEL_RECORD = `(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:crowd-kernel:v1')) } catch { return null } })()`
+
+/**
+ * The browser's GPU process gone while the physics worker builds the crowd's kernel, as a phone's graphics driver
+ * takes it down (Browser.crashGpuProcess, the moment the worker says it is asking for the kernel): every device of the
+ * page is lost at once, the worker's with it. The page starts again by itself, once, asking for the light kernel, and
+ * the city stands on it; the kernel is remembered, and the address is left as it was. A second loss, under the light
+ * kernel, leaves the card that says no kernel is left to ask this GPU for, and the start after that asks the browser
+ * for no adapter at all. Two losses only: Chrome withholds the GPU from the page after them for a while and gives
+ * GPU graphics up after a third.
+ */
+async function gpuProcessLost(chrome, origin) {
+  const p = await open(chrome)
+  const url = `${origin}/?${LIGHT}`
+  const what = 'fail gpu process'
+  /** Kills the GPU process once the new document's worker says it is asking for `rung`. */
+  const crashAt = async (rung) => {
+    await p.b.waitFor(`!window.__smokeOld && (window.__smokeLadder ?? []).includes('${rung} trying')`, BOOT_MS, 20)
+    await p.b.send('Browser.crashGpuProcess', {}, '')
+  }
+  /** Loads the page again (the old document is marked, so it cannot answer for the new one). */
+  const again = async () => {
+    await p.eval('window.__smokeOld = true')
+    await p.b.send('Page.reload', {})
+  }
+  try {
+    await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: LADDER_EARS })
+    const loads = []
+    p.b.on('Page.frameNavigated', (e) => { if (!e.frame.parentId) loads.push(e.frame.url) })
+    await p.goto(url)
+    await crashAt('full')
+    // The city, or a card: whichever comes says how the start ended.
+    const up = await p.waitFor(`(() => { const c = ${CARD}; return c ? { card: c.kind + ': ' + c.headline } : !!window.__SIM__ && window.__SIM__.snapshot().output.fps > 0 && !document.querySelector('.boot-veil') ? { live: true } : null })()`, BOOT_MS).catch(() => null)
+    check(up?.live === true, `${what}: lost under the full kernel, the city stands after all`, up?.live ? '' : up?.card ?? 'neither the city nor a card')
+    check(loads.length === 2 && /[?&]kernel=lite(&|$)/.test(loads[1] ?? ''), `${what}: the page started again by itself, once, asking for the light kernel`, loads.map((l) => l.replace(origin, '')).join(' then '))
+    if (up?.live) {
+      const s = await p.snap()
+      const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${s.crowdFrames + 2}`, 60_000).then(() => true, () => false)
+      const kernel = await p.eval('window.__SIM__.engine.sim.meta.crowdKernel')
+      check(ran && kernel === 'lite', `${what}: the crowd runs on the light kernel`, `kernel ${kernel}, readings ${ran ? 'arriving' : 'none'}`)
+      const record = await p.eval(KERNEL_RECORD)
+      check(record?.from === 'lite' && record.why === 'lost' && record.rung === 'full' && record.strikes === 1, `${what}: the page remembers that the full kernel took this GPU down`, JSON.stringify(record).slice(0, 300))
+      const search = await p.eval('location.search')
+      check(!/[?&]kernel=/.test(search), `${what}: the address is left without the kernel word once the record says the same`, search)
+      await p.shot('fail-gpu-process')
+    }
+    // The next start begins at the light kernel (the record), and the GPU process goes again under it.
+    await again()
+    await crashAt('lite')
+    await expectCard(p, `${what}, lite`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    const none = await p.eval(KERNEL_RECORD)
+    check(none?.from === 'none' && none.rung === 'lite', `${what}: after the light kernel's own loss the record says none is left`, JSON.stringify(none).slice(0, 300))
+    check(loads.length === 3, `${what}: no restart by itself after the lightest kernel's loss`, `${loads.length} loads`)
+    await p.shot('fail-gpu-process-none')
+    // A start inside the hold asks nothing of the GPU: the card at once, and no adapter asked for.
+    await again()
+    await p.waitFor('document.readyState !== "loading" && !window.__smokeOld', 60_000)
+    await expectCard(p, `${what}, held`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    const asks = await p.eval('window.__smokeAdapterAsks')
+    check(asks === 0, `${what}: a start inside the hold asks the browser for no adapter`, `${asks} asked`)
+    check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
   } finally { await p.b.close() }
 }
 

@@ -70,23 +70,34 @@ export const HEAD = [
   "<script>if (window.isSecureContext && /^https?:$/.test(location.protocol) && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('[web] no offline copy: ' + e))</script>",
 ].join('\n    ')
 
+/**
+ * The name of the meta that says which published build a page is (the twelve hex digits that also name its offline
+ * cache). The recovery card prints it (src/07_Execute_Actions/bootFailure.ts BUILD_META, kept equal by a test): a
+ * phone's offline copy can be a build behind the host, and a screenshot of a card should say which it was.
+ */
+export const BUILD_META = 'agent-city-build'
+
 const ANCHOR = /(<meta name="theme-color" content="[^"]*" \/>)/
 const POLICY = /(<meta http-equiv="Content-Security-Policy" content=")([^"]+)(")/
 
 /**
- * The page with the head lines and `manifest-src 'self'`. A page without exactly one theme colour and one content
- * policy, or one that already names a manifest source, is not the page this was written for: it fails rather than
- * publishing a page whose policy refuses its own manifest.
+ * The page with the head lines and `manifest-src 'self'`, and with `build` (the page's own hash, twelve hex digits)
+ * its build meta first among them. A page without exactly one theme colour and one content policy, one that already
+ * names a manifest source, or one that already carries a build meta, is not the page this was written for: it fails
+ * rather than publishing a page whose policy refuses its own manifest or that names two builds.
  */
-export function webPage(html) {
+export function webPage(html, build = '') {
   if ((html.match(new RegExp(ANCHOR, 'g')) ?? []).length !== 1) throw new Error('dist/index.html: expected one theme-color meta to anchor the head lines')
   if ((html.match(new RegExp(POLICY, 'g')) ?? []).length !== 1) throw new Error('dist/index.html: expected one Content-Security-Policy meta')
+  if (build && !/^[0-9a-f]{12}$/.test(build)) throw new Error(`the build word must be twelve hex digits, got "${build}"`)
+  if (html.includes(`<meta name="${BUILD_META}"`)) throw new Error('dist/index.html: the page already carries a build meta')
+  const head = build ? `<meta name="${BUILD_META}" content="${build}" />\n    ${HEAD}` : HEAD
   return html
     .replace(POLICY, (_m, open, policy, close) => {
       if (/(^|;)\s*manifest-src\b/.test(policy)) throw new Error('dist/index.html: the policy already names manifest-src')
       return `${open}${policy.replace(/;?\s*$/, '')}; manifest-src 'self'${close}`
     })
-    .replace(ANCHOR, (m) => `${m}\n    ${HEAD}`)
+    .replace(ANCHOR, (m) => `${m}\n    ${head}`)
 }
 
 /**
@@ -139,10 +150,11 @@ export function build({ from = join(ROOT, 'dist'), out = join(ROOT, 'dist-web') 
   if (!existsSync(page)) throw new Error(`${page} is missing: run \`npm run build\` first`)
   const html = readFileSync(page, 'utf8')
   const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
-  const cache = `agent-city-${version}-${createHash('sha256').update(html).digest('hex').slice(0, 12)}`
+  const digest = createHash('sha256').update(html).digest('hex').slice(0, 12)
+  const cache = `agent-city-${version}-${digest}`
   rmSync(out, { recursive: true, force: true })
   mkdirSync(out, { recursive: true })
-  writeFileSync(join(out, 'index.html'), webPage(html))
+  writeFileSync(join(out, 'index.html'), webPage(html, digest))
   writeFileSync(join(out, 'manifest.webmanifest'), `${JSON.stringify(manifest(), null, 2)}\n`)
   writeFileSync(join(out, 'sw.js'), worker(cache))
   for (const icon of ICONS) copyFileSync(join(ROOT, icon.from), join(out, icon.name))

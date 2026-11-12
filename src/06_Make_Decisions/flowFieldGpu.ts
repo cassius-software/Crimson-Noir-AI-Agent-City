@@ -128,12 +128,13 @@ export class FlowFieldGpu implements FlowSolver {
 
   /**
    * Builds the pipelines over `flow`, the crowd's flow texture (createFlowTexture for this grid). Rejects when the
-   * device refuses the shader (validation), so the caller can fall back to the CPU solver.
+   * device refuses the shader (validation), so the caller can fall back to the CPU solver; a device lost under the
+   * build rejects as its DeviceLostError (gpuPipelines.ts), which no solver can fall back from.
    */
   static async create(device: GPUDevice, grid: FlowGrid, flow: GPUTexture): Promise<FlowFieldGpu> {
     // Every kind of refusal, not validation alone: a pipeline the GPU's own compiler refuses is an internal error, which
     // a validation scope never sees, and the solver would then dispatch an invalid pipeline every solve.
-    const { value: solver, errors } = await withErrorScopes(device, () => new FlowFieldGpu(device, grid, flow))
+    const { value: solver, errors } = await withErrorScopes(device, () => new FlowFieldGpu(device, grid, flow), 'building the flow field')
     if (errors.length) throw new Error(`flowField.wgsl pipeline ${errors.every((e) => e.filter === 'validation') ? 'validation' : 'compilation'} failed: ${scopedMessage(errors)}`)
     return solver
   }

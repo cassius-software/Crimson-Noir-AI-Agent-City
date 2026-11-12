@@ -17,8 +17,14 @@
  * city is reported as a WebGL2 fallback again.
  */
 
-/** Why the page has no GPU device: the codes the recovery card words (bootFailure.ts). */
-export type GpuFailure = 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'gpu-reset'
+/**
+ * Why the page has no GPU device: the codes the recovery card words (bootFailure.ts). 'kernel-lost' and
+ * 'kernel-none' are a device lost while the physics worker built a crowd kernel
+ * (03_Spawn_Agents/crowdKernelMemory.ts): with a lighter kernel left for the next start, or after the lightest.
+ * 'gpu-paused' is the browser handing the page no adapter because the page lost the GPU twice within two minutes
+ * (bootFailure.ts gpuPaused): no adapter for now, not no adapter at all.
+ */
+export type GpuFailure = 'insecure' | 'no-api' | 'no-adapter' | 'compat-only' | 'device' | 'gpu-reset' | 'kernel-lost' | 'kernel-none' | 'gpu-paused'
 
 /**
  * The page cannot have the WebGPU device the city needs; `code` says why. `background`: it happened while the page
@@ -98,12 +104,49 @@ export async function acquireDevice(gpu: GpuEntry | null | undefined, secure: bo
   try {
     device = await adapter.requestDevice({ requiredFeatures: deviceFeatures(adapter), label: 'page' })
   } catch (e) {
-    throw new WebGPUUnavailableError('device', `The GPU refused a WebGPU device: ${e instanceof Error && e.message ? e.message : String(e)}`)
+    const words = e instanceof Error && e.message ? e.message : String(e)
+    // The browser's GPU process went while the device was asked for (Chrome's words for it): a reset, not a refusal.
+    if (/Instance dropped|external Instance reference no longer exists/i.test(words)) throw new WebGPUUnavailableError('gpu-reset', `The GPU was lost while a device was asked for: ${words}`)
+    throw new WebGPUUnavailableError('device', `The GPU refused a WebGPU device: ${words}`)
   }
   // A device lost as it was made (a GPU process that crashed in between) has settled already: the race sees it first.
   const lost = await Promise.race([device.lost, Promise.resolve(null)])
   if (lost) throw new WebGPUUnavailableError('gpu-reset', `The GPU device was lost as soon as it was made (${lost.reason}): ${lost.message || 'no message'}`)
   return { adapter, device }
+}
+
+/** How often a page that lost the GPU asks whether it is back before it starts again, ms. */
+export const GPU_BACK_EVERY_MS = 500
+/** How long it asks at most before it starts again regardless, ms. */
+export const GPU_BACK_FOR_MS = 12_000
+
+/**
+ * Resolves true once the browser hands out a live GPU device again, false after `forMs` of asking every `everyMs`.
+ * A browser whose GPU process went needs a moment to start another (measured in Chromium: a device asked for 0.4 s
+ * after the crash was whole), and a page that restarted itself into that gap would get no adapter, or a device
+ * already lost, and show a card for a condition about to pass. The device asked for carries no features and is
+ * destroyed at once. `sleep` is the tests' clock.
+ */
+export async function gpuBack(gpu: GpuEntry | null | undefined, o: { everyMs?: number; forMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<boolean> {
+  if (!gpu) return false
+  const everyMs = o.everyMs ?? GPU_BACK_EVERY_MS
+  const forMs = o.forMs ?? GPU_BACK_FOR_MS
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  for (let waited = 0; ; waited += everyMs) {
+    try {
+      const adapter = await gpu.requestAdapter({ powerPreference: POWER })
+      const device = adapter ? await adapter.requestDevice({ label: 'page: is the GPU back' }) : null
+      if (device) {
+        const lost = await Promise.race([device.lost, Promise.resolve(null)])
+        device.destroy()
+        if (!lost) return true
+      }
+    } catch {
+      // Not yet: a browser between GPU processes may reject the request outright.
+    }
+    if (waited >= forMs) return false
+    await sleep(everyMs)
+  }
 }
 
 /** What the adapter half says about this browser: ok, or the code and message the recovery card shows. */
