@@ -91,11 +91,27 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
 /**
  * Lite, tier -1: below Minimal for entry-level phone GPUs (DeviceProfile.lite). It is not in TIERS, so ?quality=0…4, the
  * console's tier numbers and every index the governor's tests pin keep their meaning; knobsOf reads it. Half the base
- * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a thinner, shorter crowd draw than Minimal.
+ * pixel ratio's edge (a quarter of its pixels), no shadows or post, and a smaller crowd draw than Minimal, spent
+ * where a small screen can show it: everyone within maxDistance (crowdDensity 1) and nobody beyond, a wall less than
+ * half as far as Minimal's. A person 80 m off is a few pixels at this resolution; the same share of the draw kept as a
+ * lottery out to there (15 % to 80 m, as Lite first shipped) left a street two people wide and the rest appearing from
+ * nothing at 14 m. The drawn count stays a step under Minimal's by the table's own rule (governor.test.ts).
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.15, lodDistance: 8, nearRadius: 6, maxDistance: 80, textureSize: 64, lampLights: 0 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 1, lodDistance: 8, nearRadius: 6, maxDistance: 45, textureSize: 64, lampLights: 0 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
+
+/**
+ * The knobs a lite boot draws at: on Lite and on Minimal (the whole of a lite profile's automatic range, tierRange) the
+ * crowd is Lite's, everyone within its wall; every other knob is the tier's own. Minimal keeps a fifth of the people
+ * out to 110 m, so a step up from Lite would thin the street round the visitor to put dots on the horizon, against
+ * the table's rule that a step up only adds: on a lite boot it adds pixels, and the people stay. A tier above Minimal
+ * (only a hand's pin reaches one: a lite profile's automatic range stops at Minimal) draws the table's own crowd.
+ */
+export function liteCrowd(k: QualityKnobs): QualityKnobs {
+  if (k.label !== LITE.label && k.label !== TIERS[0].label) return k
+  return { ...k, crowdDensity: LITE.crowdDensity, lodDistance: LITE.lodDistance, nearRadius: LITE.nearRadius, maxDistance: LITE.maxDistance }
+}
 
 /**
  * Peak, tier 5: above Ultra for big GPUs. It is not in TIERS (as Lite is not), so TOP, every one-argument tierRange and

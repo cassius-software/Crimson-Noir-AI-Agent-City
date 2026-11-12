@@ -85,7 +85,7 @@ import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Ob
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import {
-  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
+  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteCrowd, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
   readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
 } from '../05_Observe_Environment/governor.ts'
@@ -1197,7 +1197,10 @@ export class Engine {
       // shore wall. A surveyed region has no window and none of it.
       const transit = pack && layout && streets && hollow ? regionTransit(hollow.pack, layout, streets) : null
       const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The lots whose floors the window's painted light shows lit (region/paintedLight.ts): the workplaces', whose
+      // ceilings hang real fixtures wherever lamps are lit, and the shops' and the homes', which have none.
+      const interiors = hollow ? [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))] : []
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit, interiors } : null, lite ? LITE_WORLD : FULL_WORLD)
       // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
       // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
       // VTOL routes and racetrack as the page does.
@@ -1267,9 +1270,10 @@ export class Engine {
       const governor = options.quality === 'auto'
         ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, hardware, ...range })
         : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, hardware, ...range })
-      // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach.
-      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
-      const first = governor.knobs()
+      // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach, and
+      // its crowd is Lite's on Minimal too (governor.ts liteCrowd: a step up adds pixels, not distant dots for near people).
+      const mask = (k: QualityKnobs): QualityKnobs => ({ ...(lite ? liteCrowd(k) : k), shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
+      const first = mask(governor.knobs())
       // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
       // kilometres from the region).
       const hidden = (c: CullSettings): CullSettings => (empty ? { ...c, maxDistance: 0 } : c)
@@ -1293,7 +1297,7 @@ export class Engine {
         setLampLights: (count) => world.setLampLights(count),
         setShadowTaps: (count) => world.setShadowTaps(count),
       }
-      const applied = mask(first)
+      const applied = first
       applyQuality(applied, targets)
 
       const view0 = new CrowdView(options.agents, world.matrixMode.globalState)

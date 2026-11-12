@@ -11,7 +11,9 @@
  *   as ribbons at their surveyed widths, with centre lines and lane dashes, a patch of plain asphalt (and of plain
  *   pavement) over every junction where two ribbons would otherwise share one plane; water; the ground. Each surface
  *   lies at its own height (SURFACE), and that height alone keeps it over the one below: see SURFACE for why no
- *   polygon offset is used;
+ *   polygon offset is used; after dark the asphalt, the pavement and the lawn glow with the window's painted light
+ *   (region/paintedLight.ts: the lamps' pools, the shopfronts' spill and the rooms' lit floors, one picture, one
+ *   texture sample), wherever no real light stands in for it;
  * - the physics: every wall as a segment with its height, the lake's shoreline as a low wall, and the region's edge;
  * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk;
  * - the workplaces', the shops' and the homes' lots hollowed (hollowLots): the buildings on the lots
@@ -22,23 +24,26 @@
  * What breaks if it is removed? A region pack can be compiled but never walked.
  */
 import {
-  BufferGeometry, Float32BufferAttribute, Mesh, MeshStandardNodeMaterial, PlaneGeometry, ShapeUtils, Vector2, type Node, type UniformNode, type Vector4,
+  BufferGeometry, ClampToEdgeWrapping, DataTexture, Float32BufferAttribute, LinearFilter, LinearMipmapLinearFilter, Mesh, MeshStandardNodeMaterial, NoColorSpace,
+  PlaneGeometry, RGBAFormat, ShapeUtils, UnsignedByteType, Vector2, type Node, type Texture, type UniformNode, type Vector4,
 } from 'three/webgpu'
-import { abs, attribute, float, fract, mix, positionWorld, smoothstep, step, vec3 } from 'three/tsl'
+import { abs, attribute, float, fract, length, mix, positionWorld, smoothstep, step, texture, vec2, vec3 } from 'three/tsl'
 import { CITY, STYLE, type Building } from '../city.ts'
 import type { FbmSet } from '../fbmTexture.ts'
 import { ROOM, toWorld, workplacesAt, type Side, type Workplace, type WorkplaceLot } from '../interiors.ts'
 import { homesAt, type Home, type HomeLot } from '../properties.ts'
 import { shopsAt, type Shop, type ShopLot } from '../storefronts.ts'
-import { buildingMaterial, waterMaterial } from '../materials.ts'
+import { buildingMaterial, waterMaterial, type RealLight } from '../materials.ts'
 import { applyMatrixMode } from '../matrixMode.ts'
 import { clipRing, isRect, type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
+import { PAINT_MARGIN, PAINT_TEXEL, type PaintedLight } from './paintedLight.ts'
 import { LANE_WIDTH, SIDEWALK, roadWidth } from './streets.ts'
 import type { Crossing, RegionTransit } from './transit.ts'
 import { buildingLot, slabPodium, type LotBuilding } from './workplaces.ts'
 
 type F = Node<'float'>
+type V3 = Node<'vec3'>
 
 /** Where the region's south-west corner sits in the engine's frame: clear of the procedural grid (0..640 m). */
 export const REGION_CORNER = Object.freeze({ x: 2000, z: 2000 })
@@ -382,11 +387,85 @@ export class RegionPlaces {
 // ---------------------------------------------------------------- meshes
 
 /**
+ * The window's painted light as the materials read it (region/paintedLight.ts bakes the picture; world.ts hands it
+ * over with the night, where the real lamp light reaches and whether the rooms' fixtures are off).
+ */
+export interface RegionPaint {
+  /** The picture's place and size (paintedLight.ts PaintedLight), without its bytes. */
+  originX: number
+  originZ: number
+  size: number
+  /** The picture as a texture (paintTexture). */
+  map: Texture
+  /** 0 by day, 1 at night (world.ts). */
+  night: UniformNode<'float', number>
+  /** Where the real lamp light reaches (materials.ts RealLight): the pools fade out inside it, as the city ground's do. */
+  real: RealLight
+  /** 1 while no ceiling fixture is lit (a lite boot, a headset: world.ts setLampLights), 0 while they are: the
+   *  workplaces' painted floors stand in for their fixtures, never under them. */
+  floors: UniformNode<'float', number>
+}
+
+/**
+ * The painted light's colours (linear RGB) and strengths, each a share of the surface's own colour at the picture's
+ * full value. The pools are the city ground's (materials.ts groundMaterial: the same warm tint at 0.7). The spill is
+ * the shopfronts' cream (materials.ts shopGlow), at about three times what a strip of that glass would really cast,
+ * as the pools are about three times a real lamp's light (cityLights.ts LAMP): a painted night is drawn to be read.
+ * The floors take the fixtures' cool white (cityLights.ts FIXTURE.color).
+ */
+export const PAINT_LIGHT = Object.freeze({
+  pool: Object.freeze({ color: [1.0, 0.8, 0.55] as const, gain: 0.7 }),
+  spill: Object.freeze({ color: [1.0, 0.86, 0.66] as const, gain: 0.5 }),
+  floor: Object.freeze({ color: [0.95, 0.97, 1.0] as const, gain: 0.45 }),
+})
+
+/**
+ * The picture as a texture: filtered between texels and mipmapped (a pool a street away is smaller than a pixel),
+ * clamped at its edge, linear data. Its format is the FBM textures' (fbmTexture.ts), so three builds its mips with the
+ * pass it already built for theirs.
+ */
+export function paintTexture(p: PaintedLight): DataTexture {
+  const tex = new DataTexture(p.data, p.size, p.size, RGBAFormat, UnsignedByteType)
+  tex.wrapS = tex.wrapT = ClampToEdgeWrapping
+  tex.magFilter = LinearFilter
+  tex.minFilter = LinearMipmapLinearFilter
+  tex.generateMipmaps = true
+  tex.colorSpace = NoColorSpace
+  tex.needsUpdate = true
+  tex.name = 'paintedLight'
+  return tex
+}
+
+/**
+ * The glow a surface of colour `base` takes from the painted light at its place: one sample of the picture, by the
+ * world position (so a junction's patch, a plaza and a room's floor read it as the ribbons do, with no attribute).
+ * Outside the picture there is none: the mask says so, because the sampler's clamp would otherwise repeat the edge of
+ * the coarser mips, which average lit texels in, as far as the ground goes. The pools fade inside the real light's
+ * reach (a lamp is lit by its light or by its pool, never both); the spill has no real light anywhere; a workplace's
+ * floor shows only while its fixtures are off, a shop's and a home's always (no light hangs there).
+ */
+function paintedGlow(paint: RegionPaint): (base: V3) => V3 {
+  const p = positionWorld
+  const uv = p.xz.sub(vec2(paint.originX, paint.originZ)).div(paint.size * PAINT_TEXEL)
+  const picture = texture(paint.map, uv).setName('paintedLight')
+  picture.updateMatrix = false
+  const inside = step(abs(uv.x.sub(0.5)), 0.5).mul(step(abs(uv.y.sub(0.5)), 0.5))
+  const beyondReal = smoothstep(paint.real.radius.mul(0.75).max(1), paint.real.radius.max(1.5), length(p.xz.sub(paint.real.focus)))
+  const { pool, spill, floor } = PAINT_LIGHT
+  const light = vec3(...pool.color).mul(picture.r.mul(beyondReal).mul(pool.gain))
+    .add(vec3(...spill.color).mul(picture.g.mul(spill.gain)))
+    .add(vec3(...floor.color).mul(picture.b.mul(paint.floors).add(picture.a).mul(floor.gain)))
+  const lit = light.mul(inside.mul(paint.night))
+  return (base) => base.mul(lit)
+}
+
+/**
  * A dark, fine-grained asphalt with a yellow centre line on two-way streets and dashed white lines between lanes. A
  * junction patch (junctions) carries `lanes` 0, which draws no marking at all: the asphalt grain alone, read from the
- * world position like the carriageways', so the patch is seamless with them.
+ * world position like the carriageways', so the patch is seamless with them. `glow`: the painted light (paintedGlow),
+ * on the asphalt and its paint alike.
  */
-function asphaltMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
+function asphaltMaterial(fbm: FbmSet, glow: ((base: V3) => V3) | null): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
   const across = attribute('across', 'float') as unknown as F // −1 … 1 over the carriageway
@@ -406,32 +485,38 @@ function asphaltMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
   const isCentre = step(abs(k.round().sub(lanes.div(2))), 0.01).mul(twoWay)
   const dash = step(fract(dist.div(9)), 0.33).mul(nearDivider).mul(float(1).sub(isCentre)).mul(step(2.5, lanes))
   const edge = step(float(1).sub(float(0.15).div(halfW)), abs(across)).mul(step(1.5, lanes))
-  m.colorNode = mix(mix(base, vec3(0.78, 0.6, 0.12), centre), vec3(0.78, 0.78, 0.74), dash.add(edge).min(1))
+  const colour = mix(mix(base, vec3(0.78, 0.6, 0.12), centre), vec3(0.78, 0.78, 0.74), dash.add(edge).min(1))
+  m.colorNode = colour
   m.roughnessNode = float(0.88)
+  if (glow) m.emissiveNode = glow(colour)
   return m
 }
 
-/** Concrete sidewalk slabs with joints every 1.5 m along the street (a junction patch, at `dist` 0, has none). */
-function sidewalkMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
+/** Concrete sidewalk slabs with joints every 1.5 m along the street (a junction patch, at `dist` 0, has none). `glow`: the painted light. */
+function sidewalkMaterial(fbm: FbmSet, glow: ((base: V3) => V3) | null): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
   const dist = attribute('dist', 'float') as unknown as F
   const n = fbm.sample(p.xz.div(2.5)).g
   const joint = smoothstep(0.96, 0.99, fract(dist.div(1.5)))
-  m.colorNode = mix(vec3(0.5, 0.49, 0.46), vec3(0.58, 0.57, 0.54), n).mul(float(1).sub(joint.mul(0.3)))
+  const colour = mix(vec3(0.5, 0.49, 0.46), vec3(0.58, 0.57, 0.54), n).mul(float(1).sub(joint.mul(0.3)))
+  m.colorNode = colour
   m.roughnessNode = float(0.9)
+  if (glow) m.emissiveNode = glow(colour)
   return m
 }
 
-/** The ground between streets and buildings: lawns and bare earth. */
-function groundMaterial(fbm: FbmSet): MeshStandardNodeMaterial {
+/** The ground between streets and buildings: lawns and bare earth. `glow`: the painted light (a frontage's spill falls on the lawn before it). */
+function groundMaterial(fbm: FbmSet, glow: ((base: V3) => V3) | null): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
   const p = positionWorld
   const a = fbm.sample(p.xz.div(11)).r, b = fbm.sample(p.xz.div(1.7)).g
   const grass = mix(vec3(0.13, 0.2, 0.08), vec3(0.2, 0.27, 0.11), b)
   const earth = mix(vec3(0.24, 0.21, 0.17), vec3(0.3, 0.27, 0.22), b)
-  m.colorNode = mix(grass, earth, smoothstep(0.55, 0.75, a))
+  const colour = mix(grass, earth, smoothstep(0.55, 0.75, a))
+  m.colorNode = colour
   m.roughnessNode = float(0.95)
+  if (glow) m.emissiveNode = glow(colour)
   return m
 }
 
@@ -631,6 +716,33 @@ export function buildingStyle(pack: RegionPack, l: RegionLayout, i: number): num
   return finishOf(pack, i, shift(l, polygonAt(pack.buildings, i)[0]))
 }
 
+/** The finishes the facade draws without windows or shopfronts (materials.ts buildingMaterial `blind`) among those styleOf gives. */
+const BLIND = new Set<number>([STYLE.concrete])
+
+/**
+ * The frontages the painted light spills from (region/paintedLight.ts): the outer ring, in the engine's frame, of every
+ * building that stands (a hollowed lot's has no height), whose finish has a lit ground floor (every finish styleOf
+ * gives but the sheds' plain concrete) and whose box comes within `reach` of the rectangle `around`.
+ */
+export function regionFrontages(pack: RegionPack, l: RegionLayout, around: Rect, reach: number): Pt[][] {
+  const out: Pt[][] = []
+  for (let i = 0; i < polygonCount(pack.buildings); i++) {
+    if (!(pack.buildings.height[i] > 0)) continue
+    const outer = shift(l, polygonAt(pack.buildings, i)[0])
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
+    for (const [x, z] of outer) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+    if (x1 < around.x0 - reach || x0 > around.x1 + reach || z1 < around.z0 - reach || z0 > around.z1 + reach) continue
+    if (BLIND.has(finishOf(pack, i, outer))) continue
+    out.push(outer)
+  }
+  return out
+}
+
+/** The rectangle a street window's painted picture covers (paintedLight.ts: the window and PAINT_MARGIN round it). */
+export function paintBounds(w: { originX: number; originZ: number; blocks: number }): Rect {
+  return { x0: w.originX - PAINT_MARGIN, z0: w.originZ - PAINT_MARGIN, x1: w.originX + w.blocks * CITY.pitch + PAINT_MARGIN, z1: w.originZ + w.blocks * CITY.pitch + PAINT_MARGIN }
+}
+
 /** Every building of the pack, merged by `tile`-metre tiles, walls and roofs, with the facade attributes. */
 function buildingGeometries(pack: RegionPack, l: RegionLayout, tile: number): Map<string, BufferGeometry> {
   const tiles = new Map<string, Buffers>()
@@ -734,11 +846,13 @@ export interface RegionScene {
   stats: { buildings: number; roads: number; junctions: number; water: number; tiles: number; vertices: number }
 }
 
-/** Painted road markings: near-white, rough, the paint of a zebra crossing or a runway's bars. */
-function markingMaterial(): MeshStandardNodeMaterial {
+/** Painted road markings: near-white, rough, the paint of a zebra crossing or a runway's bars. `glow`: the painted light (a crossing under a lamp is the brightest thing on the road). */
+function markingMaterial(glow: ((base: V3) => V3) | null): MeshStandardNodeMaterial {
   const m = new MeshStandardNodeMaterial()
-  m.colorNode = vec3(0.8, 0.8, 0.77)
+  const colour = vec3(0.8, 0.8, 0.77)
+  m.colorNode = colour
   m.roughnessNode = float(0.85)
+  if (glow) m.emissiveNode = glow(colour)
   return m
 }
 
@@ -753,15 +867,19 @@ function quad(b: Buffers, r: Rect, y: number): void {
  * Everything the page draws for a region. `transit` (region/transit.ts regionTransit, a generated region with a street
  * window): the STOL strip's paving, as a road ribbon of one lane (no centre line, no dashes), and every painted
  * marking (the crossings' stripes, the strip's bars and centreline) as quads at SURFACE.marking in one mesh of one
- * material; the pier's boxes come as the plan (world.ts), not here.
+ * material; the pier's boxes come as the plan (world.ts), not here. `paint` (a region with a street window): the
+ * window's painted light, which the asphalt, the pavement and the lawn glow with after dark.
  */
-export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null, transit: Pick<RegionTransit, 'markings' | 'strip'> | null = null): RegionScene {
+export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null, transit: Pick<RegionTransit, 'markings' | 'strip'> | null = null, paint: RegionPaint | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
   // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
   // material is made, never per mesh. The buildings' one facade is every tile's, and each wrap reads the colour under
   // it twice, so a wrap per tile doubled the shadow pass's shader with every tile until no browser could build it.
   const moded = (m: MeshStandardNodeMaterial): MeshStandardNodeMaterial => (matrixMode ? applyMatrixMode(m, matrixMode) : m)
+  // The painted light: the ground's materials (the lawn, the pavement, the asphalt, the markings) each sample the
+  // picture once, where they are made.
+  const glow = paint ? paintedGlow(paint) : null
   const add = (g: BufferGeometry, m: MeshStandardNodeMaterial, name: string, shadow: boolean, order = 0) => {
     const mesh = new Mesh(g, m)
     mesh.name = name
@@ -775,7 +893,7 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   const b = l.bounds, margin = 3000
   const w = b.x1 - b.x0 + 2 * margin, d = b.z1 - b.z0 + 2 * margin
   const ground = new PlaneGeometry(w, d, Math.ceil(w / SURFACE_PIECE), Math.ceil(d / SURFACE_PIECE))
-  add(ground.rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), moded(groundMaterial(fbm)), 'RegionGround', false, 1)
+  add(ground.rotateX(-Math.PI / 2).translate((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2), moded(groundMaterial(fbm, glow)), 'RegionGround', false, 1)
   add(waterGeometry(pack, l, SURFACE.water), moded(waterMaterial(fbm)), 'RegionWater', false, 2)
   // Roads: sidewalks under the carriageways, each surface at its SURFACE height and nothing else keeping them apart.
   const walks = buffers('dist'), roads = buffers('across', 'dist', 'lanes', 'twoWay', 'halfWidth')
@@ -816,7 +934,7 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   const walkJunctions = buffers('dist'), roadJunctions = buffers('across', 'dist', 'lanes', 'twoWay', 'halfWidth')
   junctions(ribbons, walkJunctions, SURFACE.sidewalkJunction, (r) => r.walkHalf, { dist: 0 })
   const junctionCount = junctions(ribbons, roadJunctions, SURFACE.roadJunction, (r) => r.half, { across: 0, dist: 0, lanes: 0, twoWay: 0, halfWidth: 1 })
-  const pavement = moded(sidewalkMaterial(fbm)), asphalt = moded(asphaltMaterial(fbm))
+  const pavement = moded(sidewalkMaterial(fbm, glow)), asphalt = moded(asphaltMaterial(fbm, glow))
   add(geometryOf(walks), pavement, 'RegionSidewalks', false, 3)
   if (walkJunctions.idx.length > 0) add(geometryOf(walkJunctions), pavement, 'RegionSidewalkJunctions', false, 3)
   add(geometryOf(roads), asphalt, 'RegionRoads', false, 4)
@@ -825,7 +943,7 @@ export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, nig
   if (transit && transit.markings.length > 0) {
     const marks = buffers()
     for (const r of transit.markings) quad(marks, r, SURFACE.marking)
-    add(geometryOf(marks), moded(markingMaterial()), 'RegionMarkings', false, 5)
+    add(geometryOf(marks), moded(markingMaterial(glow)), 'RegionMarkings', false, 5)
   }
   // Buildings, by tile, every tile in the one facade.
   const facade = moded(buildingMaterial(fbm, night, attribute('along', 'float') as unknown as F))

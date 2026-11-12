@@ -257,13 +257,21 @@ lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on
 on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
 Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
 lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
-whose asphalt has no painted pools, so its streets are lit only where the real light reaches. Every indoor workplace
+and beyond their reach its ground is lit by paint too, from a picture rather than from the grid: the window seen from
+above, a texel a metre, baked once at boot from what stands there (`01_Initialize_World/region/paintedLight.ts`) and
+read by the lawn, the pavement, the asphalt and the road markings with one texture sample. It holds the pool under
+every lamp's head (the spread of a point of light at the head's height: half at 4.5 m, an eighth at 10 m, gone at
+16 m, so a crossing between eight lamps is lit and the middle of a block is not black), the light every glazed ground
+floor spills on the ground before it (shopfronts, and the glass round every room, shop and home, out to 10 m), and the
+lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. Every indoor workplace
 (the city's sixteen glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
 luminaire panel over each, on by day and by night. The
 lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
 lights of its cell, so the tier moves the count without recompiling a shader, and dusk costs no hitch. A lite profile
-builds none of this (every lamp is an emissive head over its pool, the rooms are lit by the sky), and under a headset
-the lamps go back to emissive heads while the headset presents.
+builds none of this: every lamp is an emissive head over its painted pool, a region's rooms are lit by their painted
+floors (the city's by the sky), and the night's fill gains the glow of a lit city (`world.ts` `CITY_GLOW`), since
+paint lights only the ground it is on. Under a headset the lamps go back to emissive heads over their pools while the
+headset presents.
 
 ### Sun shadows
 
@@ -3479,9 +3487,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   bare `img-tec` only on 4 GB or less, so a D-Series is not lite), or Adreno 5xx and older, and any phone that reports
   2 GB of memory or less. Valhall and Immortalis, Adreno 6xx and newer, Xclipse, iPhones, desktops, laptops, the
   native shell and software rasterizers keep their profiles. A lite profile:
-  - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a thinner,
-    shorter crowd draw (density 0.15, detailed bodies within 8 m, always drawn within 6 m, nobody beyond 80 m). Its
-    automatic range is Lite to Minimal, so it never reaches a tier that needs post or shadows;
+  - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a smaller
+    crowd draw spent nearby (everyone within 45 m, detailed bodies within 8 m, nobody beyond: no lottery, so nobody
+    appears from nothing a few metres off). Its automatic range is Lite to Minimal, so it never reaches a tier that
+    needs post or shadows, and on Minimal it keeps Lite's crowd (a step up adds pixels, not people far off in place of
+    people near);
   - simulates 2,500 pedestrians and 12 cars unless `?crowd` or `?cars` says (a region's street window still caps the
     cars);
   - boots a lighter city, decided before anything compiles: the post chain capped off as with `?post=0` and never
