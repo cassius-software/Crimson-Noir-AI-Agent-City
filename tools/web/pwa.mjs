@@ -20,9 +20,11 @@
  * newly published build is what the next launch runs once the host serves its name, without waiting for the new copy
  * to be kept first (it is kept in the background, by the new build's own worker, which waits for the launch's own
  * download to be over so that the two do not share the link). A page from the host that stops or crawls is given up,
- * and the launch starts from the copy instead. It also adds the two cross-origin isolation headers a
- * static host does not send to the page it serves, so from the second visit on the physics bridge shares memory
- * with its worker as it does under `npm run preview` (without them the bridge copies, and nothing else changes).
+ * and the launch starts from the copy instead. The site's model in models/, which the web workflow adds beside these
+ * files with tools/web/siteModel.mjs, is left to the network: the page keeps that in its own storage. It also adds
+ * the two cross-origin isolation headers a static host does not send to the page it serves, so from the second visit
+ * on the physics bridge shares memory with its worker as it does under `npm run preview` (without them the bridge
+ * copies, and nothing else changes).
  * Usage: node tools/web/pwa.mjs [--from dist] [--out dist-web]. Needs `npm run build` first (`npm run build:web` does
  * both).
  * What breaks if it is removed? dist/index.html still plays from a disk or a localhost server; a phone loses its way to
@@ -267,6 +269,8 @@ async function linkFree() {
     clearTimeout(timer)
   }
 }
+// The site's model beside the page (tools/web/siteModel.mjs): never cached here (the page keeps it in its own storage).
+const MODELS = new URL('models/', self.location).pathname
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -473,6 +477,9 @@ async function page(event) {
 self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return
+  // The model, its manifest and its licence go straight to the network: no 0.4 GB copy in this cache, and a page load
+  // of models/LICENSE is the licence, not the city.
+  if (new URL(req.url).pathname.startsWith(MODELS)) return
   if (req.mode === 'navigate') { event.respondWith(page(event)); return }
   event.respondWith(caches.open(CACHE).then((c) => c.match(req)).then((hit) => hit || fetch(req)))
 })

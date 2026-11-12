@@ -136,6 +136,15 @@ wllama's JavaScript also carries feature tests from wasm-feature-detect (Apache-
 the runtime also carries the full text of each of these licenses at the end of `dist/index.html`, from
 `third_party/wllama/3.8.1/NOTICE`.
 
+**The model the web copy serves.** The page file, the Windows app and the release builds carry no model. The
+published web copy of the page serves one model beside it, Qwen2.5 0.5B Instruct (the file
+`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site only when a visitor taps for it, and
+keeps in that visitor's browser. The model is the Qwen team's, Copyright 2024 Alibaba Cloud, licensed under the Apache
+License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by bartowski, served unchanged. It
+remains under its own licence, not under this product's licence: the full text of the Apache License 2.0 with that
+copyright line, and a notice of where the file comes from, are served beside it as `models/LICENSE` and
+`models/NOTICE`, from `third_party/qwen2.5-0.5b-instruct/`.
+
 ## Map data (the surveyed region)
 
 Every build carries a region whose geometry is surveyed open data (walked with `?region=on`; the pilot build,
@@ -165,10 +174,14 @@ it can speak instead (`ask api chat`), llama.cpp only to identify the local serv
 that format (`ask provider llamacpp`) and the engine compiled into the in-page model runtime (`ask provider inpage`),
 Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
 (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
-unless the operator chooses another (`09_Cognition/localCompute.ts`). No model and no model server ships with the product:
-the operator's server, or the operator's own model file kept in their browser for the in-page runtime, holds the
-model under the model's own licence, and the network provider answers only with the operator's own key, which stays
-in their browser. No speech engine, speech
+unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the model the web copy serves
+beside its page for the in-page runtime (`09_Cognition/siteModel.ts`). No model server ships with the product, and the
+page file, the Windows app and the release builds carry no model: the operator's server, or a model file kept in their
+browser for the in-page runtime, holds the model under the model's own licence. The one model the product offers is
+Qwen2.5 0.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud; the file quantized by bartowski), which the web copy
+serves beside its page and fetches only when the visitor taps for it, under its own licence
+(`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`). The network provider
+answers only with the operator's own key, which stays in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
 (`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
 
@@ -230,7 +243,8 @@ release; each one is something the release engineering could not confirm.
     loopback HTTP port. Nothing of any server is bundled or linked, so its licence does not reach this product's
     code. The server's own code, its model weights and each voice come under their own terms, which vary: some
     servers are GPL or AGPL, and some voices are non-commercial or require attribution. Check them before speech
-    is used commercially, for example in a recording that is published. The same applies to `ask`'s model.
+    is used commercially, for example in a recording that is published. The same applies to `ask`'s model; the one
+    model the product itself serves, on the web copy, is item 14.
 12. **Personal data in the swarm's memory.** The memory keeps the operator's prompts, the start of each answer,
     and the text of everything said, in this browser's IndexedDB (`civic-simulation:swarm-memory`), on this
     machine only. Nothing is transmitted. `memory forget all` erases one city; clearing the site's data erases
@@ -253,6 +267,23 @@ release; each one is something the release engineering could not confirm.
     - **Copyright in the code.** Most of this codebase was written with an AI assistant under the operator's direction.
       Copyright protection for AI-assisted work is unsettled (the US Copyright Office's 2025 guidance protects only
       human-authored expression; Canada has no ruling). Ask counsel what records of human authorship to keep.
+
+14. **The model the web copy serves.** The web copy on GitHub Pages serves Qwen2.5 0.5B Instruct beside its page
+    (`src/09_Cognition/siteModel.ts` pins it; `third_party/qwen2.5-0.5b-instruct/` and `docs/ip-audit.md` section 1
+    record it): the Qwen team's weights, Apache-2.0, Copyright 2024 Alibaba Cloud, as a Q4_K_M GGUF file quantized with
+    an importance matrix by bartowski, fetched by the web workflow from Hugging Face at a pinned revision, checked
+    against its size and SHA-256 and served unchanged, with the licence and a notice beside it. The weights are not in
+    this repository, in `dist/index.html`, in the Windows app or in any release build. Before a public release:
+    - **The licence text.** `third_party/qwen2.5-0.5b-instruct/LICENSE` is the Apache License 2.0 with Qwen's copyright
+      line, rebuilt from the canonical text; it was not compared byte for byte with the LICENSE file in Qwen's own
+      repository, because Hugging Face was not reachable from the container that wrote it. Compare it once.
+    - **A third party's quantization.** The file served is bartowski's conversion of Qwen's weights (format and numeric
+      precision changed), not Qwen's own file, and bartowski's repository names its licence as apache-2.0 without a
+      licence file of its own. The NOTICE beside the model says so, as section 4(b) of the licence asks of a modified
+      file. Confirm that this is enough, or serve Qwen's own GGUF file instead.
+    - **Privacy and bandwidth.** The web copy downloads about 0.4 GB from its own site when a visitor taps for it, and
+      nothing of the visitor's goes with the request. Say so in a privacy notice if the web copy gets one. GitHub Pages
+      has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the model.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

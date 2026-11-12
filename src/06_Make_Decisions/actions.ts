@@ -107,6 +107,22 @@ const CANDIDATE = new RegExp(String.raw`^\s*(?:\d+[.)]\s+)?[\x60*_>"#\-\s]*(?:ci
  */
 const HEAD = new RegExp(String.raw`\b(?:city\s+)?action[\x60*_"]*\s*[:\-–—=]\s*[\x60*_"]*\s*(?:${WORDS})\b`, 'i')
 
+/**
+ * Where the first action line starts in `text`, by this parser's own reading (a whole line CANDIDATE reads, or a HEAD
+ * glued to prose), or -1 for none: where a conversation's reply is cut (07_Execute_Actions/onboarding/voice.ts
+ * chatWords), so what the chat shows as words and what this parser would read as a line never disagree.
+ */
+export function actionCut(text: string): number {
+  let at = 0
+  let cut = -1
+  for (const line of text.split('\n')) {
+    if (CANDIDATE.test(line)) { cut = at; break }
+    at += line.length + 1
+  }
+  const head = HEAD.exec(text)
+  return head !== null && (cut < 0 || head.index < cut) ? head.index : cut
+}
+
 /** The typed reading of an action's value, from which the canonical line, the sentence and the facade call all follow. */
 type Decoded =
   | { readonly verb: 'time'; readonly hours: number }
