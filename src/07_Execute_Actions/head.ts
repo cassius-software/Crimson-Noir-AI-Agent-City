@@ -22,11 +22,12 @@ export const EYE_HEIGHT = 1.7
 /** The eye may be set this far above the feet, m (the wardrobe's shortest and tallest bodies lie well inside). */
 export const EYE_RANGE: readonly [number, number] = Object.freeze([1.2, 2.2] as [number, number])
 /**
- * The eye height of a body drawn at `scale` times the reference height (look.ts heightScale): EYE_HEIGHT scaled,
- * held within EYE_RANGE; a non-finite scale is the reference eye.
+ * The eye height of a body drawn at `scale` times the reference height (look.ts heightScale), standing `lift` m higher
+ * on a heel (look.ts heelRiseOf): EYE_HEIGHT scaled and lifted, held within EYE_RANGE; a non-finite answer is the
+ * reference eye.
  */
-export function eyeHeightFor(scale: number): number {
-  const h = EYE_HEIGHT * scale
+export function eyeHeightFor(scale: number, lift = 0): number {
+  const h = EYE_HEIGHT * scale + lift
   if (!Number.isFinite(h)) return EYE_HEIGHT
   return h < EYE_RANGE[0] ? EYE_RANGE[0] : h > EYE_RANGE[1] ? EYE_RANGE[1] : h
 }

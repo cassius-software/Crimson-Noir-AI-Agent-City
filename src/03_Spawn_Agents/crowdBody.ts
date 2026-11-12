@@ -17,7 +17,7 @@
  * What breaks if it is removed? The bodies have no vertex stage: nothing of the crowd is posed or drawn.
  */
 import { wgslFn } from 'three/tsl'
-import { BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, UMBRELLA_OPEN, WALK } from './humanoid.ts'
+import { BONE, FACE, GARMENT_STEP, GAZE, HEEL_TAN, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, UMBRELLA_OPEN, WALK } from './humanoid.ts'
 
 const TAU = Math.PI * 2
 
@@ -37,8 +37,8 @@ const LOWER_TABLE = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.sli
  * the base height, piece mask, idle phase 0..1, -); `morphA` = (mass, muscle, shoulders, hips) and `morphB` = (legs,
  * posture, head, lower cut), the sliders each 0..1, the lower cut as bodyGarment reads it (the cut, 16 more under a
  * coat); `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, carried), the sliders each −1..1, and
- * `carried` the near body's code for the pieces past the mask (the umbrella | the headphones << 2, look.ts
- * LOOK_CODED_PIECE; 0 on the far body) on every vertex; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
+ * `carried` the near body's code for the pieces past the mask (the umbrella | the headphones << 2 | the heel << 4,
+ * look.ts LOOK_CODED_PIECE; 0 on the far body) on every vertex; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
  * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
  * world centre (x, y, z) and rotation (a quaternion) of the rig shapes the vertex's two bones hang from, read when
  * `stance.w` (the rig slot word, slot + 1) is set: a fallen pedestrian's body wears the realm's rig (bodyRig) and
@@ -262,6 +262,14 @@ fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f {
   let knee = ${f(Math.PI)} - acos(clamp((thigh * thigh + shin * shin - r * r) / (2.0 * thigh * shin), -1.0, 1.0));
   return vec4f(hip, knee, sole - hip - knee, 0.0);
 }
+fn bodyHeel(heel: u32, fLegs: f32) -> vec2f {
+  // A heel (humanoid.ts heelPose): (the foot's pitch toes down, how much higher the body stands, in the base body's
+  // metres). The pitch sets the toes' tip and the heel's foot on one level, the legs' factor stretching the heel; the
+  // rise keeps the toes' tip on the ground with the foot turned about the ankle. Heel 0 is neither.
+  let k = select(select(select(${f(HEEL_TAN[1])}, ${f(HEEL_TAN[2])}, heel == 2u), ${f(HEEL_TAN[3])}, heel == 3u), 0.0, heel == 0u);
+  let tilt = atan(fLegs * k);
+  return vec2f(tilt, ${f(LANDMARK.ankle)} * fLegs * (cos(tilt) - 1.0) + ${f(SOLE.toe)} * sin(tilt));
+}
 fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f {
   // Where the head turns (humanoid.ts gazeAt): (the chest's yaw, the head's own yaw, the head's pitch). The way
   // they go first, the head leading a turn; then the operator's eye when it is in front, within reach and not their
@@ -351,7 +359,8 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let weight = clamp(skin.y, 0.0, 1.0);
   let mask = u32(stance.y + 0.5);
   // The pieces from the umbrella's on are past the mask (a float holds its bits 1 to 24): three to a slot, each worn
-  // when its slot's option in the carried code (faceB.w: the umbrella, the headphones two bits up) is its own.
+  // when its slot's option in the carried code (faceB.w: the umbrella, the headphones two bits up, the heel two more)
+  // is its own.
   let carry = u32(faceB.w + 0.5);
   let coded = opt - ${PIECE.UMBRELLA_FOLDING}u;
   let worn = select(((mask >> opt) & 1u) == 1u, ((carry >> (coded / 3u * 2u)) & 3u) == coded % 3u + 1u, opt >= ${PIECE.UMBRELLA_FOLDING}u);
@@ -388,7 +397,8 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   // planted through the stance half, carried from half a stride ahead to half behind linearly in the phase, keeps its
   // spot of ground: each leg is solved from its foot (bodyFoot, bodyLeg) in the base body's metres (the stature's
   // scales come after the pose), the stride, the lift and the roll shrinking to standing under WALK.strideSpeed; the
-  // pelvis drops what the planted leg cannot span. The arms swing with the speed, the left against the left leg.
+  // pelvis drops what the planted leg cannot span; on a heel both feet pitch toes down by its tilt and the body stands
+  // higher by its rise (bodyHeel). The arms swing with the speed, the left against the left leg.
   let swing = clamp(motion.w / ${f(WALK.fullSpeed)}, 0.0, ${f(WALK.maxSwing)});
   let phase = motion.z;
   let sL = sin(phase);
@@ -404,8 +414,9 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let reach = bodyReach(thigh, shin);
   let planted = select(footR, footL, footL.w > 0.5);
   let drop = max(0.0, pivA.x - pivA.z - planted.y - sqrt(max(reach * reach - planted.x * planted.x, 0.0)));
-  let legL = bodyLeg(pivA.z + footL.y + drop - pivA.x, footL.x, thigh, shin, footL.z);
-  let legR = bodyLeg(pivA.z + footR.y + drop - pivA.x, footR.x, thigh, shin, footR.z);
+  let heel = bodyHeel((carry >> 4u) & 3u, fLegs);
+  let legL = bodyLeg(pivA.z + footL.y + drop - pivA.x, footL.x, thigh, shin, footL.z + heel.x);
+  let legR = bodyLeg(pivA.z + footR.y + drop - pivA.x, footR.x, thigh, shin, footR.z + heel.x);
   let holdingCup = ((mask >> 3u) & 1u) == 1u;
   let carryingBag = ((mask >> 2u) & 1u) == 1u;
   var shoulderL = -sL * ${f(WALK.shoulder)} * swing * gait;
@@ -474,9 +485,9 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
     b = b0 * weight + b1 * (1.0 - weight);
   }
   b = bodyRotAxis(b, vec3f(0.0), k, pose.x);
-  // The stature's scales (the normal takes their reciprocals), the pelvis' rise, the heading, the place.
+  // The stature's scales (the normal takes their reciprocals), the pelvis' rise (and a heel's), the heading, the place.
   let p = b[0];
-  let q = vec3f(p.x * across, p.y * stance.x - drop * stance.x, p.z * across);
+  let q = vec3f(p.x * across, p.y * stance.x + (heel.y - drop) * stance.x, p.z * across);
   let nn = vec3f(b[1].x / across, b[1].y / stance.x, b[1].z / across);
   let ch = cos(agent.w);
   let sh = sin(agent.w);
@@ -497,7 +508,7 @@ export const BODY_INCLUDES: Readonly<Record<string, readonly string[]>> = Object
   bodyBone: Object.freeze(['bodyRotX', 'bodyRotY', 'bodyRotAxis']),
   bodyLowerShape: Object.freeze(['bodyRamp', 'bodyHat']),
   bodyGarment: Object.freeze(['bodyLowerShape', 'bodyRamp']),
-  bodyVertex: Object.freeze(['bodyFace', 'bodyGarment', 'bodyHeightMap', 'bodyMorph', 'bodyRig', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
+  bodyVertex: Object.freeze(['bodyFace', 'bodyGarment', 'bodyHeightMap', 'bodyMorph', 'bodyRig', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyHeel', 'bodyGaze', 'bodyBone', 'bodyRotAxis']),
 })
 
 const parts = BODY_WGSL.split(/(?=^fn )/m).map((s) => s.trim()).filter(Boolean)

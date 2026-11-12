@@ -57,13 +57,15 @@ export const SLOTS = 16
  * float holds bits 1 to 24 exactly) and are worn by a code instead (look.ts LOOK_CODED_PIECE, crowdBody.ts bodyVertex):
  * the umbrella in the cup's hand, furled short (UMBRELLA_FOLDING), furled long (UMBRELLA_WALKING) or open over the head
  * (UMBRELLA_OPEN, on the chest, the arm held up to its shaft); and the headphones on the head, over-ear (HEADPHONES),
- * on-ear (ON_EAR) or in the ears (EARBUDS). Every one is the near body's alone, in the device slot.
+ * on-ear (ON_EAR) or in the ears (EARBUDS), in the device slot; and a heel under each shoe, a block (HEEL_BLOCK), a
+ * mid heel (HEEL_MID) or a high one (HEEL_HIGH), in the shoe's slot. Every one is the near body's alone.
  */
 export const PIECE = Object.freeze({
   NONE: 0, TIE: 1, BAG: 2, CUP: 3, LONG_HAIR: 4, GLASSES: 5, HAIR_CAP: 6, BOB: 7, BUN: 8, FACE: 9, COAT: 10, SCARF: 11,
   VOLUME: 12, TOP_BUN: 13, PONYTAIL: 14, WRAP: 15, TURBAN: 16, HAT: 17, BRIM: 18,
   BEARD: 19, AID_L: 20, AID_R: 21, COIL_L: 22, COIL_R: 23,
   UMBRELLA_FOLDING: 24, UMBRELLA_WALKING: 25, UMBRELLA_OPEN: 26, HEADPHONES: 27, ON_EAR: 28, EARBUDS: 29,
+  HEEL_BLOCK: 30, HEEL_MID: 31, HEEL_HIGH: 32,
 })
 
 /**
@@ -280,6 +282,50 @@ export const UMBRELLA_OPEN = 3
 
 /** The shoe's sole about the ankle, m: the heel this far behind it, the toes this far ahead (legTubes' lowest ring). */
 export const SOLE = Object.freeze({ heel: 0.085, toe: 0.145 })
+
+/** One heel's shape, m in the base body (HEEL_SHAPES). */
+export interface HeelShape {
+  /** How tall it stands at its centre. */
+  readonly height: number
+  /** Its centre, behind the ankle (its back at the shoe's back). */
+  readonly z: number
+  /** Its cross-section's radii (across, along the foot) under the sole and where it meets the ground. */
+  readonly top: readonly [number, number]
+  readonly ground: readonly [number, number]
+  readonly segments: number
+}
+
+/**
+ * The heels (look.ts HEEL), by option: none (0, the shoe flat on the ground as before), a block heel, a mid heel that
+ * tapers, and a high heel that tapers to a point. A heel lifts the back of the shoe while the toes keep the ground, so
+ * the foot pitches toes down and the body stands higher (heelPose); the heel stands upright under it (heelTubes).
+ */
+export const HEEL_SHAPES: readonly (HeelShape | null)[] = Object.freeze([
+  null,
+  Object.freeze({ height: 0.04, z: -0.058, top: Object.freeze([0.03, 0.027] as const), ground: Object.freeze([0.027, 0.024] as const), segments: 6 }),
+  Object.freeze({ height: 0.06, z: -0.062, top: Object.freeze([0.024, 0.022] as const), ground: Object.freeze([0.013, 0.012] as const), segments: 6 }),
+  Object.freeze({ height: 0.08, z: -0.068, top: Object.freeze([0.02, 0.017] as const), ground: Object.freeze([0.0055, 0.0055] as const), segments: 4 }),
+])
+
+/**
+ * The tangent of the pitch each heel gives the base body's foot (toes down): the heel's height over the distance
+ * from its centre to the toes' tip, as a sine. The vertex stage takes these as constants (crowdBody.ts bodyHeel).
+ */
+export const HEEL_TAN: readonly number[] = Object.freeze(HEEL_SHAPES.map((s) => (s ? Math.tan(Math.asin(s.height / (SOLE.toe - s.z))) : 0)))
+
+/**
+ * The foot's pitch on a heel (rad, toes down) and how much higher the body stands for it (m, the base body's), for a
+ * shape's legs factor. The pitch sets the toes' tip and the heel's foot on one level: on the base legs that is
+ * HEEL_TAN's, and the sliders stretch the heel with the leg (heightMap), so it is atan(legs × that). The rise keeps the
+ * toes' tip on the ground once the foot turns about the ankle's pivot. Heel 0 is neither. crowdBody.ts bodyHeel is the
+ * GPU twin.
+ */
+export function heelPose(heel: number, legs: number): { readonly tilt: number; readonly rise: number } {
+  const k = HEEL_TAN[heel] ?? 0
+  if (k === 0) return { tilt: 0, rise: 0 }
+  const tilt = Math.atan(legs * k)
+  return { tilt, rise: LANDMARK.ankle * legs * (Math.cos(tilt) - 1) + SOLE.toe * Math.sin(tilt) }
+}
 
 /**
  * Where the head turns (gazeAt). Metres from the neck: the operator's eye holds the gaze whole within `near`, not
@@ -658,7 +704,10 @@ export interface WalkAngles {
   readonly headYaw: number
   /** The trunk's lean from the posture (about the hip, forward positive). */
   readonly slouch: number
-  /** The pelvis' rise, m (world): at or below zero, what the planted leg cannot span at the ends of the stance. */
+  /**
+   * The pelvis' rise, m (world): at or below zero, what the planted leg cannot span at the ends of the stance; on a
+   * heel, the heel's rise above that (heelPose).
+   */
   readonly rise: number
 }
 
@@ -754,12 +803,13 @@ export function gazeAt(neck: readonly [number, number, number], heading: number,
  * The walk at `phase` (rad; the left leg's cycle, the right half a turn behind) at `speed` (m/s), for a shape's
  * factors, holding a cup (the left arm up) or carrying a bag (the right arm still), looking `gaze`'s way, with an
  * umbrella (look.ts UMBRELLA) in the left hand: a furled one stills the arm as a bag does, an open one holds it up to
- * the shaft at the cup's raise, without a swing (it takes the cup's hand: look.ts lookMask). Each leg
+ * the shaft at the cup's raise, without a swing (it takes the cup's hand: look.ts lookMask), on a heel (look.ts
+ * HEEL): both feet pitched toes down by its tilt and the body raised by its rise (heelPose). Each leg
  * is solved from its foot (footAt, legSolve) in the base body's metres, the stride, the lift and the roll shrinking
  * to standing under WALK.strideSpeed; the pelvis drops what the planted leg cannot span; the arms swing with the
  * speed against the legs. Exactly what the vertex stage computes, in the same order.
  */
-export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD, umbrella = 0): WalkAngles {
+export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = false, bag = false, gaze: Gaze = GAZE_AHEAD, umbrella = 0, heel = 0): WalkAngles {
   const swing = swingOf(speed)
   const scale = scaleOf(f)
   const piv = pivotsOf(f)
@@ -772,8 +822,10 @@ export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = 
   const planted = footL.planted ? footL : footR
   const drop = pelvisDrop(planted.z, planted.y, piv)
   const thigh = piv.hip - piv.knee, shin = piv.knee - piv.ankle
-  const legL = legSolve(piv.ankle + footL.y + drop - piv.hip, footL.z, thigh, shin, footL.sole)
-  const legR = legSolve(piv.ankle + footR.y + drop - piv.hip, footR.z, thigh, shin, footR.sole)
+  const onHeel = heelPose(heel, f.legs)
+  const tilted = (sole: number) => (onHeel.tilt === 0 ? sole : sole + onHeel.tilt)
+  const legL = legSolve(piv.ankle + footL.y + drop - piv.hip, footL.z, thigh, shin, tilted(footL.sole))
+  const legR = legSolve(piv.ankle + footR.y + drop - piv.hip, footR.z, thigh, shin, tilted(footR.sole))
   const arm = (p: number) => {
     const s = Math.sin(p)
     const shoulder = -s * WALK.shoulder * swing * f.gait
@@ -792,7 +844,7 @@ export function walkAngles(phase: number, speed: number, f: ShapeFactors, cup = 
     head: -f.slouch * WALK.headCounter - gaze.pitch,
     headYaw: gaze.head,
     slouch: f.slouch,
-    rise: -drop * scale.y,
+    rise: onHeel.rise === 0 ? -drop * scale.y : (onHeel.rise - drop) * scale.y,
   }
 }
 
@@ -979,6 +1031,8 @@ interface Ring {
   readonly sideWeight?: boolean
   /** Laid on the skull: every vertex's z takes the skull's own lofted chord at its height and x (skullFront), plus the ring's. */
   readonly wrap?: boolean
+  /** The ring's plane rises this much per metre ahead of its centre (a heel's foot, level once the foot is pitched). */
+  readonly tilt?: number
 }
 
 interface Tube {
@@ -1549,6 +1603,30 @@ function umbrellaTubes(): Tube[] {
   ]
 }
 
+/**
+ * A heel under each shoe (pieces HEEL_BLOCK, HEEL_MID, HEEL_HIGH, by HEEL_SHAPES; the shoe's slot, on the foot's bone),
+ * from just inside the sole down to the ground. The foot stands pitched on it (heelPose), so in the rest frame it leans
+ * toward the toes by the pitch and its foot's ring is tilted the other way: once the foot is turned, the heel stands
+ * upright and its foot is level, on the ground (the sliders stretch it with the leg and the pitch follows: heelPose).
+ */
+function heelTubes(side: number, woman: boolean): Tube[] {
+  const foot = side < 0 ? BONE.FOOT_L : BONE.FOOT_R
+  const x = side * LANDMARK.hipX
+  const r = woman ? 0.92 : 1
+  return HEEL_SHAPES.flatMap((s, heel): Tube[] => {
+    if (!s) return []
+    const k = HEEL_TAN[heel], c = 1 / Math.hypot(1, k)
+    const groundY = -s.height * c, groundZ = s.z + s.height * k * c
+    return [{
+      rings: [
+        { y: groundY, x, z: groundZ, rx: s.ground[0] * r, rz: s.ground[1], tilt: k, slot: SLOT.SHOES, bone: foot },
+        { y: 0.003, x, z: s.z, rx: s.top[0] * r, rz: s.top[1], slot: SLOT.SHOES, bone: foot },
+      ],
+      segments: s.segments, farSegments: s.segments, capBottom: groundY, piece: PIECE.HEEL_BLOCK + heel - 1, nearOnly: true,
+    }]
+  })
+}
+
 /** The skirt: a shell from the waist to above the knee, turned with the trunk. */
 function skirtTube(): Tube {
   const rings: Ring[] = [
@@ -1584,7 +1662,7 @@ export function bodyTubes(variant: number): Tube[] {
   ]
   if (skirt) tubes.push(skirtTube())
   if (v === 0) tubes.push(tieTube(profile))
-  tubes.push(coatTube(woman), ...scarfTubes(profile), ...umbrellaTubes())
+  tubes.push(coatTube(woman), ...scarfTubes(profile), ...umbrellaTubes(), ...heelTubes(-1, woman), ...heelTubes(1, woman))
   return tubes
 }
 
@@ -1653,8 +1731,9 @@ class Loft {
         const th = (j / n) * Math.PI * 2
         const s = Math.sin(th)
         const x = cx + r.rx * Math.cos(th)
-        const z = cz + (s >= 0 ? rz : back) * s + laid(r, r.y, x)
-        this.vertex(x, r.y, z, r.bone, r.slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
+        const ahead = (s >= 0 ? rz : back) * s
+        const z = cz + ahead + laid(r, r.y, x)
+        this.vertex(x, r.y + ahead * (r.tilt ?? 0), z, r.bone, r.slot, piece, bone1, w, region(r), far ? 0 : faceWeight(r, th))
       }
     }
     for (let k = 1; k < rings.length; k++) {
@@ -1747,13 +1826,14 @@ const STILL: BodyPose = Object.freeze({ tilt: 0, bend: 0, fall: 0 })
  * weighted to their own bone alone here (their blend to the trunk is a few millimetres at rest); a cut skirt's rings
  * are posed as the shader poses them (skirtPose: the trunk and the legs blended), which moves a midi's hem a few
  * centimetres in the side view at a slumped or an upright posture, and so are the coat's rings below the waist
- * (coatPose).
+ * (coatPose). On a heel the feet are pitched and the body raised as the shader stands it (heelPose).
  */
-function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean, lowerCut = 0, coat = false): SilhouetteRing[] {
+function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, side: boolean, lowerCut = 0, coat = false, heel = 0): SilhouetteRing[] {
   const f = shapeFactors(shape)
   const scale = scaleOf(f)
   const piv = pivotsOf(f)
-  const a = walkAngles(0, 0, f)
+  const a = walkAngles(0, 0, f, false, false, GAZE_AHEAD, 0, heel)
+  const lift = heelPose(heel, f.legs).rise * scale.y
   const out: SilhouetteRing[] = []
   const p = [0, 0, 0]
   const g = [0, 0, 0, 0, 0, 0]
@@ -1772,6 +1852,7 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
       boneTransform(r.bone, p, 1, a, STILL, piv)
     }
     p[0] *= scale.xz; p[1] *= scale.y; p[2] *= scale.xz
+    if (lift !== 0) p[1] += lift
     return p
   }
   tubes.forEach((t, tube) => {
@@ -1784,9 +1865,10 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
       let y: number, left: number, right: number
       if (side) {
         const laid = r.wrap ? skullFront(r.y, cx) : 0
-        const b = edge(cx, r.y, cz - back + laid, r, Math.PI * 1.5)
+        const tilt = r.tilt ?? 0
+        const b = edge(cx, r.y - back * tilt, cz - back + laid, r, Math.PI * 1.5)
         left = b[2]; y = b[1]
-        right = edge(cx, r.y, cz + rz + laid, r, Math.PI / 2)[2]
+        right = edge(cx, r.y + rz * tilt, cz + rz + laid, r, Math.PI / 2)[2]
         if (under) right = Math.min(right, edge(cx, r.y, HAIRLINE.temple, r, Math.PI / 2)[2])
       } else {
         const l = edge(cx - r.rx, r.y, cz + (r.wrap ? skullFront(r.y, cx - r.rx) : 0), r, Math.PI)
@@ -1805,10 +1887,10 @@ function ringEdges(tubes: readonly Tube[], shape: BodyShape, face: FaceShape, si
  * the look without a GPU. Optional pieces are included with their piece bit; the caller leaves out the ones the look
  * does not wear (the features, piece FACE, belong to faceRings). The face is the base one here. `lowerCut` reshapes the
  * trousers or the skirt as the shader does (garmentPoint; `coat`: under a coat, where no skirt widens); the painted
- * cuts are not shown.
+ * cuts are not shown. `heel` (look.ts HEEL) stands the body on its heels, as the shader does.
  */
-export function silhouetteRings(variant: number, shape: BodyShape, side = false, lowerCut = 0, coat = false): SilhouetteRing[] {
-  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side, lowerCut, coat)
+export function silhouetteRings(variant: number, shape: BodyShape, side = false, lowerCut = 0, coat = false, heel = 0): SilhouetteRing[] {
+  return ringEdges(bodyTubes(variant), shape, FACE_NEUTRAL, side, lowerCut, coat, heel)
 }
 
 /**

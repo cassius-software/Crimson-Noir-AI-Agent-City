@@ -17,13 +17,13 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { BODY_INCLUDES, BODY_WGSL, crowdHash, statureFactor } from './crowdBody.ts'
 import {
-  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GARMENT_STEP, GAZE, GAZE_AHEAD, HAIRLINE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION,
+  BODY_NAMES, BONE, BONES, EYE_LEVEL, FACE, FACE_NEUTRAL, FACE_REGION, GARMENT, GARMENT_STEP, GAZE, GAZE_AHEAD, HAIRLINE, HEEL_SHAPES, HEEL_TAN, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION,
   RIG_REST, RIG_WEAR, SHAPE_NEUTRAL, SKIRT_CUT, SKIRT_SHAPE, SLOT, SLOTS, SOLE, TROUSER_CUT, TROUSER_SHAPE, UMBRELLA_OPEN, WALK,
-  bodyTubes, boneGroup, boneSide, boneTransform, coatFollow, coatPose, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, garmentPoint, gazeAt, heightMap, humanoidMesh, legReach, legSolve, lowerShape, morphNormal, morphPoint,
+  bodyTubes, boneGroup, boneSide, boneTransform, coatFollow, coatPose, eyeHeightOf, faceNormal, facePoint, faceRings, footAt, garmentPoint, gazeAt, heelPose, heightMap, humanoidMesh, legReach, legSolve, lowerShape, morphNormal, morphPoint,
   pelvisDrop, pivotsOf, rigPoint, rotateByQuat, scaleOf, shapeFactors, silhouetteRings, skinPoint, skirtFollow, skirtLeft, skirtPose, skullFront, swingOf, walkAngles,
   type BodyPose, type BodyShape, type FaceShape, type LegAngles, type RigPose,
 } from './humanoid.ts'
-import { LOOK_BODIES, LOOK_CODED_PIECE, LOOK_HASH, LOOK_PIECE_BIT, UMBRELLA, shaderHash } from './look.ts'
+import { HEEL, LOOK_BODIES, LOOK_CODED_PIECE, LOOK_HASH, LOOK_PIECE_BIT, UMBRELLA, shaderHash } from './look.ts'
 import { FOOT, SEGMENTS } from './ragdollRig.ts'
 import { compileWgsl } from './wgslHost.ts'
 import { RIG_POSE, RIG_SEGMENTS, RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
@@ -44,10 +44,13 @@ test('the tables: four bodies named as the wardrobe names them, the pieces where
   assert.deepEqual([...BODY_NAMES], [...LOOK_BODIES])
   assert.deepEqual(LOOK_PIECE_BIT, { tie: PIECE.TIE, bag: PIECE.BAG, cup: PIECE.CUP, longHair: PIECE.LONG_HAIR, glasses: PIECE.GLASSES, hairCap: PIECE.HAIR_CAP, bob: PIECE.BOB, bun: PIECE.BUN, face: PIECE.FACE, coat: PIECE.COAT, scarf: PIECE.SCARF, volume: PIECE.VOLUME, topBun: PIECE.TOP_BUN, ponytail: PIECE.PONYTAIL, wrap: PIECE.WRAP, turban: PIECE.TURBAN, hat: PIECE.HAT, brim: PIECE.BRIM, beard: PIECE.BEARD, aidL: PIECE.AID_L, aidR: PIECE.AID_R, coilL: PIECE.COIL_L, coilR: PIECE.COIL_R })
   assert.equal(PIECE.NONE, 0)
-  assert.deepEqual([...Object.values(PIECE)].sort((a, b) => a - b), Array.from({ length: 30 }, (_, i) => i))
+  assert.deepEqual([...Object.values(PIECE)].sort((a, b) => a - b), Array.from({ length: 33 }, (_, i) => i))
   // Past the mask's bits, three pieces to a slot, option k of each the slot's first piece plus k - 1 (look.ts).
   assert.deepEqual([PIECE.UMBRELLA_FOLDING, PIECE.UMBRELLA_WALKING, PIECE.UMBRELLA_OPEN], [24, 25, 26].map((p) => p - 24 + LOOK_CODED_PIECE.umbrella))
   assert.deepEqual([PIECE.HEADPHONES, PIECE.ON_EAR, PIECE.EARBUDS], [27, 28, 29].map((p) => p - 27 + LOOK_CODED_PIECE.headphones))
+  assert.deepEqual([PIECE.HEEL_BLOCK, PIECE.HEEL_MID, PIECE.HEEL_HIGH], [HEEL.block, HEEL.mid, HEEL.high].map((k) => LOOK_CODED_PIECE.heel + k - 1))
+  assert.equal(HEEL_SHAPES.length, 4); assert.equal(HEEL_TAN.length, 4)
+  for (const table of [HEEL_SHAPES, HEEL_TAN, ...HEEL_SHAPES.filter((s) => s !== null)]) assert.ok(Object.isFrozen(table))
   assert.equal(UMBRELLA_OPEN, UMBRELLA.open)
   assert.deepEqual([...Object.values(FACE_REGION)].sort((a, b) => a - b), Array.from({ length: 8 }, (_, i) => i))
   assert.equal(FACE_REGION.NONE, 0)
@@ -92,15 +95,17 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
       assert.ok(Number.isInteger(bone) && bone >= 0 && bone < BONES, `${name}: bone ${bone}`)
       assert.ok(Number.isInteger(bone1) && bone1 >= 0 && bone1 < BONES, `${name}: second bone ${bone1}`)
       assert.ok(Number.isInteger(slot) && slot >= 0 && slot < SLOTS, `${name}: slot ${slot}`)
-      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.EARBUDS, `${name}: piece ${piece}`)
+      assert.ok(Number.isInteger(piece) && piece >= 0 && piece <= PIECE.HEEL_HIGH, `${name}: piece ${piece}`)
       assert.ok(w >= 0 && w <= 1, `${name}: weight ${w}`)
       assert.ok(Number.isInteger(region) && region >= 0 && region <= FACE_REGION.LIPS, `${name}: face region ${region}`)
       assert.ok(rw >= 0 && rw <= 1, `${name}: face weight ${rw}`)
       if (region !== FACE_REGION.NONE) assert.equal(bone, BONE.HEAD, `${name}: a face region on the head alone (vertex ${i})`)
       if (!detailed) assert.equal(region, FACE_REGION.NONE, `${name}: the far body has no face to shape`)
       near(Math.hypot(m.normal[i * 3], m.normal[i * 3 + 1], m.normal[i * 3 + 2]), 1, 1e-3, `${name}: normal ${i}`)
-      // Nothing stands higher than a tall crown but an open umbrella's canopy.
-      assert.ok(m.position[i * 3 + 1] >= -1e-6 && m.position[i * 3 + 1] <= (piece === PIECE.UMBRELLA_OPEN ? 2.08 : HEIGHT_BASE + 0.12), `${name}: y ${m.position[i * 3 + 1]}`)
+      // Nothing stands higher than a tall crown but an open umbrella's canopy; nothing is below the sole but a heel,
+      // which reaches the ground once the foot is pitched on it (heelPose).
+      const heel = piece >= PIECE.HEEL_BLOCK
+      assert.ok(m.position[i * 3 + 1] >= (heel ? -0.08 : -1e-6) && m.position[i * 3 + 1] <= (piece === PIECE.UMBRELLA_OPEN ? 2.08 : heel ? 0.0031 : HEIGHT_BASE + 0.12), `${name}: y ${m.position[i * 3 + 1]}`)
       bones.add(bone)
       regions.add(region)
     }
@@ -118,9 +123,10 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
     // The near body grew by the hair's later shapes, the headwear, the long beard and the hearing devices (about 400
     // vertices); the far body by the volume, the crown's puff and the beard alone (the headwear and the devices are
     // near-only: the far body paints the hair's cap in the headwear's cloth). The umbrella's three and the headphones'
-    // three added about 400 more to the near body alone.
-    assert.ok(m.vertexCount <= (detailed ? 2350 : 540), `${name}: ${m.vertexCount} vertices`)
-    assert.ok(m.index.length / 3 <= (detailed ? 4150 : 890), `${name}: ${m.index.length / 3} triangles`)
+    // three added about 400 more to the near body alone, and the three heels (a ring at the sole, one at the ground and
+    // a cap, under each shoe) 70.
+    assert.ok(m.vertexCount <= (detailed ? 2450 : 540), `${name}: ${m.vertexCount} vertices`)
+    assert.ok(m.index.length / 3 <= (detailed ? 4300 : 890), `${name}: ${m.index.length / 3} triangles`)
     counts[name] = [m.vertexCount, m.index.length / 3]
     const again = humanoidMesh(v, detailed)
     assert.deepEqual(again.position, m.position)
@@ -137,11 +143,11 @@ test('every body, near and far: finite, indexed within range, every vertex on a 
   assert.deepEqual(humanoidMesh(Number.NaN).position, humanoidMesh(0).position)
 })
 
-test('the pieces: the suit alone has a tie; the cup, the glasses, the tie, the face, the umbrellas and the headphones are near-only; the bag, the hair, the coat and the scarf reach the far body; the shirt\'s V is paint, not a slot; the arms hang at rest; an open umbrella\'s canopy is over every crown', () => {
+test('the pieces: the suit alone has a tie; the cup, the glasses, the tie, the face, the umbrellas, the headphones and the heels are near-only; the bag, the hair, the coat and the scarf reach the far body; the shirt\'s V is paint, not a slot; the arms hang at rest; an open umbrella\'s canopy is over every crown', () => {
   const pieces = (v: number, detailed: boolean) => { const m = humanoidMesh(v, detailed); return new Set(Array.from({ length: m.vertexCount }, (_, i) => m.rig[i * 3 + 2])) }
   const sorted = (s: Set<number>) => [...s].sort((a, b) => a - b)
   const later = [PIECE.VOLUME, PIECE.TOP_BUN, PIECE.PONYTAIL, PIECE.WRAP, PIECE.TURBAN, PIECE.HAT, PIECE.BRIM, PIECE.BEARD, PIECE.AID_L, PIECE.AID_R, PIECE.COIL_L, PIECE.COIL_R,
-    PIECE.UMBRELLA_FOLDING, PIECE.UMBRELLA_WALKING, PIECE.UMBRELLA_OPEN, PIECE.HEADPHONES, PIECE.ON_EAR, PIECE.EARBUDS]
+    PIECE.UMBRELLA_FOLDING, PIECE.UMBRELLA_WALKING, PIECE.UMBRELLA_OPEN, PIECE.HEADPHONES, PIECE.ON_EAR, PIECE.EARBUDS, PIECE.HEEL_BLOCK, PIECE.HEEL_MID, PIECE.HEEL_HIGH]
   assert.deepEqual(sorted(pieces(0, true)), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, ...later])
   for (const v of [1, 2, 3]) assert.deepEqual(sorted(pieces(v, true)), [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, ...later], BODY_NAMES[v])
   for (const v of VARIANTS) {
@@ -459,6 +465,79 @@ test('the feet stay planted: walking at any speed from WALK.strideSpeed up, at a
   near(standing[0], -piv.hipX, 1e-9, 'standing: the ankle under the hip'); near(standing[1], piv.ankle, 1e-9, 'at its rest'); near(standing[2], 0, 1e-9, 'neither ahead nor behind')
 })
 
+test('on a heel: the foot pitches toes down and the body stands higher by heelPose\'s rise, so the toes\' tip and the heel\'s foot (its centre and its front and back edges) are on the ground, standing or planted mid-stance, at every legs slider and stature, the heel upright on the base legs; the ankle keeps its spot through the stance; heel 0 changes nothing; the GPU twin (crowdBody.ts bodyHeel, through wgslHost.ts) gives heelPose', () => {
+  assert.equal(HEEL_SHAPES[0], null)
+  assert.equal(HEEL_TAN[0], 0)
+  assert.deepEqual(HEEL_SHAPES.map((s) => s?.height ?? 0), [0, 0.04, 0.06, 0.08])
+  for (const s of HEEL_SHAPES) if (s) near(s.z - s.top[1], -SOLE.heel, 0.0011, 'the heel\'s back at the shoe\'s back')
+  assert.deepEqual(heelPose(HEEL.none, 1), { tilt: 0, rise: 0 })
+  const TAU = 2 * Math.PI
+  const posed = (x: number, y: number, z: number, f: ReturnType<typeof shapeFactors>, a: ReturnType<typeof walkAngles>, at: readonly [number, number, number] = ORIGIN) => {
+    const p = morphPoint(x, y, z, BONE.FOOT_L, f)
+    return skinPoint(p[0], p[1], p[2], BONE.FOOT_L, BONE.FOOT_L, 1, 1, a, STILL, pivotsOf(f), scaleOf(f), 0, at)
+  }
+  const x = -LANDMARK.hipX
+  for (const legs of [0, 0.5, 1]) for (const height of [1.5, 1.75, 2.05]) {
+    const f = shapeFactors(shape({ legs, height })), piv = pivotsOf(f), scale = scaleOf(f)
+    assert.deepEqual(walkAngles(1.7, 0, f, false, false, GAZE_AHEAD, 0, HEEL.none), walkAngles(1.7, 0, f), 'heel 0 is the shoe as before')
+    let lastRise = 0
+    for (let heel = HEEL.block; heel <= HEEL.high; heel++) {
+      const s = HEEL_SHAPES[heel]!, k = HEEL_TAN[heel], c = 1 / Math.hypot(1, k)
+      const pose = heelPose(heel, f.legs)
+      near(pose.tilt, Math.atan(f.legs * k), 1e-15, 'the pitch')
+      assert.ok(pose.rise > lastRise && pose.rise > s.height * 0.55 && pose.rise < s.height * 0.75, `${heel}: a higher heel stands higher, by about two thirds of its height (${pose.rise})`)
+      lastRise = pose.rise
+      const what = `heel ${heel}, legs ${legs}, ${height} m`
+      // Standing, and walking with the left foot planted mid-stance (phase 0): the same stance for that foot.
+      for (const [a, at] of [[walkAngles(1.7, 0, f, false, false, GAZE_AHEAD, 0, heel), ORIGIN], [walkAngles(0, 1.2, f, false, false, GAZE_AHEAD, 0, heel), [0.3, 0, 2] as const]] as const) {
+        const flat = walkAngles(1.7, 0, f)
+        if (at === ORIGIN) near(a.rise - flat.rise, pose.rise * scale.y, 1e-12, `${what}: the body stands higher by the rise`)
+        near(posed(x, 0, SOLE.toe, f, a, at)[1], 0, 1e-9, `${what}: the toes' tip on the ground`)
+        const groundY = -s.height * c, groundZ = s.z + s.height * k * c
+        near(posed(x, groundY, groundZ, f, a, at)[1], 0, 1e-9, `${what}: the heel's foot on the ground`)
+        for (const dz of [s.ground[1], -s.ground[1]]) near(posed(x, groundY + dz * k, groundZ + dz, f, a, at)[1], 0, 1e-9, `${what}: its foot level (${dz})`)
+        // Above the ground the shoe's sole clears it: its back edge stands at most the whole pitch's height.
+        assert.ok(posed(x, 0, -SOLE.heel, f, a, at)[1] > s.height * 0.8 * scale.y, `${what}: the shoe's back up on the heel`)
+        if (legs === 0.5) {
+          const top = posed(x, 0, s.z, f, a, at), foot = posed(x, groundY, groundZ, f, a, at)
+          near(top[2], foot[2], 1e-9, `${what}: the heel upright on the base legs`); near(top[0], foot[0], 1e-9, 'not leaning to the side')
+        }
+      }
+      // Walking on it, the planted ankle keeps its spot and stands the rise above where it stood flat.
+      let spot: [number, number] | null = null
+      for (let dist = 0; dist < WALK.cycle; dist += WALK.cycle / 200) {
+        const phase = dist * TAU / WALK.cycle
+        const a = walkAngles(phase, 1.2, f, false, false, GAZE_AHEAD, 0, heel)
+        const ankle = skinPoint(x * f.hips, piv.ankle, 0, BONE.FOOT_L, BONE.FOOT_L, 1, 1, a, STILL, piv, scale, 0, [0, 0, dist])
+        const flatAnkle = skinPoint(x * f.hips, piv.ankle, 0, BONE.FOOT_L, BONE.FOOT_L, 1, 1, walkAngles(phase, 1.2, f), STILL, piv, scale, 0, [0, 0, dist])
+        near(ankle[1] - flatAnkle[1], pose.rise * scale.y, 1e-9, `${what}: the ankle stands the rise higher at ${dist.toFixed(3)} m`)
+        near(ankle[2], flatAnkle[2], 1e-9, 'and is where it was along the way')
+        const st = (((phase + Math.PI / 2) / TAU) % 1) * 2
+        if (st < 1) { if (spot) { near(ankle[0], spot[0], 1e-6, 'planted x'); near(ankle[2], spot[1], 1e-6, 'planted z') } else spot = [ankle[0], ankle[2]] } else spot = null
+      }
+    }
+  }
+  // The GPU twin, in f32.
+  const parts = new Map([...BODY_WGSL.split(/(?=^fn )/m)].filter((p) => p.startsWith('fn ')).map((p) => [p.match(/^fn (\w+)/)![1], p]))
+  const host = compileWgsl(parts.get('bodyHeel')!)
+  for (let heel = 0; heel <= 3; heel++) for (const fLegs of [MORPH.legs.base, 1, MORPH.legs.base + MORPH.legs.range]) {
+    const [tilt, rise] = host.call('bodyHeel', heel, Math.fround(fLegs)) as number[]
+    const want = heelPose(heel, fLegs)
+    near(tilt, want.tilt, 1e-6, `bodyHeel(${heel}, ${fLegs}): the pitch`); near(rise, want.rise, 1e-6, `bodyHeel(${heel}, ${fLegs}): the rise`)
+  }
+  // The card's outline stands on it as well (silhouetteRings' heel): each heel's foot on the ground line, the crown the
+  // rise higher, from the front and from the side. (The outline leaves out the standing knee's drop, as it always has:
+  // under half a millimetre.)
+  const crown = (rings: ReturnType<typeof silhouetteRings>) => Math.max(...rings.filter((r) => r.piece === PIECE.NONE).map((r) => r.y))
+  for (const side of [false, true]) for (let heel = HEEL.block; heel <= HEEL.high; heel++) {
+    const flat = silhouetteRings(3, SHAPE_NEUTRAL, side), heeled = silhouetteRings(3, SHAPE_NEUTRAL, side, 0, false, heel)
+    near(crown(heeled) - crown(flat), heelPose(heel, 1).rise, 1e-9, `the outline on heel ${heel} stands the rise higher`)
+    const rings = heeled.filter((r) => r.piece === PIECE.HEEL_BLOCK + heel - 1)
+    assert.equal(rings.length, 4, 'a heel under each shoe, a ring at its foot and one under the sole')
+    for (const r of rings.filter((_, i) => i % 2 === 0)) near(r.y, 0, 5e-4, `heel ${heel}${side ? ' from the side' : ''}: its foot on the ground line`)
+  }
+})
+
 test('gazeAt: the eye ahead holds the head straight; to the side it turns the chest by its share and the head by the rest, to their limits; behind, beyond reach or at the person\'s own neck it is let go; it fades from near to reach; the way they go turns the head within its small limit, whole from a slow walk; a heading wraps', () => {
   const neck = [0, 1.5, 0] as const
   const sum = GAZE.headYaw + GAZE.chestYaw
@@ -713,7 +792,8 @@ test('silhouetteRings: one ring per ring of every tube, from the front and from 
       assert.ok(r.left < r.right, `ring ${i} has width`)
       assert.ok(side[i].left < side[i].right, `ring ${i} has depth`)
       assert.equal(side[i].slot, r.slot); assert.equal(side[i].piece, r.piece); assert.equal(side[i].tube, r.tube)
-      assert.ok(r.y > -0.01 && r.y < (r.piece === PIECE.UMBRELLA_OPEN ? 2.08 : HEIGHT_BASE + 0.12))
+      // A heel stands flat here, under a flat foot: its rings reach below the ground (silhouetteRings' heel stands it up).
+      assert.ok(r.y > (r.piece >= PIECE.HEEL_BLOCK ? -0.08 : -0.01) && r.y < (r.piece === PIECE.UMBRELLA_OPEN ? 2.08 : HEIGHT_BASE + 0.12))
       // At rest, facing +z, a ring on the body's axis is centred.
       if (r.slot !== SLOT.PROP && r.piece === PIECE.NONE && Math.abs(r.left + r.right) < 1e-9) assert.ok(true)
     }
@@ -909,7 +989,7 @@ test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and i
 
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), twenty functions, one call for the position and the normal, the face shaped on the head alone, the lower cut before the sliders, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), twenty-one functions, one call for the position and the normal, the face shaped on the head alone, the lower cut before the sliders, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
@@ -919,12 +999,13 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   const carried = [...flat('LANDMARK', LANDMARK), ...flat('MORPH', MORPH), ...flat('REGION', REGION), ...flat('LIMB_GIRTH', LIMB_GIRTH), ...flat('WALK', WALK), ...flat('SOLE', SOLE), ...flat('GAZE', GAZE), ...flat('FACE', FACE), ...flat('LOWER', LOWER), ...flat('GARMENT_STEP', GARMENT_STEP)]
     .filter(([name]) => name !== 'LANDMARK.elbow' && name !== 'LANDMARK.wrist' && name !== 'FACE.nose.rootY' && name !== 'FACE.clear')
   for (const [name, v] of carried) assert.ok(BODY_WGSL.includes(lit(v)), `${name} = ${lit(v)} in the WGSL`)
+  for (const k of HEEL_TAN.slice(1)) assert.ok(BODY_WGSL.includes(lit(k)), `HEEL_TAN ${k} in the WGSL`)
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.elbow)}`), 'the elbow hangs its drop under the shoulder')
   assert.ok(BODY_WGSL.includes(`shoulderY - ${lit(LANDMARK.shoulder - LANDMARK.wrist)}`), 'the wrist too')
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
   // Tint refuses WGSL's reserved words as names (it refused `target`); the ones a hand reaches for, as a declared name.
   assert.doesNotMatch(BODY_WGSL, /\b(?:target|flat|smooth|filter|get|set|type|mod|of|from|new|ref|self|this|with|where|use|pass|premerge|precise|common|shared|static|sizeof|null|nil|do|match|move|mut|pub|priv|super|try|catch|throw|final|package|module|import|export|layout|resource|register|precision|patch|partition|require|regardless|unless|operator|namespace|template|typedef|union|enum|class|interface|extends|implements|instanceof|delete|yield|await|become|crate|impl|trait|unsafe|unsized|external|demote|coherent|readonly|writeonly|varying|attribute|active|cast|highp|mediump|lowp|snorm|unorm|std|meta|macro|auto|goto|inline|noexcept|volatile|virtual|friend|explicit|mutable|restrict|protected|public|using|typename|typeof|typeid|decltype|concept|debugger|fallthrough|finally|subroutine|groupshared|nointerpolation|noperspective|packoffset|pixelfragment|thread_local|column_major)\s*[:=]/, 'no name WGSL reserves')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyRamp', 'bodyLowerShape', 'bodyGarment', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyRamp', 'bodyLowerShape', 'bodyGarment', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyHeel', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
   assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f, rigA: vec4f, rigAq: vec4f, rigB: vec4f, rigBq: vec4f) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyRig(m: mat3x3f, bone0: u32, bone1: u32, weight: f32, stature: f32, pA: vec4f, qA: vec4f, pB: vec4f, qB: vec4f) -> mat3x3f'))
   // The fallen body: after the sliders and before the walk, hung from its rig; every shape's standing centre in the text.
@@ -938,9 +1019,9 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   // The legs from the feet, the pelvis' drop from the planted one, the gaze from the neck's place in the world, in humanoid.ts's order.
   assert.match(BODY_WGSL, /let footL = bodyFoot\(phase, stride, lift, roll\);\n\s*let footR = bodyFoot\(phase \+ 3\.14159\d+, stride, lift, roll\);/)
   assert.match(BODY_WGSL, /let planted = select\(footR, footL, footL\.w > 0\.5\);\n\s*let drop = max\(0\.0, pivA\.x - pivA\.z - planted\.y - sqrt\(max\(reach \* reach - planted\.x \* planted\.x, 0\.0\)\)\);/)
-  assert.match(BODY_WGSL, /let legL = bodyLeg\(pivA\.z \+ footL\.y \+ drop - pivA\.x, footL\.x, thigh, shin, footL\.z\);/)
+  assert.match(BODY_WGSL, /let heel = bodyHeel\(\(carry >> 4u\) & 3u, fLegs\);\n\s*let legL = bodyLeg\(pivA\.z \+ footL\.y \+ drop - pivA\.x, footL\.x, thigh, shin, footL\.z \+ heel\.x\);\n\s*let legR = bodyLeg\(pivA\.z \+ footR\.y \+ drop - pivA\.x, footR\.x, thigh, shin, footR\.z \+ heel\.x\);/)
   assert.match(BODY_WGSL, /let look = bodyGaze\(agent\.xyz \+ vec3f\(0\.0, pivB\.w \* stance\.x, 0\.0\), agent\.w, motion\.xy, gaze\);/)
-  assert.match(BODY_WGSL, /p\.y \* stance\.x - drop \* stance\.x/, 'the pelvis\' drop after the stature\'s scale, as humanoid.ts rise')
+  assert.ok(BODY_WGSL.includes('p.y * stance.x + (heel.y - drop) * stance.x'), 'the pelvis\' drop and the heel\'s rise after the stature\'s scale, as humanoid.ts rise')
   assert.match(BODY_WGSL, /if \(bone == 2u\) \{ q = bodyRotX\(q, vec3f\(0\.0, pivB\.w, 0\.0\), trunk\.y\); q = bodyRotY\(q, vec3f\(0\.0, pivB\.w, 0\.0\), headYaw\); \}/, 'the head nods, then turns, about the neck')
   assert.ok(BODY_WGSL.includes('fn bodyMorph(p: vec3f, n: vec3f, bone: u32, m: vec4f, fD: f32, fLegs: f32, fTrunk: f32) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyFace(p: vec3f, n: vec3f, face: vec2f, fa: vec4f, fb: vec4f) -> mat3x3f'))
@@ -1040,7 +1121,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   }
   const src = read('./crowdBody.ts')
   assert.match(src, /^(?:\/\/[^\n]*\n)*\/\*\*\n \* Why does this file exist\?[\s\S]*What breaks if it is removed\?/, 'the header')
-  assert.match(src, /import \{ BONE, FACE, GARMENT_STEP, GAZE, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, UMBRELLA_OPEN, WALK \} from '\.\/humanoid\.ts'/)
+  assert.match(src, /import \{ BONE, FACE, GARMENT_STEP, GAZE, HEEL_TAN, HEIGHT_BASE, LANDMARK, LIMB_GIRTH, LOWER, MORPH, PIECE, REGION, RIG_REST, SKIRT_SHAPE, SLOT, SOLE, TROUSER_SHAPE, UMBRELLA_OPEN, WALK \} from '\.\/humanoid\.ts'/)
   assert.match(src, /export const bodyVertex = fn\('bodyVertex'\)/)
   assert.doesNotMatch(src, /from 'three\/webgpu'|three\/src/, 'nodes only: no renderer')
   assert.equal(statureFactor(HEIGHT_BASE), 1)

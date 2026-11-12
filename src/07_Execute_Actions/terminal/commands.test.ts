@@ -1825,7 +1825,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('look skin mst-1'), ['look skin mst-10'])
   assert.deepEqual(complete('look vitiligo h'), ['look vitiligo hands', 'look vitiligo hands and face'])
   assert.deepEqual(complete('look freckles '), ['look freckles dense', 'look freckles light', 'look freckles medium', 'look freckles none'])
-  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look headphones', 'look headwear', 'look headwearColour', 'look hearing', 'look height', 'look hips'])
+  assert.deepEqual(complete('look h'), ['look hairColour', 'look hairStyle', 'look head', 'look headphones', 'look headwear', 'look headwearColour', 'look hearing', 'look heel', 'look height', 'look hips'])
   assert.deepEqual(complete('look u'), ['look umbrella', 'look undertone'])
   assert.deepEqual(complete('look body '), LOOK_BODY_ARGS.map((a) => `look body ${a}`))
   assert.deepEqual(complete('look body s'), ['look body skirt suit', 'look body smart casual', 'look body suit'])

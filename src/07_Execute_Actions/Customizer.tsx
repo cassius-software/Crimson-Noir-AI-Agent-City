@@ -103,6 +103,7 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'footwear': return 'Shoe style'
     case 'shoes': return 'Shoe colour'
     case 'shoeFinish': return 'Shoe finish'
+    case 'heel': return 'Heel'
     case 'tie': return 'Tie'
     case 'tieStyle': return 'Tie style'
     case 'scarf': return 'Scarf'
@@ -260,11 +261,12 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
   const views = useMemo(() => {
     // The features are the face view's: at this scale they would only clutter the head.
     const keep = (r: SilhouetteRing) => r.piece !== PIECE.FACE && wears(look, r.piece)
-    // The lower cut's shape (a wide leg, a midi hem) is the vertex stage's, through the same garmentPoint.
+    // The lower cut's shape (a wide leg, a midi hem) is the vertex stage's, through the same garmentPoint; so is the
+    // stance on a heel (the feet pitched, the body raised: humanoid.ts heelPose).
     const coat = look.layer === LAYER.coat
     return {
-      front: silhouetteRings(body, shape, false, look.bottomCut, coat).filter(keep),
-      side: silhouetteRings(body, shape, true, look.bottomCut, coat).filter(keep),
+      front: silhouetteRings(body, shape, false, look.bottomCut, coat, look.heel).filter(keep),
+      side: silhouetteRings(body, shape, true, look.bottomCut, coat, look.heel).filter(keep),
     }
   }, [look, body, shape])
   return (
@@ -278,7 +280,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles and finishes, the tie's and the bag's styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline; the umbrella and the headphones show in both.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles and finishes, the tie's and the bag's styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline; the umbrella, the headphones and the heel show in both.`}
       </p>
     </div>
   )

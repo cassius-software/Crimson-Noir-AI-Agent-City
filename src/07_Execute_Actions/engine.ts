@@ -67,7 +67,7 @@ import type { OperatorSkill } from '../02_Define_The_Rules/progression.ts'
 import { airgapInstalled } from '../02_Define_The_Rules/airgap.ts'
 import { kernelPanic } from '../02_Define_The_Rules/ring0Panic.ts'
 import { CrowdView, FIGURE_QUADS } from '../03_Spawn_Agents/crowd.ts'
-import { heightScale, LOOK_NONE, LOOK_WORDS, packGenome, packLook, unpackGenome, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
+import { heelRiseOf, heightScale, LOOK_NONE, LOOK_WORDS, packGenome, packLook, unpackGenome, validateLook, type Look } from '../03_Spawn_Agents/look.ts'
 import type { ConciergeOut } from './onboarding/speaker.ts'
 import { CONCIERGE_NAME as CONCIERGE_LABEL } from './onboarding/script.ts'
 import { kernelSourcesKey, packFrustumPlanes, PLAYER_INDEX, type CrowdStats, type CullSettings } from '../03_Spawn_Agents/crowdCompute.ts'
@@ -1640,8 +1640,8 @@ export class Engine {
     this.gpu.device.queue.writeBuffer(this.crowdLook, agent * 4, this.lookWords, agent, 1)
     this.gpu.device.queue.writeBuffer(this.crowdFigure, at * 4, this.figureWords, at, FIGURE_STRIDE)
     // The player's own body sets the first-person eye: a taller look sees over the crowd, a shorter one looks up at
-    // it (head.ts eyeHeightFor; the hash's body keeps the reference eye).
-    if (agent === PLAYER_INDEX) this.rig.setEyeHeight(eyeHeightFor(look === null ? 1 : heightScale(look)))
+    // it, and a heel lifts it as it lifts the body (head.ts eyeHeightFor; the hash's body keeps the reference eye).
+    if (agent === PLAYER_INDEX) this.rig.setEyeHeight(look === null ? eyeHeightFor(1) : eyeHeightFor(heightScale(look), heelRiseOf(look)))
     return true
   }
 
