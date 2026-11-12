@@ -41,7 +41,10 @@ export interface PlanStep {
 }
 /** One why-question; the options are quick replies, free text is always allowed. */
 export interface WhyStep { depth: number; question: string; options: string[] }
-export interface Brief { goal: string; whys: { question: string; answer: string }[]; root: string; plan: PlanStep[]; unmapped: string[]; markdown: string }
+/** `chat`: the goal is talk, not a change to the city (a greeting, "how's it going", a question nothing maps to): the
+ *  plan is empty, nobody is sent, and the Concierge answers it as a conversation (a connected model's reply, or a plain
+ *  line saying none is connected). */
+export interface Brief { goal: string; whys: { question: string; answer: string }[]; root: string; plan: PlanStep[]; unmapped: string[]; markdown: string; chat?: true }
 export interface Classification { control: Control; value?: number | string; confidence: number }
 
 /** Whys asked at most, per goal. */
@@ -69,8 +72,8 @@ interface Hyp {
  *  workplaces, the wardrobe), so it is an answer, not a gap. `chore`: "jobs" and "tasks", which say nothing
  *  against a goal that names work. */
 interface Unmapped { label: string; modules: readonly string[]; exists?: true; chore?: true }
-/** Why a goal has no hypotheses: it asked for harm, it was "I don't know", or nothing in the taxonomy fits. */
-type Flag = 'none' | 'harm' | 'unsure' | 'unmapped' | 'pointed'
+/** Why a goal has no hypotheses: it asked for harm, it was "I don't know", it was talk (`chat`), or nothing in the taxonomy fits. */
+type Flag = 'none' | 'harm' | 'unsure' | 'unmapped' | 'pointed' | 'chat'
 interface Frame {
   readonly goal: string
   readonly hyps: Hyp[]
@@ -141,6 +144,37 @@ const PERSON = "(?:a |the |some |those |that |any |every |all the |all )?(?:pers
 const HARM = new RegExp(`\\b(?:(?:hurt|harm)(?:ing)? ${PERSON}|run(?:ning)? ${PERSON} over|(?:run|drive|plough|plow|mow)(?:ning|ing)? (?:over|down) ${PERSON}|(?:crash|smash|ram|slam|drive|plough|plow)(?:m?ing)? (?:into|through) ${PERSON}|hit(?:ting)? ${PERSON})\\b`)
 
 const UNSURE = /\b(?:(?:i )?(?:don'?t|dont|do not) (?:know|mind|care)|dunno|not sure|no idea|unsure|just (?:browsing|curious|here|visiting|checking)|just looking(?! around)|nothing(?: really| much| in particular)?|whatever|anything|surprise me|you (?:choose|pick|decide)|no goal|idk|not much|i'?m (?:fine|good|ok|okay)|all good|no thanks?|nope|hmm+|not really)\b|^no$/
+
+/** The "I don't know" phrases, everywhere in a goal (a talk-only goal is read with them blanked out). */
+const UNSURE_ALL = new RegExp(UNSURE.source, 'g')
+/** Acknowledgements and laughs: talk where nothing else is said, but never enough on their own to make an "I don't know"
+ *  ("no thanks", "i'm ok", "idk lol") a conversation. */
+const ACK = String.raw`thank(?:s| you)|thx|cheers|okay|ok|cool|nice|great|awesome|lol|(?:ha){2,}h?|(?:he){2,}|lmf?ao`
+/** Talk to Sloane: a greeting, "how's it going", a question about Sloane, goodbye, or a wish to chat. */
+const TALK = String.raw`hi+|hiya|hey+|hello+|howdy|yo|sup|wh?at'?s ?up|wassup|greetings|good (?:morning|afternoon|evening|day|night)|how (?:are|r) (?:you|u|ya)(?: (?:doing|today|tonight|this (?:morning|afternoon|evening)))*|how'?s it (?:going|goin)|how is it going|how goes it|how (?:have|you) you been|how'?s (?:your|ur) (?:day|night|evening|morning|afternoon)(?: going| been)?|how do you do|nice to meet you|who (?:are|r) (?:you|u)|what (?:are|r) (?:you|u)|(?:what'?s|what is) (?:your|ur) name|your name|who (?:made|built|created|wrote) you|are you (?:an? )?(?:ai|bot|robot|real|human|alive|person|machine|model|llm|there|ok|okay)|tell me (?:about yourself|a joke|a story|something)|what can you do|what do you do|(?:let'?s|can we|could we|wanna|want to|i want to) (?:have a )?(?:talk|chat|conversation)|(?:have|having) a (?:chat|talk|conversation)|(?:talk|chat|speak) (?:to|with) (?:me|sloane)|(?:can|could|may) i (?:talk|speak|chat) (?:to|with) you|just (?:chatting|talking)|conversation|say (?:hello|hi)(?: to (?:you|u|sloane))?|i'?m bored|i am bored|bye|goodbye|good bye|see (?:you|ya)|sloane`
+const TALK_ALL = new RegExp(String.raw`\b(?:${TALK}|${ACK})\b`, 'g')
+const TALK_SAID = new RegExp(String.raw`\b(?:${TALK})\b`)
+/** Words that leave a goal talk when talk is all else it says ("ok so thanks again", "hey there sloane"). */
+const FILLER = /\b(?:a|an|the|so|now|please|pls|plz|just|and|then|well|oh|um+|uh+|there|too|to|you|u|me|again|really|very|much|all|dear|mate|buddy)\b/g
+/**
+ * Whether the whole goal is talk (normalized): talk words (TALK or ACK) and fillers and nothing else, so "nice, find a
+ * cafe" is a goal and "hey sloane, how's it going" is talk. An "I don't know" beside talk to Sloane is talk too ("i'm
+ * good, how are you?"); beside an acknowledgement only it stays what it was ("no thanks", "i'm ok").
+ */
+function talkOnly(said: string, unsure: boolean): boolean {
+  if (!said.match(TALK_ALL)) return false
+  const rest = (unsure && TALK_SAID.test(said) ? said.replace(UNSURE_ALL, ' ') : said).replace(TALK_ALL, ' ').replace(FILLER, ' ')
+  return !/[a-z0-9]/.test(rest)
+}
+/** Courtesy before a question's first word ("please, what is…", "so why…"). */
+const LEAD = String.raw`(?:(?:please|pls|plz|so|um+|uh+|and|but|well|ok|okay|hey|hi|hello|sloane) )*`
+/** A question by its first words (the "?" is read on the goal as typed: normalize drops it). */
+const QUESTION = new RegExp(String.raw`^${LEAD}(?:what|what'?s|why|how|how'?s|who|who'?s|which|whose|is|isn'?t|are|aren'?t|was|were|should|do (?:you|i|we|they)|does|did|have you|has|tell me)\b`)
+/** A request worded as a question ("can you find a cafe?") and a question about the city's whereabouts or times ("where's
+ *  the courier?"): goals for the scouts, not talk, since a model knows nothing of this city's places. */
+const REQUEST = new RegExp(String.raw`^${LEAD}(?:(?:can|could|would|will|won'?t|can'?t) (?:you|u|ya)(?! (?:tell|explain|talk|chat|hear|see|understand|speak|say|be)\b)|where|when)\b`)
+/** A wish to send someone: scouts, a team, agents, a recruit. Never talk, even mid-conversation. */
+const SEND = /\b(?:send|dispatch|deploy|get)\b.*\b(?:scouts?|team|agents?|sub ?agents?|someone|somebody|workers?|bots?|helpers?|people)\b|\b(?:recruit|scouts?)\b/
 
 /** Peak by name (the Peak rule's words). */
 const PEAK_NAMED = /\bpeak (?:quality|graphics|settings|detail|fidelity)\b|\b(?:above|beyond|(?<!\b(?:my|the|your|our|those|these) )past) ultra\b/
@@ -287,8 +321,10 @@ const UNSUPPORTED: readonly (Unmapped & { re: RegExp })[] = [
     label: 'Weather: the city has one clear late-September day so far', modules: ['01_Initialize_World/solar.ts', '01_Initialize_World/world.ts', '07_Execute_Actions/postfx.ts'] },
   { re: /\b(?:dogs?|cats?|birds?|pigeons?|animals?|pets?|horses?|squirrels?|wildlife|deer)\b/,
     label: 'Animals: only people and cars live here so far', modules: ['03_Spawn_Agents/crowd.ts', '03_Spawn_Agents/crowdCompute.ts', '03_Spawn_Agents/crowd.wgsl'] },
-  { re: /\b(?:friends?|multiplayer|online|other players?|co ?op|chat(?:ting)?|talk(?:ing)? (?:to|with)|conversation|dialogue|say hello|make friends)\b/,
-    label: 'Company: the city is single-player; you can ask someone over by their skill (say "recruit" and a skill, or type recruit <skill> in the console), but nobody holds a conversation yet', modules: ['08_Swarm/recruitment.ts', '03_Spawn_Agents/skills.ts', '06_Make_Decisions/intent.ts'] },
+  // Talk with Sloane themself is not company: it is chat (TALK), answered by a connected model. Talk aimed at anyone
+  // else is ("talk to the shopkeeper", "say hello to a stranger", "start a dialogue").
+  { re: /\b(?:friends?|multiplayer|online|other players?|co ?op|dialogue|(?:chat(?:ting)?|talk(?:ing)?|speak(?:ing)?|convers(?:e|ing|ation)) (?:to|with) (?!(?:you|u|ya|me|sloane)\b)[a-z]+|say (?:hello|hi) to (?!(?:you|u|ya|sloane)\b)[a-z]+)\b/,
+    label: 'Company: the city is single-player and passers-by keep to themselves; you can ask someone over by their skill (say "recruit" and a skill, or type recruit <skill> in the console) and they answer at the console, and Sloane talks with you when a language model answers this page', modules: ['08_Swarm/recruitment.ts', '03_Spawn_Agents/skills.ts', '06_Make_Decisions/intent.ts'] },
   { re: /\b(?:fly(?:ing)?|flight|jet ?pack|wings|helicopters?|drones?|planes?|aircraft|hover|float up|climb (?:a |the )?(?:building|tower|roof)|roof ?tops?)\b/,
     label: 'Flying and rooftops: nobody flies or stands on a roof; the one way up is the sky floor of the Penthouse or the Sky-Mansion in the city, from the home\'s card', modules: ['07_Execute_Actions/player.ts', '07_Execute_Actions/physics.ts'] },
   { re: /\b(?:go (?:inside|indoors)|indoors?|interiors?|inside (?:a |the )?(?:building|shop|house|tower)|enter (?:a |the )?(?:building|shop|house|tower)|apartments?|my (?:house|home|place)|houses?|homes?)\b/,
@@ -501,7 +537,7 @@ const blankSpan = (s: string, sp: Span): string => `${s.slice(0, sp.index)}${' '
  * or auto the goal names stands, and so does the heat and battery rule's Low. The rest of the goal reads as it did before
  * Peak.
  */
-function analyze(input: string, scouts = false): Analysis {
+function analyze(input: string, scouts = false, chatting = false): Analysis {
   let r = read(input, peakNamed(input))
   const q = r.hyps.find((h) => h.control === 'quality')
   if (q?.value === PEAK_TIER) {
@@ -530,10 +566,23 @@ function analyze(input: string, scouts = false): Analysis {
   // A goal whose every note points at something the city has ("where are the shops", "go indoors") is answered by the
   // notes: nobody is sent to scout for it.
   const pointed = unmapped.length > 0 && unmapped.every((u) => u.exists === true)
-  const team = harm ? null : named || (scouts && worded && hyps.length === 0 && unsure === null && !pointed) ? teamOf(work, input) : null
+  // Talk is a conversation, not a goal. A goal that is talk and nothing else ("hey sloane, how's it going", "good
+  // evening", "are you a robot?") is talk whatever a word of it would set. A question nothing maps to and no note
+  // answers is talk too, but not a request worded as one or a question about the city's places (REQUEST). In a
+  // conversation already going (`chatting`) anything that maps to nothing is the next turn, and so is a question or
+  // talk beside a gap ("do you like dogs?"); an "I don't know" there is an answer, not a wish to look around. A wish to
+  // send someone (SEND) is never talk: the scouts go.
+  const said = normalize(input)
+  const send = SEND.test(said)
+  const only = !harm && worded && !send && !pointed && unmapped.length === 0 && talkOnly(said, unsure !== null)
+  if (only) { hyps.length = 0; tags.clear() }
+  const question = (/\?\s*$/.test(input) || QUESTION.test(said)) && !REQUEST.test(said)
+  const chat = only || (!harm && !named && worded && !send && hyps.length === 0 && !pointed &&
+    (unmapped.length === 0 || (chatting && question)) && (chatting || (unsure === null && question)))
+  const team = harm || chat ? null : named || (scouts && worded && hyps.length === 0 && unsure === null && !pointed) ? teamOf(work, input) : null
   if (team) mergeHyp(hyps, { control: 'dispatch', value: team.lanes.length, confidence: team.scouting ? 0.5 : work.count !== null ? 1 : 0.9, at: work.at, derived: false })
   hyps.sort((a, b) => b.confidence - a.confidence || a.at - b.at)
-  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : unsure !== null ? 'unsure' : pointed ? 'pointed' : 'unmapped'
+  const flag: Flag = harm ? 'harm' : hyps.length ? 'none' : chat ? 'chat' : unsure !== null ? 'unsure' : pointed ? 'pointed' : 'unmapped'
   // Work the goal names is the work: its "tasks" and "jobs" are not a wish for missions.
   const notes = team && !team.scouting ? unmapped.filter((u) => u.chore !== true) : unmapped
   return { hyps, tags, unmapped: notes, flag, team }
@@ -663,8 +712,8 @@ const BOTH = ['both', 'both', 'all', 'either', 'each'] as const
 const PROBES: readonly Probe[] = [
   {
     key: 'redirect',
-    // A goal the notes already answer (`pointed`) is not asked again.
-    when: (f) => f.hyps.length === 0 && f.flag !== 'pointed',
+    // A goal the notes already answer (`pointed`) is not asked again, and talk (`chat`) is answered as talk.
+    when: (f) => f.hyps.length === 0 && f.flag !== 'pointed' && f.flag !== 'chat',
     // An answer that emptied the frame (a goal with nothing to map is a dispatch, never a redirect), or harm, or "I don't know".
     ask: (f) => ({
       question: f.flag === 'harm'
@@ -988,6 +1037,7 @@ function rootOf(f: Frame): string {
     if (f.flag === 'harm') return 'Nothing here can hurt anyone, so let’s find what the city can do for you.'
     if (f.flag === 'unsure') return 'You’re happy just looking around for now.'
     if (f.flag === 'pointed') return 'That is already in the city; here is where to find it.'
+    if (f.flag === 'chat') return 'You want to talk, not change the city.'
     return 'I couldn’t map this one yet.'
   }
   const district = find(f, 'district')?.value
@@ -1092,9 +1142,10 @@ export class FiveWhys {
   private pending: { probe: Probe; step: WhyStep } | null = null
   private last: string | undefined
 
-  constructor(goal: string) {
+  /** `chatting`: a conversation is already going, so a goal that maps to nothing is its next turn, not a job for the scouts. */
+  constructor(goal: string, opts: { chatting?: boolean } = {}) {
     const text = clean(goal)
-    const a = analyze(text, true)
+    const a = analyze(text, true, opts.chatting === true)
     this.frame = { goal: text, hyps: a.hyps, tags: a.tags, unmapped: a.unmapped, asked: new Set(), flag: a.flag, team: a.team }
   }
 
@@ -1148,6 +1199,7 @@ export class FiveWhys {
       plan,
       unmapped: unmapped.map((u) => u.label),
       markdown: markdownOf(f.goal, this.whys, root, plan, unmapped, done, plan.some((s) => s.control === 'dispatch') ? f.team : null),
+      ...(f.flag === 'chat' && plan.length === 0 ? { chat: true as const } : {}),
     }
   }
 }

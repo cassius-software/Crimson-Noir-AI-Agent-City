@@ -13,6 +13,10 @@
  * work is dispatched: the host opens the brief's team (08_Swarm/team.ts) and its lanes show under the
  * brief as they read the city. Sloane may say the brief's sentence in their own words (the host's `reword`,
  * the page's mind): the words change, never the plan, and the planner's sentence stands until they arrive.
+ * A goal that is talk ("how's it going", "who are you", intent.ts Brief.chat) is a conversation instead: the host's
+ * `chat` (onboarding/voice.ts sloaneChat) streams the model's reply onto the card and the field stays open for the next
+ * turn, where anything that maps to the city is a goal again. Where no model answers, Sloane says so plainly and offers
+ * the ways to get one (a model file kept in this page, a server on this computer); nothing is sent and nothing applied.
  * The card then settles into a small chip that offers the goal dialogue and reopens the full control list.
  * The ORC Notice is the card's fine print (on a phone held in landscape, only in the full list).
  * What breaks if it is removed? Nobody is greeted, the avatar never gets a name or seed, first-time
@@ -31,7 +35,7 @@ import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
-import type { Voice } from './onboarding/voice.ts'
+import type { Chat, ChatTurn, Voice } from './onboarding/voice.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
 import { heardGoal } from './onboarding/heard.ts'
 
@@ -64,6 +68,35 @@ const STARTERS = ['Make it night', 'Golden hour', 'Smoother', 'Fewer people', 'S
 interface Dialogue { whys: FiveWhys | null; step: WhyStep | null; brief: Brief | null; applied: readonly Control[] }
 /** Lanes shown under a brief before "and N more". */
 const TEAM_ROWS = 6
+
+/** How a reply in the conversation stands (onboarding/voice.ts ChatResult, `waiting` while it streams in, and `stopped`
+ *  by the person's Stop). */
+type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'refused' | 'failed' | 'stopped'
+/** The reply on the card: which ask it answers, how it stands, the words so far, and why it failed (a router's reason). */
+interface Talk { readonly id: number; readonly state: TalkState; readonly text: string; readonly why: string }
+/** Turns of the conversation kept for the visit (the model is shown the last of them, voice.ts CHAT_TURNS). */
+const TALK_KEPT = 16
+/** What Sloane says when no model answers this page: plainly that none does, and what they can still do. */
+const NO_MODEL_LINE = 'No language model is answering this page yet, so I can’t chat. I can still change the city for you: try “make it night”.'
+/** A model file small enough for a first visit, named in the hint beside the picker (it runs on a processor alone). */
+const SMALL_MODEL_HINT = 'A small model file runs right in this page: a .gguf such as Qwen2.5 0.5B Instruct at Q4_K_M, about 0.4 GB.'
+/** A page Ollama answers by default (localhost, 127.0.0.1 and 0.0.0.0 on any port; not [::1]). */
+const LOOPBACK_PAGE = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?$/
+/** The card's line for a reply. */
+function talkLine(t: Talk | null): string {
+  switch (t?.state) {
+    case undefined: return ''
+    case 'waiting': return t.text || '…'
+    case 'said': return t.text
+    case 'none': return NO_MODEL_LINE
+    case 'slow': return 'The model took too long to answer. Ask again, or try something shorter.'
+    case 'held': return 'I won’t repeat what the model answered: it didn’t pass the city’s screen. Ask me something else.'
+    // The person's words failed the 14A screen: not engaged with, not repeated, not sent anywhere.
+    case 'refused': return 'Let’s keep it to the city. What would you like it to do?'
+    case 'failed': return 'The model couldn’t answer this time. Ask again in a moment.'
+    case 'stopped': return 'Stopped. Say something else, or ask again.'
+  }
+}
 const NO_GOAL: Dialogue = { whys: null, step: null, brief: null, applied: [] }
 
 /** A dialogue given up front (a deep link, a server render): its goal and answers already in. */
@@ -240,6 +273,16 @@ export interface ConciergeProps {
    * it arrives; the plan under it, the dispatch and what is spoken stay the planner's. Null: the planner's words.
    */
   reword?: Voice | null
+  /**
+   * Optional: Sloane in conversation (onboarding/voice.ts sloaneChat, over the page's mind): a goal that is talk
+   * (intent.ts Brief.chat) gets the model's reply, streamed onto the card, and the field stays open for the next turn.
+   * Null: no model can be asked, and talk gets the plain line saying so.
+   */
+  chat?: Chat | null
+  /** Optional: opens the picker for a model file kept in this page (Menu › Model file), offered when no model answers. */
+  onPickModel?(): void
+  /** Optional: why this page cannot run a model file (the browser lacks a piece), said in place of the picker. */
+  noPageModel?: string | null
   /** Optional: the lanes of the team the host opened for the brief (08_Swarm/team.ts lines), shown under it as they run. */
   lanes?: readonly LaneLine[] | null
   /** Optional: the first walk's card is on screen (it stands on the right of a wide screen): the wide column keeps left of it. */
@@ -250,7 +293,7 @@ export interface ConciergeProps {
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
@@ -270,12 +313,55 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   // One ask a brief: the planner's sentence shows (and is spoken) meanwhile, and a new brief or a card that goes ends the ask.
   useEffect(() => {
     const b = dialogue.brief
-    if (!reword || !b) return
+    // Talk is answered by the conversation below, never reworded.
+    if (!reword || !b || b.chat) return
     const ctl = new AbortController()
     const root = b.root
     reword.say(root, ctl.signal).then((text) => { if (!ctl.signal.aborted && text && text !== root) setWorded({ brief: b, text }) }, () => {})
     return () => ctl.abort()
   }, [reword, dialogue.brief])
+  /** The conversation: the reply on the card, the ask under way (a newer ask ends it) and the turns of the visit so far. */
+  const [talk, setTalk] = useState<Talk | null>(null)
+  const [asking, setAsking] = useState<{ id: number; turns: readonly ChatTurn[] } | null>(null)
+  const turnsRef = useRef<readonly ChatTurn[]>([])
+  const talkId = useRef(0)
+  // One ask a turn: the words stream onto the card as they come; a newer turn ends it. A card that settles into the
+  // chip lets the reply finish (it is kept for the next turn); nothing here ever times it out (voice.ts sloaneChat).
+  useEffect(() => {
+    if (!asking || !chat) return
+    const id = asking.id
+    const ctl = new AbortController()
+    const put = (t: Partial<Talk>) => { if (!ctl.signal.aborted) setTalk((v) => (v?.id === id ? { ...v, ...t } : v)) }
+    chat.reply(asking.turns, ctl.signal, (soFar) => put({ text: soFar })).then((r) => {
+      if (ctl.signal.aborted) return
+      if (r.kind === 'said') {
+        turnsRef.current = [...turnsRef.current, { who: 'sloane' as const, text: r.text }].slice(-TALK_KEPT)
+        put({ state: 'said', text: r.text, why: '' })
+        return
+      }
+      // Words the screen refused are not kept as a turn: no later ask carries them.
+      if (r.kind === 'refused' && turnsRef.current.at(-1)?.who === 'you') turnsRef.current = turnsRef.current.slice(0, -1)
+      put({ state: r.kind, text: '', why: r.kind === 'none' || r.kind === 'failed' ? r.why : '' })
+    }, (e: unknown) => put({ state: 'failed', text: '', why: e instanceof Error ? e.message : String(e) }))
+    return () => ctl.abort()
+  }, [chat, asking])
+  /** Puts the turns so far to Sloane (the last one the person's); with no conversation to ask, the plain line at once. */
+  const askTurns = (turns: readonly ChatTurn[]) => {
+    talkId.current += 1
+    const id = talkId.current
+    setTalk({ id, state: chat ? 'waiting' : 'none', text: '', why: '' })
+    setAsking(chat ? { id, turns } : null)
+  }
+  const talkOn = (text: string) => {
+    turnsRef.current = [...turnsRef.current, { who: 'you' as const, text }].slice(-TALK_KEPT)
+    askTurns(turnsRef.current)
+  }
+  /** A reply still on its way: the next turn waits for it or for Stop, so a second message never cuts short a model
+   *  that is still loading for the first (a new ask would end that load and start it again). */
+  const replying = talk?.state === 'waiting'
+  /** The last reply the person has had on the card (shown and said); one that came while the card was away is unseen. */
+  const [seenTalk, setSeenTalk] = useState(0)
+  const unseen = talk !== null && talk.state !== 'waiting' && talk.id !== seenTalk
   /** The brief on the clipboard, or shown to copy by hand where the clipboard is out of reach. */
   const [copied, setCopied] = useState<'no' | 'yes' | 'shown'>('no')
   /** Bumped whenever a card opens or a question changes: restarts the settle timer and the focus effect. */
@@ -284,6 +370,23 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const inputRef = useRef<HTMLInputElement>(null)
   /** The next ask or goal card takes focus even on touch (the player tapped for it, so a keyboard may rise). */
   const focusNext = useRef(false)
+  /** Back to the field after a button that goes away when pressed (Stop, Ask again): focus never falls to the page, where
+   *  the next letter typed would be a step that puts the card away. */
+  const refocus = () => {
+    focusNext.current = true
+    setEpoch((n) => n + 1)
+  }
+  /** The last turn again (after a model file was chosen, a server started, or a slow answer). */
+  const askAgain = () => {
+    if (turnsRef.current.at(-1)?.who === 'you') askTurns(turnsRef.current)
+    refocus()
+  }
+  /** The person's Stop: the ask ends (a model loading in this page for it stops loading, as any stop of an answer does). */
+  const stopTalk = () => {
+    setAsking(null)
+    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
+    refocus()
+  }
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
   const [seenDriving, setSeenDriving] = useState(driving)
@@ -294,8 +397,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   // A nudge is one line however it is reworded (the script's words are said; a model's rewording changes the card
   // only), and a card hidden and shown again (the console, H) is the same line, not a new one: only the chip or the
   // full list in between lets the same words be said again.
-  const spoken = spokenLine(view, mood, name, nudge, dialogue)
+  // A reply is said once it is whole (never word by word as it streams).
+  const talking = view === 'goal' && dialogue.brief?.chat === true
+  const spoken = talking ? (talk && talk.state !== 'waiting' ? talkLine(talk) : '') : spokenLine(view, mood, name, nudge, dialogue)
   const spokenKey = view === 'nudge' && nudge ? `nudge:${nudge.id}` : spoken
+  // Adjusted while rendering: a reply is seen once the card shows it.
+  if (visible && talking && talk && talk.state !== 'waiting' && talk.id !== seenTalk) setSeenTalk(talk.id)
   const sayRef = useRef(onSay)
   const saidRef = useRef('')
   useEffect(() => { sayRef.current = onSay }, [onSay])
@@ -364,24 +471,39 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
       const fresh = whys.brief().plan.filter((s) => s.immediate && !applied.includes(s.control) && onIntent?.(s) === true).map((s) => s.control)
       done = fresh.length ? [...applied, ...fresh] : applied
     }
-    setDialogue({ whys, step, brief: step ? null : whys.brief(done), applied: done })
+    const brief = step ? null : whys.brief(done)
+    // Talk while a reply is still on its way (however it got here: typed, heard, after Another goal) waits in the field.
+    if (brief?.chat && replying) {
+      setDraft(brief.goal)
+      return
+    }
+    setDialogue({ whys, step, brief, applied: done })
     setCopied('no')
     setDraft('')
-    // On touch the chips are the way to answer: let the on-screen keyboard drop between questions.
-    if (family === 'touch') inputRef.current?.blur()
+    // Talk is the next turn of the conversation, and its field stays up for the turn after (on touch too).
+    if (brief?.chat) {
+      talkOn(brief.goal)
+      focusNext.current = true
+    } else if (family === 'touch') inputRef.current?.blur() // on touch the chips are the way to answer: let the on-screen keyboard drop between questions
     setEpoch((n) => n + 1)
   }
-  const startGoal = (text: string) => {
+  /** `chatting`: a conversation is on the card, so words that map to nothing are its next turn (intent.ts FiveWhys). */
+  const startGoal = (text: string, chatting = false) => {
     const goalText = text.trim()
     if (!goalText) return
-    advance(new FiveWhys(goalText), [])
+    advance(new FiveWhys(goalText, { chatting }), [])
     onGoalSent?.(goalText)
   }
   const reply = (text: string) => {
+    // A reply still on its way: the words wait in the field (a heard line too), to go with Send once it lands.
+    if (dialogue.brief?.chat && replying) {
+      setDraft((d) => (d.trim() ? d : text))
+      return
+    }
     if (dialogue.whys && dialogue.step) {
       dialogue.whys.answer(text)
       advance(dialogue.whys, dialogue.applied)
-    } else startGoal(text)
+    } else startGoal(text, dialogue.brief?.chat === true)
   }
   const submitGoal = (e: FormEvent) => {
     e.preventDefault()
@@ -407,6 +529,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const openGoal = () => {
     focusNext.current = true
+    // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands.
+    if (dialogue.brief?.chat && (replying || unseen)) {
+      open('goal')
+      onGoal?.()
+      return
+    }
     setDraft('')
     setDialogue(NO_GOAL)
     setCopied('no')
@@ -419,11 +547,15 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const heardRef = useRef(0)
   const takeHeard = useEffectEvent((text: string) => {
     if (!visible) return
-    const open = view === 'goal' && !dialogue.brief
+    const open = view === 'goal' && (!dialogue.brief || dialogue.brief.chat === true)
     const said = heardGoal(text, open)
     if (said === null) return
     if (open) reply(said)
-    else {
+    else if (dialogue.brief?.chat && replying) {
+      // "Sloane, …" from the chip while a reply is on its way: the conversation opens as it stands, the words in its field.
+      openGoal()
+      setDraft(said)
+    } else {
       openGoal()
       startGoal(said)
     }
@@ -526,7 +658,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     if (!el || (active && active !== el && isEditable(active))) return
     el.focus({ preventScroll: true })
   })
-  const fielded = view === 'ask' || (view === 'goal' && dialogue.brief === null)
+  const fielded = view === 'ask' || (view === 'goal' && (dialogue.brief === null || dialogue.brief.chat === true))
   useEffect(() => {
     if (visible && fielded) focusField()
   }, [visible, fielded, epoch])
@@ -605,12 +737,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
 
   const tips = view === 'greet' || view === 'help' ? controlHints(family, driving, view === 'help' ? 'all' : 'tips') : []
   const { step, brief } = dialogue
-  const phase = view !== 'goal' ? null : brief ? 'brief' : step ? 'why' : 'goal'
+  const phase = view !== 'goal' ? null : brief ? (brief.chat ? 'chat' : 'brief') : step ? 'why' : 'goal'
   const line: ReactNode =
     view === 'ask' ? <>Hi, I’m {SLOANE.name}, your concierge. I’ll get you set up — what should I call you?</>
     : view === 'goal' ? (
       step ? step.question
-      : brief ? (worded?.brief === brief ? worded.text : brief.root)
+      : brief ? (brief.chat ? talkLine(talk) : worded?.brief === brief ? worded.text : brief.root)
       : <>What would you like the city to do? The time of day, the crowds, the traffic, how it runs, where to go — say it plainly.</>
     )
     : view === 'help' ? (name ? <>Here’s everything you can do, <bdi>{name}</bdi>.</> : <>Here’s everything you can do.</>)
@@ -663,7 +795,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
               </button>
             )}
           </div>
-          <p aria-live="polite" className="mt-1 text-[14px] leading-snug">{line}</p>
+          {talking && brief && (
+            <p className={`mt-1 truncate text-[12px] leading-snug ${muted}`} data-you>
+              <span className="sr-only">You said: </span>“<bdi>{brief.goal}</bdi>”
+            </p>
+          )}
+          <p aria-live="polite" aria-busy={talking && talk?.state === 'waiting'} className="mt-1 text-[14px] leading-snug">{line}</p>
 
           {view === 'ask' && (
             <form onSubmit={submit} className={`${gap} flex items-center gap-2`}>
@@ -727,7 +864,70 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
             </>
           )}
 
-          {view === 'goal' && brief && (
+          {view === 'goal' && brief?.chat && (
+            <div className={gap} data-chat={talk?.state ?? 'none'}>
+              {replying && (
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {!talk.text && <span className={`text-[12px] leading-tight ${muted}`}>Thinking…</span>}
+                  <button type="button" onClick={stopTalk} className={link} data-action="stop">Stop</button>
+                </div>
+              )}
+              {talk?.state === 'none' && (
+                <div data-no-model>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    {onPickModel && !noPageModel && (
+                      <button type="button" onClick={onPickModel} className={`rounded-xl px-3.5 py-2 text-[13px] font-semibold ${primary}`} data-action="model-file">
+                        Choose a model file
+                      </button>
+                    )}
+                    <button type="button" onClick={askAgain} className={link} data-action="ask-again">Ask again</button>
+                  </div>
+                  <p className={`mt-2 text-[12px] leading-snug ${muted}`}>
+                    {onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
+                    Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
+                    {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
+                  </p>
+                  {talk.why && (
+                    <details className={`mt-1 text-[11px] leading-snug ${muted}`}>
+                      <summary className="cursor-pointer">Where I looked</summary>
+                      <span className="break-words">{talk.why}</span>
+                    </details>
+                  )}
+                </div>
+              )}
+              {(talk?.state === 'slow' || talk?.state === 'failed' || talk?.state === 'held' || talk?.state === 'stopped') && (
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  {talk.state !== 'held' && <button type="button" onClick={askAgain} className={link} data-action="ask-again">Ask again</button>}
+                  {talk.why && <span className={`min-w-0 text-[11px] leading-snug break-words ${muted}`}>{talk.why}</span>}
+                </div>
+              )}
+              <form onSubmit={submitGoal} className="mt-2 flex items-center gap-2">
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={onGoalKey}
+                  maxLength={GOAL_MAX}
+                  placeholder={compact ? 'Say something…' : 'Say something, or ask for a change'}
+                  aria-label="Your words to Sloane"
+                  autoComplete="off"
+                  autoCapitalize="sentences"
+                  spellCheck={false}
+                  enterKeyHint="send"
+                  dir="auto"
+                  className={`min-w-0 flex-1 rounded-xl border px-3 py-2 outline-none ${compact ? 'text-[16px]' : 'text-[14px]'} ${field}`}
+                />
+                <button type="submit" disabled={replying} className={`shrink-0 rounded-xl px-3.5 py-2 text-[13px] font-semibold disabled:opacity-50 ${primary}`}>
+                  Send{family === 'keyboard' && <span aria-hidden className="ml-1.5 opacity-60">↵</span>}
+                </button>
+                <button type="button" onClick={backOut} className={`shrink-0 px-1 py-2 text-[12px] ${muted} hover:underline`}>
+                  Done
+                </button>
+              </form>
+            </div>
+          )}
+
+          {view === 'goal' && brief && !brief.chat && (
             <div className={gap} data-brief>
               {done.length > 0 && <PlanList title="Done" steps={done} ticked dark={dark} />}
               {later.length > 0 && <PlanList title="Plan" steps={later} ticked={false} dark={dark} />}
@@ -854,6 +1054,12 @@ function PlanList({ title, steps, ticked, dark }: { title: string; steps: readon
       </ul>
     </div>
   )
+}
+
+/** Beside the local-server hint: a page not served from this computer is answered by Ollama only once its origin is allowed. */
+function serverNote(origin: string): string {
+  if (!/^https?:/.test(origin) || LOOPBACK_PAGE.test(origin)) return ''
+  return ` (Ollama answers this page only with ${origin} in OLLAMA_ORIGINS)`
 }
 
 /** The card's line in plain words (the JSX above, without its markup), or '' for a view with nothing to say aloud. */

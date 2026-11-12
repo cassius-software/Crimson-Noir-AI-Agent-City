@@ -101,6 +101,12 @@ export interface InPageMind extends Mind {
   keep(files: readonly File[], onProgress?: (done: number, total: number) => void): Promise<KeptModel>
   forget(name?: string): Promise<string>  // a console line
   load(): Promise<string>                 // clears the crash guard and the failed mark, loads now; a console line
+  /**
+   * Whether an answer would have to load a file first: the chosen file, or with none chosen and `newest` (the inpage
+   * provider, which then answers with the newest kept), the newest kept, is not the one in the runtime. False with no
+   * such file. Asks nothing, loads nothing, makes no runtime.
+   */
+  cold(newest: boolean): boolean
   unload(): Promise<string>
   setGpu(mode: GpuMode): GpuMode
   log(): readonly string[]
@@ -846,6 +852,11 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       await listKept().catch(() => undefined)
       if (removed === 0) return 'no model file is kept in this page'
       return n ? `forgot ${n}: it is no longer kept in this page` : `forgot ${removed} model file${removed === 1 ? '' : 's'}: none is kept in this page now`
+    },
+
+    cold: (newest: boolean): boolean => {
+      const target = model ?? (newest ? known?.[0]?.name ?? null : null)
+      return target !== null && !(current !== null && current.name === target && runtime !== null && runtime.loaded())
     },
 
     load: async (): Promise<string> => {

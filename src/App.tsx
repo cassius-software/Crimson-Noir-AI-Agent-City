@@ -89,7 +89,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneVoice, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
@@ -841,6 +841,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
   /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; it keeps the planner's sentence while the provider is scripted. */
   const [sloane, setSloane] = useState<Voice | null>(null)
+  /** Sloane in conversation (onboarding/voice.ts sloaneChat), once the city's mind exists: talk on the card is put to it. */
+  const [sloaneTalk, setSloaneTalk] = useState<Chat | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
@@ -1608,8 +1610,26 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         const lanes = team.console()
         // Sloane's own words for a brief: the router's order (the local servers, then the model in this page), the
         // planner's sentence on any failure; never with the provider the player set to scripted, asked at every sentence
-        // (the console's `ask provider` changes it while the city runs).
-        setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted'))
+        // (the console's `ask provider` changes it while the city runs). Never while the model file this page would answer
+        // with is still to be loaded either: the rewording's deadline would stop that load with its answer (inPage.ts:
+        // an answer's stop ends its load), so the planner's sentence stands until the model is in. Under auto the file
+        // answers only when no server does: once a look has found a server the rewording asks again, and until a look has
+        // said, one runs (it loads nothing) and the rewording waits for it.
+        let looking = false
+        const pageCold = (): boolean => {
+          const s = local.settings()
+          if (s.provider === 'inpage') return inPage.cold(true)
+          if (s.provider !== 'auto' || !inPage.cold(false)) return false
+          if (s.found === undefined && !looking) {
+            looking = true
+            void local.installed().catch(() => []).finally(() => { looking = false })
+          }
+          return s.found === undefined || s.found === 'inpage'
+        }
+        setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted' && !pageCold()))
+        // Sloane in conversation, in the same order: talk on the card gets the model's reply, with no deadline of its own
+        // (the router's waits bound it, a load in this page among them); none with the scripted provider.
+        setSloaneTalk(sloaneChat(mind, () => local.settings().provider !== 'scripted'))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -1750,6 +1770,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       setEngine(null)
       setBridge(null)
       setSloane(null)
+      setSloaneTalk(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
@@ -1825,6 +1846,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           heard={heard}
           reword={sloane}
           lanes={hud.supplier.lanes ?? null}
+          chat={sloaneTalk}
+          onPickModel={onModelFile}
+          noPageModel={PAGE_MODEL_REFUSAL()}
           beside={walking && fw.card !== null}
           zoom={access.scale / 100}
           onOpen={setSloaneOpen}

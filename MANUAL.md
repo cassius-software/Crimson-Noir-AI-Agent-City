@@ -1065,8 +1065,36 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`06_Make_Decisions/intent.ts`, `06_Make_Decisions/dispatch.ts`) is deterministic and offline: no language
   model decides anything, no network, and no console syntax is ever shown. A local model may say the one
   sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
-  model kept in this page; never with the provider set to scripted), screened like the onboarding's rewording
-  and with every number kept; the planner's sentence stands until it answers and whenever it does not.
+  model kept in this page; never with the provider set to scripted, and never while the model file this page would
+  answer with is still to be loaded, since the rewording's 4 s deadline would stop that load: under auto that is only
+  until a look finds a server), screened like the
+  onboarding's rewording and with every number kept; the planner's sentence stands until it answers and whenever it
+  does not.
+- **Talk to Sloane.** A message that is talk and nothing else ("hi", "how's it going", "good evening", "who are you",
+  "are you a robot?", "thanks") and a question nothing in the city maps to ("what is the meaning of life?") are a
+  conversation, not a goal (`intent.ts` Brief.chat): nobody is sent, nothing is applied and no why is asked. A talk word
+  beside a goal leaves it the goal ("ok, find the courier" still sends the scouts), an "I don't know" beside a thanks is
+  still an "I don't know" ("no thanks" gets the look-around offer), a request worded as a question ("can you find a
+  cafe?") or a question about the city's whereabouts ("where's the courier?") goes to the scouts, and talk aimed at
+  anyone but Sloane ("talk to the shopkeeper") gets the Company note. With a model answering this page (a local server,
+  or a model file kept in this page), Sloane answers your words as themself (`onboarding/voice.ts` sloaneChat). Your
+  words pass the same 14A screen the operator tier puts every prompt through first: words it refuses reach no model,
+  are not kept, and Sloane only steers back to the city. The model is given Sloane's framing and the last eight turns;
+  its reply streams onto the card in whole words, each step through the 14A screen (a refused word stops the model and
+  shows nothing of the reply), and everything from the first action line on, read exactly as the action parser reads
+  one (`actions.ts` actionCut), is cut and stops the model, because a conversation never acts. The field stays open for
+  the next turn: anything that maps to the city ("make it night") is a goal again, a wish to send someone ("send
+  scouts") sends them, and what maps to nothing else is the conversation's next turn. While a reply is on its way the
+  next message waits in the field (a heard one too) and **Stop** ends the ask; a reply that lands while the card is put
+  away is shown and said when it opens. Sloane's own wait is bounded only by the router's (the first piece, a stall, a
+  load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model
+  answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
+  ways to get one: **Choose a model file** (the same picker as Menu › Model file; a small `.gguf` such as Qwen2.5 0.5B
+  Instruct at Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this computer (Ollama, LM Studio,
+  llama.cpp), with the `OLLAMA_ORIGINS` note on a page Ollama refuses by default (anything but localhost, 127.0.0.1 or
+  0.0.0.0), and **Ask again** once one is there. Where this browser cannot run a model file, the picker gives way to its
+  reason. "Where I looked" opens the router's own list of what it tried. How well a model converses, and how fast,
+  depends on the model and the device and is not verified here.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
   for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
@@ -2723,10 +2751,12 @@ its own licence. The parts: `09_Cognition/inPage.ts` (the provider), `inPagePlan
 `inPageCaps.ts` (what the browser offers), `gguf.ts` (the header check), `modelStore.ts` (keeping the file) and
 `wllamaRuntime.ts`, the only file that touches wllama.
 
-- **Choosing the file.** Three ways, the same from then on:
+- **Choosing the file.** Four ways, the same from then on:
   - on a phone or tablet, **Menu › Model file** opens the browser's file picker;
   - in the console, `ask file` opens it (from the Enter key itself, which is when a browser allows a picker);
-  - on a computer, drop the `.gguf` file, or every part of a split one, on the city.
+  - on a computer, drop the `.gguf` file, or every part of a split one, on the city;
+  - from Sloane's card, **Choose a model file**, offered when you talk to Sloane and no model answers (Talk to Sloane,
+    above).
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
