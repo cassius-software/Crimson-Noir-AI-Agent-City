@@ -1965,6 +1965,40 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A phone's Lakefront streets are lit at night, and the people near it are drawn.** On a lite boot (an entry-level
+  phone GPU, the Lite tier) the generated map's street window after dark was lamp heads and shopfronts glowing over
+  black streets, with one or two people in view: a lite boot builds no real lamp light (`world.ts` `LITE_WORLD`), the
+  region's lawn, pavement and asphalt had no painted light (only the procedural city's ground paints its pools), the
+  night's fill is a few thousandths (the tone curve shows it as black), and Lite drew a fixed 15% of the people out
+  to 80 m. Now the window's light is baked once at boot into a picture of the window seen from above, a texel a metre
+  (`src/01_Initialize_World/region/paintedLight.ts`, new; some 50 to 100 ms on this machine for the metropolis
+  window), from what stands there: red, the pool under every lamp's head (the spread of a point of light at the
+  head's height, ending at 16 m, so a crossing between eight lamps and the middle of a block are lit); green, the
+  light every glazed ground floor spills on the ground before it (shopfronts and the glass round every room, shop and
+  home, out to 10 m); blue and alpha, the floors inside the workplaces (shown only while their real fixtures are off)
+  and inside the shops and homes. The lawn, the pavement, the asphalt and the road markings read it with one texture
+  sample as an emissive term (`regionWorld.ts` `paintedGlow`, `PAINT_LIGHT`); a street the map left out has no lamps
+  and no pool; on the tiers that light real lamps the pools fade inside the lit lamps' reach as the city ground's do.
+  On a night no real lamp lights, the hemisphere fill gains the glow of a lit city (`world.ts` `CITY_GLOW`), so trees,
+  poles and people in light clothes keep a dim colour of their own; dark suits stay silhouettes. Lite's crowd draw
+  is now everyone within 45 m and nobody beyond (`governor.ts` `LITE`: density 1, draw distance 45 m, was 0.15 and
+  80 m), so nobody appears from nothing at 14 m; by the tests' own model of the GPU cull it draws 74% of what Minimal
+  draws (it drew 37%), still a step under Minimal (`governor.test.ts` restates the rule as the drawn count, not knob by
+  knob). No new render or compute pipeline, no change to the crowd kernels (the phone's kernel memory keeps its key),
+  one 680×680 RGBA texture with mips (about 2.4 MB); `dist/index.html` grows by 4,650 bytes, from 12,059,574 to
+  12,064,224, the limit in `tools/verify/page_dist.mjs` unchanged. Tests: `paintedLight.test.ts` (new) holds the bake
+  to hand-worked scenes and to the metropolis as the page builds it (every lamp head over a lit pool, every crossing
+  lit, every missing street dark, every room, shop and home lit in its channel), the texture's format and the four
+  materials' wiring; `shadowShaders.test.ts` finds one sample of the picture in the fragment stage of each painted
+  material, none in any vertex stage or other material, none without a street window, and the glow on the fill only
+  on nights no lamp lights. Pictures on the software WebGPU adapter (SwiftShader) at 720×1440 on Lite, 18:56 and
+  22:00, before and after from the same places: the street, pavement, lawn strip and road markings lit under the
+  lamps and before the shopfronts, a room's and a shop's floor lit, about nine people in the view that showed two;
+  Minimal and High photographed at night too (after only): the real lamp light round the camera, no pool doubled
+  under a lit lamp. Not fixed here: outside the 640 m street
+  window (15/16 of the map) there are still no lamps, people or cars. Unverified: no phone GPU has drawn it yet, nor
+  has the frame time on a Mali been measured.
+
 - **A newly published build of the web copy is what the next launch runs.** The service worker answered every launch
   from its copy and fetched a new build in the background, so the build a phone ran was always one launch behind the
   host (two reloads after every publish), and a copy that could not start had to stay alive through a 7 MB download
