@@ -15,7 +15,9 @@
  * "randomise" that asks lookFromSeed for the look the hash would give some other number, a reset to the look the
  * visitor's own seed gives, and the short shareable code (formatLookCode / parseLookCode, checksummed) to write down
  * or paste. Every change is worn at once: the host writes it to the player's body (engine.setLook) and keeps it
- * (lookStore.ts). "Agents": the player's own agents (08_Swarm/roster.ts), one tab each: a name, pronouns, a role in
+ * (lookStore.ts). On the player's own look, an option a shop sells is locked until it is bought (lookLock.ts): a
+ * padlock and the price on it, the shop named under its row, and what the look wore when the card opened kept on.
+ * "Agents": the player's own agents (08_Swarm/roster.ts), one tab each: a name, pronouns, a role in
  * the player's words, a voice (one of the twelve profiles, or a voice the speech provider knows), and the same
  * wardrobe for their look, worn by the pedestrian hired as them the moment it changes; hiring itself is the
  * console's (agent hire <name> <skill>), so the card never reaches the swarm. There is no mirror by design: the
@@ -36,6 +38,10 @@ import {
 import { TATTOO_BY_FAMILY, TATTOO_FAMILIES, TATTOO_MOTIFS, TATTOO_ZONES } from '../03_Spawn_Agents/tattoo.ts'
 import { seedFromName } from '../05_Observe_Environment/profile.ts'
 import { PRONOUNS, ROSTER_MAX, VOICE_PROFILES, voiceProfile, type AgentIdentity, type Roster } from '../08_Swarm/roster.ts'
+import { SHOP_INFO } from '../01_Initialize_World/storefronts.ts'
+import { fitLook, heldBy, heldWords, lockWords, wornFromShops, type Owns } from './lookLock.ts'
+import { credits, type StoreItem } from './storeCatalog.ts'
+import type { Shopkeeper } from './shopkeeper.ts'
 
 export interface CustomizerProps {
   /** Show the card (the host passes false while the boot veil covers the page or the terminal is open). */
@@ -56,6 +62,11 @@ export interface CustomizerProps {
   onAgentLook?(name: string, look: Look | null): void
   /** Optional: say a line in an agent's voice (a profile or a provider voice), for the Hear button. */
   onHear?(voice: string, line: string): void
+  /**
+   * Optional: the one shopkeeper. With it, what a shop sells is locked on the player's own look until it is bought
+   * (lookLock.ts), and a purchase redraws the card; agents' looks stay free.
+   */
+  keeper?: Pick<Shopkeeper, 'owns' | 'onChange'>
 }
 
 /** What each slot is called on the card, by body where the cloth differs (and the top by its layer: a coat's dye is the coat). */
@@ -340,6 +351,30 @@ function Face({ look, t }: { look: Look; t: Theme }) {
 // --- The tattoos -------------------------------------------------------------------------------------------------
 
 /** The zones the wardrobe has a slot for (tattoo.ts TATTOO_ZONES, in zone order: the hands, the neck, the nape, the forearms, the left calf and the right ankle). */
+/** A padlock, drawn: the mark of an option a shop sells that is not bought yet (lookLock.ts). */
+function LockGlyph() {
+  return (
+    <svg aria-hidden viewBox="0 0 10 12" className="inline-block h-2.5 w-2.5 shrink-0 align-[-1px]" fill="currentColor" data-lock-glyph>
+      <path d="M2.5 5V3.5a2.5 2.5 0 0 1 5 0V5h.5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm1.2 0h2.6V3.5a1.3 1.3 0 0 0-2.6 0z" />
+    </svg>
+  )
+}
+
+/**
+ * Under a row with locked options: the shops that sell them and the lowest price, or, once a locked option is pressed,
+ * that line in full (lockWords: the shop, where it stands, the price and the level).
+ */
+function LockLine({ lines, note, t }: { lines: readonly StoreItem[]; note: string | null; t: Theme }) {
+  if (!lines.length && note === null) return null
+  const shops = [...new Set(lines.map((i) => SHOP_INFO[i.shop].name))].join(' and ')
+  const low = Math.min(...lines.map((i) => i.price))
+  return (
+    <p className={`mb-2 ml-[92px] text-[11px] leading-snug ${t.muted}`} role="status" data-lock-line>
+      <LockGlyph /> {note ?? `Sold at ${shops}${lines.length > 1 ? `, from ${credits(low)}` : `, ${credits(low)}`}: buy it there to wear it here.`}
+    </p>
+  )
+}
+
 const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot)).map((z) => ({ ...z, slot: z.slot as LookSlot }))
 /** The slots the Tattoos section shows (the zones and the ink), never as rows of their own. */
 const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)
@@ -354,12 +389,17 @@ const designName = (id: number): string => (id > 0 ? TATTOO_MOTIFS[id - 1].name 
  * card's own: it starts on the first zone that holds a design, or the left hand. Every control is a button in a
  * radiogroup, which switch scanning and dwell press like any other.
  */
-function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, value: number): void; ink: ReactNode; t: Theme }) {
+function TattooSection({ worn, set, ink, lockOf, note, t }: {
+  worn: Look; set(slot: LookSlot, value: number): void; ink: ReactNode; lockOf(slot: LookSlot, value: number): StoreItem | null; note(slot: LookSlot, lines: readonly StoreItem[]): ReactNode; t: Theme
+}) {
   const [zone, setZone] = useState<LookSlot>(() => CARD_ZONES.find((z) => worn[z.slot] > 0)?.slot ?? 'tattooHand')
   const design = worn[zone]
   const family = design > 0 ? TATTOO_MOTIFS[design - 1].family : null
   const label = `w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`
   const pill = (on: boolean) => `rounded-full border px-2.5 py-0.5 text-[12px] ${on ? t.pillOn : t.pill}`
+  // The family's designs a shop still sells (lookLock.ts): a family opens on its first design that is free or bought.
+  const designLocks = family === null ? [] : TATTOO_BY_FAMILY[family].map((id) => (id === design ? null : lockOf(zone, id)))
+  const firstOpen = (f: number): number => TATTOO_BY_FAMILY[f].find((id) => lockOf(zone, id) === null) ?? TATTOO_BY_FAMILY[f][0]
   return (
     <div className={`mb-2 mt-3 border-t pt-3 ${t.rule}`} role="group" aria-label="Tattoos" data-row="tattoos">
       <div className="mb-2 flex items-baseline gap-3">
@@ -397,7 +437,7 @@ function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, 
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Design family">
           <button type="button" role="radio" aria-checked={family === null} onClick={() => set(zone, 0)} className={pill(family === null)}>none</button>
           {TATTOO_FAMILIES.map((name, f) => (
-            <button key={name} type="button" role="radio" aria-checked={family === f} onClick={() => { if (family !== f) set(zone, TATTOO_BY_FAMILY[f][0]) }} className={pill(family === f)}>
+            <button key={name} type="button" role="radio" aria-checked={family === f} onClick={() => { if (family !== f) set(zone, firstOpen(f)) }} className={pill(family === f)}>
               {name}
             </button>
           ))}
@@ -407,87 +447,134 @@ function TattooSection({ worn, set, ink, t }: { worn: Look; set(slot: LookSlot, 
         <div className="mb-2 flex items-start gap-3" data-row="tattoo-design">
           <div className={label}>Design</div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Design">
-            {TATTOO_BY_FAMILY[family].map((id) => (
-              <button key={id} type="button" role="radio" aria-checked={id === design} onClick={() => set(zone, id)} className={pill(id === design)}>
-                {designName(id)}
-              </button>
-            ))}
+            {TATTOO_BY_FAMILY[family].map((id, k) => {
+              const line = designLocks[k]
+              return (
+                <button key={id} type="button" role="radio" aria-checked={id === design} aria-disabled={line ? true : undefined} title={line ? lockWords(line) : undefined} onClick={() => set(zone, id)} className={`${pill(id === design)}${line ? ' opacity-70' : ''}`} data-locked={line ? line.id : undefined}>
+                  {line && <><LockGlyph />{' '}</>}{designName(id)}{line && <span className="ml-1 opacity-80">· {credits(line.price)}</span>}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
+      {note(zone, designLocks.filter((l): l is StoreItem => l !== null))}
       {ink}
     </div>
   )
 }
 
-/** The wardrobe itself: the silhouette, presets, the slot rows and the code row, over one look; every change goes out through `onChange`. */
-function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onChange(look: Look): void; t: Theme }) {
+/**
+ * The wardrobe itself: the silhouette, presets, the slot rows and the code row, over one look; every change goes out
+ * through `onChange`. With `owns` (the player's own look), an option a shop sells and nobody bought is locked
+ * (lookLock.ts heldBy): it shows a padlock and its price, the row says which shop sells it, and pressing it says the
+ * line in full instead of wearing it. What the look wore when the card opened (`kept`) stays on, and its option
+ * chosen, until it is taken off and the card closed. A preset, Randomise, Reset or a pasted code is worn with what
+ * the shops still hold put back (fitLook), and the card says what was held.
+ */
+function LookEditor({ worn, seed, onChange, owns = null, t }: { worn: Look; seed: number; onChange(look: Look): void; owns?: Owns | null; t: Theme }) {
   const body = worn.body as LookBody
   /** A code being typed to wear, and why the last one was refused. */
   const [code, setCode] = useState('')
   const [refused, setRefused] = useState(false)
   /** The code last copied to the clipboard: "Copied" shows while the look is still that one. */
   const [copied, setCopied] = useState('')
-  const set = (slot: LookSlot, value: number) => {
-    const next = withLookSlot(worn, slot, value)
-    if (next) onChange(next)
+  /** The look the card opened on: what it wears stays on although a shop sells it (the card remounts as it opens). */
+  const [kept] = useState(worn)
+  /** What the card last said about a lock, and under which row ('held' for a bundle, under the presets). */
+  const [note, setNote] = useState<{ row: string; text: string } | null>(null)
+  /** The line that would hold `next` (a shop sells what it adds and nobody bought it), or null; never without `owns`. */
+  const lockOf = (next: Look | null): StoreItem | null => (owns && next ? heldBy(next, kept, owns) : null)
+  /** One choice (an option, a garment, a build, a face shape): worn, or refused with the lock's words under `row`. */
+  const choose = (next: Look | null, row: string) => {
+    if (!next) return
+    const line = lockOf(next)
+    if (line) { setNote({ row, text: `${lockWords(line)}.` }); return }
+    setNote(null)
+    onChange(next)
   }
+  /** A whole look (a preset, Randomise, Reset, a code): worn with what the shops still hold put back, and said. */
+  const wearAll = (next: Look) => {
+    if (!owns) { onChange(next); return }
+    const fit = fitLook(next, worn, kept, owns)
+    setNote(fit.held.length ? { row: 'held', text: `Worn without what the shops still hold: ${heldWords(fit.held)}.` } : null)
+    onChange(fit.look)
+  }
+  const set = (slot: LookSlot, value: number) => choose(withLookSlot(worn, slot, value), slot)
+  /** The lock line under row `row`: the shops of its locked options, or what the card said there last. */
+  const lockLine = (row: string, lines: readonly StoreItem[]) => <LockLine lines={lines} note={note?.row === row ? note.text : null} t={t} />
   const wearCode = (e: FormEvent) => {
     e.preventDefault()
     const parsed = parseLookCode(code)
     if (!parsed) { setRefused(true); return }
     setRefused(false)
     setCode('')
-    onChange(parsed)
+    wearAll(parsed)
   }
-  /** A slot's row of options: a colour as a swatch, a named option as a pill. */
+  /** A slot's row of options: a colour as a swatch, a named option as a pill; a locked one with its padlock. */
   const optionRow = (slot: LookSlot) => {
     const options = lookOptions(body, slot, worn.layer)
     const current = worn[slot]
+    const locks = options.map((_, i) => (i === current ? null : lockOf(withLookSlot(worn, slot, i))))
     return (
-      <div key={slot} className="mb-2 flex items-start gap-3" data-slot={slot}>
-        <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
-          {options.map((o, i) => {
-            const on = i === current
-            // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth, the matching trim's the outer layer's).
-            const hex = o.hex ?? ((slot === 'bottom' || slot === 'trim') && o.name === 'matching' ? matchingSwatch(worn, slot) : null)
-            if (o.hex !== null) {
+      <Fragment key={slot}>
+        <div className="mb-2 flex items-start gap-3" data-slot={slot}>
+          <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>{slotLabel(slot, body, worn.layer)}</div>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label={slotLabel(slot, body, worn.layer)}>
+            {options.map((o, i) => {
+              const on = i === current
+              const line = locks[i]
+              // A colour is a swatch; a named option is a pill (the matching trousers' carries the jacket's cloth, the matching trim's the outer layer's).
+              const hex = o.hex ?? ((slot === 'bottom' || slot === 'trim') && o.name === 'matching' ? matchingSwatch(worn, slot) : null)
+              if (o.hex !== null) {
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    aria-label={line ? `${o.name}, locked: ${lockWords(line)}` : o.name}
+                    aria-disabled={line ? true : undefined}
+                    title={line ? `${o.name}: ${lockWords(line)}` : o.name}
+                    onClick={() => set(slot, i)}
+                    style={{ backgroundColor: hex6(o.hex) }}
+                    className={`h-6 w-6 overflow-hidden rounded-full border border-black/20 ${on ? `ring-2 ring-offset-1 ${t.ring}` : ''}`}
+                    data-locked={line ? line.id : undefined}
+                  >
+                    {line && <span className="flex h-full w-full items-center justify-center bg-black/45 text-white"><LockGlyph /></span>}
+                  </button>
+                )
+              }
               return (
                 <button
                   key={i}
                   type="button"
                   role="radio"
                   aria-checked={on}
-                  aria-label={o.name}
-                  title={o.name}
+                  aria-disabled={line ? true : undefined}
+                  title={line ? lockWords(line) : undefined}
                   onClick={() => set(slot, i)}
-                  style={{ backgroundColor: hex6(o.hex) }}
-                  className={`h-6 w-6 rounded-full border border-black/20 ${on ? `ring-2 ring-offset-1 ${t.ring}` : ''}`}
-                />
+                  className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on ? t.pillOn : t.pill}${line ? ' opacity-70' : ''}`}
+                  data-locked={line ? line.id : undefined}
+                >
+                  {line && <><LockGlyph />{' '}</>}
+                  {hex !== null && (
+                    <span aria-hidden className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-black/20 align-middle" style={{ backgroundColor: hex6(hex) }} />
+                  )}
+                  {o.name}
+                  {line && <span className="ml-1 normal-case opacity-80">· {credits(line.price)}</span>}
+                </button>
               )
-            }
-            return (
-              <button
-                key={i}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                onClick={() => set(slot, i)}
-                className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on ? t.pillOn : t.pill}`}
-              >
-                {hex !== null && (
-                  <span aria-hidden className="mr-1 inline-block h-2.5 w-2.5 rounded-full border border-black/20 align-middle" style={{ backgroundColor: hex6(hex) }} />
-                )}
-                {o.name}
-              </button>
-            )
-          })}
+            })}
+          </div>
         </div>
-      </div>
+        {lockLine(slot, locks.filter((l): l is StoreItem => l !== null))}
+      </Fragment>
     )
   }
   const code6 = formatLookCode(worn)
+  /** What the look wears that a shop sells and nobody bought: kept on from before (lookLock.ts wornFromShops). */
+  const keptOn = owns ? wornFromShops(worn, owns) : []
   const copy = () => {
     try {
       void navigator.clipboard.writeText(code6).then(() => setCopied(code6), () => setCopied(''))
@@ -502,20 +589,25 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           <button
             key={p.name}
             type="button"
-            onClick={() => onChange(p.look)}
+            onClick={() => wearAll(p.look)}
             aria-pressed={formatLookCode(p.look) === code6}
             className={`rounded-full border px-2.5 py-1 text-[12px] capitalize ${formatLookCode(p.look) === code6 ? t.pillOn : t.pill}`}
           >
             {p.name}
           </button>
         ))}
-        <button type="button" onClick={() => onChange(lookFromSeed(randomSeed()))} className={`rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`} data-action="randomise">
+        <button type="button" onClick={() => wearAll(lookFromSeed(randomSeed()))} className={`rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`} data-action="randomise">
           Randomise
         </button>
-        <button type="button" onClick={() => onChange(lookFromSeed(seed))} className={`rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`} data-action="reset">
+        <button type="button" onClick={() => wearAll(lookFromSeed(seed))} className={`rounded-full border px-2.5 py-1 text-[12px] ${t.pill}`} data-action="reset">
           Reset
         </button>
       </div>
+      {owns && (note?.row === 'held' || keptOn.length > 0) && (
+        <p className={`mt-2 text-[11px] leading-snug ${t.muted}`} role="status" data-lock-line="held">
+          <LockGlyph /> {note?.row === 'held' ? note.text : `Kept on from before: ${keptOn.join(', ')}. A shop sells ${keptOn.length > 1 ? 'them: take one off' : 'it: take it off'} and close the card, and it waits there until bought.`}
+        </p>
+      )}
 
       <div className={`mt-3 border-t pt-3 ${t.rule}`}>
         <Silhouette look={worn} t={t} />
@@ -537,7 +629,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           // The legs show on the skirt suit and below cropped trousers and culottes; full-length trousers hide them.
           if (slot === 'legwear' && worn.body !== 3 && worn.bottomCut !== TROUSER_CUT.cropped && worn.bottomCut !== TROUSER_CUT.culottes) return null
           // The tattoos are one section, headed where the first zone's row would be: the zones and the ink have no rows of their own.
-          if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />
+          if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} lockOf={(zone, id) => lockOf(withLookSlot(worn, zone, id))} note={lockLine} t={t} />
           if (isTattooSlot(slot)) return null
           const options = lookOptions(body, slot, worn.layer)
           const current = worn[slot]
@@ -575,7 +667,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                           type="button"
                           role="radio"
                           aria-checked={on?.name === b.name}
-                          onClick={() => { const next = withBuild(worn, b.name); if (next) onChange(next) }}
+                          onClick={() => choose(withBuild(worn, b.name), 'build')}
                           className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${on?.name === b.name ? t.pillOn : t.pill}`}
                         >
                           {b.name}
@@ -602,7 +694,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                           type="button"
                           role="radio"
                           aria-checked={shape?.name === f.name}
-                          onClick={() => { const next = withFaceShape(worn, f.name); if (next) onChange(next) }}
+                          onClick={() => choose(withFaceShape(worn, f.name), 'face-shape')}
                           className={`rounded-full border px-2.5 py-0.5 text-[12px] capitalize ${shape?.name === f.name ? t.pillOn : t.pill}`}
                         >
                           {f.name}
@@ -620,25 +712,34 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           // The garments head the outer layer's rows (each sets the layer, its cut and its weave; the colours stay the look's).
           if (slot === 'layer') {
             const wearing = garmentOf(worn)
+            // A coat among them is the tailor's until an overcoat in that colour is bought (lookLock.ts).
+            const garments = LOOK_GARMENTS.map((g) => {
+              const next = withGarment(worn, g.name)
+              return { g, next, line: wearing?.name === g.name ? null : lockOf(next) }
+            })
             return (
               <Fragment key={slot}>
                 <div className="mb-2 flex items-start gap-3" data-row="garment">
                   <div className={`w-20 shrink-0 pt-1 text-[11px] font-semibold tracking-wider uppercase ${t.muted}`}>Garment</div>
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Garment">
-                    {LOOK_GARMENTS.map((g) => (
+                    {garments.map(({ g, next, line }) => (
                       <button
                         key={g.name}
                         type="button"
                         role="radio"
                         aria-checked={wearing?.name === g.name}
-                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
-                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
+                        aria-disabled={line ? true : undefined}
+                        title={line ? lockWords(line) : undefined}
+                        onClick={() => choose(next, 'garment')}
+                        className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}${line ? ' opacity-70' : ''}`}
+                        data-locked={line ? line.id : undefined}
                       >
-                        {g.name}
+                        {line && <><LockGlyph />{' '}</>}{g.name}{line && <span className="ml-1 opacity-80">· {credits(line.price)}</span>}
                       </button>
                     ))}
                   </div>
                 </div>
+                {lockLine('garment', garments.flatMap(({ line }) => (line ? [line] : [])))}
                 {pills}
               </Fragment>
             )
@@ -658,7 +759,7 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
                         type="button"
                         role="radio"
                         aria-checked={wearing?.name === g.name}
-                        onClick={() => { const next = withGarment(worn, g.name); if (next) onChange(next) }}
+                        onClick={() => choose(withGarment(worn, g.name), 'lowerGarment')}
                         className={`rounded-full border px-2.5 py-0.5 text-[12px] ${wearing?.name === g.name ? t.pillOn : t.pill}`}
                       >
                         {g.name}
@@ -782,8 +883,13 @@ function AgentEditor({ id, roster, onAgentLook, onHear, onForget, t }: { id: Age
   )
 }
 
-export function Customizer({ visible, look, seed, onChange, onClose, dark = false, agents = [], roster, onAgentLook, onHear }: CustomizerProps) {
+export function Customizer({ visible, look, seed, onChange, onClose, dark = false, agents = [], roster, onAgentLook, onHear, keeper }: CustomizerProps) {
   const cardRef = useRef<HTMLElement>(null)
+  // The shopkeeper's every change (a purchase) redraws the card, so a line just bought opens at once.
+  const [, setBought] = useState(0)
+  useEffect(() => keeper?.onChange(() => setBought((v) => v + 1)), [keeper])
+  /** Whether the player owns a catalogue line, or null without a shopkeeper (then nothing is locked). */
+  const owns = useMemo<Owns | null>(() => (keeper ? (line: StoreItem) => keeper.owns(line.id) : null), [keeper])
   /** Which tab: the player ('you'), or an agent by name. */
   const [tab, setTab] = useState<string>('you')
   const [newName, setNewName] = useState('')
@@ -885,7 +991,7 @@ export function Customizer({ visible, look, seed, onChange, onClose, dark = fals
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-2">
           {current && roster
             ? <AgentEditor key={current.name} id={current} roster={roster} onAgentLook={onAgentLook} onHear={onHear} onForget={() => forget(current.name)} t={t} />
-            : <LookEditor worn={worn} seed={seed} onChange={onChange} t={t} />}
+            : <LookEditor worn={worn} seed={seed} onChange={onChange} owns={owns} t={t} />}
         </div>
 
         <div className={`flex justify-end border-t px-5 py-3 ${t.rule}`}>

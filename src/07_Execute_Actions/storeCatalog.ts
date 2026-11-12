@@ -7,7 +7,8 @@
  * civic credits, the bit it owns in the progression record's unlock spaces (look, property, furniture: the
  * progression engine's purchase gate, docs/progression.md), and what it does when worn (the look slots it sets,
  * through look.ts withLookSlot, so nothing a shop sells can dress anyone in anything the crowd does not wear); and
- * the words for the gate's verdicts.
+ * the words for the gate's verdicts. A worn line's bit is also what opens it in the wardrobe: until it is set, the
+ * card and the console lock what the line sells on the player's own look (lookLock.ts).
  *
  * A line whose look slots the wardrobe does not have yet is on order: shown, priced, never sold, and live the moment
  * the wardrobe gains a slot of that name. No line is on order today: the umbrella and the headphones, the last two,
@@ -94,9 +95,10 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
   item(24, 'tailor', 'wear', 'Neckwear', 'Silk tie', 1, 120, { tie: 1 }),
 
   // Aethelgard Ink Studio: designs for the left forearm, design i + 1 of the wardrobe's (tattoo.ts TATTOO_MOTIFS),
-  // each with the sleeves rolled to the elbow so what is bought is what the mirror showed (the card places any design
-  // on any zone, free); and the two inks. Each name says what the design draws: a rope's braid, a band of scalloped
-  // arcs, a compass rose, the unit circle's half turn. The ids, and so the bits a purchase sets, never change with a name.
+  // each with the sleeves rolled to the elbow so what is bought is what the mirror showed (once bought, the card places
+  // the design on any zone: the wardrobe's shop lock, lookLock.ts); and the two inks. Each name says what the design
+  // draws: a rope's braid, a band of scalloped arcs, a compass rose, the unit circle's half turn. The ids, and so the
+  // bits a purchase sets, never change with a name.
   ...['Fine-line olive branch', 'Fibonacci spiral', 'Braided rope band', 'Circuit-trace sleeve', 'Star-chart sleeve', 'Scalloped arc band',
     'Origami crane sequence', 'Soundwave band', 'Compass rose', 'Botanical sleeve', 'Euler\'s identity circle', 'Ocean-wave armband']
     .map((name, i) => item(48 + i, 'inkStudio', 'wear', 'Designs', name, 1 + Math.floor(i / 2), 200 + i * 60, { tattooForearm: i + 1, sleeves: SLEEVES.rolled })),
@@ -105,7 +107,8 @@ export const CATALOGUE: readonly StoreItem[] = Object.freeze([
 
   // Bio-Frame Prosthetics Atelier: smart eyewear, four fitted limbs and a hearing processor. A limb line sets the
   // wardrobe's limb and finish (look.ts PROSTHETIC, WARDROBE.prostheticFinish) and says its side in its name; the
-  // wardrobe itself offers every limb, side and finish at no cost, so nobody has to buy their own body.
+  // wardrobe itself offers every limb, side and finish at no cost, so nobody has to buy their own body (the shop lock,
+  // lookLock.ts FREE_SHOPS, never locks the atelier's lines, the glasses and the hearing aids too).
   item(96, 'prosthetics', 'wear', 'Eyewear', 'Smart eyewear', 2, 450, { eyewear: 1 }),
   item(97, 'prosthetics', 'wear', 'Limbs', 'Brushed-titanium right arm', 3, 1200, { prosthetic: 2, prostheticFinish: 2 }),
   item(98, 'prosthetics', 'wear', 'Limbs', 'Matte carbon-fibre left arm', 5, 2200, { prosthetic: 1, prostheticFinish: 1 }),
