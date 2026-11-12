@@ -323,6 +323,32 @@ test('legSolve: the hip and knee put the ankle where the foot is, the knee forwa
   assert.equal(soled.hip, legSolve(-0.7, 0.3, t, s, 0).hip)
 })
 
+test('standing still, both legs hang from the hip, whichever zero the foot\'s distance ahead is: the GPU twin (crowdBody.ts bodyLeg, through wgslHost.ts) under the software adapter\'s atan2, which gives pi for a negative zero over a positive x, and legSolve alike', () => {
+  const t = 0.42, s = 0.42, dy = -legReach(t, s)
+  // SwiftShader's atan2, as it was measured in a compute pass: pi for atan2(-0, x > 0), where IEEE gives -0. bodyLeg
+  // called it as atan2(-dz, -dy), so a standing leg whose dz was +0 turned half a turn up through the hip (the shop's
+  // mirror drew the player on one leg).
+  const adapter = 'fn softAtan2(y: f32, x: f32) -> f32 { return select(atan2(y, x), 3.14159265, y == 0.0 && x > 0.0 && 1.0 / y < 0.0); }\n'
+  const parts = new Map([...BODY_WGSL.split(/(?=^fn )/m)].filter((p) => p.startsWith('fn ')).map((p) => [p.match(/^fn (\w+)/)![1], p]))
+  const leg = parts.get('bodyLeg')!
+  assert.equal([...leg.matchAll(/\batan2\(/g)].length, 1, 'one atan2 in the leg solve')
+  const host = compileWgsl(adapter + parts.get('bodyReach')! + leg.replace(/\batan2\(/, 'softAtan2('))
+  assert.equal(host.call('softAtan2', -0, 0.8), Math.fround(Math.PI), 'the stand-in gives pi where the adapter did')
+  assert.equal(host.call('softAtan2', 0, 0.8), 0)
+  const standing = legSolve(dy, 0, t, s, 0)
+  near(standing.hip, -WALK.kneeRest / 2, 1e-9, 'the CPU twin: the thigh leans forward by half the standing bend')
+  for (const dz of [0, -0]) {
+    const [hip, knee, ankle] = host.call('bodyLeg', Math.fround(dy), dz, t, s, 0) as number[]
+    near(hip, standing.hip, 1e-5, `the hip for dz ${Object.is(dz, -0) ? '-0' : '+0'}: down, not up through the trunk`)
+    near(knee, standing.knee, 1e-5, 'the standing bend')
+    near(ankle, standing.ankle, 1e-5, 'the sole flat')
+    assert.deepEqual(legSolve(dy, dz, t, s, 0), standing, 'legSolve the same for either zero')
+  }
+  // A foot ahead or behind, however little, still takes the line through it.
+  near((host.call('bodyLeg', Math.fround(dy), 0.05, t, s, 0) as number[])[0], legSolve(dy, 0.05, t, s, 0).hip, 1e-5, 'ahead')
+  near((host.call('bodyLeg', Math.fround(dy), -0.05, t, s, 0) as number[])[0], legSolve(dy, -0.05, t, s, 0).hip, 1e-5, 'behind')
+})
+
 test('pelvisDrop: nothing with the foot under the hip, more the further the planted foot is from under it, nothing with the foot raised', () => {
   const piv = pivotsOf(shapeFactors(SHAPE_NEUTRAL))
   const leg = piv.hip - piv.ankle
