@@ -80,7 +80,10 @@ any licence above: third_party/wllama/ holds the WebAssembly module of wllama (M
 a page that carries the in-page model runtime carries as that runtime. The NOTICE file beside the module lists what is
 compiled into it (llama.cpp and ggml, nlohmann/json, stb_image, miniaudio, the SHA-256 code llama.cpp vendors, Dawn,
 the Emscripten runtime, musl, LLVM libc++) with each one's licence in full, and the build embeds it in dist/index.html
-whenever the page carries the module.
+whenever the page carries the module. The directory third_party/qwen2.5-0.5b-instruct/ is the record (its licence,
+its notice and its SHA-256) of the one model the web copy serves beside its page, Qwen2.5 0.5B Instruct (Apache-2.0,
+Copyright 2024 Alibaba Cloud, as quantized by bartowski), whose weights are not in the repository and remain under
+their own licence, not under any licence above.
 
 
 5. Prior releases of Crimson Noir OS

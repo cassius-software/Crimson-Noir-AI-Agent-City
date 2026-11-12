@@ -188,6 +188,17 @@ function size(bytes: number, up: boolean): string {
   return `${round(bytes / MIB)} MB`
 }
 
+/**
+ * Why a model of `bytes` will not fit in storage that has `used` of `quota` taken (with SPARE_BYTES kept free as
+ * well), as the sentence the store refuses with; null when it fits. The store asks it before every copy, and the page
+ * before it downloads the site's model (App.tsx), so neither starts what the storage cannot hold.
+ */
+export function roomRefusal(bytes: number, room: { used: number; quota: number }): string | null {
+  const free = Math.max(0, room.quota - room.used)
+  if (free >= bytes + SPARE_BYTES) return null
+  return `this model needs ${size(bytes, true)} and this page's storage has ${size(free, false)} free (64 MB is kept spare as well): free some space in this browser, or choose a smaller model`
+}
+
 /** The model's name to show: the first file's name without the shard number. */
 const displayName = (first: string): string => first.replace(/-\d{5}-of-\d{5}(?=\.gguf$)/, '')
 
@@ -412,10 +423,8 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
       return
     }
     if (typeof e.quota !== 'number' || !Number.isFinite(e.quota)) return
-    const free = Math.max(0, e.quota - (typeof e.usage === 'number' && Number.isFinite(e.usage) ? e.usage : 0))
-    if (free < bytes + SPARE_BYTES) {
-      throw new CognitionError('model', `this model needs ${size(bytes, true)} and this page's storage has ${size(free, false)} free (64 MB is kept spare as well): free some space in this browser, or choose a smaller model`)
-    }
+    const no = roomRefusal(bytes, { used: typeof e.usage === 'number' && Number.isFinite(e.usage) ? e.usage : 0, quota: e.quota })
+    if (no !== null) throw new CognitionError('model', no)
   }
 
   async function keepNow(files: readonly File[], onProgress: ((done: number, total: number) => void) | undefined, signal: AbortSignal | undefined): Promise<KeptModel> {

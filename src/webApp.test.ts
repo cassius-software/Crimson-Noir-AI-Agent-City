@@ -10,21 +10,26 @@
  * address when the host names another, always with the two isolation headers; it never cuts off a page that keeps
  * its pace, gives up one that stops, breaks or crawls (the copy takes the answer over where nothing was handed on yet,
  * else the body ends cleanly and the copy answers the load that follows), never writes a cache from a page load,
- * leaves other origins and other methods to the network, and drops only its own older caches. The browser smoke test (tools/browser/smoke.mjs `pwa`) runs the real thing in Chrome as an
- * iPhone, with a second build published and with the host taken away.
+ * leaves other origins, other methods and the site's model folder (models/) to the network, and drops only its own
+ * older caches. The site's model goes beside that page and nowhere else (tools/web/siteModel.mjs placeModel: checked
+ * against its pin while copied, nothing left behind on a mismatch, a folder that is not the web copy refused), and the
+ * web workflow places it after the build and before the upload, on every publish. The browser smoke test
+ * (tools/browser/smoke.mjs `pwa`) runs the real thing in Chrome as an iPhone, with a second build published and with
+ * the host taken away.
  * What breaks if it is removed? A change to the builder could publish a page whose policy refuses its own manifest, a
  * worker that serves a stale or unisolated page, or one that deletes another app's cache, with nothing to say so
  * before a phone finds out.
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
 import { BRAND } from './brand.ts'
 import { BUILD_META } from './07_Execute_Actions/bootFailure.ts'
+import { SITE_MODEL, manifestText, type SiteModelPin } from './09_Cognition/siteModel.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
@@ -885,4 +890,119 @@ test('the build word covers everything published, the worker included, and build
     writeFileSync(join(dir, 'index.html'), SOURCE.replace(dog, '<script id="another">'))
     assert.throws(() => web.build({ from: dir, out }), /the boot watchdog must end within/, 'no watchdog at all')
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('the site\'s model folder is left to the network: no model in the worker\'s cache, and models/LICENSE is the licence, not the city', async () => {
+  const w = runWorker({ [CACHE]: { 'index.html': 'the city', 'modelsx.png': 'png' } }, publishing(CACHE, () => html('never asked for')))
+  for (const path of [`models/${SITE_MODEL.file}`, 'models/manifest.json', 'models/LICENSE']) {
+    assert.equal(await w.request(`${SCOPE}${path}`), null, path)
+    assert.equal(await w.request(`${SCOPE}${path}`, { mode: 'navigate' }), null, `a page load of ${path}`)
+  }
+  assert.deepEqual(urls(w), [], 'nothing asked of the host for them: the browser fetches them itself')
+  assert.equal(await (await w.request(`${SCOPE}modelsx.png`))?.text(), 'png', 'only the folder itself')
+  assert.equal(await (await w.request(SCOPE, { mode: 'navigate' }))?.text(), 'the city', 'the page still comes from the copy')
+  assert.ok(!web.CACHED.some((f) => f.startsWith('models/')), 'nothing of the model is cached on install')
+})
+
+// tools/web/siteModel.mjs is plain JavaScript; a computed specifier keeps the page's typecheck off it.
+const SITE: string = '../tools/web/siteModel.mjs'
+const siteTool = (await import(SITE)) as {
+  LICENCE_FILES: readonly string[]
+  pinLines(pin?: SiteModelPin): string[]
+  checkModel(o: { from: string; pin?: SiteModelPin }): Promise<{ bytes: number; sha256: string }>
+  placeModel(o: { from: string; out: string; pin?: SiteModelPin; licence?: string }): Promise<string[]>
+}
+
+/** A model file of `bytes` in a fresh folder, a pin for it, and a stand-in web copy (its index.html names the manifest, or not). */
+function staged(webCopy = true) {
+  const root = mkdtempSync(join(tmpdir(), 'site-model-'))
+  const from = join(root, 'cache')
+  const out = join(root, 'dist-web')
+  mkdirSync(from)
+  mkdirSync(out)
+  const model = Buffer.from(Array.from({ length: 70_001 }, (_, i) => (i * 31 + 7) & 0xff))
+  const pin: SiteModelPin = { ...SITE_MODEL, file: 'tiny-a.gguf', bytes: model.length, sha256: createHash('sha256').update(model).digest('hex') }
+  writeFileSync(join(from, pin.file), model)
+  writeFileSync(join(out, 'index.html'), webCopy ? '<!doctype html><link rel="manifest" href="manifest.webmanifest" />' : '<!doctype html><title>dist</title>')
+  return { root, from, out, model, pin, done: () => rmSync(root, { recursive: true, force: true }) }
+}
+
+test('the workflow\'s pin is the page\'s: one cache key per pin, and the file fetched at the pinned revision', () => {
+  const where = createHash('sha256').update(`${SITE_MODEL.repo}\n${SITE_MODEL.revision}\n${SITE_MODEL.file}\n${SITE_MODEL.bytes}`).digest('hex').slice(0, 16)
+  assert.deepEqual(siteTool.pinLines(), [
+    `key=site-model-${SITE_MODEL.sha256}-${where}`,
+    `file=${SITE_MODEL.file}`,
+    `bytes=${SITE_MODEL.bytes}`,
+    `sha256=${SITE_MODEL.sha256}`,
+    `url=https://huggingface.co/${SITE_MODEL.repo}/resolve/${SITE_MODEL.revision}/${SITE_MODEL.file}`,
+  ])
+  // Any change to the pin misses the cache, so the new address or name is fetched (and checked) on the pull request.
+  const keyOf = (pin: SiteModelPin): string | undefined => siteTool.pinLines(pin)[0]
+  for (const moved of [{ revision: '0'.repeat(40) }, { repo: 'someone/else' }, { file: 'renamed.gguf' }]) {
+    assert.notEqual(keyOf({ ...SITE_MODEL, ...moved }), keyOf(SITE_MODEL), JSON.stringify(moved))
+  }
+})
+
+test('the model goes beside the web copy, checked while copied, with its manifest and licence; a mismatch leaves no model behind', async () => {
+  const s = staged()
+  try {
+    assert.deepEqual(await siteTool.checkModel({ from: s.from, pin: s.pin }), { bytes: s.model.length, sha256: s.pin.sha256 })
+    const files = await siteTool.placeModel({ from: s.from, out: s.out, pin: s.pin })
+    assert.deepEqual(files, ['models/tiny-a.gguf', 'models/manifest.json', 'models/LICENSE', 'models/NOTICE'])
+    assert.deepEqual(readFileSync(join(s.out, 'models', 'tiny-a.gguf')), s.model)
+    assert.equal(readFileSync(join(s.out, 'models', 'manifest.json'), 'utf8'), manifestText(s.pin))
+    for (const f of siteTool.LICENCE_FILES) assert.equal(readFileSync(join(s.out, 'models', f), 'utf8'), readFileSync(new URL(`../third_party/qwen2.5-0.5b-instruct/${f}`, import.meta.url), 'utf8'))
+    assert.deepEqual(readdirSync(join(s.out, 'models')).sort(), ['LICENSE', 'NOTICE', 'manifest.json', 'tiny-a.gguf'], 'no .part file left')
+  } finally {
+    s.done()
+  }
+  for (const wrong of [{ bytes: 70_000 }, { sha256: '0'.repeat(64) }]) {
+    const t = staged()
+    try {
+      const pin = { ...t.pin, ...wrong }
+      await assert.rejects(siteTool.checkModel({ from: t.from, pin }), /the pin says/)
+      await assert.rejects(siteTool.placeModel({ from: t.from, out: t.out, pin }), /the pin says/)
+      assert.ok(!existsSync(join(t.out, 'models')), 'nothing of the model is left in the web copy')
+    } finally {
+      t.done()
+    }
+  }
+})
+
+test('the model never goes beside a page that is not the web copy (dist/ carries no model), nor from a cache without it', async () => {
+  const s = staged(false)
+  try {
+    await assert.rejects(siteTool.placeModel({ from: s.from, out: s.out, pin: s.pin }), /is not the web copy/)
+    assert.ok(!existsSync(join(s.out, 'models')))
+  } finally {
+    s.done()
+  }
+  const t = staged()
+  try {
+    await assert.rejects(siteTool.placeModel({ from: join(t.root, 'empty'), out: t.out, pin: t.pin }), /is missing/)
+  } finally {
+    t.done()
+  }
+})
+
+test('the web workflow places the checked model after the build and before the upload, on every publish, and caches it by its pin alone', () => {
+  const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
+  const at = (needle: string): number => {
+    const i = yml.indexOf(needle)
+    assert.ok(i >= 0, needle)
+    return i
+  }
+  const build = at('run: npm run build:web')
+  const pin = at('run: node tools/web/siteModel.mjs pin >> "$GITHUB_OUTPUT"')
+  const cache = at('key: ${{ steps.model.outputs.key }}')
+  const fetchStep = at('if: steps.model-cache.outputs.cache-hit != \'true\'')
+  const place = at('run: node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out dist-web')
+  const upload = at('uses: actions/upload-pages-artifact@')
+  assert.ok(build < pin && pin < cache && cache < fetchStep && fetchStep < place && place < upload, 'build, pin, cache, fetch, place, upload')
+  assert.doesNotMatch(yml, /restore-keys/, 'a new pin never restores an old file')
+  const placeStep = yml.slice(yml.lastIndexOf('- name:', place), place)
+  assert.doesNotMatch(placeStep, /\bif:/, 'the check runs on every publish, the cached file included')
+  const check = readFileSync(new URL('../.github/workflows/site-model.yml', import.meta.url), 'utf8')
+  assert.match(check, /pull_request:\s+paths:[\s\S]*src\/09_Cognition\/siteModel\.ts[\s\S]*tools\/web\/siteModel\.mjs/)
+  assert.match(check, /node tools\/web\/siteModel\.mjs check --from "\$RUNNER_TEMP\/site-model"/)
 })

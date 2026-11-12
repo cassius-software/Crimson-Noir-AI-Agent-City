@@ -33,6 +33,7 @@ import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from 
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
+import type { SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
 import type { Chat, ChatTurn, Voice } from './onboarding/voice.ts'
@@ -283,6 +284,11 @@ export interface ConciergeProps {
   onPickModel?(): void
   /** Optional: why this page cannot run a model file (the browser lacks a piece), said in place of the picker. */
   noPageModel?: string | null
+  /**
+   * Optional: the model this site serves beside the page (09_Cognition/siteModel.ts, built by App.tsx), offered when no
+   * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. Null: nothing to offer.
+   */
+  siteModel?: SiteModelHost | null
   /** Optional: the lanes of the team the host opened for the brief (08_Swarm/team.ts lines), shown under it as they run. */
   lanes?: readonly LaneLine[] | null
   /** Optional: the first walk's card is on screen (it stands on the right of a wide screen): the wide column keeps left of it. */
@@ -293,7 +299,7 @@ export interface ConciergeProps {
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, siteModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
@@ -387,6 +393,95 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
     refocus()
   }
+  /** The site's model on offer (siteModel.offer): undefined until the card first needs it, null where there is none. */
+  const [site, setSite] = useState<SiteModelLine | null | undefined>(undefined)
+  /** Getting it: how far it has come, or null. */
+  const [getting, setGetting] = useState<SiteModelProgress | null>(null)
+  /** Why the last try to get it ended short (a plain sentence), or ''. */
+  const [gotWhy, setGotWhy] = useState('')
+  /** Whether the card has shown that reason: one that came while the card was away keeps the conversation for it. */
+  const [whySeen, setWhySeen] = useState(true)
+  /** The model has just arrived and the last turn is asked again: the wait says it is starting, not thinking. */
+  const [starting, setStarting] = useState(false)
+  const getCtl = useRef<AbortController | null>(null)
+  /** The file has been handed to the copy into the page, which runs to its end: a Stop from then on does nothing. */
+  const handed = useRef(false)
+  useEffect(() => () => getCtl.current?.abort(), [])
+  /** Whether the card is on a conversation, read when a download ends minutes after the render that started it. */
+  const onChat = useRef(false)
+  useEffect(() => { onChat.current = dialogue.brief?.chat === true })
+  const offering = talk?.state === 'none' && siteModel !== null && !noPageModel
+  // Asked again at each conversation that ends with no model, and after each try to get it: whether the site serves it
+  // (the host asks the manifest once a visit, again only after the site could not be reached) and whether this
+  // browser keeps it now, so the button never says "kept" of a copy that has gone, nor hides an offer for good.
+  const noneOf = talk?.id
+  const fetchingSite = getting !== null
+  useEffect(() => {
+    if (!offering || fetchingSite || !siteModel) return
+    let live = true
+    siteModel.offer().then((o) => { if (live) setSite(o) }, () => { if (live) setSite(null) })
+    return () => { live = false }
+  }, [offering, fetchingSite, noneOf, siteModel])
+  // Adjusted while rendering: the start is over once the answer to the turn asked again has come (or none could).
+  if (starting && talk?.state !== 'waiting') setStarting(false)
+  /** After a button that goes away (the offer, Stop) or a download that ends: back to the field, as refocus does, but
+   *  never on touch, where no stray key can put the card away and an unasked on-screen keyboard would cover the bar. */
+  const refocusKeys = () => {
+    if (family !== 'touch') refocus()
+  }
+  /** When a download ends, minutes after the tap: back to the field only if focus is still on the card or has fallen
+   *  to the page, never taken from a control elsewhere (the HUD, the first walk's card). */
+  const refocusAtEnd = () => {
+    const a = document.activeElement
+    if (!a || a === document.body || cardRef.current?.contains(a)) refocusKeys()
+  }
+  /** The tap: the site's model downloaded, checked and kept (or, kept already, chosen), then the last turn asked again. */
+  const getSite = () => {
+    if (!siteModel || getting) return
+    const ctl = new AbortController()
+    getCtl.current?.abort()
+    getCtl.current = ctl
+    setGotWhy('')
+    setWhySeen(true)
+    setGetting({ step: 'download', done: 0, total: 0 })
+    handed.current = false
+    refocusKeys()
+    siteModel.get((p) => {
+      if (ctl.signal.aborted) return
+      if (p.step === 'keep') handed.current = true
+      setGetting(p)
+    }, ctl.signal).then(() => {
+      if (ctl.signal.aborted) return
+      getCtl.current = null
+      setGetting(null)
+      setSite((v) => (v ? { ...v, kept: true } : v))
+      // Only a conversation still on the card is asked again: a goal typed since is the visitor's next thing, and an
+      // answer to an old turn would come where nothing shows it.
+      if (onChat.current && turnsRef.current.at(-1)?.who === 'you') {
+        setStarting(true)
+        askTurns(turnsRef.current)
+      }
+      refocusAtEnd()
+    }, (e: unknown) => {
+      if (getCtl.current === ctl) getCtl.current = null
+      setGetting(null)
+      if (!ctl.signal.aborted) {
+        setGotWhy(e instanceof Error ? e.message : String(e))
+        setWhySeen(false)
+      }
+      refocusAtEnd()
+    })
+  }
+  /** Stop while it downloads: nothing is kept, and the offer is back. */
+  const stopGetting = () => {
+    // Once the file is handed to the copy it runs to its end (it is kept and chosen): a Stop still on screen for that
+    // frame does nothing, rather than bring the offer back over a model that is being kept.
+    if (handed.current) return
+    getCtl.current?.abort()
+    getCtl.current = null
+    setGetting(null)
+    refocusKeys()
+  }
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
   const [seenDriving, setSeenDriving] = useState(driving)
@@ -403,6 +498,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const spokenKey = view === 'nudge' && nudge ? `nudge:${nudge.id}` : spoken
   // Adjusted while rendering: a reply is seen once the card shows it.
   if (visible && talking && talk && talk.state !== 'waiting' && talk.id !== seenTalk) setSeenTalk(talk.id)
+  // Adjusted while rendering: so is the reason a download ended short, once the card shows it.
+  if (!whySeen && visible && talking && talk?.state === 'none' && gotWhy !== '' && getting === null) setWhySeen(true)
   const sayRef = useRef(onSay)
   const saidRef = useRef('')
   useEffect(() => { sayRef.current = onSay }, [onSay])
@@ -529,8 +626,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   const openGoal = () => {
     focusNext.current = true
-    // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands.
-    if (dialogue.brief?.chat && (replying || unseen)) {
+    // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands;
+    // so is one whose model is still downloading, or whose download ended short while the card was away.
+    if (dialogue.brief?.chat && (replying || unseen || getting !== null || (!whySeen && talk?.state === 'none'))) {
       open('goal')
       onGoal?.()
       return
@@ -868,22 +966,47 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
             <div className={gap} data-chat={talk?.state ?? 'none'}>
               {replying && (
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  {!talk.text && <span className={`text-[12px] leading-tight ${muted}`}>Thinking…</span>}
+                  {!talk.text && <span className={`text-[12px] leading-tight ${muted}`}>{starting ? 'Starting the model… the first answer takes longer' : 'Thinking…'}</span>}
                   <button type="button" onClick={stopTalk} className={link} data-action="stop">Stop</button>
                 </div>
               )}
               {talk?.state === 'none' && (
                 <div data-no-model>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                    {onPickModel && !noPageModel && (
-                      <button type="button" onClick={onPickModel} className={`rounded-xl px-3.5 py-2 text-[13px] font-semibold ${primary}`} data-action="model-file">
-                        Choose a model file
-                      </button>
-                    )}
-                    <button type="button" onClick={askAgain} className={link} data-action="ask-again">Ask again</button>
-                  </div>
+                  {getting ? (
+                    <div data-site-model={getting.step}>
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
+                        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} data-action="stop-model">Stop</button>}
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-label={getting.step === 'download' ? 'Downloading the model' : 'Keeping the model in this page'}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={percent(getting)}
+                        className={`mt-1.5 h-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}
+                      >
+                        <div className={`h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      {site && (
+                        <button type="button" onClick={getSite} className={`rounded-xl px-3.5 py-2 text-[13px] font-semibold ${primary}`} data-action="site-model">
+                          {site.kept ? 'Use the model kept here' : `Get the model · ${site.size}`}
+                        </button>
+                      )}
+                      {onPickModel && !noPageModel && (
+                        <button type="button" onClick={onPickModel} className={site ? link : `rounded-xl px-3.5 py-2 text-[13px] font-semibold ${primary}`} data-action="model-file">
+                          Choose a model file
+                        </button>
+                      )}
+                      <button type="button" onClick={askAgain} className={link} data-action="ask-again">Ask again</button>
+                    </div>
+                  )}
+                  {gotWhy && !getting && <p role="status" className={`mt-1.5 text-[11px] leading-snug break-words ${muted}`} data-site-why>{gotWhy}</p>}
                   <p className={`mt-2 text-[12px] leading-snug ${muted}`}>
-                    {onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
+                    {site ? siteHint(site) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
                     Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
                     {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
                   </p>
@@ -1057,6 +1180,29 @@ function PlanList({ title, steps, ticked, dark }: { title: string; steps: readon
 }
 
 /** Beside the local-server hint: a page not served from this computer is answered by Ollama only once its origin is allowed. */
+/** How far getting the site's model has come, as a whole percent. */
+function percent(p: SiteModelProgress): number {
+  return p.total > 0 ? Math.min(100, Math.max(0, Math.floor((p.done / p.total) * 100))) : 0
+}
+
+/**
+ * The line over the bar while the site's model is got: megabytes while it downloads (kilobytes for a file under one
+ * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept.
+ */
+function gettingLine(p: SiteModelProgress): string {
+  if (p.step === 'keep') return `Keeping it in this page · ${percent(p)}%`
+  if (p.total <= 0) return 'Downloading…'
+  const [unit, name] = p.total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
+  return `Downloading · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
+}
+
+/** The hint under the site's model: what it is, where it comes from, and where it stays. */
+function siteHint(site: SiteModelLine): string {
+  return site.kept
+    ? `${site.title} is kept in this browser already. `
+    : `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+}
+
 function serverNote(origin: string): string {
   if (!/^https?:/.test(origin) || LOOPBACK_PAGE.test(origin)) return ''
   return ` (Ollama answers this page only with ${origin} in OLLAMA_ORIGINS)`

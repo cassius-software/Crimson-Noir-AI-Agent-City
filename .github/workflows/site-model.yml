@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? The web workflow (web.yml) runs only after a merge, on main, and refuses to publish the web
+# copy when the site's model it fetches is not exactly the page's pin (src/09_Cognition/siteModel.ts SITE_MODEL). So a
+# wrong pin would be found only once it had already stopped the live copy following main. This workflow fetches the
+# pinned file the same way on a pull request that touches the pin, the tool or the model's record, and checks it with
+# the same tool (tools/web/siteModel.mjs check, then place into a stand-in web copy), so a wrong pin is red before it
+# can be merged. Run by hand, it checks the pin as main has it.
+# What breaks if it is removed? A pin that names a file Hugging Face does not serve, or a size or hash that is off,
+# would pass review and break the next publish of the web copy.
+
+name: site-model
+
+on:
+  pull_request:
+    paths:
+      - src/09_Cognition/siteModel.ts
+      - tools/web/siteModel.mjs
+      - third_party/qwen2.5-0.5b-instruct/**
+      - .github/workflows/site-model.yml
+      - .github/workflows/web.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-model-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: model
+        name: The site's model, by the page's own pin
+        run: node tools/web/siteModel.mjs pin | tee -a "$GITHUB_OUTPUT"
+      - id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/site-model
+          key: ${{ steps.model.outputs.key }}
+      - name: The site's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/site-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/site-model/$FILE"
+      - name: It is exactly the pinned file (size and SHA-256)
+        run: node tools/web/siteModel.mjs check --from "$RUNNER_TEMP/site-model"
+      - name: It goes beside a web copy with its manifest and licence (a stand-in page)
+        run: |
+          mkdir -p "$RUNNER_TEMP/web"
+          printf '<!doctype html><link rel="manifest" href="manifest.webmanifest" />\n' > "$RUNNER_TEMP/web/index.html"
+          node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out "$RUNNER_TEMP/web"
+          ls -l "$RUNNER_TEMP/web/models"
+          cat "$RUNNER_TEMP/web/models/manifest.json"

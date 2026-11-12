@@ -7,7 +7,10 @@
  * node:http); every runtime source that names an outbound primitive (fetch(, WebSocket, XMLHttpRequest, EventSource,
  * RTCPeerConnection, sendBeacon, WebTransport, importScripts, import( of an http string) or a URL literal off this
  * machine is in an explicit allowlist, and each allowlisted call site goes through the gate (02_Define_The_Rules/
- * airgap.ts loopbackOnly, or an alias of it, named in the enclosing function); the gate itself is pure, defines every
+ * airgap.ts loopbackOnly, or an alias of it, named in the enclosing function), but for the one fetch of the page's own
+ * site, the model the web copy serves beside the page, which goes through siteUrl (09_Cognition/siteModel.ts: a
+ * models/ file beside the page, on its own origin, which the installed gate admits as connect-src 'self' does); the
+ * gate itself is pure, defines every
  * alias and guard in terms of loopbackOnly, and is installed by main.tsx and physics.worker.ts before anything else;
  * the replication core takes its 14A verdicts from conduct.ts; the network stage's imports stay inside the allowlist
  * (never the realm); and the in-page model runtime is reached only through its adapter (09_Cognition/wllamaRuntime.ts:
@@ -63,8 +66,13 @@ const PRIMITIVES = /\bfetch\s*\(|\bWebSocket\b|\bXMLHttpRequest\b|\bEventSource\
  * name (the gate or one of its aliases), or null for a mere presence check that addresses nothing.
  */
 const ALLOWED: Record<string, { line: RegExp; guard: RegExp | null }[]> = {
-  // The page's own fetch, handed to the model and speech clients under the gate's wrapper (which goes through loopbackOnly).
-  'App.tsx': [{ line: /window\.fetch\(url, init\)/, guard: /\bloopbackFetch\(/ }],
+  // The page's own fetch, handed to the model and speech clients under the gate's wrapper (which goes through loopbackOnly);
+  // and the one fetch of the page's own site, for the model the web copy serves beside it, held to a models/ file
+  // beside the page on its own origin by siteUrl (09_Cognition/siteModel.ts), inside what the installed gate admits.
+  'App.tsx': [
+    { line: /window\.fetch\(url, init\)/, guard: /\bloopbackFetch\(/ },
+    { line: /window\.fetch\(siteUrl\(path, window\.location\.href\), init\)/, guard: /\bsiteUrl\(path, window\.location\.href\)/ },
+  ],
   // The room client's one socket, made only for a URL netServer (the gate's ws alias) admits; a presence check for the voice stub.
   '10_Network/netClient.ts': [
     { line: /new WebSocket\(url, protocols\)/, guard: /\bnetServer\(url\)/ },

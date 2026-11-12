@@ -39,8 +39,9 @@ import { figureFromAdapters } from './09_Cognition/modelFit.ts'
 import { shellGpuMemory } from './07_Execute_Actions/desktopShell.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
-import { holdTier, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
-import { createModelStore, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
+import { fits, holdTier, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
+import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
+import { SITE_MANIFEST, SITE_MODEL, fetchSiteModel, parseManifest, siteUrl, type SiteFetch, type SiteModelHost, type SiteModelLine, type SiteModelOffer } from './09_Cognition/siteModel.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
 import { createWllamaRuntime } from './09_Cognition/wllamaRuntime.ts'
 import { canShareMemory } from './07_Execute_Actions/sharedBridge.ts'
@@ -168,8 +169,14 @@ const NET_TOKEN_KEY = 'civic-simulation:net:v1'
 /** The elite tier's passphrase record (operator.ts EliteVault): a salted hash, never the words. */
 const ELITE_KEY = 'civic-simulation:elite:v1'
 
-/** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it, and nothing else does. */
+/** The page's own fetch, held to this machine (airgap.ts loopbackFetch): the model and speech clients speak through it. */
 const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
+/**
+ * The one fetch beyond this machine: a file the web copy serves beside the page (09_Cognition/siteModel.ts siteUrl, a
+ * models/ path on the page's own origin, which the air gap main.tsx installed admits as connect-src 'self' does), only
+ * for the site's model, and only when the visitor taps for it on Sloane's card.
+ */
+const siteFetch: SiteFetch = (path, init) => window.fetch(siteUrl(path, window.location.href), init)
 
 /** `make()` the first time it is asked for, and the same value every time after. */
 function once<T>(make: () => T): () => T {
@@ -843,6 +850,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [sloane, setSloane] = useState<Voice | null>(null)
   /** Sloane in conversation (onboarding/voice.ts sloaneChat), once the city's mind exists: talk on the card is put to it. */
   const [sloaneTalk, setSloaneTalk] = useState<Chat | null>(null)
+  /** The model this site serves beside the page, offered on Sloane's card when no model answers (null until the engine is up). */
+  const [siteModel, setSiteModel] = useState<SiteModelHost | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
@@ -1499,14 +1508,20 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // or chosen, so the provider is left as it was.
         let keeping = false
         let hinted = false
-        const keepPicked = async (files: readonly File[]): Promise<string> => {
+        // Set while Sloane's card gets the site's model (below), from its tap to its hand-off to keepPicked: a pick, a
+        // drop or the console is refused until then (it says to wait or stop it), so neither keep throws the other's
+        // file away or unchooses it.
+        let fetching = false
+        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void): Promise<string> => {
           if (keeping) throw new Error('a model file is being kept in this page already: wait for it to finish')
+          if (fetching) throw new Error('the model this site serves is on its way to this page: wait for it to finish, or stop it on Sloane\'s card')
           keeping = true
           keepLine = 'keeping the model file in this page'
           let kept: KeptModel
           try {
             kept = await inPage.keep(files, (done, total) => {
               keepLine = `keeping the model file in this page ${total > 0 ? Math.min(100, Math.max(0, Math.floor((done / total) * 100))) : 0}%`
+              onCopy?.(done, total)
             })
           } finally {
             keeping = false
@@ -1538,6 +1553,83 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           return picker ? picker.open() : Promise.reject(new Error('this page has no file picker'))
         }
         modelFileRef.current = () => keepAndSay(pickFiles())
+        // The model this site serves beside the page (09_Cognition/siteModel.ts), for Sloane's card when no model answers:
+        // the manifest is asked once, when the card first offers it (never at boot), and the model is fetched only on
+        // the visitor's tap, after the device's limits (inPagePlan.ts fits) and the storage's room (modelStore.ts
+        // roomRefusal) have said yes, so nothing is downloaded that could not be kept or run here. It arrives checked
+        // against the pin this page was built with, and is then kept exactly as a picked file is (keepPicked: the
+        // copy, the provider and the model chosen, the desktop's warm load). The city's end stops a download in flight.
+        const siteEnd = new AbortController()
+        let offered: Promise<SiteModelOffer | null> | null = null
+        // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
+        const keptSite = async (): Promise<KeptModel | null> =>
+          (await PAGE_MODELS().list()).find((m) => m.name === SITE_MODEL.file && m.bytes === SITE_MODEL.bytes) ?? null
+        const siteHost = Object.freeze<SiteModelHost>({
+          offer: async (): Promise<SiteModelLine | null> => {
+            // Only the web copy (the page tools/web/pwa.mjs builds, which names a web app manifest) asks: dist/index.html
+            // served by the launcher, a preview or the Windows app has nothing beside it to ask for.
+            if (PAGE_MODEL_REFUSAL() !== null || !/^https?:$/.test(window.location.protocol) || !document.querySelector('link[rel="manifest"]')) return null
+            // A site that answers with the manifest, or says it has none (404, 410), is asked once a visit; one that could
+            // not be reached, or could not answer just now (a 429, a 5xx), is asked again next time.
+            offered ??= siteFetch(SITE_MANIFEST, { cache: 'no-cache', signal: siteEnd.signal })
+              .then(async (r) => {
+                if (r.ok) return parseManifest(await r.text())
+                void r.body?.cancel().catch(() => undefined)
+                if (r.status === 404 || r.status === 410) return null
+                throw new Error(`the site answered ${r.status}`)
+              })
+              .catch(() => { offered = null; return null })
+            const offer = await offered
+            if (!offer) return null
+            return { title: SITE_MODEL.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
+          },
+          get: async (onProgress, signal) => {
+            const cannot = PAGE_MODEL_REFUSAL()
+            if (cannot !== null) throw new Error(cannot)
+            if (keeping || fetching) throw new Error('a model file is being kept in this page already: wait for it to finish')
+            // Busy from here, before the first wait, so a second tap, a pick or a drop cannot start beside it.
+            fetching = true
+            let file: File
+            try {
+              const had = await keptSite().catch(() => null)
+              if (had) {
+                // The provider's own list is read first, so a copy another tab kept since this page last looked is
+                // known to it, and choosing it cannot fail halfway with the provider already switched.
+                await inPage.installed().catch(() => [])
+                local.setProvider('inpage')
+                local.setModel(had.name)
+                return `${had.name} is kept in this page already: the inpage provider answers with it now`
+              }
+              const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
+              const fit = fits([{ name: SITE_MODEL.file, bytes: SITE_MODEL.bytes }], env, placement(env))
+              if (!fit.ok) throw new Error(fit.reason)
+              const room = await PAGE_MODELS().usage()
+              const full = room ? roomRefusal(SITE_MODEL.bytes, room) : null
+              if (full !== null) throw new Error(full)
+              let shown = -1
+              keepLine = 'getting the model from this site 0%'
+              file = await fetchSiteModel(siteFetch, SITE_MODEL, (done, total) => {
+                // Told once a megabyte, not once a piece: the card and the HUD redraw for what a person can see change.
+                const mb = Math.floor(done / 1024 ** 2)
+                if (mb === shown && done < total) return
+                shown = mb
+                keepLine = `getting the model from this site ${Math.floor((done / Math.max(1, total)) * 100)}%`
+                onProgress({ step: 'download', done, total })
+              }, AbortSignal.any([signal, siteEnd.signal]))
+              // A Stop, or the city's end, that came as the last bytes did: nothing is kept or chosen.
+              signal.throwIfAborted()
+              siteEnd.signal.throwIfAborted()
+            } finally {
+              fetching = false
+              keepLine = null
+            }
+            // Handed to the copy from here, in the same turn as the checks above, so no Stop lands between them: the
+            // card drops its Stop now (step 'keep'), not at the copy's first progress after the header check.
+            onProgress({ step: 'keep', done: 0, total: file.size })
+            return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }))
+          },
+        })
+        setSiteModel(siteHost)
         // A .gguf (or every part of a split one) dropped on the city is kept as a pick is, on a desktop (a phone has
         // nothing to drag). Any file dropped is the page's, so the browser never leaves the city to open it.
         const main = mainRef.current
@@ -1568,6 +1660,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         window.addEventListener('pagehide', onPageHide)
         unModel = () => {
           modelFileRef.current = null
+          siteEnd.abort()
           picker?.dispose()
           main?.removeEventListener('dragover', onDragOver)
           main?.removeEventListener('drop', onDrop)
@@ -1771,6 +1864,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       setBridge(null)
       setSloane(null)
       setSloaneTalk(null)
+      setSiteModel(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
@@ -1849,6 +1943,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           chat={sloaneTalk}
           onPickModel={onModelFile}
           noPageModel={PAGE_MODEL_REFUSAL()}
+          siteModel={siteModel}
           beside={walking && fw.card !== null}
           zoom={access.scale / 100}
           onOpen={setSloaneOpen}
