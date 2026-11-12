@@ -1667,6 +1667,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The car you sit in passes through people instead of stopping for them.** On the live copy the player's car
+  stopped dead in front of anyone in its path: the First Law held every car, the player's included, for a person
+  inside its stopping envelope. Now the car a player sits in, on that player's own controls with the Sanctuary on, is
+  ruled apart (`laws.ts` source `'seated'`): the Bouncer rules it on the Second Law alone, and the fleet's emergency
+  latch and counter-motion guard leave it be (`vehicles.ts` `drive(v, intent, handbrake, seated)`). Nobody is touched
+  instead. Avatars and a rig's shapes never meet a chassis in Rapier, as before; the crowd shader still senses the
+  pedestrians in its corridor and then skips the contact push, the stagger, the step back and the yield for it (a
+  negative corridor reach in the car's slot marks it, `crowdCompute.ts` `packCrowdParams`); the Sanctuary still flips
+  every person it is about to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig
+  beside it. The pass outlives the seat: a car left rolling or among people goes on passing until it stands at rest
+  with nobody within 0.6 m of it. Scripted (`intent`), AI-driven and parked cars stop for people as before, and with
+  the Sanctuary switched off the First Law holds the seated car too. The Ring-0 audit still halts the realm for a
+  solid person inside any moving footprint, the seated car's included; only its unguarded-approach check is waived,
+  and only while the kernel's own record carries both the seated ruling and the occupant. Tests: `laws.test.ts`
+  (the seated ruling is the ruling with nobody about, over random readings), `ring0.fuzz.test.ts` (seated, impact and
+  unguarded properties), `vehicles.test.ts`, `sanctuary.test.ts` (an avatar passed through at 3, 14 and 30 m/s, never
+  moved, never nudged), `wgslHost.test.ts` (the shader senses them and pushes, staggers and turns back nobody),
+  `simCore.test.ts` and `simPlayers.test.ts` (players passed through at 144, 60 and 20 frames a second; a scripted car
+  beside the seated one still stops for the player in its lane). The first walk's fleet card, the manual's ethical
+  kernel ("The car you sit in") and the blueprint say so. Unverified: nobody has driven it on a phone or a GPU yet,
+  and the shader change has run only in the WGSL host the tests use.
+
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
   three's `hash` node was written out inline at every use (110 copies in the suit's near fragment stage, 39 in the
   vertex stage). `crowdBody.ts` `crowdHash` is one WGSL function with the same arithmetic, so each stage carries it

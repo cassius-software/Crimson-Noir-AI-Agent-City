@@ -4,13 +4,16 @@
 /**
  * Why does this file exist? It is the property-based fuzzing of the Ring-0 kernel's rules (Phase 13), seeded and
  * replayable (property.ts): the Three Laws' adjudication (laws.ts) is bounded (a command inside the bouncer's bounds
- * comes out inside them), puts the First Law first whoever drives (a person inside the stopping envelope, ahead or
- * behind, always gets a full stop with the steer kept), fails toward the person on a reading that is not a number,
+ * comes out inside them), puts the First Law first for every car nobody sits in, an AI's or a script's (a person
+ * inside the stopping envelope, ahead or behind, always gets a full stop with the steer kept), rules the car a person
+ * is seated in without the people (it passes through them) and never with the Third Law, fails toward the person on a
+ * reading that is not a number,
  * leaves a person's instruction alone otherwise (the Second Law), is monotone (a person nearer never turns a stop
  * into a go) and pure; the Bouncer counts an intervention once per vehicle each time it enters it; and the Ring-0
  * auditor (ring0.ts) names every non-finite state, caps every car between the velocity cap and twice it, panics on
  * one beyond, contains every chassis to the slab and above the ground floor, finds an IMPACT for every solid person
- * inside a moving footprint and never for a sensor, and finds nothing in a clean tick.
+ * inside a moving footprint and never for a sensor, seated driver or not, finds an unguarded approach on every car
+ * nobody sits in and never on the one a person is seated in, and finds nothing in a clean tick.
  * What breaks if it is removed? A situation nobody tried could let a car drive on into a person, or an audit pass a
  * state it should have halted on.
  */
@@ -28,7 +31,7 @@ const situationOf = (g: Gen): Situation => ({
   source: g.bool() ? 'ai' : 'player', speed: g.float(-12, 50), personAhead: distance(g), personBehind: distance(g), obstacleAhead: distance(g),
 })
 
-test('the First Law first, for anyone at the wheel: a person in the envelope ahead or behind gets a full stop, the steer kept', () => {
+test('the First Law first, for every car nobody sits in (an AI\'s, a script\'s): a person in the envelope ahead or behind gets a full stop, the steer kept', () => {
   forAll('first law', { seed: 0x1a3, runs: 50_000 }, (g) => ({ intent: intentOf(g), s: situationOf(g) }), ({ intent, s }) => {
     const r = adjudicate(intent, s)
     const forward = s.speed > 0.05 || intent.throttle > 0
@@ -49,6 +52,19 @@ test('the First Law first, for anyone at the wheel: a person in the envelope ahe
     if (r.law === 3) assert.ok(r.command.throttle === 0 && r.command.brake >= intent.brake)
     // Pure.
     assert.deepEqual(adjudicate(intent, s), r)
+  })
+})
+
+test('the car a person is seated in: the people are never read, a finite speed is never stopped, the Third Law never rules, bounded and pure', () => {
+  forAll('seated', { seed: 0x1b7, runs: 50_000 }, (g) => ({ intent: intentOf(g), s: { ...situationOf(g), source: 'seated' as const }, nan: g.bool(0.1) }), ({ intent, s, nan }) => {
+    const people = nan ? { personAhead: Number.NaN, personBehind: Number.NaN } : { personAhead: s.personAhead, personBehind: s.personBehind }
+    const r = adjudicate(intent, { ...s, ...people })
+    const free = adjudicate(intent, { ...s, source: 'player', personAhead: Infinity, personBehind: Infinity })
+    assert.deepEqual(r, free, 'the person-free ruling of a person\'s instruction')
+    assert.notEqual(r.law, 1)
+    assert.notEqual(r.law, 3)
+    assert.ok(Math.abs(r.command.throttle) <= 1 && r.command.brake >= 0 && r.command.brake <= KERNEL.maxBrake && Math.abs(r.command.steer) <= MAX_STEER)
+    assert.deepEqual(r.command, intent, 'the instruction stands')
   })
 })
 
@@ -138,12 +154,42 @@ test('an IMPACT for every solid person inside a moving footprint, never for a se
     v.speed = speed
     const u = g.float(-v.halfLength, v.halfLength), l = g.float(-v.halfWidth, v.halfWidth)
     const fx = Math.sin(v.heading), fz = Math.cos(v.heading)
-    return { v, person: { id: 9, x: v.x + u * fx + l * fz, y: 0.95, z: v.z + u * fz - l * fx, solid: g.bool(0.7) } }
+    // A person seated at its wheel or not: IMPACT is audited of every car alike.
+    const seated = g.bool(0.5)
+    return { v: { ...v, seated, occupant: seated ? 3 : -1 }, person: { id: 9, x: v.x + u * fx + l * fz, y: 0.95, z: v.z + u * fz - l * fx, solid: g.bool(0.7) } }
   }, ({ v, person }) => {
     const r = new Ring0Auditor(C).run([v], [person], false)
     assert.equal(r.violations.some((x) => x.code === 'IMPACT'), person.solid)
     // The same car alone, at rest, in bounds and finite: a clean tick.
     const clean = new Ring0Auditor(C).run([{ ...v, vx: 0, vz: 0, speed: 0 }], [], false)
     assert.deepEqual([clean.violations, clean.capped], [[], []])
+  })
+})
+
+test('an unguarded approach on every car nobody sits in, never on the one a person is seated in; "seated" with nobody in it counts for nothing', () => {
+  forAll('unguarded', { seed: 0x7a9, runs: 5000 }, (g) => {
+    const v = { ...vehicleOf(g, 0), x: C.x + g.float(-500, 500), y: 0.56, z: C.z + g.float(-500, 500), curvature: 0 }
+    const speed = g.float(0.6, 40) * (g.bool() ? 1 : -1)
+    v.vx = Math.sin(v.heading) * speed
+    v.vz = Math.cos(v.heading) * speed
+    v.speed = speed
+    // Any command but an emergency stop.
+    v.throttle = g.float(0.01, 1) * Math.sign(speed)
+    v.brake = g.float(0, KERNEL.maxBrake - 0.01)
+    const dir = Math.sign(speed)
+    // A solid person in the corridor (half width + the margin) 0.15 to 1.5 m beyond the leading bumper: beyond the
+    // audit's contact margin, so the car is closing on them, never touching them.
+    const d = g.float(RING0.contactMargin + 0.05, KERNEL.standoff), lateral = g.float(-(v.halfWidth + RING0.corridorMargin) + 0.01, v.halfWidth + RING0.corridorMargin - 0.01)
+    const u = dir * (v.halfLength + d)
+    const fx = Math.sin(v.heading), fz = Math.cos(v.heading)
+    const seated = g.bool(), occupant = g.bool() ? 3 : -1
+    return { v: { ...v, seated, occupant }, person: { id: 9, x: v.x + u * fx + lateral * fz, y: 0.95, z: v.z + u * fz - lateral * fx, solid: true } }
+  }, ({ v, person }) => {
+    const a = new Ring0Auditor(C)
+    a.run([v], [person], false)
+    const r = a.run([v], [person], false)
+    const unguarded = r.violations.some((x) => x.code === 'UNGUARDED_APPROACH')
+    assert.equal(unguarded, !(v.seated && v.occupant >= 0), `seated ${v.seated}, occupant ${v.occupant}`)
+    assert.ok(!r.violations.some((x) => x.code === 'IMPACT'), 'nobody in the footprint')
   })
 })

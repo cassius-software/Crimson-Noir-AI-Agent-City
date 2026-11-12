@@ -47,7 +47,8 @@ export const COLLISION = Object.freeze({
    * The avatar on foot passes through every car, parked or rolling, as through a lamp: its capsule and a chassis never
    * pair (AVATAR_GROUPS filters `vehicle` out), so there is no impulse either way, nothing to shove and nothing to be
    * shoved by; the car's mesh dissolves around the camera instead (07_Execute_Actions/dissolve.ts). The First Law is
-   * untouched: the bouncer still brakes every car for the avatar in its corridor, and the Sanctuary still shields.
+   * untouched: the bouncer still brakes every car nobody sits in for the avatar in its corridor (the car a person sits
+   * in passes through people instead, 07_Execute_Actions/vehicles.ts), and the Sanctuary still shields.
    */
   avatarThroughCars: true,
   /**

@@ -3,14 +3,14 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It holds the 14A civic limits and the city's traffic law: pedestrians are
- * never harmed (a vehicle that touches one only nudges them aside), the signal cycle that drivers and
+ * never harmed (a vehicle that touches one at most nudges them aside), the signal cycle that drivers and
  * pedestrians both obey (crowd.wgsl mirrors signalFor/walkAllowed), speed limits, and the Reflex save a
  * pedestrian makes to get out of a vehicle's path.
  * What breaks if it is removed? Cars ignore lights, pedestrians cross into traffic, and nothing
  * guarantees a vehicle cannot hurt anyone.
  */
 
-/** 14A: no violence and no harm to pedestrians. Contact with a vehicle is a nudge, never an injury. */
+/** 14A: no violence and no harm to pedestrians. Contact with a vehicle is at most a nudge, never an injury. */
 export const CIVIC = {
   rating: 'Canada-14A',
   pedestriansHarmable: false,

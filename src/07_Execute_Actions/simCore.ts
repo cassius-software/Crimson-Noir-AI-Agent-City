@@ -643,10 +643,14 @@ export class SimCore {
       if (speed >= RING0.maxVelocity - 0.5) throttle = Math.min(throttle, 0)
       else if (speed <= -(RING0.maxVelocity - 0.5)) throttle = Math.max(throttle, 0)
       limited = throttle !== asked
-      // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel.
-      fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true)
+      // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel. A person is
+      // seated at this wheel, so the car passes through people instead of being held for them (laws.ts, source
+      // 'seated'), for as long as the Sanctuary stands: with it switched off (a debug command) nothing would shield a
+      // person from the car, and the First Law holds it like any other.
+      fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true, this.#sanctuaryOn)
       trigger = Math.min(1, v.lastCommand.brake / KERNEL.maxBrake)
-      // A thump when the First Law takes the car, or when the driver stands on the brake.
+      // A thump when the First Law takes the car (only with the Sanctuary off: a seated car is otherwise not held), or
+      // when the driver stands on the brake.
       const hold = fleet.bouncer.holding(v.index)
       const fullBrake = brake >= KERNEL.maxBrake && speed > 0.5
       thump = (hold && !this.#holdWas[k]) || (fullBrake && !this.#fullBrakeWas[k])
@@ -908,8 +912,9 @@ export class SimCore {
         // A scripted intent takes a parked car, as a player does; a car with a driver is not taken from them.
         if (v.mode === 'ai') throw new Error(`intent: car ${v.index} has a driver (park it first: setMode parked)`)
         v.mode = 'player'
-        // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. It is ruled after
-        // this step's sensing (step()), so never on a reading one step staler than the player's own controls.
+        // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. Nobody sits in a scripted
+        // car, so it stops for people (only the operator's own controls pass through them). It is ruled after this
+        // step's sensing (step()), so never on a reading one step staler than the player's own controls.
         this.#intents.set(v.index, { throttle: finite(cmd.throttle), brake: finite(cmd.brake), steer: finite(cmd.steer) })
         return
       }
@@ -1291,8 +1296,10 @@ export class SimCore {
       r.heading = fleet.heading(v); r.speed = fleet.speed(v); r.curvature = fleet.curvature(v)
       r.throttle = v.lastCommand.throttle; r.brake = v.lastCommand.brake
       r.preVx = this.#preVel[2 * i]; r.preVz = this.#preVel[2 * i + 1]
-      // The person driving it (the audit exempts only them from its own footprint), or nobody.
+      // The person driving it (the audit exempts only them from its own footprint), or nobody; and whether the Bouncer
+      // ruled its command as theirs this step (a car that passes through people is given no stop to audit).
       r.occupant = this.#driving.indexOf(v)
+      r.seated = fleet.seated(v)
     }
     list.length = vehicles.length
     // Every avatar is a person, id = player. Inside a car the collider is disabled; on foot it is solid unless the

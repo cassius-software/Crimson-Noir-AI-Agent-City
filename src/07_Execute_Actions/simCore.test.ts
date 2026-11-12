@@ -520,37 +520,139 @@ test('boot waits for the crowd\'s first reading even when it lands in a later ta
 })
 
 test('reversing cars read the crowd\'s "behind" slots too: held for a person behind, aged when stale, held when silent', async () => {
+  // A car nobody sits in, reversed by a script's intent: the First Law holds it for whoever is behind. (The car a
+  // person is seated in is not held for people at all: the tests after this one.)
+  const crowd = new FakeCrowd()
+  const { poses, step } = await core(true, 4, crowd)
+  const at = 1 * POSE.stride
+  const still = { c: 'dbgVelocity', i: 1, x: 0, y: 0, z: 0 } as const
+  const reverse = { c: 'intent', i: 1, throttle: -1, brake: 0, steer: 0 } as const
+  step({ cmds: [{ c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  for (let k = 0; k < 60; k++) step()
+  let s = step({ cmds: [reverse] })
+  assert.ok(poses[at + POSE.throttle] < 0, 'nobody behind: reverse is granted')
+  // Someone 1 m behind the bumper: the reverse throttle is refused.
+  crowd.behind[1] = 1.0
+  step({ cmds: [still] })
+  let law1 = step({ cmds: [still] }).kernel.law1
+  s = step({ cmds: [still, reverse] })
+  assert.equal(poses[at + POSE.throttle], 0)
+  assert.ok(s.kernel.law1 > law1)
+  // A reading just outside the standoff is fine fresh, and closes in as it ages (the person may have walked up).
+  crowd.behind[1] = KERNEL.standoff + 0.3
+  for (let k = 0; k < 30; k++) step({ cmds: [still] })
+  s = step({ cmds: [still, reverse] })
+  assert.ok(poses[at + POSE.throttle] < 0, 'fresh, 1.8 m behind is clear of the standoff')
+  crowd.answering = false
+  law1 = s.kernel.law1
+  for (let k = 0; k < 10; k++) s = step({ cmds: [still, reverse] })
+  assert.ok(s.crowd.ageMs! > 150)
+  assert.equal(poses[at + POSE.throttle], 0, 'stale, the person behind may have walked up: held')
+  // Silent for over a second with an empty street behind: still held.
+  crowd.behind[1] = Infinity
+  crowd.answering = true
+  step()
+  crowd.answering = false
+  for (let k = 0; k < 65; k++) s = step({ cmds: [still] })
+  s = step({ cmds: [still, reverse] })
+  assert.ok(s.crowd.ageMs! > 1000)
+  assert.equal(poses[at + POSE.throttle], 0, 'silent: nobody behind can be vouched for')
+})
+
+const FORWARD = { steer: 0, fwd: 1, back: 0, handbrake: false }
+
+test('the car a person is seated in is not held for people: the crowd\'s reading stops a scripted car beside it and not theirs', async () => {
   const crowd = new FakeCrowd()
   const { poses, step } = await core(true, 4, crowd)
   seat(step, 0)
-  let s = step({ drive: REVERSE })
-  assert.ok(poses[POSE.throttle] < 0, 'nobody behind: reverse is granted')
-  // Someone 1 m behind the bumper: the reverse throttle is refused.
-  crowd.behind[0] = 1.0
+  // Car 1, nobody in it, on the same street: a script's intent drives it.
+  step({ cmds: [{ c: 'setMode', i: 1, mode: 'parked' }, { c: 'recover', i: 1, x: OPEN.x, z: OPEN.z + 40, heading: 0 }] })
+  for (let k = 0; k < 60; k++) step({ drive: IDLE })
+  const go = { c: 'intent', i: 1, throttle: 1, brake: 0, steer: 0 } as const
+  // Someone 1 m ahead of each bumper, and someone inside each footprint behind (0 m).
+  crowd.ahead[0] = 1.0; crowd.ahead[1] = 1.0
+  crowd.behind[0] = 0; crowd.behind[1] = 0
   step({ drive: IDLE })
-  let law1 = step({ drive: IDLE }).kernel.law1
-  s = step({ drive: REVERSE })
-  assert.equal(poses[POSE.throttle], 0)
-  assert.ok(s.kernel.law1 > law1)
-  // A reading just outside the standoff is fine fresh, and closes in as it ages (the person may have walked up).
-  crowd.behind[0] = KERNEL.standoff + 0.3
-  for (let k = 0; k < 30; k++) step({ drive: IDLE, cmds: [{ c: 'dbgVelocity', i: 0, x: 0, y: 0, z: 0 }] })
-  s = step({ drive: REVERSE, cmds: [{ c: 'dbgVelocity', i: 0, x: 0, y: 0, z: 0 }] })
-  assert.ok(poses[POSE.throttle] < 0, 'fresh, 1.8 m behind is clear of the standoff')
+  const before = step({ drive: IDLE }).kernel
+  let s = step({ drive: FORWARD, cmds: [go] })
+  assert.equal(poses[POSE.throttle], 1, 'seated: the throttle stands with a person 1 m ahead')
+  assert.equal(poses[1 * POSE.stride + POSE.throttle], 0, 'scripted: held')
+  assert.equal(poses[1 * POSE.stride + POSE.brake], KERNEL.maxBrake)
+  assert.ok(s.kernel.last.startsWith('First Law'), s.kernel.last)
+  assert.equal(s.haptics.thump, false, 'no First-Law thump at the seated wheel')
+  for (let k = 0; k < 90; k++) s = step({ drive: FORWARD, cmds: [go] })
+  assert.ok(poses[POSE.speed] > 4, `the seated car drove on (${poses[POSE.speed].toFixed(2)} m/s)`)
+  assert.ok(Math.abs(poses[1 * POSE.stride + POSE.speed]) < 0.05, 'the scripted car never moved')
+  // The First Law counted the scripted car's hold (and, before the seat was taken, the parked cars'): never the seated car's.
+  assert.equal(s.kernel.law1, before.law1 + 1, 'one new hold: the scripted car\'s')
+  // Reverse into the person behind: granted too.
+  for (let k = 0; k < 240 && poses[POSE.speed] > 0.4; k++) s = step({ drive: { steer: 0, fwd: 0, back: 1, handbrake: false } })
+  for (let k = 0; k < 30; k++) s = step({ drive: REVERSE })
+  assert.ok(poses[POSE.throttle] < 0 && poses[POSE.speed] < -0.5, `reversing with someone behind (${poses[POSE.speed].toFixed(2)} m/s)`)
+  // The crowd is told which car passes through people: the seated one alone.
+  const cars = crowd.steps.at(-1)!.cars
+  assert.deepEqual(cars.map((c) => c.passage), [true, false, false, false])
+  // A silent sensor vouches for nobody, and holds every car but the one a person is seated in.
   crowd.answering = false
-  law1 = s.kernel.law1
-  for (let k = 0; k < 10; k++) s = step({ drive: REVERSE, cmds: [{ c: 'dbgVelocity', i: 0, x: 0, y: 0, z: 0 }] })
-  assert.ok(s.crowd.ageMs! > 150)
-  assert.equal(poses[POSE.throttle], 0, 'stale, the person behind may have walked up: held')
-  // Silent for over a second with an empty street behind: still held.
-  crowd.behind[0] = Infinity
-  crowd.answering = true
-  step({ drive: IDLE })
-  crowd.answering = false
-  for (let k = 0; k < 65; k++) s = step({ drive: IDLE, cmds: [{ c: 'dbgVelocity', i: 0, x: 0, y: 0, z: 0 }] })
-  s = step({ drive: REVERSE, cmds: [{ c: 'dbgVelocity', i: 0, x: 0, y: 0, z: 0 }] })
+  for (let k = 0; k < 64; k++) s = step({ drive: FORWARD })
   assert.ok(s.crowd.ageMs! > 1000)
-  assert.equal(poses[POSE.throttle], 0, 'silent: nobody behind can be vouched for')
+  assert.equal(poses[POSE.throttle], 1, 'silent sensor: the seated car is still the driver\'s')
+  assert.equal(s.kernel.audit.panic, null)
+})
+
+test('leaving the car among people: the First Law holds it at once, and it goes on passing through them until it stands clear of everyone', async () => {
+  const crowd = new FakeCrowd()
+  const { poses, step } = await core(true, 4, crowd)
+  seat(step, 0)
+  let s = step({ drive: FORWARD })
+  for (let k = 0; k < 120; k++) s = step({ drive: FORWARD })
+  assert.ok(poses[POSE.speed] > 5)
+  // Someone 2 m ahead, well inside the envelope at this speed; the driver gets out of the rolling car.
+  crowd.ahead[0] = 2.0
+  step({ drive: FORWARD })
+  s = step({ drive: FORWARD })
+  assert.equal(poses[POSE.throttle], 1, 'seated: not held')
+  const law1 = s.kernel.law1
+  s = step({ cmds: [{ c: 'interact' }] })
+  assert.equal(s.driving, -1)
+  assert.equal(poses[POSE.throttle], 0)
+  assert.equal(poses[POSE.brake], KERNEL.maxBrake, 'nobody at the wheel: an emergency stop, the same step')
+  assert.equal(s.kernel.law1, law1 + 1)
+  assert.equal(crowd.steps.at(-1)!.cars[0].passage, true, 'still rolling: the crowd is not pushed by it')
+  // It stops with the person inside its footprint: still a passage, however long it stands there.
+  crowd.ahead[0] = 0; crowd.behind[0] = 0
+  for (let k = 0; k < 240; k++) s = step()
+  assert.ok(Math.abs(poses[POSE.speed]) < 0.05, 'stopped')
+  assert.equal(crowd.steps.at(-1)!.cars[0].passage, true, 'someone stands in it: it pushes nobody out')
+  // They walk out of it: an ordinary parked car again.
+  crowd.ahead[0] = 0.3; crowd.behind[0] = Infinity
+  for (let k = 0; k < 5; k++) s = step()
+  assert.equal(crowd.steps.at(-1)!.cars[0].passage, true, 'someone within the contact margin of its bumper')
+  crowd.ahead[0] = 3; crowd.behind[0] = Infinity
+  for (let k = 0; k < 5; k++) s = step()
+  assert.equal(crowd.steps.at(-1)!.cars[0].passage, false, 'standing, nobody in or against it: ordinary again')
+  assert.equal(s.kernel.audit.panic, null)
+})
+
+test('the pass is the Sanctuary\'s: switched off, the First Law holds the seated car like any other', async () => {
+  const crowd = new FakeCrowd()
+  const { poses, step } = await core(true, 4, crowd)
+  seat(step, 0)
+  crowd.ahead[0] = 1.0
+  step({ drive: IDLE })
+  step({ drive: IDLE })
+  let s = step({ drive: FORWARD })
+  assert.equal(poses[POSE.throttle], 1, 'the Sanctuary on: the throttle stands')
+  const law1 = s.kernel.law1
+  s = step({ drive: FORWARD, cmds: [{ c: 'dbgSanctuary', on: false }] })
+  assert.equal(poses[POSE.throttle], 0, 'the Sanctuary off: held')
+  assert.equal(poses[POSE.brake], KERNEL.maxBrake)
+  assert.equal(s.kernel.law1, law1 + 1)
+  assert.equal(s.haptics.thump, true, 'and the wheel says so')
+  s = step({ drive: FORWARD, cmds: [{ c: 'dbgSanctuary', on: true }] })
+  for (let k = 0; k < 30; k++) s = step({ drive: FORWARD })
+  assert.equal(poses[POSE.throttle], 1, 'on again: the driver\'s again')
+  assert.equal(s.kernel.audit.panic, null)
 })
 
 test('aging, the walk term: a standing car is held once a pedestrian could have walked into the standoff', async () => {

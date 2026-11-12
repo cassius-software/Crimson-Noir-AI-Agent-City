@@ -112,6 +112,8 @@ interface Options {
    * shield is proven by contrast with a control run; the realm's VEHICLE_CHASSIS_GROUPS never pair with the avatar.
    */
   groups?: number
+  /** The car passes through people (a person seated at its wheel): its footprint says so (VehicleFootprint.passage). */
+  passage?: boolean
 }
 
 interface Log {
@@ -132,6 +134,7 @@ async function rig(o: Options) {
   const start = o.car ?? { x: -20, z: 0, heading: EAST }
   const car = (o.kind === 'sedan' ? sedan : box)(world, start.x, start.z, start.heading)
   if (o.groups !== undefined) car.collider.setCollisionGroups(o.groups)
+  if (o.passage === true) car.footprint.passage = true
   const avatar = o.person ? new Avatar(physics, o.person.x, o.person.z) : null
   const sanctuary = new Sanctuary(world)
   if (avatar && o.shield) sanctuary.register(avatar.person)
@@ -356,6 +359,57 @@ test('a shielded avatar is never trapped inside a car that stops on top of it', 
   assert.equal(r.log.contacts, 0)
   const after = r.car.body.translation()
   assert.ok(Math.hypot(after.x - parked.x, after.z - parked.z) < 1e-6, 'the stopped car was pushed')
+})
+
+test('the car a person is seated in passes through a standing avatar at speed: shielded before contact, never nudged, solid again behind it', async () => {
+  for (const speed of [3, 14, 30]) {
+    const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: -8, z: 0, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS, passage: true })
+    let inside = 0
+    // The driver holds the speed (the box has no drivetrain): on through the avatar and 2 m past them.
+    for (let i = 0; i < 600 && r.car.body.translation().x - HALF_LENGTH < 2; i++) {
+      r.launch(speed)
+      r.step()
+      const { u, w } = local(r.car, r.avatar!.x, r.avatar!.z)
+      if (Math.abs(u) <= HALF_LENGTH + 0.1 && Math.abs(w) <= HALF_WIDTH + 0.1) {
+        inside++
+        assert.equal(r.avatar!.collider.isSensor(), true, `${speed} m/s: solid inside the footprint`)
+      }
+    }
+    assert.ok(inside > 0, `${speed} m/s: the car never went through the avatar`)
+    assert.ok(r.car.body.translation().x - HALF_LENGTH >= 2, `${speed} m/s: the car passed`)
+    for (let i = 0; i < 30; i++) r.step()
+    assert.ok(Math.hypot(r.avatar!.x, r.avatar!.z) < 1e-3, `${speed} m/s: the avatar was moved to (${r.avatar!.x.toFixed(3)}, ${r.avatar!.z.toFixed(3)})`)
+    assert.equal(r.sanctuary.flips, 1, `${speed} m/s: one shield, no chatter`)
+    assert.equal(r.avatar!.collider.isSensor(), false, `${speed} m/s: solid again behind the car`)
+    assert.equal(r.log.contacts, 0)
+  }
+})
+
+test('the car a person is seated in stops on top of a shielded avatar and leaves them there; an ordinary car beside it still nudges', async () => {
+  const r = await rig({ kind: 'box', person: { x: 0, z: 0 }, shield: true, car: { x: -12, z: 0, heading: EAST }, groups: VEHICLE_CHASSIS_GROUPS, passage: true })
+  r.launch(20)
+  while (r.car.body.translation().x + HALF_LENGTH < 1) r.step()
+  r.car.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+  for (let i = 0; i < 120; i++) r.step()
+  const { u, w } = local(r.car, r.avatar!.x, r.avatar!.z)
+  assert.ok(Math.abs(u) < HALF_LENGTH && Math.abs(w) < HALF_WIDTH, 'still inside the standing car')
+  assert.ok(Math.hypot(r.avatar!.x, r.avatar!.z) < 1e-3, 'not moved')
+  assert.equal(r.avatar!.collider.isSensor(), true, 'kept a sensor while the car stands on them')
+  assert.equal(r.log.contacts, 0)
+  // Two cars at once: the one a person is seated in and an ordinary one sweeping in from the side. The ordinary one
+  // pushes, as ever; the seated one never is the car pushed against.
+  const physics = await Physics.create([], { lamps: [], trees: [], signals: [] })
+  const sanctuary = new Sanctuary(physics.world)
+  const body = physics.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 0.92, 0))
+  sanctuary.register({ body, collider: physics.world.createCollider(RAPIER.ColliderDesc.capsule(0.6, RADIUS), body), radius: RADIUS, halfHeight: 0.6 })
+  const seated: VehicleFootprint = { ...footprint(EAST), x: -1, vx: 10, speed: 10, passage: true }
+  const ordinary: VehicleFootprint = { ...footprint(0), id: 1, z: -2.3, vz: 10, speed: 10 }
+  const alone = sanctuary.guard([seated], H)[0]
+  assert.equal(sanctuary.isSensor(0), true)
+  assert.deepEqual({ ...alone }, { dx: 0, dz: 0 }, 'the seated car alone: nobody moved')
+  const both = sanctuary.guard([seated, ordinary], H)[0]
+  assert.ok(Math.hypot(both.dx, both.dz) > 0.05, 'the ordinary car still nudges')
+  assert.ok(Math.abs(both.dz) < 1e-9, 'away from the ordinary car alone (across its path, along the seated car)')
 })
 
 test('a car respawned on top of a standing person neither shields nor moves them: a standing chassis and the avatar never pair', async () => {

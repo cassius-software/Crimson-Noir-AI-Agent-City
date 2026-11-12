@@ -7,7 +7,9 @@
  * invariants that hold whenever the kernel (laws.ts, sanctuary.ts, the fleet's vetting) has done its job:
  * every state finite, no vehicle past the velocity cap, every vehicle inside the world slab, no solid
  * person inside a moving vehicle's footprint, and no moving vehicle closing on a solid person inside its
- * standoff while its applied command is anything but an emergency stop; and, over the scheduled craft stream
+ * standoff while its applied command is anything but an emergency stop (the Bouncer's stop, which a car with a
+ * person seated at its wheel is not given, laws.ts: that one car is audited for the footprint alone, and through it
+ * nobody solid may ever be); and, over the scheduled craft stream
  * (the trains, drones and planes that have no body and no Bouncer), every value finite and every craft at or
  * above the floor of the corridor that keeps it away from people. A violation is a kernel panic:
  * the engine severs the hardware bridge, halts, and `kernelPanic` throws out of the frame. The 1.85 m
@@ -61,6 +63,14 @@ export interface AuditVehicle {
   brake: number
   /** id of the person occupying it (the driver), or -1. */
   occupant: number
+  /**
+   * True when the kernel ruled this tick's command as a seated person's (laws.ts, source 'seated'; vehicles.ts seated):
+   * the Bouncer does not hold that car for people, it passes through them, so there is no emergency stop for
+   * UNGUARDED_APPROACH to find missing and it is not raised for this vehicle. It counts only with an `occupant`: a car
+   * nobody sits in is never exempt, whatever this says. IMPACT is audited of it like any other: a solid person inside
+   * its moving footprint halts the realm.
+   */
+  seated?: boolean
   /**
    * Path curvature the wheels follow, 1/m, positive = turning left (Fleet.curvature). With it the path
    * test bends exactly as the bouncer's corridor does; without it the path is straight ahead. Pass it: a
@@ -274,7 +284,9 @@ export class Ring0Auditor {
    * Audits one tick; reuses one result object, allocating only for a violation. Order: people finite;
    * then per vehicle finite, RUNAWAY, OUT_OF_BOUNDS, IMPACT per solid person, UNGUARDED_APPROACH. The
    * first violation is the panic reason. `harnessBlind`: UNGUARDED_APPROACH is suspended (a harness has
-   * blinded person sensing on purpose, so the bouncer cannot have stopped anything); IMPACT never is.
+   * blinded person sensing on purpose, so the bouncer cannot have stopped anything); IMPACT never is. Nor is
+   * UNGUARDED_APPROACH raised for a vehicle a person is seated in (`seated` with an `occupant`): the bouncer
+   * gives that car no stop to audit, and IMPACT is what keeps its footprint clear of solid people.
    */
   run(vehicles: readonly AuditVehicle[], people: readonly AuditPerson[], harnessBlind: boolean): AuditResult {
     const r = this.result
@@ -316,6 +328,8 @@ export class Ring0Auditor {
       const moving = Math.hypot(v.vx, v.vz) > movingSpeed
       const dir: 1 | -1 | 0 = v.speed > movingSpeed ? 1 : v.speed < -movingSpeed ? -1 : 0
       const emergency = v.throttle === 0 && v.brake >= this.maxBrake
+      // A person at its wheel, by both of the kernel's words: the ruling's and the seat's.
+      const passes = v.seated === true && v.occupant >= 0
       const fx = Math.sin(v.heading), fz = Math.cos(v.heading)
       const hl = v.halfLength, hw = v.halfWidth, half = hw + corridorMargin
       const curvature = v.curvature ?? 0
@@ -351,7 +365,7 @@ export class Ring0Auditor {
           if (d > 0 && d <= this.standoff && !emergency && d < unguarded) unguarded = d
         }
       }
-      if (unguarded !== Infinity && !harnessBlind) {
+      if (unguarded !== Infinity && !harnessBlind && !passes) {
         if (latch[i] !== 0) {
           const way = dir > 0 ? 'ahead' : 'behind'
           const detail = `${m3(unguarded)} ${way} at ${Math.abs(v.speed).toFixed(1)}m/s, throttle ${v.throttle.toFixed(2)}, brake ${v.brake.toFixed(1)}m/s²`
