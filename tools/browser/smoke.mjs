@@ -983,6 +983,23 @@ const WHERE_KEYS = `(() => { const a = document.activeElement, c = document.quer
     + ', ' + (document.querySelector('[aria-label="Your goal"]') ? 'a' : 'no') + ' goal field' })()`
 
 /**
+ * A page expression: starts a trail (once a page) of the views Sloane's card goes through ('nothing' while it is
+ * hidden), where the keyboard was and whether the visitor was on foot each time, and every key, pointer press, click
+ * and focus the page saw, each with its time in ms; the last 40 are kept. talkToSloane reports it when the goal field
+ * never took the keyboard.
+ */
+const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = window.__cardTrail = [], t0 = performance.now()
+  const note = (s) => { t.push(Math.round(performance.now() - t0) + ' ' + s); if (t.length > 40) t.shift() }
+  const view = () => { const c = document.querySelector('aside[data-concierge]'); return c ? c.getAttribute('data-concierge') : document.querySelector('[data-concierge="chip"]') ? 'chip' : 'nothing' }
+  const on = (e) => e && e.tagName ? e.tagName.toLowerCase() + (e.getAttribute('data-concierge') ? '[' + e.getAttribute('data-concierge') + ']' : e.getAttribute('aria-label') ? ' "' + e.getAttribute('aria-label') + '"' : '') : '-'
+  let last = view(); note('view ' + last)
+  const mode = () => { try { return window.__SIM__.snapshot().input.mode } catch { return '?' } }
+  new MutationObserver(() => { const v = view(); if (v !== last) { note('view ' + last + ' > ' + v + ', keys on ' + on(document.activeElement) + ', ' + mode()); last = v } })
+    .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-concierge'] })
+  for (const type of ['keydown', 'pointerdown', 'click', 'focusin']) window.addEventListener(type, (e) => note(type + ' ' + (e.key ?? e.pointerType ?? '') + ' on ' + on(e.target)), true)
+  return true })()`
+
+/**
  * A first visit to `url` as far as Sloane's answer to SMALL_TALK (sitemodel): the city booted, the name question
  * skipped with Esc and the greeting put away with Esc, the chip clicked (again, should a line of Sloane's own have
  * taken its place), the words typed into the goal field and sent with Enter. Returns the card (SLOANE_TALK) once it
@@ -993,6 +1010,7 @@ async function talkToSloane(p, url) {
   const notes = []
   await p.goto(url)
   await p.booted()
+  await p.eval(CARD_TRAIL).catch(() => {})
   if (await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
   else notes.push('the name question never took the keyboard')
   if (await p.waitFor(`!!document.querySelector('aside[data-concierge="greet"]')`, 10_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
@@ -1010,7 +1028,10 @@ async function talkToSloane(p, url) {
     await clickAt(p, box)
     field = await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your goal'`, 5_000).then(() => true, () => false)
   }
-  if (!field) return { card: await p.eval(SLOANE_TALK), notes: [...notes, 'the goal field never took the keyboard'] }
+  if (!field) {
+    const trail = await p.eval('window.__cardTrail ?? []').catch(() => [])
+    return { card: await p.eval(SLOANE_TALK), notes: [...notes, 'the goal field never took the keyboard', `the card's trail: ${trail.join(' | ')}`] }
+  }
   await p.type(SMALL_TALK)
   await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' })
   await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
