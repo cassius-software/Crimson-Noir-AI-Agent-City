@@ -6,7 +6,8 @@
  * per pedestrian holding the last few things that happened between them and the player or another agent (who, what
  * was said or done, where they stood, when on the city's clock), oldest dropped first, and the one plain sentence that
  * says what the agent has around them this moment ("Standing near The Spire in Lakefront Metro, looking at a dark red
- * car, with two people close by"). Both go into the model's system prompt under one heading (09_Cognition
+ * car, with two people close by"), beside the one the crowd's own readings give of what they are doing
+ * (09_Cognition/personFeatures.ts). All of it goes into the model's system prompt under one heading (09_Cognition
  * localCompute.ts systemPrompt) within a fixed character budget, so an answer knows where it is said and what just
  * happened without the prompt growing. This is the host-side counterpart of the swarm's long-term ledger
  * (memory.ts), which keeps whole recruitments on disk, hash-chained: this one lives in memory for the visit, holds
@@ -62,6 +63,11 @@ export interface AgentContext {
   readonly identity?: string | null
   /** The surroundings sentence, or null when nothing is known. */
   readonly surroundings: string | null
+  /**
+   * What the crowd measured them doing, in one sentence (09_Cognition/personFeatures.ts describePerson: their activity,
+   * what they were called away from, whether they are getting nowhere or in a crowd); absent or null when unknown.
+   */
+  readonly doing?: string | null
   /** The last moments, oldest first. */
   readonly recent: readonly Interaction[]
 }
@@ -183,13 +189,16 @@ export function contextLines(ctx: AgentContext, budget: number = CONTEXT_BUDGET)
   }
   const head = `Agent ${ctx.agent}, right now:`
   const identity = typeof ctx.identity === 'string' && ctx.identity.trim() ? ctx.identity.trim() : null
-  if (ctx.surroundings === null && ctx.recent.length === 0 && identity === null) return out
+  const doing = typeof ctx.doing === 'string' && ctx.doing.trim() ? ctx.doing.trim() : null
+  if (ctx.surroundings === null && ctx.recent.length === 0 && identity === null && doing === null) return out
   out.push(head)
   spent += head.length + 1
   // Who they are comes first and is never cut by the budget's halving below: it is one short line.
   if (identity !== null) take(`- ${identity}`)
   // The surroundings take at most half the budget, so a long sentence never crowds the moments out.
   if (ctx.surroundings) take(`- ${clipLine(ctx.surroundings, Math.max(40, Math.floor(budget / 2)))}`)
+  // What they were measured doing: one short sentence, after where they are and before what just happened.
+  if (doing !== null) take(`- ${clipLine(doing, Math.max(40, Math.floor(budget / 3)))}`)
   if (ctx.recent.length) {
     const sub = 'Just before this, oldest first:'
     spent += sub.length + 1

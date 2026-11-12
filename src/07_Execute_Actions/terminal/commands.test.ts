@@ -161,6 +161,8 @@ function fakeFeatures(calls: string[]): FeaturesBridge {
     about: (name) => { calls.push(`features about ${name}`); return /^civic/i.test(name) ? ['CIVIC_COOPERATION  (civic cooperation)', 'People letting others through.', 'threshold 0.05  now 0.40'] : null },
     prompt: () => { calls.push('features prompt'); return [] },
     explain: () => { calls.push('features explain'); return ['features: 12 named readings', 'not a sparse autoencoder'] },
+    person: (agent) => { calls.push(`features person ${agent}`); return agent === 7 ? ['person 7: Walking the streets; not getting anywhere for a while.', 'STUCK                 [##########]  1.00'] : null },
+    people: () => { calls.push('features people'); return ['people: 499 measured (person 0 is your own body)', 'STUCK                 [..........]  0.00  1: person 7'] },
     steer: (name, bias) => { calls.push(`features steer ${name} ${bias}`); return [`${name} bias +${bias.toFixed(2)}`, 'physics.car.power = 0.85'] },
     clamp: (name, value) => { calls.push(`features clamp ${name} ${value}`); return `${name} clamp ${value.toFixed(2)}` },
     release: (name) => { calls.push(`features release ${name}`); return [`${name} released`] },
@@ -1214,13 +1216,13 @@ test('air gap: while locked, across every command and completion, the only knobs
   assert.ok(lines.includes('operator unlock'))
   const sweep = [...lines.filter((l) => l !== 'operator unlock'), 'time 8', 'time 08:15', 'run 1 + 1', 'run rust: 1 + 1', 'get physics', 'set physics.car.power 2', 'harness run kernel-stop',
     'recruit rally 7', 'recruit rally 7 1 2', 'look show 7', 'look top 2', 'look code ABCD-EFGH', 'net join ws://127.0.0.1:8787 tok', 'topic get ~/x', 'topic list ~/#', 'topic tree ~/Area',
-    'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));']
+    'noir print(crowd.n);', 'noir print(tune("car.power", 2.0));', 'feature person 7']
   for (const l of sweep) void run(l, b, ['help'])
   const touched = new Set(b.calls.map((c) => c.split(' ')[0]))
   assert.deepEqual([...touched].sort(), ['audio', 'captions', 'features', 'ghost', 'haptics', 'hardware', 'look', 'memory', 'model', 'net', 'pair', 'ping', 'quality', 'rain', 'recruit', 'render', 'robot', 'setClock', 'soa', 'stats', 'topics', 'xr'])
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
-  assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'prompt'])
+  assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'people', 'person', 'prompt'])
   // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
   assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
@@ -2370,7 +2372,15 @@ test('feature: the inspector is read while locked (rows, top k, one card, the pr
   for (const l of ['feature steer CIVIC_COOPERATION 0.5', 'feature clamp CIVIC_COOPERATION 0.8', 'feature release CIVIC_COOPERATION', 'feature reset']) {
     assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: "feature: locked; type 'operator unlock' first" }, l)
   }
-  assert.ok(b.calls.every((c) => /^features (lines|about|prompt|explain)\b/.test(c)), b.calls.join(', '))
+  // One person and the crowd's per-person readings: reads, served while locked, with their own usage line.
+  assert.deepEqual(texts(run('feature person 7', b, [])), ['person 7: Walking the streets; not getting anywhere for a while.', 'STUCK                 [##########]  1.00'])
+  assert.deepEqual(only(run('feature person 8', b, [])), { kind: 'err', text: 'feature: nothing measured of person 8 (no such person, or the crowd has sent no frame yet)' })
+  for (const l of ['feature person', 'feature person 0', 'feature person -1', 'feature person 1.5', 'feature person x', 'feature person 7 8']) {
+    assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: 'usage: feature person <n> (person 1 or above; 0 is your own body)' }, l)
+  }
+  assert.deepEqual(texts(run('feature people', b, [])), ['people: 499 measured (person 0 is your own body)', 'STUCK                 [..........]  0.00  1: person 7'])
+  assert.deepEqual(only(run('feature people now', b, [])).kind, 'err')
+  assert.ok(b.calls.every((c) => /^features (lines|about|prompt|explain|person|people)\b/.test(c)), b.calls.join(', '))
   const u = unlocked()
   assert.deepEqual(texts(run('feature steer CIVIC_COOPERATION 0.5', u, [])), ['CIVIC_COOPERATION bias +0.50', 'physics.car.power = 0.85'])
   assert.deepEqual(only(run('feature clamp CIVIC_COOPERATION 0.8', u, [])), { kind: 'out', text: 'CIVIC_COOPERATION clamp 0.80' })
@@ -2383,7 +2393,7 @@ test('feature: the inspector is read while locked (rows, top k, one card, the pr
   assert.deepEqual(only(run('feature steer CIVIC_COOPERATION', u, [])), { kind: 'err', text: 'usage: feature steer <NAME> <value>' })
   assert.deepEqual(only(run('feature clamp', u, [])), { kind: 'err', text: 'usage: feature clamp <NAME> <value>' })
   assert.deepEqual(only(run('feature release', u, [])), { kind: 'err', text: 'usage: feature release <NAME>' })
-  assert.deepEqual(only(run('feature reset now', u, [])), { kind: 'err', text: 'usage: feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]' })
+  assert.deepEqual(only(run('feature reset now', u, [])), { kind: 'err', text: 'usage: feature [list|top <k>|watch|<NAME>|person <n>|people|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]' })
   assert.deepEqual(u.calls, [])
   // The tier's own refusal (a RangeError for an unknown name or a value out of range) is an error line.
   u.operator.features.steer = () => { throw new RangeError("unknown feature 'NOPE'") }
@@ -2394,6 +2404,7 @@ test('feature: the inspector is read while locked (rows, top k, one card, the pr
   assert.deepEqual(FEATURE_IDS, FEATURES.map((f) => f.id))
   assert.ok(complete('feature ').includes('feature CIVIC_COOPERATION'))
   assert.ok(complete('feature steer ').includes('feature steer TRAFFIC_YIELD'))
+  assert.ok(complete('feature pe').includes('feature people') && complete('feature pe').includes('feature person'))
 })
 
 test('ring0: the elite tier reads while locked, opens only for the operator with the passphrase set, and never echoes or keeps the passphrase', () => {

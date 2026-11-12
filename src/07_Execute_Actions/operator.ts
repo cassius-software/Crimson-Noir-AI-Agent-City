@@ -40,6 +40,7 @@ import {
   FEATURES, NO_STEERING, about as featuresAbout, activations, clampFeature, featureById, featureLines, knobEffects, readingsOf,
   release as releaseFeature, steer as steerFeature, steeringLines, type FeatureDef, type Steering,
 } from '../09_Cognition/features.ts'
+import { personAbout } from '../09_Cognition/personFeatures.ts'
 export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
@@ -338,6 +339,8 @@ export interface Senses {
   readonly speech?: SpeechOut
   readonly diary?: Diary
   readonly awareness?: Awareness
+  /** What each pedestrian is measured doing (09_Cognition/personFeatures.ts over the page's crowd frames), for the feature inspector's `person` and `people`. */
+  readonly people?: PeopleSense
   /** The voice a hired agent speaks in (08_Swarm/roster.ts), or null for the chosen one. */
   readonly voiceOf?: (agent: number) => string | null
   /** The name a hired agent goes by (08_Swarm/roster.ts), or null when they have none. */
@@ -362,6 +365,17 @@ export interface Awareness {
   context(agent: number): AgentContext | null
   /** Notes a moment between `agent` and `who` (what was said or done), now, where they stand. */
   remember(agent: number, who: string, what: string): void
+}
+
+/**
+ * The crowd's per-person readings as the feature inspector reads them (09_Cognition/personFeatures.ts PersonReadings,
+ * kept by the host over the crowd frames it already receives): read-only, every row formatted.
+ */
+export interface PeopleSense {
+  /** One person's card: who and what they are measured doing, then a row per reading over its threshold; null when nothing is known of them. */
+  lines(agent: number): string[] | null
+  /** The crowd's rows: how many were measured, then each reading's share of them, the stuck ones named. */
+  crowdLines(): string[]
 }
 
 /** What a say ended as. */
@@ -1064,7 +1078,7 @@ const answeringProvider = (mind: Mind): string | undefined => {
  */
 export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sleep: (ms: number) => Promise<void> = wait, senses: Senses = {}): OperatorBridge {
   const api = scriptApi(sim)
-  const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault } = senses
+  const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault, people } = senses
   /** What the host vouches to the gate (null: nothing, which admits nothing). */
   const contained = (): Vouched => (senses.contained ? senses.contained() === true : null)
   /**
@@ -1236,7 +1250,10 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
       ]
     },
     prompt: (): string[] => steeringLines(steering),
-    explain: (): string[] => featuresAbout(),
+    explain: (): string[] => [...featuresAbout(), ...personAbout()],
+    // One pedestrian, and the crowd, as the host measured them: reads, so they work while locked, and they write nothing.
+    person: (agent: number): string[] | null => people?.lines(agent) ?? null,
+    people: (): string[] => people?.crowdLines() ?? ['people: no reading (this tier was given no crowd)'],
     steer: (name: string, bias: number): string[] => {
       if (!unlocked) throw locked('feature')
       steering = steerFeature(steering, name, bias)
