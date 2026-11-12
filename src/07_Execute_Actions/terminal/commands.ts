@@ -212,6 +212,7 @@ export const LOOK_SLOT_ARGS = [
   'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'watch', 'bag', 'cup',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
+  'legwear', 'tattooCalf', 'tattooAnkleR',
 ] as const
 export const LOOK_BUILD_ARGS = ['athletic', 'broad', 'full', 'lean', 'muscular', 'slight', 'soft', 'stocky'] as const
 export const LOOK_BODY_ARGS = ['pantsuit', 'skirt suit', 'smart casual', 'suit'] as const
@@ -332,6 +333,9 @@ const ARGS: Record<string, readonly string[]> = {
   'look sleeves': ['full', 'rolled'],
   'look tattooForearm': LOOK_TATTOO_ARGS,
   'look tattooForearmR': LOOK_TATTOO_ARGS,
+  'look legwear': ['as hashed', 'bare', 'opaque', 'sheer'],
+  'look tattooCalf': LOOK_TATTOO_ARGS,
+  'look tattooAnkleR': LOOK_TATTOO_ARGS,
   progress: ['reroll', 'reset', 'table', 'train'],
   'progress train': ['commerce', 'computers', 'optics', 'piloting', 'robotics', 'security', 'swarm', 'voice'],
   'progress reset': ['--yes'],

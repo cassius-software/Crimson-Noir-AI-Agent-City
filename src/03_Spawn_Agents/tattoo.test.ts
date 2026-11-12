@@ -21,9 +21,9 @@ import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { crowdHash } from './crowdBody.ts'
 import { TATTOO_INCLUDES, TATTOO_INSET, TATTOO_WGSL } from './crowdTattoo.ts'
 import { BONE, BONES, SLOT, SLOTS, humanoidMesh } from './humanoid.ts'
-import { LAYER, LOOK_FIELD, LOOK_HASH, LOOK_PALETTE, LOOK_STREET_FLAG, SLEEVES, lookFromSeed, shaderHash, streetTattoos } from './look.ts'
+import { LAYER, LEGWEAR, LOOK_FIELD, LOOK_HASH, LOOK_PALETTE, LOOK_STREET_FLAG, SLEEVES, lookFromSeed, shaderHash, streetTattoos } from './look.ts'
 import {
-  TATTOO_FRAMES, TATTOO_HALO, TATTOO_HEAD_SPLIT, TATTOO_INK, TATTOO_INKS, TATTOO_MOTIFS, TATTOO_SHOP_INKS, TATTOO_SLEEVE, TATTOO_STUDIO_LINES, TATTOO_TILE, TATTOO_ZONES,
+  TATTOO_FRAMES, TATTOO_HALO, TATTOO_HEAD_SPLIT, TATTOO_INK, TATTOO_INKS, TATTOO_LEG_ZONES, TATTOO_MOTIFS, TATTOO_SHOP_INKS, TATTOO_SLEEVE, TATTOO_STUDIO_LINES, TATTOO_TILE, TATTOO_ZONES,
   inkLine, tattooContrast, tattooLuminance, type TattooFrame, type TattooRgb,
 } from './tattoo.ts'
 import { compileWgsl } from './wgslHost.ts'
@@ -170,6 +170,19 @@ test('the street\'s sleeves: the shader rolls them for a passer-by whose designs
   // About six passers-by in a hundred: three of the eight street sets reach a forearm (the left, the right, both) of
   // the one in five who carry ink, less those in a coat.
   assert.ok(rolled > 1100 && rolled < 1500, `rolled ${rolled}`)
+})
+
+test('the street\'s legs: the shader bares them for a skirt-suit passer-by (the fourth body, crowd.ts variant 3) whose designs reach the calf or the ankle (tatZones against TATTOO_LEG_ZONES), as look.ts lookFromSeed does; everyone else\'s are as hashed, for every agent below 20,000', () => {
+  let bare = 0
+  for (let s = 0; s < 20_000; s++) {
+    const look = lookFromSeed(s)
+    const gpu = s % 4 === 3 && ((host.call('tatZones', s) as number) & TATTOO_LEG_ZONES) !== 0 ? LEGWEAR.bare : LEGWEAR.hashed
+    if (gpu !== look.legwear) assert.fail(`agent ${s}: the shader's legs ${gpu}, lookFromSeed ${look.legwear}`)
+    assert.equal(look.legwear === LEGWEAR.bare, look.body === 3 && look.tattooCalf + look.tattooAnkleR > 0)
+    if (gpu === LEGWEAR.bare) bare++
+  }
+  // About one in 160: the one in five who carry ink, of the skirt suit's quarter, whose set (one in eight) reaches the legs.
+  assert.ok(bare > 90 && bare < 170, `bare ${bare}`)
 })
 
 const cross = (u: V3, v: V3): V3 => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]

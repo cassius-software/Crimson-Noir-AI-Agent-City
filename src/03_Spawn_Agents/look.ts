@@ -100,6 +100,7 @@ export const LOOK_SLOTS = [
   'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'tie', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'watch', 'bag', 'cup',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
+  'legwear', 'tattooCalf', 'tattooAnkleR',
 ] as const
 export type LookSlot = (typeof LOOK_SLOTS)[number]
 export type Look = Readonly<Record<LookSlot, number>>
@@ -113,6 +114,7 @@ export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
   'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
+  'legwear', 'tattooCalf', 'tattooAnkleR',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -425,6 +427,16 @@ export const LAYER = Object.freeze({ jacket: 0, shirt: 1, coat: 2 })
 export const SLEEVES = Object.freeze({ full: 0, rolled: 1 })
 
 /**
+ * The legs (the cloth word's [5, 18, 2]): what covers a leg wherever it shows below the hem (the skirt suit's, or the
+ * ankle below cropped trousers and culottes). As hashed (0, as before: about one person in two of the skirt suit's
+ * in dark hose and the rest bare-legged, the same link for a sock), bare, sheer (the skin under a light dark veil, a
+ * calf's or an ankle's tattoo seen through it) or opaque (dark, as the hash's dark hose is, hiding them).
+ */
+export const LEGWEAR = Object.freeze({ hashed: 0, bare: 1, sheer: 2, opaque: 3 })
+/** How far sheer legs veil the skin toward the hose's dark (crowd.ts): bare is none of it, opaque (and the hash's dark hose) all. */
+export const LEGWEAR_VEIL = 0.35
+
+/**
  * The catalogue: what each slot may hold. `stature` is the height slider (32 steps, 1.50 m to 2.05 m: five bits);
  * `sliderSteps` the other body sliders' and the face sliders' (four bits each) but the head's (`headSteps`, three
  * bits); `ageSteps` the age's (three bits); `undertone` the skin's cast; `vitiligo` where the skin's paler patches
@@ -481,6 +493,7 @@ export const WARDROBE = Object.freeze({
   tattoo: Object.freeze(['none', ...TATTOO_MOTIFS.map((m) => m.name)]),
   tattooInk: Object.freeze(TATTOO_INKS.map((i) => i.name)),
   sleeves: Object.freeze(['full', 'rolled']),
+  legwear: Object.freeze(['as hashed', 'bare', 'sheer', 'opaque']),
   outfits: Object.freeze([
     Object.freeze({ top: 'suits', bottom: 'suits', matching: true, shirt: 'shirts', shoes: 'menShoes' }),
     Object.freeze({ top: 'blazers', bottom: 'chinos', matching: false, shirt: 'casualShirts', shoes: 'casualShoes' }),
@@ -511,7 +524,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * style's high bits, the curl, the headwear and its cloth, the facial hair, the hearing devices, a prosthetic limb and
  * its finish; bits 30 and 31 are spare. Word 5 is the cloth word: the top's weave and the bottom's at four bits each,
  * then the outer layer's cut at four, then the lower garment's cut at four, then the sleeves at two (0 full, as
- * before; 1 rolled to the elbow); bits 18 to 31 are spare, and the legs [5, 18, 2] come next. Word 6 is the
+ * before; 1 rolled to the elbow), then the legs at two (0 as hashed, as before; bare, sheer, opaque); bits 20 to 31
+ * are spare. Word 6 is the
  * accessory word, paint on the meshes the body already has: the shoe's style at five bits (twelve of thirty-two, room
  * to grow), the glasses' frame finish at four, the watch at three, the lapel pin at three; bits 15 to 31 are spare, and
  * the next slice is to take them in this order, so its fields are written down here and declared then: an umbrella
@@ -521,9 +535,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * as before); bits 0 to 30 are its fields. Its bit 31 is never a field's: the crowd's fragment stage reads a person
  * in no chosen look as word 7 with that bit alone set, the street flag that draws their tattoos from their seed, so
  * no worn look may set it and unpackGenome refuses one that does (LOOK_STREET_FLAG). Word 8 is the second tattoo
- * word: the left forearm's design and the right's at seven bits each, shown below sleeves rolled to the elbow; bits
- * 14 to 31 are spare, and the next slice is to declare the calf's [8, 14, 7] and the ankle's [8, 21, 7] there with the
- * legs. Words 9 to 15 (LOOK_WORDS) are spare, and unpackGenome requires every spare bit of the words from 4 on to be zero, so
+ * word: the left forearm's design and the right's at seven bits each, shown below sleeves rolled to the elbow, then
+ * the left calf's and the right ankle's, shown on bare or sheer legs; bits 28 to 31 are spare. Words 9 to 15 (LOOK_WORDS) are spare, and unpackGenome requires every spare bit of the words from 4 on to be zero, so
  * a reader older than a field refuses a look that sets it rather than drop it. Every width is pinned to hold its
  * slot's largest option count (with its high bits, for a slot that has them).
  */
@@ -574,6 +587,7 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   cut: [5, 8, 4],
   bottomCut: [5, 12, 4],
   sleeves: [5, 16, 2],
+  legwear: [5, 18, 2],
   footwear: [6, 0, 5],
   frames: [6, 5, 4],
   watch: [6, 9, 3],
@@ -585,6 +599,8 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   tattooInk: [7, 28, 3],
   tattooForearm: [8, 0, 7],
   tattooForearmR: [8, 7, 7],
+  tattooCalf: [8, 14, 7],
+  tattooAnkleR: [8, 21, 7],
 })
 
 /**
@@ -744,6 +760,10 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     // The forearms (word 8): the same designs, shown below sleeves rolled to the elbow (the cloth word's sleeves).
     case 'tattooForearm': case 'tattooForearmR': return named(WARDROBE.tattoo)
     case 'sleeves': return named(WARDROBE.sleeves)
+    // The left calf and the right ankle (word 8): the same designs again, shown where the legs are bare or sheer (the
+    // cloth word's legwear).
+    case 'tattooCalf': case 'tattooAnkleR': return named(WARDROBE.tattoo)
+    case 'legwear': return named(WARDROBE.legwear)
   }
 }
 
@@ -1223,7 +1243,11 @@ export function streetTattoos(hc: (k: number) => number): StreetTattoos {
  * knits up the neck to the chin ring (crowd.ts turtleNeck). The turtleneck reaches only the lower half of the nape's
  * square, so the nape says nothing; a scarf, a hijab, long hair or a full beard worn over a zone are pieces the person
  * chose to wear there, so they say nothing either. A forearm shows only below sleeves rolled to the elbow, never under
- * a coat (whose own piece covers the arm), and a prosthetic arm on that side covers it as it covers the hand.
+ * a coat (whose own piece covers the arm), and a prosthetic arm on that side covers it as it covers the hand. A calf
+ * and an ankle show only where the leg is: under the skirt suit's skirt, or for the trousers the ankle below a cropped
+ * pair or culottes (whose hem's inside band covers the calf but its lowest few centimetres); a prosthetic leg on that
+ * side covers them, a boot's shaft the ankle (a knee boot's the calf too), and opaque legs both. Legs left as hashed
+ * may be in dark hose or a dark sock, so the card says how to be sure.
  */
 export function tattooCover(look: Look, slot: LookSlot): string | null {
   const arms = look.prosthetic === PROSTHETIC.bothArms
@@ -1237,6 +1261,18 @@ export function tattooCover(look: Look, slot: LookSlot): string | null {
       if (look.layer === LAYER.coat) return 'a coat keeps its sleeves down'
       return look.sleeves === SLEEVES.rolled ? null : 'roll the sleeves to show it'
     }
+    case 'tattooCalf': case 'tattooAnkleR': {
+      const calf = slot === 'tattooCalf'
+      if (look.prosthetic === PROSTHETIC.bothLegs || look.prosthetic === (calf ? PROSTHETIC.leftLeg : PROSTHETIC.rightLeg)) return 'covered by the limb'
+      if (look.body !== 3) {
+        if (look.bottomCut === TROUSER_CUT.culottes) { if (calf) return 'the culottes cover most of it' }
+        else if (!(look.bottomCut === TROUSER_CUT.cropped && !calf)) return 'the trousers cover it'
+      }
+      const shafts = calf ? FOOTWEAR_FEATURES.kneeShaft : FOOTWEAR_FEATURES.shaft
+      if (((shafts >>> look.footwear) & 1) === 1) return 'the boots cover it'
+      if (look.legwear === LEGWEAR.opaque) return 'opaque legs cover it'
+      return look.legwear === LEGWEAR.hashed ? 'pick bare or sheer legs to show it' : null
+    }
     default: return null
   }
 }
@@ -1245,10 +1281,12 @@ export function tattooCover(look: Look, slot: LookSlot): string | null {
  * The look the crowd's hash gives an agent of this index (any non-negative integer; a profile seed does as well):
  * body = index mod 4, pieces, the figure and the face from the vertex chain, colours, the age, the undertone, the
  * Monk tone, vitiligo and freckles from the fragment chain, exactly as crowd.ts chooses them, each slider rounded to its step. What the words cannot carry
- * (the tie's cloth, the bag's leather, the skirt suit's hose, the iris) stays hashed in the shader, so it is not here.
+ * (the tie's cloth, the bag's leather, the iris, and the hose or sock of legs left as hashed) stays hashed in the
+ * shader, so it is not here.
  * The tattoos are the street's draw (streetTattoos) on the zones the wardrobe has, with the drawn ink only when one of
- * them is inked (else black, as before); the street's other zones wait for their slots. A person whose draw inks a
- * forearm rolls their sleeves, unless they wear a coat (crowd.ts's street sleeve rule).
+ * them is inked (else black, as before). A person whose draw inks a forearm rolls their sleeves, unless they wear a
+ * coat (crowd.ts's street sleeve rule), and one of the skirt suit's whose draw inks the calf and the ankle goes
+ * bare-legged (its leg rule); everyone else's legs stay the hash's (LEGWEAR.hashed).
  */
 export function lookFromSeed(seed: number): Look {
   const s = Number.isFinite(seed) ? Math.abs(Math.trunc(seed)) % 4294967296 : 0
@@ -1283,7 +1321,7 @@ export function lookFromSeed(seed: number): Look {
   // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
   const topSize = LOOK_PALETTE[outfit.top].length
   const street = streetTattoos(hc)
-  const [tattooHand, tattooHandR, tattooNeck, tattooNape, tattooForearm, tattooForearmR] = street.motifs
+  const [tattooHand, tattooHandR, tattooNeck, tattooNape, tattooForearm, tattooForearmR, tattooCalf, tattooAnkleR] = street.motifs
   const look: Record<LookSlot, number> = {
     body,
     height: statureSteps.from + stepOf(hp(6), statureSteps.span),
@@ -1348,11 +1386,16 @@ export function lookFromSeed(seed: number): Look {
     tattooHandR,
     tattooNeck,
     tattooNape,
-    tattooInk: tattooHand + tattooHandR + tattooNeck + tattooNape + tattooForearm + tattooForearmR > 0 ? street.ink : TATTOO_INK.black,
+    tattooInk: street.motifs.some((m) => m > 0) ? street.ink : TATTOO_INK.black,
     // The forearms, below sleeves the street rolls for them (never a coat's).
     sleeves: tattooForearm + tattooForearmR > 0 && layer !== LAYER.coat ? SLEEVES.rolled : SLEEVES.full,
     tattooForearm,
     tattooForearmR,
+    // The left calf and the right ankle, on bare legs for the skirt suit's carriers (the other bodies' trousers keep
+    // the hash's: a cropped pair's ankle shows bare or in a sock as before).
+    legwear: body === 3 && tattooCalf + tattooAnkleR > 0 ? LEGWEAR.bare : LEGWEAR.hashed,
+    tattooCalf,
+    tattooAnkleR,
   }
   return Object.freeze(look)
 }

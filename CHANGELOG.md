@@ -15,6 +15,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Bare legs and tattoos on the calf and the ankle.** The look genome's cloth word gains the legs (word 5, bits 18
+  and 19: as hashed, as before; bare; sheer; opaque) and the second tattoo word a design (0 for none, or one of
+  sixty-four) on the left calf and the right ankle at seven bits each (word 8, bits 14 to 27; bits 28 to 31 spare and
+  refused). Option 0 of each is as before, so every earlier look keeps its code. The legs are a veil over the skin
+  (`src/03_Spawn_Agents/crowd.ts` `veil`): as hashed, the old link (about one in two in dark hose or a dark sock);
+  bare, none; sheer, the skin 35% of the way to the hose's dark (`look.ts` `LEGWEAR_VEIL`); opaque, all of it. It sets
+  the skirt suit's hose and the sock or the bare ankle below cropped trousers and culottes, on the near and the far
+  body alike. Where a leg shows bare or sheer the skin's slot goes to the ink (`inkSlot`), so the calf and the ankle
+  take their designs there, dimmed under sheer legs as the colour is, never on a prosthetic shin, under a boot's shaft
+  or under the culottes' inside band. A skirt-suit passer-by whose drawn designs reach the calf or the ankle goes
+  bare-legged, in the shader (`crowdTattoo.ts` `tatZones` against `tattoo.ts` `TATTOO_LEG_ZONES`) and in
+  `lookFromSeed` alike: `tattoo.test.ts` finds the two agree on all of 20,000 seeds, 132 of them bare-legged. The card
+  shows all eight tattoo zones and a Legs row (for the skirt suit and below cropped trousers and culottes; full-length
+  trousers hide the legs), and its outline's skirt-suit legs follow the choice; a zone's note says what covers it
+  ("the trousers cover it", "the boots cover it", "opaque legs cover it", "covered by the limb"). The console takes
+  `look legwear bare` and `look tattooAnkleR anchor`. The shader budget holds: the worst near main fragment stage is
+  183,846 characters (was 185,605) and the worst far one 142,706 (was 142,122). `dist/index.html` grows by 1,971
+  bytes, from 12,004,143 to 12,006,114; the limit in `tools/verify/page_dist.mjs` is unchanged. Fifteen pictures of the
+  ink studio's mirror on the software WebGPU adapter (SwiftShader) show the calf's design on bare legs, dimmed under
+  sheer legs and hidden under opaque ones and under the hash's dark hose, white ink on the deepest skin, gold leaf, the
+  bare ankle below cropped trousers, full-length trousers and boots covering the designs, a prosthetic left leg taking
+  the calf, and option 0 as before. The mirror draws the player's body with its left leg only, as it already did on
+  main, so the right ankle's design is not pictured. Unverified: no hardware GPU has compiled or drawn it yet.
 - **Rolled sleeves and tattoos on the forearms.** The look genome's cloth word gains the sleeves (word 5, bits 16 and
   17: full, as before, or rolled) and word 8 becomes the second tattoo word: a design (0 for none, or one of
   sixty-four) on the left and the right forearm at seven bits each, its other bits spare and refused. Option 0 of each
