@@ -4071,9 +4071,45 @@ https: the Files app only previews `dist/index.html`, and the page served over p
 by `tools/web/pwa.mjs`:
 - a manifest (`manifest.webmanifest`: the name, full screen, black) and the home-screen icon, which the page's
   head names; its content policy gains `manifest-src 'self'` so the browser may read the manifest, and nothing else;
-- a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit. From then on the
-  city starts with no network at all, airplane mode included. A new build reaches the phone the next time it opens
-  online: it is fetched in the background, and the launch after that runs it;
+- a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit. From then on the city
+  starts with no network at all, airplane mode included. **The host decides which build runs, and the copy delivers
+  it.** On each launch the worker asks the host for one small file (`build.txt`, the published build's name, some
+  forty bytes; never kept, and never taken from the browser's cache) and waits two seconds at most. The same name as
+  its copy, no answer in time, a phone that says it is offline, or anything else the host sends: the copy answers and
+  the launch itself downloads nothing more (a newer build, where one is published, is still fetched in the background
+  by its own worker). Another name: that launch runs the host's page, streamed from the one fixed address `index.html`
+  (the worker asks for that address, not the one that was opened, so `?players=2` or `?kernel=lite` are not downloads
+  of their own; only with neither a copy nor a page from the host to answer with does it pass the browser's own
+  request on), and the new build's own worker keeps it in the background and drops the older copy. So a newly
+  published build is what the next launch runs, with no second reload, once the host serves its name (GitHub Pages
+  lets its delivery network keep an answer for up to ten minutes); before, a new build ran only on the launch after
+  the one that fetched it. What that costs: on the launch that brings a new build the page is downloaded while the
+  splash shows (about 7 MB compressed), and the new build's worker downloads it a second time to keep it, after the
+  launch's own download: a browser starts that worker by itself during the launch (Safari a second into it, Chrome
+  once the launch's work is over), so the worker that is handing the page on holds a named lock until that page is
+  over, and a newer worker's install waits for the lock, half a minute at most, before it downloads anything (a launch
+  itself never waits for it, and the pace rule below ends any page well inside that time) (where a browser has no such
+  locks the two share the link, and the pace rule below sees only the launch's part of it). On a first visit, with no
+  worker yet, the page registers one at its load event, so the copy is fetched once the page has arrived. The launch
+  is not left to a bad link: the host's page must begin within four seconds, and once begun it must keep coming: a
+  download that brings nothing for more than five seconds (the worker looks once a second), breaks, or after its first
+  four seconds has averaged less than 600 kB of page a second (about three megabits a second as GitHub sends it; the
+  whole page in some twenty seconds at the slowest pace kept) is given up, and the launch starts from the copy
+  instead. How: the worker holds back the page's first 32 kB until they have all come; a download given up before that
+  has shown the phone nothing, and the copy takes that very answer over, with no second load. Given up later, the page
+  ends where it stopped, and the page itself, finding at its load event that its script never ran under a worker,
+  loads again, once (its watchdog, which those first 32 kB carry; once a minute a tab at most, and only where the
+  browser keeps session storage for the page): the copy answers that. Should that second load end the same way, the
+  card with Restart appears. After giving a page up the worker leaves the host alone for up to five minutes (its own
+  memory, lost when the browser stops the worker, which a browser does once the worker has had nothing to answer for a
+  while: about thirty seconds in Chrome, even with the app in use; a launch after that asks the host again). A page
+  that keeps its pace is never cut off. With no copy to fall back on there is no deadline either: the host's page is
+  waited for and nothing is given up. The worker keeps a build only when the host serves that build's page (it checks
+  the page's build stamp), so a deploy caught half way, or a cache ten minutes behind, cannot file the older page
+  under the new name; it tries again at the next launch. Chrome (140 and later) may itself ask the host for the opened
+  address while it starts a worker that was not running, and discards the answer when the worker gives its own: that
+  request is the browser's, not the worker's. A phone still holding a worker from before this needs one launch online
+  to get this one, then behaves as described;
 - the two cross-origin isolation headers, added by the service worker to the page it serves (a static host cannot
   send them), so from the second launch the physics realm and the page share one memory bridge, as in the Windows
   app. Where a browser does not honour headers from a service worker, the bridge uses its private buffer and nothing
@@ -4111,10 +4147,22 @@ What the phone copy keeps, and what it cannot have yet:
 
 What is verified: the CI's browser job runs the installable copy in Chrome as an iPhone (`tools/browser/smoke.mjs
 pwa`): the browser reads the manifest through the page's policy, the icons load, the service worker installs, the
-second load is cross-origin isolated, and with the host stopped the city starts from the phone's copy with its touch
-controls. `src/webApp.test.ts` holds the policy change, the icons and the service worker's answers. Not verified, and
-needing a real iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a
-service worker in Safari, and heat and memory over a long session.
+second load is cross-origin isolated and costs the host its build word, not the page (with the worker already
+running), a second build published over a link that goes quiet a megabyte into its page leaves the launch to the copy
+(the page loads again by itself, once, and the build before starts), over a link that goes quiet in the page's first
+bytes it is answered by the copy itself with no second load, the same build over a whole link is what the very next
+load runs (isolated, then kept by its own worker, the older copy dropped), and with the host stopped the city starts
+from the phone's copy of that build with its touch controls. `src/webApp.test.ts` holds the policy change, the icons,
+the registration at the page's load and the service worker's answers against a scripted host and a clock the test
+turns (every deadline, refusal, pace and query string, and a newer worker's install waiting for a launch's page);
+`src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
+iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a service worker in
+Safari on the copy and on a page streamed from the host, Safari ending a page whose download was given up so that it
+loads again, Safari's own look for a newer worker a second into a launch and its locks between two workers, and heat
+and memory over a long session. Not measured anywhere: what a launch from a worker the browser had stopped costs the
+host (Chrome's own request beside the worker's; the scenario runs such launches for what they show, not for what they
+download), the pace a real phone's link keeps, and a host's delivery network serving the build word of the build
+before.
 
 ## On NixOS
 
@@ -4442,7 +4490,9 @@ bar and no reload of their own, so the page carries its own way out.
   classic script in `index.html`'s head shows a card with Restart, adding what the city will need where the browser
   plainly lacks it (a secure address, iOS 26 on an older iPhone, in Safari or the home-screen app, WebGPU, which the
   Windows app gets from an updated WebView2; nothing of the kind under `?boot=tty`), and
-  `<noscript>` says how to turn JavaScript on.
+  `<noscript>` says how to turn JavaScript on. In the web copy, under its service worker, a page whose script never
+  ran (and that threw nothing) first loads again by itself, once a minute a tab at most: the worker ends a download it
+  gave up half way, and answers the second load from its copy (On an iPhone (the web app)); the card comes after that.
   The Files app only previews `dist/index.html` and runs no scripts: open the page's https address in Safari.
 
 What is verified: the classifier's words against real user agents (iOS 18 and 26 Safari, iOS Chrome, in-app

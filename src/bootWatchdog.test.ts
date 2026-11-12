@@ -158,6 +158,59 @@ test('a module that never ran: at load the card says so, with Restart focused an
   assert.equal(p.reloads, 1, 'Restart reloads the page')
 })
 
+test('under the web copy\'s worker a page whose script never ran loads again by itself, once a minute at most; then the card', () => {
+  /** A tab's session storage, as a browser gives it (or one that refuses, or forgets what it is told). */
+  const storage = (kept: Record<string, string> = {}, how: 'keeps' | 'refuses' | 'forgets' = 'keeps') => ({
+    kept,
+    getItem: (k: string) => { if (how === 'refuses') throw new Error('denied'); return kept[k] ?? null },
+    setItem: (k: string, v: string) => { if (how === 'refuses') throw new Error('denied'); if (how === 'keeps') kept[k] = v },
+  })
+  const KEY = 'civic-simulation:loaded-again'
+  const under = (session: unknown, nav: Record<string, unknown> = { serviceWorker: { controller: {} } }, fail?: unknown): Page => {
+    const p = new Page()
+    p.nav = nav
+    if (session) p.window.sessionStorage = session
+    p.run(watchdog(SOURCE))
+    if (fail) p.fire('error', fail)
+    p.fire('load')
+    return p
+  }
+  // The worker ended a download it gave up half way: the page's script never ran, and nothing threw.
+  const first = storage()
+  const once = under(first)
+  assert.equal(once.reloads, 1, 'the page loads again by itself')
+  assert.equal(once.card, undefined, 'with no card')
+  assert.ok(Math.abs(Number(first.kept[KEY]) - Date.now()) < 60_000, 'and the tab remembers when')
+  // The second load ends the same way within the minute: the card, with Restart.
+  const twice = under(storage({ [KEY]: String(Date.now() - 5_000) }))
+  assert.equal(twice.reloads, 0, 'not sent round again')
+  assert.deepEqual(twice.buttons().map((b) => b.text), ['Restart'])
+  // A minute on it is tried again, not sooner; a clock that went backwards does not hold it for ever.
+  assert.equal(under(storage({ [KEY]: String(Date.now() - 59_000) })).reloads, 0, 'still inside the minute: the card')
+  assert.equal(under(storage({ [KEY]: String(Date.now() - 61_000) })).reloads, 1, 'a minute later: once more')
+  assert.equal(under(storage({ [KEY]: String(Date.now() + 3_600_000) })).reloads, 1, 'a time from the future is not a hold')
+  // Never where nothing would stop a second time, where no worker answers the page, or where the page's script threw.
+  for (const [what, p] of [
+    ['a browser that keeps nothing for the page', under(storage({}, 'refuses'))],
+    ['a browser that forgets what it is told', under(storage({}, 'forgets'))],
+    ['a browser with no session storage', under(null)],
+    ['a page no worker answers', under(storage(), { serviceWorker: { controller: null } })],
+    ['a browser with no service workers', under(storage(), {})],
+    ['a script that threw', under(storage(), undefined, { error: { name: 'TypeError', message: 'x is not a function' } })],
+  ] as const) {
+    assert.equal(p.reloads, 0, `${what}: not loaded again`)
+    assert.ok(p.card, `${what}: the card`)
+  }
+  // A page that started is left alone.
+  const started = new Page()
+  started.nav = { serviceWorker: { controller: {} } }
+  started.window.sessionStorage = storage()
+  started.run(watchdog(SOURCE))
+  started.window.__bootDone = true
+  started.fire('load')
+  assert.equal(started.reloads, 0)
+})
+
 test('a SyntaxError or a throw while loading has its own words and its message; a page that started is left alone', () => {
   const old = new Page()
   old.run(watchdog(SOURCE))

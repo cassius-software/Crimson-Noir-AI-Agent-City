@@ -42,8 +42,10 @@
          would stay a black splash with nothing to press, and the installed iPhone app (full screen) and the Windows
          app have no reload of their own: at load, unless the module said it started (window.__bootDone, main.tsx), it
          draws a card with the reason and Restart (focused; Enter, a pad's A). main.tsx hands it React's uncaught
-         errors too (window.__bootFatal). Pinned by src/bootWatchdog.test.ts, which also keeps it before the module in
-         dist/index.html. -->
+         errors too (window.__bootFatal). Under the web copy's service worker a page whose script never ran is first
+         loaded again, once, by itself: the worker ends a download it gave up half way (tools/web/pwa.mjs pumped) and
+         answers the second load from its copy. Pinned by src/bootWatchdog.test.ts, which also keeps it before the
+         module in dist/index.html. -->
     <script id="boot-watchdog">
       (function () {
         var w = window, d = document, seen = [], shown = false
@@ -58,6 +60,21 @@
           return (m && m.getAttribute('content')) || 'The city'
         }
         function restart() { w.location.reload() }
+        // Whether the page was just sent to load again by itself: only where a service worker answers this page (it
+        // holds a copy to answer the second load from), and once a minute a tab at most (the card after that). A
+        // browser that keeps nothing for the page is never sent round: nothing would stop a second time.
+        function loadAgain() {
+          var key = 'civic-simulation:loaded-again', now = new Date().getTime(), at
+          try {
+            if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return false
+            at = +w.sessionStorage.getItem(key) || 0
+            if (at <= now && now - at < 60000) return false
+            w.sessionStorage.setItem(key, String(now))
+            if (w.sessionStorage.getItem(key) !== String(now)) return false
+          } catch (err) { return false }
+          restart()
+          return true
+        }
         function toConsole() {
           var q = w.location.search.replace(/^\?/, '').split('&'), out = ['boot=tty'], i
           for (i = 0; i < q.length; i++) if (q[i] && q[i].split('=')[0] !== 'boot') out.push(q[i])
@@ -135,6 +152,7 @@
             if (w.__bootDone) return
             var name = appName(), first = seen[0], update = 'If it happens again, update the browser (on an iPhone or iPad: Settings > General > Software Update).'
             var then = ['Restart to load it again.', update].concat(needs())
+            if (!first && loadAgain()) return
             if (!first) fatal(name + ' couldn’t start', ['The page did not finish downloading, or this browser did not run its script.'].concat(then), 'the page’s script never ran', false)
             else if (first.name === 'SyntaxError') fatal(name + ' couldn’t start', ['This browser could not read the page’s script: it is older than ' + name + ' needs, or the download was cut off.'].concat(then), 'SyntaxError: ' + first.message, false)
             else fatal(name + ' couldn’t start', ['The page stopped while it was loading.'].concat(then), (first.name ? first.name + ': ' : '') + first.message, false)

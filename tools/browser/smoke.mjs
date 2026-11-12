@@ -81,8 +81,12 @@
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
- *   installed, the second load cross-origin isolated by the worker, a model file kept from the Menu on that second
- *   visit, and the city started from the phone's copy with the host gone, the kept model still answering;
+ *   installed, the second load cross-origin isolated by the worker and costing the host only its build word, a model
+ *   file kept from the Menu on that second visit, a second build published: first over a link that goes quiet a
+ *   megabyte into its page (the page loads again by itself, once, and the copy answers) and one that goes quiet in
+ *   its first bytes (the copy takes that very answer over), then over a whole link, run by the very next load
+ *   (isolated, then kept by its own worker, the older copy dropped), and the city started from the phone's copy of
+ *   that build with the host gone, the kept model still answering;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
  *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
  *   sizes and the walk's card stepping aside for it under 960 px;
@@ -154,7 +158,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Browser, findChrome, loopbackOnly, SOFTWARE_WEBGPU, watchTargets } from './cdp.mjs'
 import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
 import { parseShard, shardOf } from './shard.mjs'
-import { APP_NAME, build as buildWeb, ICONS } from '../web/pwa.mjs'
+import { APP_NAME, build as buildWeb, CACHED, ICONS } from '../web/pwa.mjs'
 import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
 
@@ -573,15 +577,40 @@ const turn = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a))
 
 /** Serves a folder the way a static host such as GitHub Pages does: its files by name, the folder's index, and no isolation headers. */
 async function serveStatic(dir) {
-  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png' }
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8' }
   const files = new Set(readdirSync(dir))
+  /** How often each file was sent, by name, and when each request came, as it was asked (seconds since the host started). */
+  const sent = new Map()
+  const began = Date.now()
+  const asked = []
+  // A file whose answers stop after so many bytes, the connection left open (a link that goes quiet in the middle of
+  // a download), until flow() lets the host answer whole again and drops the answers it left hanging.
+  let stalled = null
+  const hanging = new Set()
   const server = createServer((req, res) => {
     const name = new URL(req.url ?? '/', 'http://x').pathname.slice(1) || 'index.html'
     if (!files.has(name)) { res.writeHead(404).end(); return }
-    res.writeHead(200, { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' }).end(readFileSync(join(dir, name)))
+    sent.set(name, (sent.get(name) ?? 0) + 1)
+    asked.push(`${req.url}${stalled && stalled.name === name ? ' (stalled)' : ''} at ${((Date.now() - began) / 1000).toFixed(1)} s`)
+    const head = { 'Content-Type': TYPES[extname(name)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' }
+    if (stalled && stalled.name === name) {
+      res.writeHead(200, head)
+      res.write(readFileSync(join(dir, name)).subarray(0, stalled.bytes))
+      hanging.add(res)
+      res.on('close', () => hanging.delete(res))
+      return
+    }
+    res.writeHead(200, head).end(readFileSync(join(dir, name)))
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
-  return { origin: `http://127.0.0.1:${server.address().port}`, close: () => { server.closeAllConnections(); server.close() } }
+  return {
+    origin: `http://127.0.0.1:${server.address().port}`,
+    sent: (name) => sent.get(name) ?? 0,
+    asked: () => [...asked],
+    stall: (name, bytes) => { stalled = { name, bytes } },
+    flow: () => { stalled = null; for (const res of hanging) res.destroy(); hanging.clear() },
+    close: () => { server.closeAllConnections(); server.close() },
+  }
 }
 
 /**
@@ -1643,8 +1672,10 @@ const SCENARIOS = {
    */
   async pwa(chrome) {
     const dir = mkdtempSync(join(tmpdir(), 'agent-city-web-'))
-    buildWeb({ out: dir })
+    const first = buildWeb({ out: dir })
     const site = await serveStatic(dir)
+    /** The build the page on screen says it is (the meta pwa.mjs stamps it with). */
+    const BUILD_OF_PAGE = `(document.querySelector('meta[name="agent-city-build"]') || {}).content || ''`
     const p = await open(chrome, { mobile: true })
     try {
       const url = `${site.origin}/?${LIGHT}`
@@ -1657,19 +1688,84 @@ const SCENARIOS = {
       check(icons.every((t) => t === 'image/png'), 'pwa: the home-screen icons load', icons.join(', '))
       const active = await p.waitFor(`Promise.race([navigator.serviceWorker.ready.then((r) => r.active && r.active.state === 'activated'), new Promise((r) => setTimeout(() => r(false), 2000))])`, 120_000).then(() => true, () => false)
       check(active, 'pwa: the service worker installs and activates')
+      const pagesSent = site.sent('index.html'), wordsSent = site.sent('build.txt')
       await reload(p, url)
       const iso = await p.eval(`!!navigator.serviceWorker.controller && globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function'`)
       check(iso, 'pwa: from the second load the worker serves the page, isolated (the shared-memory bridge)')
+      check(site.sent('index.html') === pagesSent && site.sent('build.txt') === wordsSent + 1 && (await p.eval(BUILD_OF_PAGE)) === first.build,
+        'pwa: the same build again costs the host one small file (its build word), not the page', `page sent ${site.sent('index.html') - pagesSent} more time(s), build.txt ${site.sent('build.txt') - wordsSent}`)
       // The second visit keeps the model file (from the Menu, as on a phone).
       const pick = await menuPick(p)
       check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'pwa: the second visit keeps a model file from Menu › Model file',
         `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
+      // A second build is published (the same page with a comment after it: another build word). Over a whole link
+      // the next load runs it, from the host, isolated, under the worker that still holds the build before; the new
+      // build's own worker then keeps it and drops the older copy.
+      const next = mkdtempSync(join(tmpdir(), 'agent-city-next-'))
+      let second
+      try {
+        writeFileSync(join(next, 'index.html'), `${readFileSync(DIST, 'utf8')}\n<!-- smoke: a second build -->\n`)
+        second = buildWeb({ from: next, out: dir })
+      } finally { rmSync(next, { recursive: true, force: true }) }
+      // First on a link that goes quiet a megabyte into the new page: past the opening the worker holds back, so part
+      // of the host's page has been handed on. The worker gives it up and ends it where it stopped; the page's own
+      // watchdog, finding at load that its script never ran under a worker, loads the page again, once; the copy
+      // answers that, and the launch starts the build before by itself, with no card to press. (The new build's own
+      // worker, installing behind, hangs on the same quiet link and keeps nothing.)
+      const LOADED_AGAIN = `sessionStorage.getItem('civic-simulation:loaded-again')`
+      const state = `({ build: ${BUILD_OF_PAGE}, isolated: globalThis.crossOriginIsolated === true, card: !!document.querySelector('[data-failure]'), again: ${LOADED_AGAIN} })`
+      /**
+       * Whether the worker itself asked the host for the page: its word, then the page at its fixed address, before
+       * the site's worker is looked at again. The browser's own request for the address that was opened (Chrome sends
+       * one beside the worker's answer) carries that address's query string, and is not counted.
+       */
+      const workerAsked = (since) => {
+        const word = since.findIndex((a) => a.startsWith('/build.txt'))
+        const page = since.findIndex((a, i) => i > word && a.startsWith('/index.html (stalled)'))
+        const sw = since.findIndex((a) => a.startsWith('/sw.js'))
+        return word >= 0 && page > word && (sw < 0 || page < sw)
+      }
+      site.stall('index.html', 1_000_000)
+      await p.eval(`sessionStorage.removeItem('civic-simulation:loaded-again')`)
+      let from = site.asked().length
+      await reload(p, url)
+      const fell = await p.eval(state)
+      const copies = await p.eval(`caches.open(${JSON.stringify(first.cache)}).then((c) => c.keys()).then((k) => k.length)`)
+      let since = site.asked().slice(from)
+      check(workerAsked(since) && fell.again !== null && fell.build === first.build && fell.isolated && !fell.card && copies === CACHED.length,
+        'pwa: a new build whose download goes quiet a megabyte in leaves the launch to the copy: the page loads again by itself, once, and the build before starts, isolated, its copy whole',
+        `the page says ${fell.build} (the copy is ${first.build}), isolated=${fell.isolated}, card=${fell.card}, loaded again=${fell.again !== null}, ${copies} file(s) in the copy; the host was asked: ${since.join(', ')}`)
+      // The same link going quiet inside the page's opening, which the worker holds back: nothing of the host's page
+      // was handed on, so the copy's body takes that very answer over and the build before starts with no second
+      // load. The worker holds a page it gave up against the host for five minutes of its own life, so the browser is
+      // told to stop it first, as it does by itself once the worker has had nothing to answer for a while.
+      await p.b.send('ServiceWorker.enable').catch(() => {})
+      await p.b.send('ServiceWorker.stopAllWorkers')
+      site.stall('index.html', 2_000)
+      await p.eval(`sessionStorage.removeItem('civic-simulation:loaded-again')`)
+      from = site.asked().length
+      await reload(p, url)
+      const took = await p.eval(state)
+      since = site.asked().slice(from)
+      check(workerAsked(since) && took.again === null && took.build === first.build && took.isolated && !took.card,
+        'pwa: a new build whose download goes quiet in its first bytes is answered by the copy itself: the build before starts, isolated, with no second load',
+        `the page says ${took.build} (the copy is ${first.build}), isolated=${took.isolated}, card=${took.card}, loaded again=${took.again !== null}; the host was asked: ${since.join(', ')}`)
+      // The link is whole again, and the worker is stopped again so that it asks the host.
+      site.flow()
+      await p.b.send('ServiceWorker.stopAllWorkers')
+      await reload(p, url)
+      const ran2 = await p.eval(`({ build: ${BUILD_OF_PAGE}, isolated: globalThis.crossOriginIsolated === true })`)
+      check(second.build !== first.build && ran2.build === second.build && ran2.isolated, 'pwa: a newly published build is what the next load runs, isolated, with no second reload',
+        `published ${second.build} after ${first.build}; the page says ${ran2.build}, isolated=${ran2.isolated}`)
+      const kept = await p.waitFor(`caches.keys().then((k) => k.length === 1 && k[0] === ${JSON.stringify(second.cache)})`, 120_000).then(() => true, () => false)
+      check(kept, 'pwa: the new build\'s worker keeps it and drops the copy before', kept ? '' : JSON.stringify(await p.eval('caches.keys()').catch(() => null)))
       site.close()
       await reload(p, url)
       const s = await p.snap()
       const f0 = s.crowdFrames
       const ran = await p.waitFor(`window.__SIM__.snapshot().process.crowdFrames > ${f0 + 2}`, 60_000).then(() => true, () => false)
-      check(ran && s.touch, 'pwa: with the host gone the city starts from the offline copy, touch controls up', `touch=${s.touch}`)
+      const off = await p.eval(`({ build: ${BUILD_OF_PAGE}, isolated: globalThis.crossOriginIsolated === true })`)
+      check(ran && s.touch && off.build === second.build && off.isolated, 'pwa: with the host gone the city starts from the offline copy of the new build, isolated, touch controls up', `touch=${s.touch}, build ${off.build}, isolated=${off.isolated}`)
       // With the host gone the model kept on the second visit still answers: the runtime is in the page, the file in its storage.
       check(await menuConsole(p), 'pwa: the Menu opens the console offline')
       await p.command('operator unlock', /unlocked/)
