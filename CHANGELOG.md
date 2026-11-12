@@ -1859,6 +1859,43 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **A newly published build of the web copy is what the next launch runs.** The service worker answered every launch
+  from its copy and fetched a new build in the background, so the build a phone ran was always one launch behind the
+  host (two reloads after every publish), and a copy that could not start had to stay alive through a 7 MB download
+  before it could be replaced. Now the host decides and the copy delivers (`tools/web/pwa.mjs` `worker`): on a page load
+  the worker asks the host for `build.txt` (new: the published build's cache name, some forty bytes, never kept and
+  never from the browser's cache) with a two-second deadline; the same name, no answer in time, an offline phone or
+  anything else, and the copy answers as before; another name, and the page is streamed from the host's fixed
+  `index.html` (not the address that was opened, so no query string is a download of its own), isolated like the copy,
+  while the new build's own worker keeps it in the background, after the launch's own download: the worker handing the
+  page on holds a named lock until that page is over, and a newer worker's install waits for it, half a minute at most
+  (Safari starts that install a second into the launch, and two downloads side by side would halve what the pace rule
+  sees of the link; on a first visit the page now registers its worker at its load event, for the same reason). A launch
+  is not left to a bad link: the host's page must begin within four seconds, and one that then brings nothing for more
+  than five seconds, breaks, or averages under 600 kB a second after its first four is given up, and the launch starts
+  from the copy. The worker holds back the page's first 32 kB (they carry the page's watchdog; the builder refuses a
+  page where they do not): given up before they have come, the copy's body takes that very answer over, with no second
+  load; given up later, the page ends cleanly where it stopped (an errored or open body would leave a splash with
+  nothing to press) and the page's watchdog (`index.html`), finding at load that its script never ran under a worker,
+  loads the page again, once a minute a tab at most, which the copy answers; the card with Restart only after that. The
+  worker then leaves the host alone for up to five minutes of its own life. A page that keeps its pace is never cut;
+  with no copy there is no deadline either, the host's page is waited for and nothing is given up. Install now asks the
+  host past the browser's HTTP cache and keeps a build only when the page carries that build's stamp, so a deploy caught
+  half way cannot file the older page under the new name; it reads the small files whole before it asks for the page,
+  because a browser lets a worker hold only a few answers whose bodies nobody is reading (an install that waited on all
+  five headers first never finished in Chrome, which the browser run caught). The build word covers what is published
+  (the page as published, the manifest, the icons, the worker's own text), so a changed icon or worker is a new build
+  with a cache of its own. No request the worker answers writes a cache. `webApp.test.ts` runs the worker against a
+  scripted host that holds back a fourth unread answer as Chrome does, and a clock the test turns (every refusal,
+  deadline, pace and query string; sixty-four deliberate breakages of the worker and the builder each fail a test), and
+  `bootWatchdog.test.ts` the page's one load again; CI's `pwa` scenario publishes a second build into the served folder,
+  first over a link that goes quiet a megabyte into the page (the page loads again by itself and the copy starts), then
+  over one that goes quiet in the page's first bytes (the copy answers that very load), then whole: it runs on the very
+  next load, isolated, is kept by its own worker with the older copy dropped, and starts offline. A phone holding the
+  worker from before needs one launch online to get this one. On GitHub Pages a new build's name can take up to ten
+  minutes to reach a phone (the host's delivery network). Not verified on a real iPhone (Safari streaming the host's
+  page through a worker, ending one it gave up so that the page loads again, and its locks between two workers). Manual:
+  On an iPhone (the web app).
 - **Standing still, both legs.** In a shop's mirror the player's own body showed one leg: the other had swung half a
   turn up through the hip and into the trunk. Anyone standing still has a stride of nothing, so the walk's leg solve
   (`src/03_Spawn_Agents/crowdBody.ts` `bodyLeg`) got the foot's distance ahead as a zero of either sign, and took the
