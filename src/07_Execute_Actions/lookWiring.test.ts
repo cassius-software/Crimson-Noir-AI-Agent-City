@@ -162,7 +162,8 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.ok(crowd.indexOf('  monk: hex(') === crowd.indexOf('  skin: hex(') + crowd.slice(crowd.indexOf('  skin: hex(')).indexOf('\n') + 1, 'monk is the very next palette after skin')
   assert.match(fragment, /const outfit = WARDROBE\.outfits\[variant\]/, 'this body\'s cloths, from the same catalogue')
   // The tie, the bag, the hose and the iris stay hashed (the words have no room for them).
-  assert.match(fragment, /const accent = variant === 0 \? pick\(PALETTE\.ties, h\(5\)\) : shirt/)
+  assert.match(fragment, /const tieCloth = variant === 0 \? pick\(PALETTE\.ties, h\(5\)\) : shirt/)
+  assert.match(fragment, /let accent: V3 = tieCloth\n/, 'the tie in its hashed cloth, its style painted over it')
   assert.match(fragment, /pick\(PALETTE\.bags, h\(12\)\)/)
   assert.ok(fragment.includes('const hose = mix(inked ? inked.xyz : wornSkin, vec3(0.08, 0.07, 0.07), veil)'), 'the hose, the sock and a flat\'s glimpse of either: the skin (inked where it shows) under one veil')
   assert.ok(fragment.includes('const veil = select(legCover.equal(uint(LEGWEAR.hashed)), step(0.55, h(11)), '), 'legs as hashed: one link, as before')
@@ -181,13 +182,21 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
     'const watch = near ? select(custom, gene(LOOK_FIELD.watch), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSmart), uint(WATCH.smartwatch),\n      select(watchLink.greaterThanEqual(LOOK_ODDS.watchLeather), uint(WATCH.leather), select(watchLink.greaterThanEqual(LOOK_ODDS.watchSteel), uint(WATCH.steel), uint(WATCH.none))))).toVar()',
     'const pinLink = near ? h(LOOK_HASHED_COLOUR.lapelPin) : float(0)',
     'const lapelPin = near ? select(custom, gene(LOOK_FIELD.lapelPin), select(pinLink.greaterThanEqual(LOOK_ODDS.pinFlower), uint(LAPEL_PIN.flower),\n      select(pinLink.greaterThanEqual(LOOK_ODDS.pinBar), uint(LAPEL_PIN.bar), uint(LAPEL_PIN.none)))).toVar()',
+    'const shoeFinish = near ? select(custom, gene(LOOK_FIELD.shoeFinish), select(h(LOOK_HASHED_COLOUR.shoeFinish).greaterThanEqual(LOOK_ODDS.shoeFinish),\n      uint(SHOE_FINISH_STREET_PACKED[variant]).shiftRight(uint(h(LOOK_HASHED_COLOUR.shoeFinishPick).mul(4 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))).toVar()',
+    'const tieStyle = near && variant === 0 ? select(custom, gene(LOOK_FIELD.tieStyle), select(h(LOOK_HASHED_COLOUR.tieStyle).greaterThanEqual(LOOK_ODDS.tieStyle),\n      uint(h(LOOK_HASHED_COLOUR.tieStylePick).mul(WARDROBE.tieStyle.length - 1 - 0.001)).add(uint(1)), uint(0))).toVar()',
+    'const bagStyle = near ? select(custom, gene(LOOK_FIELD.bagStyle), select(h(LOOK_HASHED_COLOUR.bagStyle).greaterThanEqual(LOOK_ODDS.bagStyle),\n      uint(BAG_STREET_PACKED).shiftRight(uint(h(LOOK_HASHED_COLOUR.bagStylePick).mul(8 - 0.001)).mul(uint(4))).bitAnd(uint(15)), uint(0))).toVar()',
   ]) assert.ok(fragment.includes(decode), decode)
+  // Only the suit has a tie (humanoid.ts tieTube): the other bodies read no style and pay for no tie paint.
+  assert.ok(fragment.includes('if (near && variant === 0) {\n      const tieIs = '), 'the tie\'s paint is the near suit\'s alone')
   const decodes = between(fragment, 'const watchLink = ', '// A boot\'s shaft')
   assert.ok(!decodes.includes('WATCH.tourbillon') && !decodes.includes('LAPEL_PIN.rank'), 'the street never draws the tourbillon or the rank pin: the shop sells them')
   assert.match(fragment, /const streetFootwear = uint\(FOOTWEAR_STREET_PACKED\[variant\]\)\.shiftRight\(uint\(h\(LOOK_HASHED_COLOUR\.footwearPick\)\.mul\(8 - 0\.001\)\)\.mul\(uint\(4\)\)\)\.bitAnd\(uint\(15\)\)/, 'one of the body\'s eight street styles')
   // The shoe's style is painted over its colour, the shaft of a boot over the bare leg, the pin over the jacket's cloth
   // (one of the cut's marks, so the weave keeps off it), the watch over the left hand; frame 0 is the old black.
-  assert.match(fragment, /shoes = footwearPaint\(shoeCloth, footwear, hose, footprint, near\)/)
+  assert.match(fragment, /shoes = footwearPaint\(finishedShoe, footwear, hose, footprint, near\)/, 'the shoe\'s style over its colour in its finish')
+  assert.ok(fragment.includes('const finishedShoe = near ? shoeCloth.mul(byShoeFinish(SHOE_FINISH_SHADE)).toVar() as unknown as V3 : shoeCloth'), 'the far body\'s shoe as before')
+  assert.ok(fragment.includes('const prop = select(rig.z.greaterThan(PIECE.CUP - 0.5), vec3(0.93, 0.92, 0.9), bag)'), 'a cup keeps its white; the bag takes its style')
+  assert.ok(fragment.includes("roughOf[SLOT.PROP] = select(rig.z.greaterThan(PIECE.CUP - 0.5), float(rough[SLOT.PROP]), bagRough)"), 'the bag\'s sheen, the cup\'s as before')
   assert.match(fragment, /select\(pinHere, pinColour, stitched\)\)\)\)\)\)\)/, 'the pin innermost in the jacket')
   assert.match(fragment, /const cutMarks = [^\n]*\.or\(pinHere\)/, 'the pin is one of the cut\'s marks')
   assert.match(fragment, /watchHere = watch\.notEqual\(uint\(WATCH\.none\)\)\.and\(slotIs\(SLOT\.SKIN\)\)\.and\(boneIs\(BONE\.HAND_R\)\)/, 'the watch on the person\'s own left wrist')
@@ -255,7 +264,7 @@ test('crowd.ts: the near body inks its skin (crowdTattoo.ts) from genome words 7
   assert.ok(lit.includes('const gold = select(inkNo.equal(uint(TATTOO_INK.goldLeaf)), inkShown, float(0))'))
   assert.ok(lit.includes('m.roughnessNode = mix(m.roughnessNode as F1, float(0.32), gold)') && lit.includes('m.metalnessNode = mix(m.metalnessNode as F1, float(0.7), gold)'), 'gold leaf\'s sheen')
   assert.ok(lit.includes('m.emissiveNode = vec3(0.33, 0.57, 0.48).mul(select(inkNo.equal(uint(TATTOO_INK.luminescent)), inkShown, float(0))).mul(float(1).sub(vDissolve))'), 'luminescent\'s glow, gone with the body')
-  before(fragment, 'm.metalnessNode = select(chrome, float(0.85), float(0))', 'if (inkShown) {', 'after the sheen')
+  before(fragment, 'm.metalnessNode = select(chrome, float(0.85), near ? select(onCase, float(0.8), float(0)) : float(0))', 'if (inkShown) {', 'after the sheen')
   before(fragment, 'if (inkShown) {', 'applyMatrixMode(m, ', 'before the rain mode dims the emissive')
   // Built: the near bodies' colour reaches the tattoo function, the far bodies' never does.
   const code = (tattoo as unknown as { code: string }).code
@@ -283,7 +292,7 @@ test('crowd.ts: rolled sleeves (the look\'s, or a passer-by\'s whose designs rea
   before(fragment, 'const skinSlot = ', 'const marked = skinMarks(', 'before the skin is marked')
   // Every paint of the skin reads the skin's slot there: the marks, the ink, the colour and the roughness picked by slot.
   assert.match(fragment, /const marked = skinMarks\(toned, vitiligo, freckles, rig, vec3\([^\n]*\), skinSlot, near\)/)
-  assert.ok(fragment.includes('color = select(skinSlot.lessThan(s + 0.5), slots[s], color)') && fragment.includes('roughness = select(skinSlot.lessThan(s + 0.5), float(rough[s]), roughness)'))
+  assert.ok(fragment.includes('color = select(skinSlot.lessThan(s + 0.5), slots[s], color)') && fragment.includes('roughness = select(skinSlot.lessThan(s + 0.5), roughOf[s], roughness)'))
   assert.ok(!/select\(slot\.lessThan\(s \+ 0\.5\)/.test(fragment), 'no pick by the bare slot is left')
   assert.ok(fragment.includes('const outer = slotIs(SLOT.TOP).and(layer.notEqual(uint(LAYER.shirt))).and(bareArm.not())'), 'no cloth\'s sheen on the bared skin')
   assert.ok(fragment.includes(': []), skinSlot, veil, wornSkin, '), 'declared with the shared values, before the skin and any branch read it (the legs\' veil too)')
@@ -474,7 +483,7 @@ test('the card\'s Tattoos section: headed where the left hand\'s row was, the zo
   assert.doesNotMatch(card, /calves|thigh|knee tattoo/i, 'one calf, one ankle: no zone the wardrobe lacks')
   // The outline's skirt-suit legs follow the legwear (the neutral as hashed, as before).
   assert.ok(card.includes("out[SLOT.LEGWEAR] = look.body !== 3 ? out[SLOT.BOTTOM] : look.legwear === LEGWEAR.bare ? out[SLOT.SKIN] : look.legwear === LEGWEAR.sheer ? sheer(LEGWEAR_VEIL) : hose"))
-  assert.ok(card.includes('shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.'))
+  assert.ok(card.includes('shoe styles and finishes, the tie\'s and the bag\'s styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.'))
 })
 
 test('lookStore: its own key, a look within the wardrobe round-trips as a v5 record, a v4 record (thirty-two slots) reads as it is, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {

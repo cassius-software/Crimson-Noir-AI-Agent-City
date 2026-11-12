@@ -102,13 +102,16 @@ function slotLabel(slot: LookSlot, body: LookBody, layer: number = LAYER.jacket)
     case 'shirt': return body >= 2 ? 'Blouse' : 'Shirt'
     case 'footwear': return 'Shoe style'
     case 'shoes': return 'Shoe colour'
+    case 'shoeFinish': return 'Shoe finish'
     case 'tie': return 'Tie'
+    case 'tieStyle': return 'Tie style'
     case 'scarf': return 'Scarf'
     case 'lapelPin': return 'Lapel pin'
     case 'eyewear': return 'Glasses'
     case 'frames': return 'Frames'
     case 'watch': return 'Watch'
     case 'bag': return 'Bag'
+    case 'bagStyle': return 'Bag style'
     case 'cup': return 'Cup'
     // The tattoo zones by the person's own side (tattoo.ts TATTOO_ZONES' labels), and the one ink of them all.
     case 'tattooHand': return 'Left hand'
@@ -265,7 +268,7 @@ function Silhouette({ look, t }: { look: Look; t: Theme }) {
         <span className={`text-[10px] font-semibold tracking-wider uppercase ${t.muted}`}>Side</span>
       </div>
       <p className={`max-w-[14rem] pb-4 text-[11px] leading-snug ${t.muted}`}>
-        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
+        {`${shape.height.toFixed(2)} m, standing. The same rings the city draws; the tie, the bag and hose as hashed keep the street's own colours; shoe styles and finishes, the tie's and the bag's styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.`}
       </p>
     </div>
   )
@@ -512,6 +515,9 @@ function LookEditor({ worn, seed, onChange, t }: { worn: Look; seed: number; onC
           if (worn.layer === LAYER.shirt && (slot === 'cut' || slot === 'top' || slot === 'topWeave' || slot === 'trim' || slot === 'lapelPin')) return null
           // The frames are the glasses' finish: without glasses there is nothing to finish.
           if (slot === 'frames' && worn.eyewear === 0) return null
+          // A style is the tie's or the bag's: without one there is nothing to style, and only the suit wears a tie.
+          if (slot === 'tieStyle' && (worn.tie === 0 || worn.body !== 0)) return null
+          if (slot === 'bagStyle' && worn.bag === 0) return null
           // A coat keeps its sleeves down (its own piece covers the arm), so under a coat there are no sleeves to roll.
           if (slot === 'sleeves' && worn.layer === LAYER.coat) return null
           // The legs show on the skirt suit and below cropped trousers and culottes; full-length trousers hide them.
