@@ -1425,7 +1425,7 @@ const HANDLERS: Record<Name, Handler> = {
       const n = Number(args[1])
       if (args.length !== 2 || args[1].trim() === '' || !Number.isInteger(n) || n < 1) return fail('usage: feature person <n> (person 1 or above; 0 is your own body)')
       const card = f.person(n)
-      return card ? { lines: card.map(out) } : fail(`feature: nothing measured of person ${n} (no such person, or the crowd has sent no frame yet)`)
+      return card ? { lines: card.map(out) } : fail(`feature: nothing measured of person ${n} (no such person, or no crowd has been read: none sent yet, or none in this map)`)
     }
     if (a === 'people') {
       if (args.length > 1) return fail(usage('feature'))

@@ -58,7 +58,7 @@ function frameOf(people: readonly { x: number; z: number; speed?: number; activi
 }
 
 test('the dictionary: ten ids in order, thresholds in (0, 1), one lane per activity the crowd kernel names except the routine walk, frozen', () => {
-  assert.deepEqual(IDS, ['STUCK', 'CROWDED', 'YIELDING', 'WAITING', 'CROSSING', 'SUMMONED', 'TALKING', 'WORKING', 'COMMUTING', 'PACE'])
+  assert.deepEqual(IDS, ['STUCK', 'CROWDED', 'YIELDING', 'WAITING', 'CROSSING', 'SUMMONED', 'ARRIVED', 'WORKING', 'COMMUTING', 'PACE'])
   for (const f of PERSON_FEATURES) {
     assert.match(f.id, /^[A-Z][A-Z_]*$/)
     assert.ok(f.theta > 0 && f.theta < 1, f.id)
@@ -86,7 +86,10 @@ test('the formulas, by hand', () => {
   assert.equal(read('YIELDING', { activity: ACTIVITY.waiting }), 0)
   assert.equal(read('WORKING', { activity: ACTIVITY.working }), 1)
   assert.equal(read('SUMMONED', { activity: ACTIVITY.coming }), 1)
-  assert.equal(read('TALKING', { activity: ACTIVITY.interviewing }), 1)
+  assert.equal(read('ARRIVED', { activity: ACTIVITY.interviewing }), 1)
+  for (const activity of [ACTIVITY.waiting, ACTIVITY.working, ACTIVITY.interviewing]) {
+    assert.equal(read('STUCK', { activity, spin: 3 * STUCK_FULL_M }), 0, `STUCK reads 0 while the activity is standing (${activity})`)
+  }
   assert.equal(read('COMMUTING', { activity: ACTIVITY.commuting }), 1)
   assert.equal(read('CROSSING', { activity: ACTIVITY.crossing }), 1)
   assert.equal(read('WAITING', { activity: -1 }), 0, 'no activity known reads no activity')
@@ -114,7 +117,7 @@ test('observe: a frame that is not one is refused and nothing is kept', () => {
   assert.equal(p.observe(new Float32Array(24), 2, Number.NaN), false, 'no clock')
   assert.equal(p.agents, 0)
   assert.equal(p.view(1), null)
-  assert.deepEqual(p.crowdLines(), ['people: no reading yet (the crowd has sent no frame)'])
+  assert.deepEqual(p.crowdLines(), ['people: no reading (no crowd has been read: none sent yet, or none in this map)'])
   assert.equal(p.crowd(), null)
 })
 
@@ -142,7 +145,7 @@ test('STUCK: stepping on the spot accrues the metres stepped; a metre of progres
   assert.equal(personActivations(p.view(1)!)[lane('STUCK')], 1)
 })
 
-test('STUCK is never read while standing is the activity: waiting at the kerb, working at a station, talking with the operator', () => {
+test('STUCK is never read while standing is the activity: waiting at the kerb, working at a station, standing where the operator called them', () => {
   for (const activity of [ACTIVITY.waiting, ACTIVITY.working, ACTIVITY.interviewing]) {
     const p = new PersonReadings()
     for (let t = 0; t < 40; t++) p.observe(frameOf([{ x: 0, z: 0 }, { x: 0.1 * Math.sin(t), z: 0, speed: 1.2, activity }]), 2, t * 0.25)
@@ -151,6 +154,16 @@ test('STUCK is never read while standing is the activity: waiting at the kerb, w
   const walker = new PersonReadings()
   for (let t = 0; t < 40; t++) walker.observe(frameOf([{ x: 0, z: 0 }, { x: 0.1 * Math.sin(t), z: 0, speed: 1.2 }]), 2, t * 0.25)
   assert.ok(walker.view(1)!.spin > STUCK_FULL_M, 'the same steps on the routine walk read STUCK')
+  // Stuck on the walk, then standing: STUCK reads 0 from the first frame of it, not a few seconds later.
+  for (const activity of [ACTIVITY.waiting, ACTIVITY.working, ACTIVITY.interviewing]) {
+    const p = new PersonReadings()
+    for (let t = 0; t < 48; t++) p.observe(frameOf([{ x: 0, z: 0 }, { x: 0.1 * Math.sin(t), z: 0, speed: 1.4 }]), 2, t * 0.25)
+    assert.equal(personActivations(p.view(1)!)[lane('STUCK')], 1, `stuck before ${activity}`)
+    p.observe(frameOf([{ x: 0, z: 0 }, { x: 0, z: 0, activity }]), 2, 12)
+    assert.equal(p.view(1)!.spin, 0, `the count starts again (${activity})`)
+    assert.equal(personActivations(p.view(1)!)[lane('STUCK')], 0, String(activity))
+    assert.ok(!/not getting anywhere/.test(p.sentence(1)!), p.sentence(1)!)
+  }
 })
 
 test('a new crowd size, or a clock that went back, starts every person afresh', () => {
@@ -177,14 +190,14 @@ test('what someone was called away from: kept from the frame they were called in
   assert.equal(p.view(1)!.before, ACTIVITY.working)
   p.observe(doing(ACTIVITY.interviewing), 2, 0.5)
   assert.equal(p.view(1)!.before, ACTIVITY.working, 'coming over, then talking: still what they left')
-  assert.equal(p.sentence(1), 'Talking with the player; before being called over, working at a station indoors.')
+  assert.equal(p.sentence(1), 'Standing by for the player; before being called over, working at a station indoors.')
   p.observe(doing(ACTIVITY.routine), 2, 0.75)
   assert.equal(p.view(1)!.before, -1, 'let go')
   // Called in the very first frame: what came before is not known, and nothing is made up.
   const q = new PersonReadings()
   q.observe(doing(ACTIVITY.coming), 2, 0)
   assert.equal(q.view(1)!.before, -1)
-  assert.equal(q.sentence(1), 'Coming over to the player.')
+  assert.equal(q.sentence(1), "Answering the player's call.")
   // A code the page does not know (a newer kernel's, or not a whole number) is no activity, and says nothing.
   for (const code of [8, 2.5, Number.NaN, -3]) {
     const r = new PersonReadings()
@@ -192,6 +205,30 @@ test('what someone was called away from: kept from the frame they were called in
     assert.equal(r.view(1)!.activity, -1, String(code))
     assert.equal(r.sentence(1), null, String(code))
   }
+})
+
+test('a car\'s step back while called over is part of the summons: it keeps what they were called away from, and only being let go clears it', () => {
+  const p = new PersonReadings()
+  const doing = (activity: number) => frameOf([{ x: 0, z: 0 }, { x: 3, z: 3, activity }])
+  const steps = [ACTIVITY.working, ACTIVITY.coming, ACTIVITY.steppingBack, ACTIVITY.coming, ACTIVITY.interviewing, ACTIVITY.steppingBack, ACTIVITY.interviewing]
+  steps.forEach((activity, k) => p.observe(doing(activity), 2, k * 0.25))
+  assert.equal(p.view(1)!.before, ACTIVITY.working, 'not the step back')
+  assert.equal(p.sentence(1), 'Standing by for the player; before being called over, working at a station indoors.')
+  p.observe(doing(ACTIVITY.routine), 2, 2)
+  assert.equal(p.view(1)!.before, -1, 'let go')
+  // Stepping back from a car while nobody has called them is what they were doing when they are called.
+  p.observe(doing(ACTIVITY.steppingBack), 2, 2.25)
+  p.observe(doing(ACTIVITY.coming), 2, 2.5)
+  assert.equal(p.view(1)!.before, ACTIVITY.steppingBack)
+  // Let go straight into a step back: that is not a summons, and the next call keeps what came just before it.
+  p.observe(doing(ACTIVITY.routine), 2, 2.75)
+  p.observe(doing(ACTIVITY.crossing), 2, 3)
+  p.observe(doing(ACTIVITY.coming), 2, 3.25)
+  assert.equal(p.view(1)!.before, ACTIVITY.crossing)
+  // Called in the very first frame, then a step back: still nothing made up.
+  const q = new PersonReadings()
+  for (const [k, activity] of [ACTIVITY.coming, ACTIVITY.steppingBack, ACTIVITY.coming].entries()) q.observe(doing(activity), 2, k * 0.25)
+  assert.equal(q.view(1)!.before, -1)
 })
 
 test('view: the player\'s own body, a stranger and a place that is not a number are nobody', () => {
@@ -260,7 +297,7 @@ test('the sentence and the rows: what they are doing, then stuck and crowded whe
     'PACE                  [#####.....]  0.47',
     'CROWDED               [####......]  0.38',
   ])
-  assert.deepEqual(p.lines(3)![0], 'person 3: Coming over to the player; before being called over, working at a station indoors; 3 people within 2.5 m.')
+  assert.deepEqual(p.lines(3)![0], "person 3: Answering the player's call; before being called over, working at a station indoors; 3 people within 2.5 m.")
   const rows = p.crowdLines()
   assert.equal(rows[0], 'people: 6 measured (person 0 is your own body)')
   assert.equal(rows.length, 1 + PERSON_FEATURES.length)
@@ -302,6 +339,8 @@ test('the engine: the readings are read from the crowd frame beside the position
   assert.match(engine, /^ {2}private readonly people = new PersonReadings\(\)$/m)
   const copy = engine.slice(engine.indexOf('if (s.crowdFrame && now - this.crowdCopiedAt >= CROWD_COPY_MS) {'), engine.indexOf('this.crowdCopiedAt = now'))
   assert.match(copy, /this\.people\.observe\(frame, n, s\.simTime\)/, 'in the copy block, at its pace')
+  assert.match(copy, /if \(!\(this\.places && !this\.streets\)\) this\.people\.observe\(/, 'not in a surveyed region without a street window, whose crowd the telemetry counts as nobody')
+  assert.match(engine, /pedestrians: this\.places && !this\.streets \? 0 :/, 'the same rule the telemetry keeps')
   assert.ok(engine.indexOf('this.people.observe(') < engine.indexOf('if (s.crowdFrame && this.crowd.upload(s.crowdFrame))'), 'before the upload hands the frame back to the worker')
   assert.match(engine, /doing: this\.people\.sentence\(agent\)/)
   assert.match(engine, /awareness: this\.awareness\(\), people: this\.people,/)

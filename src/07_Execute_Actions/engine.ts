@@ -2388,14 +2388,15 @@ export class Engine {
     if (this.netClient?.status === 'joined') this.netMove = this.netMoveOf(s)
     // Where they stand, for SimControls.crowd.positions (the frame's first 4 floats per person are its position), and
     // what each is measured doing (the person readings), a few times a second: before the upload, which hands the
-    // buffer back to the worker.
+    // buffer back to the worker. A surveyed region without a street window shows no crowd (the telemetry counts
+    // nobody there), so nobody in it is read.
     const now = performance.now()
     if (s.crowdFrame && now - this.crowdCopiedAt >= CROWD_COPY_MS) {
       const n = this.options.agents, frame = s.crowdFrame
       if (frame.length >= 4 * n) {
         if (this.crowdPose.length !== 4 * n) this.crowdPose = new Float32Array(4 * n)
         this.crowdPose.set(frame.subarray(0, 4 * n))
-        this.people.observe(frame, n, s.simTime)
+        if (!(this.places && !this.streets)) this.people.observe(frame, n, s.simTime)
         this.crowdCopiedAt = now
       }
     }

@@ -2374,7 +2374,7 @@ test('feature: the inspector is read while locked (rows, top k, one card, the pr
   }
   // One person and the crowd's per-person readings: reads, served while locked, with their own usage line.
   assert.deepEqual(texts(run('feature person 7', b, [])), ['person 7: Walking the streets; not getting anywhere for a while.', 'STUCK                 [##########]  1.00'])
-  assert.deepEqual(only(run('feature person 8', b, [])), { kind: 'err', text: 'feature: nothing measured of person 8 (no such person, or the crowd has sent no frame yet)' })
+  assert.deepEqual(only(run('feature person 8', b, [])), { kind: 'err', text: 'feature: nothing measured of person 8 (no such person, or no crowd has been read: none sent yet, or none in this map)' })
   for (const l of ['feature person', 'feature person 0', 'feature person -1', 'feature person 1.5', 'feature person x', 'feature person 7 8']) {
     assert.deepEqual(only(run(l, b, [])), { kind: 'err', text: 'usage: feature person <n> (person 1 or above; 0 is your own body)' }, l)
   }

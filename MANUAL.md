@@ -1827,14 +1827,16 @@ while you type.
   the crowd over each threshold, naming up to five people who read `STUCK`; both work while locked. The ten readings
   are functions of what the crowd already sends the page a few times a second (where each person stands, the speed of
   their last step, the activity the crowd kernel wrote for them) and of the frames before it: `STUCK` (metres stepped
-  without getting 1 m from where they stood, over 8, drained by standing, and never read while waiting, working or
-  talking), `CROWDED` (other people within the crowd kernel's own 2.5 m flocking radius, over 8), `YIELDING`,
-  `WAITING`, `CROSSING`, `SUMMONED`, `TALKING`, `WORKING`, `COMMUTING` (each 1 while the kernel reports that
-  activity) and `PACE`. The sentence also goes into the prompt of a person you hold, after where they stand (for
-  example "Talking with the player; before being called over, working at a station indoors."). These readings move
-  nobody: no pedestrian's position, velocity, goal or activity is written, on any crowd kernel, and they are
-  hand-written like the city's, not learned (a pedestrian's whole state is 28 hand-written floats, with no hidden
-  activations to learn from).
+  without getting 1 m from where they stood, over 8, drained by standing, and read as 0 while waiting, working or
+  standing by), `CROWDED` (other people within the crowd kernel's own 2.5 m flocking radius, over 8), `YIELDING`,
+  `WAITING`, `CROSSING`, `SUMMONED` (on the way to you, or to a rally point you chose), `ARRIVED` (standing by there),
+  `WORKING`, `COMMUTING` (each 1 while the kernel reports that activity) and `PACE`. A car's step back on the way is
+  part of being called over, so it is never taken for what they were called away from. The sentence also goes into
+  the prompt of a person you hold, after where they stand (for example "Standing by for the player; before being
+  called over, working at a station indoors."). A surveyed region without a street window shows no crowd, and nobody
+  in it is read. These readings move nobody: no pedestrian's position, velocity, goal or activity is written, on any
+  crowd kernel, and they are hand-written like the city's, not learned (a pedestrian's whole state is 28 hand-written
+  floats, with no hidden activations to learn from).
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to

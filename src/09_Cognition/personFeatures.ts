@@ -78,13 +78,20 @@ export interface PersonFeatureDef {
 const unit = (x: number): number => (Number.isNaN(x) ? 0 : x < 0 ? 0 : x > 1 ? 1 : x)
 const doing = (code: number) => (v: PersonView): number => (v.activity === code ? 1 : 0)
 const feature = (f: PersonFeatureDef): PersonFeatureDef => Object.freeze(f)
+/**
+ * Whether the operator has called this person over: on the way to where they were called (the operator, or a rally
+ * point the operator chose for an Active recruit), or standing there.
+ */
+const called = (code: number): boolean => code === ACTIVITY.coming || code === ACTIVITY.interviewing
+/** Whether standing still is what this activity is: at the kerb, at a station, standing by where the operator called them. STUCK reads 0 during one. */
+const still = (code: number): boolean => code === ACTIVITY.waiting || code === ACTIVITY.working || code === ACTIVITY.interviewing
 
 /** The dictionary, in lane order: `personActivations(v)[i]` is `PERSON_FEATURES[i].read(v)`. */
 export const PERSON_FEATURES: readonly PersonFeatureDef[] = Object.freeze([
   feature({
     id: 'STUCK', title: 'stuck', theta: 0.5,
-    doc: `Walking and getting nowhere: metres stepped since they were last ${STUCK_RADIUS} m from where they stood, over ${STUCK_FULL_M}, capped at 1; a second standing (or waiting, working or talking) takes ${STUCK_REST} m off.`,
-    read: (v) => unit(v.spin / STUCK_FULL_M),
+    doc: `Walking and getting nowhere: metres stepped since they were last ${STUCK_RADIUS} m from where they stood, over ${STUCK_FULL_M}, capped at 1; a second standing takes ${STUCK_REST} m off; waiting, working or ARRIVED reads 0 and starts it again.`,
+    read: (v) => (still(v.activity) ? 0 : unit(v.spin / STUCK_FULL_M)),
   }),
   feature({
     id: 'CROWDED', title: 'crowded', theta: 0.25,
@@ -94,8 +101,8 @@ export const PERSON_FEATURES: readonly PersonFeatureDef[] = Object.freeze([
   feature({ id: 'YIELDING', title: 'yielding', theta: 0.5, doc: 'Stepping back from a car: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.steppingBack) }),
   feature({ id: 'WAITING', title: 'waiting', theta: 0.5, doc: 'At the kerb for the walk signal: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.waiting) }),
   feature({ id: 'CROSSING', title: 'crossing', theta: 0.5, doc: 'Crossing on the walk signal: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.crossing) }),
-  feature({ id: 'SUMMONED', title: 'summoned', theta: 0.5, doc: 'Coming over to the operator who asked for them: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.coming) }),
-  feature({ id: 'TALKING', title: 'talking', theta: 0.5, doc: 'Standing with the operator who asked for them: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.interviewing) }),
+  feature({ id: 'SUMMONED', title: 'summoned', theta: 0.5, doc: 'Answering the operator\'s call, on the way to them or to a rally point they chose: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.coming) }),
+  feature({ id: 'ARRIVED', title: 'arrived', theta: 0.5, doc: 'Standing by where the operator called them, beside them or at a rally point they chose: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.interviewing) }),
   feature({ id: 'WORKING', title: 'working', theta: 0.5, doc: 'At a workstation indoors: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.working) }),
   feature({ id: 'COMMUTING', title: 'commuting', theta: 0.5, doc: 'On the way to or from an indoor workplace: 1 while the crowd kernel reports it, else 0.', read: doing(ACTIVITY.commuting) }),
   feature({
@@ -133,10 +140,6 @@ const NONE = 255
 const CODES = Object.values(ACTIVITY) as readonly number[]
 /** The activity a frame's float names: one of ACTIVITY's codes, or NONE (not a number, not whole, or a code from a newer kernel). */
 const codeOf = (x: number): number => (Number.isInteger(x) && CODES.includes(x) ? x : NONE)
-/** Whether the operator has called this person over: they are coming, or standing with them. */
-const called = (code: number): boolean => code === ACTIVITY.coming || code === ACTIVITY.interviewing
-/** Whether standing still is what this activity is: at the kerb, at a station, with the operator. STUCK is never read during one. */
-const still = (code: number): boolean => code === ACTIVITY.waiting || code === ACTIVITY.working || code === ACTIVITY.interviewing
 
 /** Each activity in words, as a prompt and the console say it of someone. */
 const DOING: Readonly<Record<number, string>> = Object.freeze({
@@ -144,8 +147,8 @@ const DOING: Readonly<Record<number, string>> = Object.freeze({
   [ACTIVITY.waiting]: 'waiting at the kerb for the walk signal',
   [ACTIVITY.crossing]: 'crossing on the walk signal',
   [ACTIVITY.steppingBack]: 'stepping back from a car',
-  [ACTIVITY.coming]: 'coming over to the player',
-  [ACTIVITY.interviewing]: 'talking with the player',
+  [ACTIVITY.coming]: "answering the player's call",
+  [ACTIVITY.interviewing]: 'standing by for the player',
   [ACTIVITY.working]: 'working at a station indoors',
   [ACTIVITY.commuting]: 'on the way to or from work',
 })
@@ -197,6 +200,8 @@ export class PersonReadings {
   #speed = new Float32Array(0)
   #activity = new Uint8Array(0)
   #before = new Uint8Array(0)
+  /** 1 while the operator has them called over: from the frame they were called in until they are let go. */
+  #calling = new Uint8Array(0)
 
   /** Pedestrians in the newest frame read (the player's own body among them); 0 before the first. */
   get agents(): number {
@@ -220,10 +225,11 @@ export class PersonReadings {
       this.#speed = new Float32Array(agents)
       this.#activity = new Uint8Array(agents)
       this.#before = new Uint8Array(agents)
+      this.#calling = new Uint8Array(agents)
     }
     const dt = fresh ? 0 : Math.min(OBSERVE_GAP_S, time - this.#time)
     this.#time = time
-    const xz = this.#xz, from = this.#from, spin = this.#spin, speeds = this.#speed, activity = this.#activity, before = this.#before
+    const xz = this.#xz, from = this.#from, spin = this.#spin, speeds = this.#speed, activity = this.#activity, before = this.#before, calling = this.#calling
     const vel = 4 * agents, pose = 8 * agents, r2 = STUCK_RADIUS * STUCK_RADIUS
     for (let i = 0; i < agents; i++) {
       const x = frame[4 * i], z = frame[4 * i + 2], s = frame[vel + 4 * i + 3]
@@ -238,6 +244,7 @@ export class PersonReadings {
         spin[i] = 0
         activity[i] = code
         before[i] = NONE
+        calling[i] = called(code) ? 1 : 0
         continue
       }
       // Getting somewhere: a metre from where they last did (a place that is not a number is never near anything).
@@ -246,15 +253,22 @@ export class PersonReadings {
         from[2 * i] = x
         from[2 * i + 1] = z
         spin[i] = 0
-      } else if (speed > STUCK_PACE && !still(code)) spin[i] = Math.min(2 * STUCK_FULL_M, spin[i] + speed * dt)
+      } else if (still(code)) spin[i] = 0
+      else if (speed > STUCK_PACE) spin[i] = Math.min(2 * STUCK_FULL_M, spin[i] + speed * dt)
       else spin[i] = Math.max(0, spin[i] - STUCK_REST * dt)
-      // What they were called away from: kept from the frame they were called in until they are let go.
-      const was = activity[i]
-      if (code !== was) {
-        if (called(code) && !called(was)) before[i] = was
-        else if (!called(code)) before[i] = NONE
-        activity[i] = code
+      // What they were called away from: kept from the frame they were called in until they are let go. A car's step
+      // back while called over is part of the summons (the crowd kernel's step back outranks it, and the realm counts
+      // the recruit as taken through it), so it neither lets them go nor becomes what they were called away from.
+      if (called(code)) {
+        if (!calling[i]) {
+          before[i] = activity[i]
+          calling[i] = 1
+        }
+      } else if (!(calling[i] && code === ACTIVITY.steppingBack)) {
+        calling[i] = 0
+        before[i] = NONE
       }
+      activity[i] = code
     }
     return true
   }
@@ -345,7 +359,7 @@ export class PersonReadings {
    */
   crowdLines(): string[] {
     const c = this.crowd()
-    if (!c) return ['people: no reading yet (the crowd has sent no frame)']
+    if (!c) return ['people: no reading (no crowd has been read: none sent yet, or none in this map)']
     const shares = Float32Array.from(c.over, (k) => (c.measured > 0 ? k / c.measured : 0))
     const rows = topK(shares, shares.length).map(({ index, value }) => {
       const names = index === STUCK_LANE && c.stuck.length ? `: person ${c.stuck.join(', ')}${c.over[index] > c.stuck.length ? ` and ${c.over[index] - c.stuck.length} more` : ''}` : ''

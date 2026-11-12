@@ -106,7 +106,7 @@ test('a hired agent\'s identity comes first in their section, under the heading,
 
 test('what the crowd measured someone doing sits after where they are and before the moments, alone is enough for a heading, and keeps to its share of the budget', () => {
   const recent = [{ who: 'the player', what: 'said hello', where: 'Lakefront Metro', at: 1, clock: '09:00' }]
-  const doing = 'Talking with the player; before being called over, working at a station indoors.'
+  const doing = 'Standing by for the player; before being called over, working at a station indoors.'
   assert.deepEqual(contextLines({ agent: 17, identity: 'You go by Nova.', surroundings: 'Standing at Lakefront Metro.', doing, recent }), [
     'Agent 17, right now:', '- You go by Nova.', '- Standing at Lakefront Metro.', `- ${doing}`, 'Just before this, oldest first:', '- 09:00 Lakefront Metro: the player said hello',
   ])
