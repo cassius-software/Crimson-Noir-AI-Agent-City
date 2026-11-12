@@ -155,8 +155,23 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   const place = (name: string) => new RegExp(`\\b${name}: '([^']+)'`).exec(card)?.[1] ?? ''
   // Sloane's chip publishes where it ends in her tall layouts (lower at the wheel): the walk's card stops short of it.
   assert.match(concierge, /--chip-bottom/)
-  for (const name of ['touch', 'compact']) {
-    assert.match(place(name), /max-h-\[[^\]]*max\(calc\(max\(0\.75rem,env\(safe-area-inset-top\)\)_\+_8\.75rem\),calc\(var\(--chip-bottom,0px\)_\+_0\.5rem\)\)/, `${name} keeps under the minimap row and her chip`)
+  assert.match(place('compact'), /max-h-\[[^\]]*max\(calc\(max\(0\.75rem,env\(safe-area-inset-top\)\)_\+_8\.75rem\),calc\(var\(--chip-bottom,0px\)_\+_0\.5rem\)\)/, 'compact keeps under the minimap row and her chip')
+  // A phone held upright: the card's foot stands above the touch buttons and the stick's zone, and its top under her
+  // chip. Where the band between the two is short of 7 rem (the stage's line and its button need that much), the top
+  // steps up to the line under the minimap row (the header and the walk's strip, 7.5 rem), over her chip: her chip is
+  // back when the card folds to its strip, which the first touch outside it does.
+  {
+    const VH = 'calc(100dvh_/_var(--ui-zoom,1))'
+    const FOOT = 'calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)'
+    const CHIP = 'calc(var(--chip-bottom,0px)_+_0.5rem)'
+    const STEP = `clamp(0px,calc((7rem_-_calc(${VH}_-_${CHIP}_-_${FOOT}))_*_10000),100vh)`
+    const touch = place('touch')
+    assert.ok(touch.includes(` bottom-[${FOOT}] `), 'above the buttons and the stick')
+    assert.ok(touch.endsWith(` max-h-[calc(${VH}_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(${CHIP}_-_${STEP}))_-_${FOOT})]`), 'under her chip, or over it under the minimap row where the band is short')
+    // Opened out with More it always starts under the minimap row: the same foot, the same sides.
+    const opened = place('touchMore')
+    assert.equal(opened, touch.replace(/ max-h-\[.*$/, ` max-h-[calc(${VH}_-_calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem)_-_${FOOT})]`))
+    assert.match(card, /const place = foldable && more \? AT\.touchMore : at\n/)
   }
   // Sideways (a short landscape screen, Concierge's short layout): no room above the thumbs, so the card stands
   // between them, left of the buttons' left edge and right of the stick's zone, above the HUD's chips at the foot.
@@ -199,21 +214,83 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   assert.match(hud, /const next = nextFootPeak\(footPeak, sizeOf\(\), foot\)\n\s+if \(next !== footPeak\) root\.setProperty\('--hud-foot-peak', `\$\{next\.peak\}px`\)/)
   assert.match(hud, /window\.addEventListener\('resize', \(\) => \{\n\s+if \(footPeak\?\.size === sizeOf\(\)\) return\n\s+footPeak = null\n\s+root\.removeProperty\('--hud-foot-peak'\)/)
   assert.doesNotMatch(hud.slice(hud.indexOf('return () => {', hud.indexOf('function publishFoot'))), /^\s+root\.removeProperty\('--hud-foot-peak'\)/m, 'a stack going does not let the latch go')
-  assert.match(hud, /<div ref=\{publishFoot\} className="absolute bottom-0 left-1\/2 [^"]*" data-hud="foot">\s*\{captionStrip\}/)
+  assert.match(hud, /<div ref=\{publishFoot\} className=\{lifted \? FOOT_LIFTED : FOOT_CENTRE\} data-hud="foot">\s*\{captionStrip\}/)
+  assert.match(hud, /const FOOT_CENTRE = 'absolute bottom-0 left-1\/2 [^']*'/)
   // With the HUD hidden its captions stay (an access surface H does not put away), and so does the foot they publish.
   assert.equal(hud.match(/ref=\{publishFoot\}/g)?.length, 2, 'the HUD\'s stack and the hidden HUD\'s captions')
-  assert.match(hud, /\{captionStrip && <div ref=\{publishFoot\} className="[^"]*" data-hud="foot">\{captionStrip\}<\/div>\}/)
+  assert.match(hud, /\{captionStrip && <div ref=\{publishFoot\} className=\{lifted \? FOOT_LIFTED : '[^']*'\} data-hud="foot">\{captionStrip\}<\/div>\}/)
   // At the wheel sideways the car's buttons fill the band: the card steps aside until the visitor is on foot.
   assert.match(app, /<FirstWalkCard\b[^>]*\bdriving=\{hud\.input\.mode === 'vehicle'\}/, 'the walk\'s card hears the wheel')
   // Meanwhile Sloane still says each line: the car ends one stage and the next stage's ask is heard at the wheel.
   // (heard, not shown: the effect's let-go above reads heard, so a line at the wheel is spoken, not dropped)
-  assert.doesNotMatch(card.slice(card.indexOf('const said = useRef'), card.indexOf('if (!shown) return null')), /\bshown\b/)
+  // (nor does it read the fold: a card folded to its strip on an upright phone is heard as well)
+  const saying = card.slice(card.indexOf('const said = useRef'), card.indexOf('}, [beat, heard])'))
+  assert.ok(saying.length > 200, 'the effect that says each line is there')
+  assert.doesNotMatch(shown(saying), /\b(?:shown|open|folded|foldable)\b/)
   assert.match(card, /\}, \[beat, heard\]\)/)
   // The touch Menu's sheet stands over the walk's card (the Ring-0 stage sends the visitor to it), under the onboarding.
   const touch = read('../../04_Connect_Hardware/TouchControls.tsx')
   const sheet = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\] select-none" style=\{ROOT_STYLE\}>\n\s+<div\n\s+aria-hidden/.exec(touch)?.[1])
   const walkZ = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\]">/.exec(card)?.[1])
   assert.ok(sheet > walkZ && sheet < 1100, `the Menu's sheet (${sheet}) over the walk's card (${walkZ}), under the onboarding (1100)`)
+})
+
+test('on a phone held upright the card folds to a strip under the HUD\'s header and opens from it; a fold is not a close', () => {
+  const app = read('../../App.tsx')
+  const hud = read('../Hud.tsx')
+  const concierge = read('../Concierge.tsx')
+  const touch = read('../../04_Connect_Hardware/TouchControls.tsx')
+  const card = read('./FirstWalk.tsx')
+  // The HUD keeps a slot for the strip in its compact column, under the header, and says when it is there.
+  assert.match(hud, /export const WALK_SLOT = \{/)
+  assert.match(hud, /<div ref=\{holdWalkSlot\} className="max-w-full empty:hidden" data-hud="walk-slot" \/>/)
+  assert.match(card, /const slot = useSyncExternalStore\(WALK_SLOT\.subscribe, WALK_SLOT\.get, WALK_SLOT\.server\)/)
+  // It folds only there: the touch controls on screen, upright, the console shut, the HUD up to hold the strip.
+  assert.match(card, /const foldable = overlay && !sideways && !termOpen && slot !== null\n/)
+  assert.match(card, /const open = !\(foldable && folded\)\n/)
+  // The strip is the way back, so it is drawn whenever the card may be folded (also while Sloane's open card has the
+  // walk's step aside), and the component returns it when the card itself is not drawn.
+  assert.match(card, /const strip = visible && foldable && slot !== null && createPortal\(\n\s+<button\n/)
+  assert.match(card, /if \(!shown \|\| !open\) return strip \|\| null\n/)
+  assert.match(card, /<>\n\s+\{strip\}\n/)
+  assert.match(card, /data-walk-strip=\{card\.stage\}/)
+  assert.match(card, /aria-expanded=\{open && shown\}/)
+  assert.match(card, /onClick=\{\(\) => \{ setFolded\(open && shown\); setUnread\(false\) \}\}/, 'a tap opens it or folds it')
+  // A new line opens the card again; at the wheel it is heard and the strip marks it unread instead. Getting into a
+  // car folds it. The fold is kept nowhere: a reload opens the card.
+  assert.match(card, /if \(beat && beat\.id !== seenBeat\) \{ setSeenBeat\(beat\.id\); setFolded\(driving\); setUnread\(driving\) \}\n/)
+  assert.match(card, /if \(driving !== seenDriving\) \{ setSeenDriving\(driving\); if \(driving\) setFolded\(true\) \}\n/)
+  assert.doesNotMatch(card, /localStorage|sessionStorage|firstWalkStore/, 'the card keeps nothing')
+  // Under way it folds by itself: a touch outside it and its strip, or a few metres covered (a paired pad sends no touch).
+  assert.match(card, /const folding = foldable && shown && open\n/)
+  assert.match(card, /window\.addEventListener\('pointerdown', down, true\)/)
+  assert.match(card, /if \(at && \(cardRef\.current\?\.contains\(at\) \|\| stripRef\.current\?\.contains\(at\)\)\) return\n\s+setFolded\(true\)/)
+  assert.match(card, /else if \(travelled - travelFrom\.current >= FOLD_METRES\) setFolded\(true\)/)
+  assert.match(app, /<FirstWalkCard\b[^>]*\btravelled=\{hud\.experience\.distanceWalked \+ hud\.experience\.distanceDriven\}/)
+  // Open it is short: Sloane's line cut to the lines its band has room for (walkFold.ts, measured from the card as
+  // laid out), the stage's button under it, and More opens the rest.
+  assert.match(card, /const brief = foldable && !more\n/)
+  assert.match(card, /const next = fitLines\(px\(box\.maxHeight\), all - text\.offsetHeight, px\(getComputedStyle\(text\)\.lineHeight\), text\.scrollHeight\)/)
+  assert.match(card, /style=\{brief \? \{ WebkitLineClamp: fit\.lines \} : undefined\}/)
+  assert.match(card, /edges\?\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \['style'\] \}\)/, 'measured again when the touch layer or Sloane publish a new edge')
+  // The short card that fits takes touches on its buttons only: a finger on its words reaches the look area or the
+  // stick (and folds the card). Not the last stage's, which holds the program and scrolls.
+  assert.match(card, /const through = brief && !exitStage && fit\.whole\n/)
+  assert.match(card, /\$\{through \? 'pointer-events-none' : 'pointer-events-auto'\}/)
+  assert.match(card, /<div className="flex shrink-0 flex-wrap items-center gap-2 \[&>button\]:pointer-events-auto">/)
+  assert.match(card, /\{foldable && <button type="button" onClick=\{\(\) => setMore\(\(m\) => !m\)\} aria-expanded=\{more\} className="noir-button" data-walk-more>\{more \? 'Less' : 'More'\}<\/button>\}/)
+  // A fold is not a close: nothing in the card ends the walk or reports to it but the stage's own button and the
+  // program (the hook's props), and the strip stays on screen with the stage's number and title.
+  const calls = [...shown(card).matchAll(/\bon[A-Z]\w*\(/g)].map((m) => m[0])
+  assert.deepEqual([...new Set(calls)].sort(), ['onOutside(', 'onRun(', 'onShow(', 'onType('].sort())
+  assert.match(card, /\{card\.index\} of \{card\.count\}<\/span>\n\s+<span className="min-w-0 truncate font-semibold text-noir-titanium-100">\{card\.title\}<\/span>/)
+  // The HUD's layer stands over the touch layer and under Sloane's, so the strip (and the HUD's other few buttons)
+  // take their taps on a phone, where the look area covers half the screen.
+  const hudZ = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-(\d+) font-sans /.exec(hud)?.[1])
+  const touchZ = Number(/<div ref=\{layer\} className="pointer-events-none absolute inset-0 z-(\d+) select-none"/.exec(touch)?.[1])
+  const sloaneZ = [...concierge.matchAll(/<div className="ui-zoom pointer-events-none absolute inset-0 z-(\d+) font-sans /g)].map((m) => Number(m[1]))
+  assert.ok(touchZ > 0 && hudZ > touchZ, `the HUD (${hudZ}) over the touch layer (${touchZ})`)
+  assert.ok(sloaneZ.length > 0 && sloaneZ.every((z) => z > hudZ), 'and under Sloane')
 })
 
 test('the exam reaches the walk\'s program and the bridge\'s type, and nothing else: no gate, no engine, no realm, no write', () => {

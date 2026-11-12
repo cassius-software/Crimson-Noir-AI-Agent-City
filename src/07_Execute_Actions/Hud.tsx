@@ -16,9 +16,14 @@
  * On phones and touch devices (or any small window) it switches to a compact layout that keeps the
  * bottom corners free for the touch controls: stick bottom-left, buttons bottom-right. A phone held in
  * landscape is short, so there the panels spread across the top and the speedometer goes bottom-centre.
+ * Held upright it is one panel beside the minimap (the brand, the place and the clock, with the frame rate, the
+ * signals and the quality tier on its last line: the First Law's count and the input rate are the console's there),
+ * the first walk's strip under it, and the captions and the shop's or a home's chip above the stick, left of the
+ * buttons, where no thumb covers them. The layer stands over the touch layer, so its few buttons (those chips, the
+ * microphone's badge) take their taps; its panels take none and let every touch through to the stick and the look.
  * What breaks if it is removed? The player loses location, time, speed, signals and control hints.
  */
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { isOpen, phaseWord, pillLabel, pillWord, type MicMeter } from '../04_Connect_Hardware/microphone.ts'
 import { CITY, CITY_SIZE, LAKE, districtOfLot } from '../01_Initialize_World/city.ts'
 import { drawRooms, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
@@ -80,8 +85,17 @@ function publishPanels(el: HTMLDivElement | null) {
   }
 }
 
-/** Where the compact layout's chips at the foot begin (the captions, the shop's chip, the speedometer of a phone held
- *  sideways at the wheel; with the HUD hidden, the captions alone), for the first walk's card (onboarding/FirstWalk.tsx),
+/** Where the compact layout's chips at the foot stand (the captions, the shop's chip, a home's, the speedometer of a
+ *  phone held sideways at the wheel; with the HUD hidden, the captions alone). FOOT_CENTRE is the foot of the screen,
+ *  between the thumbs: a small window, a tablet, a phone held sideways. FOOT_LIFTED is a phone held upright, where the
+ *  stick and the buttons leave no room between them (a 360 px screen keeps 68 px there, and the captions lay under the
+ *  stick and Run): the stack stands above the stick's zone and left of the buttons instead, from the frame's left edge
+ *  to 0.5 rem short of the buttons' left edge (--touch-left) and 0.5 rem above the zone's top (--touch-stick-top; both
+ *  window pixels from TouchControls.tsx, divided by the text size's zoom, the frame's own insets taken off). */
+const FOOT_CENTRE = 'absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2'
+const FOOT_LIFTED = 'absolute left-0 right-[calc(calc(var(--touch-left,7rem)_/_var(--ui-zoom,1))_+_0.5rem_-_max(0.75rem,env(safe-area-inset-right)))] bottom-[calc(calc(var(--touch-stick-top,12rem)_/_var(--ui-zoom,1))_+_0.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] flex flex-col items-start gap-2'
+
+/** Where the compact layout's chips at the foot begin, for the first walk's card (onboarding/FirstWalk.tsx),
  *  which stands above them between a sideways phone's thumbs: --hud-foot is the height from the screen's foot to the
  *  top of the stack, in window pixels. A ref callback on the stack, so it is published while the stack is on screen and
  *  taken away when it goes (React runs the old stack's cleanup before the new one's ref when H swaps them). */
@@ -145,11 +159,55 @@ function mediaStore(query: string) {
  *  same two queries. */
 const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
 const SHORT = mediaStore('(max-height: 499px)')
+/** A phone's width (SMALL's own): held upright, the stick and the buttons leave no room between them at the foot. */
+const NARROW = mediaStore('(max-width: 639px)')
 /** The system asks for reduced motion: the progress chip's ring after a success stays still (its words still show). */
 const CALM = mediaStore('(prefers-reduced-motion: reduce)')
 /** Room for the capture chip's key row: one line between the minimap and the speed panel, and height left
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
+
+/**
+ * The slot under the compact layout's header where the first walk's strip stands on a phone held upright
+ * (onboarding/FirstWalk.tsx puts it there through a portal): beside the minimap, in the panels' own column, so the
+ * status chips under it and Sloane's chip (--hud-bottom) make room for it like any panel. The HUD only holds the
+ * element out; with no HUD on screen (the H key, a wide window) there is none, and the walk's card stays open.
+ */
+let walkSlot: HTMLElement | null = null
+const walkSlotHeard = new Set<() => void>()
+export const WALK_SLOT = {
+  subscribe(onChange: () => void) {
+    walkSlotHeard.add(onChange)
+    return () => { walkSlotHeard.delete(onChange) }
+  },
+  get: (): HTMLElement | null => walkSlot,
+  server: (): HTMLElement | null => null,
+}
+function holdWalkSlot(el: HTMLDivElement | null) {
+  if (!el) return
+  walkSlot = el
+  for (const heard of walkSlotHeard) heard()
+  return () => {
+    if (walkSlot !== el) return
+    walkSlot = null
+    for (const heard of walkSlotHeard) heard()
+  }
+}
+
+/** How long a recruitment's last outcome ("Python: step onto the sidewalk first: …") stays on a compact screen: it is
+ *  news, not state, and a phone has no room to keep it (the console's `recruit` still has it). */
+const NOTE_MS = 8000
+/** True for `ms` after a piece of news first shows: `news` is its ordinal (0 is no news), and the same ordinal coming
+ *  back (the line was state for a while) is not fresh again. */
+function useFresh(news: number, ms: number): boolean {
+  const [seen, setSeen] = useState(0)
+  useEffect(() => {
+    if (news === 0 || news === seen) return
+    const id = window.setTimeout(() => setSeen(news), ms)
+    return () => window.clearTimeout(id)
+  }, [news, seen, ms])
+  return news !== 0 && news !== seen
+}
 
 export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13, onBrowse, homes = null, onHome }: {
   s: SipocSnapshot | null
@@ -177,11 +235,17 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
   const roomy = useSyncExternalStore(ROOMY.subscribe, ROOMY.matches, ROOMY.server)
+  const narrow = useSyncExternalStore(NARROW.subscribe, NARROW.matches, NARROW.server)
+  const noteFresh = useFresh(s?.supplier.recruiting?.news ?? 0, NOTE_MS)
   if (!s) return null
   const c = s.customer
   const touch = s.supplier.touch
   const family = s.supplier.glyphs
   const compact = touch || small
+  /** Compact and not short: a phone held upright, a tablet, a small tall window. One panel beside the minimap. */
+  const upright = compact && !short
+  /** A phone held upright with the touch controls on screen: the chips at the foot stand above the stick (FOOT_LIFTED). */
+  const lifted = touch && narrow && !short
   const dark = c.daylight < 0.35
   const glass = dark
     ? 'bg-slate-900/55 text-slate-50 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.45)]'
@@ -284,20 +348,26 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const rc = s.supplier.recruiting
   const dotted = Boolean(rc?.listening) && !voice
   const team = s.supplier.team ?? ''
-  const micChip = ((rc && (dotted || rc.line)) || team) && (
+  // On a compact screen the last outcome of a recruitment (a refusal's reason, cut short by the chip's width) is news:
+  // shown for a few seconds, then gone. Who is over, who is coming, an answer streaming in and the microphone's failure
+  // are state, and stay (recruitment.ts hudLine).
+  const rcLine = rc && !(compact && (rc.news ?? 0) > 0 && !noteFresh) ? rc.line : ''
+  const micChip = (dotted || rcLine || team) && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums ${panel}`} data-hint="mic">
       {dotted && <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500" />}
-      <span className="truncate">{[dotted ? 'MIC · on-device' : '', rc?.line ?? '', team].filter(Boolean).join(' · ')}</span>
+      <span className="truncate">{[dotted ? 'MIC · on-device' : '', rcLine, team].filter(Boolean).join(' · ')}</span>
     </div>
   )
 
   // Closed captions of the soundscape (captions.ts, fed by the engine): every sound with its bearing and distance,
   // speech with its words. An accessibility surface, so it outlives the H key like the MIC and REC chips.
+  // Above the stick of a phone held upright (FOOT_LIFTED) the strip is as narrow as the buttons leave it (118 px at the
+  // wheel of a 360 px phone), so a line there wraps onto a second before it is cut, and reads from the left.
   const captions = c.captions
   const captionStrip = captions && captions.length > 0 && (
-    <div role="status" aria-live="polite" className={`flex max-w-full flex-col items-center gap-1 px-4 py-2 font-medium ${panel}`} style={{ fontSize: `${captionPx}px` }} data-hint="captions">
+    <div role="status" aria-live="polite" className={`flex max-w-full flex-col font-medium ${lifted ? 'items-start gap-0.5 px-3 py-1.5' : 'items-center gap-1 px-4 py-2'} ${panel}`} style={{ fontSize: `${captionPx}px` }} data-hint="captions">
       {captions.map((line, i) => (
-        <div key={`${i}:${line}`} className="max-w-full truncate text-center">{line}</div>
+        <div key={`${i}:${line}`} className={lifted ? 'line-clamp-2 max-w-full text-left leading-tight' : 'max-w-full truncate text-center'}>{line}</div>
       ))}
     </div>
   )
@@ -330,9 +400,12 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // The operator's progression (progress.ts hudProgress; App puts the finished words on the snapshot): the standing,
   // and for a few seconds after a success what it was and what it paid. Game feedback, so it goes with the H key. On
   // a phone it shows only while a check is fresh and never on a short screen, so Sloane's chip under the column moves
-  // only for those seconds.
+  // only for those seconds. At the wheel of a phone held upright the column also holds a toast (`stacked` below), and
+  // Sloane's chip under it can go no lower than the car's buttons: while a toast is up the check waits for it, so the
+  // column never grows down under her chip (getting into a car pays a check and raises a toast in the same moment).
   const pr = s.supplier.progress
-  const progressChip = pr && (!compact || (pr.cue !== null && !short)) && <ProgressChip p={pr} panel={panel} muted={muted} />
+  const toastAtWheel = compact && !short && s.input.mode === 'vehicle' && s.toasts.length > 0
+  const progressChip = pr && (!compact || (pr.cue !== null && !short && !toastAtWheel)) && <ProgressChip p={pr} panel={panel} muted={muted} />
 
   // Render off (the console's render knob): the black canvas says why, and how to draw again. It outlives the
   // H key like the recorder's chip: a blank screen is never left unexplained.
@@ -366,7 +439,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   )
 
   return (
-    <div className="ui-zoom pointer-events-none absolute inset-0 font-sans text-[13px] antialiased select-none">
+    // Over the touch layer (TouchControls.tsx, z-10), under Sloane and every card (z-30 and up): the layer itself takes
+    // no pointer, so the stick, the look area and the buttons get every touch that lands on a panel, and the few
+    // buttons here (the shop's chip, a home's, the microphone's badge) get theirs, which under that layer they never
+    // did on a phone: the look area and the stick's zone lay over them.
+    <div className="ui-zoom pointer-events-none absolute inset-0 z-20 font-sans text-[13px] antialiased select-none">
       {/* The screen reader's line (announcer.ts): always in the page, so a reader follows it from the first word. */}
       <span className="sr-only" role="status" aria-live="polite" data-announce>{c.announce ?? ''}</span>
       {/* The microphone's state for a reader: here, not in the pill, which a phone or a hidden HUD leaves unmounted while
@@ -487,19 +564,42 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                   readout's place while it shows, so nothing reaches down to the touch stick or the buttons.
                   Otherwise `contents` keeps them in the column. */}
               <div className={short ? 'flex max-w-full flex-wrap items-start gap-2' : 'contents'} data-hud-row>
-                <div className={`flex max-w-full items-center gap-2.5 py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
-                  <MonolithLogo size={28} title="" />
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight"><span className="shrink-0 whitespace-nowrap">{BRAND.short}</span>{nameTag}</div>
-                    <div className={`truncate text-[11px] ${muted}`}>{c.district}</div>
+                {/* Upright the header is the one panel: the frame rate under the clock, and on its last line the
+                    signals and the quality tier (a paired pad's line under that). The readout's other numbers (the
+                    First Law's count, the sensor flips, the input rate beside the camera's, the Auto mark) are the
+                    console's there: with the minimap 7 rem tall beside it, the header and the first walk's strip are
+                    all that column holds before Sloane's chip must start lower. */}
+                <div className={`max-w-full py-2 pr-3.5 pl-2.5 ${panel}`} data-hud="panel">
+                  <div className="flex max-w-full items-center gap-2.5">
+                    <MonolithLogo size={28} title="" />
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center text-[14px] leading-tight font-semibold tracking-tight"><span className="shrink-0 whitespace-nowrap">{BRAND.short}</span>{nameTag}</div>
+                      <div className={`truncate text-[11px] ${muted}`}>{c.district}</div>
+                    </div>
+                    <div className={divider} />
+                    <div className="text-right">
+                      <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
+                      {upright && <div className={`text-[10px] leading-tight whitespace-nowrap tabular-nums ${muted}`} data-hud="rate">{(s.output.camera ? s.output.camera.fps : s.output.fps).toFixed(0)} fps</div>}
+                    </div>
                   </div>
-                  <div className={divider} />
-                  <div className="text-[15px] font-semibold tabular-nums tracking-tight">{c.clock}</div>
+                  {upright && (
+                    <div className="mt-1 flex max-w-full items-center gap-2 text-[11px]" data-hud="status">
+                      {(!c.region || c.streets) && (
+                        <>
+                          <Signal label="E–W" light={c.signalEW} />
+                          <Signal label="N–S" light={c.signalNS} />
+                          <span className={`tabular-nums ${muted}`}>{c.signalRemaining.toFixed(0)}s</span>
+                        </>
+                      )}
+                      <span className={`ml-auto min-w-0 truncate ${muted}`}>{q.label}</span>
+                    </div>
+                  )}
+                  {upright && s.supplier.hal && <div className={`truncate text-[11px] ${muted}`}>{s.supplier.hal}</div>}
                 </div>
                 {/* On a short screen the readout keeps to three lines and 12 rem, so it stays beside the header and
                     above Sloane's chip: a device line (a paired pad) takes the First Law line's place. */}
-                {tight && toasts.length > 0 ? <div className="flex w-48 max-w-full flex-col gap-2">{toasts}</div> : (
-                  <div className={`${tight ? 'max-w-[min(100%,12rem)]' : 'max-w-full'} px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
+                {tight && (toasts.length > 0 ? <div className="flex w-48 max-w-full flex-col gap-2">{toasts}</div> : (
+                  <div className={`max-w-[min(100%,12rem)] px-3 py-2 text-[11px] ${panel}`} data-hud="panel">
                     {(!c.region || c.streets) && (
                       <div className="flex items-center gap-2">
                         <Signal label="E–W" light={c.signalEW} />
@@ -510,23 +610,24 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                     <div className={`mt-1 truncate tabular-nums ${muted}`}>
                       {s.output.camera ? `${s.output.camera.fps.toFixed(0)} fps · ${s.output.fps.toFixed(0)} Hz` : `${s.output.fps.toFixed(0)} fps`} · {q.label}{q.auto ? ' · auto' : ''}
                     </div>
-                    {!(tight && s.supplier.hal) && (
+                    {!s.supplier.hal && (
                       <div className={`truncate tabular-nums ${muted}`}>
                         First Law {k.law1.toLocaleString()} · {k.sensorFlips.toLocaleString()} flips
                       </div>
                     )}
                     {s.supplier.hal && <div className={`truncate ${muted}`}>{s.supplier.hal}</div>}
-                    {/* The unified namespace (namespace.ts): how many topics the bus retains. Not on a phone: upright at the
-                        wheel the readout's foot already meets Sloane's chip where it must end above the touch buttons
-                        (Concierge.tsx CHIP_TOP), and a short screen has three lines; the console's `topic` has the count. */}
+                    {/* The unified namespace (namespace.ts): how many topics the bus retains. Not on a phone: upright the
+                        header is the one panel, and a short screen has three lines; the console's `topic` has the count. */}
                     {!compact && s.output.topics && (
                       <div className={`truncate tabular-nums ${muted}`} data-hud="topics">
                         namespace {s.output.topics.count.toLocaleString()} topics
                       </div>
                     )}
                   </div>
-                )}
+                ))}
               </div>
+              {/* The first walk's strip (onboarding/FirstWalk.tsx), on a phone held upright: empty, the slot takes no room. */}
+              <div ref={holdWalkSlot} className="max-w-full empty:hidden" data-hud="walk-slot" />
               {recChip}
               {micChip}
               {ghostChip}
@@ -548,9 +649,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
 
           {/* Bottom-centre, between the thumbs: the capture hint (a small desktop window), the enter
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
-              and the speedometer under the minimap would reach the driving buttons — the speedometer. */}
+              and the speedometer under the minimap would reach the driving buttons — the speedometer. On a phone held
+              upright the thumbs leave no room between them: the stack stands above the stick instead (FOOT_LIFTED). */}
           {(captureHint || enterPrompt || shopChip || homeChip || (driving && short) || captionStrip) && (
-            <div ref={publishFoot} className="absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2" data-hud="foot">
+            <div ref={publishFoot} className={lifted ? FOOT_LIFTED : FOOT_CENTRE} data-hud="foot">
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
@@ -571,7 +673,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {micPill}
             {rc?.listening && micChip}
           </div>
-          {captionStrip && <div ref={publishFoot} className="absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2" data-hud="foot">{captionStrip}</div>}
+          {captionStrip && <div ref={publishFoot} className={lifted ? FOOT_LIFTED : 'absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2'} data-hud="foot">{captionStrip}</div>}
         </div>
       )}
 

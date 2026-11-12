@@ -132,7 +132,7 @@ test('the nearest idle person within earshot, on this side of the street, with t
   assert.equal(r.stateOf(b), 'Active')
   assert.equal(r.stateOf(a), 'Interviewing')
   assert.deepEqual(r.swarmSkills, bSkills)
-  assert.deepEqual(hudLine(r), { listening: false, line: `Active swarm 1: [${bSkills.join(', ')}] · coming over · Rust` })
+  assert.deepEqual(hudLine(r), { listening: false, line: `Active swarm 1: [${bSkills.join(', ')}] · coming over · Rust`, news: 0 })
   // Both Active: every skill once, in the order they joined.
   host.deliver(xz, [], [view(b, 'Rust', true), view(a, 'Rust', true)])
   const both = [...new Set([...bSkills, ...view(a, 'Rust', true).skills])]
@@ -631,7 +631,7 @@ test('a microphone failure leaves the HUD once voice works again', async () => {
   assert.match(hudLine(m.r).line, /^voice: microphone permission was refused/)
   // Permission granted on a second try.
   await open(m)
-  assert.deepEqual(hudLine(m.r), { listening: true, line: '' })
+  assert.deepEqual(hudLine(m.r), { listening: true, line: '', news: 0 })
   // A missing model, then installed: the HUD no longer says it is missing.
   const n = micRig({ available: 'downloadable' })
   await n.r.listen()
@@ -643,6 +643,30 @@ test('a microphone failure leaves the HUD once voice works again', async () => {
   await k.r.recruit('juggling')
   const before = hudLine(k.r).line
   assert.match(before, /unknown skill/)
+})
+
+test('the HUD line says when it is news: an outcome has its ordinal, told again it has the next; the swarm at work, an answer coming and the microphone\'s failure are state', async () => {
+  const k = rig()
+  assert.deepEqual(hudLine(k.r), { listening: false, line: '', news: 0 }, 'nothing told yet')
+  await k.r.recruit('juggling')
+  const first = hudLine(k.r)
+  assert.match(first.line, /unknown skill/)
+  assert.ok(first.news > 0, 'an outcome is news')
+  assert.equal(k.r.outcomes, first.news)
+  // The same words again are a new piece of news: a phone's HUD, which lets news go, shows them again.
+  await k.r.recruit('juggling')
+  assert.deepEqual(hudLine(k.r), { ...first, news: first.news + 1 })
+  // Something going on (an answer streaming in, a task bound) is state: the line stays.
+  assert.equal(hudLine(k.r, 0, 'Sloane is answering').news, 0)
+  assert.equal(hudLine(k.r, 1).news, 0)
+  // The microphone's failure stays until voice works again: state, not news.
+  const m = micRig()
+  const p = m.r.listen()
+  await flush()
+  m.made[0].onerror!({ error: 'not-allowed' })
+  await p
+  assert.match(hudLine(m.r).line, /^voice: /)
+  assert.equal(hudLine(m.r).news, 0)
 })
 
 test('tryAsk answers at once: who was asked and the worker\'s request sent, or why not; the worker\'s answer still arrives as for recruit', () => {

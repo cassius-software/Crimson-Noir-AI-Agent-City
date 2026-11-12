@@ -152,6 +152,8 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
 
   // Where the buttons stand, for Sloane's card (Concierge.tsx), which keeps clear of them: --touch-top is the height
   // from the screen's foot to the buttons' top edge, --touch-left the width from its right edge to their left edge.
+  // And where the stick's zone begins, for the HUD's chips above it on a phone held upright (Hud.tsx FOOT_LIFTED):
+  // --touch-stick-top, the height from the screen's foot to the zone's top edge.
   // The same pass measures every control and judges the layout (touchLayout.ts), into data-touch-layout on the layer:
   // on mount, on every resize, whenever the cluster changes size, and when the buttons change with the mode.
   const cluster = useRef<HTMLDivElement>(null)
@@ -164,6 +166,8 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
       const r = el.getBoundingClientRect()
       page.setProperty('--touch-top', `${Math.round(window.innerHeight - r.top)}px`)
       page.setProperty('--touch-left', `${Math.round(window.innerWidth - r.left)}px`)
+      const stick = root.querySelector<HTMLElement>('[data-touch="stick"]')
+      if (stick) page.setProperty('--touch-stick-top', `${Math.round(window.innerHeight - stick.getBoundingClientRect().top)}px`)
       root.setAttribute('data-touch-layout', layoutAttribute(validateTouchLayout(measureControls(root), viewportOf(root))))
     }
     publish()
@@ -175,6 +179,7 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
       window.removeEventListener('resize', publish)
       page.removeProperty('--touch-top')
       page.removeProperty('--touch-left')
+      page.removeProperty('--touch-stick-top')
     }
   }, [epoch, driving, nearVehicle])
 

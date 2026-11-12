@@ -1848,6 +1848,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           crowded={sloaneOpen}
           driving={hud.input.mode === 'vehicle'}
           zoom={access.scale / 100}
+          travelled={hud.experience.distanceWalked + hud.experience.distanceDriven}
         />
       )}
       {hud && (
