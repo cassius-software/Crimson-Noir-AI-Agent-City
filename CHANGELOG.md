@@ -1882,6 +1882,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
   planner's sentence stands meanwhile.
 
+- **Standing still, both legs.** In a shop's mirror the player's own body showed one leg: the other had swung half a
+  turn up through the hip and into the trunk. Anyone standing still has a stride of nothing, so the walk's leg solve
+  (`src/03_Spawn_Agents/crowdBody.ts` `bodyLeg`) got the foot's distance ahead as a zero of either sign, and took the
+  thigh's line from `atan2(-dz, -dy)`. For a negative zero over a positive x IEEE gives that zero, but the software
+  WebGPU adapter (SwiftShader, which CI and the project's pictures draw on) gives pi, as a compute pass on it showed:
+  hip 3.112 radians for one leg instead of -0.03. Passers-by walk, so their feet are never exactly under the hip, and
+  they kept both legs. A foot straight below the hip now takes the line's zero, on the GPU and in the CPU twin
+  (`humanoid.ts` `legSolve`). `humanoid.test.ts` runs `bodyLeg` through `wgslHost.ts` (which learned `asin` and `acos`)
+  with a stand-in for the adapter's `atan2`; the test fails without the fix. Mirror pictures from the software adapter
+  show both legs from every side. Whether a hardware GPU ever did this is unverified.
+
 - **A start whose GPU goes away while the crowd is built starts again on the light kernel, instead of stopping at
   "Instance dropped in popErrorScope".** A Mali-G52 phone showed "init: Instance dropped in popErrorScope" on the
   card: Chrome's words for an error scope popped after its GPU process has gone, which takes every WebGPU device of
@@ -1911,6 +1922,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `crowdKernelMemory.test.ts`, `gpuPipelines.test.ts`, `bootFailure.test.ts`, `realmBoot.test.ts` and
   `recoveryWiring.test.ts` pin the rules, the words and the wiring. Whether the phone's driver survives the light
   kernel is not known until it is tried there. Manual: When the city cannot start or stops.
+
 - **The first walk's way out works from wherever you stand.** `spawn_subagents` asked only people within 5 m, and its
   loop stopped at the first skill nobody near knew (Robotics), so the exit program answered a swarm of 0 and
   `unlock_city` refused. The walk's own workplace stage leaves the visitor inside a room, where nobody can be asked
