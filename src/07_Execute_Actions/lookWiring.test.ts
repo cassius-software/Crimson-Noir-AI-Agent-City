@@ -135,7 +135,9 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(posed, /const morphA = vec4\(slider\('mass'\), slider\('muscle'\), slider\('shoulders'\), slider\('hips'\)\)/)
   assert.match(posed, /const morphB = vec4\(slider\('legs'\), slider\('posture'\), slider\('head'\), lowerCode\)/, 'morphB.w: the lower cut, 16 more under a coat (crowdBody.ts bodyGarment)')
   assert.match(posed, /faceA\.assign\(vec4\(faceStep\('brow'\), faceStep\('jaw'\), faceStep\('chin'\), faceStep\('cheek'\)\)\)/)
-  assert.match(posed, /faceB\.assign\(vec4\(faceStep\('nose'\), faceStep\('eyes'\), faceStep\('lips'\), 0\)\)/)
+  assert.match(posed, /faceB\.assign\(vec4\(faceStep\('nose'\), faceStep\('eyes'\), faceStep\('lips'\), carried\)\)/, 'faceB.w: what the person carries, the umbrella and the headphones (crowdBody.ts bodyVertex)')
+  assert.match(posed, /const faceB = vec4\(0, 0, 0, carried\)\.toVar\(\)/, 'off the head too: the umbrella is skinned to the hand and the chest')
+  assert.match(posed, /const carried = near\n/, 'the far body carries neither')
   before(posed, "vLookLo.assign(float(word.bitAnd(uint(0xffff))))", 'if (!eye) return body', 'the shadow pass writes the low half too')
   before(posed, "vLookHi.assign(float(word.shiftRight(uint(16))))", 'if (!eye) return body', 'and the high half')
   const fragment = between(crowd, 'm.castShadowPositionNode = posed(false)', 'applyCodeDissolve(m, vDissolve, feet, PEOPLE_DISSOLVE_INK)')
@@ -170,9 +172,10 @@ test('crowd.ts: the words override the hashed mask, figure, face and wardrobe in
   assert.match(fragment, /const legwear = variant === 3 \? hose : bottom/)
   assert.match(fragment, /const iris = pick\(PALETTE\.iris, h\(LOOK_HASHED_COLOUR\.iris\)\)/)
   assert.match(fragment, /const slots: V3\[\] = \[worn, shirt, select\(turtleNeck, knitShirt, select\(watchHere, watchColour, select\(armHere, limbColour, skinShown\)\)\), hairShown, bottomShown, shoes, accent, prop, select\(booted, bootColour, select\(legHere, limbColour, legwear\)\), frame, white, iris, lip, scarf, fabric, device\]/, 'every slot, the bottom in its weave and its cut\'s lines, a watch over the wrist, a prosthetic over the hand or the bare shin and a boot over both, the headwear\'s cloth and the devices last')
-  // The accessory word (word 6, the genome quad's third lane) reaches the fragment alone: posed() has no use for it, so
-  // the vertex stages are as they were. The fragment decodes it as lookFromSeed draws it, from the colours' chain.
-  assert.doesNotMatch(posed, /genomeQuad\.z/, 'the vertex stage never reads the accessory word')
+  // The accessory word (word 6, the genome quad's third lane): posed() reads two of its fields alone, the umbrella and
+  // the headphones, the meshes it shows; the fragment decodes the rest as lookFromSeed draws it, from the colours' chain.
+  assert.equal(posed.match(/genomeQuad\.z/g)?.length, 1, 'the vertex stage reads the accessory word once')
+  assert.deepEqual(posed.match(/accessoryWord\.shiftRight\(uint\(LOOK_FIELD\.\w+\[1\]\)\)/g), ['accessoryWord.shiftRight(uint(LOOK_FIELD.umbrella[1]))', 'accessoryWord.shiftRight(uint(LOOK_FIELD.headphones[1]))'], 'and only the umbrella and the headphones from it')
   // Each decode whole, thresholds and pick included: a wrong odds name, a pick over the wrong length or a street that
   // wears the shop's own lines would draw a crowd lookFromSeed does not.
   for (const decode of [
@@ -483,7 +486,12 @@ test('the card\'s Tattoos section: headed where the left hand\'s row was, the zo
   assert.doesNotMatch(card, /calves|thigh|knee tattoo/i, 'one calf, one ankle: no zone the wardrobe lacks')
   // The outline's skirt-suit legs follow the legwear (the neutral as hashed, as before).
   assert.ok(card.includes("out[SLOT.LEGWEAR] = look.body !== 3 ? out[SLOT.BOTTOM] : look.legwear === LEGWEAR.bare ? out[SLOT.SKIN] : look.legwear === LEGWEAR.sheer ? sheer(LEGWEAR_VEIL) : hose"))
-  assert.ok(card.includes('shoe styles and finishes, the tie\'s and the bag\'s styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline.'))
+  assert.ok(card.includes('shoe styles and finishes, the tie\'s and the bag\'s styles, the watch, the pin, rolled sleeves and tattoos show in the city, not in this outline; the umbrella and the headphones show in both.'))
+  // The umbrella takes the cup's hand: under one the Cup row is gone (look.ts lookMask leaves a chosen cup off), and the
+  // outline's box widens to an open canopy's reach, the plain box when nothing passes it.
+  assert.ok(card.includes("if (slot === 'cup' && worn.umbrella !== 0) return null"))
+  assert.ok(card.includes('const top = rings.reduce((v, r) => Math.max(v, r.y + 0.02), 2.12)'))
+  assert.ok(card.includes('<svg viewBox={`${m(left)} ${m(-top)} ${m(right - left)} ${m(top + 0.08)}`} width="78" height="143"'))
 })
 
 test('lookStore: its own key, a look within the wardrobe round-trips as a v5 record, a v4 record (thirty-two slots) reads as it is, a v3 record (twenty-nine slots), a v2 record (twenty) and a v1 record (fourteen) are upgraded, anything else reads as none, storage trouble is silent', () => {

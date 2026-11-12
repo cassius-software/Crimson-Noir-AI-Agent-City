@@ -42,6 +42,7 @@ import {
   LOOK_HASHED_SLIDER, LOOK_ODDS, LOOK_PIECE_BIT, LOOK_SLIDER_MIDDLE, LOOK_STATURE, LOOK_WORDS, VITILIGO, WARDROBE, WEAVE, WEAVE_STREET_PACKED, CUT, CUT_STREET_PACKED, TIELESS_CUTS, BOTTOM_CUT_STREET_PACKED, SKIRT_CUT, TROUSER_CUT,
   FOOTWEAR, FOOTWEAR_FEATURES, FOOTWEAR_STREET_PACKED, FRAMES, FRAME_FINISH, TORTOISE_LIGHT, WATCH, LAPEL_PIN, SLEEVES, LEGWEAR, LEGWEAR_VEIL,
   SHOE_FINISH_ROUGHNESS, SHOE_FINISH_SHADE, SHOE_FINISH_STREET_PACKED, TIE_STYLE, BAG_STYLE, BAG_STYLE_ROUGHNESS, BAG_STREET_PACKED,
+  UMBRELLA, HEADPHONES, LOOK_HASHED_UMBRELLA, LOOK_HASHED_HEADPHONES,
   type LookFaceSlider, type LookSlider, type LookSlot, type PaletteName,
 } from './look.ts'
 import { TATTOO_INK, TATTOO_LEG_ZONES, TATTOO_SLEEVE } from './tattoo.ts'
@@ -803,6 +804,20 @@ export class CrowdView {
           .add(select(hears(HEARING.implants), float(1 << LOOK_PIECE_BIT.coilL), float(0)))
           .add(select(hears(HEARING.implant, HEARING.implants, HEARING.implantAndAid), float(1 << LOOK_PIECE_BIT.coilR), float(0)))
         : float(0))
+      // The umbrella and the headphones (look.ts LOOK_CODED_PIECE): a chosen look's from its accessory word, or on the
+      // near body the street's, drawn as lookFromSeed draws them: a furled umbrella for one in ten with no cup, headphones
+      // on a few heads with no headwear and no hearing device. bodyVertex reads them from faceB.w (the near body's alone),
+      // and an umbrella takes the cup's hand: a chosen look's cup is left off under one (look.ts lookMask).
+      const accessoryWord = genomeQuad.z
+      const chosenUmbrella = accessoryWord.shiftRight(uint(LOOK_FIELD.umbrella[1])).bitAnd(uint(3))
+      const odds3 = (link: F1, edges: readonly number[], kinds: readonly number[]): U1 =>
+        edges.reduceRight((r: U1, edge, i) => select(link.greaterThanEqual(edge), uint(kinds[i]), r), uint(0))
+      const carried = near
+        ? float(select(custom, chosenUmbrella, select(cup.greaterThan(0), uint(0), odds3(h(LOOK_HASHED_UMBRELLA), [LOOK_ODDS.umbrellaWalking, LOOK_ODDS.umbrellaFolding], [UMBRELLA.walking, UMBRELLA.folding])))
+          .bitOr(select(custom, accessoryWord.shiftRight(uint(LOOK_FIELD.headphones[1])).bitAnd(uint(3)),
+            select(hashedHeadwear.equal(uint(HEADWEAR.none)).and(hashedHearing.equal(uint(HEARING.none))),
+              odds3(h(LOOK_HASHED_HEADPHONES), [LOOK_ODDS.earbuds, LOOK_ODDS.headphonesOver, LOOK_ODDS.headphonesOnEar], [HEADPHONES.earbuds, HEADPHONES.overEar, HEADPHONES.onEar]), uint(0))).shiftLeft(uint(2))))
+        : float(0)
       const ownGrooms = ownHair.add(headwearBits).add(genomePieces)
       const hashedHead = hashedHair.add(headwearBits).add(genomePieces)
       // The eye pass alone draws the face's features (their piece bit): the shadow map does without them.
@@ -840,6 +855,7 @@ export class CrowdView {
       const tieWorn = select(custom, float(word.shiftRight(uint(2 + LOOK_PIECE_BIT.tie)).bitAnd(uint(1))), step(0.3, h(1))).mul(1 << LOOK_PIECE_BIT.tie)
       const mask = select(custom, float(word.shiftRight(uint(2)).bitAnd(uint(46))).add(ownGrooms), hashedMask.add(hashedHead)).add(features).add(wardrobePieces)
         .sub(select(tieless, tieWorn, float(0)))
+        .sub(select(custom.and(chosenUmbrella.notEqual(uint(0))), float(word.shiftRight(uint(2 + LOOK_PIECE_BIT.cup)).bitAnd(uint(1))).mul(1 << LOOK_PIECE_BIT.cup), float(0)))
       const slider = (slot: Exclude<LookSlider, 'height'>) => {
         const n = (slot === 'head' ? WARDROBE.headSteps : WARDROBE.sliderSteps) - 1
         return select(custom, stepOf(slot), hashedStep(LOOK_HASHED_SLIDER[slot], n)).div(n)
@@ -856,11 +872,11 @@ export class CrowdView {
       const faceStep = (slot: LookFaceSlider) =>
         select(custom, stepOf(slot), hashedStep(LOOK_HASHED_FACE[slot], WARDROBE.sliderSteps - 1)).sub(LOOK_SLIDER_MIDDLE.slider).div(LOOK_SLIDER_MIDDLE.slider)
       const faceA = vec4(0).toVar()
-      const faceB = vec4(0).toVar()
+      const faceB = vec4(0, 0, 0, carried).toVar()
       if (near) {
         If(rig.x.greaterThan(BONE.HEAD - 0.5).and(rig.x.lessThan(BONE.HEAD + 0.5)), () => {
           faceA.assign(vec4(faceStep('brow'), faceStep('jaw'), faceStep('chin'), faceStep('cheek')))
-          faceB.assign(vec4(faceStep('nose'), faceStep('eyes'), faceStep('lips'), 0))
+          faceB.assign(vec4(faceStep('nose'), faceStep('eyes'), faceStep('lips'), carried))
         })
       }
       // The skin (crowdBody.ts): one call gives the posed position (column 0) and its normal (column 1).
@@ -1389,7 +1405,9 @@ export class CrowdView {
       tieRough = select(clip, float(0.25), select(tieIs(TIE_STYLE.satin), float(0.22), select(tieIs(TIE_STYLE.knit), float(0.92), float(0.6))))
     }
     const legwear = variant === 3 ? hose : bottom
-    const device = vec3(0.17, 0.175, 0.18)
+    // The devices' charcoal (the hearing devices, the headphones), and an umbrella's canopy and handle near black.
+    const charcoal = vec3(0.17, 0.175, 0.18)
+    const device = near ? select(rig.z.greaterThan(PIECE.UMBRELLA_FOLDING - 0.5).and(rig.z.lessThan(PIECE.UMBRELLA_OPEN + 0.5)), vec3(0.018, 0.018, 0.02), charcoal) : charcoal
     // The bag's style (look.ts BAG_STYLE) on the bag in the person's left hand, from the rest position (humanoid.ts
     // bagTube: its broad faces 4.5 cm either side of x 0.242, from 0.56 m up to 0.76 m and its length along z, the handle
     // above): brass clasps under a flap's seam, carbon twill's woven diamonds, an aluminium case's ribs and black handle,
