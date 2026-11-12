@@ -18,7 +18,7 @@
  * wheel there (the car's buttons fill the band); with the console open, at the foot of the screen under it.
  * On a phone held upright that band is all of the city the visitor sees between the HUD and their thumbs (131 px of
  * a 360 x 552 page), so there the card folds: a one-line strip under the HUD's header, beside the minimap (Hud.tsx
- * WALK_SLOT), always says the stage and its number, and the card itself opens under Sloane's chip for each new line
+ * and walkSlot.ts), always says the stage and its number, and the card itself opens under Sloane's chip for each new line
  * and at a tap on the strip, and folds at the next touch outside it, after a few metres, or getting into a car (at
  * the wheel a new line is heard and the strip marks it; the card waits for a tap). Open, it shows Sloane's line cut
  * to the lines its band has room for over the stage's button, and More unfolds the rest (the whole line, what the
@@ -32,7 +32,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, useSyncEx
 import { createPortal } from 'react-dom'
 import { PROGRAM, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
 import { besideRoom } from '../Concierge.tsx'
-import { WALK_SLOT } from '../Hud.tsx'
+import { WALK_SLOT } from '../walkSlot.ts'
 import { CONCIERGE_NAME } from './script.ts'
 import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
 
@@ -50,17 +50,22 @@ import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
  *  (Concierge.tsx CHIP_TOP.walk), its foot latched at its highest (--hud-foot-peak, footPeak.ts) so captions coming
  *  and going cannot flip it. Either way it ends left of the minimap's column (7 rem wide under a 0.75 rem frame),
  *  and its foot comes down over the HUD's chips rather than let it grow up over the chip once what is left is less
- *  than its own padding and border (1.875 rem). Upright on a touch screen (`touch`) the card ends 0.5 rem above the
- *  buttons and starts 0.5 rem under Sloane's chip while that band holds 7 rem; where it does not (a short phone beside
- *  a car, whose Enter car button stands above the Menu, or at the wheel), it rises over her chip to the line 7.5 rem
- *  under the frame's top, the foot of the minimap's row, by the same kind of step as the sideways place: an open card
- *  there was asked for by a tap on the strip, and the next touch outside folds it again. Opened out with More
- *  (`touchMore`) it always starts at that line: the visitor asked to read all of it, and her chip is back with Less. */
+ *  than its own padding and border (1.875 rem). Upright on a touch screen (`touch`) the card starts 0.5 rem under
+ *  Sloane's chip and ends 0.5 rem above the HUD's chips at the foot (the captions, a shop's chip: --hud-foot latched at
+ *  its highest, so captions coming and going do not move it), the buttons and the stick's zone, while that band holds
+ *  7 rem. Where it does not, it ends above the buttons and the stick alone, over the HUD's chips (an open card folds at
+ *  the next touch, and they are back). Where even that band is short of 7 rem (a short phone beside a car, whose Enter
+ *  car button stands above the Menu, or at the wheel, where the car's buttons reach up), it stands above her chip
+ *  instead, from the frame's top to 0.5 rem over her chip's head (--chip-head, Concierge.tsx), over the HUD's header,
+ *  the walk's strip and the minimap: never over her chip, which stages ask the visitor to tap. Each switch is the
+ *  sideways place's kind of step (0 while the band holds, else the screen's height). Opened out with More
+ *  (`touchMore`) the card ends above the buttons and the stick whatever the HUD's chips: the visitor asked to read all
+ *  of it, and Less or the next touch gives the chips back. */
 const AT = {
   wide: 'right-[max(1.25rem,env(safe-area-inset-right))] top-[calc(max(1.25rem,env(safe-area-inset-top))+16rem)] w-[20rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-top))_-_16rem_-_7.5rem)]',
   compact: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_8.75rem),calc(var(--chip-bottom,0px)_+_0.5rem))_-_max(0.75rem,env(safe-area-inset-bottom))_-_5rem)]',
-  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem),calc(calc(var(--chip-bottom,0px)_+_0.5rem)_-_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh)))_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem))]',
-  touchMore: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(max(0.75rem,env(safe-area-inset-top))_+_7.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem))]',
+  touch: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(max(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem),calc(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)),calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1)))_+_0.5rem)_-_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)),calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh))),calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-head,0px)_-_0.5rem)_-_100vh_+_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(0.75rem,env(safe-area-inset-top)),calc(calc(var(--chip-bottom,0px)_+_0.5rem)_-_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh)))_-_max(max(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem),calc(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)),calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1)))_+_0.5rem)_-_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)),calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh))),calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-head,0px)_-_0.5rem)_-_100vh_+_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh))))]',
+  touchMore: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem),calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-head,0px)_-_0.5rem)_-_100vh_+_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(0.75rem,env(safe-area-inset-top)),calc(calc(var(--chip-bottom,0px)_+_0.5rem)_-_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh)))_-_max(calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem),calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-head,0px)_-_0.5rem)_-_100vh_+_clamp(0px,calc((7rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--chip-bottom,0px)_+_0.5rem)_-_calc(max(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1)),calc(11.5rem_/_var(--ui-zoom,1)))_+_0.5rem)))_*_10000),100vh))))]',
   between: 'left-[calc(env(safe-area-inset-left,0px)_+_calc(12.5rem_/_var(--ui-zoom,1)))] right-[max(calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem),calc(max(0.75rem,env(safe-area-inset-right))_+_7.5rem))] bottom-[max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem)))] mx-auto max-w-[28rem] max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_max(0px,min(max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot,0px)_/_var(--ui-zoom,1))_+_0.5rem)),calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(max(max(0.75rem,env(safe-area-inset-top)),calc(var(--chip-bottom,0px)_+_0.5rem)),calc(max(0.75rem,env(safe-area-inset-top))_+_10.5rem_-_clamp(0px,calc((8rem_-_calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_10.5rem_-_max(max(0.75rem,env(safe-area-inset-bottom)),calc(calc(var(--hud-foot-peak,var(--hud-foot,0px))_/_var(--ui-zoom,1))_+_0.5rem))))_*_10000),100vh)))_-_1.875rem))))]',
   console: 'left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-[28rem] max-h-[calc(calc(55dvh_/_var(--ui-zoom,1))_-_4rem)]',
 } as const
@@ -135,7 +140,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   // Room for Sloane's open card beside this one on a wide screen (Concierge.tsx's own query, at the same zoom).
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
-  /** The HUD's slot for the strip (Hud.tsx WALK_SLOT): there while its compact layout is on screen. */
+  /** The HUD's slot for the strip (walkSlot.ts): there while its compact layout is on screen. */
   const slot = useSyncExternalStore(WALK_SLOT.subscribe, WALK_SLOT.get, WALK_SLOT.server)
   /** Between the thumbs of a phone held sideways (the console's place wins while it is open). */
   const between = overlay && sideways && !termOpen
@@ -186,6 +191,8 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   const cardRef = useRef<HTMLElement>(null)
   const stripRef = useRef<HTMLButtonElement>(null)
   const lineRef = useRef<HTMLParagraphElement>(null)
+  /** Focus is on one of the open card's buttons: when a fold takes the card away it goes to the strip, not the page. */
+  const focusIn = useRef(false)
   const folding = foldable && shown && open
   const onOutside = useEffectEvent((e: PointerEvent) => {
     if (e.pointerType === 'mouse') return
@@ -199,6 +206,12 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
     window.addEventListener('pointerdown', down, true)
     return () => window.removeEventListener('pointerdown', down, true)
   }, [folding])
+  useLayoutEffect(() => {
+    if (open && shown) return
+    if (!focusIn.current) return
+    focusIn.current = false
+    if (!document.activeElement || document.activeElement === document.body) stripRef.current?.focus({ preventScroll: true })
+  }, [open, shown])
   const travelFrom = useRef(Number.NaN)
   useEffect(() => { travelFrom.current = Number.NaN }, [folding, seenBeat])
   useEffect(() => {
@@ -210,13 +223,17 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   // The strip, in the HUD's own column under its header (a portal: it is drawn with the HUD's panels and zoomed with
   // them, and stays while Sloane's open card has this card step aside): the stage's number and title, and a tap opens
   // or folds the card. It is not shown where the card itself is put away whole (the wardrobe, a shop's card, a halt).
+  const line = beat && beat.stage === card.stage ? beat.text : card.ask
+  // With the strip the line is told from beside it (a live region that stays while the card folds and opens), so a
+  // reader hears each new line, folded or not; the open card's own line is then not a live region too.
   const strip = visible && foldable && slot !== null && createPortal(
+    <>
     <button
       ref={stripRef}
       type="button"
       onClick={() => { setFolded(open && shown); setUnread(false) }}
       aria-expanded={open && shown}
-      aria-label={`Your first walk, ${card.index} of ${card.count}: ${card.title}. ${open && shown ? 'Fold' : 'Show'} ${CONCIERGE_NAME}’s line.`}
+      aria-label={`Your first walk, ${card.index} of ${card.count}: ${card.title}.${unread ? ` A new line from ${CONCIERGE_NAME}.` : ''} ${open && shown ? 'Fold' : 'Show'} ${CONCIERGE_NAME}’s line.`}
       data-walk-strip={card.stage}
       data-walk-unread={unread || undefined}
       className="noir-panel pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left font-noir-text text-[12px] leading-4 text-noir-titanium-200 antialiased focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-noir-crimson"
@@ -227,10 +244,11 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
       <svg viewBox="0 0 12 12" className={`h-3 w-3 shrink-0 text-noir-titanium-400 ${open && shown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M2.5 4.5 6 8l3.5-3.5" />
       </svg>
-    </button>,
+    </button>
+    <span className="sr-only" role="status" aria-live="polite" data-walk-told>{CONCIERGE_NAME}: {line}</span>
+    </>,
     slot,
   )
-  const line = beat && beat.stage === card.stage ? beat.text : card.ask
   const exitStage = card.stage === 'exam'
   /** Where it folds the card is short: the line cut to the lines the band has room for over the button, the rest
    *  behind More (the strip above carries the stage's number and title, so the card's own header is left out). */
@@ -238,7 +256,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   // The short card's lines: measured from the card as it is laid out (its greatest height is the band, resolved by
   // the browser from the touch layer's and Sloane's published edges), and again when the window, those edges (the
   // root's style) or the card's own box change. Set before the browser paints.
-  const [fit, setFit] = useState(UNMEASURED)
+  const [fit, setFit] = useState({ ...UNMEASURED, below: false })
   const measuring = brief && shown && open
   const measure = useEffectEvent(() => {
     const el = cardRef.current, text = lineRef.current
@@ -249,7 +267,12 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
     const all = kids.reduce((sum, k) => sum + k.offsetHeight, 0) + px(box.rowGap) * Math.max(0, kids.length - 1)
       + px(box.paddingTop) + px(box.paddingBottom) + px(box.borderTopWidth) + px(box.borderBottomWidth)
     const next = fitLines(px(box.maxHeight), all - text.offsetHeight, px(getComputedStyle(text).lineHeight), text.scrollHeight)
-    setFit((f) => (f.lines === next.lines && f.whole === next.whole ? f : next))
+    // Under Sloane's chip, or above it where the band under it is short (AT.touch): only under it may touches go
+    // through the card's words (above it they would reach the HUD's strip or the microphone's badge).
+    const chip = document.querySelector('[data-concierge="chip"]')
+    const pill = chip?.closest('[role="group"]') ?? chip
+    const below = !pill || el.getBoundingClientRect().top >= pill.getBoundingClientRect().bottom - 1
+    setFit((f) => (f.lines === next.lines && f.whole === next.whole && f.below === below ? f : { ...next, below }))
   })
   useLayoutEffect(() => {
     if (!measuring) return
@@ -269,8 +292,9 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   const place = foldable && more ? AT.touchMore : at
   /** The short card, when all of it fits, takes touches on its buttons only: a finger on its words reaches the look
    *  area or the stick under it (and folds the card, as any touch outside does). The last stage's card holds the
-   *  program and scrolls, so it keeps its touches; so does a short card too tall for its band. */
-  const through = brief && !exitStage && fit.whole
+   *  program and scrolls, so it keeps its touches; so does a short card too tall for its band, and one standing above
+   *  Sloane's chip. */
+  const through = brief && !exitStage && fit.whole && fit.below
   return (
     <>
       {strip}
@@ -284,6 +308,8 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
           data-walk={card.stage}
           data-walk-index={card.index}
           data-walk-through={through || undefined}
+          onFocus={() => { focusIn.current = true }}
+          onBlur={(e) => { if (e.relatedTarget instanceof Node && !cardRef.current?.contains(e.relatedTarget)) focusIn.current = false }}
           className={`noir-panel absolute flex flex-col overflow-y-auto overscroll-contain font-noir-text text-noir-titanium-200 antialiased ${through ? 'pointer-events-none' : 'pointer-events-auto'} ${foldable ? 'gap-2 p-3' : 'gap-2.5 p-3.5'} ${place}`}
         >
           {!foldable && (
@@ -301,7 +327,7 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
               <h2 className="text-[17px] font-semibold leading-[22px] text-noir-titanium-100">{card.title}</h2>
             </>
           )}
-          <p ref={lineRef} className={`shrink-0 text-[15px] leading-5 text-noir-titanium-100 ${brief ? 'line-clamp-3' : ''}`} style={brief ? { WebkitLineClamp: fit.lines } : undefined} aria-live="polite" data-walk-line>
+          <p ref={lineRef} className={`shrink-0 text-[15px] leading-5 text-noir-titanium-100 ${brief ? 'line-clamp-3' : ''}`} style={brief ? { WebkitLineClamp: fit.lines } : undefined} aria-live={foldable ? undefined : 'polite'} data-walk-line>
             <span className="text-noir-titanium-400">{CONCIERGE_NAME}: </span>{line}
           </p>
           {!brief && <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>}

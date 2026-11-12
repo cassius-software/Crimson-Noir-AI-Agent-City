@@ -36,6 +36,7 @@ import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
 import { nextFootPeak, type FootPeak } from './footPeak.ts'
 import { credits, itemById } from './storeCatalog.ts'
+import { holdWalkSlot } from './walkSlot.ts'
 
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
 /** A ping's colour by what it asks, on the minimap and the chip. */
@@ -93,6 +94,10 @@ function publishPanels(el: HTMLDivElement | null) {
  *  to 0.5 rem short of the buttons' left edge (--touch-left) and 0.5 rem above the zone's top (--touch-stick-top; both
  *  window pixels from TouchControls.tsx, divided by the text size's zoom, the frame's own insets taken off). */
 const FOOT_CENTRE = 'absolute bottom-0 left-1/2 flex max-w-full -translate-x-1/2 flex-col items-center gap-2'
+/** A phone held sideways, on foot: the stack between the thumbs, from the stick's zone (12.5 rem of the unzoomed touch
+ *  layer with its gaps) to 0.5 rem short of the buttons' left edge, so a shop's or a home's chip (a button, over the
+ *  touch layer) wraps inside that gap rather than reach over the stick or Ping and take their touches. */
+const FOOT_BETWEEN = 'absolute bottom-0 left-[calc(calc(12.5rem_/_var(--ui-zoom,1))_+_env(safe-area-inset-left,0px)_-_max(0.75rem,env(safe-area-inset-left)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem_-_max(0.75rem,env(safe-area-inset-right)))] flex flex-col items-center gap-2'
 const FOOT_LIFTED = 'absolute left-0 right-[calc(calc(var(--touch-left,7rem)_/_var(--ui-zoom,1))_+_0.5rem_-_max(0.75rem,env(safe-area-inset-right)))] bottom-[calc(calc(var(--touch-stick-top,12rem)_/_var(--ui-zoom,1))_+_0.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] flex flex-col items-start gap-2'
 
 /** Where the compact layout's chips at the foot begin, for the first walk's card (onboarding/FirstWalk.tsx),
@@ -103,6 +108,10 @@ let footPeak: FootPeak | null = null
 /** Lets the latch go when the window changes size, before any stack republishes (installed once, ahead of theirs). */
 let footSized = false
 function sizeOf(): string { return `${window.innerWidth}x${window.innerHeight}` }
+/** The latch's key: the window's size, and whether the stack is the lifted one (a phone held upright). A rotation's
+ *  resize is measured while the old layout still stands, so a lifted stack's height must never be latched for the
+ *  centred one (or the other way): the two are latched apart, and the stack's element is a new one when it switches. */
+function footKey(el: HTMLElement): string { return `${sizeOf()}${el.hasAttribute('data-lifted') ? ' lifted' : ''}` }
 /** Also --hud-foot-peak (footPeak.ts): the highest foot since the window took its size, which the first walk's band
  *  reads to choose its place, so captions coming and going cannot flip it. */
 function publishFoot(el: HTMLDivElement | null) {
@@ -111,7 +120,7 @@ function publishFoot(el: HTMLDivElement | null) {
   if (!footSized) {
     footSized = true
     window.addEventListener('resize', () => {
-      if (footPeak?.size === sizeOf()) return
+      if (footPeak?.size.split(' ')[0] === sizeOf()) return
       footPeak = null
       root.removeProperty('--hud-foot-peak')
     })
@@ -119,7 +128,7 @@ function publishFoot(el: HTMLDivElement | null) {
   const publish = () => {
     const foot = Math.round(window.innerHeight - el.getBoundingClientRect().top)
     root.setProperty('--hud-foot', `${foot}px`)
-    const next = nextFootPeak(footPeak, sizeOf(), foot)
+    const next = nextFootPeak(footPeak, footKey(el), foot)
     if (next !== footPeak) root.setProperty('--hud-foot-peak', `${next.peak}px`)
     footPeak = next
   }
@@ -167,46 +176,26 @@ const CALM = mediaStore('(prefers-reduced-motion: reduce)')
  *  for the Concierge card above it. Smaller windows get the one-line chip (Sloane's list has every key). */
 const ROOMY = { ...mediaStore('(min-width: 1100px) and (min-height: 600px)'), server: () => true }
 
-/**
- * The slot under the compact layout's header where the first walk's strip stands on a phone held upright
- * (onboarding/FirstWalk.tsx puts it there through a portal): beside the minimap, in the panels' own column, so the
- * status chips under it and Sloane's chip (--hud-bottom) make room for it like any panel. The HUD only holds the
- * element out; with no HUD on screen (the H key, a wide window) there is none, and the walk's card stays open.
- */
-let walkSlot: HTMLElement | null = null
-const walkSlotHeard = new Set<() => void>()
-export const WALK_SLOT = {
-  subscribe(onChange: () => void) {
-    walkSlotHeard.add(onChange)
-    return () => { walkSlotHeard.delete(onChange) }
-  },
-  get: (): HTMLElement | null => walkSlot,
-  server: (): HTMLElement | null => null,
-}
-function holdWalkSlot(el: HTMLDivElement | null) {
-  if (!el) return
-  walkSlot = el
-  for (const heard of walkSlotHeard) heard()
-  return () => {
-    if (walkSlot !== el) return
-    walkSlot = null
-    for (const heard of walkSlotHeard) heard()
-  }
-}
-
 /** How long a recruitment's last outcome ("Python: step onto the sidewalk first: …") stays on a compact screen: it is
  *  news, not state, and a phone has no room to keep it (the console's `recruit` still has it). */
 const NOTE_MS = 8000
-/** True for `ms` after a piece of news first shows: `news` is its ordinal (0 is no news), and the same ordinal coming
- *  back (the line was state for a while) is not fresh again. */
+/** True for `ms` after a piece of news first shows: `news` is its ordinal (0 is no news). Its time runs from when it
+ *  first showed, whatever comes between (the line being state for a while), and the same ordinal coming back is not
+ *  fresh again. */
 function useFresh(news: number, ms: number): boolean {
-  const [seen, setSeen] = useState(0)
+  const [over, setOver] = useState(0)
+  const timer = useRef<{ news: number; id: number } | null>(null)
   useEffect(() => {
-    if (news === 0 || news === seen) return
-    const id = window.setTimeout(() => setSeen(news), ms)
-    return () => window.clearTimeout(id)
-  }, [news, seen, ms])
-  return news !== 0 && news !== seen
+    if (news === 0 || timer.current?.news === news) return
+    if (timer.current) window.clearTimeout(timer.current.id)
+    const id = window.setTimeout(() => setOver(news), ms)
+    timer.current = { news, id }
+  }, [news, ms])
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current.id)
+    timer.current = null
+  }, [])
+  return news !== 0 && news !== over
 }
 
 export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13, onBrowse, homes = null, onHome }: {
@@ -401,8 +390,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // and for a few seconds after a success what it was and what it paid. Game feedback, so it goes with the H key. On
   // a phone it shows only while a check is fresh and never on a short screen, so Sloane's chip under the column moves
   // only for those seconds. At the wheel of a phone held upright the column also holds a toast (`stacked` below), and
-  // Sloane's chip under it can go no lower than the car's buttons: while a toast is up the check waits for it, so the
-  // column never grows down under her chip (getting into a car pays a check and raises a toast in the same moment).
+  // Sloane's chip under it can go no lower than the car's buttons: while a toast is up the check is not shown there
+  // (its chime and its tap still mark it), so the column never grows down under her chip (getting into a car pays a
+  // check and raises a toast in the same moment, and the toast's words say how to drive).
   const pr = s.supplier.progress
   const toastAtWheel = compact && !short && s.input.mode === 'vehicle' && s.toasts.length > 0
   const progressChip = pr && (!compact || (pr.cue !== null && !short && !toastAtWheel)) && <ProgressChip p={pr} panel={panel} muted={muted} />
@@ -420,12 +410,14 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // (one, on a single body line, on a short screen, where it stands in the readout's place). Upright on foot
   // they start below Sloane's chip; at the wheel the buttons reach across the screen, so they cannot run on
   // below it: one toast on a single body line stands under the panels, measured with them, and the chip below it.
+  // On a phone held upright on foot one toast on a single body line too: the captions and a shop's chip stand above
+  // the stick (FOOT_LIFTED), and two toasts under her chip would run down into them on a 552 px page.
   const tight = compact && short
   const stacked = compact && !short && driving
-  const toasts = (compact ? s.toasts.slice(0, short || stacked ? 1 : 2) : s.toasts).map((t) => (
+  const toasts = (compact ? s.toasts.slice(0, short || stacked || lifted ? 1 : 2) : s.toasts).map((t) => (
     <div key={t.id} className={`px-4 py-2.5 ${panel}`} data-hud="panel">
-      <div className={`text-[13px] font-semibold ${tight || stacked ? 'truncate' : ''}`}>{t.title}</div>
-      <div className={`text-xs ${muted} ${tight || stacked ? 'truncate' : ''}`}>{t.body}</div>
+      <div className={`text-[13px] font-semibold ${tight || stacked || lifted ? 'truncate' : ''}`}>{t.title}</div>
+      <div className={`text-xs ${muted} ${tight || stacked || lifted ? 'truncate' : ''}`}>{t.body}</div>
     </div>
   ))
   const speedChip = (
@@ -626,8 +618,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
                   </div>
                 ))}
               </div>
-              {/* The first walk's strip (onboarding/FirstWalk.tsx), on a phone held upright: empty, the slot takes no room. */}
-              <div ref={holdWalkSlot} className="max-w-full empty:hidden" data-hud="walk-slot" />
+              {/* The first walk's strip (onboarding/FirstWalk.tsx, walkSlot.ts), on a phone held upright: empty, the slot takes no room. */}
+              {lifted && <div ref={holdWalkSlot} className="max-w-full empty:hidden" data-hud="walk-slot" />}
               {recChip}
               {micChip}
               {ghostChip}
@@ -652,7 +644,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               and the speedometer under the minimap would reach the driving buttons — the speedometer. On a phone held
               upright the thumbs leave no room between them: the stack stands above the stick instead (FOOT_LIFTED). */}
           {(captureHint || enterPrompt || shopChip || homeChip || (driving && short) || captionStrip) && (
-            <div ref={publishFoot} className={lifted ? FOOT_LIFTED : FOOT_CENTRE} data-hud="foot">
+            <div key={lifted ? 'lifted' : 'centre'} ref={publishFoot} className={lifted ? FOOT_LIFTED : touch && short && !driving ? FOOT_BETWEEN : FOOT_CENTRE} data-hud="foot" data-lifted={lifted || undefined}>
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
@@ -673,7 +665,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             {micPill}
             {rc?.listening && micChip}
           </div>
-          {captionStrip && <div ref={publishFoot} className={lifted ? FOOT_LIFTED : 'absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2'} data-hud="foot">{captionStrip}</div>}
+          {captionStrip && <div key={lifted ? 'lifted' : 'centre'} ref={publishFoot} className={lifted ? FOOT_LIFTED : 'absolute bottom-0 left-1/2 w-max max-w-full -translate-x-1/2'} data-hud="foot" data-lifted={lifted || undefined}>{captionStrip}</div>}
         </div>
       )}
 

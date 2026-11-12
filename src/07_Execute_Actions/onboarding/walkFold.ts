@@ -12,8 +12,10 @@
  * is cut by the band beside a car.
  */
 
-/** Ground covered (walked or driven, metres) since the card opened that folds it: the visitor is under way. */
-export const FOLD_METRES = 3
+/** Ground covered (walked or driven, metres) since the card opened that folds it: the visitor is under way. Ten is
+ *  some seven seconds' walk, time to read the short card when a line comes with a thumb already on the stick (a fresh
+ *  touch anywhere outside the card folds it at once). */
+export const FOLD_METRES = 10
 /** The short card's share of Sloane's line, in lines: as many as its band has room for (fitLines), within these. */
 export const LINES_MIN = 2
 export const LINES_MAX = 6

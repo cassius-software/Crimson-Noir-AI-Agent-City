@@ -1773,6 +1773,31 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **A phone held upright shows the city, not a stack of cards.** On a 360 x 552 page (a 360 px wide Android phone
+  under its browser's bars) the HUD's header, its readout, the recruiter's last line, Sloane's chip, the first walk's
+  card and the captions stacked down the screen until the walk's card was a 67 px strip and the captions ran under
+  the stick and the Run button. Now on every compact tall screen (a phone held upright, a tablet, a narrow window) the
+  HUD is one panel beside the minimap, the frame rate under the clock and the walk signals and the quality tier on its
+  last line (the First Law's count, the sensor flips and the input rate are the console's there; `Hud.tsx`), and
+  Sloane's open card starts 7.5 rem down instead of 8.75. On a compact screen a recruit's or a rally's last outcome is
+  shown for eight seconds from when it first shows and then let go (`recruitment.ts` `hudLine` gives it an ordinal,
+  `news`; the swarm at work, an answer coming and a microphone failure are state and stay). On a phone held upright
+  with the touch controls on screen (under 640 px across): the first walk's card folds to a one-line strip under the
+  HUD's panel (the stage's number and title; `onboarding/FirstWalk.tsx`, the slot in `walkSlot.ts`); the card opens for
+  each new line and at a tap on the strip, shows Sloane's line cut to the lines its band holds (two to six, measured
+  from the card as laid out: `onboarding/walkFold.ts` `fitLines`) over the stage's button with More for the rest, and
+  folds at the next touch outside it, after ten metres on the move or on getting into a car (at the wheel a new line is
+  spoken, told to a screen reader beside the strip, and the strip's dot pulses). It stands under Sloane's chip above
+  the HUD's chips at the foot, or above the controls alone where that band is short, or above her chip, over the HUD's
+  header, where even that is short (beside a car, at the wheel): never over her chip (`--chip-head`, published by
+  `Concierge.tsx`). It has no close and no skip, folded or open, and the walk still ends only in the console. The
+  captions and a shop's or a home's chip stand above the stick and left of the buttons (`--touch-stick-top`, published
+  by `TouchControls.tsx`), each caption wrapping to two lines, and one message at a time stands under her chip. At the
+  wheel upright a progress check made while a message is up is not shown on the HUD (its chime and tap still mark it),
+  so the column never runs on under her chip. A tablet keeps the whole walk card, and a phone held sideways and a
+  desktop keep their places. The browser smoke's `walkphone` checks the fold, the strip and the Browse chip on a 360 x
+  552 page in a shop, and the folded card opened from its strip at the wheel.
+
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
   three's `hash` node was written out inline at every use (110 copies in the suit's near fragment stage, 39 in the
   vertex stage). `crowdBody.ts` `crowdHash` is one WGSL function with the same arithmetic, so each stage carries it
@@ -1964,6 +1989,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **On a phone the shop's Browse chip, a home's chip and the microphone's badge take a tap.** The HUD's layer stood
+  under the touch controls' layer, whose look area covers the right half of the screen and whose stick zone covers the
+  bottom left, so a tap on those buttons turned the view or moved the stick instead. The HUD's layer now stands over
+  the touch layer and under Sloane's and every card; its panels still take no pointer, so every touch on them reaches
+  the stick and the look. Held sideways on foot the HUD's chips at the foot stand between the stick's zone and the
+  buttons, wrapping there, so a long shop name cannot reach over the stick or Ping. `walkphone` hit-tests the Browse
+  chip's middle and finds the chip there.
 
 - **A newly published build of the web copy is what the next launch runs.** The service worker answered every launch
   from its copy and fetched a new build in the background, so the build a phone ran was always one launch behind the

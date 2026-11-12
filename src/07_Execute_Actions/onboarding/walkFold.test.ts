@@ -52,6 +52,6 @@ test('a card not laid out yet is unmeasured: three lines, not whole', () => {
   assert.ok(Object.isFrozen(UNMEASURED))
 })
 
-test('an open card folds once the visitor has covered three metres', () => {
-  assert.equal(FOLD_METRES, 3)
+test('an open card folds once the visitor has covered ten metres, some seven seconds on foot', () => {
+  assert.equal(FOLD_METRES, 10)
 })

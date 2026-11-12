@@ -782,13 +782,19 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const chipRef = useCallback((el: HTMLElement | null) => {
     if (!el || !footOf) return
     const root = document.documentElement.style
-    const publish = () => root.setProperty('--chip-bottom', `calc(${footOf} + ${Math.round(el.offsetHeight)}px)`)
+    // Its head too (--chip-head): on a phone held upright the first walk's open card stands above the chip, over the
+    // HUD's header, where the band under it is too short (onboarding/FirstWalk.tsx AT.touch), and never over it.
+    const publish = () => {
+      root.setProperty('--chip-bottom', `calc(${footOf} + ${Math.round(el.offsetHeight)}px)`)
+      root.setProperty('--chip-head', footOf)
+    }
     publish()
     const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
     watch?.observe(el)
     return () => {
       watch?.disconnect()
       root.removeProperty('--chip-bottom')
+      root.removeProperty('--chip-head')
     }
   }, [footOf])
 

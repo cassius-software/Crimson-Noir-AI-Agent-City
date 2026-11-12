@@ -233,7 +233,7 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
     assert.equal(walk.match(new RegExp(zone, 'g'))?.length, walk.match(new RegExp(`calc\\(${zone}_/_var\\(--ui-zoom,1\\)\\)`, 'g'))?.length, 'and the stick\'s zone')
   }
   const heights = walk.match(/\d+dvh/g) ?? []
-  assert.equal(heights.length, 12, 'seven places\' heights, the two sideways places measuring the window again in their feet, the upright phone\'s in its step')
+  assert.equal(heights.length, 23, 'seven places\' heights, the two sideways places measuring the window again in their feet, the two upright phone places in each of their steps')
   assert.equal(walk.match(/calc\(\d+dvh_\/_var\(--ui-zoom,1\)\)/g)?.length, heights.length, 'and the window\'s height')
   assert.match(HUD, /mt-\[max\(0px,calc\(var\(--chip-bottom,0px\)_-_var\(--hud-bottom,0px\)_\/_var\(--ui-zoom,1\)\)\)\]/, 'the HUD\'s toasts under the chip: the chip\'s foot is already in the zoom\'s lengths, the HUD\'s is not')
   // The HUD's stack at the foot of a phone held upright: above the stick's top and left of the buttons' left edge, both

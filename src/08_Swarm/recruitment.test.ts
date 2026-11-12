@@ -659,8 +659,11 @@ test('the HUD line says when it is news: an outcome has its ordinal, told again 
   // Something going on (an answer streaming in, a task bound) is state: the line stays.
   assert.equal(hudLine(k.r, 0, 'Sloane is answering').news, 0)
   assert.equal(hudLine(k.r, 1).news, 0)
-  // The microphone's failure stays until voice works again: state, not news.
+  // The microphone's failure stays until voice works again: state, not news, even after an outcome has been told.
   const m = micRig()
+  await m.r.recruit('juggling')
+  assert.equal(m.r.outcomes, 1)
+  assert.equal(hudLine(m.r).news, 1)
   const p = m.r.listen()
   await flush()
   m.made[0].onerror!({ error: 'not-allowed' })

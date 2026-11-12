@@ -101,8 +101,17 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   upright, the HUD's messages start below it on foot, and at the wheel one message, cut to a line, stands above it; on
   a short phone in landscape it rises to end above the buttons, and where there is no room under the minimap (a phone
   under browser bars) it moves left of it, its goal text cut short to keep clear of the HUD's panels on the left
-  (under about 600 px across it can still reach a passing message there). On a short screen the HUD's readout keeps to
-  three lines: a paired pad's line takes the First Law counter's place, and a passing message takes the readout's
+  (under about 600 px across it can still reach a passing message there). Held upright (and on a tablet) the HUD is
+  one panel beside the minimap: the brand, the place and the clock, the frame rate under the clock, and on its last line the walk
+  signals and the quality tier (the First Law's count, the sensor flips and the input rate are the console's there).
+  On a phone held upright the captions and a shop's or a home's chip stand above the stick and left of the buttons,
+  never under a thumb, each caption wraps to two lines rather than run under the Run button, and one message at a time
+  stands under Sloane's chip; held sideways on foot those chips stand between the stick and the buttons. The HUD's layer stands over the touch layer,
+  so those chips and the microphone's badge take a tap (under it the look area and the stick's zone took them), while
+  its panels let every touch through to the stick and the look. A recruit's or a rally's last outcome ("Python: step
+  onto the sidewalk first") shows on a phone's status chip for eight seconds from when it first shows and then goes; who is over, who is
+  coming, an answer streaming in and a microphone that could not open stay. On a short screen the HUD's readout keeps
+  to three lines: a paired pad's line takes the First Law counter's place, and a passing message takes the readout's
   place while it shows, clear of the stick. This follows the touch buttons being on screen, so a pad paired with a
   phone keeps it. The browser smoke test checks, at six phone and tablet sizes both ways up and at two landscape views
   under browser bars, on foot, driving and driving with a paired pad, that every control is on screen and clear of the
@@ -1140,7 +1149,19 @@ shows it (there is no city to walk).
   sideways (above the captions and a shop's chip at the foot), and at the foot of the screen while the console is
   open. On a wide screen from 960 px across, Sloane's own open card (her name question, a goal) stands to its left
   rather than under it; anywhere else the walk's card steps aside while hers is open and comes back when she settles
-  into her chip. Sideways, where the band between the thumbs is too short for it (large text, or the foot's chips
+  into her chip. On a phone held upright (under 640 px across, the touch controls on screen) that band is all of the
+  city you see between the HUD and your thumbs, so there the card folds: a one-line **strip** under the HUD's header, beside the minimap, always shows the stage's
+  number and title, and the card opens under Sloane's chip for each new line and at a tap on the strip. It folds again
+  at your next touch outside it (the stick, a drag on the view, a button), after a few metres on the move, or as you
+  get into a car; at the wheel a new line is spoken (and told to a screen reader beside the strip) and the strip's
+  dot pulses until you tap it. Open, it shows
+  Sloane's line cut to as many lines as the band holds (two to six) over the stage's button, and **More** unfolds the
+  whole line, what the stage is and the whys (Less folds them back). A finger dragged across the short card's words
+  turns the view, as the first stage asks. Folding is not closing: the strip has no close either, and the walk still
+  ends only when the console's program has run. Open, it stands under Sloane's chip and above the captions and a
+  shop's chip; where that band is short of 7 rem it ends above the buttons, over those chips; and where even that is
+  short (beside a car or at the wheel on a short phone) it stands above her chip, over the HUD's header and the strip.
+  It never covers her chip, which the stages ask you to tap. A tablet keeps the whole card. Sideways, where the band between the thumbs is too short for it (large text, or the foot's chips
   taking the room), her chip moves up to the top row and the card stands under it over the HUD's header and readout;
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
   lines) and comes back when you get out. It names the stage (1 of
