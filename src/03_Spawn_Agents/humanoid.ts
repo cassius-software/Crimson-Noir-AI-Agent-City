@@ -692,7 +692,9 @@ export const legReach = (thigh: number, shin: number): number => Math.sqrt(thigh
  */
 export function legSolve(dy: number, dz: number, thigh: number, shin: number, sole: number): LegAngles {
   const r = Math.max(Math.min(Math.hypot(dy, dz), legReach(thigh, shin)), 1e-3)
-  const line = Math.atan2(-dz, -dy)
+  // A foot straight below the hip (standing) on the line's zero, whichever zero dz is (crowdBody.ts bodyLeg: the
+  // software adapter's atan2 gives pi for a negative zero over a positive x).
+  const line = dz === 0 ? 0 : Math.atan2(-dz, -dy)
   const open = Math.acos(clampTo((thigh * thigh + r * r - shin * shin) / (2 * thigh * r), -1, 1))
   const hip = line - open
   const knee = Math.PI - Math.acos(clampTo((thigh * thigh + shin * shin - r * r) / (2 * thigh * shin), -1, 1))

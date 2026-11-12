@@ -250,9 +250,12 @@ fn bodyReach(thigh: f32, shin: f32) -> f32 {
 fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f {
   // The leg solved from its foot (humanoid.ts legSolve): (hip, knee, ankle, -) that put the ankle dy from the hip
   // and dz ahead of it, the knee forward of the line between them, the distance held to the reach; the ankle turns
-  // the sole to its angle whatever the leg does.
+  // the sole to its angle whatever the leg does. A foot straight below the hip (anyone standing still: the stride is
+  // nothing, so dz is a zero of either sign) is on the line's zero itself, and is given it: atan2 of a negative zero
+  // over a positive x is that zero by IEEE, but pi on the software adapter (SwiftShader), which swung the leg whose dz
+  // was +0 up through the hip into the trunk, so the shop's mirror showed the player on one leg.
   let r = max(min(length(vec2f(dy, dz)), bodyReach(thigh, shin)), 0.001);
-  let line = atan2(-dz, -dy);
+  let line = select(atan2(-dz, -dy), 0.0, dz == 0.0);
   let open = acos(clamp((thigh * thigh + r * r - shin * shin) / (2.0 * thigh * r), -1.0, 1.0));
   let hip = line - open;
   let knee = ${f(Math.PI)} - acos(clamp((thigh * thigh + shin * shin - r * r) / (2.0 * thigh * shin), -1.0, 1.0));
