@@ -568,10 +568,11 @@ export class Engine {
   private readonly crowdFrameSeconds: UniformNode<'float', number>
   /**
    * Why the crowd runs a kernel below the full one (the console's `hardware`): this GPU refused the ones above, now or
-   * on an earlier start; a heavier one took the GPU down on an earlier start (crowdKernelMemory.ts); or the address
-   * asked for it (?kernel=). Null on the full kernel.
+   * on an earlier start; a heavier one took the GPU down on an earlier start (crowdKernelMemory.ts); the address
+   * asked for it (?kernel=); or this GPU's family starts on it (crowdKernelMemory.ts familyKernel). Null on the full
+   * kernel.
    */
-  private readonly kernelWhy: 'refused' | 'lost' | 'asked' | null
+  private readonly kernelWhy: 'refused' | 'lost' | 'asked' | 'family' | null
   /**
    * The address asked for the crowd kernel that runs (?kernel=) and the page's own record of this GPU says the same
    * (crowdKernelMemory.ts): the address's word adds nothing, and the page that put it there for its own restart may
@@ -918,7 +919,7 @@ export class Engine {
 
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
-    hardware: HardwareClass; hints: DeviceHints; kernelWhy: 'refused' | 'lost' | 'asked' | null; kernelKept: boolean
+    hardware: HardwareClass; hints: DeviceHints; kernelWhy: 'refused' | 'lost' | 'asked' | 'family' | null; kernelKept: boolean
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     start: { x: number; z: number }
@@ -1403,13 +1404,14 @@ export class Engine {
       stillThere()
       // Why the crowd runs below the full kernel, for the console: a loss remembered (whether the record or the page's
       // own restart address asked for the kernel it left; a record of 'none' whose hold has passed is one too: every
-      // kernel was lost here, none refused), the address's own word, a refusal.
+      // kernel was lost here, none refused), the address's own word, the GPU's family (familyKernel), a refusal.
       const ran = sim.meta.crowdKernel
       const remembered = kernels.memory !== null && kernels.memory.from === ran && ran === kernels.plan.from
       const wasNone = kernels.memory?.from === 'none' && kernels.plan.by === 'memory'
       const kernelWhy = ran === 'full' || ran === 'none' ? null
         : (remembered || wasNone) && kernels.memory?.why === 'lost' ? 'lost'
-          : kernels.plan.by === 'address' && ran === kernels.plan.from ? 'asked' : 'refused'
+          : kernels.plan.by === 'address' && ran === kernels.plan.from ? 'asked'
+            : kernels.plan.by === 'family' && ran === kernels.plan.from ? 'family' : 'refused'
       const kernelKept = kernels.plan.by === 'address' && remembered
       const engine = new Engine({
         canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options, kernelWhy, kernelKept,

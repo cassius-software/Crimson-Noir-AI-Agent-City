@@ -24,6 +24,7 @@ import type { BootStage } from './engine.ts'
 import { nativeHost } from '../05_Observe_Environment/governor.ts'
 import type { GpuProbe } from '../01_Initialize_World/gpuDevice.ts'
 import { crowdKernelOf, type CrowdKernel } from '../03_Spawn_Agents/crowdSensor.ts'
+import { KERNEL_MEMORY_KEY, lostBefore } from '../03_Spawn_Agents/crowdKernelMemory.ts'
 
 /** Every class of failure the card has words for. */
 export type FailureKind =
@@ -61,6 +62,15 @@ export interface Env {
   touchPoints: number
   /** The page's own address (location.href), for a button that opens it in another browser. */
   href?: string
+  /**
+   * The browser's own name where it says (appName: Brave sends Chrome's user agent on Android; Edge adds its own EdgA
+   * token), so the steps name the app the player has open. '': the browser's client hints name no app (a build of
+   * Chromium, or a fork that keeps its name to itself), so it is not Chrome either, and the steps say "this browser".
+   * Absent or null: no client hints, and the user agent names it.
+   */
+  app?: string | null
+  /** A crowd kernel took this browser's GPU down on an earlier visit, seen in front (crowdKernelMemory.ts lostBefore). */
+  gpuLostHere?: boolean
 }
 
 /** The device and browser behind a user agent, as far as the words need them. */
@@ -127,6 +137,41 @@ export function pageEnv(): Env {
     origin: typeof location === 'undefined' ? '' : location.origin,
     touchPoints: nav.maxTouchPoints ?? 0,
     href: typeof location === 'undefined' ? '' : location.href,
+    app: appName((nav as { userAgentData?: { brands?: unknown } }).userAgentData?.brands, typeof (nav as { brave?: unknown }).brave === 'object' && (nav as { brave?: unknown }).brave !== null),
+    gpuLostHere: gpuLostHere(),
+  }
+}
+
+/**
+ * Pure. The browser's own name: Brave where it says so itself (navigator.brave), else the first brand of its client
+ * hints that is not the engine's or a placeholder ('Google Chrome' reads Chrome, 'Microsoft Edge' reads Edge). ''
+ * where the hints name no app (Google Chrome always names itself, so that browser is not Chrome); null where there
+ * are no client hints at all (Safari, Firefox), and the user agent has to say.
+ */
+export function appName(brands: unknown, brave: boolean): string | null {
+  if (brave) return 'Brave'
+  if (!Array.isArray(brands)) return null
+  for (const b of brands) {
+    const raw = b && typeof b === 'object' ? (b as { brand?: unknown }).brand : undefined
+    const name = typeof raw === 'string' ? raw.replace(/[^\x20-\x7e]/g, '').trim() : ''
+    if (!name || /^chromium$/i.test(name) || /not.{0,3}a.{0,3}brand/i.test(name)) continue
+    // Opera for Android names itself OperaMobile in its hints; Android lists the app as Opera.
+    const plain = name.replace(/^(?:Google|Microsoft) /, '')
+    return (plain === 'OperaMobile' ? 'Opera' : plain).slice(0, 24)
+  }
+  return ''
+}
+
+/**
+ * Whether a crowd kernel took this browser's GPU down on an earlier visit (Env.gpuLostHere). Only the kernel record
+ * counts: the loss times the page notes (recentGpuLosses) include the phone taking the GPU back from an app in the
+ * background and another tab's crash, which are not the crowd's. Never throws.
+ */
+function gpuLostHere(): boolean {
+  try {
+    return lostBefore(localStorage.getItem(KERNEL_MEMORY_KEY))
+  } catch {
+    return false
   }
 }
 
@@ -176,8 +221,13 @@ export function classify(error: unknown, env: Env): Failure {
   // KernelNoneError.kept). Held, Restart goes to the address without ?kernel= (the word that asked for a kernel, by
   // hand or by the page's own restart), where the hold stops the start before any GPU is asked for.
   const kept = kind !== 'kernel-none' || !(typeof error === 'object' && error !== null && (error as { kept?: unknown }).kept === false)
+  // No adapter: what the page's own WebGL2 said at that moment (gpuDevice.ts NoAdapterError), null where unknown.
+  const said = kind === 'no-adapter' && typeof error === 'object' && error !== null ? (error as { webgl?: unknown }).webgl : null
+  const webgl = typeof said === 'boolean' ? said : null
   return {
-    ...words(kind, env, p, kept), kind, detail: message || 'No message was given.', openIn: kind === 'no-api' ? openInChrome(env, p) : null,
+    ...words(kind, env, p, kept, webgl), kind, detail: message || 'No message was given.',
+    // An Android app's built-in browser is sent to Chrome with the button whether it has no WebGPU or no adapter.
+    openIn: kind === 'no-api' || (kind === 'no-adapter' && p.os === 'android' && p.inApp) ? openInChrome(env, p) : null,
     restartHref: lighter ? kernelAddress(env.href ?? '', lighter) : kind === 'kernel-none' && kept ? kernelFreeAddress(env.href ?? '') : null,
   }
 }
@@ -326,7 +376,57 @@ function iosLockdown(standalone: boolean): string {
 /** Lockdown Mode on a Mac: per site in Safari's own settings for the website, or the switch in System Settings. */
 const MAC_LOCKDOWN = 'Lockdown Mode turns it off in Safari: choose Safari > Settings for This Website and untick Enable Lockdown Mode, or turn it off in System Settings > Privacy & Security > Lockdown Mode.'
 
-function words(kind: FailureKind, env: Env, p: Platform, kept = true): Omit<Failure, 'kind' | 'detail'> {
+/**
+ * The app the player has open, by name: its own (Env.app), else as its user agent reads; '' where neither names it
+ * (the hints name no app, or a user agent the city does not know), and the card says "this browser".
+ */
+function browserName(env: Env, p: Platform): string {
+  if (typeof env.app === 'string') return env.app
+  if (/SamsungBrowser\//.test(env.ua)) return 'Samsung Internet'
+  return p.browser === 'edge' ? 'Edge' : p.browser === 'chrome' ? 'Chrome' : p.browser === 'firefox' ? 'Firefox' : ''
+}
+
+/**
+ * Android with no adapter. Chrome's own code gives a page no adapter on Android when: the page lost the GPU process
+ * twice within two minutes (the 'gpu-paused' card); the browser hands the page no GPU at all after its graphics
+ * crashed (WebGL is refused as well); WebGPU alone is held back, by the browser's list of GPUs it keeps WebGPU from
+ * (which Google can change without an update) or under Android's Advanced Protection, where Chrome turns WebGPU off.
+ * The page's own WebGL answer (`webgl`) tells the middle one from the last two. Closing the browser clears whatever a
+ * crash left behind, so that comes first; Advanced Protection and "built on Chromium" are said only to a browser that
+ * is not Firefox; the installed app is never sent to another browser; a browser with no name is "this browser".
+ */
+function androidNoAdapter(env: Env, p: Platform, webgl: boolean | null, again: string) {
+  const name = browserName(env, p)
+  const gecko = p.browser === 'firefox'
+  const It = name || 'This browser'
+  const it = name || 'this browser'
+  const others = ['Chrome', 'Brave', 'Edge'].filter((b) => b !== name).slice(0, 2).join(' or ')
+  const other = env.standalone ? '' : gecko ? 'open the page in Chrome or Brave' : `open the page in another browser built on Chromium, such as ${others}`
+  const before = env.gpuLostHere ? [`The city’s crowd took this phone’s GPU down in ${it} on an earlier visit.`] : []
+  const stop = name
+    ? `Close ${name} completely (Settings > Apps > ${name} > Force stop), ${again}.`
+    : `Close this browser completely (in Settings > Apps, choose it, then Force stop), ${again}.`
+  if (webgl === false) {
+    return {
+      headline: `${It} is giving this page no GPU`,
+      steps: [...before, `${It} hands this page no GPU at all, not even for WebGL, as a browser can after its graphics crashed, until it is closed.`, stop, `Still nothing: restart the phone${other ? `, or ${other}` : ''}.`],
+    }
+  }
+  const last = gecko
+    ? (other ? `Still none: ${other}.` : 'Still none: restart the phone.')
+    : `Still none: under Android’s Advanced Protection (Settings > Security & privacy > Advanced Protection) Chrome and the browsers built on it turn WebGPU off, and ${it} can keep it from a GPU on its own list${other ? `; ${other}` : ''}.`
+  return {
+    headline: 'No graphics adapter for WebGPU',
+    steps: [
+      ...before,
+      webgl ? `${It} still gives this page WebGL but holds WebGPU back.` : `${It} has WebGPU but gave this page no GPU for it.`,
+      stop,
+      last,
+    ],
+  }
+}
+
+function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boolean | null = null): Omit<Failure, 'kind' | 'detail'> {
   const phone = p.os === 'ios' || p.os === 'android'
   const device = p.ipad ? 'iPad' : 'iPhone'
   const iosUpdate = p.ipad
@@ -432,10 +532,14 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true): Omit<Fail
         ], true)
       }
       if (p.os === 'android') {
-        return w('No graphics adapter for WebGPU', [
-          'Chrome has WebGPU, but not for this phone’s GPU or its driver.',
-          'Update Chrome and Android; some phones aren’t supported yet.',
-        ], true)
+        if (p.inApp) {
+          return w('Open this page in Chrome', [
+            'This is an app’s built-in browser, and it gave this page no GPU for WebGPU.',
+            'Use the app’s menu (often ⋮) and choose Open in Chrome, or Open in browser.',
+          ], true)
+        }
+        const a = androidNoAdapter(env, p, webgl, again)
+        return w(a.headline, a.steps, true)
       }
       if (p.browser === 'firefox') {
         return w('No graphics adapter for WebGPU', [
@@ -499,7 +603,8 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true): Omit<Fail
           : phone
             ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
             : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
-        'For the crowd’s simulate pass the city also tried narrower workgroups and its lighter kernel; the details name each refusal.',
+        // A start may begin on the light kernel (the address, a record, a GPU family that starts there): nothing heavier was tried then.
+        'Where the city started higher, it also tried narrower workgroups and its lighter kernel; the details name each refusal.',
       ])
     case 'kernel-lost':
       // Said as what the page saw, not as the driver's fault for certain: the browser's own watchdog, or the system
@@ -511,8 +616,8 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true): Omit<Fail
         'Restart: the city starts with a lighter kernel for the crowd, which asks less of the driver.',
       ])
     case 'kernel-none':
-      return w('The crowd keeps stopping this device’s graphics', [
-        'The GPU dropped out of the browser each time one of the crowd’s kernels was built, the lightest included; the details name them.',
+      return w('The crowd’s lightest kernel stopped this device’s graphics', [
+        'The crowd’s lightest kernel took the GPU out of the browser, on this start or an earlier one, so no lighter kernel is left to ask it for; the details say which kernels were lost and when.',
         p.os === 'ios'
           ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
           : phone

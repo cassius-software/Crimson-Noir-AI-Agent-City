@@ -42,6 +42,61 @@ export class WebGPUUnavailableError extends Error {
 }
 
 /**
+ * No adapter at all ('no-adapter'), with what the page's own WebGL said when asked at that moment (webgl2Answers):
+ * true, WebGPU alone is held back (the browser's list of GPUs it keeps WebGPU from, a setting, Android's Advanced
+ * Protection); false, the browser hands this page no GPU at all, neither WebGL2 nor WebGL (as it can after its
+ * graphics crashed); null, there was nothing to ask (no canvas: a worker, the Node tests). The recovery card words
+ * the two apart (bootFailure.ts).
+ */
+export class NoAdapterError extends WebGPUUnavailableError {
+  readonly webgl: boolean | null
+  constructor(message: string, webgl: boolean | null) {
+    super('no-adapter', message)
+    this.name = 'NoAdapterError'
+    this.webgl = webgl
+  }
+}
+
+/** The part of a canvas webgl2Answers asks (an HTMLCanvasElement or an OffscreenCanvas; the tests hand in fakes). */
+export interface WebGL2Asked { getContext(id: 'webgl2' | 'webgl'): unknown }
+
+/** A canvas of the page's own (a 1 by 1 OffscreenCanvas where there is no document), or null where there is none. */
+function scratchCanvas(): WebGL2Asked | null {
+  if (typeof document !== 'undefined' && typeof document.createElement === 'function') return document.createElement('canvas')
+  return typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(1, 1) : null
+}
+
+/**
+ * Whether the browser gives this page WebGL right now: WebGL2 asked first, then WebGL on a fresh canvas (a browser
+ * can keep WebGL2 alone from a GPU on its list, and a canvas that refused one context id may not be asked another).
+ * True: a context was made, and let go at once, so it holds nothing of the GPU. False: both refused. Null: no canvas
+ * to ask, or asking threw. Asked only once WebGPU has offered no adapter, to tell a browser that holds back WebGPU
+ * alone from one that hands the page no GPU at all.
+ */
+export function webgl2Answers(canvas: () => WebGL2Asked | null = scratchCanvas): boolean | null {
+  try {
+    for (const id of ['webgl2', 'webgl'] as const) {
+      const c = canvas()
+      if (!c) return null
+      const gl = c.getContext(id) as { getExtension?(name: string): { loseContext?(): void } | null } | null
+      if (!gl) continue
+      gl.getExtension?.('WEBGL_lose_context')?.loseContext?.()
+      return true
+    }
+    return false
+  } catch {
+    return null
+  }
+}
+
+/** Pure. The no-adapter message, with what WebGL said where it was asked. */
+export function noAdapterMessage(webgl: boolean | null): string {
+  const base = 'The browser offered no WebGPU adapter (requestAdapter returned null)'
+  if (webgl === null) return `${base}.`
+  return webgl ? `${base}; WebGL still works on this page, so WebGPU alone is held back.` : `${base}, and refused WebGL2 and WebGL as well: it hands this page no GPU at all.`
+}
+
+/**
  * three r186's GPUFeatureName values (three/src/renderers/webgpu/utils/WebGPUConstants.js), in its order: WebGPUBackend
  * asks for each of these the adapter has. gpuDevice.test.ts holds this list equal to three's, so an upgrade that adds a
  * feature is noticed rather than quietly dropped from the device.
@@ -64,7 +119,8 @@ const POWER: GPUPowerPreference = 'high-performance'
 /**
  * The core adapter the city needs, or the coded reason there is none: not a secure context (WebGPU is [SecureContext]
  * in every browser), no navigator.gpu, no adapter at all, or only a compatibility one (asked for only to tell those
- * two apart: its reduced limits cannot run the crowd). `origin` names the page in the insecure message.
+ * two apart: its reduced limits cannot run the crowd). `origin` names the page in the insecure message. With no
+ * adapter at all, `webgl` (webgl2Answers) says whether the browser still gives the page WebGL (NoAdapterError).
  */
 /** The xrCompatible request: null where the browser answers none, rejects or throws on the option. */
 async function xrAdapter(gpu: GpuEntry): Promise<GPUAdapter | null> {
@@ -75,7 +131,7 @@ async function xrAdapter(gpu: GpuEntry): Promise<GPUAdapter | null> {
   }
 }
 
-export async function coreAdapter(gpu: GpuEntry | null | undefined, secure: boolean, origin = '', headset = false): Promise<GPUAdapter> {
+export async function coreAdapter(gpu: GpuEntry | null | undefined, secure: boolean, origin = '', headset = false, webgl: () => boolean | null = webgl2Answers): Promise<GPUAdapter> {
   if (!secure) throw new WebGPUUnavailableError('insecure', `This page is not a secure context${origin ? ` (${origin})` : ''}: browsers turn WebGPU on only for https:// pages and localhost.`)
   if (!gpu) throw new WebGPUUnavailableError('no-api', 'This browser does not expose WebGPU (navigator.gpu).')
   // A headset's session binds to the page's device, and the WebXR/WebGPU binding wants an adapter asked for as
@@ -85,7 +141,8 @@ export async function coreAdapter(gpu: GpuEntry | null | undefined, secure: bool
   if (adapter) return adapter
   const compat = await gpu.requestAdapter({ powerPreference: POWER, featureLevel: 'compatibility' }).catch(() => null)
   if (compat) throw new WebGPUUnavailableError('compat-only', 'The browser offers only a WebGPU compatibility adapter; the crowd needs a core one.')
-  throw new WebGPUUnavailableError('no-adapter', 'The browser offered no WebGPU adapter (requestAdapter returned null).')
+  const gl = webgl()
+  throw new NoAdapterError(noAdapterMessage(gl), gl)
 }
 
 /** The features the page's device asks for: three's own list, as far as the adapter has them (WebGPUBackend's filter). */
