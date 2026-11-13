@@ -5,8 +5,11 @@
  * Why does this file exist? It pins the Ring-0 bouncer's ranking: the First Law stop envelope forward and
  * in reverse, the player's instruction outranking self-preservation (Second Law), an AI driver protecting
  * its vehicle (Third Law), rising-edge counting per vehicle, and — over a grid of speeds, distances and
- * throttles — that no ruling ever lets a vehicle throttle toward a person inside its stopping envelope.
- * What breaks if it is removed? A kernel edit could let a car drive into a person unnoticed.
+ * throttles — that no ruling ever lets a car nobody sits in throttle toward a person inside its stopping
+ * envelope; and the one car ruled apart, the one a person is seated in (source 'seated'), which passes through
+ * people and is ruled exactly by the Second and the Third Law's rules with the people left out, never anything else.
+ * What breaks if it is removed? A kernel edit could let a car drive into a person unnoticed, or let the seated
+ * driver's exception reach a car nobody sits in.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -82,7 +85,7 @@ test('First Law at a standstill: pulling away toward a person inside the standof
   assert.equal(adjudicate(go(0, 2), at({ speed: 0, personAhead: near, personBehind: near })).law, 0)
 })
 
-test('First Law keeps the steering and outranks the player', () => {
+test('First Law keeps the steering and outranks a person\'s instruction to a car nobody sits in', () => {
   const r = adjudicate(go(1, 0, 0.3), at({ source: 'player', speed: 10, personAhead: 3 }))
   assert.equal(r.law, 1)
   assert.deepEqual(r.command, { throttle: 0, brake: KERNEL.maxBrake, steer: 0.3 })
@@ -162,7 +165,7 @@ test('Bouncer counts rising edges per law and per vehicle, not frames', () => {
   assert.equal(b.holding(99), false, 'an unknown vehicle is not held')
 })
 
-test('property: no ruling ever throttles toward a person inside the stopping envelope', () => {
+test('property: no ruling for a car nobody sits in ever throttles toward a person inside the stopping envelope', () => {
   const STILL = 0.05
   // A 0.25 m/s grid plus both edges of the standstill band, where direction of travel is decided by the throttle.
   const speeds: number[] = [-STILL - 0.01, -STILL, -STILL + 0.01, STILL - 0.01, STILL, STILL + 0.01]
@@ -221,6 +224,73 @@ test('property: a reckless full-throttle driver still stops short of a person se
       }
     }
   }
+})
+
+test('the car a person is seated in is not held for people: their instruction stands, the Second Law still counted, the Third never', () => {
+  // A person 1 m ahead at 10 m/s, and someone inside the footprint behind: an AI's car or a script's would stop.
+  const s = at({ source: 'seated', speed: 10, personAhead: 1, personBehind: 0 })
+  assert.equal(adjudicate(go(1, 0, 0.3), at({ ...s, source: 'player' })).law, 1, 'a script\'s car: the First Law')
+  assert.equal(adjudicate(go(1, 0, 0.3), at({ ...s, source: 'ai' })).law, 1, 'an AI\'s car: the First Law')
+  const r = adjudicate(go(1, 0, 0.3), s)
+  assert.equal(r.law, 0)
+  assert.deepEqual(r.command, go(1, 0, 0.3), 'the instruction passes unchanged')
+  // Reverse into the person behind, and forward throttle while still rolling back toward the person ahead.
+  assert.deepEqual(adjudicate(go(-1), at({ ...s, speed: -2 })).command, go(-1))
+  assert.deepEqual(adjudicate(go(1), at({ ...s, speed: -2 })).command, go(1))
+  // Readings that are not numbers fail toward nobody: the people are not read at all.
+  assert.deepEqual(adjudicate(go(1), at({ ...s, personAhead: NaN, personBehind: NaN })).command, go(1))
+  // A wall: the Second Law, as for any person's instruction; never the Third Law's brake.
+  const wall = adjudicate(go(1, 0, 0.1), at({ ...s, obstacleAhead: 5 }))
+  assert.equal(wall.law, 2)
+  assert.deepEqual(wall.command, go(1, 0, 0.1))
+  assert.match(wall.reason, /Second Law/)
+  // The car's own speed must still be a number: one that is not stops it, as the First Law stops any car.
+  for (const speed of [NaN, Infinity, -Infinity]) {
+    const bad = adjudicate(go(1), at({ ...s, speed }))
+    assert.equal(bad.law, 1, `speed ${speed}`)
+    assert.deepEqual(bad.command, { throttle: 0, brake: KERNEL.maxBrake, steer: 0 })
+  }
+  // Only that exact word: anything else is the strictest reading (an AI's car).
+  for (const source of ['Seated', 'seat', '', 'seated ', undefined] as unknown as Situation['source'][]) {
+    assert.equal(adjudicate(go(1), at({ ...s, source })).law, 1, `source ${JSON.stringify(source)}`)
+  }
+})
+
+test('property: the seated driver\'s ruling is the person-free ruling of a person\'s instruction, whatever the people', () => {
+  let checked = 0
+  for (let speed = -12; speed <= 20; speed += 0.5) {
+    for (const d of [0, 0.5, 1.5, 4, 12, 40, Infinity, NaN]) {
+      for (const throttle of [-1, -0.4, 0, 0.4, 1]) {
+        for (const obstacleAhead of [Infinity, 30, 6, 1]) {
+          const intent = go(throttle, 0.5, 0.1)
+          const seated = adjudicate(intent, { source: 'seated', speed, personAhead: d, personBehind: d, obstacleAhead })
+          const free = adjudicate(intent, { source: 'player', speed, personAhead: Infinity, personBehind: Infinity, obstacleAhead })
+          assert.deepEqual(seated.command, free.command, `at ${speed} m/s, people ${d} m, obstacle ${obstacleAhead} m`)
+          assert.equal(seated.law, free.law)
+          assert.notEqual(seated.law, 1)
+          assert.notEqual(seated.law, 3)
+          checked++
+        }
+      }
+    }
+  }
+  assert.ok(checked > 10_000, `${checked}`)
+})
+
+test('the Bouncer never holds the car a person is seated in, and lets go of a hold it carried from before they sat down', () => {
+  const b = new Bouncer()
+  const person = at({ speed: 10, personAhead: 3 })
+  assert.deepEqual(b.vet(0, go(1), { ...person, source: 'player' }), { throttle: 0, brake: KERNEL.maxBrake, steer: 0 })
+  assert.equal(b.holding(0), true)
+  assert.equal(b.counts[1], 1)
+  assert.deepEqual(b.vet(0, go(1), { ...person, source: 'seated' }), go(1))
+  assert.equal(b.holding(0), false, 'seated: no longer held')
+  for (let i = 0; i < 10; i++) b.vet(0, go(1), { ...person, personAhead: 0, source: 'seated' })
+  assert.equal(b.counts[1], 1, 'no new First-Law ruling')
+  assert.equal(b.holding(0), false)
+  // The seat lapses: the very next vet of a car nobody sits in is held again.
+  assert.deepEqual(b.vet(0, go(1), { ...person, source: 'player' }), { throttle: 0, brake: KERNEL.maxBrake, steer: 0 })
+  assert.equal(b.counts[1], 2)
 })
 
 test('the First Law guards the direction the throttle points, even while the car still rolls the other way', () => {

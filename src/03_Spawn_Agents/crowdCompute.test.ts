@@ -1218,6 +1218,15 @@ test('Params: every field each side writes lands where the WGSL struct reads it,
   assert.deepEqual([...f.subarray(at('global'), at('global') + 4)], [f32(input.time), 0, 0, 0])
   crowd.step(simInput({ matrixMode: true }))
   assert.deepEqual([...params(device, 'crowd.params').f.subarray(at('global'), at('global') + 4)], [f32(input.time), 1, 0, 0])
+  // A car that passes through people (a person seated at its wheel) carries the same reach with its sign turned, and
+  // nothing else differs; only `true` turns it (the shader reads the reach squared, so the sensing is unchanged).
+  const seated = simInput()
+  seated.cars = [{ ...seated.cars[0], passage: true }, { ...seated.cars[1], passage: 'yes' as unknown as boolean }]
+  crowd.step(seated)
+  const turned = params(device, 'crowd.params')
+  assert.deepEqual(turned.carField(0, 'b'), [0.92, 2.3, 0.05, -corridorReach(input.cars[0])].map(f32))
+  assert.deepEqual(turned.carField(0, 'a'), [10, 7, 0.3, 9].map(f32))
+  assert.deepEqual(turned.carField(1, 'b'), [0.92, 2.3, -0.1, corridorReach(input.cars[1])].map(f32))
   // The shader reads them by these names: Car.b = (half width, half length, curvature, corridor reach), aux =
   // (avatar visible, density beyond nearRadius, max draw distance, -).
   assert.match(flat('simulate'), /corridorGap\(lz, -lx, car\.b\.x, car\.b\.y, car\.b\.z, -CAR_AXLE\)/)

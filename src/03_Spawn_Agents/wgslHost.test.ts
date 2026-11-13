@@ -9,8 +9,9 @@
  * packSimParams writes every block, its pure functions give the CPU's own answers (degreeOf, the walk window,
  * the First-Law corridor against vehicles.ts corridorDistance over random cars and people), and that CrowdHost
  * (crowdHost.ts) steps it as crowdSim.ts steps the GPU: the first reading lands at once, later ones after the
- * latency asked for, the hazard slots read the cars, frames are in the render layout, two hosts stepped alike
- * agree to the bit, and SimCore primes on it like on the GPU.
+ * latency asked for, the hazard slots read the cars, frames are in the render layout, a car that passes through
+ * people (one a person is seated in) still senses them and pushes, staggers and turns back nobody while an ordinary
+ * car does all three, two hosts stepped alike agree to the bit, and SimCore primes on it like on the GPU.
  * What breaks if it is removed? The soaks (crowdSoak.test.ts) could pass on a host that runs a different shader
  * from the one that ships, and nothing would say so.
  */
@@ -218,6 +219,34 @@ test('CrowdHost steps crowd.wgsl as crowdSim.ts does: the first reading at once,
     assert.ok(Number.isFinite(s.pos[4 * i]) && Number.isFinite(s.pos[4 * i + 2]), `agent ${i}`)
     assert.equal(s.pos[4 * i + 1], i === 0 ? -100 : 0)
   }
+})
+
+test('a car that passes through people (a person seated at its wheel) senses them as ever, and pushes, staggers and turns back nobody', () => {
+  // brain floats (16 per person): 4 and 5 the stagger springs' kicks, 10 the step-back timer (crowd.wgsl Brain b.x, b.y, c.z).
+  const scene = (passage: boolean, at: { x: number; z: number }, car: { x: number; z: number; heading: number; speed: number }) => {
+    const host = new CrowdHost(256)
+    host.place(1, at.x, at.z, Math.PI)
+    const before = { x: host.state.pos[4], z: host.state.pos[6] }
+    host.step({ ...input(1, 1 / 60, 1 / 60, [car]), cars: [{ ...car, halfWidth: CAR.halfWidth, halfLength: CAR.halfLength, curvature: 0, passage }] })
+    const s = host.state, r = host.readout!
+    return { moved: Math.hypot(s.pos[4] - before.x, s.pos[6] - before.z), kick: Math.hypot(s.brain[16 + 4], s.brain[16 + 5]), back: s.brain[16 + 10], nudges: r.stats.nudges, ahead: r.hazardsAhead[0] }
+  }
+  // Standing on someone: a car at rest on a street (x = 120 is a street line) with a person 0.2 m off its centreline.
+  const standing = { x: 122, z: 140, heading: 0, speed: 0 }, inside = { x: 122.2, z: 140.5 }
+  const pushed = scene(false, inside, standing), passed = scene(true, inside, standing)
+  assert.ok(pushed.moved > 0.9, `an ordinary car sets them onto its side: moved ${pushed.moved.toFixed(3)} m`)
+  assert.ok(pushed.kick > 1 && pushed.nudges >= 1, `and staggers them (kick ${pushed.kick.toFixed(2)}, nudges ${pushed.nudges})`)
+  assert.ok(passed.moved < 0.1, `passing through: moved ${passed.moved.toFixed(3)} m (their own step at most)`)
+  assert.equal(passed.kick, 0, 'no stagger')
+  assert.equal(passed.nudges, 0, 'no nudge counted')
+  assert.equal(passed.ahead, 0, 'sensed as ever: inside the footprint is 0 m')
+  assert.equal(pushed.ahead, 0)
+  // Coming at someone in the road 6 m ahead at 8 m/s: the ordinary car makes them step back, the passing one does not.
+  const coming = { x: 122, z: 100, heading: 0, speed: 8 }, road = { x: 122.3, z: 106 }
+  const saved = scene(false, road, coming), stood = scene(true, road, coming)
+  assert.ok(saved.back > 1, `an ordinary car: a step back (${saved.back.toFixed(2)} s)`)
+  assert.ok(stood.back <= 0, `passing through: no step back (${stood.back.toFixed(2)})`)
+  assert.ok(Math.abs(stood.ahead - saved.ahead) < 0.02 && stood.ahead > 3 && stood.ahead < 4, `sensed alike: ${stood.ahead} and ${saved.ahead} m`)
 })
 
 test('two hosts stepped alike agree to the bit, and a host inside the realm primes SimCore like the GPU', async () => {

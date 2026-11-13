@@ -592,7 +592,8 @@ listeners."
 
 **The realm's per-player guarantees, as the verifier stated them.** Every avatar is a person to every part of the
 ethical kernel: the Bouncer measures each one exactly (the nearest present person in each car's corridor holds the
-car, whoever is driving), the Sanctuary registers each as a ward in player order and shields only the one a car is
+car, whoever is driving; since 2026-11-12 a car a player sits in passes through people instead, harmlessly, MANUAL.md
+"The car you sit in"), the Sanctuary registers each as a ward in player order and shields only the one a car is
 about to reach, and the Ring-0 audit lists each with its own id (= player) so a car that reaches one halts the realm
 naming that person; the only person exempt from a car's footprint is the player driving it. One driver per car and
 one car per driver: a car someone else is driving is refused with a `rejected` event, and `setMode`, `intent` and
@@ -935,9 +936,11 @@ gap, and release.
 - **Open, for the operator.**
   - **AI cars are checked by an envelope, not a coordinate**, for the reason above. A client can claim an AI car
     anywhere on its own ring's lane within reach of its door; what it gains is a door's reach, at the door rate.
-  - **A cheating driver can ignore the First Law in its own page.** The room replays the wheel command the page
-    reports and cannot run the Bouncer (the pedestrians are the page's GPU crowd). The car still obeys the room's
-    physics and the velocity cap, and remote players are poses, never bodies, so nobody else's page is touched.
+  - **The room cannot rule a page's wheel command.** The room replays the wheel command the page reports and cannot
+    run the Bouncer (the pedestrians are the page's GPU crowd). A page that skips the Bouncer gains little: the car a
+    person sits in already passes through people, harmlessly, in an honest page (MANUAL.md, "The car you sit in").
+    The car still obeys the room's physics and the velocity cap, and remote players are poses, never bodies, so
+    nobody else's page is touched.
   - **Cost.** A driving player costs the host about 4 % of a core (a world step of the full city is about 0.7 ms);
     32 drivers at once would need more than one core.
   - **A clock-speed cheat gains at most 5 %**, the refill headroom that lets an honest page's bank come back.
@@ -1007,10 +1010,12 @@ only additions and four single-line widenings (two imports, one type, one event 
   Tests: `simCore.test.ts` "rally: refused for a point inside a building lot ...", `skillsRally.test.ts`. (2) `reset`
   could put a car down beside a player on foot (audit invariant 8), unreachable with one avatar and reachable with
   four. Fix in `simCore.ts`: `#clearOfPeople` guards `reset` as it guards `recover`. Test: `simPlayers.test.ts`
-  "adversarial: player 2 drives at player 0 standing in the lane and the Bouncer holds; one car cannot be taken by
-  two players in a step; a reset is refused beside a player on foot; infinite controls are no control". **Attacks
-  that held** (kept as tests): infinite controls for a player on foot and one at the wheel; player 2 at full throttle
-  at player 0 standing 35 m ahead (held over 1 m short); two players taking the same parked car in one step; a rally
+  "adversarial: player 2 drives at player 0 standing in the lane and passes through them untouched; one car cannot be
+  taken by two players in a step; a reset is refused beside a player on foot; infinite controls are no control".
+  **Attacks that held** (kept as tests): infinite controls for a player on foot and one at the wheel; player 2 at full
+  throttle at player 0 standing 35 m ahead (held over 1 m short; superseded on 2026-11-12: the car player 2 sits in
+  now passes through player 0 untouched, with player 0 shielded and never moved, and a scripted car still holds short
+  of a player, "a scripted car beside a seated one ..."); two players taking the same parked car in one step; a rally
   at 11.9 m, after a dismiss, for an Interviewing recruit, onto the road, with the operator in a car; a spawn inside
   a lot; four players over a surveyed region ("adversarial: a surveyed region takes spawns too ...").
 - *The page wirings, first pass* (`bd700b8` to `f5765d5`). Checks as above, plus: no new page-to-worker path (the

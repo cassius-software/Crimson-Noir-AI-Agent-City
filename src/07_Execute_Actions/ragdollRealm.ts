@@ -18,7 +18,8 @@
  *
  * A vehicle is never a cause. The pool refuses one by name, no car's push is ever offered, nobody standing within
  * VEHICLE_CLEARANCE of a moving car is promoted, and once a rig exists every one of its thirteen shapes is a ward of
- * the Sanctuary (a car about to reach it flips it to a sensor and nudges it clear, so no impulse is ever exchanged)
+ * the Sanctuary (a car about to reach it flips it to a sensor and nudges it clear, or, the car a person is seated in,
+ * flips it and leaves it where it lies, so no impulse is ever exchanged)
  * and a person to the Ring-0 audit (solid while not a sensor, with an id of its own: a car that reaches one halts the
  * realm naming it). A shielded segment keeps no gravity (a sensor meets no ground) until every car is clear again.
  * Like the rest of the realm it lives in the physics worker only, and nothing it returns is a reference into it.
@@ -227,11 +228,12 @@ export class RagdollRealm {
       if (dx * dx + dz * dz <= r2 && finite(x) && finite(z)) near.push(i)
     }
     if (hadPrev && near.length > 0) {
-      // Who is close to a moving car: not a candidate (a rig is never built where a car is about to be).
+      // Who is close to a moving car: not a candidate (a rig is never built where a car is about to be). Nor is who is
+      // close to a car that passes through people, moving or standing: people can stand in that one.
       const clear = (x: number, z: number): boolean => {
         for (let j = 0; j < cars.length; j++) {
           const c = cars[j]
-          if (!c.active || Math.hypot(c.vx, c.vz) <= CAR_MOVING) continue
+          if (!c.active || (c.passage !== true && Math.hypot(c.vx, c.vz) <= CAR_MOVING)) continue
           if (Math.hypot(x - c.x, z - c.z) < c.halfLength + VEHICLE_CLEARANCE) return false
         }
         return true
@@ -367,14 +369,29 @@ export class RagdollRealm {
     }
   }
 
-  /** Appends one person per rig (its pelvis) to `out` from index `from` for the Fleet (setPeople); returns the new length. */
+  /**
+   * Appends one person per rig (its pelvis) to `out` from index `from` for the Fleet (setPeople); returns the new length.
+   * Each carries its `reach`: how far across the ground its body lies from the pelvis (the farthest end of any of its
+   * thirteen shapes, a foot's sole included), so a car left among people stays a passage while a lying rig's head or
+   * legs are under it, though its pelvis is clear (vehicles.ts #standsClear).
+   */
   peopleInto(out: Person[], from: number, present: boolean): number {
     let k = from
     for (const s of this.#slots) {
       if (!s.rig) continue
       const p = s.rig.bodies.pelvis.translation(this.#at)
-      const q = out[k] ?? (out[k] = { x: 0, z: 0, present: false })
-      q.x = p.x; q.z = p.z; q.present = present
+      const px = p.x, pz = p.z
+      let reach = 0
+      for (const shape of s.shapes) {
+        const c = shape.person.body.translation(this.#at)
+        reach = Math.max(reach, Math.hypot(c.x - px, c.z - pz) + shape.spec.halfHeight + shape.spec.radius)
+        if (shape.spec.foot) {
+          const f = this.#shapeAt(shape)
+          reach = Math.max(reach, Math.hypot(f.x - px, f.z - pz) + shape.spec.radius)
+        }
+      }
+      const q = out[k] ?? (out[k] = { x: 0, z: 0, present: false, reach: 0 })
+      q.x = px; q.z = pz; q.present = present; q.reach = reach
       k++
     }
     return k

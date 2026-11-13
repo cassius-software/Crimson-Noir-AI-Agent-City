@@ -1564,7 +1564,9 @@ anywhere in the product.
   A lower law never overrides a higher one:
   1. **Protect people.** If a person is inside the stopping envelope in the direction of travel, the
      command becomes a full emergency stop, whatever the driver asked for. The envelope is
-     `v·latency + v²/2a`, plus a 1.5 m standoff.
+     `v·latency + v²/2a`, plus a 1.5 m standoff. One car is ruled apart: the car a person sits in at the wheel
+     passes through people instead of stopping for them, because nothing lets it touch anyone (see **The car you
+     sit in**, below). Every scripted, AI-driven or empty car still stops.
   2. **Follow instructions.** Otherwise the player's controls stand, even when the Third Law would
      object.
   3. **Preserve itself.** AI drivers do not throttle into an obstacle they cannot stop for.
@@ -1582,8 +1584,8 @@ anywhere in the product.
 
   A stale reading therefore only ever brings a person nearer. A car moved by `recover` holds until the crowd has
   measured it where it now stands. Scripted intents are ruled on the same step's sensing as the player's own
-  controls. A sensor silent for over a second vouches for nobody, so every car holds. A lost sensor halts the
-  realm.
+  controls. A sensor silent for over a second vouches for nobody, so every car nobody sits in holds. A lost sensor
+  halts the realm.
 - **Sanctuary** (`07_Execute_Actions/sanctuary.ts`). This is the last line of defence, run before
   every Rapier step.
   - A person collider that a moving vehicle is about to reach flips from **Solid to Sensor**, so no
@@ -1596,7 +1598,26 @@ anywhere in the product.
   - The collider becomes solid again once every car is clear.
   - Wheel ray casts ignore sensors, so a car never rides over anyone.
   - The GPU pedestrians are never Rapier bodies, so they carry no kinetic impact to begin with. A car
-    that touches one only pushes them aside into a spring-damper stagger (a "safety nudge").
+    that touches one only pushes them aside into a spring-damper stagger (a "safety nudge"). The car you sit in
+    does not even do that.
+- **The car you sit in** (`07_Execute_Actions/vehicles.ts`, `simCore.ts`). While a person sits at its wheel (a
+  player's car on that player's own controls, with the Sanctuary on), the Bouncer rules it on the Second Law alone, so
+  driving into people does not stop it.
+  - Nobody is touched instead. Avatars and the shapes of a rig never meet a chassis in Rapier (their collision
+    groups); the GPU pedestrians it meets are not pushed, staggered or turned back (the crowd shader still senses
+    them, then skips the contact for a car marked as passing); the Sanctuary still flips every person it is about
+    to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig in its way.
+  - It does not wait on the crowd's readings at all, so a silent sensor or a `recover` does not hold it either.
+  - The pass outlives the seat. Leave the car rolling, or among people, and it keeps passing until it has stood
+    parked for 1.25 s (longer than any crowd reading is used for, so the reading that frees it was taken of the car
+    parked, on straight wheels) and stands at rest with nobody within 0.6 m of it, ahead, behind or beside, a fallen
+    pedestrian's legs and head counted as well as where they sit; only then is it solid for people again. A car an
+    AI or a script takes from there is ordinary at once, as their cars always are.
+  - The Ring-0 audit checks it like any car: a solid person inside its moving footprint is a kernel panic. Only the
+    unguarded-approach check is waived, and only while both the seated ruling and its occupant are on the car's
+    record.
+  - Switch the Sanctuary off (debug) and the First Law holds the seated car like any other.
+  - Every other car is held as before: a scripted car beside yours still stops for the person in its lane.
 - **Ring-0 audit** (`02_Define_The_Rules/ring0.ts`). After every physics step, inside the physics worker and
   before any state leaves it (so before anything is rendered or sent to hardware), an independent auditor (plain
   geometry, no Rapier query) checks every vehicle and every Rapier person (each avatar, and each of the thirteen
@@ -1705,7 +1726,8 @@ anywhere in the product.
   is moved onto the sidewalk beside it; a surveyed region keeps it as given) and send their controls in
   `StepRequest.players`, clamped exactly like player 1's (a run at most; NaN or infinite controls are no control).
   Every avatar is a person to every part of the kernel: the Bouncer measures each one exactly (`Fleet.setPeople`:
-  the nearest present person in each car's corridor holds the car, whoever is driving), the Sanctuary registers each
+  the nearest present person in each car's corridor holds the car, unless a player sits at its wheel: that car
+  passes through people instead, see The ethical kernel, "The car you sit in"), the Sanctuary registers each
   as a ward in player order and shields the one a car is about to reach, and the Ring-0 audit lists each with its
   own id, so a car that reaches one halts the realm naming that person; the only person exempt from a car's
   footprint is the player driving it. One driver per car and one car per driver: `interact` and `teleport` take a

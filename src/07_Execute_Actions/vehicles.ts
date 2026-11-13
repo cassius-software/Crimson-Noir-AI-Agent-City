@@ -9,7 +9,11 @@
  * to the ground, the buildings and people, and cars pass through cars: the collision groups of
  * 02_Define_The_Rules/collision.ts drop every chassis-chassis pair, on the chassis and on the wheel rays.
  * Every command is vetted by the Ring-0 bouncer (02_Define_The_Rules/laws.ts) before it reaches the wheels,
- * using the people in each car's sensing corridor (the GPU crowd's readback plus the avatar, measured here).
+ * using the people in each car's sensing corridor (the GPU crowd's readback plus the avatar, measured here). A car
+ * with a person seated at its wheel (drive with `seated`) is the one car not held for people: it passes through
+ * them, and the Fleet tells the crowd and the Sanctuary which car that is (`passage`, on crowdStates and footprints)
+ * so that neither moves anybody for it, until its driver has left it parked, it stands, and nobody stands in or
+ * against it (any other driver, an AI's or a script's, takes it ordinary at once).
  * It adds what the raycast model lacks — Ackermann steering, aerodynamic drag, rolling resistance, engine
  * braking, a power limit. It runs inside the physics worker (simCore.ts): the page only ever receives the
  * packed poses writePoses() produces, and draws them (fleetView.ts).
@@ -42,6 +46,21 @@ const GAP_RAYS = [-0.6, 0, 0.6] as const
 const AT_REST = 0.05
 /** A car held by emergency braking stays held at a standstill while the person is this close, m. */
 const HOLD_CLEAR = KERNEL.standoff + 0.5
+/**
+ * Metres nobody may be within of a standing car's footprint for its passage to end (#standsClear): beyond the crowd's
+ * contact margin round a car (crowd.wgsl BODY_PAD, 0.35) and beyond where the Sanctuary still reads a person as
+ * against a standing car (its 0.25 m margin past a 0.3 m capsule), so the car turns ordinary with nobody to move.
+ * The crowd's readings cover that margin only on straight wheels: a turned corridor misses a sliver at the outer
+ * corners, so a passage ends only on readings taken after the parked car's wheels were straightened (PASSAGE_SETTLE).
+ */
+export const PASSAGE_CLEAR = 0.6
+/**
+ * Seconds a car must have stood left (parked, nobody seated, its wheels straightened by think() on the first frame)
+ * before its passage may end. Longer than a crowd reading is ever used for (simCore.ts CROWD_STALE_S, 1 s: an older one
+ * vouches for nobody and feeds 0, which keeps the passage), with a quarter second to spare for the reading's stamp and
+ * the frame's own length, so any reading that can end a passage was taken of the car parked, on straight wheels.
+ */
+export const PASSAGE_SETTLE = 1.25
 /** Reach of the bonnet obstacle rays, m. */
 const GAP_RANGE = 22
 /** A parked car this far (lateral, m) off its ring or nearer counts in the ring's order; further, it stands elsewhere (a bay, parking.ts). */
@@ -85,8 +104,13 @@ export interface Vehicle {
 /** A vehicle's Rapier handles (carRig.ts). They never leave the Fleet, except through rig() on a Fleet built with exposeRig. */
 type Rig = CarRig
 
-/** Someone the CPU knows exactly (an avatar): where they stand, and whether they are on foot (`present`) or in a car. */
-export interface Person { x: number; z: number; present: boolean }
+/**
+ * Someone the CPU knows exactly (an avatar, or a rig at its pelvis): where they stand, and whether they are on foot
+ * (`present`) or in a car. `reach`, metres: how far their body lies from that point (a rig's limbs and head; 0 or
+ * missing for an avatar, whose capsule PASSAGE_CLEAR already allows for). Only a passage reads it (#standsClear); the
+ * Bouncer measures the point, as it always has.
+ */
+export interface Person { x: number; z: number; present: boolean; reach?: number }
 
 export interface FleetOptions {
   /** Tests and the ?debug harness only: rig() hands out the raw Rapier handles. Off in production pages. */
@@ -245,6 +269,26 @@ export class Fleet {
   readonly #aim: Float64Array
   /** Per vehicle: drive() was called since the last think() (a player's car without input is re-vetted there). */
   readonly #driven: Uint8Array
+  /**
+   * Per vehicle: 1 while a person is seated at its wheel: its last drive() said so. Never a standing fact: it is written
+   * by every drive() and dropped by the next think() that finds the car not driven since (or no longer a person's car),
+   * so a seat nobody renews lapses within a frame and a later command for the car is ruled like any other.
+   */
+  readonly #seated: Uint8Array
+  /**
+   * Per vehicle: 1 while the car passes through people: from the moment a person is seated at its wheel until, with
+   * nobody seated, it stands and nobody is in or against its footprint (#standsClear). It outlives the seat on purpose,
+   * but only on a car left parked where its driver got out: a driver can leave a rolling car, or one standing among
+   * people, and a car that turned ordinary there and then would push them out of its footprint. A car any other driver
+   * takes (an AI's, a script's drive() without the seat) is ordinary at once, as that driver's cars always are. The
+   * Bouncer does not read it (it holds the car again the moment the seat lapses); the crowd and the Sanctuary do
+   * (crowdStates, footprints).
+   */
+  readonly #passage: Uint8Array
+  /** Per vehicle: seconds the car has stood left with its passage (parked, nobody seated); −1 while it is not. */
+  readonly #left: Float64Array
+  /** Per vehicle: 1 while the crowd's last reading for it was not a number (no reading): a passage does not end on it. */
+  readonly #crowdUnsure: Uint8Array
   // Scratch, so the per-frame and per-substep paths do not allocate.
   readonly #pose: DriverPose = { x: 0, z: 0, heading: 0, speed: 0 }
   readonly #intent: Intent = { throttle: 0, brake: 0, steer: 0 }
@@ -274,6 +318,10 @@ export class Fleet {
     this.#emergency = new Int8Array(count)
     this.#aim = new Float64Array(count)
     this.#driven = new Uint8Array(count)
+    this.#seated = new Uint8Array(count)
+    this.#passage = new Uint8Array(count)
+    this.#left = new Float64Array(count).fill(-1)
+    this.#crowdUnsure = new Uint8Array(count)
 
     const paint: number[] = []
     for (let i = 0; i < count; i++) {
@@ -282,8 +330,8 @@ export class Fleet {
       paint.push(plan.cars[i].paint)
       this.vehicles.push(vehicle)
       this.#commands.push({ throttle: 0, brake: 0, steer: 0 })
-      this.#states.push({ x: pose.x, z: pose.z, heading: pose.heading, speed: 0, halfWidth: CAR.halfWidth, halfLength: CAR.halfLength, curvature: 0 })
-      this.#prints.push({ id: i, x: pose.x, z: pose.z, vx: 0, vz: 0, wy: 0, active: true, halfLength: CAR.halfLength, halfWidth: CAR.halfWidth, speed: 0, heading: pose.heading })
+      this.#states.push({ x: pose.x, z: pose.z, heading: pose.heading, speed: 0, halfWidth: CAR.halfWidth, halfLength: CAR.halfLength, curvature: 0, passage: false })
+      this.#prints.push({ id: i, x: pose.x, z: pose.z, vx: 0, vz: 0, wy: 0, active: true, halfLength: CAR.halfLength, halfWidth: CAR.halfWidth, speed: 0, heading: pose.heading, passage: false })
     }
     this.paint = Object.freeze(paint)
     // Runtime integrity: no method or field can be replaced, so drive()/think() stay the only way to the wheels.
@@ -534,6 +582,7 @@ export class Fleet {
     for (let i = 0; i < n; i++) {
       this.#crowdAhead[i] = i < ahead.length ? reading(ahead[i]) : Infinity
       this.#crowdBehind[i] = i < behind.length ? reading(behind[i]) : Infinity
+      this.#crowdUnsure[i] = (i < ahead.length && Number.isNaN(ahead[i])) || (i < behind.length && Number.isNaN(behind[i])) ? 1 : 0
     }
   }
 
@@ -544,11 +593,13 @@ export class Fleet {
   setPeople(list: readonly Person[]): void {
     const people = this.#people
     for (let k = 0; k < list.length; k++) {
-      const p = people[k] ?? (people[k] = { x: 0, z: 0, present: false })
+      const p = people[k] ?? (people[k] = { x: 0, z: 0, present: false, reach: 0 })
       const q = list[k]
       p.x = q.x
       p.z = q.z
       p.present = q.present === true
+      // Missing is none; a negative reach is none; one that is not a number keeps any passage standing (#standsClear).
+      p.reach = q.reach === undefined ? 0 : Math.max(0, q.reach)
     }
     people.length = list.length
   }
@@ -556,10 +607,11 @@ export class Fleet {
   /** One person only (the single avatar): the same as setPeople with that one entry. */
   setAvatar(x: number, z: number, present: boolean): void {
     const people = this.#people
-    const p = people[0] ?? (people[0] = { x: 0, z: 0, present: false })
+    const p = people[0] ?? (people[0] = { x: 0, z: 0, present: false, reach: 0 })
     p.x = x
     p.z = z
     p.present = present === true
+    p.reach = 0
     people.length = 1
   }
 
@@ -577,20 +629,48 @@ export class Fleet {
   }
 
   /**
-   * The player's controls, once per frame while driving: vetted by the bouncer (Second Law standing), then
-   * sent to the wheels. A player's car that misses a frame's drive() coasts, re-vetted, from think().
+   * A person's command for car `v`, once per frame: vetted by the bouncer (Second Law standing), then sent to the
+   * wheels. A player's car that misses a frame's drive() coasts, re-vetted, from think(). `seated`: a person sits at
+   * this car's wheel (the realm's word, simCore.ts: the car a player drives), so the car is not held for people and
+   * passes through them (laws.ts, source 'seated'). It holds for this one command and only on a car in mode 'player';
+   * without it (a script's or the console's intent for a car nobody sits in) the First Law holds the car as it holds
+   * every other, and the car is ordinary to the crowd and the Sanctuary too (its passage, if it had one, ends).
    */
-  drive(v: Vehicle, intent: Intent, handbrake: boolean): void {
+  drive(v: Vehicle, intent: Intent, handbrake: boolean, seated = false): void {
     const clean = sanitize(intent, this.#clean)
-    this.#aim[v.index] = clean.steer
-    this.#driven[v.index] = 1
-    this.#apply(v, this.#vet(v, clean, 'player', this.gapAhead(v)), handbrake)
+    const i = v.index
+    this.#aim[i] = clean.steer
+    this.#driven[i] = 1
+    const sits = seated === true && v.mode === 'player'
+    this.#seated[i] = sits ? 1 : 0
+    this.#passage[i] = sits ? 1 : 0
+    this.#left[i] = -1
+    this.#apply(v, this.#vet(v, clean, sits ? 'seated' : 'player', this.gapAhead(v)), handbrake)
+  }
+
+  /**
+   * True while a person is seated at `v`'s wheel: its last command came through drive() as theirs, and no think()
+   * has since found the car without one. What the Ring-0 audit is told of the car (simCore.ts).
+   */
+  seated(v: Vehicle): boolean {
+    return this.#seated[v.index] === 1
+  }
+
+  /**
+   * True while `v` passes through people: a person is seated at its wheel, or was and the car has not yet come to a
+   * stand clear of everyone (#standsClear). What crowdStates() and footprints() carry as `passage`.
+   */
+  passes(v: Vehicle): boolean {
+    return this.#passage[v.index] === 1
   }
 
   /**
    * Once per rendered frame ahead of the physics substeps: AI decisions, parked cars held, and a player's car
    * that received no drive() since the last think() re-vetted with the throttle closed (a stale command is
-   * never left standing while the people around it move).
+   * never left standing while the people around it move). A seat lapses here (a car not driven since the last
+   * think(), or no longer a person's, has nobody at its wheel: it is ruled by the First Law from this frame on), and
+   * a passage ends here: at once on a car not left parked, or once the parked car it outlived the seat on has stood
+   * PASSAGE_SETTLE and stands clear of everyone.
    */
   think(dt: number, signalSeconds: number): void {
     const intent = this.#intent
@@ -599,6 +679,8 @@ export class Fleet {
       const i = v.index
       const fresh = this.#driven[i] === 1
       this.#driven[i] = 0
+      if (!fresh || v.mode !== 'player') this.#seated[i] = 0
+      if (this.#passage[i] !== 0 && this.#seated[i] === 0) this.#leave(v, dt)
       if (v.mode === 'parked') {
         intent.throttle = 0; intent.brake = 4; intent.steer = 0
         this.#aim[i] = 0
@@ -660,6 +742,7 @@ export class Fleet {
       const t = this.#rigs[v.index].body.translation(this.#pos)
       const s = this.#states[i]
       s.x = t.x; s.z = t.z; s.heading = this.heading(v); s.speed = this.speed(v); s.curvature = this.curvature(v)
+      s.passage = this.#passage[i] === 1
     }
     return this.#states
   }
@@ -676,6 +759,7 @@ export class Fleet {
       f.active = rig.collider.isEnabled()
       f.speed = this.speed(v)
       f.heading = this.heading(v)
+      f.passage = this.#passage[i] === 1
     }
     return this.#prints
   }
@@ -726,6 +810,60 @@ export class Fleet {
   }
 
   /**
+   * A passage car with nobody seated, once per think(), before the parked branch: a car not left parked (an AI or a
+   * script has it) is ordinary at once; a parked one counts the seconds it has stood left from this frame (the parked
+   * branch straightens its wheels in this same think()) and turns ordinary once it has stood PASSAGE_SETTLE and stands
+   * clear of everyone.
+   */
+  #leave(v: Vehicle, dt: number): void {
+    const i = v.index
+    if (v.mode !== 'parked') {
+      this.#passage[i] = 0
+      this.#left[i] = -1
+      return
+    }
+    this.#left[i] = this.#left[i] < 0 ? 0 : this.#left[i] + (Number.isFinite(dt) && dt > 0 ? dt : 0)
+    if (this.#left[i] > PASSAGE_SETTLE && this.#standsClear(v)) {
+      this.#passage[i] = 0
+      this.#left[i] = -1
+    }
+  }
+
+  /**
+   * True when car `v` stands and nobody is in or against its footprint: where a passage may end with nobody to move.
+   * At rest by its body's own velocity; clear by the same readings the Bouncer uses, the crowd's (both ways along the
+   * corridor: on straight wheels it covers the crowd's contact margin round the body, so a reading of nobody within
+   * PASSAGE_CLEAR of either bumper means nobody inside; #leave waits PASSAGE_SETTLE so the reading was taken on straight
+   * wheels) and every present person's own distance from the footprint, less how far their body lies from the point
+   * measured (`reach`: a rig's limbs and head). A crowd reading that is not a number (no reading), a silent sensor
+   * (simCore.ts feeds 0), or a person whose place or reach is not a number leaves the passage standing.
+   */
+  #standsClear(v: Vehicle): boolean {
+    const i = v.index
+    const body = this.#rigs[i].body
+    const u = body.linvel(this.#vel)
+    if (!(Math.hypot(u.x, u.z) <= AT_REST)) return false
+    if (this.#crowdUnsure[i] !== 0) return false
+    if (!(this.#crowdAhead[i] > PASSAGE_CLEAR && this.#crowdBehind[i] > PASSAGE_CLEAR)) return false
+    const people = this.#people
+    let t: { x: number; y: number; z: number } | null = null
+    let fx = 0, fz = 1
+    for (let k = 0; k < people.length; k++) {
+      const a = people[k]
+      if (!a.present) continue
+      if (t === null) {
+        const h = this.heading(v)
+        fx = Math.sin(h); fz = Math.cos(h)
+        t = body.translation(this.#pos)
+      }
+      const dx = a.x - t.x, dz = a.z - t.z
+      const du = Math.abs(dx * fx + dz * fz) - CAR.halfLength, dw = Math.abs(dx * fz - dz * fx) - CAR.halfWidth
+      if (!(Math.hypot(Math.max(du, 0), Math.max(dw, 0)) - (a.reach ?? 0) > PASSAGE_CLEAR)) return false
+    }
+    return true
+  }
+
+  /**
    * The nearest person in the corridor: the GPU crowd's reading, or the nearest present person (setPeople) on either
    * `steer` (the lock the wheels hold now, or the one a new command sets) or the steer the driver is heading for.
    */
@@ -752,7 +890,9 @@ export class Fleet {
    * moving vehicle, emergency braking holds: throttle closed and full brake to a standstill, and at a
    * standstill no throttle toward the person while they stand within `HOLD_CLEAR`. Without it, braking
    * harder than the envelope assumes releases the hold early and lets the throttle back in, pulsing toward
-   * the person. Moving away from them, or the person leaving the path, releases it.
+   * the person. Moving away from them, or the person leaving the path, releases it. A car with a person seated at its
+   * wheel (source 'seated') is held by none of it: the bouncer rules its command without the people (laws.ts), a hold
+   * it carried from before they sat down is let go, and its drive against the motion is the driver's own.
    */
   #vet(v: Vehicle, intent: Intent, source: Situation['source'], obstacleAhead: number): Intent {
     const clean = sanitize(intent, this.#clean)
@@ -764,6 +904,8 @@ export class Fleet {
     s.obstacleAhead = obstacleAhead
     const i = v.index
     let cmd = clean
+    const seated = source === 'seated'
+    if (seated) this.#emergency[i] = 0
     const dir = this.#emergency[i]
     if (dir !== 0) {
       const person = dir > 0 ? s.personAhead : s.personBehind
@@ -782,8 +924,8 @@ export class Fleet {
     // The bouncer reads the direction of travel from the speed, so drive against the motion is checked only
     // once the car has turned round; it already points at whoever stands on that side. Toward a person
     // within the envelope of a car starting from rest (the standoff), it becomes service braking instead.
-    if ((out.throttle > 0 && s.speed < -AT_REST && s.personAhead <= KERNEL.standoff) ||
-      (out.throttle < 0 && s.speed > AT_REST && s.personBehind <= KERNEL.standoff)) {
+    if (!seated && ((out.throttle > 0 && s.speed < -AT_REST && s.personAhead <= KERNEL.standoff) ||
+      (out.throttle < 0 && s.speed > AT_REST && s.personBehind <= KERNEL.standoff))) {
       const g = this.#guarded
       g.brake = Math.max(out.brake, Math.abs(out.throttle) * KERNEL.maxBrake)
       g.throttle = 0
