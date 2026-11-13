@@ -82,7 +82,10 @@ export interface PrefixStats {
   readonly refused: number
   readonly prefixTokens: number
   readonly prefixPages: number
+  /** Every key paged and still held, */
   readonly agents: number
+  /** of which these forked the prefix (the rest, a prompt not opening with it, are their own chains). */
+  readonly forked: number
   readonly capacity: number
   readonly free: number
   readonly mapped: number
@@ -273,13 +276,15 @@ export function createPrefixCache({ prefix, pages = DEFAULT_POOL_PAGES }: { pref
   const stats = (): PrefixStats | null => {
     if (counts.asks === 0) return null
     const p = pool ?? { capacity: pages, free: pages, mapped: 0, shared: 0, idleCached: 0, emptySlots: 0, cachedKeys: 0 }
-    return { ...counts, prefixTokens: prefixTokens.length, prefixPages, agents: agents.size, ...p, lastError }
+    let forked = 0
+    for (const a of agents.values()) if (a.forked) forked++
+    return { ...counts, prefixTokens: prefixTokens.length, prefixPages, agents: agents.size, forked, ...p, lastError }
   }
   const line = (): string | null => {
     const s = stats()
     if (s === null) return null
     const parts = [
-      `prefix ${plural(s.prefixPages, 'page')} (${plural(s.prefixTokens, 'token')}), forked for ${plural(s.agents, 'agent')}`,
+      `prefix ${plural(s.prefixPages, 'page')} (${plural(s.prefixTokens, 'token')}), forked for ${plural(s.forked, 'agent')}${s.agents > s.forked ? `, ${plural(s.agents - s.forked, 'prompt')} paged apart` : ''}`,
       `${plural(s.asks, 'ask')}: ${s.prefixHits} reused the prefix, ${s.hits} the whole prompt`,
       `${plural(s.mapped, 'page')} mapped, ${s.shared} shared`,
       `${plural(s.copies, 'copy', 'copies')} on write`,

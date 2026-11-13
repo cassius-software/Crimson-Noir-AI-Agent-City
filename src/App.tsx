@@ -1242,8 +1242,6 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     /** What the model in this page is doing, for the HUD's activity line: its own phase (loading, reading the prompt)
      *  and a model file being kept (its copy's progress); null when neither is. */
     let modelPhase: string | null = null
-    /** Who else hears that phase as it changes: Sloane's card, until a reply's first words (voice.ts PhaseSource). */
-    const phaseHeard = new Set<(phase: string | null) => void>()
     let keepLine: string | null = null
     /** Takes back what the model's wiring added to the page (the picker, the drop, the page's lifecycle). */
     let unModel = noop
@@ -1370,10 +1368,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             kept: store,
             env: device,
             busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
-            onPhase: (text) => {
-              modelPhase = text
-              for (const heard of phaseHeard) heard(text)
-            },
+            onPhase: (text) => { modelPhase = text },
           })),
           // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
           vram: options.vram,
@@ -1726,13 +1721,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         }
         setSloane(sloaneVoice(mind, SLOANE_REWORD_MS, () => local.settings().provider !== 'scripted' && !pageCold()))
         // Sloane in conversation, in the same order: talk on the card gets the model's reply, with no deadline of its own
-        // (the router's waits bound it, a load in this page among them); none with the scripted provider. The model in
-        // this page's phase (its load, the prompt read so far) shows on the card until the reply's first words.
-        setSloaneTalk(sloaneChat(mind, () => local.settings().provider !== 'scripted', (heard) => {
-          phaseHeard.add(heard)
-          heard(modelPhase)
-          return () => { phaseHeard.delete(heard) }
-        }))
+        // (the router's waits bound it, a load in this page among them); none with the scripted provider.
+        setSloaneTalk(sloaneChat(mind, () => local.settings().provider !== 'scripted'))
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).

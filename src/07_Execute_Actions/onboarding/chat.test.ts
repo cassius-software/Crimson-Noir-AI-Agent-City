@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { AnswerRequest, Mind, Piece } from '../operator.ts'
-import { CHAT_MAX, CHAT_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, phaseLine, sloaneChat, type ChatTurn, type PhaseSource } from './voice.ts'
+import { CHAT_MAX, CHAT_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, phaseLine, sloaneChat, type ChatTurn } from './voice.ts'
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url))
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
@@ -178,55 +178,68 @@ test('sloaneChat has no deadline of its own: the router\'s waits bound a reply, 
   assert.match(chat, /if \(!admitWords\(said\)\.admitted\) return \{ kind: 'held' \}/, 'and the whole reply')
 })
 
-test('sloaneChat asks as a conversation (the short talk prompt) and tells the card what the model is doing until its first word', async () => {
-  // The host's phase: one listener at a time, told the phase it is in at once, then each change.
-  let heard: ((p: string | null) => void) | null = null
-  let unheard = 0
-  const phases: PhaseSource = (listen) => {
-    heard = listen
-    listen('loading the model in this page')
-    return () => { heard = null; unheard++ }
-  }
-  const m = mindOf('hang')
+test('sloaneChat asks as a conversation (the short talk prompt) and tells the card the request\'s own phase until its first word', async () => {
+  // A mind that reports the request's phase as the model in this page does, then hangs until stopped.
+  const asked: AnswerRequest[] = []
+  const hanging = {
+    answer: (req: AnswerRequest) => {
+      asked.push(req)
+      return new Promise<never>((_, reject) => { req.signal.addEventListener('abort', () => reject(req.signal.reason), { once: true }) })
+    },
+  } as unknown as Mind
   const seen: (string | null)[] = []
   const stop = new AbortController()
-  const r = sloaneChat(m.mind, () => true, phases).reply([you('hire an agent')], stop.signal, undefined, (p) => seen.push(p))
+  const r = sloaneChat(hanging).reply([you('hire an agent')], stop.signal, undefined, (p) => seen.push(p))
   await Promise.resolve()
-  assert.equal(m.asked.length, 1)
-  assert.equal(m.asked[0].talk, true, 'a conversation, so every provider sends the talk prompt')
-  assert.deepEqual(m.asked[0].tethers, [], 'bound to no one')
-  heard!('reading the prompt 25%')
-  heard!('reading the prompt 25%')
-  heard!('reading the prompt 50%')
+  assert.equal(asked.length, 1)
+  assert.equal(asked[0].talk, true, 'a conversation, so every provider sends the talk prompt')
+  assert.deepEqual(asked[0].tethers, [], 'bound to no one')
+  const phase = asked[0].onPhase
+  assert.equal(typeof phase, 'function', 'the phase is the request\'s own, so no other answer\'s progress reaches the card')
+  for (const p of ['waiting for the model to finish another answer', null, 'loading the model in this page', 'reading the prompt 25%', 'reading the prompt 25%', 'reading the prompt 50%']) phase!(p)
   stop.abort()
   assert.deepEqual(await r, { kind: 'failed', why: 'stopped' })
-  assert.deepEqual(seen, ['loading the model in this page', 'reading the prompt 25%', 'reading the prompt 50%', null], 'each change once, cleared at the end')
-  assert.equal(heard, null)
-  assert.equal(unheard, 1, 'the listener is let go')
+  assert.deepEqual(seen, ['waiting for the model to finish another answer', null, 'loading the model in this page', 'reading the prompt 25%', 'reading the prompt 50%', null], 'each change once, cleared at the end')
 
-  // The first word clears the phase, and nothing the host says after it reaches the card.
+  // The first word clears the phase, and nothing reported after it reaches the card.
   const said: (string | null)[] = []
-  let late: ((p: string | null) => void) | null = null
-  const talking = mindOf('All good here, the streets are calm.')
-  const done = await sloaneChat(talking.mind, () => true, (listen) => { late = listen; listen('reading the prompt 90%'); return () => {} })
-    .reply([you('how is it going')], live(), () => { late?.('generating') }, (p) => said.push(p))
+  const talking = {
+    answer: async (req: AnswerRequest, onPiece: (p: Piece) => void) => {
+      req.onPhase?.('reading the prompt 90%')
+      onPiece({ kind: 'text', text: 'All good here, ' })
+      req.onPhase?.('reading the prompt 95%')
+      onPiece({ kind: 'text', text: 'the streets are calm.' })
+      return { text: 'All good here, the streets are calm.', thinking: 0, tokens: 2, reason: 'stop' }
+    },
+  } as unknown as Mind
+  const done = await sloaneChat(talking).reply([you('how is it going')], live(), undefined, (p) => said.push(p))
   assert.equal(done.kind, 'said')
   assert.deepEqual(said, ['reading the prompt 90%', null])
 
-  // A host whose phase source or card line throws never costs the reply.
-  const sturdy = await sloaneChat(mindOf('Fine, thanks.').mind, () => true, () => { throw new Error('no phases') })
-    .reply([you('hi')], live(), undefined, () => { throw new Error('the card went') })
+  // A card line that throws never costs the reply; a mind that reports no phase tells the card nothing.
+  const sturdy = await sloaneChat(talkingThrough('Fine, thanks.')).reply([you('hi')], live(), undefined, () => { throw new Error('the card went') })
   assert.deepEqual(sturdy, { kind: 'said', text: 'Fine, thanks.' })
-  // No phase source at all: the reply as before, the card told only that nothing is pending.
   const plain: (string | null)[] = []
   assert.equal((await sloaneChat(mindOf('Fine.').mind).reply([you('hi')], live(), undefined, (p) => plain.push(p))).kind, 'said')
   assert.deepEqual(plain, [])
 })
 
+/** A mind that reports a phase, then says `text` whole. */
+function talkingThrough(text: string): Mind {
+  return {
+    answer: async (req: AnswerRequest, onPiece: (p: Piece) => void) => {
+      req.onPhase?.('loading the model in this page')
+      onPiece({ kind: 'text', text })
+      return { text, thinking: 0, tokens: 1, reason: 'stop' }
+    },
+  } as unknown as Mind
+}
+
 test('the phase line: the prompt read as the conversation with its share, the load as it is, anything else as the runtime says it', () => {
   assert.equal(phaseLine('reading the prompt 42%'), 'Reading the conversation · 42%')
   assert.equal(phaseLine('reading the prompt 100%'), 'Reading the conversation · 100%')
   assert.equal(phaseLine('loading the model in this page'), 'Loading the model in this page…')
+  assert.equal(phaseLine('waiting for the model to finish another answer'), 'Waiting for the model to finish another answer')
   assert.equal(phaseLine('thinking'), 'Thinking')
   assert.equal(phaseLine(''), '')
 })
@@ -263,8 +276,7 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
 
 test('App: the card gets Sloane\'s conversation, the picker and the browser\'s refusal; the rewording waits for a model file to be loaded', () => {
   const src = read('App.tsx')
-  assert.match(src, /setSloaneTalk\(sloaneChat\(mind, \(\) => local\.settings\(\)\.provider !== 'scripted', \(heard\) => \{\n\s*phaseHeard\.add\(heard\)\n\s*heard\(modelPhase\)\n\s*return \(\) => \{ phaseHeard\.delete\(heard\) \}\n\s*\}\)\)/, 'the conversation hears the model\'s phase, starting with the one it is in')
-  assert.match(src, /modelPhase = text\n\s*for \(const heard of phaseHeard\) heard\(text\)/, 'every phase reaches every listener')
+  assert.match(src, /setSloaneTalk\(sloaneChat\(mind, \(\) => local\.settings\(\)\.provider !== 'scripted'\)\)/)
   assert.match(src, /chat=\{sloaneTalk\}\s*onPickModel=\{onModelFile\}\s*noPageModel=\{PAGE_MODEL_REFUSAL\(\)\}/)
   assert.match(src, /if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
   assert.match(src, /if \(s\.provider !== 'auto' \|\| !inPage\.cold\(false\)\) return false/)

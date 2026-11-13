@@ -276,7 +276,7 @@ test('a conversation (talk: true) is sent the talk prompt by every provider, wit
   const guide = srv.calls.filter((c) => c.body !== null).at(-1)
   assert.ok(guide)
   assert.equal((guide.body as { system: string }).system, systemPrompt([]))
-  assert.match(r.settings().cache ?? '', /forked for 2 agents/, 'the conversation\'s page and the guide\'s')
+  assert.match(r.settings().cache ?? '', /forked for 1 agent, 1 prompt paged apart · /, 'the guide\'s prompt forks the base reality; the conversation\'s, which does not open with it, is its own chain')
 })
 
 test('the scripted provider, chosen on purpose, ends an answer that plainly asks for one city action with the ACTION line on a line of its own; a plain question proposes nothing', async () => {

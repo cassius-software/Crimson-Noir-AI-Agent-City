@@ -2520,12 +2520,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`src/09_Cognition/localCompute.ts` TALK_PROMPT, through `systemFor`, which every provider uses): the expertise rule
   and the city actions it leaves out were most of the prompt, and a conversation is bound to no one and never acts.
   Phones and the lite profile read the prompt 64 tokens a step (`src/09_Cognition/inPagePlan.ts` PHONE_BATCH), so a
-  phone needs about half a token a second to stay inside the stall wait. The card says what the model is doing before
-  its first word ("Loading the model in this page…", "Reading the conversation · 40%"), and a reply that still runs
-  out says which wait ran out beside **Ask again**; a stall while the prompt is still being read now says so
-  (`src/09_Cognition/wllamaRuntime.ts`; it said "in the middle of the answer"). Verified by unit tests and the in-page
-  and site-model browser runs on headless Chromium; the cause is read from the code and the phone's report, and the
-  phone's own speed is unverified until it is tried there.
+  phone needs about half a token a second to stay inside the stall wait. The card says what the model is doing for
+  that reply before its first word ("Waiting for the model to finish another answer", "Loading the model in this
+  page…", "Reading the conversation · 40%"): the request's own phase (`AnswerRequest.onPhase`, reported by
+  `src/09_Cognition/inPage.ts`), never another answer's. A reply that still runs out says which wait ran out beside
+  **Ask again**; a stall while the prompt is still being read now says so (`src/09_Cognition/wllamaRuntime.ts`; it
+  said "in the middle of the answer"). The `ask` cache line counts a prompt that does not open with the base reality
+  (a conversation's) as paged apart, not as a fork. Verified by unit tests and the site-model browser run on headless
+  Chromium; the cause is read from the code and the phone's report, and the phone's own speed is unverified until it
+  is tried there.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

@@ -132,17 +132,12 @@ export type ChatResult =
   | { readonly kind: 'failed'; readonly why: string }
 /**
  * Sloane in conversation: a reply to the last of `turns`, the words so far given to `onText` as they arrive, and what
- * the model is doing until the first of them (loading, reading the prompt: the model in this page's phase) to `onPhase`,
- * null once there is nothing to say about it.
+ * the model is doing for this reply until the first of them (waiting its turn, loading, reading the prompt: the
+ * request's own phase, AnswerRequest.onPhase) to `onPhase`, null once there is nothing to say about it.
  */
 export interface Chat {
   reply(turns: readonly ChatTurn[], signal: AbortSignal, onText?: (soFar: string) => void, onPhase?: (phase: string | null) => void): Promise<ChatResult>
 }
-/**
- * Where the phase of the model in this page can be heard (the host's: inPage.ts onPhase): `listen` is told the phase now
- * and at every change, until the returned function is called.
- */
-export type PhaseSource = (listen: (phase: string | null) => void) => () => void
 
 /** A chat reply is cut here (at the last sentence end before it, where there is one) and the model is stopped. */
 export const CHAT_MAX = 600
@@ -201,8 +196,9 @@ export function chatSoFar(text: string): string {
 }
 
 /**
- * Sloane's card's small line for what the model in this page is doing before its first words (09_Cognition/inPage.ts phase): its load,
- * or how much of the prompt it has read, so a phone that takes minutes shows that it is working.
+ * Sloane's card's small line for what the model in this page is doing for a reply before its first words (the request's
+ * own phase, 09_Cognition/inPage.ts): waiting for another answer, its load, or how much of the prompt it has read, so a
+ * phone that takes minutes shows that it is working.
  */
 export function phaseLine(phase: string): string {
   const read = /^reading the prompt (\d{1,3})%$/.exec(phase)
@@ -228,13 +224,13 @@ const messageOf = (e: unknown): string => (e instanceof Error && e.message ? e.m
  * CHAT_TURNS turns; the reply is streamed in whole words, each step screened with admitWords (a refused word stops the
  * model and shows nothing of the reply), cut at the first action line by the parser's own reading (a conversation never
  * acts: the planner does, from what the person asks) and at CHAT_MAX, and screened whole once more at the end. Until
- * the first words, the phase `phases` hears (the model in this page loading, reading the prompt) goes to `onPhase`, so
- * a slow phone shows that it is working. The router's own waits bound the reply (the first piece, a stall, a load in
+ * the first words, the request's own phase (AnswerRequest.onPhase: the model in this page waiting for another answer,
+ * loading, reading the prompt; never another request's) goes to `onPhase`, so a slow phone shows that it is working. The router's own waits bound the reply (the first piece, a stall, a load in
  * this page), so nothing here times it out: a model loading in this page is never stopped by a deadline of Sloane's;
  * one that runs out is `slow` with the runtime's words. `live` is asked at every reply: false (the scripted provider
  * is set) answers `none`.
  */
-export function sloaneChat(mind: Mind, live: () => boolean = () => true, phases?: PhaseSource): Chat {
+export function sloaneChat(mind: Mind, live: () => boolean = () => true): Chat {
   return {
     reply: async (turns, signal, onText, onPhase) => {
       let asks = false
@@ -264,14 +260,8 @@ export function sloaneChat(mind: Mind, live: () => boolean = () => true, phases?
           // the card's line, not the reply's
         }
       }
-      let unlisten: () => void = () => {}
       try {
-        unlisten = phases?.((p) => { if (!text) tell(p) }) ?? unlisten
-      } catch {
-        // no phase to show, the reply all the same
-      }
-      try {
-        const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt: chatPrompt(turns), talk: true }, (p) => {
+        const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt: chatPrompt(turns), talk: true, onPhase: (p) => { if (!text) tell(p) } }, (p) => {
           if (p.kind !== 'text' || held || full) return
           if (!text) tell(null)
           text += p.text
@@ -303,11 +293,6 @@ export function sloaneChat(mind: Mind, live: () => boolean = () => true, phases?
         }
       } finally {
         signal.removeEventListener('abort', onAbort)
-        try {
-          unlisten()
-        } catch {
-          // already gone
-        }
         tell(null)
       }
       const said = chatWords(text)

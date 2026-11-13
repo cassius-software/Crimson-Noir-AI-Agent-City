@@ -128,6 +128,8 @@ const SERVER = 'this page'
 const NO_MODEL = 'no model file is kept in this page: Menu › Model file, or ask file'
 /** The HUD's phase line while the model loads. */
 const LOADING = 'loading the model in this page'
+/** A request's phase while an earlier answer or load still has the model (AnswerRequest.onPhase). */
+export const WAITING = 'waiting for the model to finish another answer'
 /** Why an answer in flight stopped when a phone's page stayed in the background. */
 const HIDDEN = 'the page went to the background, so the model was unloaded: the next ask loads it again'
 /** Why the mind answers nothing once the page has shut it down. */
@@ -151,6 +153,9 @@ interface Loaded {
 }
 
 /** A signal's reason as something to throw: an Error as it is, anything else as an AbortError. */
+/** A request's own phase line (AnswerRequest.onPhase), or one that hears nothing. */
+type Phase = (text: string | null) => void
+const none: Phase = () => {}
 const reasonOf = (s: AbortSignal): Error => (s.reason instanceof Error ? s.reason : new DOMException('aborted', 'AbortError'))
 
 /** An error's message as one plain clause, without a closing full stop. */
@@ -292,6 +297,8 @@ export function createInPageMind(d: InPageDeps): InPageMind {
   let life = new AbortController()
   /** One answer or load works with the runtime at a time; the others wait their turn. */
   let queue: Promise<void> = Promise.resolve()
+  /** How many answers and loads are in the queue, working or waiting: one that joins it above 0 waits for another. */
+  let turns = 0
   /** How many answers and loads are working or waiting: busy() is said when this leaves and returns to 0. */
   let holds = 0
   let shown: string | null = null
@@ -541,16 +548,22 @@ export function createInPageMind(d: InPageDeps): InPageMind {
     }
   }
 
-  /** Waits for every earlier answer or load to finish with the runtime (or the signal), then runs `fn`. */
-  async function inTurn<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
+  /**
+   * Waits for every earlier answer or load to finish with the runtime (or the signal), then runs `fn`; `onWait` is told
+   * first when one is still ahead of it.
+   */
+  async function inTurn<T>(signal: AbortSignal, fn: () => Promise<T>, onWait?: () => void): Promise<T> {
     const before = queue
     let done!: () => void
     const mine = new Promise<void>((resolve) => { done = resolve })
     queue = before.then(() => mine)
+    if (turns > 0) onWait?.()
+    turns++
     try {
       await race(before, signal)
       return await fn()
     } finally {
+      turns--
       done()
     }
   }
@@ -585,7 +598,7 @@ export function createInPageMind(d: InPageDeps): InPageMind {
    * whatever it holds unloaded first and this one loaded. A GPU load that fails is tried once more on the processor
    * when the model fits there (the GPU is then off for the visit); a load that fails for good is failure().
    */
-  async function ensureLoaded(target: KeptModel, place: Placement, signal: AbortSignal, warn: string | undefined): Promise<Loaded> {
+  async function ensureLoaded(target: KeptModel, place: Placement, signal: AbortSignal, warn: string | undefined, mine: Phase = none): Promise<Loaded> {
     // An answer stopped just before may still be settling in the runtime; one it cannot stop in time takes the model
     // with it, so whether it is still loaded is asked only once that is over (else this ask would fail, not load).
     if (current !== null) await race(rt().idle(), signal)
@@ -596,6 +609,7 @@ export function createInPageMind(d: InPageDeps): InPageMind {
     if (refused) throw refused
     loading = { id: target.id, name: target.name, gpu: place.gpu }
     phase(LOADING)
+    mine(LOADING)
     try {
       if (current !== null || rt().loaded()) {
         current = null
@@ -632,11 +646,12 @@ export function createInPageMind(d: InPageDeps): InPageMind {
     } finally {
       loading = null
       phase(null)
+      mine(null)
     }
   }
 
   /** The answer itself, with the model loaded: the system prompt and the prompt, streamed into `onPiece`. */
-  async function speak(req: AnswerRequest, onPiece: (p: Piece) => void, place: Placement, stop: AbortSignal, own: AbortController): Promise<Answer> {
+  async function speak(req: AnswerRequest, onPiece: (p: Piece) => void, place: Placement, stop: AbortSignal, own: AbortController, mine: Phase = none): Promise<Answer> {
     const system = systemFor(req)
     const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: req.prompt }]
     let text = ''
@@ -650,29 +665,35 @@ export function createInPageMind(d: InPageDeps): InPageMind {
         own.abort(e)
       }
     }
-    // The phase line this answer sets (the prompt's progress) is its own to clear, however the chat ends.
+    // The phase line this answer sets (the prompt's progress) is its own to clear, however the chat ends; the request
+    // hears the same.
+    const both = (text: string | null): void => {
+      phase(text)
+      mine(text)
+    }
     const result = await race(rt().chat(messages, {
       signal: stop, maxTokens: place.maxTokens, think: place.think, firstMs, stallMs,
       onChunk: (c: ChatChunk) => {
         // A chunk can still arrive after a stop (spike): nothing after it is the answer.
         if (stop.aborted) return
         const p = c.progress
-        if (p && Number.isFinite(p.processed) && Number.isFinite(p.total) && p.total > 0) {
-          phase(`reading the prompt ${Math.max(0, Math.min(100, Math.floor((p.processed / p.total) * 100)))}%`)
+        // The prompt's progress only until the answer begins: a report after it is nothing to show.
+        if (p && pieces === 0 && thinking === 0 && Number.isFinite(p.processed) && Number.isFinite(p.total) && p.total > 0) {
+          both(`reading the prompt ${Math.max(0, Math.min(100, Math.floor((p.processed / p.total) * 100)))}%`)
         }
         if (typeof c.thinking === 'string' && c.thinking) {
-          phase(null)
+          both(null)
           thinking++
           give({ kind: 'thinking', text: c.thinking })
         }
         if (typeof c.text === 'string' && c.text && !stop.aborted) {
-          phase(null)
+          both(null)
           text += c.text
           pieces++
           give({ kind: 'text', text: c.text })
         }
       },
-    }), stop).finally(() => phase(null))
+    }), stop).finally(() => both(null))
     return {
       text, thinking,
       tokens: typeof result.tokens === 'number' && Number.isFinite(result.tokens) ? result.tokens : pieces,
@@ -791,14 +812,27 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       // Refused before it waits or holds the city when it does not fit; placed again in its turn, where a GPU load
       // that failed meanwhile (or the operator's ask gpu) has changed where it runs.
       const first = placed(target).place
+      // This request's own phase (AnswerRequest.onPhase), each change once: never another answer's, and never the
+      // request's failure.
+      let heard: string | null = null
+      const mine: Phase = (text) => {
+        if (text === heard) return
+        heard = text
+        try {
+          req.onPhase?.(text)
+        } catch {
+          // the asker's line, not the answer's
+        }
+      }
       clearIdle()
       hold(1, first)
       try {
         return await inTurn(stop, async () => {
+          mine(null)
           const { place, warn } = placed(target)
-          await ensureLoaded(target, place, stop, warn)
-          return speak(req, onPiece, place, stop, own)
-        })
+          await ensureLoaded(target, place, stop, warn, mine)
+          return speak(req, onPiece, place, stop, own, mine)
+        }, () => mine(WAITING))
       } catch (e) {
         if (stop.aborted) throw reasonOf(stop)
         // The runtime stopped or went quiet mid-answer: what it holds is unloaded, and the next ask loads it again. A
@@ -807,7 +841,8 @@ export function createInPageMind(d: InPageDeps): InPageMind {
         throw e
       } finally {
         // The phase line is cleared by whichever load or answer set it, never here: an answer stopped while it waited
-        // its turn would blank the line of the load still running ahead of it.
+        // its turn would blank the line of the load still running ahead of it. The request's own is its own to clear.
+        mine(null)
         hold(-1, null)
         armIdle()
       }

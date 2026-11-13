@@ -1111,7 +1111,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   next message waits in the field (a heard one too) and **Stop** ends the ask; a reply that lands while the card is put
   away is shown and said when it opens. Sloane's own wait is bounded only by the router's (the first piece, a stall, a
   load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. Until the first word
-  the card says what the model is doing ("Loading the model in this page…", then "Reading the conversation · 40%"),
+  the card says what the model in this page is doing for that reply, and only for it ("Waiting for the model to finish
+  another answer", "Loading the model in this page…", then "Reading the conversation · 40%"),
   and a reply that runs out of time says which wait ran out ("the model in this page wrote nothing for 5 minutes …") beside **Ask again**.
   A conversation is sent a short system prompt of its own (`localCompute.ts` TALK_PROMPT: the 14A conduct core and the
   guide's line, without the expertise rule or the city actions, since a conversation is bound to no one and never

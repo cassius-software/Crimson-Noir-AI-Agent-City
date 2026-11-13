@@ -83,7 +83,11 @@ test('a prompt not opening with the prefix is its own chain; a second copy of it
   const b = await cache.page('2', other)
   assert.deepEqual([b.forked, b.prefixHit, b.hit, b.cachedPages], [false, true, false, 2], 'two full pages of the same words, the tail is its own')
   const s = cache.stats()!
-  assert.deepEqual([s.asks, s.prefixHits, s.hits, s.agents, s.shared], [2, 0, 0, 2, 2])
+  assert.deepEqual([s.asks, s.prefixHits, s.hits, s.agents, s.forked, s.shared], [2, 0, 0, 2, 0, 2])
+  assert.match(cache.line() ?? '', /, forked for 0 agents, 2 prompts paged apart · 2 asks: 0 reused the prefix, 0 the whole prompt · /, 'a chain of its own is never counted as a fork')
+  await cache.page('3', prompt('agent 3 (Go)'))
+  assert.equal(cache.stats()!.forked, 1)
+  assert.match(cache.line() ?? '', /, forked for 1 agent, 2 prompts paged apart · 3 asks: /)
 })
 
 test('a table too small refuses in the report and the line, stops nothing, and goes on paging what fits', async () => {

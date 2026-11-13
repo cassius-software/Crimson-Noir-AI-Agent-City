@@ -28,7 +28,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type { AnswerRequest, GateTether, Memories, Piece } from '../07_Execute_Actions/operator.ts'
-import { createInPageMind, GUARD_KEY, type ChatMessage, type ChatOptions, type ChatResult, type InPageRuntime, type LoadOptions } from './inPage.ts'
+import { createInPageMind, GUARD_KEY, WAITING, type ChatMessage, type ChatOptions, type ChatResult, type InPageRuntime, type LoadOptions } from './inPage.ts'
 import { OPAQUE_REASON, runtimeMode, type Caps } from './inPageCaps.ts'
 import { HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, placement, START_MS, type PlanEnv } from './inPagePlan.ts'
 import { CognitionError, FIRST_PIECE_MS, promptHash, STALL_MS, systemPrompt, TALK_PROMPT } from './localCompute.ts'
@@ -824,6 +824,57 @@ test('thinking as pieces of its own, the prompt\'s progress as the phase line, a
   assert.equal(a.thinking, 1)
   assert.equal(a.text, 'ok')
   assert.deepEqual(h.phases, ['loading the model in this page', null, 'reading the prompt 0%', 'reading the prompt 50%', null])
+})
+
+test('each request hears its own phase (AnswerRequest.onPhase): waiting its turn, its load, its prompt read so far, cleared at its first word; never another answer\'s', async () => {
+  const h = await harness()
+  const loaded = deferred<{ gpu: boolean; ms: number }>()
+  h.r.onLoad = () => loaded.promise
+  const answered: ChatResult[] = []
+  const goOn: (() => void)[] = []
+  h.r.onChat = (c) => {
+    c.o.onChunk({ progress: { processed: 0, total: 100 } })
+    c.o.onChunk({ progress: { processed: 60, total: 100 } })
+    return new Promise<ChatResult>((resolve) => {
+      goOn.push(() => {
+        c.o.onChunk({ text: 'ok' })
+        c.o.onChunk({ progress: { processed: 100, total: 100 } })
+        const r = { reason: 'stop', tokens: 1 }
+        answered.push(r)
+        resolve(r)
+      })
+    })
+  }
+  const first: (string | null)[] = []
+  const second: (string | null)[] = []
+  const a = h.mind.answer({ ...req(), onPhase: (p) => first.push(p) }, () => {})
+  await flush()
+  // A second request joins while the first loads: it waits, and hears only that.
+  const b = h.mind.answer({ ...req(), talk: true, onPhase: (p) => second.push(p) }, () => {})
+  await flush()
+  assert.deepEqual(first, ['loading the model in this page'])
+  assert.deepEqual(second, [WAITING])
+  loaded.resolve({ gpu: false, ms: 5 })
+  await flush()
+  assert.deepEqual(first, ['loading the model in this page', null, 'reading the prompt 0%', 'reading the prompt 60%'])
+  assert.deepEqual(second, [WAITING], 'the first answer\'s prompt is never the second\'s')
+  goOn.shift()!()
+  await a
+  assert.deepEqual(first.slice(4), [null], 'cleared at its first word, once; nothing after it')
+  await flush()
+  // Its turn: no load (the model is there), its own prompt read.
+  assert.deepEqual(second, [WAITING, null, 'reading the prompt 0%', 'reading the prompt 60%'])
+  goOn.shift()!()
+  await b
+  assert.deepEqual(second.slice(4), [null])
+  assert.equal(answered.length, 2)
+  assert.equal(h.phases.at(-1), null, 'the HUD\'s line is as it was')
+
+  // A listener that throws costs the answer nothing; a request with none answers as before.
+  const t = await harness()
+  const sturdy = await t.mind.answer({ ...req(), onPhase: () => { throw new Error('the card went') } }, () => {})
+  assert.equal(sturdy.text, 'hello there')
+  assert.equal((await t.mind.answer(req(), () => {})).text, 'hello there')
 })
 
 test('the phase line is cleared only by the load or answer that set it, never by one that waited its turn or finished before', async () => {
