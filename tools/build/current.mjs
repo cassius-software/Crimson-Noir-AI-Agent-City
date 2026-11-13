@@ -8,23 +8,34 @@
  * the other eight through build-matrix.yml), then this script puts the files on one GitHub pre-release, tag `current`,
  * titled "Crimson Noir: Agent City, current build", whose files are replaced the same way after each later green run.
  * It never makes a numbered release or any tag but `current`; numbered releases stay build-release.yml's.
- * - `pick --sha <commit> [--force] [--strict]`: whether that commit should be built. It prints `sha=<commit>` and
- *   `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) when the commit is on main, ci passed on it there (a push
- *   or a run by hand, never a pull request's run), it is at least as new as what the release holds, and the release
- *   does not already hold it for every target (`--force` builds it anyway); otherwise it prints why on stderr and
- *   nothing on stdout. `--strict` exits 1 when the commit is refused (not on main, no green ci), for a run by hand.
+ * - `pick --sha <commit> [--force] [--strict]`: which commit to build, given the one that started the run. It prints
+ *   `sha=<commit>` and `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) for the newest commit on main that ci
+ *   passed on there (a push or a run by hand, never a pull request's run), so a run that took a waiting run's place
+ *   still builds the newest green commit; nothing on stdout, and why on stderr, when the given commit is not on main,
+ *   no commit on main passed ci, the release already holds a newer one, or it holds that one for every target
+ *   (`--force` builds it again). `--strict` exits 1 when refused (not on main, nothing green), for a run by hand.
  * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--summary <file>] [--dry-run]`:
  *   <dir> holds the run's artifacts, one folder each (`matrix-<id>`, and `windows-installer-*`, `windows-msi-*`,
  *   `windows-portable-*` for windows-x64, which counts as built only with all three); a target whose artifact is
  *   missing failed its job, whose uploads come after its gates (a UEFI job's bake twice and QEMU boot). It asks again
- *   that the commit is on main and not older than the release's, then uploads each new or changed file, deletes the
- *   files no target names any more, writes SHA256SUMS (every file on the release) and current.json (which commit,
- *   run and time made each target's files), moves the tag to the commit and rewrites the notes. A target that failed
- *   keeps the files of the last commit it built, and the notes say so; the exit is then 1, except for the iOS build
- *   (best effort, as in build-matrix.yml). `--source` is a checkout of the built commit: its package.json gives the
- *   version the notes name, and crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with
- *   the x86-64 media, as build-release.yml publishes them. `--dry-run` reads the release, prints the plan and the
- *   notes, and writes nothing (a pull request's run of the workflow).
+ *   that the commit is on main and not older than the release's (and stops, writing nothing, when it cannot read the
+ *   release's current.json or GitHub cannot compare the two), then puts the tag at the commit before any file is
+ *   written, uploads each new or changed file, writes SHA256SUMS (every built file) and current.json (which commit,
+ *   run and time made each target's files), deletes the files no target names any more and rewrites the notes. A
+ *   target that failed keeps the files of the last commit it built while the release still holds them byte for byte,
+ *   and the notes say so; the exit is then 1, except for the iOS build (best effort, as in build-matrix.yml).
+ *   `--source` is a checkout of the built commit: its package.json gives the version the notes name, and
+ *   crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with the x86-64 media, as
+ *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan and the notes, and writes nothing
+ *   (a pull request's run of the workflow).
+ * - The tag. GitHub lets the workflow's own token move a tag only when no workflow file differs between where it was
+ *   and where it goes, but lets it make a tag at a commit whose workflow files match main's tip. When a move is
+ *   refused, the release is set on a stand-in tag, `current-next`, at the commit, `current` is made again there, the
+ *   release goes back onto it and the stand-in is deleted: the release is never on a tag being deleted (that would
+ *   turn it into a draft, and publishing it again would notify everyone watching), and for those few seconds its
+ *   download addresses answer 404. A run that stops halfway leaves the release on `current-next`; the next run finds it
+ *   there and finishes. When GitHub refuses the stand-in as well (a later commit on main changed a workflow), the tag
+ *   stays where it was, the files are still published, and the notes and current.json say where the tag is.
  * GitHub is reached only through the `gh` command line (GH_TOKEN, GH_REPO), run with argument vectors, never a shell.
  * What breaks if it is removed? The workflow has nothing to publish with, and the downloads wait for the next
  * numbered release; the web copy still follows main (web.yml).
@@ -38,6 +49,8 @@ import { fileURLToPath } from 'node:url'
 import { IDS } from './matrix.mjs'
 
 export const TAG = 'current'
+/** The tag the release stands on for the seconds `current` is made again; see the header. */
+export const NEXT = 'current-next'
 export const TITLE = 'Crimson Noir: Agent City, current build'
 export const STATE = 'current.json'
 export const SUMS = 'SHA256SUMS'
@@ -168,13 +181,21 @@ const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
 
 /**
  * What a publish does, worked out before anything is written: the new current.json (each target built now at this
- * commit; each that failed keeps its last files, as long as the release still has them), the files to upload (new,
- * or not the bytes the release has under that name), the files to delete (named by no target any more), SHA256SUMS,
- * the targets missing, the missing ones that turn the run red, and the notes.
+ * commit; each that failed keeps its last files, as long as the release still holds them byte for byte), the files to
+ * upload (new, or not the bytes the release has under that name), the files to delete (named by no target any more),
+ * SHA256SUMS, the targets missing, the missing ones that turn the run red, and the notes. `tagAt` is the commit the
+ * tag is at when it could not be moved to `sha` (see the header).
  */
-export function plan({ state, built, sha, run = '', ci = '', time, version = 'unknown', repo, assets = null }) {
+export function plan({ state, built, sha, run = '', ci = '', time, version = 'unknown', repo, assets = null, tagAt = sha }) {
   const prev = state ?? { targets: {} }
   const have = assets ? new Map(assets.map((a) => [a.name, a])) : null
+  // A file is still on the release as recorded: its size, and its SHA-256 where GitHub gives the asset's digest. The
+  // UEFI media keep one size from commit to commit (a fixed 36 MiB disk) while their bytes change, so size alone is
+  // not enough; an earlier publish that stopped halfway can have replaced a file under the same name.
+  const same = (f) => {
+    const a = have?.get(f.name)
+    return Boolean(a) && a.size === f.size && (!a.digest || a.digest === `sha256:${f.sha256}`)
+  }
   const targets = {}
   const dropped = []
   for (const id of IDS) {
@@ -182,8 +203,7 @@ export function plan({ state, built, sha, run = '', ci = '', time, version = 'un
       targets[id] = { commit: sha, run, time, files: built[id].map(({ name, sha256, size }) => ({ name, sha256, size })) }
     } else if (prev.targets?.[id]) {
       const t = prev.targets[id]
-      // Kept only while every file is still on the release with the size it was recorded at (when the release is known).
-      if (!have || t.files.every((f) => have.get(f.name)?.size === f.size)) targets[id] = t
+      if (!have || t.files.every(same)) targets[id] = t
       else dropped.push(id)
     }
   }
@@ -202,7 +222,7 @@ export function plan({ state, built, sha, run = '', ci = '', time, version = 'un
   const missing = IDS.filter((id) => !built[id])
   const failed = missing.filter((id) => !BEST_EFFORT.includes(id))
   const sums = [...files].sort(byName).map((f) => `${f.sha256}  ${f.name}`).join('\n') + '\n'
-  const next = { schema: 1, tag: TAG, commit: sha, time, run, ci, version, targets }
+  const next = { schema: 1, tag: TAG, tagAt, commit: sha, time, run, ci, version, targets }
   return { state: next, uploads, deletes, sums, missing, failed, dropped, notes: notes(next, { repo, missing }) }
 }
 
@@ -232,6 +252,9 @@ export function notes(state, { repo, missing = [] }) {
     `The current build of Crimson Noir: Agent City and Crimson Noir OS. Every file here was built from a commit on \`main\` that ${ci} passed on, and is replaced the same way after each later green run, as the [web copy](${web}) is. This is a pre-release: the latest numbered release is unchanged, and numbered releases are still cut by hand.`,
     '',
     `**Commit** ${commit(state.commit)} on main, published ${when(state.time)}${state.run ? ` by [this run](${state.run})` : ''}.${missing.length ? ` Not built at this commit: ${missing.map((id) => LABELS[id]).join(', ')}.` : ''}`,
+    ...(state.tagAt && state.tagAt !== state.commit
+      ? ['', `**The tag \`${TAG}\` is still at ${commit(state.tagAt)}**, and so are the source code archives GitHub adds below: GitHub refused to move it to ${commit(state.commit)}, as it does when a later commit on main changed a workflow file. The files in the table are from the commits beside them; the next publish moves the tag.`]
+      : []),
     '',
     '| Platform | Files | Built from |',
     '| :--- | :--- | :--- |',
@@ -240,8 +263,8 @@ export function notes(state, { repo, missing = [] }) {
     `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
     '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device; the iPhone can play the web copy instead.',
     "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); the macOS app opens with right-click › Open the first time; the `.apk` carries the Android debug key; the `.ipa` must be re-signed before a device takes it. The OS images run on a UEFI machine with Secure Boot off.",
-    `- **Versions.** The file names carry the version in \`package.json\` at this commit (\`${state.version}\`); the commit above is what tells one current build from the next.`,
-    `- **Checking a download.** \`sha256sum --check --ignore-missing ${SUMS}\` in the folder you downloaded into; \`${SUMS}\` lists every file here, and \`${STATE}\` records which commit, run and time made each.`,
+    `- **Versions.** The apps' file names carry the version in \`package.json\` at this commit (\`${state.version}\`), the \`.rpm\` with its pre-release part as its release number; the zipped macOS \`.app\`, the UEFI files and images, and the notices beside them carry none. The commit above, and each file's row, tell one current build from the next.`,
+    `- **Checking a download.** \`sha256sum --check --ignore-missing ${SUMS}\` in the folder you downloaded into; \`${SUMS}\` lists every file here but itself and \`${STATE}\`, which records which commit, run and time made each.`,
     `- **A link that stays current.** \`${url}/releases/download/${TAG}/<file>\` always gives the newest file of that name.`,
     `- **On NixOS.** \`nix run github:${repo}\` builds main's tip from source in Nix's sandbox.`,
     '',
@@ -285,44 +308,47 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo)) {
   return compare(gh, repo, sha, tip) === 'ahead'
 }
 
-/** The ci run that passed on `sha` on main (a push, or ci run by hand there), as its address, or null. */
-export function ciPassed(gh, repo, sha) {
-  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?head_sha=${sha}&status=success&per_page=100`)).workflow_runs ?? []
-  const run = runs.find((r) => r.head_sha === sha && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)
-  return run ? run.html_url : null
+/**
+ * The newest commit on main that ci passed on there (a push, or ci run by hand, in this repository), with that run's
+ * address, or null. GitHub lists runs newest first; a commit is taken only while it is still on main's history.
+ */
+export function newestGreen(gh, repo, tip = mainTip(gh, repo)) {
+  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`)).workflow_runs ?? []
+  const seen = new Set()
+  for (const r of runs) {
+    if (!(SHA.test(r.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)) continue
+    if (seen.has(r.head_sha)) continue
+    seen.add(r.head_sha)
+    if (onMain(gh, repo, r.head_sha, tip)) return { sha: r.head_sha, ci: r.html_url }
+  }
+  return null
 }
 
-/** The `current` release (its id, assets with name, size, digest and id), or null when there is none. */
+/**
+ * The `current` release (its id, the tag it stands on, its assets with name, size, digest and id), or null when
+ * there is none. A release still on the stand-in tag (a run stopped halfway through remaking `current`) is found too.
+ */
 export function getRelease(gh, repo) {
-  const r = gh(['api', `repos/${repo}/releases/tags/${TAG}`])
-  if (notFound(r)) return null
-  if (!r.ok) throw new Error(`gh api releases/tags/${TAG}: ${r.err.trim()}`)
-  const rel = JSON.parse(r.out)
-  return { id: rel.id, assets: (rel.assets ?? []).map((a) => ({ id: a.id, name: a.name, size: a.size, digest: a.digest ?? null })) }
+  for (const tag of [TAG, NEXT]) {
+    const r = gh(['api', `repos/${repo}/releases/tags/${tag}`])
+    if (notFound(r)) continue
+    if (!r.ok) throw new Error(`gh api releases/tags/${tag}: ${r.err.trim()}`)
+    const rel = JSON.parse(r.out)
+    return { id: rel.id, tag: rel.tag_name ?? tag, assets: (rel.assets ?? []).map((a) => ({ id: a.id, name: a.name, size: a.size, digest: a.digest ?? null })) }
+  }
+  return null
 }
 
-/** The release's current.json, read (an empty one when it has none or it does not parse). */
-export function readState(gh, repo, release) {
+/**
+ * The release's current.json, read (an empty one when the release has none, or it does not parse). When the release
+ * lists one that cannot be downloaded, this throws: publishing as if there were none would delete a failed target's
+ * last files and lose the check against stepping back.
+ */
+export function readState(gh, repo, release, { wait = 5000 } = {}) {
   const asset = release?.assets.find((a) => a.name === STATE)
   if (!asset) return { targets: {} }
-  const r = gh(['api', '-H', 'Accept: application/octet-stream', `repos/${repo}/releases/assets/${asset.id}`])
-  if (r.ok) return readStateText(r.out)
-  // Unread, every target is treated as never built: a failed one's last files are then not kept.
-  console.error(`::warning::the release's ${STATE} could not be read (${r.err.trim()}); publishing as if it had none`)
-  return { targets: {} }
-}
-
-/** The tag `current` at `sha`: made when missing, moved when elsewhere (a lightweight tag, as the API makes it). */
-export function setTag(gh, repo, sha) {
-  const r = gh(['api', `repos/${repo}/git/ref/tags/${TAG}`])
-  if (notFound(r)) {
-    api(gh, `repos/${repo}/git/refs`, '-X', 'POST', '-f', `ref=refs/tags/${TAG}`, '-f', `sha=${sha}`)
-    return 'made'
-  }
-  if (!r.ok) throw new Error(`gh api git/ref/tags/${TAG}: ${r.err.trim()}`)
-  if (JSON.parse(r.out).object?.sha === sha) return 'kept'
-  api(gh, `repos/${repo}/git/refs/tags/${TAG}`, '-X', 'PATCH', '-f', `sha=${sha}`, '-F', 'force=true')
-  return 'moved'
+  const r = retry(gh, ['api', '-H', 'Accept: application/octet-stream', `repos/${repo}/releases/assets/${asset.id}`], `read the release's ${STATE} (nothing was published)`, { wait })
+  return readStateText(r.out)
 }
 
 function pause(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
@@ -338,75 +364,174 @@ function retry(gh, argv, what, { tries = 3, wait = 15000 } = {}) {
   throw new Error(`${what}: ${r.err.trim() || 'failed'}`)
 }
 
-/** Whether a commit should be built; see the header. Returns { sha, ci } or { skip, refused }. */
-export function pick({ sha, force = false, repo }, gh) {
-  if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
-  const tip = mainTip(gh, repo)
-  if (!onMain(gh, repo, sha, tip)) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
-  const ci = ciPassed(gh, repo, sha)
-  if (!ci) return { skip: `ci has not passed on ${sha} on main`, refused: true }
-  const release = getRelease(gh, repo)
-  const state = release ? readState(gh, repo, release) : { targets: {} }
-  if (state.commit && state.commit !== sha && compare(gh, repo, state.commit, sha) === 'behind') {
-    return { skip: `the release already holds ${state.commit}, which is newer than ${sha}`, refused: false }
+/** GitHub's answer, not a lost connection: a 4xx is not tried again. */
+const answered = (r) => /HTTP 4\d\d/.test(r.err)
+/** GitHub refused the token this change (a tag it may not make or move), as opposed to a missing ref or a lost connection. */
+const refused = (r) => !r.ok && (/HTTP 40[13]|HTTP 422/.test(r.err) || /workflows?` permission|without `?workflows|not accessible by integration/i.test(r.err))
+
+/** A ref step, tried again over a lost connection but not after GitHub answered; the result, never a throw. */
+function attempt(gh, argv, what, wait) {
+  let r
+  for (let i = 1; i <= 3; i++) {
+    r = gh(argv)
+    if (r.ok || answered(r)) return r
+    if (i < 3) { console.error(`${what} failed (${r.err.trim()}); trying again (${i}/2)`); pause(wait) }
   }
-  const required = IDS.filter((id) => !BEST_EFFORT.includes(id))
-  if (!force && state.commit === sha && required.every((id) => state.targets[id]?.commit === sha)) {
-    return { skip: `the release already holds ${sha} for every target (run by hand with force to build it again)`, refused: false }
-  }
-  return { sha, ci }
+  return r
+}
+
+/** Where a tag points, or null when there is no such tag. */
+export function tagAt(gh, repo, name) {
+  const r = gh(['api', `repos/${repo}/git/ref/tags/${name}`])
+  if (notFound(r)) return null
+  if (!r.ok) throw new Error(`gh api git/ref/tags/${name}: ${r.err.trim()}`)
+  return JSON.parse(r.out).object?.sha ?? null
 }
 
 /**
- * Publishes (or, with dryRun, plans) the current build; see the header. Returns { status, plan } where status is
+ * The tag `current` at `sha` before any file is written; see the header. Returns { at, how }: `at` the commit the
+ * tag is at afterwards, `how` one of made, kept, moved, remade (through the stand-in) or refused (it stays at `at`).
+ * Throws, with the release where the next run can finish, when GitHub fails partway (not when it refuses).
+ */
+export function placeTag(gh, repo, sha, release, { log = console.log, wait = 15000 } = {}) {
+  const ref = (name) => `repos/${repo}/git/refs/tags/${name}`
+  const make = (name, at) => attempt(gh, ['api', '-X', 'POST', '-f', `ref=refs/tags/${name}`, '-f', `sha=${at}`, `repos/${repo}/git/refs`], `make the tag ${name}`, wait)
+  const drop = (name) => {
+    const r = attempt(gh, ['api', '-X', 'DELETE', ref(name)], `delete the tag ${name}`, wait)
+    if (!r.ok && !/HTTP 422|HTTP 404/.test(r.err)) throw new Error(`delete the tag ${name}: ${r.err.trim()}`)
+  }
+  const stand = (name) => retry(gh, ['api', '-X', 'PATCH', '-f', `tag_name=${name}`, '-f', 'make_latest=false', `repos/${repo}/releases/${release.id}`], `set the release on the tag ${name}`, { wait })
+  const must = (r, what) => { if (!r.ok) throw new Error(`${what}: ${r.err.trim() || 'failed'}`); return r }
+
+  // A run stopped halfway: the release is on the stand-in. Nothing stands on `current`, so it is made (again) at this
+  // commit, or failing that where the stand-in is, and the release goes back onto it.
+  if (release?.tag === NEXT) {
+    const was = tagAt(gh, repo, NEXT)
+    const old = tagAt(gh, repo, TAG)
+    let at = old
+    if (at !== sha) {
+      if (at !== null) { drop(TAG); at = null }
+      for (const want of [sha, was, old]) if (want && make(TAG, want).ok) { at = want; break }
+    }
+    if (at === null) throw new Error(`the release is on the tag ${NEXT} and GitHub refused to make ${TAG} again: run the workflow by hand on main once main's tip passes ci`)
+    stand(TAG)
+    release.tag = TAG
+    drop(NEXT)
+    log(`tag ${TAG}: finished an earlier run's remaking of it, at ${at}`)
+    return { at, how: at === sha ? 'remade' : 'refused' }
+  }
+
+  const at = tagAt(gh, repo, TAG)
+  if (at === sha) return { at, how: 'kept' }
+  if (at === null) {
+    must(make(TAG, sha), `make the tag ${TAG} at ${sha}`)
+    return { at: sha, how: 'made' }
+  }
+  const moved = attempt(gh, ['api', '-X', 'PATCH', '-f', `sha=${sha}`, '-F', 'force=true', ref(TAG)], `move the tag ${TAG}`, wait)
+  if (moved.ok) return { at: sha, how: 'moved' }
+  if (!refused(moved)) throw new Error(`move the tag ${TAG} to ${sha}: ${moved.err.trim() || 'failed'}`)
+  log(`tag ${TAG}: GitHub refused to move it from ${at} (${moved.err.trim()}); making it again at ${sha}`)
+
+  // No release yet: nothing stands on the tag, so it is simply made again.
+  if (!release) {
+    drop(TAG)
+    must(make(TAG, sha), `make the tag ${TAG} at ${sha}`)
+    return { at: sha, how: 'remade' }
+  }
+
+  // The swap through the stand-in. If GitHub refuses the stand-in, nothing has changed and the tag stays.
+  if (tagAt(gh, repo, NEXT) !== null) drop(NEXT)
+  const next = make(NEXT, sha)
+  if (!next.ok) {
+    if (!refused(next)) throw new Error(`make the tag ${NEXT} at ${sha}: ${next.err.trim() || 'failed'}`)
+    log(`::warning::GitHub refused a tag at ${sha} as well (${next.err.trim()}): the tag ${TAG} stays at ${at}, and the files are published all the same`)
+    return { at, how: 'refused' }
+  }
+  stand(NEXT)
+  release.tag = NEXT
+  drop(TAG)
+  must(make(TAG, sha), `make the tag ${TAG} again at ${sha} (the release is on ${NEXT}; the next run finishes this)`)
+  stand(TAG)
+  release.tag = TAG
+  try { drop(NEXT) } catch (e) { log(`::warning::${e.message}; the next run deletes it`) }
+  return { at: sha, how: 'remade' }
+}
+
+/** Which commit to build; see the header. Returns { sha, ci, note } or { skip, refused }. */
+export function pick({ sha, force = false, repo, wait = 5000 }, gh) {
+  if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
+  const tip = mainTip(gh, repo)
+  if (!onMain(gh, repo, sha, tip)) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
+  // The newest green commit, not only the one that started this run: one run waits at a time, and a run that took a
+  // waiting one's place (a re-run, a run by hand before main's tip passed ci) must not leave the newest one unpublished.
+  const green = newestGreen(gh, repo, tip)
+  if (!green) return { skip: `ci has not passed on ${sha} or on any newer commit on main`, refused: true }
+  const note = green.sha === sha ? '' : `building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`
+  const release = getRelease(gh, repo)
+  const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
+  if (state.commit && state.commit !== green.sha && compare(gh, repo, state.commit, green.sha) === 'behind') {
+    return { skip: `the release already holds ${state.commit}, which is newer than ${green.sha}`, refused: false }
+  }
+  const required = IDS.filter((id) => !BEST_EFFORT.includes(id))
+  if (!force && state.commit === green.sha && required.every((id) => state.targets[id]?.commit === green.sha)) {
+    return { skip: `the release already holds ${green.sha} for every target (run by hand with force to build it again)`, refused: false }
+  }
+  return { sha: green.sha, ci: green.ci, note }
+}
+
+/**
+ * Publishes (or, with dryRun, plans) the current build; see the header. Returns { status, plan, tag } where status is
  * `published`, `planned` (a dry run) or `stale` (the release already holds a newer commit: nothing written).
  */
-export function publish({ media, stage, source, sha, ci = '', run = '', repo, dryRun = false, time = new Date().toISOString(), log = console.log, verifyWait = 10000 }, gh) {
+export function publish({ media, stage, source, sha, ci = '', run = '', repo, dryRun = false, time = new Date().toISOString(), log = console.log, wait = 15000, verifyWait = 10000 }, gh) {
   if (!SHA.test(sha ?? '')) throw new Error(`not a commit: ${sha}`)
   const built = collect({ media, stage, source })
   const version = source && existsSync(join(source, 'package.json')) ? JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version : 'unknown'
   if (dryRun) log(`dry run: nothing is written, and ${sha} is not checked against main`)
   else if (!onMain(gh, repo, sha)) throw new Error(`${sha} is not on main any more: nothing was published`)
   const release = getRelease(gh, repo)
-  const state = release ? readState(gh, repo, release) : { targets: {} }
+  const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== sha) {
     const s = compare(gh, repo, state.commit, sha)
     if (s === 'behind' && dryRun) log(`the release holds ${state.commit}, newer than ${sha}: a real publish would stop here; the plan below is as if it did not`)
     else if (s === 'behind') {
       log(`::notice::the release already holds ${state.commit}, newer than ${sha}: nothing was published`)
-      return { status: 'stale', plan: null }
+      return { status: 'stale', plan: null, tag: null }
     }
-    else if (s !== 'ahead' && !dryRun) log(`::warning::GitHub compares ${state.commit} and ${sha} as ${s ?? 'unknown'}; publishing ${sha}, which is on main`)
+    else if (s === null && !dryRun) throw new Error(`GitHub could not compare ${state.commit}, which the release holds, with ${sha}: nothing was published`)
+    else if (s !== 'ahead' && !dryRun) log(`::warning::GitHub compares ${state.commit} and ${sha} as ${s}; publishing ${sha}, which is on main`)
   }
   if (Object.keys(built).length === 0) throw new Error('no target was built: nothing to publish')
-  const p = plan({ state, built, sha, run, ci, time, version, repo, assets: release ? release.assets : [] })
-  log(`release ${TAG}: ${release ? 'exists' : 'to be made'}; commit ${sha}; version ${version}`)
+  const args = { state, built, sha, run, ci, time, version, repo, assets: release ? release.assets : [] }
+  let p = plan(args)
+  log(`release ${TAG}: ${release ? `exists${release.tag === NEXT ? ` (on the tag ${NEXT}: an earlier run stopped halfway)` : ''}` : 'to be made'}; commit ${sha}; version ${version}`)
   for (const id of IDS) {
     const t = p.state.targets[id]
     log(`  ${id.padEnd(16)} ${built[id] ? `built: ${built[id].map((f) => f.name).join(', ')}` : t ? `failed: keeps ${t.commit.slice(0, 7)}'s files` : 'failed: no files'}`)
   }
   for (const f of p.uploads) log(`  upload ${f.name} (${mib(f.size)})`)
   for (const n of p.deletes) log(`  delete ${n}`)
-  for (const id of p.dropped) log(`  ::warning::${id}: its last files are gone from the release, so it is listed with none`)
-  if (dryRun) return { status: 'planned', plan: p }
+  for (const id of p.dropped) log(`  ::warning::${id}: its last files are gone from the release or no longer the bytes it recorded, so it is listed with none`)
+  if (dryRun) return { status: 'planned', plan: p, tag: null }
 
+  // The tag first: should GitHub fail here, no file has been touched.
+  const tag = placeTag(gh, repo, sha, release, { log, wait })
+  log(`tag ${TAG}: ${tag.how}, at ${tag.at}`)
+  if (tag.at !== sha) p = plan({ ...args, tagAt: tag.at })
   const notesFile = join(stage, '.notes.md')
   writeFileSync(notesFile, p.notes)
   const R = ['--repo', repo]
-  if (!release) {
-    log(`tag ${TAG}: ${setTag(gh, repo, sha)} at ${sha}`)
-    retry(gh, ['release', 'create', TAG, '--verify-tag', '--prerelease', '--latest=false', '--title', TITLE, '--notes-file', notesFile, ...R], `gh release create ${TAG}`)
-  }
-  for (const f of p.uploads) retry(gh, ['release', 'upload', TAG, f.path, '--clobber', ...R], `upload ${f.name}`)
+  if (!release) retry(gh, ['release', 'create', TAG, '--verify-tag', '--prerelease', '--latest=false', '--title', TITLE, '--notes-file', notesFile, ...R], `gh release create ${TAG}`, { wait })
+  for (const f of p.uploads) retry(gh, ['release', 'upload', TAG, f.path, '--clobber', ...R], `upload ${f.name}`, { wait })
   writeFileSync(join(stage, SUMS), p.sums)
   writeFileSync(join(stage, STATE), `${JSON.stringify(p.state, null, 2)}\n`)
-  retry(gh, ['release', 'upload', TAG, join(stage, SUMS), join(stage, STATE), '--clobber', ...R], `upload ${SUMS} and ${STATE}`)
-  for (const n of p.deletes) retry(gh, ['release', 'delete-asset', TAG, n, '--yes', ...R], `delete ${n}`)
-  if (release) log(`tag ${TAG}: ${setTag(gh, repo, sha)} at ${sha}`)
-  retry(gh, ['release', 'edit', TAG, '--title', TITLE, '--notes-file', notesFile, '--prerelease', '--latest=false', ...R], `gh release edit ${TAG}`)
+  retry(gh, ['release', 'upload', TAG, join(stage, SUMS), join(stage, STATE), '--clobber', ...R], `upload ${SUMS} and ${STATE}`, { wait })
+  for (const n of p.deletes) retry(gh, ['release', 'delete-asset', TAG, n, '--yes', ...R], `delete ${n}`, { wait })
+  retry(gh, ['release', 'edit', TAG, '--title', TITLE, '--notes-file', notesFile, '--prerelease', '--latest=false', ...R], `gh release edit ${TAG}`, { wait })
 
-  // What the release now holds is what the plan says: every file, at its size (and its digest where GitHub gives
-  // one), and nothing else. Asked up to three times, a few seconds apart, in case GitHub's listing lags a change.
+  // What the release now holds is what the plan says: on the tag `current`, every file at its size (and its digest
+  // where GitHub gives one), and nothing else. Asked up to three times, a few seconds apart, in case GitHub's listing
+  // lags a change.
   const want = [...IDS.flatMap((id) => p.state.targets[id]?.files ?? []), { name: SUMS, size: Buffer.byteLength(p.sums) }, { name: STATE, size: null }]
   let problems = []
   for (let i = 0; i < 3; i++) {
@@ -415,6 +540,7 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
     if (!after) { problems = [`the release ${TAG} is gone`]; continue }
     const now = new Map(after.assets.map((a) => [a.name, a]))
     problems = [
+      ...(after.tag === TAG ? [] : [`the release is on the tag ${after.tag}`]),
       ...want.filter((f) => {
         const a = now.get(f.name)
         return !a || (f.size !== null && a.size !== f.size) || (f.sha256 && a.digest && a.digest !== `sha256:${f.sha256}`)
@@ -425,7 +551,7 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
   }
   if (problems.length) throw new Error(`the release does not hold what was published: ${problems.join('; ')}`)
   log(`published ${sha} to ${TAG}: ${want.length} files`)
-  return { status: 'published', plan: p }
+  return { status: 'published', plan: p, tag }
 }
 
 export function main(argv, gh = realGh) {
@@ -445,6 +571,7 @@ export function main(argv, gh = realGh) {
         console.error(`${r.refused && flag('strict') ? '::error::' : '::notice::'}${r.skip}`)
         return r.refused && flag('strict') ? 1 : 0
       }
+      if (r.note) console.error(`::notice::${r.note}`)
       console.log(`sha=${r.sha}\nci=${r.ci}`)
       return 0
     }

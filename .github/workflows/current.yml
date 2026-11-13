@@ -15,18 +15,20 @@
 #   and current.json on the release say which commit each file comes from, and the run is red (the iOS build is best
 #   effort, as in build-matrix.yml, and never turns it red).
 # - It never steps back: it builds only a commit on main that ci passed on, and publishes it only while it is still on
-#   main and at least as new as what the release holds (asked again after the build). One run at a time; a newer
-#   commit's run waiting takes the place of an older one waiting, so during a burst of merges the release follows the
-#   last green commit, as the web copy does.
-# - It makes no numbered release and no tag but `current`, which it moves to each commit it publishes. The release is
-#   a pre-release and never "Latest"; numbered releases stay build-release.yml's, from a tag a person pushes. The tag
-#   is moved with the workflow's own token, for which GitHub starts no workflow (build-release.yml takes v* and
-#   stable-* tags only anyway).
+#   main and at least as new as what the release holds (asked again after the build). One run at a time, and one
+#   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
+#   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
+#   does.
+# - It makes no numbered release and no tag but `current`, which it puts at each commit it publishes (through a
+#   stand-in tag, `current-next`, for a few seconds when GitHub refuses to move it; tools/build/current.mjs says why).
+#   The release is a pre-release and never "Latest"; numbered releases stay build-release.yml's, from a tag a person
+#   pushes. The tags are made with the workflow's own token, for which GitHub starts no workflow (build-release.yml
+#   takes v* and stable-* tags only anyway).
 # - On a pull request that touches this file, its tool or the two workflows it calls, it builds everything the same
 #   way and runs the publish step as a dry run, with read-only access: it prints what it would upload, keep and
 #   delete, writes the notes to the run's summary, and publishes nothing.
-# - By hand (Actions > current > Run workflow, on main), only when an automatic run failed: it builds main's tip if ci
-#   passed on it there, and with "force" even when the release already holds that commit.
+# - By hand (Actions > current > Run workflow, on main), only when an automatic run failed: it builds the newest
+#   commit on main that ci passed on, and with "force" even when the release already holds that commit.
 # - Only GitHub's own actions run here. The release can be updated only while it is not immutable (immutable releases
 #   are a repository setting, off here).
 # What breaks if it is removed? The downloads wait for the next numbered release; the web copy still follows main.
@@ -54,13 +56,14 @@ on:
 
 permissions: {}
 
-# One publication at a time, never cancelled halfway; a newer run waiting takes the place of an older one waiting. A
-# ci that did not pass on main publishes nothing, so its run waits in a group of its own and never takes a real one's
-# place. A pull request's dry runs have a group of their own, and a newer push to it cancels the older run.
+# One publication at a time, never cancelled halfway; a run that comes while another waits takes its place, and pick
+# then builds the newest green commit, whichever run it is. A ci that did not pass on main, or a run by hand anywhere
+# but main, publishes nothing, so its run waits in a group of its own and never takes a real one's place. A pull
+# request's dry runs have a group of their own, and a newer push to it cancels the older run.
 concurrency:
   group: >-
     ${{ (github.event_name == 'pull_request' && format('current-pr-{0}', github.event.pull_request.number)) ||
-    ((github.event_name == 'workflow_dispatch' ||
+    (((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
     (github.event.workflow_run.conclusion == 'success' &&
     (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     && 'current') || format('current-skip-{0}', github.run_id) }}
@@ -100,7 +103,7 @@ jobs:
         with:
           node-version: '22'
       - id: pick
-        name: The commit ci passed on main, unless the release already holds it or a newer one (a pull request's head, for a dry run)
+        name: The newest commit ci passed on main, unless the release already holds it or a newer one (a pull request's head, for a dry run)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

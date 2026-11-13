@@ -24,14 +24,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   numbered release and no tag but `current`, and the release is never "Latest". The UEFI jobs still bake twice,
   compare the bytes and boot in QEMU before they upload; a target whose job fails keeps its last files, and the notes
   and `current.json` say which commit each file comes from (the run is then red; the iOS build stays best effort).
-  It builds only a commit on main that ci passed on and publishes only one at least as new as the release's; files
-  whose bytes did not change are not uploaded again; `SHA256SUMS` covers every file. On a pull request that touches
-  it, it builds everything and runs the publish as a dry run with read-only access. The bare Windows executables are
-  now published as `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`: both were `crimson-noir-app.exe`, so on a
-  `v*` release the second upload would have replaced the first. Eleven tests hold the publish step against a stand-in
-  for GitHub (a first publish, a later one with a failed target and a version change, a stale commit, a commit off
-  main, a dry run, the pick, the command line) and the workflows' triggers, access and calls. Nothing has been
-  published yet: the first real run is the first green ci on main after the merge.
+  It builds the newest commit on main that ci passed on, whichever run starts, and publishes only one at least as new
+  as the release's, stopping without writing anything when it cannot read the release's `current.json` or GitHub
+  cannot compare the two. A failed target keeps its last files only while the release still holds those very bytes
+  (the UEFI images keep one size from commit to commit, so the check is by SHA-256, not size). Files whose bytes did
+  not change are not uploaded again (usually the UEFI applications and the notices: the images carry their commit's
+  time and GUIDs and change with every commit); `SHA256SUMS` covers every built file. The tag is put at the commit
+  before any file is written; GitHub refuses to move a tag with the workflow's own token across a change to a
+  workflow file, so the release then stands on a stand-in tag, `current-next`, for the seconds `current` is made
+  again (never on a tag being deleted, which would turn it into a draft), a run stopped halfway is finished by the
+  next, and when GitHub refuses that too the files are published and the notes say where the tag stayed. On a pull
+  request that touches it, it builds everything and runs the publish as a dry run with read-only access; on this
+  change's own pull request that run built all nine targets. The bare Windows executables are now published as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`: both were `crimson-noir-app.exe`, so on a `v*` release the
+  second upload would have replaced the first. Fifteen tests hold the publish step against a stand-in for GitHub that
+  keeps its tag rules (a first publish, a later one with a failed target and a version change, the tag remade through
+  the stand-in, refused, and finished after a run stopped halfway, unreadable state, a replaced file, a stale commit, a
+  commit off main, a dry run, the pick, the command line) and the workflows' triggers, queue, access and calls. How
+  GitHub treats the tags is taken from reports of its behaviour, not yet seen here: nothing has been published yet,
+  and the first real run is the first green ci on main after the merge.
 
 - **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
   heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to

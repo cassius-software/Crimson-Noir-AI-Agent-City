@@ -5,9 +5,13 @@
  * Why does this file exist? It pins the current build (tools/build/current.mjs, .github/workflows/current.yml): every
  * target of the build matrix published from a commit on main that ci passed, onto one pre-release whose files follow
  * main. It holds the publish step against a stand-in for GitHub (the release, its assets with their digests, the
- * tag, main's history, ci's runs): a first publish makes the tag and the release, a later one moves the tag, uploads
- * only changed files, deletes the ones no target names, and keeps a failed target's last files with their commit; it
- * never steps back to an older commit, never publishes one off main, and a dry run writes nothing. It also holds the
+ * tags with GitHub's rules for the workflow's token, main's history, ci's runs): a first publish makes the tag and the
+ * release, a later one puts the tag at the commit before any file is written (through the stand-in tag when GitHub
+ * refuses the move, never turning the release into a draft, and finishing a run that stopped halfway), uploads only
+ * changed files, deletes the ones no target names, and keeps a failed target's last files with their commit while
+ * they are still those bytes; it never steps back to an older commit, never publishes one off main, stops when it
+ * cannot read what the release holds, builds the newest green commit whichever run starts, and a dry run writes
+ * nothing. It also holds the
  * workflow: what starts it, the two workflows it calls with the commit (and that a call never cancels or is cancelled
  * by their own runs), its access, and the bare Windows executables' names, which once collided on a release.
  * What breaks if it is removed? The downloads could step back, publish an untested commit, lose a platform's files
@@ -40,21 +44,35 @@ type Gh = (argv: string[]) => GhResult
 interface Asset { id: number; name: string; size: number; digest: string; body: Buffer }
 interface FileRecord { name: string; sha256: string; size: number }
 interface TargetRecord { commit: string; files: FileRecord[] }
-interface State { schema: number; commit: string; version: string; targets: Record<string, TargetRecord> }
+interface State { schema: number; commit: string; tagAt: string; version: string; targets: Record<string, TargetRecord> }
 
 const commitOf = (n: number) => createHash('sha1').update(`commit ${n}`).digest('hex')
 const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex')
 
+/** The address of the ci run that passed on a commit, as the stand-in lists it. */
+const ciUrl = (sha: string) => `https://github.com/${REPO}/actions/runs/${parseInt(sha.slice(0, 6), 16)}`
+
 /**
- * A stand-in for GitHub as `gh` sees it: main's history (a line of commits, oldest first), ci's green runs, the tag
- * `current`, and its release with assets. Every call is logged; `writes` are the calls that change anything.
+ * A stand-in for GitHub as `gh` sees it: main's history (a line of commits, oldest first, which a test can extend),
+ * ci's green runs, the tags, and the release with its assets. It keeps GitHub's rules for the workflow's own token as
+ * far as they are known: a tag is not moved across a change to a workflow file (each commit's workflow files are
+ * named by `workflows`, the same for all unless given), a tag is not made at a commit whose workflow files differ from
+ * main's tip, and deleting the tag a release stands on turns the release into a draft (`everDraft` remembers it).
+ * `fail` lets a test make any call fail. Every call is logged; `writes` are the calls that change anything.
  */
-function fakeGitHub(history: string[], { green = history, release = false }: { green?: string[]; release?: boolean } = {}) {
+interface Release { id: number; tag: string; draft: boolean; title: string; notes: string; prerelease: boolean; latest: boolean; assets: Map<string, Asset> }
+
+function fakeGitHub(history: string[], { green = history, workflows = {} }: { green?: string[]; workflows?: Record<string, string> } = {}) {
+  const refs = new Map<string, string>()
   const s = {
     history: [...history],
     green: new Set(green),
-    tag: null as string | null,
-    release: release ? { id: 7, title: '', notes: '', prerelease: true, latest: false, assets: new Map<string, Asset>() } : null,
+    workflows: { ...workflows } as Record<string, string>,
+    refs,
+    get tag() { return refs.get('current') ?? null },
+    release: null as Release | null,
+    everDraft: false,
+    fail: null as ((argv: string[]) => GhResult | null) | null,
     calls: [] as string[][],
     writes: [] as string[][],
     nextAsset: 100,
@@ -68,8 +86,13 @@ function fakeGitHub(history: string[], { green = history, release = false }: { g
     return f
   }
   const pos = (a: string) => s.history.indexOf(a)
+  const tip = () => s.history[s.history.length - 1]
+  const wf = (c: string) => s.workflows[c] ?? 'w0'
+  const live = (tag: string) => (s.release && !s.release.draft && s.release.tag === tag && refs.has(tag) ? s.release : null)
   const gh: Gh = (argv) => {
     s.calls.push(argv)
+    const injected = s.fail?.(argv)
+    if (injected) return injected
     const [cmd, sub] = argv
     if (cmd === 'api') {
       const path = argv[argv.length - 1]
@@ -78,38 +101,61 @@ function fakeGitHub(history: string[], { green = history, release = false }: { g
       if (!path.startsWith(base)) return { ok: false, out: '', err: `unexpected path ${path}` }
       const p = path.slice(base.length)
       if (method !== 'GET') s.writes.push(argv)
-      if (p === 'git/ref/heads/main') return ok({ object: { sha: s.history[s.history.length - 1] } })
+      if (p === 'git/ref/heads/main') return ok({ object: { sha: tip() } })
       let k = /^compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)\?per_page=1$/.exec(p)
       if (k) {
         const [a, b] = [pos(k[1]), pos(k[2])]
         return ok({ status: a < 0 || b < 0 ? 'diverged' : b > a ? 'ahead' : b < a ? 'behind' : 'identical' })
       }
-      k = /^actions\/workflows\/ci\.yml\/runs\?head_sha=([0-9a-f]+)&status=success&per_page=100$/.exec(p)
-      if (k) {
-        const sha = k[1]
-        return ok({ workflow_runs: s.green.has(sha) ? [{ head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: `https://github.com/${REPO}/actions/runs/1` }] : [] })
+      if (p === 'actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50') {
+        const run = (sha: string) => ({ head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) })
+        // A fork's pull request from its own branch named main is listed too, and must be passed over.
+        const fork = { ...run(tip()), event: 'pull_request', head_repository: { full_name: 'someone/fork' }, html_url: 'https://fork' }
+        return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c)).map(run)] })
       }
-      if (p === 'releases/tags/current') {
-        if (!s.release || !s.tag) return missing
-        return ok({ id: s.release.id, assets: [...s.release.assets.values()].map(({ id, name, size, digest }) => ({ id, name, size, digest })) })
+      k = /^releases\/tags\/([a-z-]+)$/.exec(p)
+      if (k) {
+        const rel = live(k[1])
+        return rel ? ok({ id: rel.id, tag_name: rel.tag, assets: [...rel.assets.values()].map(({ id, name, size, digest }) => ({ id, name, size, digest })) }) : missing
       }
       k = /^releases\/assets\/(\d+)$/.exec(p)
       if (k) {
         const a = [...(s.release?.assets.values() ?? [])].find((x) => x.id === Number(k?.[1]))
         return a ? ok(a.body.toString('utf8')) : missing
       }
-      if (p === 'git/ref/tags/current') return s.tag ? ok({ object: { sha: s.tag, type: 'commit' } }) : missing
-      if (p === 'git/refs' && method === 'POST') {
+      if (p === 'releases/7' && method === 'PATCH') {
         const f = fields(argv)
-        assert.equal(f.ref, 'refs/tags/current')
-        s.tag = f.sha
+        assert.equal(f.make_latest, 'false', 'never Latest')
+        if (!s.release || !refs.has(f.tag_name)) return { ok: false, out: '', err: 'gh: Validation Failed (HTTP 422)' }
+        s.release.tag = f.tag_name
         return ok({})
       }
-      if (p === 'git/refs/tags/current' && method === 'PATCH') {
+      k = /^git\/ref\/tags\/([a-z-]+)$/.exec(p)
+      if (k) return refs.has(k[1]) ? ok({ object: { sha: refs.get(k[1]), type: 'commit' } }) : missing
+      if (p === 'git/refs' && method === 'POST') {
+        const f = fields(argv)
+        const name = f.ref.replace(/^refs\/tags\//, '')
+        assert.ok(['current', 'current-next'].includes(name), `only the two tags: ${f.ref}`)
+        if (refs.has(name)) return { ok: false, out: '', err: 'gh: Reference already exists (HTTP 422)' }
+        if (pos(f.sha) < 0) return { ok: false, out: '', err: 'gh: Object does not exist (HTTP 422)' }
+        if (wf(f.sha) !== wf(tip())) return { ok: false, out: '', err: 'gh: Resource not accessible by integration (HTTP 403)' }
+        refs.set(name, f.sha)
+        return ok({})
+      }
+      k = /^git\/refs\/tags\/([a-z-]+)$/.exec(p)
+      if (k && method === 'PATCH') {
         const f = fields(argv)
         assert.equal(f.force, 'true')
-        s.tag = f.sha
+        const was = refs.get(k[1])
+        if (!was) return { ok: false, out: '', err: 'gh: Reference does not exist (HTTP 422)' }
+        if (wf(was) !== wf(f.sha)) return { ok: false, out: '', err: 'gh: refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission (HTTP 422)' }
+        refs.set(k[1], f.sha)
         return ok({})
+      }
+      if (k && method === 'DELETE') {
+        if (!refs.delete(k[1])) return { ok: false, out: '', err: 'gh: Reference does not exist (HTTP 422)' }
+        if (s.release?.tag === k[1]) { s.release.draft = true; s.everDraft = true }
+        return ok('')
       }
       return { ok: false, out: '', err: `unexpected api call ${argv.join(' ')}` }
     }
@@ -118,29 +164,30 @@ function fakeGitHub(history: string[], { green = history, release = false }: { g
       assert.equal(argv[2], 'current', 'only the current release is touched')
       assert.equal(opt(argv, '--repo'), REPO)
       if (sub === 'create') {
-        assert.ok(argv.includes('--verify-tag') && s.tag, 'the tag is made before the release')
+        assert.ok(argv.includes('--verify-tag') && refs.has('current'), 'the tag is made before the release')
         assert.ok(argv.includes('--prerelease') && argv.includes('--latest=false'))
-        s.release = { id: 7, title: opt(argv, '--title') ?? '', notes: readFileSync(opt(argv, '--notes-file') ?? '', 'utf8'), prerelease: true, latest: false, assets: new Map() }
+        s.release = { id: 7, tag: 'current', draft: false, title: opt(argv, '--title') ?? '', notes: readFileSync(opt(argv, '--notes-file') ?? '', 'utf8'), prerelease: true, latest: false, assets: new Map() }
         return ok('')
       }
-      if (!s.release) return missing
+      const rel = live('current')
+      if (!rel) return { ok: false, out: '', err: 'release not found' }
       if (sub === 'upload') {
         assert.ok(argv.includes('--clobber'))
         for (const f of argv.slice(3).filter((a) => !a.startsWith('--') && a !== REPO)) {
           const body = readFileSync(f)
-          s.release.assets.set(basename(f), { id: s.nextAsset++, name: basename(f), size: body.length, digest: `sha256:${sha256(body)}`, body })
+          rel.assets.set(basename(f), { id: s.nextAsset++, name: basename(f), size: body.length, digest: `sha256:${sha256(body)}`, body })
         }
         return ok('')
       }
       if (sub === 'delete-asset') {
         assert.ok(argv.includes('--yes'))
-        s.release.assets.delete(argv[3])
+        rel.assets.delete(argv[3])
         return ok('')
       }
       if (sub === 'edit') {
         assert.ok(argv.includes('--prerelease') && argv.includes('--latest=false'), 'never Latest')
-        s.release.title = opt(argv, '--title') ?? ''
-        s.release.notes = readFileSync(opt(argv, '--notes-file') ?? '', 'utf8')
+        rel.title = opt(argv, '--title') ?? ''
+        rel.notes = readFileSync(opt(argv, '--notes-file') ?? '', 'utf8')
         return ok('')
       }
     }
@@ -171,8 +218,10 @@ function allBuilt(tag: string, version = VERSION): Record<string, Record<string,
     'matrix-macos-universal': { [`${app}_universal.dmg`]: `dmg ${tag}` },
     'matrix-android-apk': { [`crimson-noir-agent-city_${version}_arm64-v8a-debugsigned.apk`]: `apk ${tag}` },
     'matrix-ios-ipa': { [`crimson-noir-agent-city_${version}_ios-arm64-unsigned.ipa`]: `ipa ${tag}` },
-    'matrix-uefi-x64': { 'BOOTX64.EFI': 'efi (reproducible)', 'crimson_noir_os.img': 'img (reproducible)', 'crimson_noir_os.iso': 'iso (reproducible)' },
-    'matrix-uefi-arm64': { 'BOOTAA64.EFI': 'aa64 efi', 'crimson_noir_os-aarch64.img': 'aa64 img', 'crimson_noir_os-aarch64.iso': 'aa64 iso' },
+    // The UEFI applications keep their bytes from commit to commit when their code does; the images carry the commit's
+    // time and GUIDs, so their bytes change with every commit at one fixed size.
+    'matrix-uefi-x64': { 'BOOTX64.EFI': 'efi (same code)', 'crimson_noir_os.img': `img ${tag}`, 'crimson_noir_os.iso': `iso ${tag}` },
+    'matrix-uefi-arm64': { 'BOOTAA64.EFI': 'aa64 efi', 'crimson_noir_os-aarch64.img': `aa64 img ${tag}`, 'crimson_noir_os-aarch64.iso': `aa64 iso ${tag}` },
     'matrix-report-linux-x64': { 'matrix.json': '{}' },
   }
 }
@@ -271,7 +320,13 @@ test('a first publish makes the tag at the commit, then the release as a pre-rel
     assert.match(rel.notes, new RegExp(`\\*\\*Commit\\*\\* \\[\`${c1.slice(0, 7)}\`\\]\\(https://github\\.com/${REPO}/commit/${c1}\\) on main, published 2026-11-13 02:14 UTC by \\[this run\\]\\(https://run\\)\\.`))
     for (const id of IDS) assert.match(rel.notes, new RegExp(`^\\| ${c.LABELS[id].replace(/[()]/g, '\\$&')} \\| \\[`, 'm'), id)
     assert.match(rel.notes, /\[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\)/)
-    assert.match(rel.notes, /The file names carry the version in `package\.json` at this commit \(`1\.0\.0-stable-beta`\)/)
+    assert.match(rel.notes, /The apps' file names carry the version in `package\.json` at this commit \(`1\.0\.0-stable-beta`\)/)
+    assert.match(rel.notes, /the zipped macOS `\.app`, the UEFI files and images, and the notices beside them carry none/)
+    assert.match(rel.notes, /`SHA256SUMS` lists every file here but itself and `current\.json`/)
+    assert.doesNotMatch(rel.notes, /is still at/, 'the tag is where the files are from')
+    assert.equal(state.tagAt, c1)
+    assert.equal(rel.tag, 'current')
+    assert.deepEqual([...gh.s.refs.keys()], ['current'])
     assert.match(rel.notes, /releases\/download\/current\/Crimson\.Noir\.Agent\.City_1\.0\.0-stable-beta_x64-setup\.exe/)
     // The scrub list the WebAssembly air gap applies to shipped text holds for the notes too.
     for (const word of [/\bthe matrix\b/i, /\bdigital rain\b/i, /\bxbox\b/i, /\bnintendo\b/i]) assert.doesNotMatch(rel.notes, word)
@@ -285,7 +340,8 @@ test('a later publish moves the tag, uploads only what changed, deletes files no
     const gh = fakeGitHub([commitOf(0), c1, c2])
     c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), source: source(join(t.dir, 'src1')), sha: c1, repo: REPO, log: quiet }, gh.gh)
     const before = new Map(gh.s.release?.assets ?? [])
-    // At c2 the version moved on (every app's name changes), linux-arm64's job failed, and the UEFI media are the same bytes.
+    // At c2 the version moved on (every app's name changes), linux-arm64's job failed, the UEFI applications are the
+    // same bytes and the images are not.
     const next = allBuilt('b', '1.0.1-stable-beta')
     delete next['matrix-linux-arm64']
     const callsBefore = gh.s.writes.length
@@ -296,7 +352,8 @@ test('a later publish moves the tag, uploads only what changed, deletes files no
     assert.equal(gh.s.tag, c2, 'the tag moved')
     const writes = gh.s.writes.slice(callsBefore)
     const uploaded = writes.filter((w) => w[1] === 'upload').flatMap((w) => w.slice(3).filter((a) => !a.startsWith('--') && a !== REPO).map((p) => basename(p)))
-    for (const same of ['BOOTX64.EFI', 'crimson_noir_os.img', 'crimson_noir_os.iso', 'BOOTAA64.EFI', 'LICENSE', 'containment.nix']) assert.ok(!uploaded.includes(same), `${same}: the same bytes are not uploaded again`)
+    for (const same of ['BOOTX64.EFI', 'BOOTAA64.EFI', 'LICENSE', 'containment.nix']) assert.ok(!uploaded.includes(same), `${same}: the same bytes are not uploaded again`)
+    for (const changed of ['crimson_noir_os.img', 'crimson_noir_os.iso', 'crimson_noir_os-aarch64.img']) assert.ok(uploaded.includes(changed), `${changed}: new bytes under the same name and size`)
     assert.ok(uploaded.includes('Crimson.Noir.Agent.City_1.0.1-stable-beta_amd64.deb'))
     const deleted = writes.filter((w) => w[1] === 'delete-asset').map((w) => w[3])
     assert.ok(deleted.includes('Crimson.Noir.Agent.City_1.0.0-stable-beta_amd64.deb'), 'the old version\'s file goes')
@@ -365,26 +422,158 @@ test('it never steps back: an older commit than the release holds publishes noth
   } finally { t.done() }
 })
 
-test('pick: a commit on main that ci passed on, unless the release holds it for every target already (force builds it again) or holds a newer one', () => {
+test('the tag across a workflow change: GitHub refuses the move, so the release stands on current-next while current is made again at the commit, and is never a draft', () => {
+  const t = scratch()
+  try {
+    const [c1, c2] = [commitOf(1), commitOf(2)]
+    const gh = fakeGitHub([commitOf(0), c1])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), source: source(join(t.dir, 'src1')), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    // c2 changes a workflow file, as this very change does.
+    gh.s.history.push(c2)
+    gh.s.workflows[c2] = 'w1'
+    const logs: string[] = []
+    const r = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), source: source(join(t.dir, 'src2')), sha: c2, repo: REPO, log: (l: string) => logs.push(l) }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.tag, { at: c2, how: 'remade' })
+    assert.match(logs.join('\n'), /GitHub refused to move it from .*workflows.*; making it again at/)
+    assert.equal(gh.s.tag, c2)
+    assert.deepEqual([...gh.s.refs.keys()], ['current'], 'the stand-in is gone')
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.equal(gh.s.everDraft, false, 'the release was never on a tag being deleted')
+    // The tag was placed before any file was written.
+    const firstUpload = gh.s.calls.findIndex((a) => a[0] === 'release' && a[1] === 'upload' && a.includes(join(t.dir, 's2', 'crimson_noir_os.img')))
+    const madeAgain = gh.s.calls.findIndex((a) => a.includes('POST') && a.includes('ref=refs/tags/current') && a.includes(`sha=${c2}`))
+    assert.ok(madeAgain >= 0 && firstUpload > madeAgain)
+    const state: State = JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}')
+    assert.equal(state.tagAt, c2)
+    assert.doesNotMatch(gh.s.release?.notes ?? '', /is still at/)
+  } finally { t.done() }
+})
+
+test('when GitHub refuses the stand-in too (a later commit changed a workflow), the tag stays, the files are published, the notes say where the tag is, and the next publish moves it', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([commitOf(0), c1])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    gh.s.history.push(c2, c3)
+    Object.assign(gh.s.workflows, { [c2]: 'w1', [c3]: 'w2' })
+    const r = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.tag, { at: c1, how: 'refused' })
+    assert.equal(gh.s.tag, c1)
+    assert.deepEqual([...gh.s.refs.keys()], ['current'])
+    assert.equal(gh.s.everDraft, false)
+    const state: State = JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}')
+    assert.equal(state.commit, c2)
+    assert.equal(state.tagAt, c1)
+    assert.ok(Object.values(state.targets).every((x) => x.commit === c2), 'every file is c2\'s')
+    assert.match(gh.s.release?.notes ?? '', new RegExp(`^\\*\\*The tag \`current\` is still at \\[\`${c1.slice(0, 7)}\`\\]\\(.*\\)\\*\\*, and so are the source code archives GitHub adds below: GitHub refused to move it to \\[\`${c2.slice(0, 7)}\`\\]`, 'm'))
+    const r3 = c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('c')), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet }, gh.gh)
+    assert.deepEqual(r3.tag, { at: c3, how: 'remade' })
+    assert.equal(gh.s.tag, c3)
+    assert.doesNotMatch(gh.s.release?.notes ?? '', /is still at/)
+  } finally { t.done() }
+})
+
+test('a run that stops halfway through remaking the tag leaves the release on current-next with its files untouched; the next run finds it there and finishes', () => {
+  const t = scratch()
+  try {
+    const [c1, c2] = [commitOf(1), commitOf(2)]
+    const gh = fakeGitHub([commitOf(0), c1])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    const before = new Map([...(gh.s.release?.assets ?? [])].map(([n, a]) => [n, a.digest]))
+    gh.s.history.push(c2)
+    gh.s.workflows[c2] = 'w1'
+    // GitHub stops answering just as current is made again.
+    gh.s.fail = (argv) => (argv.includes('POST') && argv.includes('ref=refs/tags/current') ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    const media = artifacts(join(t.dir, 'm2'), allBuilt('b'))
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /make the tag current again at .* \(the release is on current-next; the next run finishes this\): gh: Bad Gateway/)
+    assert.equal(gh.s.release?.tag, 'current-next')
+    assert.equal(gh.s.tag, null)
+    assert.equal(gh.s.everDraft, false)
+    assert.deepEqual(new Map([...(gh.s.release?.assets ?? [])].map(([n, a]) => [n, a.digest])), before, 'no file was touched')
+    // pick still reads the release where it stands.
+    gh.s.green.add(c2)
+    assert.equal(c.pick({ sha: c2, repo: REPO }, gh.gh).sha, c2)
+    gh.s.fail = null
+    const r = c.publish({ media, stage: join(t.dir, 's3'), sha: c2, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.tag, { at: c2, how: 'remade' })
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.deepEqual([...gh.s.refs.entries()], [['current', c2]])
+    assert.equal(gh.s.everDraft, false)
+    assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c2)
+  } finally { t.done() }
+})
+
+test('it stops, writing nothing, when it cannot read the release\'s current.json or GitHub cannot compare the commits; a kept target whose file was replaced under the same name and size is dropped', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([commitOf(0), c1, c2, c3])
+    const first = allBuilt('a')
+    c.publish({ media: artifacts(join(t.dir, 'm1'), first), stage: join(t.dir, 's1'), source: source(join(t.dir, 'src1')), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    const noArm = allBuilt('b')
+    delete noArm['matrix-linux-arm64']
+    const media = artifacts(join(t.dir, 'm2'), noArm)
+    const writes = gh.s.writes.length
+    gh.s.fail = (argv) => (/releases\/assets\/\d+$/.test(argv[argv.length - 1]) ? { ok: false, out: '', err: 'gh: Service Unavailable (HTTP 503)' } : null)
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /read the release's current\.json \(nothing was published\): gh: Service Unavailable/)
+    assert.throws(() => c.pick({ sha: c2, repo: REPO, wait: 0 }, gh.gh), /current\.json/, 'pick does not guess either')
+    // The release's commit against this one (whether c2 is still on main is asked first, and answered).
+    gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c1}...${c2}`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .*, which the release holds, with .*: nothing was published/)
+    // And a commit GitHub cannot place on main is refused, as one off main is.
+    gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c2}...`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3b'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /is not on main any more: nothing was published/)
+    gh.s.fail = null
+    assert.equal(gh.s.writes.length, writes, 'nothing written')
+    assert.ok(gh.s.release?.assets.has('Crimson.Noir.Agent.City_1.0.0-stable-beta_arm64.deb'), 'linux-arm64\'s last file is still there')
+
+    // An earlier publish that stopped halfway replaced the x86-64 image under its name, at its size; then uefi-x64 fails.
+    const img = gh.s.release?.assets.get('crimson_noir_os.img')
+    assert.ok(img)
+    const body = Buffer.from('img z')
+    assert.equal(body.length, img.size)
+    gh.s.release?.assets.set('crimson_noir_os.img', { ...img, body, digest: `sha256:${sha256(body)}` })
+    const noUefi = allBuilt('c')
+    delete noUefi['matrix-uefi-x64']
+    const r = c.publish({ media: artifacts(join(t.dir, 'm4'), noUefi), stage: join(t.dir, 's4'), sha: c3, repo: REPO, log: quiet }, gh.gh)
+    assert.deepEqual(r.plan.dropped, ['uefi-x64'])
+    assert.equal(r.plan.state.targets['uefi-x64'], undefined)
+    assert.ok(!gh.s.release?.assets.has('crimson_noir_os.img'), 'a file whose bytes nobody recorded is not offered')
+    assert.doesNotMatch(gh.s.release?.assets.get('SHA256SUMS')?.body.toString('utf8') ?? '', /crimson_noir_os\.img/)
+  } finally { t.done() }
+})
+
+test('pick: the newest commit on main that ci passed on, whichever commit started the run, unless the release holds it for every target already (force builds it again) or holds a newer one; refused off main or with nothing green', () => {
   const t = scratch()
   try {
     const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
     const gh = fakeGitHub([c1, c2, c3], { green: [c1, c2] })
-    assert.deepEqual(c.pick({ sha: c2, repo: REPO }, gh.gh), { sha: c2, ci: `https://github.com/${REPO}/actions/runs/1` }, 'behind main\'s tip is still on main')
-    assert.equal(c.pick({ sha: c3, repo: REPO }, gh.gh).refused, true, 'no green ci')
-    assert.match(c.pick({ sha: c3, repo: REPO }, gh.gh).skip, /ci has not passed/)
+    assert.deepEqual(c.pick({ sha: c2, repo: REPO }, gh.gh), { sha: c2, ci: ciUrl(c2), note: '' }, 'behind main\'s tip is still on main')
+    // A run that took a waiting one's place (a re-run for an older commit, a run by hand before the tip passed ci)
+    // builds the newest green commit all the same.
+    const older = c.pick({ sha: c1, repo: REPO }, gh.gh)
+    assert.equal(older.sha, c2)
+    assert.equal(older.ci, ciUrl(c2))
+    assert.match(older.note, new RegExp(`building ${c2}, the newest commit on main that ci passed on \\(this run was started for ${c1}\\)`))
+    assert.equal(c.pick({ sha: c3, repo: REPO }, gh.gh).sha, c2, 'main\'s tip has not passed ci yet')
     assert.match(c.pick({ sha: commitOf(42), repo: REPO }, gh.gh).skip, /is not on main/)
     assert.equal(c.pick({ sha: 'main', repo: REPO }, gh.gh).refused, true)
+    const none = c.pick({ sha: c3, repo: REPO }, fakeGitHub([c1, c2, c3], { green: [] }).gh)
+    assert.equal(none.refused, true, 'nothing green, and a fork\'s run from its own main does not count')
+    assert.match(none.skip, /ci has not passed/)
     c.publish({ media: artifacts(join(t.dir, 'm'), allBuilt('a')), stage: join(t.dir, 's'), sha: c2, repo: REPO, log: quiet }, gh.gh)
     const done = c.pick({ sha: c2, repo: REPO }, gh.gh)
     assert.match(done.skip, /already holds .* for every target/)
     assert.equal(done.refused, false)
     assert.equal(c.pick({ sha: c2, force: true, repo: REPO }, gh.gh).sha, c2)
-    const older = c.pick({ sha: c1, repo: REPO }, gh.gh)
-    assert.match(older.skip, /newer than/)
-    assert.equal(older.refused, false)
-    assert.equal(gh.s.writes.length > 0, true)
-    assert.ok(gh.s.calls.filter((a) => a[0] === 'api' && a.includes('-X')).length >= 1)
+    c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('c')), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet }, gh.gh)
+    const behind = c.pick({ sha: c1, repo: REPO }, gh.gh)
+    assert.match(behind.skip, new RegExp(`already holds ${c3}, which is newer than ${c2}`))
+    assert.equal(behind.refused, false)
   } finally { t.done() }
 })
 
@@ -399,11 +588,17 @@ test('the command line: pick prints the outputs or nothing, --strict fails a ref
     const [c1, c2] = [commitOf(1), commitOf(2)]
     const gh = fakeGitHub([c1, c2], { green: [c1] })
     assert.equal(c.main(['pick', '--sha', c1, '--repo', REPO], gh.gh), 0)
-    assert.deepEqual(out.splice(0), [`sha=${c1}\nci=https://github.com/${REPO}/actions/runs/1`])
-    assert.equal(c.main(['pick', '--sha', c2, '--repo', REPO], gh.gh), 0)
-    assert.deepEqual(out.splice(0), [], 'a commit ci has not passed: nothing for the outputs')
-    assert.match(err.splice(0).join('\n'), /::notice::ci has not passed/)
-    assert.equal(c.main(['pick', '--sha', c2, '--strict', '--repo', REPO], gh.gh), 1)
+    assert.deepEqual(out.splice(0), [`sha=${c1}\nci=${ciUrl(c1)}`])
+    assert.equal(c.main(['pick', '--sha', c2, '--strict', '--repo', REPO], gh.gh), 0, 'run by hand before the tip passed ci')
+    assert.deepEqual(out.splice(0), [`sha=${c1}\nci=${ciUrl(c1)}`], 'the newest green commit')
+    assert.match(err.splice(0).join('\n'), new RegExp(`::notice::building ${c1}`))
+    const off = commitOf(77)
+    assert.equal(c.main(['pick', '--sha', off, '--repo', REPO], gh.gh), 0)
+    assert.deepEqual(out.splice(0), [], 'refused: nothing for the outputs')
+    assert.match(err.splice(0).join('\n'), /::notice::.* is not on main/)
+    assert.equal(c.main(['pick', '--sha', off, '--strict', '--repo', REPO], gh.gh), 1)
+    assert.match(err.splice(0).join('\n'), /::error::.* is not on main/)
+    assert.equal(c.main(['pick', '--sha', c2, '--strict', '--repo', REPO], fakeGitHub([c1, c2], { green: [] }).gh), 1)
     assert.match(err.splice(0).join('\n'), /::error::ci has not passed/)
     assert.equal(c.main(['pick', '--sha', c1], gh.gh), process.env.GH_REPO ? 0 : 1, 'the repository must be named')
     out.splice(0); err.splice(0)
@@ -436,6 +631,9 @@ test('the workflow: started by a green ci on main, a pull request that touches i
   // As web.yml picks: ci passed, on a push (or ci run by hand) to main in this repository.
   assert.match(WORKFLOW, /github\.event\.workflow_run\.conclusion == 'success' &&\n {6}\(github\.event\.workflow_run\.event == 'push' \|\| github\.event\.workflow_run\.event == 'workflow_dispatch'\) &&\n {6}github\.event\.workflow_run\.head_branch == 'main' &&\n {6}github\.event\.workflow_run\.head_repository\.full_name == github\.repository/)
   assert.match(WORKFLOW, /&& 'current'\) \|\| format\('current-skip-\{0\}', github\.run_id\) \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/)
+  // A run by hand joins the one queue only on main: elsewhere it is refused by pick, and must not take a real run's place.
+  assert.match(WORKFLOW, /\(\(\(github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'\) \|\|\n/)
+  assert.equal((WORKFLOW.match(/github\.event_name == 'workflow_dispatch'/g) ?? []).length, 2, 'the queue and the pick job')
   assert.match(WORKFLOW, /\[ "\$GITHUB_REF" = refs\/heads\/main \] \|\| \{ echo "::error::run it on main/)
   assert.match(WORKFLOW, /node tools\/build\/current\.mjs pick "\$\{args\[@\]\}" \| tee -a "\$GITHUB_OUTPUT"/)
   const jobs = WORKFLOW.split(/^jobs:$/m)[1] ?? ''
