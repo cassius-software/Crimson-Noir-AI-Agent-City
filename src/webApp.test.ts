@@ -1075,6 +1075,9 @@ test('the Windows workflow fetches the app\'s model by its pin, checks it on eve
   const collect = yml.slice(yml.lastIndexOf('- name:', carries), yml.indexOf('- uses:', carries))
   assert.match(collect, /\n\s+env:\n\s+MODEL_BYTES: \$\{\{ steps\.model\.outputs\.bytes \}\}\n/, 'the size check reads the pinned size')
   assert.match(collect, /: "\$\{MODEL_BYTES:\?/, 'and fails, rather than checking against 0, when it has none')
+  // Bash reads a quote inside "${VAR:?word}" as opening a quote (the step died with "unexpected EOF while looking for
+  // matching `''" on CI): no apostrophe in any such word in this workflow.
+  for (const m of yml.matchAll(/\$\{\w+:[?\-=+][^}]*\}/g)) assert.ok(!m[0].includes("'"), `no quote inside ${m[0]}`)
   const cacheStep = yml.slice(yml.lastIndexOf('- id: model-cache', cache), yml.indexOf('- name:', cache))
   assert.doesNotMatch(cacheStep, /restore-keys/, 'a new pin never restores an old file')
   const placeStep = yml.slice(yml.lastIndexOf('- name:', place), place)

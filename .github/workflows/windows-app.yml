@@ -129,7 +129,7 @@ jobs:
           [ "$(ls out/msi | wc -l)" = 1 ] || { echo "::error::expected exactly one .msi for $version"; exit 1; }
           # Each installer carries the model: neither can be smaller than nine tenths of it (the .msi's cabinet may
           # squeeze it a little; the NSIS installer stores it as it is).
-          : "${MODEL_BYTES:?the model's pinned size is missing}"
+          : "${MODEL_BYTES:?the pinned size of the model is missing}"
           for f in out/installer/* out/msi/*; do
             size=$(stat -c %s "$f")
             [ "$size" -gt "$((MODEL_BYTES / 10 * 9))" ] || { echo "::error::$f is $size bytes: it does not carry the $MODEL_BYTES-byte model"; exit 1; }
