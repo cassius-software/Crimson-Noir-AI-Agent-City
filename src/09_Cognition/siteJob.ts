@@ -17,8 +17,21 @@ import type { SiteModelProgress } from './siteModel.ts'
 
 /** Who started the job: the visitor's tap, or the page by itself. */
 export type SiteJobHow = 'tap' | 'auto'
-/** Who stopped it: the visitor's Stop, the connection turning costly (siteAuto.ts linkHold), or the city ending. */
-export type SiteJobStop = 'person' | 'network' | 'page'
+/**
+ * Who stopped it: the visitor's Stop, the connection turning costly (siteAuto.ts linkHold), the city ending, or the
+ * visitor's other choice made while the page's own download ran (a provider, a model of their own: SiteJobHeld).
+ */
+export type SiteJobStop = 'person' | 'network' | 'page' | 'choice'
+
+/** Thrown by the work to end the job as stopped (by `by`), not as ended short: nothing went wrong, it is not wanted now. */
+export class SiteJobHeld extends Error {
+  readonly by: SiteJobStop
+  constructor(by: SiteJobStop, message: string) {
+    super(message)
+    this.name = 'SiteJobHeld'
+    this.by = by
+  }
+}
 
 /** Where the job is: running (downloading, then keeping), or how it ended. Every job has its own id. */
 export type SiteJobState =
@@ -88,8 +101,14 @@ export function createSiteJob(get: SiteGet): SiteJob {
           put(done)
           return done
         } catch (e) {
-          // A stop has said so already (stop puts it at once); anything else ended short, with its reason.
+          // A stop has said so already (stop puts it at once); a work that held itself back stopped; anything else ended
+          // short, with its reason.
           if (cur?.id === id && cur.phase === 'stopped') return cur
+          if (e instanceof SiteJobHeld) {
+            const stopped: SiteJobState = { id, how, phase: 'stopped', by: e.by }
+            put(stopped)
+            return stopped
+          }
           const failed: SiteJobState = { id, how, phase: 'failed', why: said(e) }
           put(failed)
           return failed

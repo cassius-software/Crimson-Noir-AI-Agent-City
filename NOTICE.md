@@ -138,8 +138,9 @@ the runtime also carries the full text of each of these licenses at the end of `
 
 **The model the web copy serves.** The page file, the Windows app and the release builds carry no model. The
 published web copy of the page serves one model beside it, Qwen2.5 0.5B Instruct (the file
-`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site only when a visitor taps for it, and
-keeps in that visitor's browser. The model is the Qwen team's, Copyright 2024 Alibaba Cloud, licensed under the Apache
+`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site, by itself once the city is on
+screen in a browser that can run it (not on mobile data or data saver, and not once the visitor has stopped it) or when
+a visitor taps for it, and keeps in that visitor's browser. The model is the Qwen team's, Copyright 2024 Alibaba Cloud, licensed under the Apache
 License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by bartowski, served unchanged. It
 remains under its own licence, not under this product's licence: the full text of the Apache License 2.0 with that
 copyright line, and a notice of where the file comes from, are served beside it as `models/LICENSE` and
@@ -179,7 +180,8 @@ beside its page for the in-page runtime (`09_Cognition/siteModel.ts`). No model 
 page file, the Windows app and the release builds carry no model: the operator's server, or a model file kept in their
 browser for the in-page runtime, holds the model under the model's own licence. The one model the product offers is
 Qwen2.5 0.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud; the file quantized by bartowski), which the web copy
-serves beside its page and fetches only when the visitor taps for it, under its own licence
+serves beside its page and fetches by itself once the city is on screen, or when the visitor taps for it, under its
+own licence
 (`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`). The network provider
 answers only with the operator's own key, which stays in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
@@ -281,9 +283,11 @@ release; each one is something the release engineering could not confirm.
       precision changed), not Qwen's own file, and bartowski's repository names its licence as apache-2.0 without a
       licence file of its own. The NOTICE beside the model says so, as section 4(b) of the licence asks of a modified
       file. Confirm that this is enough, or serve Qwen's own GGUF file instead.
-    - **Privacy and bandwidth.** The web copy downloads about 0.4 GB from its own site when a visitor taps for it, and
-      nothing of the visitor's goes with the request. Say so in a privacy notice if the web copy gets one. GitHub Pages
-      has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the model.
+    - **Privacy and bandwidth.** The web copy downloads about 0.4 GB from its own site, by itself on a first visit from
+      a browser that can run the model (not on mobile data or data saver, and not once the visitor has stopped it), or
+      when a visitor taps for it, and nothing of the visitor's goes with the request. Say so in a privacy notice if the
+      web copy gets one. GitHub Pages has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the
+      model, so about 250 new visitors a month from such browsers.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

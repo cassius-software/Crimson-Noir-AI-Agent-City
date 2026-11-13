@@ -2171,6 +2171,11 @@ const SCENARIOS = {
         // The next visit, after the Stop: the page gets nothing by itself (it would have asked for the model long before
         // the card's offer shows), "how's it going" finds no model, the card offers the site's, and one click gets it.
         const talkAt = served.length
+        // Until anyone speaks to Sloane nothing but this site is asked: the page's own start, its download and its Stop
+        // look for no model server on this machine (a look at the loopback can bring a browser's prompt).
+        const unspoken = watch.requests.filter((r) => !(r.url === origin || r.url.startsWith(`${origin}/`) || r.url.startsWith('blob:') || r.url.startsWith('data:')))
+        check(unspoken.length === 0, 'sitemodel: until anyone spoke to Sloane, the page (its own download and its Stop among it) asked nothing off its own site, not even a model server on this machine',
+          unspoken.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ') || 'nothing off this site')
         const first = await talkToSloane(p, url)
         check(first.card?.state === 'none' && first.card.offer === offer, `sitemodel: "${SMALL_TALK}" to Sloane with no model brings the card's offer of the site's model, with its size`,
           `${JSON.stringify({ state: first.card?.state, offer: first.card?.offer })}${first.notes.length ? `; ${first.notes.join('; ')}` : ''}`)

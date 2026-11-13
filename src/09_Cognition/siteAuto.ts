@@ -6,8 +6,10 @@
  * no tap, once the city is on screen: the rules (autoVerdict, linkHold) and the one record kept between visits
  * (createAutoRecord). The model is the default wherever the site serves one, so a visitor talks to Sloane without
  * finding a model first, and the page gets it only where that is safe to do unasked:
- * - where this browser can run it and keep it (a copy that could not last would download again on every visit);
- * - where the visitor has not chosen otherwise (the scripted provider, a model server by name, a model file of their own);
+ * - where this browser can run it and keep it (a copy that could not last would download again on every visit), and
+ *   can keep this record (a Stop it could not remember would be met again on every visit);
+ * - where the visitor has not chosen otherwise (the scripted provider, a model server by name, a model file of their
+ *   own, chosen or kept in the page), and is not keeping a file of their own just now;
  * - where the browser does not say the data costs (data saver on, mobile data, a 2G link: the Network Information API,
  *   which only Chromium has, and only Chrome on Android says which kind of network it is);
  * - where the visitor has not stopped it before (their Stop is remembered: the card's button still gets it in a tap);
@@ -15,11 +17,14 @@
  *   leaves it to the tap. A page that closed in the middle of a try (no pagehide: the system killed it, often for its
  *   memory) leaves a mark with no lock held behind it; the first such mark lets the next visit try once more, the
  *   second leaves it to the tap.
- * One tab gets it at a time (a Web Lock, asked for only if it is free). Nothing here fetches, reads the DOM or the
- * global: the facts, the storage and the locks are handed in, so the Node tests hand it fakes.
+ * One tab gets it at a time (a Web Lock, asked for only if it is free, which a tapped download in another tab holds
+ * too). createSiteAuto runs the page's own start in that order, reads the facts again once it holds the lock, and
+ * records how the try ended. Nothing here fetches, reads the DOM or the global: the facts, the storage, the locks and
+ * the page's own steps are handed in, so the Node tests hand it fakes.
  * What breaks if it is removed? The served model would wait for a tap again on every platform, or a page that cannot
  * keep it, a phone on mobile data or a device that dies in the copy would download it on every visit.
  */
+import type { SiteJob, SiteJobState } from './siteJob.ts'
 import { SITE_MODEL, type SiteModelPin } from './siteModel.ts'
 
 /** Where the record is kept between visits (the page's local storage). */
@@ -69,12 +74,19 @@ export interface AutoFacts {
   readonly cannot: string | null
   /** The provider the router is set to (router.ts Provider). */
   readonly provider: string
-  /** The model file chosen for the in-page provider, or null. */
-  readonly chosen: string | null
+  /**
+   * A model file of the visitor's own in this page, or null: the one chosen for the in-page provider, else any kept
+   * that is not the site's (under the inpage provider the newest kept file answers when none is chosen).
+   */
+  readonly own: string | null
+  /** Why a model file is being kept in this page just now (a pick, a drop, the console), or null. */
+  readonly busy: string | null
   /** The site's model is kept in this page already. */
   readonly kept: boolean
-  /** The page can keep files that last (its origin private file system). */
+  /** The page can keep files that last: its origin private file system answers. */
   readonly lasting: boolean
+  /** The page can keep this record (createAutoRecord remembers), so a Stop is remembered. */
+  readonly remembers: boolean
   /** The connection, as readLink read it. */
   readonly link: Link | null
 }
@@ -87,9 +99,10 @@ const SERVERS: ReadonlySet<string> = new Set(['claude', 'ollama', 'llamacpp', 'o
 
 /**
  * Whether to get the site's model unasked, by the facts alone (the record's holds are asked after, createAutoRecord
- * hold): the browser can run it, no other model was chosen, it is not kept yet, a copy would last, and the connection
- * does not say the data costs. Under auto a model server on this machine still answers first once it is got, so none
- * is looked for here: a look reaches the loopback, which a browser may ask the visitor about before any word of theirs.
+ * hold): the browser can run it, no other model was chosen or kept, no file is being kept, it is not kept yet, a copy
+ * and this record would last, and the connection does not say the data costs. Under auto a model server on this
+ * machine (Ollama, llama.cpp, an OpenAI-compatible server) still answers first once it is got, so none is looked for
+ * here: a look reaches the loopback, which a browser may ask the visitor about before any word of theirs.
  */
 export function autoVerdict(f: AutoFacts, pin: SiteModelPin = SITE_MODEL): AutoVerdict {
   const no = (why: string): AutoVerdict => ({ go: false, why })
@@ -97,15 +110,17 @@ export function autoVerdict(f: AutoFacts, pin: SiteModelPin = SITE_MODEL): AutoV
   if (f.provider === 'scripted') return no('the scripted provider is chosen')
   if (SERVERS.has(f.provider)) return no(`the ${f.provider} provider is chosen`)
   if (f.provider !== 'auto' && f.provider !== 'inpage') return no(`the ${f.provider} provider is chosen`)
-  if (f.chosen !== null && f.chosen !== pin.file) return no(`a model file of your own (${f.chosen}) is chosen`)
+  if (f.own !== null && f.own !== pin.file) return no(`a model file of your own (${f.own}) is in this page`)
+  if (f.busy !== null) return no(f.busy)
   if (f.kept) return no(`${pin.file} is kept in this page already`)
   if (!f.lasting) return no('this browser cannot keep files for the page, so the model would download again on every visit')
+  if (!f.remembers) return no('this browser cannot keep the page\'s record of it, so a Stop could not be remembered')
   const held = linkHold(f.link)
   if (held !== null) return no(held)
   return { go: true }
 }
 
-/** How a try ended, for the record: kept, stopped by the visitor, ended short, or paused (the network changed, the city ended). */
+/** How a try ended, for the record: kept, stopped by the visitor, ended short, or paused (the network, a choice, the city's end). */
 export type AutoOutcome = 'done' | 'stopped' | 'failed' | 'paused'
 
 /** One try in this tab: it ends once, with its outcome (the lock goes with it). */
@@ -121,8 +136,18 @@ export interface AutoRecord {
    * is counted here, once, and taken away.
    */
   hold(now: number): Promise<string | null>
-  /** The one try in this origin, marked while it runs; null when another tab holds the lock. */
-  begin(now: number): Promise<AutoTry | null>
+  /**
+   * The one try in this origin, marked while it runs; or why not: another tab holds the lock, or a hold another tab
+   * wrote since this one asked (its Stop, its try that ended short) is read again once the lock is this tab's.
+   */
+  begin(now: number): Promise<AutoTry | string>
+  /**
+   * A tapped download in this tab: the lock while it is free, so another tab's page does not start beside it (no mark:
+   * a tap the system ends is not the page's try); returns its release, which does nothing where it was not free.
+   */
+  claim(): Promise<() => void>
+  /** This browser keeps the record (its local storage takes a write), so a Stop can be remembered. */
+  remembers(): boolean
   /** The page is going (pagehide): its own mark goes, so a reload or a closed tab is not counted as a page that died. */
   leave(): void
 }
@@ -152,6 +177,22 @@ interface Saved {
   failedAt?: number
   kills?: number
   mark?: { at: number; lock: string | null }
+}
+
+/** The same mark: the same try's. */
+const sameMark = (a: { at: number; lock: string | null }, b: { at: number; lock: string | null }): boolean => a.at === b.at && a.lock === b.lock
+
+/** Why the record holds the page back now (the visitor's Stop, tries that ended short), or null; marks aside. */
+function heldBy(s: Saved, now: number): string | null {
+  if (s.off) return s.off
+  const fails = s.fails ?? 0
+  if (fails >= FAILS_TO_STOP) return 'the last tries to get it ended short, so it waits for the button'
+  if (fails > 0) {
+    const wait = BACKOFF_MS[Math.min(fails, BACKOFF_MS.length) - 1]
+    const left = (s.failedAt ?? 0) + wait - now
+    if (left > 0) return `the last try to get it ended short: the next one is ${inWords(left)}, or now with the button`
+  }
+  return null
 }
 
 /** "in 42 minutes", "in 3 hours". */
@@ -207,62 +248,71 @@ export function createAutoRecord(store: AutoStore | null, locks: AutoLocks | nul
       return null
     }
   }
-  /** This tab's try, while it runs (its mark is written as `mine`). */
+  /** The lock, if it is free: its release, or null where another tab holds it (or the browser refused). */
+  const take = async (): Promise<(() => void) | null> => {
+    if (!locks) return null
+    let free!: () => void
+    const held = new Promise<void>((resolve) => { free = resolve })
+    const granted = await new Promise<boolean>((resolve) => {
+      try {
+        locks.request(AUTO_LOCK, { ifAvailable: true }, (l) => {
+          if (l === null || l === undefined) {
+            resolve(false)
+            return
+          }
+          resolve(true)
+          return held
+        }).catch(() => resolve(false))
+      } catch {
+        resolve(false)
+      }
+    })
+    if (!granted) {
+      free()
+      return null
+    }
+    return free
+  }
+  /** This tab's try, while it runs (its mark is written as `mine`), and whether a tap of this tab holds the lock. */
   let mine: { at: number; lock: string | null } | null = null
+  let claimed = false
 
   return Object.freeze<AutoRecord>({
     hold: async (now) => {
       let s = read()
       // A mark with no lock held behind it: a page that closed mid-way (a mark of this tab's own is never found here).
       if (s.mark && mine === null) {
-        const held = s.mark.lock !== null ? await heldLocks() : null
-        const alive = s.mark.lock !== null && held !== null && held.has(s.mark.lock)
-        if (!alive) {
-          s = read()
+        const judged = s.mark
+        const held = judged.lock !== null ? await heldLocks() : null
+        if (judged.lock !== null && held !== null && held.has(judged.lock)) return 'another tab is getting it'
+        // Read again after the wait: counted only if it is still the mark judged, so two tabs that judged the same dead
+        // mark count it once, and a mark another tab took away (its try ended) or wrote since is not counted at all.
+        s = read()
+        if (s.mark && sameMark(s.mark, judged)) {
           const { mark: _gone, ...rest } = s
           const kills = (rest.kills ?? 0) + 1
           s = { ...rest, kills, ...(kills >= KILLS_TO_STOP && !rest.off && { off: 'the page closed while it was getting the model, twice, so it waits for the button' }) }
           write(s)
-        } else return 'another tab is getting it'
+        } else if (s.mark) return 'another tab is getting it'
       }
-      if (s.off) return s.off
-      const fails = s.fails ?? 0
-      if (fails >= FAILS_TO_STOP) return 'the last tries to get it ended short, so it waits for the button'
-      if (fails > 0) {
-        const wait = BACKOFF_MS[Math.min(fails, BACKOFF_MS.length) - 1]
-        const left = (s.failedAt ?? 0) + wait - now
-        if (left > 0) return `the last try to get it ended short: the next one is ${inWords(left)}, or now with the button`
-      }
-      return null
+      return heldBy(s, now)
     },
 
     begin: async (now) => {
-      if (mine !== null) return null
+      if (mine !== null || claimed) return 'it is being got in this tab already'
       let release = (): void => undefined
       let lock: string | null = null
       if (locks) {
-        let free!: () => void
-        const held = new Promise<void>((resolve) => { free = resolve })
-        const granted = await new Promise<boolean>((resolve) => {
-          try {
-            locks.request(AUTO_LOCK, { ifAvailable: true }, (l) => {
-              if (l === null || l === undefined) {
-                resolve(false)
-                return
-              }
-              resolve(true)
-              return held
-            }).catch(() => resolve(false))
-          } catch {
-            resolve(false)
-          }
-        })
-        if (!granted) {
-          free()
-          return null
-        }
+        const free = await take()
+        if (!free) return 'another tab is getting it'
         lock = AUTO_LOCK
         release = free
+      }
+      // What another tab wrote since hold() (its Stop, its try that ended short) holds this one back too.
+      const why = heldBy(read(), now)
+      if (why !== null) {
+        release()
+        return why
       }
       const mark = { at: now, lock }
       mine = mark
@@ -292,6 +342,32 @@ export function createAutoRecord(store: AutoStore | null, locks: AutoLocks | nul
       })
     },
 
+    claim: async () => {
+      if (mine !== null || claimed) return () => undefined
+      const free = await take()
+      if (!free) return () => undefined
+      claimed = true
+      let done = false
+      return () => {
+        if (done) return
+        done = true
+        claimed = false
+        free()
+      }
+    },
+
+    remembers: () => {
+      if (!store) return false
+      const probe = `${AUTO_KEY}:probe`
+      try {
+        store.setItem(probe, '1')
+        store.removeItem(probe)
+        return true
+      } catch {
+        return false
+      }
+    },
+
     leave: () => {
       if (mine === null) return
       const s = read()
@@ -301,4 +377,102 @@ export function createAutoRecord(store: AutoStore | null, locks: AutoLocks | nul
       }
     },
   })
+}
+
+/** What the page's own start needs of the page (App.tsx hands the real ones, the tests fakes). */
+export interface AutoHost {
+  /** Resolves once the page is in view (at once when it is), or once the city ends. */
+  seen(): Promise<void>
+  /** Why nothing more may start (the city ended or halted), or null. */
+  ended(): string | null
+  /** The page is the web copy, served with a model beside it. */
+  served(): boolean
+  /** The facts, read now, with no request. */
+  facts(): Promise<AutoFacts>
+  /** The site's offer of the pin (it asks for the manifest), or null where it serves none; kept: this browser has it. */
+  offer(): Promise<{ readonly kept: boolean } | null>
+  /** Why this device or its storage cannot take it now (the checks a tap meets), or null. */
+  refusal(): Promise<string | null>
+  /** The connection as the browser reports it now. */
+  link(): Link | null
+  /** Calls back on each change of the connection; returns the unsubscribe. */
+  onLink(changed: () => void): () => void
+  /** The browser says it is offline. */
+  offline(): boolean
+  readonly record: AutoRecord
+  readonly job: SiteJob
+  /** Tells the visitor (a toast). */
+  say(line: string): void
+  now(): number
+}
+
+/**
+ * How a try that ended short is recorded: as a pause when the connection says why (it turned costly, or dropped) or
+ * the visitor chose otherwise meanwhile, so a train ride does not count against the next visit; else as ended short.
+ */
+function outcomeOf(end: SiteJobState, link: string | null, offline: boolean): AutoOutcome {
+  if (end.how !== 'auto') return 'paused'
+  if (end.phase === 'done') return 'done'
+  if (end.phase === 'stopped') return end.by === 'person' ? 'stopped' : 'paused'
+  if (end.phase === 'failed') return link !== null || offline ? 'paused' : 'failed'
+  return 'paused'
+}
+
+/**
+ * The page's own start, run once a city (the returned function says why it did or did not get the model, for the
+ * console): once the page is in view, on the web copy only, the facts (autoVerdict), the record's holds, the site's
+ * manifest naming the pin, the device's and the storage's room, then the lock; once the lock is this tab's the facts
+ * are read again, so what changed while it asked (the connection, a pick, a provider, another tab's keep, the city's
+ * halt) holds it back. The connection turning costly while it downloads stops it. How it ended goes in the record,
+ * and to the visitor in a toast: kept, ended short (why), or waiting for a better connection.
+ */
+export function createSiteAuto(h: AutoHost, pin: SiteModelPin = SITE_MODEL, who = 'Sloane'): () => Promise<string> {
+  let ran = false
+  return async () => {
+    if (ran) return 'the page has looked already this visit'
+    ran = true
+    await h.seen()
+    const ended = h.ended()
+    if (ended !== null) return ended
+    if (!h.served()) return 'only the web copy is served with a model beside it'
+    const first = autoVerdict(await h.facts(), pin)
+    if (!first.go) return first.why
+    const held = await h.record.hold(h.now())
+    if (held !== null) return held
+    const offer = await h.offer()
+    if (!offer) return 'this site serves no model beside the page'
+    if (offer.kept) return `${pin.file} is kept in this page already`
+    const refused = await h.refusal()
+    if (refused !== null) return refused
+    if (h.job.state()?.phase === 'running') return 'it is being got already'
+    const attempt = await h.record.begin(h.now())
+    if (typeof attempt === 'string') return attempt
+    // The lock is this tab's: the facts again, for what changed while it asked.
+    const late = h.ended()
+    const again = late !== null ? { go: false as const, why: late } : autoVerdict(await h.facts(), pin)
+    if (!again.go) {
+      attempt.end('paused', h.now())
+      return again.why
+    }
+    const unlink = h.onLink(() => { if (linkHold(h.link()) !== null) h.job.stop('network') })
+    let end: SiteJobState
+    try {
+      end = await h.job.start('auto')
+    } finally {
+      unlink()
+    }
+    const costly = linkHold(h.link())
+    const offline = h.offline()
+    const outcome = outcomeOf(end, costly, offline)
+    attempt.end(outcome, h.now())
+    const later = `the page gets it on a later visit, or now with the button on ${who}'s card`
+    if (end.how === 'auto') {
+      if (end.phase === 'done') h.say(end.line)
+      else if (end.phase === 'failed' && outcome === 'failed') h.say(`${who}'s model was not kept: ${end.why}`)
+      else if ((end.phase === 'failed' || (end.phase === 'stopped' && end.by === 'network')) && outcome === 'paused') h.say(`${who}'s model waits: ${costly ?? 'the connection dropped'}; ${later}`)
+    }
+    if (end.phase === 'done') return end.line
+    if (end.phase === 'failed') return outcome === 'paused' ? `paused: ${costly ?? 'the connection dropped'} (${end.why})` : end.why
+    return `stopped (${end.phase === 'stopped' ? end.by : end.phase})`
+  }
 }

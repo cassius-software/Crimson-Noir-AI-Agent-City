@@ -202,7 +202,7 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /else if \(dialogue\.brief\?\.chat && replying\) \{[^}]*openGoal\(\)\n\s*setDraft\(said\)/, '"Sloane, …" from the chip too')
   assert.match(card, /disabled=\{replying\}/)
   assert.match(card, /data-action="stop"/)
-  assert.match(card, /if \(dialogue\.brief\?\.chat && \(replying \|\| unseen \|\| getting !== null \|\| \(!whySeen && talk\?\.state === 'none'\)\)\) \{\n\s*open\('goal'\)/, 'a reply that came while the card was away is shown when it opens (and a download under way, or one that ended short meanwhile, keeps the conversation)')
+  assert.match(card, /if \(dialogue\.brief\?\.chat && \(replying \|\| unseen \|\| \(getting !== null && \(job\?\.how === 'tap' \|\| talk\?\.state === 'none'\)\) \|\| \(!whySeen && talk\?\.state === 'none'\)\)\) \{\n\s*open\('goal'\)/, 'a reply that came while the card was away is shown when it opens (and a download tapped there or shown in it, or one that ended short meanwhile, keeps the conversation; the page\'s own download alone does not)')
   assert.match(card, /const refocus = \(\) => \{\n\s*focusNext\.current = true/, 'Stop and Ask again hand focus back to the field')
 })
 
@@ -232,10 +232,10 @@ test('the card: the site\'s model is offered when no model answers, got in one t
   assert.match(card, /const stopGetting = \(\) => \{\n\s*if \(siteModel\?\.job\.stop\('person'\)\) refocusKeys\(\)/, 'a Stop after the hand-off does nothing: siteJob.ts stop refuses it, and the copy runs to its end')
   assert.doesNotMatch(card, /getCtl|handed\.current/, 'the card holds no download of its own: a card that goes leaves the page\'s job running (the city\'s end stops it)')
   assert.match(card, /role="progressbar"/)
-  assert.match(card, /\{getting\.step === 'download' && <button type="button" onClick=\{stopGetting\} className=\{link\} data-action="stop-model">Stop<\/button>\}/, 'Stop while it downloads; the copy into the page runs to its end')
+  assert.match(card, /\{getting\.step === 'download' && <button type="button" onClick=\{stopGetting\} className=\{link\} aria-label=\{`Stop getting \$\{SLOANE\.name\}’s model`\} data-action="stop-model">Stop<\/button>\}/, 'Stop while it downloads, named apart from the reply\'s Stop; the copy into the page runs to its end')
   // Each job's end is met once, whoever started it: a conversation still on the card is asked again.
   assert.match(card, /if \(!job \|\| job\.phase === 'running' \|\| job\.id === endMet\.current\) return\n\s*endMet\.current = job\.id\n\s*meetEnd\(job\)\n\s*\}, \[job\]\)/)
-  assert.match(card, /if \(onChat\.current && turnsRef\.current\.at\(-1\)\?\.who === 'you'\) \{\n\s*setStarting\(true\)\n\s*askTurns\(turnsRef\.current\)/, 'the last turn is asked again once the model is kept, while the card is still on that conversation')
+  assert.match(card, /if \(onChat\.current && talk\?\.state === 'none' && turnsRef\.current\.at\(-1\)\?\.who === 'you'\) \{\n\s*setStarting\(true\)\n\s*askTurns\(turnsRef\.current\)/, 'the last turn is asked again once the model is kept, only while the card is still on that conversation and it found no model (a reply on its way, stopped or held is left alone)')
   assert.match(card, /if \(end\.how === 'tap'\) refocusAtEnd\(\)/, 'only the visitor\'s own tap brings focus back to the field')
   assert.match(card, /useEffect\(\(\) => \{ onChat\.current = dialogue\.brief\?\.chat === true \}\)/, 'read when the download ends, not from the render that started it')
   assert.match(card, /\}, \[offering, fetchingSite, noneOf, siteModel\]\)/, 'the offer is asked again at each conversation with no model and after each try, so "kept" is never stale and a site out of reach once is asked again')
@@ -244,8 +244,11 @@ test('the card: the site\'s model is offered when no model answers, got in one t
   assert.match(card, /const whySeen = !\(job\?\.phase === 'failed' && job\.how === 'tap' && job\.id !== whySeenId\)/, 'only a tapped try that ended short keeps the conversation open for its reason')
   assert.match(card, /const refocusKeys = \(\) => \{\n\s*if \(family !== 'touch'\) refocus\(\)/, 'focus goes back to the field after the offer, Stop or the end of a download, never on touch')
   assert.match(card, /if \(!a \|\| a === document\.body \|\| cardRef\.current\?\.contains\(a\)\) refocusKeys\(\)/, 'a download that ends never takes focus from a control elsewhere')
-  // Shown wherever Sloane is: her chip grows a row for it, and the card's other views carry it at their foot.
-  assert.match(card, /const strip = getting && \(\n\s*<div className=\{`flex items-center gap-2 border-t[^`]*`\} data-site-strip=\{getting\.step\}>/, 'the chip\'s row')
+  // Shown wherever Sloane is: her chip carries a hairline of it that keeps the chip's size (its line and Stop are on the
+  // card), and the card's other views carry it at their foot.
+  assert.match(card, /const bar = getting && \(\n\s*<span role="progressbar" aria-label=\{stripLine\(getting\)\}[^>]*\n\s*className=\{`pointer-events-none absolute inset-x-4 bottom-0 [^`]*`\} data-site-bar=\{getting\.step\}>/, 'the chip\'s hairline, drawn over the pill')
+  assert.match(card, /\{pending \? \(\n\s*<button ref=\{chipRef\}[^\n]*\n\s*\{ask\}\n\s*\{bar\}\n\s*<\/button>\n\s*\) : \(\n\s*<div ref=\{chipRef\}[^\n]*\n\s*\{buttons\}\n\s*\{bar\}/, 'the chip\'s buttons are the same elements with or without it (no focus lost, no entry played again)')
+  assert.doesNotMatch(card, /const pill = [^\n]*getting/, 'the chip keeps its size while it downloads (the touch buttons below keep their room)')
   assert.match(card, /\{getting && !\(talking && talk\?\.state === 'none'\) && \(\n\s*<div className=\{`[^`]*`\} data-site-strip=\{getting\.step\}>/, 'the card\'s foot, where the conversation does not show it already')
 })
 
@@ -274,21 +277,33 @@ test('App: the site\'s model is fetched from the page\'s own folder only, after 
   assert.match(src, /setSloaneTalk\(null\)\n\s*setSiteModel\(null\)/)
 })
 
-test('App: the page gets the site\'s model by itself once the city is on screen, only where siteAuto.ts says so, under its record and lock', () => {
+test('App: the page gets the site\'s model by itself once the city is on screen, through siteAuto.ts createSiteAuto, with the page\'s own facts', () => {
   const src = read('App.tsx')
-  const auto = src.slice(src.indexOf('const siteAuto = async (): Promise<string> => {'), src.indexOf('siteAutoRef.current = siteAuto'))
+  // The steps and their order are siteAuto.ts's (siteAuto.test.ts drives them); App hands it the page.
+  const auto = src.slice(src.indexOf('const siteAuto = createSiteAuto({'), src.indexOf('siteAutoRef.current = siteAuto'))
   assert.ok(auto.length > 100, 'the page\'s own start is found')
-  const order = ['if (autoRan) return', 'if (document.hidden) {', "if (!webCopy()) return", 'await keptSite()', 'autoVerdict({', 'await autoRecord.hold(Date.now())', 'await siteHost.offer()', 'await siteRefusal()', 'await autoRecord.begin(Date.now())', "addEventListener?.('change', onLink)", "await siteJob.start('auto')", "removeEventListener?.('change', onLink)", 'attempt.end(outcome, Date.now())']
-  const at = order.map((n) => auto.indexOf(n))
-  at.forEach((i, k) => assert.ok(i >= 0, `${order[k]} is in the page's own start`))
-  for (let k = 1; k < at.length; k++) assert.ok(at[k - 1] < at[k], `${order[k - 1]} comes before ${order[k]}`)
-  assert.match(auto, /provider: local\.settings\(\)\.provider \?\? 'auto',\n\s*chosen: inPage\.settings\(\)\.model,\n\s*kept: kept !== null,\n\s*lasting: PAGE_RUNTIME\(\)\.caps\(\)\.opfs,\n\s*link: readLink\(navigator\),/, 'the facts: no request, no look at a model server')
-  assert.match(auto, /const onLink = \(\): void => \{ if \(linkHold\(readLink\(navigator\)\) !== null\) siteJob\.stop\('network'\) \}/, 'the connection turning costly mid-way stops it')
-  assert.match(auto, /end\.phase === 'stopped' && end\.by === 'person' \? 'stopped' : 'paused'/, 'the visitor\'s Stop is remembered; the network or the city\'s end only pause it')
-  assert.match(auto, /const outcome: AutoOutcome = end\.how !== 'auto' \? 'paused'/, 'a tap that got there first is the visitor\'s, not the page\'s')
-  assert.match(auto, /if \(end\.how === 'auto' && end\.phase === 'done'\) e\.toast\(MODEL_FILE, end\.line\)/)
-  assert.match(auto, /if \(end\.how === 'auto' && end\.phase === 'failed'\) e\.toast\(MODEL_FILE, `Sloane's model was not kept: \$\{end\.why\}`\)/)
+  assert.match(auto, /seen: \(\) => \(document\.hidden \? new Promise<void>\(/, 'a page in the background waits until it is seen')
+  assert.match(auto, /siteEnd\.signal\.addEventListener\('abort', done, \{ once: true \}\)/, 'or until the city ends')
+  assert.match(auto, /ended: \(\) => \(siteEnd\.signal\.aborted \? 'the city ended' : lockedRef\.current !== null \? 'the city halted' : null\)/, 'a halted city starts nothing')
+  assert.match(auto, /served: webCopy,\n\s*facts: siteFacts,\n\s*offer: \(\) => siteHost\.offer\(\),\n\s*refusal: siteRefusal,/)
+  assert.match(auto, /onLink: \(changed\) => \{\n\s*const l = connection\(\)\n\s*l\?\.addEventListener\?\.\('change', changed\)\n\s*return \(\) => l\?\.removeEventListener\?\.\('change', changed\)/)
+  assert.match(auto, /offline: \(\) => navigator\.onLine === false,\n\s*record: autoRecord,\n\s*job: siteJob,\n\s*say: \(line\) => e\.toast\(MODEL_FILE, line\),/)
+  // The facts: read with no request and no look at a model server.
+  const facts = src.slice(src.indexOf('const siteFacts = async (): Promise<AutoFacts> => {'), src.indexOf('const autoChoice = (): string | null => {'))
+  assert.ok(facts.length > 100, 'the facts are found')
+  assert.doesNotMatch(facts, /\bfetch\(|siteFetch|offer\(|installed\(|look\(/, 'no request: no manifest, no model server')
+  assert.match(facts, /own: chosen !== null && chosen !== SITE_MODEL\.file \? chosen : \(kept\.find\(\(m\) => m\.name !== SITE_MODEL\.file\)\?\.name \?\? null\)/, 'a model file of the visitor\'s own, chosen or only kept')
+  assert.match(facts, /busy: keeping \? '[^']+' : fetching \? '[^']+' : null/, 'a pick, a drop or a download under way')
+  assert.match(facts, /kept: kept\.some\(\(m\) => m\.name === SITE_MODEL\.file && m\.bytes === SITE_MODEL\.bytes\)/)
+  assert.match(facts, /lasting: caps\.opfs && \(await navigator\.storage\.getDirectory\(\)\.then\(\(\) => true, \(\) => false\)\)/, 'the storage must answer, not only exist')
+  assert.match(facts, /remembers: autoRecord\.remembers\(\),\n\s*link: readLink\(navigator\),/)
   assert.match(src, /const autoRecord = createAutoRecord\(autoStore\(\), autoLocks\(\)\)/)
+  // The job's work: a tap holds the page's lock, and the page's own download is not kept over a choice made meanwhile.
+  assert.match(src, /const release = how === 'tap' \? await autoRecord\.claim\(\) : noop\n\s*try \{\n\s*return await siteWork\(how, onProgress, signal\)\n\s*\} finally \{\n\s*release\(\)/)
+  assert.match(src, /const other = how === 'auto' \? autoChoice\(\) : null\n\s*if \(other !== null\) throw new SiteJobHeld\('choice', other\)\n[^\n]*\n[^\n]*\n\s*onProgress\(\{ step: 'keep'/, 'checked in the same turn as the hand-off to the copy')
+  // A halt stops the job and the start, as the city's end does.
+  assert.match(src, /e\.onHalt = \(reason\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(haltClass\(reason\) === 'gpu-reset'\) inPage\.noteGpuReset\(\)\n\s*stopSite\(\)/)
+  assert.match(src, /stopSite = \(\) => \{\n\s*siteJob\.stop\('page'\)\n\s*siteEnd\.abort\(\)/)
   // Once the city is on screen and standing: never under the boot veil or over a halted city.
   assert.match(src, /useEffect\(\(\) => \{\n\s*if \(!veilDone \|\| locked !== null \|\| siteModel === null\) return\n\s*void siteAutoRef\.current\?\.\(\)\.then\(/)
   assert.match(src, /\}, \[veilDone, locked, siteModel\]\)/)

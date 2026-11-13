@@ -453,7 +453,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const meetEnd = useEffectEvent((end: SiteJobState) => {
     if (end.phase === 'done') {
       setSite((v) => (v ? { ...v, kept: true } : v))
-      if (onChat.current && turnsRef.current.at(-1)?.who === 'you') {
+      // Only a conversation that found no model is asked again: a reply on its way, one the visitor stopped or held,
+      // or one already said stays as it is, whenever a download the page started by itself ends.
+      if (onChat.current && talk?.state === 'none' && turnsRef.current.at(-1)?.who === 'you') {
         setStarting(true)
         askTurns(turnsRef.current)
       }
@@ -615,8 +617,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const openGoal = () => {
     focusNext.current = true
     // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands;
-    // so is one whose model is still downloading, or whose download ended short while the card was away.
-    if (dialogue.brief?.chat && (replying || unseen || getting !== null || (!whySeen && talk?.state === 'none'))) {
+    // so is one whose model is still downloading (tapped there, or found no model while the page gets it), or whose
+    // download ended short while the card was away.
+    if (dialogue.brief?.chat && (replying || unseen || (getting !== null && (job?.how === 'tap' || talk?.state === 'none')) || (!whySeen && talk?.state === 'none'))) {
       open('goal')
       onGoal?.()
       return
@@ -796,20 +799,17 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   if (view === 'chip') {
     const pending = !name && !skipped
     const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
-    // While the site's model is got the chip grows a second row for it (its progress and its Stop); its foot, published
-    // above, follows.
-    const pill = `pointer-events-auto absolute ${at} flex ${getting ? 'flex-col items-stretch rounded-2xl' : 'items-center rounded-full'} border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
+    const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
     // shortTouch's other measures read --chip-top, so the walk's top replaces that, not `top`.
     const style: CSSProperties | undefined = chipTop ? { top: chipTop } : walkTop ? ({ '--chip-top': walkTop } as CSSProperties) : undefined
-    const strip = getting && (
-      <div className={`flex items-center gap-2 border-t py-1 pr-3 pl-2.5 ${rule}`} data-site-strip={getting.step}>
-        <span className={`min-w-0 flex-1 truncate tabular-nums ${muted}`}>{stripLine(getting)}</span>
-        <span role="progressbar" aria-label={getting.step === 'download' ? `Downloading ${CONCIERGE_NAME}’s model` : `Keeping ${CONCIERGE_NAME}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
-          className={`block h-1 w-10 shrink-0 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
-          <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
-        </span>
-        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={`shrink-0 font-medium underline-offset-2 hover:underline ${muted}`} data-action="stop-model">Stop</button>}
-      </div>
+    // While the site's model is got the chip carries a hairline of its progress along its foot, drawn over the pill so
+    // the chip keeps its size (the touch buttons below it keep their room) and its buttons are never rebuilt; its line
+    // and its Stop are on the card, a tap away.
+    const bar = getting && (
+      <span role="progressbar" aria-label={stripLine(getting)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+        className={`pointer-events-none absolute inset-x-4 bottom-0 block h-0.5 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`} data-site-bar={getting.step}>
+        <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+      </span>
     )
     const ask = (
       <>
@@ -836,21 +836,15 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     )
     return (
       <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
-        {pending && !strip ? (
+        {pending ? (
           <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
             {ask}
+            {bar}
           </button>
-        ) : pending ? (
-          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
-            <button type="button" onClick={askForName} className="flex min-w-0 items-center gap-2 py-1 pr-3.5 pl-1" data-concierge="chip">
-              {ask}
-            </button>
-            {strip}
-          </div>
         ) : (
           <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
-            {strip ? <div className="flex min-w-0 items-center">{buttons}</div> : buttons}
-            {strip}
+            {buttons}
+            {bar}
           </div>
         )}
       </div>
@@ -1000,7 +994,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                     <div data-site-model={getting.step}>
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                         <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
-                        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} data-action="stop-model">Stop</button>}
+                        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} aria-label={`Stop getting ${SLOANE.name}’s model`} data-action="stop-model">Stop</button>}
                       </div>
                       <div
                         role="progressbar"
@@ -1171,7 +1165,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
             className={`block h-1 min-w-8 flex-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
             <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
           </span>
-          {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} data-action="stop-model">Stop</button>}
+          {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} aria-label={`Stop getting ${SLOANE.name}’s model`} data-action="stop-model">Stop</button>}
         </div>
       )}
 

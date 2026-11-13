@@ -49,10 +49,10 @@ to a model server and a speech server on this same machine, and only when asked 
 Networking). A model file you keep in the page itself (`ask provider inpage`) runs inside the page and talks to
 nothing at all, on a page that is served rather than opened from a file (see A model in this page). The web copy on
 GitHub Pages also asks the site it came from for one thing, the small model it serves beside the page, to keep in
-this browser: once the city is on screen it gets it by itself, its progress and a **Stop** on Sloane's chip and card,
-unless this browser could not run or keep it, another model or provider is chosen, the browser says it saves data or
-is on mobile data, or you stopped it before; then only when Sloane's card says no model answers and you tap **Get the
-model** (A model in this page, The site's model). `dist/index.html` itself carries no model and asks for none.
+this browser: once the city is on screen it gets it by itself, its progress on Sloane's chip and card and a **Stop**
+on the card, unless this browser could not run or keep it, another model or provider is chosen, the browser says it
+saves data or is on mobile data, or you stopped it before; then only when Sloane's card says no model answers and you
+tap **Get the model** (A model in this page, The site's model). `dist/index.html` itself carries no model and asks for none.
 The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
@@ -1115,13 +1115,14 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model
   answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
   ways to get one. On the web copy the page has usually started getting the model that site serves beside it by
-  itself once the city was on screen (The site's model), and the card shows that download's line, bar and **Stop**;
+  itself once the city was on screen (The site's model), and the card shows that download's line, bar and **Stop**
+  (Sloane's chip shows its progress as a hairline along its foot);
   otherwise the first way is that model in one tap: **Get the model · 379 MB** (the size is on the button before
   anything is downloaded), or **Use the model kept here** once this browser keeps it. The tap downloads Qwen2.5 0.5B Instruct once from the site the page came from, checks it against
   the size and SHA-256 the page was built with, keeps it in this browser exactly as a picked file is kept, and chooses
-  it (A model in this page, The site's model). While it comes, a line and a bar show the megabytes and then the copy
-  into the page, on the card and on Sloane's chip, and **Stop** ends the download and keeps nothing; a download that
-  ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
+  it (A model in this page, The site's model). While it comes, a line and a bar on the card show the megabytes and then
+  the copy into the page (a hairline on Sloane's chip shows the same), and **Stop** ends the download and keeps
+  nothing; a download that ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
   the first answer takes longer". Where nothing serves that model beside the page (the Windows app, `dist/index.html`
   opened from a file or from a local server, the NixOS launcher and the flake), or where this browser cannot run a
   model in the page, no such button shows. Then **Choose a model file** (the same picker as Menu › Model file; a small
@@ -2871,8 +2872,8 @@ browser's own storage for this page on this device, and run inside the page by l
 It needs no model server and no address, and once the file is kept nothing it does leaves the page. It is how a
 phone, which runs no model server, gets a model of its own. The page file carries the runtime, never a model: a file
 you choose is yours, under its own licence. The web copy on GitHub Pages also serves one small model beside its page,
-Qwen2.5 0.5B Instruct, which the page gets by itself for a visitor with no model of their own, or in one tap on
-Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the launcher, the flake and the release builds carry none. The parts:
+Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
+kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the launcher, the flake and the release builds carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -2884,7 +2885,8 @@ Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the
   - from Sloane's card, **Choose a model file**, offered when you talk to Sloane and no model answers (Talk to Sloane,
     above);
   - on the web copy, by itself once the city is on screen, or from Sloane's card, **Get the model · 379 MB**: the
-    site's model (below), downloaded rather than picked, then kept as a picked file is (the tap also chooses it).
+    site's model (below), downloaded rather than picked, then kept and chosen as a picked file is (the tap also makes
+    `inpage` the provider).
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
@@ -2908,23 +2910,33 @@ Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the
   published stays up; `tools/web/siteModel.mjs place` refuses any folder but the web copy, so `dist/` never gets a
   model. On the page:
   - nothing is asked while the page loads. Once the city is on screen (the veil gone, the city not halted, the tab in
-    view) the page decides, once a city, whether to get the model by itself (`09_Cognition/siteAuto.ts`), and says why
-    or why not in one line of the browser's console ("Sloane's model: …"). It does not when this browser cannot run a
-    model in the page; when a provider other than `auto` or `inpage` is chosen (the scripted one, or a model server's);
-    when a model file of your own is chosen; when this browser keeps the model already (it is used as it is); when
-    this browser cannot keep files for the page (the model would come again on every visit); when the browser says it
-    saves data, is on mobile data, or has a 2G connection; when another tab of the page is getting it; when you stopped
-    it before; or after a try that ended short, for an hour after the first and a day after the second, and for good
-    after three in a row or after the page closed twice while getting it. Only Chrome on an Android phone says whether
-    it is on mobile data: a computer's browser, Firefox, Safari and Brave say nothing of it, so there it goes ahead.
-    Otherwise it asks for the manifest and, when the manifest names the page's pin and the device's limits and the
-    page's storage admit the model (below), downloads it exactly as the tap does, with the same line, bar and **Stop**,
-    on Sloane's chip as well as her card; a connection that turns to mobile data or data saver on the way stops it,
-    and it tries again on a later visit. It keeps the model without changing the provider, so a model server on this
-    machine still answers first, and a toast says so ("… is kept in this page (379 MB): it answers whenever no model
-    server on this machine does"); one that ends short says why in a toast too, and the card still offers the tap. A
-    **Stop** is remembered in this browser (`civic-simulation:sitemodel:auto:v1`), and from then on the page waits for
-    the tap;
+    view) the page decides, once a city, whether to get the model by itself (`09_Cognition/siteAuto.ts`
+    `createSiteAuto`), and says why or why not in one line of the browser's console ("Sloane's model: …"). It does not
+    when this browser cannot run a model in the page; when a provider other than `auto` or `inpage` is chosen (the
+    scripted one, or a model server's); when a model file of your own is chosen, or kept in the page at all; when a
+    file is being kept just then (a pick, a drop); when this browser keeps the model already; when this browser's
+    storage for the page does not answer (the model would come again on every visit) or its local storage refuses a
+    write (a Stop could not be remembered); when the browser says it saves data, is on mobile data, or has a 2G
+    connection; when another tab of the page is getting it (by itself or from a tap); when you stopped it before; or
+    after a try that ended short, for an hour after the first and a day after the second, and for good after three in
+    a row or after the system ended the page twice while it was getting it (a reload or a tab you close does not
+    count). Only Chrome on an Android phone says whether it is on mobile data: a computer's browser, Firefox, Safari
+    and Brave say nothing of it, so there it goes ahead. Otherwise it asks for the manifest and, when the manifest names
+    the page's pin and the device's limits and the page's storage admit the model (below), takes the one lock a
+    browser has for it and reads all of the above again (what changed while it asked, a connection, a pick, a
+    provider, another tab's copy, a halt, holds it back), then downloads it exactly as the tap does, with the same line,
+    bar and **Stop** on the card and a hairline on Sloane's chip. A connection that turns to mobile data or data saver
+    on the way stops it, and a download the connection cut (the browser offline, or now on mobile data) counts as a
+    pause, not a try that ended short: a toast says it waits ("Sloane's model waits: this device is on mobile data; the
+    page gets it on a later visit, or now with the button on Sloane's card"). A provider or a model of your own chosen
+    while it comes ends it too, keeping nothing. It keeps and chooses the model without changing the provider, so under
+    `auto` a model server on this machine (Ollama, llama.cpp, an OpenAI-compatible server) still answers first, and a
+    toast says so ("… is kept in this page (379 MB): it answers whenever no model server on this machine does", and on
+    a computer "and it is loading"); the Claude gateway, which `auto` asks after a model kept in the page, no longer
+    answers under `auto` once it is kept, so choose it by name (`ask provider claude`) to keep it first, which also
+    holds the page back. A try that ends short says why in a toast too, and the card still offers the tap. A **Stop** is
+    remembered in this browser (`civic-simulation:sitemodel:auto:v1`), and from then on the page waits for the tap; a
+    halt of the city stops a download under way;
   - otherwise, when Sloane's card first says no model answers, the page asks for `models/manifest.json` once a visit
     (again later only if the site could not be reached or answered with an error), and offers the model only when the
     manifest names exactly the pin the page was built with. Only the web copy asks (the page that names a web app
@@ -2942,9 +2954,10 @@ Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the
     sha256Stream`), refused the moment it runs past the pinned size, and becomes a file only once every byte has
     arrived and the hash is the pin's. A short or broken download, a different file or an HTTP error (a 429 says too
     many downloads for now) keeps nothing, and the card says why;
-  - it is then kept exactly as a picked file is (the header check, the copy into the page's storage, a computer's load
-    at once), chosen with the provider `inpage` when you tapped for it, and the card asks the last turn again. **Stop**
-    ends the download; the copy into the page, once begun, runs to its end;
+  - it is then kept and chosen exactly as a picked file is (the header check, the copy into the page's storage, a
+    computer's load at once), with the provider `inpage` when you tapped for it, and the card asks the last turn again
+    if the conversation on it found no model (a reply on its way, stopped or held is left as it is). **Stop** ends the
+    download; the copy into the page, once begun, runs to its end;
   - the service worker leaves `models/` to the network (On an iPhone, below), so its cache holds no second copy: the
     page's storage keeps the one.
 
@@ -2955,13 +2968,16 @@ Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the
   workflow only reads the served manifest and the size the site reports for the model, and never downloads the model
   itself. What is verified: the pin, the manifest, the address rule, the checked download (a flipped byte, a short
   body, a long one, a broken connection, an HTTP error, a stop) and the placing, in `siteModel.test.ts`,
-  `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the page's own start (every reason it holds back, the
-  record of a Stop, of tries that ended short and of pages that closed mid-way, one try across tabs, and the one job
-  the tap and the page share) in `siteAuto.test.ts`, `siteJob.test.ts` and `chat.test.ts`; the browser smoke's
-  `sitemodel` scenario drives, in Chrome against a web copy served from this machine with a tiny model standing in
-  under a swapped pin, the page getting it by itself with no click, its Stop and that the Stop is remembered over a
-  reload, a fresh browser keeping it by itself and Sloane answering with it, a flipped byte ending the page's own try
-  with a toast and the card's tap still offered, and the tap. Not verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
+  `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the page's own start in `siteAuto.test.ts` (each reason it
+  holds back, in order, before the site is asked for anything; the wait until the page is seen; the facts read again
+  once the lock is held; the record of a Stop, of tries that ended short and of pages the system ended, counted once
+  however many tabs look; one try across tabs, a tapped download among them; how each try ends and what the toast
+  says), the one job the tap and the page share in `siteJob.test.ts`, and the page's own facts and wiring in
+  `chat.test.ts`; the browser smoke's `sitemodel` scenario drives, in Chrome against a web copy served from this
+  machine with a tiny model standing in under a swapped pin, the page getting it by itself with no click, asking
+  nothing off its site until Sloane is spoken to, its Stop and that the Stop is remembered on the next visit, a fresh
+  browser keeping it by itself and Sloane answering with it, a flipped byte ending the page's own try with a toast and
+  the card's tap still offered, and the tap. Not verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
   well and how fast this model converses, and any real phone or GPU.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
