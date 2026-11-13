@@ -1843,3 +1843,39 @@ test('GARMENT, the coat and the scarf: the jacket\'s lines sit on the loft (the 
     }
   }
 })
+
+test('the leg runs into the shoe: its last ring sits below the shoe\'s open top and inside the shoe there, on every body and both legs, both rings half the shin\'s and half the foot\'s, so no gap shows between a trouser hem, a boot\'s shaft or a bare leg and the shoe', () => {
+  for (let v = 0; v < BODY_NAMES.length; v++) {
+    const tubes = bodyTubes(v)
+    for (const [shin, foot] of [[BONE.SHIN_L, BONE.FOOT_L], [BONE.SHIN_R, BONE.FOOT_R]]) {
+      const shoe = tubes.find((t) => t.piece === undefined && t.rings[0].slot === SLOT.SHOES && t.rings.every((r) => r.bone === foot))
+      const leg = tubes.find((t) => t.rings[t.rings.length - 1].bone === shin && t.rings[t.rings.length - 1].bone1 === foot)
+      assert.ok(shoe && leg, `${BODY_NAMES[v]}: a leg and a shoe on bone ${foot}`)
+      const end = leg.rings[leg.rings.length - 1], top = shoe.rings[0], next = shoe.rings[1]
+      assert.ok(end.y < top.y && end.y > next.y, `${BODY_NAMES[v]}: the leg ends inside the shoe (${end.y} under its top ${top.y})`)
+      const t = (top.y - end.y) / (top.y - next.y)
+      const at = (a: number, b: number) => a + (b - a) * t
+      const rx = at(top.rx, next.rx), rz = at(top.rz ?? top.rx, next.rz ?? next.rx), z = at(top.z ?? 0, next.z ?? 0), endRz = end.rz ?? end.rx
+      assert.ok(end.rx < rx, `${BODY_NAMES[v]}: within the shoe's sides there`)
+      assert.ok((end.z ?? 0) + endRz < z + rz && (end.z ?? 0) - endRz > z - rz, `${BODY_NAMES[v]}: within its toe and heel there`)
+      assert.ok(end.w === 0.5 && top.w === 0.5 && top.bone1 === shin, `${BODY_NAMES[v]}: the two rings move together`)
+    }
+  }
+})
+
+test('the wrist runs into the sleeve: the hand\'s first ring sits above the sleeve\'s open end and inside the sleeve there, on every body and both arms, both rings moved by the forearm alone, so no gap shows between a cuff, or a rolled sleeve\'s bare forearm, and the hand', () => {
+  for (let v = 0; v < BODY_NAMES.length; v++) {
+    const tubes = bodyTubes(v)
+    for (const [fore, hand] of [[BONE.FOREARM_L, BONE.HAND_L], [BONE.FOREARM_R, BONE.HAND_R]]) {
+      const sleeve = tubes.find((t) => t.piece === undefined && t.rings[0].slot === SLOT.TOP && t.rings[t.rings.length - 1].bone === fore)
+      const palm = tubes.find((t) => t.piece === undefined && t.rings[0].slot === SLOT.SKIN && t.rings.length > 1 && t.rings[1].bone === hand)
+      assert.ok(sleeve && palm, `${BODY_NAMES[v]}: a sleeve and a hand on bone ${hand}`)
+      const end = sleeve.rings[sleeve.rings.length - 1], above = sleeve.rings[sleeve.rings.length - 2], top = palm.rings[0]
+      assert.ok(top.y > end.y && top.y < above.y, `${BODY_NAMES[v]}: the hand starts inside the sleeve (${top.y} over its end ${end.y})`)
+      const t = (top.y - end.y) / (above.y - end.y)
+      const rx = end.rx + (above.rx - end.rx) * t, rz = (end.rz ?? end.rx) + ((above.rz ?? above.rx) - (end.rz ?? end.rx)) * t
+      assert.ok(top.rx < rx && (top.rz ?? top.rx) < rz && top.x === end.x && (top.z ?? 0) === (end.z ?? 0), `${BODY_NAMES[v]}: within the sleeve there`)
+      assert.ok(top.bone === hand && top.bone1 === fore && top.w === 0 && end.bone === fore && end.bone1 === undefined, `${BODY_NAMES[v]}: the two rings move together, the forearm's alone, the hand's named for its paint`)
+    }
+  }
+})

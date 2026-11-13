@@ -2091,6 +2091,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **No gap at the ankle or the wrist.** The leg's last ring ended at 9.5 cm and the shoe's open top at 8.5 cm, so a
+  centimetre all round the ankle showed what was behind the person: a pale band between every trouser hem, boot shaft
+  or bare leg and the shoe. The sleeve's last ring ended at 93.5 cm and the hand's first at 92 cm, the same at the
+  wrist: a grey line under every cuff, plainest with the sleeves rolled. The leg now ends at 8 cm, inside the shoe, and
+  the hand starts at 94 cm, inside the sleeve and fixed to the forearm as the sleeve's end is, so the wrist bends
+  between it and the palm (`src/03_Spawn_Agents/humanoid.ts` `legTubes`, `armTubes`). The near and the far body are
+  both fixed, and no vertex is added. `humanoid.test.ts` holds the leg's end inside the shoe and the hand's top inside
+  the sleeve on every body. The hand's top ring still names the hand's bone, with no weight on it, so the watch and a
+  prosthetic hand are painted there as before. Six close-ups in the watch shop's mirror, before and after, on the
+  software WebGPU adapter (SwiftShader), show the band gone under suit trousers, a knee boot and a bare leg, the line
+  gone at both wrists with the sleeves down and rolled, and a steel watch on a rolled sleeve's wrist with no gap above
+  it. Unverified: no hardware GPU has drawn it yet.
 - **On a phone the shop's Browse chip, a home's chip and the microphone's badge take a tap.** The HUD's layer stood
   under the touch controls' layer, whose look area covers the right half of the screen and whose stick zone covers the
   bottom left, so a tap on those buttons turned the view or moved the stick instead. The HUD's layer now stands over
