@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Shop locks on the wardrobe.** An option a shop sells is locked on the player's own look until it is bought
+  (`src/07_Execute_Actions/lookLock.ts`). A lock is what one worn catalogue line sells (the look slots it sets, less the
+  rolled sleeves a design comes with), open once that line is owned: the tailor's six coats, seven contrast trims, seven
+  scarves and the tie; the ink studio's twelve designs (each on every zone) and two inks; the watch shop's bag, two
+  watches, rank pin, folding umbrella and over-ear headphones. The coat itself is locked until any overcoat is owned, so
+  the coat palette's seventh colour, which no line sells, is still the tailor's. The atelier's limbs, glasses and
+  hearing aids are never locked (`FREE_SHOPS`): nobody buys their own body. The wardrobe card (`Customizer.tsx`) draws a
+  padlock and the price on a locked option (over a swatch, the padlock alone), names the shop under its row, and a press
+  on a locked option wears nothing and says the line, the shop, where it stands, the price and the level; a garment that
+  wears a locked piece is locked with it, and a design family opens on its first design that is free or bought. A
+  locked option stays a pressable button with `aria-disabled`, so switch scanning still reaches it. What the look wore
+  when the card opened stays on, and its option chosen, until it is taken off and the card closed; the card names those
+  pieces. A preset, Randomise, Reset or a pasted code is worn with what the shops still hold put back (`fitLook`: a coat
+  goes back to the jacket in the coat's cloth, a tie or a bag comes off), and the card says what it held. The console's
+  `look` passes the same lock (`changeLookLocked`, wired in `App.tsx` over the page's one shopkeeper): a held slot or
+  garment is refused in the card's words, and a preset, a code, `random` or `reset` is fitted, the first line saying
+  what was held. A purchase redraws the card. Agents' looks stay free. Tests: `lookLock.test.ts` (every locked line
+  holds what it sells until bought and not once bought or kept; the atelier never locks; a design is held on every zone;
+  the coat's colours; fitting the eight presets and 400 seeds' looks never leaves a held piece on; the console's words;
+  the wiring), and `lookWiring.test.ts` follows the tattoo section's new family press. Pictures of the card in
+  `/mnt/project-files/screenshots/shop-locks/`, drawn by the page in Chromium's software renderer.
+
 - **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
   heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to
   31 are spare and refused. Option 0 is as before, so every chosen look keeps its code. A heel is a tapered tube under
