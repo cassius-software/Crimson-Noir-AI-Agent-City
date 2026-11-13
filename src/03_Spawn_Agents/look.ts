@@ -26,7 +26,7 @@
  * What breaks if it is removed? The customizer would have no catalogue, nothing could be saved or shared, and the
  * crowd's per-agent attributes would have no agreed bit layout to carry.
  */
-import { HEIGHT_BASE, SKIRT_CUT, TROUSER_CUT, type BodyShape, type FaceShape } from './humanoid.ts'
+import { HEIGHT_BASE, SKIRT_CUT, TROUSER_CUT, heelPose, shapeFactors, type BodyShape, type FaceShape } from './humanoid.ts'
 import { TATTOO_INK, TATTOO_INKS, TATTOO_MOTIFS, TATTOO_STREET_SETS, TATTOO_STUDIO_LINES, TATTOO_ZONES } from './tattoo.ts'
 
 /** The four bodies crowd.ts draws, in draw-list order (an agent's hashed body is its index modulo four). */
@@ -97,7 +97,7 @@ export const LOOK_SLOTS = [
   'body', ...LOOK_BODY_SLIDERS, ...LOOK_FACE_SLIDERS,
   'skin', 'age', 'undertone', 'vitiligo', 'freckles', 'hairStyle', 'curl', 'hairColour', 'headwear', 'headwearColour',
   'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
-  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'shoeFinish', 'tie', 'tieStyle', 'scarf', 'lapelPin',
+  'layer', 'cut', 'top', 'topWeave', 'trim', 'bottomCut', 'bottom', 'bottomWeave', 'shirt', 'footwear', 'shoes', 'shoeFinish', 'heel', 'tie', 'tieStyle', 'scarf', 'lapelPin',
   'eyewear', 'frames', 'headphones', 'watch', 'bag', 'bagStyle', 'cup', 'umbrella',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
   'legwear', 'tattooCalf', 'tattooAnkleR',
@@ -114,7 +114,7 @@ export const LOOK_GENOME_SLOTS = [
   'vitiligo', 'freckles', 'curl', 'headwear', 'headwearColour', 'facialHair', 'hearing', 'prosthetic', 'prostheticFinish',
   'topWeave', 'bottomWeave', 'cut', 'bottomCut', 'footwear', 'frames', 'watch', 'lapelPin',
   'tattooHand', 'tattooHandR', 'tattooNeck', 'tattooNape', 'tattooInk', 'sleeves', 'tattooForearm', 'tattooForearmR',
-  'legwear', 'tattooCalf', 'tattooAnkleR', 'shoeFinish', 'tieStyle', 'bagStyle', 'umbrella', 'headphones',
+  'legwear', 'tattooCalf', 'tattooAnkleR', 'shoeFinish', 'tieStyle', 'bagStyle', 'umbrella', 'headphones', 'heel',
 ] as const satisfies readonly LookSlot[]
 
 /** The slots a look had before the genome's later words (the thirty-two of the four words): every one is required. */
@@ -471,11 +471,19 @@ export const UMBRELLA = Object.freeze({ none: 0, folding: 1, walking: 2, open: 3
  */
 export const HEADPHONES = Object.freeze({ none: 0, overEar: 1, onEar: 2, earbuds: 3 })
 /**
- * The pieces the umbrella and the headphones draw (humanoid.ts PIECE, from 24): a slot's option k is the piece
- * LOOK_CODED_PIECE[slot] + k - 1. They are past the crowd's mask (a float holds its bits 1 to 24 exactly), so the vertex
- * stage tests them against a code it carries beside it (crowd.ts: umbrella | headphones << 2) rather than a bit.
+ * The heel (WARDROBE.heel), under any shoe on the near body: none (0, flat on the ground as before); a block heel, 4 cm;
+ * a mid heel, 6 cm, tapered; a high heel, 8 cm, tapered to a point (humanoid.ts HEEL_SHAPES). The toes keep the ground,
+ * so the foot pitches and the person stands higher by about two thirds of the heel. The street puts a heel under some of the
+ * pantsuit's and the skirt suit's shoes. A flat on a heel is a court shoe.
  */
-export const LOOK_CODED_PIECE = Object.freeze({ umbrella: 24, headphones: 27 })
+export const HEEL = Object.freeze({ none: 0, block: 1, mid: 2, high: 3 })
+/**
+ * The pieces the umbrella, the headphones and the heel draw (humanoid.ts PIECE, from 24): a slot's option k is the
+ * piece LOOK_CODED_PIECE[slot] + k - 1. They are past the crowd's mask (a float holds its bits 1 to 24 exactly), so the
+ * vertex stage tests them against a code it carries beside it (crowd.ts: umbrella | headphones << 2 | heel << 4)
+ * rather than a bit.
+ */
+export const LOOK_CODED_PIECE = Object.freeze({ umbrella: 24, headphones: 27, heel: 30 })
 /** The hair pieces a crown cover leaves showing below it: the length, the bob's sides, a tail. */
 const BELOW_CROWN: ReadonlySet<string> = new Set(['longHair', 'bob', 'ponytail'])
 
@@ -563,6 +571,7 @@ export const WARDROBE = Object.freeze({
   bagStyle: Object.freeze(['briefcase', 'brass clasps', 'carbon twill', 'aluminium', 'canvas', 'quilted', 'pebble grain', 'saddle stitched']),
   umbrella: Object.freeze(['none', 'folding', 'walking', 'open']),
   headphones: Object.freeze(['none', 'over-ear', 'on-ear', 'earbuds']),
+  heel: Object.freeze(['none', 'block', 'mid', 'high']),
   tattoo: Object.freeze(['none', ...TATTOO_MOTIFS.map((m) => m.name)]),
   tattooInk: Object.freeze(TATTOO_INKS.map((i) => i.name)),
   sleeves: Object.freeze(['full', 'rolled']),
@@ -601,9 +610,8 @@ export const LONG_HAIR_BIT = 2 + LOOK_PIECE_BIT.longHair
  * are spare. Word 6 is the
  * accessory word, paint on the meshes the body already has: the shoe's style at five bits (twelve of thirty-two, room
  * to grow), the glasses' frame finish at four, the watch at three, the lapel pin at three; then, from bit 21, the
- * shoe's finish at two, the tie's style at three and the bag's at three; and two pieces, not paint, at bits 15 and 17:
- * the umbrella at two and the headphones at two. Bits 19 and 20 are held for a heel, so its field is written down
- * here and declared then: [6, 19, 2]; bits 29 to 31 are spare. Word 7 is the tattoo word: the design on the left hand, the right hand, the neck and the nape
+ * shoe's finish at two, the tie's style at three and the bag's at three; and three pieces, not paint, at bits 15, 17
+ * and 19: the umbrella at two, the headphones at two and the heel at two; bits 29 to 31 are spare. Word 7 is the tattoo word: the design on the left hand, the right hand, the neck and the nape
  * at seven bits each (0 is none, 1 to 64 a design's id: tattoo.ts TATTOO_MOTIFS), then the ink at three (0 is black,
  * as before); bits 0 to 30 are its fields. Its bit 31 is never a field's: the crowd's fragment stage reads a person
  * in no chosen look as word 7 with that bit alone set, the street flag that draws their tattoos from their seed, so
@@ -667,6 +675,7 @@ export const LOOK_FIELD: Readonly<Record<LookSlot, readonly [word: number, shift
   lapelPin: [6, 12, 3],
   umbrella: [6, 15, 2],
   headphones: [6, 17, 2],
+  heel: [6, 19, 2],
   shoeFinish: [6, 21, 2],
   tieStyle: [6, 23, 3],
   bagStyle: [6, 26, 3],
@@ -748,6 +757,10 @@ export const LOOK_HASHED_HEARING = 26
  */
 export const LOOK_HASHED_UMBRELLA = 27
 export const LOOK_HASHED_HEADPHONES = 28
+/** The link of the vertex chain the street's heel is drawn from (LOOK_ODDS: a block, a mid or a high heel, under the pantsuit's and the skirt suit's shoes). */
+export const LOOK_HASHED_HEEL = 29
+/** The bodies (LOOK_BODIES) whose shoes the street sets on a heel: the pantsuit and the skirt suit (crowd.ts the same). */
+export const STREET_HEEL_BODIES: ReadonlySet<number> = new Set([2, 3])
 /**
  * The links of the fragment chain (LOOK_HASH.colours) the age, the undertone and the iris colour are drawn from; the
  * trim's contrast (above LOOK_ODDS.trim it is a trim cloth, else matching) and that cloth; the scarf's cloth; whether
@@ -846,6 +859,7 @@ export function lookOptions(body: LookBody, slot: LookSlot, layer: number = LAYE
     case 'bagStyle': return named(WARDROBE.bagStyle)
     case 'umbrella': return named(WARDROBE.umbrella)
     case 'headphones': return named(WARDROBE.headphones)
+    case 'heel': return named(WARDROBE.heel)
     // The tattoo word's slots: every zone offers every design, and the ink is a swatch (its sRGB, for the card).
     case 'tattooHand': case 'tattooHandR': case 'tattooNeck': case 'tattooNape': return named(WARDROBE.tattoo)
     case 'tattooInk': return TATTOO_INKS.map((i) => ({ name: i.name, hex: i.hex }))
@@ -922,6 +936,15 @@ export function faceShapeOf(look: Look): FaceShape {
 /** The factor the crowd shader scales the base body by for a look: its stature over the base height (humanoid.ts). */
 export function heightScale(look: Look): number {
   return statureOf(look.height) / HEIGHT_BASE
+}
+
+/**
+ * How much higher a look stands on its heel, m (humanoid.ts heelPose at the look's legs, by its stature's scale): the
+ * player's first-person eye rises by it (engine.ts setLook). 0 with no heel.
+ */
+export function heelRiseOf(look: Look): number {
+  const heel = look.heel ?? HEEL.none
+  return heel === HEEL.none ? 0 : heelPose(heel, shapeFactors(bodyShapeOf(look)).legs).rise * heightScale(look)
 }
 
 const hasOwn = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
@@ -1256,12 +1279,12 @@ export const genomeBits = (skinWord: number, near = true): number => {
 
 /**
  * Whether a look wears a piece (humanoid.ts PIECE) on the near body: the card's picture and the crowd's mask agree on
- * it. The umbrella's and the headphones' pieces (LOOK_CODED_PIECE) are worn by their slot's option, as the vertex
- * stage tests them.
+ * it. The umbrella's, the headphones' and the heel's pieces (LOOK_CODED_PIECE) are worn by their slot's option, as the
+ * vertex stage tests them.
  */
 export function lookWears(look: Look, piece: number): boolean {
   if (piece >= LOOK_CODED_PIECE.umbrella) {
-    const slot = piece >= LOOK_CODED_PIECE.headphones ? 'headphones' : 'umbrella'
+    const slot = piece >= LOOK_CODED_PIECE.heel ? 'heel' : piece >= LOOK_CODED_PIECE.headphones ? 'headphones' : 'umbrella'
     return look[slot] === piece - LOOK_CODED_PIECE[slot] + 1
   }
   const g = packGenome(look)
@@ -1297,7 +1320,7 @@ export const LOOK_HASH = Object.freeze({ pieces: 13.37, colours: 7.919 })
  * `inkGreen` and white from `inkWhite`; the street never wears the ink studio's designs or its gold leaf and
  * luminescent inks either.
  */
-export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65, footwear: 0.45, frames: 0.5, watchSteel: 0.72, watchLeather: 0.84, watchSmart: 0.93, pinBar: 0.96, pinFlower: 0.98, tattoo: 0.8, inkGrey: 0.7, inkIndigo: 0.84, inkRed: 0.91, inkGreen: 0.95, inkWhite: 0.98, shoeFinish: 0.5, tieStyle: 0.5, bagStyle: 0.55, umbrellaFolding: 0.9, umbrellaWalking: 0.95, headphonesOnEar: 0.93, headphonesOver: 0.96, earbuds: 0.985 })
+export const LOOK_ODDS = Object.freeze({ tie: 0.3, bagMan: 0.7, bagWoman: 0.62, cup: 0.82, longHair: 0.35, glasses: 0.78, grey: 0.9, darkTrousers: 0.6, bob: 0.34, bun: 0.67, bald: 0.96, shirtSleeves: 0.2, coat: 0.85, scarf: 0.88, trim: 0.8, vitiligo: 0.98, freckles: 0.84, hijab: 0.95, headWrap: 0.93, turban: 0.975, kippah: 0.965, flatCap: 0.95, facialHair: 0.55, aids: 0.975, implant: 0.993, prosthetic: 0.99, weave: 0.6, cut: 0.7, bottomCut: 0.65, footwear: 0.45, frames: 0.5, watchSteel: 0.72, watchLeather: 0.84, watchSmart: 0.93, pinBar: 0.96, pinFlower: 0.98, tattoo: 0.8, inkGrey: 0.7, inkIndigo: 0.84, inkRed: 0.91, inkGreen: 0.95, inkWhite: 0.98, shoeFinish: 0.5, tieStyle: 0.5, bagStyle: 0.55, umbrellaFolding: 0.9, umbrellaWalking: 0.95, headphonesOnEar: 0.93, headphonesOver: 0.96, earbuds: 0.985, heelBlock: 0.72, heelMid: 0.84, heelHigh: 0.93 })
 
 const pickIndex = (h: number, length: number): number => Math.min(u32(f32(h * f32(length - 0.001))), length - 1)
 const above = (h: number, edge: number): number => (h >= f32(edge) ? 1 : 0)
@@ -1425,6 +1448,7 @@ export function lookFromSeed(seed: number): Look {
   const hearing = above(hp(LOOK_HASHED_HEARING), LOOK_ODDS.implant) ? HEARING.implant : above(hp(LOOK_HASHED_HEARING), LOOK_ODDS.aids) ? HEARING.aids : HEARING.none
   const umbrellaLink = hp(LOOK_HASHED_UMBRELLA)
   const headphonesLink = hp(LOOK_HASHED_HEADPHONES)
+  const heelLink = hp(LOOK_HASHED_HEEL)
   // The top's dye is one link whichever palette the layer reads it from (both hold as many as the body's jacket palette, or more).
   const topSize = LOOK_PALETTE[outfit.top].length
   const street = streetTattoos(hc)
@@ -1487,6 +1511,9 @@ export function lookFromSeed(seed: number): Look {
     umbrella: cup ? UMBRELLA.none : above(umbrellaLink, LOOK_ODDS.umbrellaWalking) ? UMBRELLA.walking : above(umbrellaLink, LOOK_ODDS.umbrellaFolding) ? UMBRELLA.folding : UMBRELLA.none,
     headphones: headwear !== HEADWEAR.none || hearing !== HEARING.none ? HEADPHONES.none
       : above(headphonesLink, LOOK_ODDS.earbuds) ? HEADPHONES.earbuds : above(headphonesLink, LOOK_ODDS.headphonesOver) ? HEADPHONES.overEar : above(headphonesLink, LOOK_ODDS.headphonesOnEar) ? HEADPHONES.onEar : HEADPHONES.none,
+    // About a quarter of the pantsuit's and the skirt suit's shoes stand on a heel: a block, a mid or a high one.
+    heel: !STREET_HEEL_BODIES.has(body) ? HEEL.none
+      : above(heelLink, LOOK_ODDS.heelHigh) ? HEEL.high : above(heelLink, LOOK_ODDS.heelMid) ? HEEL.mid : above(heelLink, LOOK_ODDS.heelBlock) ? HEEL.block : HEEL.none,
     hairColour: grey ? LOOK_PALETTE.hair.length : pickIndex(hc(2), LOOK_PALETTE.hair.length),
     layer,
     top: pickIndex(hc(3), topSize),

@@ -58,7 +58,7 @@ test('the card and the onboarding: each line said once as plain words, never bef
 
 test('the engine: the player\'s look sets the eye, Sloane is heard at the player\'s head with no walls between, a hired agent\'s identity rides their context', () => {
   const src = read('../engine.ts')
-  assert.match(src, /if \(agent === PLAYER_INDEX\) this\.rig\.setEyeHeight\(eyeHeightFor\(look === null \? 1 : heightScale\(look\)\)\)/)
+  assert.match(src, /if \(agent === PLAYER_INDEX\) this\.rig\.setEyeHeight\(look === null \? eyeHeightFor\(1\) : eyeHeightFor\(heightScale\(look\), heelRiseOf\(look\)\)\)/)
   assert.match(src, /this\.audio\.speak\(buffer, eye\.x, eye\.z, 0, text, \{ agent: PLAYER_INDEX, label: CONCIERGE_LABEL \}\)/)
   assert.match(src, /sp\.walls = speaking && !this\.conciergeVoice/)
   assert.match(src, /if \(this\.conciergeVoice\) this\.listenFor\(this\.views\[k\], k, st, dt, pedestrian, undefined\)/, 'split screen: the other players still hear the pedestrian, where they are')

@@ -12,6 +12,7 @@
  * seat or spins by 2π when the heading wraps could ship unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three/webgpu'
 import { PITCH_LIMIT as INPUT_PITCH_LIMIT } from '../04_Connect_Hardware/input.ts'
@@ -53,8 +54,13 @@ test('on foot: the eye is EYE_HEIGHT above the feet and the camera looks along t
   assert.ok(probe.length() < 1e-9)
 })
 
-test('the eye follows the body: setEyeHeight is held within EYE_RANGE, eased in like a step, and eyeHeightFor scales the reference eye', () => {
+test('the eye follows the body: setEyeHeight is held within EYE_RANGE, eased in like a step, and eyeHeightFor scales the reference eye and lifts it by a heel\'s rise; the engine sets the player\'s from their look', () => {
   assert.equal(eyeHeightFor(1), EYE_HEIGHT)
+  assert.equal(eyeHeightFor(1, 0), EYE_HEIGHT)
+  assert.ok(close(eyeHeightFor(1.08, 0.05), 1.886), 'the tallest body on a high heel')
+  assert.equal(eyeHeightFor(100, 0.05), EYE_RANGE[1])
+  assert.equal(eyeHeightFor(1, Number.NaN), EYE_HEIGHT)
+  assert.ok(readFileSync(new URL('./engine.ts', import.meta.url), 'utf8').includes('this.rig.setEyeHeight(look === null ? eyeHeightFor(1) : eyeHeightFor(heightScale(look), heelRiseOf(look)))'), 'the player\'s own look sets the eye, its heel too')
   assert.ok(close(eyeHeightFor(0.94), 1.598) && close(eyeHeightFor(1.08), 1.836), 'the wardrobe\'s shortest and tallest bodies')
   assert.equal(eyeHeightFor(0), EYE_RANGE[0])
   assert.equal(eyeHeightFor(100), EYE_RANGE[1])

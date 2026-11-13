@@ -268,7 +268,7 @@ test('the try-on: an ink on a look with no design showing borrows the olive bran
     for (const p of LOOK_PRESETS) assert.deepEqual(previewItem(p.look, i), wearItem(p.look, i), `${i.name} on the ${p.name}`)
   }
   assert.deepEqual(previewItem(LOOK_PRESETS[0].look, itemById(132)!), { ...LOOK_PRESETS[0].look, umbrella: 1 }, 'the umbrella is on sale and previews as worn')
-  assert.equal(previewItem(LOOK_PRESETS[0].look, { ...itemById(132)!, wear: { heel: 1 } }), null, 'a line on order (a slot the wardrobe lacks) previews as nothing')
+  assert.equal(previewItem(LOOK_PRESETS[0].look, { ...itemById(132)!, wear: { gloves: 1 } }), null, 'a line on order (a slot the wardrobe lacks) previews as nothing')
   // Buying wears wearItem's look through the keeper: the ink alone, never the borrowed design.
   const k = createShopkeeper({ purse: { level: () => MAX_LEVEL, credits: () => 0, owns: () => true, canBuy: () => GATE.owned, buy: () => GATE.owned, subscribe: () => () => {} } })
   assert.deepEqual(k.wear(64, LOOK_PRESETS[0].look), { ...LOOK_PRESETS[0].look, tattooInk: TATTOO_INK.goldLeaf })
@@ -287,7 +287,7 @@ test('whyOf says why in words', () => {
   assert.match(whyOf(coat, GATE.credits, 10), /640 more credits/)
   assert.equal(whyOf(coat, GATE.bought, 9999), 'for sale')
   assert.equal(whyOf(coat, GATE.owned, 0), 'owned')
-  assert.match(whyOf({ ...itemById(132)!, wear: { heel: 1 } }, GATE.unavailable, 0), /on order/, 'a worn line with a slot the wardrobe lacks')
+  assert.match(whyOf({ ...itemById(132)!, wear: { gloves: 1 } }, GATE.unavailable, 0), /on order/, 'a worn line with a slot the wardrobe lacks')
   assert.equal(whyOf(itemById(132)!, GATE.unavailable, 0), 'not for sale', 'the umbrella is on sale, so an unavailable one is refused, not on order')
   assert.equal(whyOf(itemById(48)!, GATE.unavailable, 0), 'not for sale', 'the forearm\'s designs are on sale, so an unavailable one is refused, not on order')
   assert.equal(whyOf(itemById(160)!, GATE.unavailable, 0), 'not for sale', 'furniture is on sale too, so an unavailable piece is refused, not on order')

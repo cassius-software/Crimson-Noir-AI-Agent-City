@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
+  heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to
+  31 are spare and refused. Option 0 is as before, so every chosen look keeps its code. A heel is a tapered tube under
+  the back of each shoe on the near body, in the shoe's colour (`src/03_Spawn_Agents/humanoid.ts` `heelTubes`,
+  `HEEL_SHAPES`); its three pieces, 30 to 32, are coded beside the umbrella's and the headphones' in `faceB.w`
+  (`crowdBody.ts`, `look.ts` `lookWears`). The toes keep the ground, so each foot pitches toes down and the body rises
+  (`humanoid.ts` `heelPose`, mirrored by `crowdBody.ts` `bodyHeel`): the pitch is `atan(legs * tan(heel angle))` and
+  the rise puts the toe tip and the heel's ground centre both at y 0 for any legs slider, 2.7, 3.9 and 4.9 cm on the
+  base body, walking or standing; the test holds both points to 1e-9 m over nine shapes and the shader to the CPU pose
+  to 1e-6. The player's first-person eye rises with it (`head.ts` `eyeHeightFor`, `look.ts` `heelRiseOf`), and the
+  card's outline stands on it. The far body stands flat, as it carries no coded piece. The street draws the heel on
+  the pieces' chain's link 29, in the shader and in `lookFromSeed` alike, on the pantsuit and the skirt suit only:
+  about 12% on a block heel, 9% on a mid heel and 7% on a high one; the suit and the smart-casual body wear none, and
+  the player's own hashed look (seed 0) draws none, so its code is unchanged. The card gets a Heel row after Shoe finish, and the console takes `look heel high`. The near bodies
+  grow from 2,248 to 2,328 vertices to 2,318 to 2,398 (the test's budget is now 2,450 vertices and 4,300 triangles).
+  The shader budget holds: the worst near main fragment stage is 196,599 characters (was 196,596; the target is
+  225,000), the near main vertex stage 60,657 (was 59,159), the far vertex stages 853 characters longer and the far fragment stages
+  unchanged. `dist/index.html` grows by 2,861 bytes, from 12,059,574 to 12,062,435; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Twelve looks in the watch shop's mirror, on the software WebGPU adapter (SwiftShader), show
+  the shoe flat and on the three heels from both sides, the front and behind, a high heel on a court shoe, on the
+  pantsuit's trousers, on the suit and on the tallest and the shortest figures, a block heel under a knee boot and a
+  white mid heel under a sneaker. Unverified: no hardware GPU has compiled or drawn it yet.
 - **What each person in the crowd is doing, read one at a time** (`src/09_Cognition/personFeatures.ts`,
   `personFeatures.test.ts`). The feature inspector gains a reading of one pedestrian: ten hand-written readings in
   [0, 1] with a JumpReLU threshold each, from the crowd frames the page already receives (where each person stands,

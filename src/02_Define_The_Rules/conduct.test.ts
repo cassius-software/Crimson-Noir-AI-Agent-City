@@ -153,7 +153,7 @@ test('the city is unarmed: 14A says so in its constants, the lexicon refuses eve
   assert.match(readFileSync(`${ROOT}MANUAL.md`, 'utf8'), /There are no weapons and no violence\s+anywhere in the product/)
 })
 
-test('a person may wear or carry nothing but the closed wardrobe: four business bodies, the optional pieces (hair, headwear, the face itself, clothes, three carried things, an umbrella and headphones), and every option, preset and console line is unarmed', () => {
+test('a person may wear or carry nothing but the closed wardrobe: four business bodies, the optional pieces (hair, headwear, the face itself, clothes, three carried things, an umbrella, headphones and a heel), and every option, preset and console line is unarmed', () => {
   assert.deepEqual([...LOOK_BODIES], ['suit', 'smart casual', 'pantsuit', 'skirt suit'])
   // The only things drawn on a person beyond their clothes. A new piece is a 14A decision: add it here once it is
   // confirmed unarmed. The hair cap, the bob and the bun are hair; the face is the features (eyes, brows, nose, lips,
@@ -187,7 +187,11 @@ test('a person may wear or carry nothing but the closed wardrobe: four business 
   // LOOK_PIECE_BIT, so the list above stays as it is.
   assert.deepEqual([...WARDROBE.umbrella], ['none', 'folding', 'walking', 'open'])
   assert.deepEqual([...WARDROBE.headphones], ['none', 'over-ear', 'on-ear', 'earbuds'])
-  assert.deepEqual({ ...LOOK_CODED_PIECE }, { umbrella: 24, headphones: 27 })
+  // 14A: the heel is a new mesh too, confirmed unarmed: a block, a mid or a high heel under the shoe, standing on the
+  // ground with the shoe's colour (humanoid.ts PIECE 30 to 32). It is worn, not carried, and none of its names is a
+  // blade's.
+  assert.deepEqual([...WARDROBE.heel], ['none', 'block', 'mid', 'high'])
+  assert.deepEqual({ ...LOOK_CODED_PIECE }, { umbrella: 24, headphones: 27, heel: 30 })
   assert.deepEqual([...WARDROBE.undertone], ['neutral', 'warm', 'cool', 'olive'])
   for (const slot of LOOK_SLOTS) {
     unarmed('a look slot', slot)
