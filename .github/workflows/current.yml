@@ -11,19 +11,22 @@
 #   software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani harnesses), which is what
 #   starts this workflow; then each job uploads only after its own checks, and each UEFI job only after baking its
 #   media a second time from a clean build, comparing the bytes and booting the image in QEMU (self-test, tutorial,
-#   terminal, power-off) and the ISO. A target whose job failed keeps the files of the last commit it built, the notes
-#   and current.json on the release say which commit each file comes from, and the run is red (the iOS build is best
-#   effort, as in build-matrix.yml, and never turns it red).
+#   terminal, power-off) and the ISO. A target whose job failed keeps the files of the last commit it built, as long as
+#   the release still holds those very bytes; the notes and current.json on the release say which commit each file
+#   comes from, and the run is red (the iOS build is best effort, as in build-matrix.yml, and never turns it red).
 # - It never steps back: it builds only a commit on main that ci passed on, and publishes it only while it is still on
-#   main and at least as new as what the release holds (asked again after the build). One run at a time, and one
+#   main and at least as new as what the release holds (asked again after the build); when GitHub cannot answer either
+#   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
 #   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
 #   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
-#   does.
-# - It makes no numbered release and no tag but `current`, which it puts at each commit it publishes (through a
-#   stand-in tag, `current-next`, for a few seconds when GitHub refuses to move it; tools/build/current.mjs says why).
-#   The release is a pre-release and never "Latest"; numbered releases stay build-release.yml's, from a tag a person
-#   pushes. The tags are made with the workflow's own token, for which GitHub starts no workflow (build-release.yml
-#   takes v* and stable-* tags only anyway).
+#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red when a newer commit is
+#   green: retry a failed run with Run workflow (or "Re-run all jobs") instead.
+# - It makes no numbered release. Its only tags are `current`, which it puts at each commit it publishes, and a
+#   stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (tools/build/current.mjs says
+#   why); when GitHub refuses the stand-in too, `current` stays where it was and the notes say so. The release is a
+#   pre-release and never "Latest"; numbered releases stay build-release.yml's, from a tag a person pushes. The tags
+#   are made with the workflow's own token, for which GitHub starts no workflow (build-release.yml takes v* and
+#   stable-* tags only anyway).
 # - On a pull request that touches this file, its tool or the two workflows it calls, it builds everything the same
 #   way and runs the publish step as a dry run, with read-only access: it prints what it would upload, keep and
 #   delete, writes the notes to the run's summary, and publishes nothing.
@@ -49,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Build and publish main's tip even when the release already holds it
+        description: Build and publish the newest commit on main that ci passed on, even when the release already holds it
         required: false
         type: boolean
         default: false
@@ -94,6 +97,7 @@ jobs:
       sha: ${{ steps.pick.outputs.sha }}
       ci: ${{ steps.pick.outputs.ci }}
       dry: ${{ steps.pick.outputs.dry }}
+      attempt: ${{ steps.pick.outputs.attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,6 +116,8 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           FORCE: ${{ inputs.force }}
         run: |
+          # Which attempt of the run picked: "Re-run failed jobs" keeps this job's answer, and publish says so.
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           case "$EVENT" in
             pull_request)
               printf 'sha=%s\ndry=true\n' "$PR_HEAD" >> "$GITHUB_OUTPUT"
@@ -181,9 +187,13 @@ jobs:
           SHA: ${{ needs.pick.outputs.sha }}
           CI_RUN: ${{ needs.pick.outputs.ci }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PICKED_IN: ${{ needs.pick.outputs.attempt }}
         run: |
+          # A re-run of the failed jobs publishes the commit an earlier attempt picked, and fails if a newer one is green.
+          args=()
+          if [ "$PICKED_IN" != "$GITHUB_RUN_ATTEMPT" ]; then args+=(--reused-pick); fi
           node tools/build/current.mjs publish --media media --source built --sha "$SHA" --ci "$CI_RUN" --run "$RUN" \
-            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY"
+            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
 
   # A pull request's run: the same step as a dry run, with read-only access.
   dry-run:

@@ -10,8 +10,9 @@
  * refuses the move, never turning the release into a draft, and finishing a run that stopped halfway), uploads only
  * changed files, deletes the ones no target names, and keeps a failed target's last files with their commit while
  * they are still those bytes; it never steps back to an older commit, never publishes one off main, stops when it
- * cannot read what the release holds, builds the newest green commit whichever run starts, and a dry run writes
- * nothing. It also holds the
+ * cannot read what the release holds or GitHub cannot answer, never leaves the release without its record (gh's
+ * --clobber deletes before it uploads), builds the newest green commit whichever run starts (and says so in red when
+ * a re-run of failed jobs could not), and a dry run writes nothing. It also holds the
  * workflow: what starts it, the two workflows it calls with the commit (and that a call never cancels or is cancelled
  * by their own runs), its access, and the bare Windows executables' names, which once collided on a release.
  * What breaks if it is removed? The downloads could step back, publish an untested commit, lose a platform's files
@@ -58,7 +59,9 @@ const ciUrl = (sha: string) => `https://github.com/${REPO}/actions/runs/${parseI
  * far as they are known: a tag is not moved across a change to a workflow file (each commit's workflow files are
  * named by `workflows`, the same for all unless given), a tag is not made at a commit whose workflow files differ from
  * main's tip, and deleting the tag a release stands on turns the release into a draft (`everDraft` remembers it).
- * `fail` lets a test make any call fail. Every call is logged; `writes` are the calls that change anything.
+ * An upload with --clobber deletes the old file before it uploads the new one, as gh does. `fail` lets a test make any
+ * call fail, `failUpload` an upload after its old file is gone. Every call is logged; `writes` are the calls that change
+ * anything.
  */
 interface Release { id: number; tag: string; draft: boolean; title: string; notes: string; prerelease: boolean; latest: boolean; assets: Map<string, Asset> }
 
@@ -73,6 +76,8 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
     release: null as Release | null,
     everDraft: false,
     fail: null as ((argv: string[]) => GhResult | null) | null,
+    // As gh does with --clobber: the old file is deleted first, then the new one uploaded, which this can fail.
+    failUpload: null as ((name: string) => boolean) | null,
     calls: [] as string[][],
     writes: [] as string[][],
     nextAsset: 100,
@@ -116,7 +121,7 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
       k = /^releases\/tags\/([a-z-]+)$/.exec(p)
       if (k) {
         const rel = live(k[1])
-        return rel ? ok({ id: rel.id, tag_name: rel.tag, assets: [...rel.assets.values()].map(({ id, name, size, digest }) => ({ id, name, size, digest })) }) : missing
+        return rel ? ok({ id: rel.id, tag_name: rel.tag, body: rel.notes, assets: [...rel.assets.values()].map(({ id, name, size, digest }) => ({ id, name, size, digest })) }) : missing
       }
       k = /^releases\/assets\/(\d+)$/.exec(p)
       if (k) {
@@ -175,6 +180,8 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
         assert.ok(argv.includes('--clobber'))
         for (const f of argv.slice(3).filter((a) => !a.startsWith('--') && a !== REPO)) {
           const body = readFileSync(f)
+          rel.assets.delete(basename(f))
+          if (s.failUpload?.(basename(f))) return { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' }
           rel.assets.set(basename(f), { id: s.nextAsset++, name: basename(f), size: body.length, digest: `sha256:${sha256(body)}`, body })
         }
         return ok('')
@@ -320,7 +327,7 @@ test('a first publish makes the tag at the commit, then the release as a pre-rel
     assert.match(rel.notes, new RegExp(`\\*\\*Commit\\*\\* \\[\`${c1.slice(0, 7)}\`\\]\\(https://github\\.com/${REPO}/commit/${c1}\\) on main, published 2026-11-13 02:14 UTC by \\[this run\\]\\(https://run\\)\\.`))
     for (const id of IDS) assert.match(rel.notes, new RegExp(`^\\| ${c.LABELS[id].replace(/[()]/g, '\\$&')} \\| \\[`, 'm'), id)
     assert.match(rel.notes, /\[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\)/)
-    assert.match(rel.notes, /The apps' file names carry the version in `package\.json` at this commit \(`1\.0\.0-stable-beta`\)/)
+    assert.match(rel.notes, /The apps' file names carry the version in `package\.json` at the commit they were built from \(`1\.0\.0-stable-beta` at this one\)/)
     assert.match(rel.notes, /the zipped macOS `\.app`, the UEFI files and images, and the notices beside them carry none/)
     assert.match(rel.notes, /`SHA256SUMS` lists every file here but itself and `current\.json`/)
     assert.doesNotMatch(rel.notes, /is still at/, 'the tag is where the files are from')
@@ -450,7 +457,7 @@ test('the tag across a workflow change: GitHub refuses the move, so the release 
   } finally { t.done() }
 })
 
-test('when GitHub refuses the stand-in too (a later commit changed a workflow), the tag stays, the files are published, the notes say where the tag is, and the next publish moves it', () => {
+test('when GitHub refuses the stand-in too (a later commit changed a workflow), the tag stays, the files are published, the notes say where the tag is, and a later publish moves it once GitHub allows', () => {
   const t = scratch()
   try {
     const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
@@ -524,9 +531,9 @@ test('it stops, writing nothing, when it cannot read the release\'s current.json
     // The release's commit against this one (whether c2 is still on main is asked first, and answered).
     gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c1}...${c2}`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
     assert.throws(() => c.publish({ media, stage: join(t.dir, 's3'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .*, which the release holds, with .*: nothing was published/)
-    // And a commit GitHub cannot place on main is refused, as one off main is.
+    // And when GitHub cannot say whether the commit is on main, it stops rather than guess.
     gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c2}...`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
-    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3b'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /is not on main any more: nothing was published/)
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3b'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .* with main's tip .*: nothing was picked or published/)
     gh.s.fail = null
     assert.equal(gh.s.writes.length, writes, 'nothing written')
     assert.ok(gh.s.release?.assets.has('Crimson.Noir.Agent.City_1.0.0-stable-beta_arm64.deb'), 'linux-arm64\'s last file is still there')
@@ -545,6 +552,162 @@ test('it stops, writing nothing, when it cannot read the release\'s current.json
     assert.ok(!gh.s.release?.assets.has('crimson_noir_os.img'), 'a file whose bytes nobody recorded is not offered')
     assert.doesNotMatch(gh.s.release?.assets.get('SHA256SUMS')?.body.toString('utf8') ?? '', /crimson_noir_os\.img/)
   } finally { t.done() }
+})
+
+test('a run stopped halfway with current already remade is put back on current without deleting it, even when GitHub would refuse to make it again', () => {
+  const t = scratch()
+  try {
+    const [b, cc, d] = [commitOf(11), commitOf(12), commitOf(13)]
+    const gh = fakeGitHub([commitOf(10)])
+    c.publish({ media: artifacts(join(t.dir, 'm0'), allBuilt('a')), stage: join(t.dir, 's0'), sha: commitOf(10), repo: REPO, log: quiet }, gh.gh)
+    gh.s.history.push(b)
+    gh.s.workflows[b] = 'w1'
+    // The swap gets as far as making current at b; setting the release back on it fails.
+    let backOn = 0
+    gh.s.fail = (argv) => (argv.includes('tag_name=current') && ++backOn ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('b')), stage: join(t.dir, 's1'), sha: b, repo: REPO, log: quiet, wait: 0 }, gh.gh), /set the release on the tag current/)
+    assert.equal(gh.s.release?.tag, 'current-next')
+    assert.equal(gh.s.tag, b)
+    gh.s.fail = null
+    // cc merges (no workflow change) and passes ci; d changes a workflow and has not: GitHub would refuse a tag at cc.
+    gh.s.history.push(cc, d)
+    Object.assign(gh.s.workflows, { [cc]: 'w1', [d]: 'w2' })
+    const r = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('c')), stage: join(t.dir, 's2'), sha: cc, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r.status, 'published', 'the files go up')
+    assert.deepEqual(r.tag, { at: cc, how: 'moved' }, 'b and cc share their workflow files, so the tag simply moves')
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.deepEqual([...gh.s.refs.entries()], [['current', cc]], 'the stand-in is tidied away')
+    assert.equal(gh.s.everDraft, false)
+  } finally { t.done() }
+})
+
+test('the record is never missing: an upload of current.json that fails after gh deleted the old one leaves current.next.json, so the next run keeps a failed target\'s files and still refuses an older commit', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([commitOf(0), c1, c2, c3], { green: [c1, c2] })
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    assert.ok(!gh.s.release?.assets.has('current.next.json'), 'a finished publish leaves no staged record')
+    gh.s.failUpload = (name) => name === 'current.json'
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload current\.json/)
+    gh.s.failUpload = null
+    const assets = gh.s.release?.assets
+    assert.ok(assets && !assets.has('current.json') && assets.has('current.next.json'))
+    const staged: State = JSON.parse(assets.get('current.next.json')?.body.toString('utf8') ?? '{}')
+    assert.equal(staged.commit, c2)
+    // pick sees that publish did not finish, and builds c2 again rather than call it done.
+    assert.equal(c.pick({ sha: c2, repo: REPO }, gh.gh).sha, c2)
+    // An older commit is still refused, by the staged record.
+    assert.equal(c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('x')), stage: join(t.dir, 's3'), sha: c1, repo: REPO, log: quiet }, gh.gh).status, 'stale')
+    // c3 with linux-arm64 failed keeps c2's arm64 file.
+    const noArm = allBuilt('c')
+    delete noArm['matrix-linux-arm64']
+    const r = c.publish({ media: artifacts(join(t.dir, 'm4'), noArm), stage: join(t.dir, 's4'), sha: c3, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.equal(r.plan.state.targets['linux-arm64'].commit, c2)
+    assert.ok(gh.s.release?.assets.has('current.json') && !gh.s.release?.assets.has('current.next.json'))
+    // A release with files and no record at all (deleted by hand) is not taken for an empty one.
+    gh.s.release?.assets.delete('current.json')
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm5'), allBuilt('d')), stage: join(t.dir, 's5'), sha: c3, repo: REPO, log: quiet }, gh.gh), /holds files but neither current\.json nor current\.next\.json/)
+  } finally { t.done() }
+})
+
+test('pick builds a commit again when its publish stopped after writing the record (files left to delete, notes not written), and stops, red, when GitHub cannot say whether a commit is on main', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([c1, c2, c3], { green: [c1, c2] })
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    gh.s.fail = (argv) => (argv[1] === 'delete-asset' && argv[3] !== 'current.next.json' ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b', '1.0.1-stable-beta')), stage: join(t.dir, 's2'), source: source(join(t.dir, 'src2'), '1.0.1-stable-beta'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /delete Crimson/)
+    gh.s.fail = null
+    assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c2, 'the record says c2')
+    assert.equal(c.pick({ sha: c2, repo: REPO }, gh.gh).sha, c2, 'but the old version\'s files are still there: build it again')
+    c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('b', '1.0.1-stable-beta')), stage: join(t.dir, 's3'), source: source(join(t.dir, 'src3'), '1.0.1-stable-beta'), sha: c2, repo: REPO, log: quiet }, gh.gh)
+    assert.match(c.pick({ sha: c2, repo: REPO }, gh.gh).skip, /already holds .* for every target/)
+
+    gh.s.green.add(c3)
+    gh.s.history.push(commitOf(4))
+    gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c3}...`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.pick({ sha: c3, repo: REPO, wait: 0 }, gh.gh), /GitHub could not compare/, 'not skipped for want of an answer')
+    const err: string[] = []
+    const error = console.error
+    console.error = (...a: unknown[]) => { err.push(a.join(' ')) }
+    try {
+      assert.equal(c.main(['pick', '--sha', c3, '--repo', REPO], (argv: string[]) => (argv[argv.length - 1].includes('/compare/') ? { ok: false, out: '', err: 'gh: Not Acceptable (HTTP 406)' } : gh.gh(argv))), 1)
+    } finally { console.error = error }
+    assert.match(err.join('\n'), /::error::GitHub could not compare/)
+  } finally { t.done() }
+})
+
+test('tag steps GitHub half-answers: a make whose answer was lost counts once the tag is there, a rate limit is not a refusal, a rule that forbids deleting the tag stops before anything changes, and a leftover stand-in is tidied away', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3, c4] = [commitOf(1), commitOf(2), commitOf(3), commitOf(4)]
+    const gh = fakeGitHub([commitOf(0), c1])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    gh.s.history.push(c2)
+    gh.s.workflows[c2] = 'w1'
+    // The stand-in's make lands, but its answer is lost; the retry hears "already exists".
+    let lost = true
+    const base = gh.gh
+    const flaky: Gh = (argv) => {
+      if (lost && argv.includes('ref=refs/tags/current-next')) { lost = false; base(argv); return { ok: false, out: '', err: 'gh: connection reset' } }
+      return base(argv)
+    }
+    const r2 = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, flaky)
+    assert.deepEqual(r2.tag, { at: c2, how: 'remade' })
+    assert.deepEqual([...gh.s.refs.keys()], ['current'])
+
+    // A secondary rate limit on the move is not taken for GitHub refusing the token: the run stops, nothing changed.
+    gh.s.history.push(c3)
+    gh.s.workflows[c3] = 'w2'
+    const fileWrites = () => gh.s.writes.filter((w) => w[0] === 'release').length
+    const before = fileWrites()
+    gh.s.fail = (argv) => (argv.includes('PATCH') && argv[argv.length - 1].endsWith('git/refs/tags/current') ? { ok: false, out: '', err: 'gh: You have exceeded a secondary rate limit (HTTP 403)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('c')), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet, wait: 0 }, gh.gh), /move the tag current to .*rate limit/)
+    // A tag rule that forbids deleting current stops the swap: the release goes straight back onto current, untouched.
+    gh.s.fail = (argv) => (argv.includes('DELETE') && argv[argv.length - 1].endsWith('git/refs/tags/current') ? { ok: false, out: '', err: 'gh: Repository rule violations found: Cannot delete this tag (HTTP 422)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm4'), allBuilt('c')), stage: join(t.dir, 's4'), sha: c3, repo: REPO, log: quiet, wait: 0 }, gh.gh), /delete the tag current: .*Repository rule violations/)
+    assert.equal(gh.s.tag, c2, 'current was not touched')
+    assert.equal(gh.s.release?.tag, 'current', 'the release is back on it')
+    assert.deepEqual([...gh.s.refs.keys()], ['current'], 'and the stand-in is gone')
+    assert.equal(fileWrites(), before, 'no file was uploaded or deleted in either try')
+    gh.s.fail = null
+    const r4 = c.publish({ media: artifacts(join(t.dir, 'm5'), allBuilt('c')), stage: join(t.dir, 's5'), sha: c3, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r4.status, 'published')
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.equal(gh.s.tag, c3)
+    assert.equal(gh.s.everDraft, false)
+
+    // A stand-in whose deletion failed is tidied by the next publish, whose tag simply moves.
+    gh.s.refs.set('current-next', c3)
+    gh.s.history.push(c4)
+    gh.s.workflows[c4] = 'w2'
+    const r5 = c.publish({ media: artifacts(join(t.dir, 'm6'), allBuilt('d')), stage: join(t.dir, 's6'), sha: c4, repo: REPO, log: quiet }, gh.gh)
+    assert.deepEqual(r5.tag, { at: c4, how: 'moved' })
+    assert.deepEqual([...gh.s.refs.keys()], ['current'])
+  } finally { t.done() }
+})
+
+test('a re-run of the failed jobs, which keeps an earlier attempt\'s pick, fails when a newer commit on main is green, so someone runs the workflow by hand', () => {
+  const t = scratch()
+  const err: string[] = []
+  const error = console.error
+  console.error = (...a: unknown[]) => { err.push(a.join(' ')) }
+  try {
+    const [c1, c2] = [commitOf(1), commitOf(2)]
+    const gh = fakeGitHub([c1, c2], { green: [c1, c2] })
+    const run = (sha: string, dir: string, extra: string[]) => c.main(['publish', '--repo', REPO, '--media', artifacts(join(t.dir, dir), allBuilt(dir)), '--sha', sha, '--stage', join(t.dir, `s-${dir}`), ...extra], gh.gh)
+    assert.equal(run(c1, 'a', ['--reused-pick']), 1)
+    assert.match(err.splice(0).join('\n'), new RegExp(`::error::this re-run kept the commit an earlier attempt picked, ${c1}; ${c2} is newer and ci passed on it`))
+    assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c1, 'what it built is still published')
+    assert.equal(run(c2, 'b', ['--reused-pick']), 0, 'the newest green: nothing to say')
+    assert.equal(run(c1, 'c', []), 0, 'a first attempt: stale, and quiet')
+  } finally {
+    console.error = error
+    t.done()
+  }
 })
 
 test('pick: the newest commit on main that ci passed on, whichever commit started the run, unless the release holds it for every target already (force builds it again) or holds a newer one; refused off main or with nothing green', () => {
