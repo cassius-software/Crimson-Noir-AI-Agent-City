@@ -34,6 +34,7 @@ import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhySt
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
+import type { SiteJobState } from '../09_Cognition/siteJob.ts'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
 import type { Chat, ChatTurn, Voice } from './onboarding/voice.ts'
@@ -288,7 +289,9 @@ export interface ConciergeProps {
   noPageModel?: string | null
   /**
    * Optional: the model this site serves beside the page (09_Cognition/siteModel.ts, built by App.tsx), offered when no
-   * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. Null: nothing to offer.
+   * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. The page may get it by itself
+   * too (09_Cognition/siteAuto.ts): either way its one job (siteJob.ts) shows its progress and its Stop here, on the
+   * conversation, on the card's other views and on the chip. Null: nothing to offer.
    */
   siteModel?: SiteModelHost | null
   /** Optional: the lanes of the team the host opened for the brief (08_Swarm/team.ts lines), shown under it as they run. */
@@ -397,18 +400,18 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   /** The site's model on offer (siteModel.offer): undefined until the card first needs it, null where there is none. */
   const [site, setSite] = useState<SiteModelLine | null | undefined>(undefined)
-  /** Getting it: how far it has come, or null. */
-  const [getting, setGetting] = useState<SiteModelProgress | null>(null)
+  /** Getting it (siteJob.ts): the page's one job, started by the tap here or by the page itself, whoever reads it. */
+  const job = useSyncExternalStore(siteModel?.job.subscribe ?? NO_SUBSCRIBE, siteModel?.job.state ?? NO_JOB, NO_JOB)
+  /** How far it has come while it runs, or null. */
+  const getting: SiteModelProgress | null = job?.phase === 'running' ? job : null
   /** Why the last try to get it ended short (a plain sentence), or ''. */
-  const [gotWhy, setGotWhy] = useState('')
-  /** Whether the card has shown that reason: one that came while the card was away keeps the conversation for it. */
-  const [whySeen, setWhySeen] = useState(true)
+  const gotWhy = job?.phase === 'failed' ? job.why : ''
+  /** The last tapped try that ended short whose reason the card has shown: one that came while the card was away keeps
+   *  the conversation for it (a try the page started by itself says why in a toast, and never opens the card). */
+  const [whySeenId, setWhySeenId] = useState(0)
+  const whySeen = !(job?.phase === 'failed' && job.how === 'tap' && job.id !== whySeenId)
   /** The model has just arrived and the last turn is asked again: the wait says it is starting, not thinking. */
   const [starting, setStarting] = useState(false)
-  const getCtl = useRef<AbortController | null>(null)
-  /** The file has been handed to the copy into the page, which runs to its end: a Stop from then on does nothing. */
-  const handed = useRef(false)
-  useEffect(() => () => getCtl.current?.abort(), [])
   /** Whether the card is on a conversation, read when a download ends minutes after the render that started it. */
   const onChat = useRef(false)
   useEffect(() => { onChat.current = dialogue.brief?.chat === true })
@@ -437,52 +440,35 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const a = document.activeElement
     if (!a || a === document.body || cardRef.current?.contains(a)) refocusKeys()
   }
-  /** The tap: the site's model downloaded, checked and kept (or, kept already, chosen), then the last turn asked again. */
+  /** The tap: the site's model downloaded, checked and kept (or, kept already, chosen); its end is met below. */
   const getSite = () => {
     if (!siteModel || getting) return
-    const ctl = new AbortController()
-    getCtl.current?.abort()
-    getCtl.current = ctl
-    setGotWhy('')
-    setWhySeen(true)
-    setGetting({ step: 'download', done: 0, total: 0 })
-    handed.current = false
     refocusKeys()
-    siteModel.get((p) => {
-      if (ctl.signal.aborted) return
-      if (p.step === 'keep') handed.current = true
-      setGetting(p)
-    }, ctl.signal).then(() => {
-      if (ctl.signal.aborted) return
-      getCtl.current = null
-      setGetting(null)
+    void siteModel.job.start('tap')
+  }
+  // How each job ended, met once, whoever started it: kept, so the offer says so and a conversation still on the card
+  // is asked again (a goal typed since is the visitor's next thing, and an answer to an old turn would come where
+  // nothing shows it); and back to the field after the visitor's own tap.
+  const endMet = useRef(0)
+  const meetEnd = useEffectEvent((end: SiteJobState) => {
+    if (end.phase === 'done') {
       setSite((v) => (v ? { ...v, kept: true } : v))
-      // Only a conversation still on the card is asked again: a goal typed since is the visitor's next thing, and an
-      // answer to an old turn would come where nothing shows it.
       if (onChat.current && turnsRef.current.at(-1)?.who === 'you') {
         setStarting(true)
         askTurns(turnsRef.current)
       }
-      refocusAtEnd()
-    }, (e: unknown) => {
-      if (getCtl.current === ctl) getCtl.current = null
-      setGetting(null)
-      if (!ctl.signal.aborted) {
-        setGotWhy(e instanceof Error ? e.message : String(e))
-        setWhySeen(false)
-      }
-      refocusAtEnd()
-    })
-  }
-  /** Stop while it downloads: nothing is kept, and the offer is back. */
+    }
+    if (end.how === 'tap') refocusAtEnd()
+  })
+  useEffect(() => {
+    if (!job || job.phase === 'running' || job.id === endMet.current) return
+    endMet.current = job.id
+    meetEnd(job)
+  }, [job])
+  /** Stop while it downloads: nothing is kept, and the offer is back. Once the file is handed to the copy it runs to
+   *  its end (it is kept and chosen): a Stop still on screen for that frame does nothing (siteJob.ts stop). */
   const stopGetting = () => {
-    // Once the file is handed to the copy it runs to its end (it is kept and chosen): a Stop still on screen for that
-    // frame does nothing, rather than bring the offer back over a model that is being kept.
-    if (handed.current) return
-    getCtl.current?.abort()
-    getCtl.current = null
-    setGetting(null)
-    refocusKeys()
+    if (siteModel?.job.stop('person')) refocusKeys()
   }
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
@@ -501,7 +487,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   // Adjusted while rendering: a reply is seen once the card shows it.
   if (visible && talking && talk && talk.state !== 'waiting' && talk.id !== seenTalk) setSeenTalk(talk.id)
   // Adjusted while rendering: so is the reason a download ended short, once the card shows it.
-  if (!whySeen && visible && talking && talk?.state === 'none' && gotWhy !== '' && getting === null) setWhySeen(true)
+  if (!whySeen && job && visible && talking && talk?.state === 'none' && gotWhy !== '' && getting === null) setWhySeenId(job.id)
   const sayRef = useRef(onSay)
   const saidRef = useRef('')
   useEffect(() => { sayRef.current = onSay }, [onSay])
@@ -810,31 +796,61 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   if (view === 'chip') {
     const pending = !name && !skipped
     const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
-    const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
+    // While the site's model is got the chip grows a second row for it (its progress and its Stop); its foot, published
+    // above, follows.
+    const pill = `pointer-events-auto absolute ${at} flex ${getting ? 'flex-col items-stretch rounded-2xl' : 'items-center rounded-full'} border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
     // shortTouch's other measures read --chip-top, so the walk's top replaces that, not `top`.
     const style: CSSProperties | undefined = chipTop ? { top: chipTop } : walkTop ? ({ '--chip-top': walkTop } as CSSProperties) : undefined
+    const strip = getting && (
+      <div className={`flex items-center gap-2 border-t py-1 pr-3 pl-2.5 ${rule}`} data-site-strip={getting.step}>
+        <span className={`min-w-0 flex-1 truncate tabular-nums ${muted}`}>{stripLine(getting)}</span>
+        <span role="progressbar" aria-label={getting.step === 'download' ? `Downloading ${CONCIERGE_NAME}’s model` : `Keeping ${CONCIERGE_NAME}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+          className={`block h-1 w-10 shrink-0 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
+          <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+        </span>
+        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={`shrink-0 font-medium underline-offset-2 hover:underline ${muted}`} data-action="stop-model">Stop</button>}
+      </div>
+    )
+    const ask = (
+      <>
+        <SloaneMark size={24} />
+        <span className="font-semibold">{SLOANE.name}</span>{' '}
+        <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
+      </>
+    )
+    const buttons = (
+      <>
+        <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
+          <SloaneMark size={24} />
+          <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
+        </button>
+        <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
+          Controls
+        </button>
+        {onLook && (
+          <button type="button" onClick={onLook} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-look">
+            Look
+          </button>
+        )}
+      </>
+    )
     return (
       <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
-        {pending ? (
+        {pending && !strip ? (
           <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
-            <SloaneMark size={24} />
-            <span className="font-semibold">{SLOANE.name}</span>{' '}
-            <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
+            {ask}
           </button>
+        ) : pending ? (
+          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
+            <button type="button" onClick={askForName} className="flex min-w-0 items-center gap-2 py-1 pr-3.5 pl-1" data-concierge="chip">
+              {ask}
+            </button>
+            {strip}
+          </div>
         ) : (
           <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
-            <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
-              <SloaneMark size={24} />
-              <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
-            </button>
-            <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
-              Controls
-            </button>
-            {onLook && (
-              <button type="button" onClick={onLook} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-look">
-                Look
-              </button>
-            )}
+            {strip ? <div className="flex min-w-0 items-center">{buttons}</div> : buttons}
+            {strip}
           </div>
         )}
       </div>
@@ -1148,6 +1164,17 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
         </div>
       </div>
 
+      {getting && !(talking && talk?.state === 'none') && (
+        <div className={`${tight ? 'mt-2 pt-2' : 'mt-3 pt-2.5'} flex items-center gap-3 border-t ${rule}`} data-site-strip={getting.step}>
+          <span className={`min-w-0 shrink-0 text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
+          <span role="progressbar" aria-label={getting.step === 'download' ? `Downloading ${SLOANE.name}’s model` : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+            className={`block h-1 min-w-8 flex-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
+            <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+          </span>
+          {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} data-action="stop-model">Stop</button>}
+        </div>
+      )}
+
       {notice && (
         <p className={`${tight ? 'mt-2 pt-2' : 'mt-3.5 pt-2.5'} border-t text-[10px] leading-snug ${rule} ${muted}`} data-notice="orc">
           {ORC_AFTER === undefined ? ORC_NOTICE : <>{ORC_BEFORE}<span className="whitespace-nowrap">{ORC_REGISTRATION}</span>{ORC_AFTER}</>}
@@ -1188,6 +1215,15 @@ function PlanList({ title, steps, ticked, dark }: { title: string; steps: readon
 }
 
 /** Beside the local-server hint: a page not served from this computer is answered by Ollama only once its origin is allowed. */
+/** No site's model: nothing to subscribe to, and no job (useSyncExternalStore's stand-ins, the same functions every render). */
+const NO_SUBSCRIBE = (): (() => void) => () => undefined
+const NO_JOB = (): SiteJobState | null => null
+
+/** The strip's short line, where the conversation does not show the full one: the chip and the card's other views. */
+function stripLine(p: SiteModelProgress): string {
+  return p.step === 'download' ? `${CONCIERGE_NAME}’s model · ${percent(p)}%` : `Keeping ${CONCIERGE_NAME}’s model · ${percent(p)}%`
+}
+
 /** How far getting the site's model has come, as a whole percent. */
 function percent(p: SiteModelProgress): number {
   return p.total > 0 ? Math.min(100, Math.max(0, Math.floor((p.done / p.total) * 100))) : 0

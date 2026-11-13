@@ -15,6 +15,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The web copy gets Sloane's model by itself.** Once the city is on screen (the veil gone, the city not halted, the
+  tab in view), a page on the web copy that can run and keep a model gets the model the site serves beside it (Qwen2.5
+  0.5B Instruct, Apache-2.0) with no click, checked against its pin exactly as the tap's download is, and keeps it
+  without changing the provider, so a model server on this machine still answers first
+  (`src/09_Cognition/siteAuto.ts`, `App.tsx siteAuto`). It holds back, with its reason in one console line, when this
+  browser cannot run a model in the page, when another provider or a model file of your own is chosen, when the model
+  is kept already, when the browser cannot keep files for the page, when the browser says it saves data, is on mobile
+  data or has a 2G connection (only Chrome on Android says mobile data), when another tab is getting it, when the
+  visitor stopped it before (remembered in this browser), and after tries that ended short (an hour, then a day, then
+  for good after three, or after the page closed twice mid-way). The tap and the page share one job
+  (`src/09_Cognition/siteJob.ts`), so its line, bar and **Stop** show on Sloane's chip as well as her card; a
+  connection that turns costly on the way stops it; a page's own try that ends short says why in a toast and the card
+  still offers the tap. `siteAuto.test.ts` and `siteJob.test.ts` hold the rules, the record and the job, `chat.test.ts`
+  the wiring, and the browser smoke's `sitemodel` scenario drives it in Chrome against a web copy served from this
+  machine with a tiny model under a swapped pin: the download starting with no click, its Stop remembered over a
+  reload, a fresh browser keeping the model by itself and Sloane answering with it, and a flipped byte ending the try
+  with the tap still offered. Not verified: a real download from GitHub Pages, any real phone, and how a phone's
+  browser reports its connection.
 - **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
   heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to
   31 are spare and refused. Option 0 is as before, so every chosen look keeps its code. A heel is a tapered tube under

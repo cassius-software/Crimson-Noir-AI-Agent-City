@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 // Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
- * Why does this file exist? It puts the site's model beside the web copy (dist-web/models/), the one model a visitor
- * can get in a tap on Sloane's card, and never anywhere else: the page file (dist/), the Windows app and the release
+ * Why does this file exist? It puts the site's model beside the web copy (dist-web/models/), the one model the page
+ * gets by itself once the city is on screen (src/09_Cognition/siteAuto.ts) or a visitor gets in a tap on Sloane's card,
+ * and never anywhere else: the page file (dist/), the Windows app and the release
  * builds carry no model. The pin is the page's own (src/09_Cognition/siteModel.ts SITE_MODEL: the file's name, size
  * and SHA-256, and the Hugging Face repository and revision it comes from), so the page and the folder can never
  * disagree about which model is served.
