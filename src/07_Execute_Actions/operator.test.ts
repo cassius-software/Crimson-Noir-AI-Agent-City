@@ -658,6 +658,32 @@ test('operatorBridge features: read while locked; steered by the operator alone;
   assert.ok(sim.calls.every((c) => !/kernel|vehicles|laws|bouncer|sanctuary/.test(c)), sim.calls.join(', '))
 })
 
+test('operatorBridge features: one person and the crowd are read from the host\'s people sense while locked, write nothing, and say plainly when there is none', () => {
+  const sim = fakeSim()
+  const asked: string[] = []
+  const people = {
+    lines: (agent: number): string[] | null => { asked.push(`lines ${agent}`); return agent === 7 ? ['person 7: Walking the streets.', 'PACE                  [#####.....]  0.47'] : null },
+    crowdLines: (): string[] => { asked.push('crowd'); return ['people: 3 measured (person 0 is your own body)'] },
+  }
+  const op = operatorBridge(sim, new FakeGate(), new FakeMind(), undefined, { contained: () => true, people })
+  assert.equal(op.unlocked(), false)
+  assert.deepEqual(op.features.person(7), ['person 7: Walking the streets.', 'PACE                  [#####.....]  0.47'])
+  assert.equal(op.features.person(8), null)
+  assert.deepEqual(op.features.people(), ['people: 3 measured (person 0 is your own body)'])
+  assert.deepEqual(asked, ['lines 7', 'lines 8', 'crowd'])
+  // Nothing of the city was touched by a read: no knob, no intent, no cull.
+  assert.deepEqual(sim.calls, [])
+  // Without a people sense (a host that keeps no crowd readings): no card, and the crowd says so.
+  const bare = operatorBridge(sim, new FakeGate(), new FakeMind(), undefined, { contained: () => true })
+  assert.equal(bare.features.person(7), null)
+  assert.deepEqual(bare.features.people(), ['people: no reading (this tier was given no crowd)'])
+  // The inspector's about says plainly that the person readings move nobody and are hand-written.
+  const about = op.features.explain().join(' ')
+  assert.match(about, /not a sparse autoencoder/)
+  assert.match(about, /It moves nobody/)
+  assert.match(about, /hand-written, not learned/)
+})
+
 test('operatorBridge elite: a passphrase kept as a salted hash opens NoirScript\'s writes, each through the facade; wrong passphrases are counted; operator lock closes it', () => {
   const sim = fakeSim()
   const kept: string[] = []

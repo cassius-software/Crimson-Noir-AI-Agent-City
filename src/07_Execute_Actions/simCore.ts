@@ -80,10 +80,11 @@ export function primeElapsed(elapsed: number, last: number, now: number): number
   return elapsed + Math.min(Math.max(0, now - last), PRIME_GAP_MS)
 }
 /**
- * Beyond this age (s) a crowd reading is not trusted at all: every car is fed a person at the bumper and holds
- * until the sensor answers again. Younger readings are shortened continuously (#feedHazards).
+ * Beyond this age (s) a crowd reading is not trusted at all: every car is fed a person at the bumper, and every car
+ * nobody sits in holds until the sensor answers again (and a car left with its passage keeps it: vehicles.ts
+ * PASSAGE_SETTLE outlasts this). Younger readings are shortened continuously (#feedHazards).
  */
-const CROWD_STALE_S = 1.0
+export const CROWD_STALE_S = 1.0
 /**
  * A summons the crowd has not taken this long after it was sent, s, was not heard: the person had stepped onto a
  * crosswalk or out of earshot in the moment the request crossed the realms. They are let go.
@@ -643,10 +644,14 @@ export class SimCore {
       if (speed >= RING0.maxVelocity - 0.5) throttle = Math.min(throttle, 0)
       else if (speed <= -(RING0.maxVelocity - 0.5)) throttle = Math.max(throttle, 0)
       limited = throttle !== asked
-      // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel.
-      fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true)
+      // The bouncer vets the driver's intent; what reaches the wheels is what the trigger should feel. A person is
+      // seated at this wheel, so the car passes through people instead of being held for them (laws.ts, source
+      // 'seated'), for as long as the Sanctuary stands: with it switched off (a debug command) nothing would shield a
+      // person from the car, and the First Law holds it like any other.
+      fleet.drive(v, { throttle, brake, steer: v.steer }, d?.handbrake === true, this.#sanctuaryOn)
       trigger = Math.min(1, v.lastCommand.brake / KERNEL.maxBrake)
-      // A thump when the First Law takes the car, or when the driver stands on the brake.
+      // A thump when the First Law takes the car (only with the Sanctuary off: a seated car is otherwise not held), or
+      // when the driver stands on the brake.
       const hold = fleet.bouncer.holding(v.index)
       const fullBrake = brake >= KERNEL.maxBrake && speed > 0.5
       thump = (hold && !this.#holdWas[k]) || (fullBrake && !this.#fullBrakeWas[k])
@@ -908,8 +913,9 @@ export class SimCore {
         // A scripted intent takes a parked car, as a player does; a car with a driver is not taken from them.
         if (v.mode === 'ai') throw new Error(`intent: car ${v.index} has a driver (park it first: setMode parked)`)
         v.mode = 'player'
-        // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. It is ruled after
-        // this step's sensing (step()), so never on a reading one step staler than the player's own controls.
+        // A scripted intent is a player-style command: same Bouncer, same envelope, same latch. Nobody sits in a scripted
+        // car, so it stops for people (only the operator's own controls pass through them). It is ruled after this
+        // step's sensing (step()), so never on a reading one step staler than the player's own controls.
         this.#intents.set(v.index, { throttle: finite(cmd.throttle), brake: finite(cmd.brake), steer: finite(cmd.steer) })
         return
       }
@@ -1177,7 +1183,8 @@ export class SimCore {
    * - "nobody" only ever meant nobody within KERNEL.range: past the latency the envelope absorbs, it is a reading
    *   at the range, aged like any other (someone just beyond it can have closed in).
    * A stale reading therefore only ever brings a person nearer. A car moved (recover) since the reading, a reading
-   * whose dispatch is no longer on record, or a sensor silent for CROWD_STALE_S vouches for nobody: the car holds.
+   * whose dispatch is no longer on record, or a sensor silent for CROWD_STALE_S vouches for nobody: the car holds
+   * (unless a person is seated in it: that car is not held for people at all).
    * Without a crowd (tests) nobody is sensed. Debug overrides apply last.
    */
   #feedHazards(): void {
@@ -1194,7 +1201,7 @@ export class SimCore {
       this.#hazardBehind.fill(Infinity)
       this.#crowdAgeMs = null
     } else if (this.#simTime - r.time > CROWD_STALE_S) {
-      // The sensor has not answered for too long: nobody can be vouched for, so every car holds.
+      // The sensor has not answered for too long: nobody can be vouched for, so every car nobody sits in holds.
       this.#hazardAhead.fill(0)
       this.#hazardBehind.fill(0)
       this.#crowdAgeMs = (this.#simTime - r.time) * 1000
@@ -1291,8 +1298,10 @@ export class SimCore {
       r.heading = fleet.heading(v); r.speed = fleet.speed(v); r.curvature = fleet.curvature(v)
       r.throttle = v.lastCommand.throttle; r.brake = v.lastCommand.brake
       r.preVx = this.#preVel[2 * i]; r.preVz = this.#preVel[2 * i + 1]
-      // The person driving it (the audit exempts only them from its own footprint), or nobody.
+      // The person driving it (the audit exempts only them from its own footprint), or nobody; and whether the Bouncer
+      // ruled its command as theirs this step (a car that passes through people is given no stop to audit).
       r.occupant = this.#driving.indexOf(v)
+      r.seated = fleet.seated(v)
     }
     list.length = vehicles.length
     // Every avatar is a person, id = player. Inside a car the collider is disabled; on foot it is solid unless the

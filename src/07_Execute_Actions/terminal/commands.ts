@@ -25,7 +25,8 @@
  * `topic` reads the unified namespace (05_Observe_Environment/namespace.ts): every reading of the city as a retained
  * topic, listed by filter, read one at a time, walked as a tree, or watched live like `stats`; read-only, like `stats`.
  * `feature` is the feature inspector (09_Cognition/features.ts, through the operator tier's surface): the named
- * readings of the city as one vector, read while locked; `steer`, `clamp`, `release` and `reset` are the operator's.
+ * readings of the city as one vector, read while locked, and each pedestrian's own (`person <n>`, `people`:
+ * 09_Cognition/personFeatures.ts), read while locked too; `steer`, `clamp`, `release` and `reset` are the operator's.
  * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
  * NoirScript's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
  * `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a bounded
@@ -97,7 +98,7 @@ const CORE = [
   { name: 'laws', usage: 'laws', summary: 'the four laws the kernel and the action gate enforce, in rank order' },
   { name: 'kernel', usage: 'kernel', summary: 'interventions per law, Solid->Sensor flips' },
   { name: 'topic', usage: 'topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]', summary: 'the unified namespace: every reading as a retained topic under Enterprise/JCS/Site/AgentCity (~); filter with + for one level and # for the rest' },
-  { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked; steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
+  { name: 'feature', usage: 'feature [list|top <k>|watch|<NAME>|person <n>|people|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]', summary: "the feature inspector: named readings of the city in [0, 1], sparsified and ranked, and of each person in the crowd (person, people); steer and clamp lean the agents' prompts and the tuning knobs (operator)" },
   { name: 'quality', usage: 'quality [auto|lite|peak|-1|0-5]', summary: 'show or set the render quality tier' },
   { name: 'hardware', usage: 'hardware', summary: 'the machine the city sized itself for: its class (phone, desktop, workstation), the adapter and its limits, the lanes simulated, the frame-time percentiles' },
   { name: 'time', usage: 'time [HH[:MM]]', summary: 'show or set the city clock' },
@@ -347,7 +348,7 @@ const ARGS: Record<string, readonly string[]> = {
   boot: ['gui', 'status', 'tty'],
   map: ['city', 'default', 'lakefront', 'status'],
   r0: ['reset', 'words'],
-  feature: ['about', 'clamp', 'list', 'prompt', 'release', 'reset', 'steer', 'top', 'watch', ...FEATURE_IDS].sort(),
+  feature: ['about', 'clamp', 'list', 'people', 'person', 'prompt', 'release', 'reset', 'steer', 'top', 'watch', ...FEATURE_IDS].sort(),
   'feature steer': FEATURE_IDS,
   'feature clamp': FEATURE_IDS,
   'feature release': FEATURE_IDS,
@@ -1418,6 +1419,17 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'about') {
       if (args.length > 1) return fail(usage('feature'))
       return { lines: f.explain().map(sys) }
+    }
+    // One person in the crowd, and the crowd's per-person readings: reads, so they work while locked.
+    if (a === 'person') {
+      const n = Number(args[1])
+      if (args.length !== 2 || args[1].trim() === '' || !Number.isInteger(n) || n < 1) return fail('usage: feature person <n> (person 1 or above; 0 is your own body)')
+      const card = f.person(n)
+      return card ? { lines: card.map(out) } : fail(`feature: nothing measured of person ${n} (no such person, or no crowd has been read: none sent yet, or none in this map)`)
+    }
+    if (a === 'people') {
+      if (args.length > 1) return fail(usage('feature'))
+      return { lines: f.people().map(out) }
     }
     if (a === 'steer' || a === 'clamp') {
       if (args.length !== 3) return fail(`usage: feature ${a} <NAME> <value>`)

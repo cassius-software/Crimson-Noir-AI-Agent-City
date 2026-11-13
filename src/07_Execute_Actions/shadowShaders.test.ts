@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 import {
   ACESFilmicToneMapping, CubeUVReflectionMapping, PCFShadowMap, PMREMGenerator, SRGBColorSpace, Texture,
-  WGSLNodeBuilder, WebGPURenderer, setConsoleFunction, type Camera, type InstancedMesh, type Light, type Material, type Mesh, type Node,
+  WGSLNodeBuilder, WebGPURenderer, setConsoleFunction, type Camera, type HemisphereLight, type InstancedMesh, type Light, type Material, type Mesh, type Node,
   type Object3D, type PointLight, type Scene,
 } from 'three/webgpu'
 import { texture } from 'three/tsl'
@@ -42,7 +42,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { buildWorld, FULL_WORLD, LITE_WORLD } = await import('../01_Initialize_World/world.ts')
+const { buildWorld, CITY_GLOW, FULL_WORLD, LITE_WORLD, NO_REAL_LIGHT } = await import('../01_Initialize_World/world.ts')
 const { CityLightsNode, FIXTURE, LAMP } = await import('../01_Initialize_World/cityLights.ts')
 const { SHADOW_TAPS, SUN_SHADOW } = await import('../01_Initialize_World/sunShadow.ts')
 const { workplaces } = await import('../01_Initialize_World/interiors.ts')
@@ -394,6 +394,41 @@ test('a region\'s tiles share one facade material, and every tile\'s shadow pass
   }
 })
 
+/** The samples of the painted light's picture in one stage (regionWorld.ts paintedGlow names it). */
+const paintSamples = (wgsl: string): number => (wgsl.match(/\btextureSample\w*\(\s*paintedLight\b/g) ?? []).length
+const PAINTED = new Set(['RegionGround', 'RegionSidewalks', 'RegionSidewalkJunctions', 'RegionRoads', 'RegionRoadJunctions', 'RegionMarkings'])
+
+test('a street window\'s painted light: one sample of the picture in the fragment stage of the lawn, the pavement and the asphalt, none in any vertex stage or any other material, none without a window', () => {
+  const renderer = offlineRenderer()
+  const count = (scene: Scene, camera: Camera): Map<string, number> => {
+    const seen = new Map<Material, string>()
+    const out = new Map<string, number>()
+    scene.traverse((o) => {
+      const mesh = o as Mesh
+      if (!mesh.isMesh || seen.has(mesh.material as Material)) return
+      seen.set(mesh.material as Material, mesh.name)
+      const { value: s, logged } = caught(() => build(renderer, scene, camera, mesh, mesh.material as Material))
+      assert.deepEqual(logged, [], `${mesh.name}: three logged nothing while building it`)
+      assert.equal(paintSamples(s.vertex), 0, `${mesh.name}: the picture is never read in a vertex stage`)
+      out.set(mesh.name, paintSamples(s.fragment))
+    })
+    return out
+  }
+  const lit = lakefront(renderer)
+  const samples = count(lit.scene, lit.camera)
+  let painted = 0
+  for (const [name, n] of samples) {
+    if (PAINTED.has(name)) { painted++; assert.equal(n, 1, `${name} reads the picture once`) } else assert.equal(n, 0, `${name} does not read the picture`)
+  }
+  assert.ok(painted >= 3, `the lawn, the pavement and the asphalt were built (${[...samples.keys()].filter((n) => PAINTED.has(n)).join(', ')})`)
+  // A region with no street window has no lamps and no lit lots: no picture, no sample, the materials as they were.
+  const bare = embeddedRegion(renderer)
+  for (const [name, n] of count(bare.scene, bare.camera)) assert.equal(n, 0, `${name}: no window, no picture`)
+  // Nor has the procedural city: its ground paints its pools from the grid (materials.ts lampPool).
+  const city = buildWorld(renderer, SEED)
+  for (const [name, n] of count(city.scene, city.camera)) assert.equal(n, 0, `${name}: the city has no picture`)
+})
+
 /**
  * Runs `fn` with the sky probe's bake stubbed (World.update bakes it through three's PMREMGenerator, which needs a
  * device): the probe is a texture whose pixels nothing here reads.
@@ -482,6 +517,57 @@ test('the lamps are clustered: one lit shader whatever the count of lit lamps, t
   withoutProbe(() => lite.update(23, 0, 320, 320))
   const liteGround = streets(lite.scene)
   assert.doesNotMatch(build(liteRenderer, lite.scene, lite.camera, liteGround, liteGround.material as Material, environment).fragment, /lightIndexes/)
+})
+
+/** The fill's irradiance from the sky's side and from the ground's, linear RGB: the hemisphere light's colours times its intensity. */
+function fillOf(scene: Scene): { sky: number[]; ground: number[] } {
+  const hemi = scene.children.find((o): o is HemisphereLight => (o as HemisphereLight).isHemisphereLight === true)
+  assert.ok(hemi, 'the world has its hemisphere light')
+  return { sky: hemi.color.toArray().map((c) => c * hemi.intensity), ground: hemi.groundColor.toArray().map((c) => c * hemi.intensity) }
+}
+
+test('a night no real lamp lights gains the city\'s glow on its fill: a lite boot always, a full one while its lamps are off, never by day or under lit lamps', () => {
+  const close = (got: number[], want: number[], what: string): void => got.forEach((g, i) => assert.ok(Math.abs(g - want[i]) < 1e-6, `${what}: ${got} is not ${want}`))
+  const plus = (a: number[], b: readonly number[]): number[] => a.map((v, i) => v + b[i])
+  const world = buildWorld(offlineRenderer(), SEED)
+  const at = (hour: number, lamps: number) => { world.setLampLights(lamps); withoutProbe(() => world.update(hour, 0, 320, 320)); return fillOf(world.scene) }
+  // Under lit lamps the night's fill is the sky's own, a few thousandths: the lamps do the rest.
+  const lamps = at(23, 32)
+  close(lamps.sky, [0.004, 0.0056, 0.0088], 'the night sky\'s fill')
+  close(lamps.ground, [0.0012, 0.0012, 0.0014], 'the night ground\'s fill')
+  // With none lit (a headset presenting, a tier that lights no lamp) the glow joins it, whole at full night.
+  const none = at(23, 0)
+  close(none.sky, plus(lamps.sky, CITY_GLOW.sky), 'the glow from the sky\'s side')
+  close(none.ground, plus(lamps.ground, CITY_GLOW.ground), 'the glow from the ground\'s side')
+  assert.ok(CITY_GLOW.sky.every((c, i) => c > 20 * lamps.sky[i]) && CITY_GLOW.ground.every((c) => c > 0.1 && c < 0.5), 'enough to show through the tone curve, far under daylight')
+  // By day there is none, lamps or no lamps.
+  close(at(12, 0).sky, at(12, 32).sky, 'noon')
+  close(at(12, 0).ground, at(12, 32).ground, 'noon')
+  // A lite boot builds no lamp light, so whatever count the governor asks its night has the glow.
+  const lite = buildWorld(offlineRenderer(), SEED, null, LITE_WORLD)
+  lite.setLampLights(128)
+  withoutProbe(() => lite.update(23, 0, 320, 320))
+  close(fillOf(lite.scene).sky, none.sky, 'a lite night')
+  close(fillOf(lite.scene).ground, none.ground, 'a lite night')
+})
+
+test('the painted pools fade only round lit lamps: with none lit (a lite boot, a tier that lights none, the day) the real light\'s focus is off every map', () => {
+  const world = buildWorld(offlineRenderer(), SEED)
+  const real = () => ({ x: world.realLight.focus.value.x, z: world.realLight.focus.value.y, r: world.realLight.radius.value })
+  const at = (hour: number, lamps: number, x = 320, z = 320) => { world.setLampLights(lamps); withoutProbe(() => world.update(hour, 0, x, z)); return real() }
+  const lit = at(23, 32)
+  assert.deepEqual([lit.x, lit.z], [320, 320], 'round the focus while lamps are lit')
+  assert.ok(lit.r > 10 && lit.r < 80, `out to the farthest lit lamp (${lit.r} m)`)
+  for (const [what, r] of [['no lamp lit', at(23, 0)], ['the day', at(12, 32, 900, 900)]] as const) {
+    assert.deepEqual([r.x, r.z, r.r], [NO_REAL_LIGHT, NO_REAL_LIGHT, 0], `${what}: off every map, a radius of 0`)
+  }
+  assert.deepEqual([at(23, 32, 400, 300).x, real().z], [400, 300], 'and back round the focus at night')
+  // The fade is a smoothstep from 1 m to 1.5 m round the focus at a radius of 0: off the map, no texel of any map is in it.
+  assert.ok(NO_REAL_LIGHT > 1e5 && Math.fround(NO_REAL_LIGHT) === NO_REAL_LIGHT, 'far, and exact in a shader\'s float')
+  const lite = buildWorld(offlineRenderer(), SEED, null, LITE_WORLD)
+  lite.setLampLights(128)
+  withoutProbe(() => lite.update(23, 0, 320, 320))
+  assert.deepEqual([lite.realLight.focus.value.x, lite.realLight.focus.value.y, lite.realLight.radius.value], [NO_REAL_LIGHT, NO_REAL_LIGHT, 0], 'a lite boot never lights a lamp')
 })
 
 test('the lakefront metropolis lights its rooms: four fixtures a room under the ceiling, the lamps of its street window clustered', () => {

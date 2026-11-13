@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **What each person in the crowd is doing, read one at a time** (`src/09_Cognition/personFeatures.ts`,
+  `personFeatures.test.ts`). The feature inspector gains a reading of one pedestrian: ten hand-written readings in
+  [0, 1] with a JumpReLU threshold each, from the crowd frames the page already receives (where each person stands,
+  the speed of their last step, the activity the crowd kernel wrote for them) and from the frames before it, read at
+  the same pace as the positions the page already copies (every 250 ms). `STUCK` is metres stepped without getting
+  1 m from where they stood (drained by standing, and read as 0 while waiting, working or standing by where the
+  operator called them); `CROWDED` counts the people within the crowd kernel's own 2.5 m flocking radius; the other
+  eight name the kernel's activities (`SUMMONED` and `ARRIVED` cover a rally point as well as the operator) and the
+  pace. The console takes `feature person <n>` (one person's sentence and rows) and `feature people` (the share of the
+  crowd over each threshold, the stuck ones named), both while locked. A held person's prompt gains one line of what
+  they were measured doing, including what the operator called them away from, which a car's step back on the way
+  does not replace (`08_Swarm/shortTerm.ts` `AgentContext.doing`); absent, the prompt is as before. A surveyed region
+  without a street window, whose crowd the telemetry already counts as nobody, is not read. Nothing is written to the
+  crowd on any kernel, so the narrow and light rungs, the First-Law sensing and the readback are unchanged.
+  `dist/index.html` grows by 7,652 bytes, from 12,059,574 to 12,067,226; the limit in `tools/verify/page_dist.mjs` is
+  unchanged. Seventeen tests, one of them running the reading over `crowd.wgsl` on the CPU (`crowdHost.ts`) through
+  the realm for 15 s of 299 people: every activity decoded matches the realm's own readout, and nobody read `STUCK`.
+  This came from a pasted sparse-autoencoder steering pass that was not merged as written: the per-agent 256-float
+  state it steered does not exist (a pedestrian is 28 floats in `crowd.wgsl`). The rest of that check was done on the
+  pasted files outside the repository and is in the pull request, not in CI.
+
 - **An umbrella and headphones.** The look genome's accessory word (word 6) gains the umbrella at bits 15 and 16
   (none, as before; folding; walking; open) and the headphones at 17 and 18 (none, as before; over-ear; on-ear;
   earbuds). Bits 19 and 20 stay held for the heel; 29 to 31 are spare and refused. Option 0 of each is as before, so
@@ -1798,6 +1819,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   desktop keep their places. The browser smoke's `walkphone` checks the fold, the strip and the Browse chip on a 360 x
   552 page in a shop, and the folded card opened from its strip at the wheel.
 
+- **The car you sit in passes through people instead of stopping for them.** On the live copy the player's car
+  stopped dead in front of anyone in its path: the First Law held every car, the player's included, for a person
+  inside its stopping envelope. Now the car a player sits in, on that player's own controls with the Sanctuary on, is
+  ruled apart (`laws.ts` source `'seated'`): the Bouncer rules it on the Second Law alone, and the fleet's emergency
+  latch and counter-motion guard leave it be (`vehicles.ts` `drive(v, intent, handbrake, seated)`). Nobody is touched
+  instead. Avatars and a rig's shapes never meet a chassis in Rapier, as before; the crowd shader still senses the
+  pedestrians in its corridor and then skips the contact push, the stagger, the step back and the yield for it (a
+  negative corridor reach in the car's slot marks it, `crowdCompute.ts` `packCrowdParams`); the Sanctuary still flips
+  every person it is about to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig
+  beside it. The pass outlives the seat, but only on a car left parked: a car left rolling or among people goes on
+  passing until it has stood 1.25 s (`PASSAGE_SETTLE`, longer than any crowd reading is used for, so the reading that
+  frees it was taken on straight wheels) at rest with nobody within 0.6 m of it, a fallen pedestrian's legs and head
+  included (`ragdollRealm.ts` `peopleInto` gives each rig a reach); a car an AI or a script takes is ordinary at once.
+  Scripted (`intent`), AI-driven and parked cars stop for people as before, and with
+  the Sanctuary switched off the First Law holds the seated car too. The Ring-0 audit still halts the realm for a
+  solid person inside any moving footprint, the seated car's included; only its unguarded-approach check is waived,
+  and only while the kernel's own record carries both the seated ruling and the occupant. Tests: `laws.test.ts`
+  (the seated ruling is the ruling with nobody about, over random readings), `ring0.fuzz.test.ts` (seated, impact and
+  unguarded properties), `vehicles.test.ts` (the seat's lapse, the passage of a car left parked, its settling time, a
+  reach, no reading, an AI taking it), `ragdollRealm.test.ts` (a left car stays a passage while a seated rig's body
+  reaches it though its pelvis is clear), `sanctuary.test.ts` (an avatar passed through at 3, 14 and 30 m/s, never
+  moved, never nudged), `wgslHost.test.ts` (the shader senses them and pushes, staggers and turns back nobody),
+  `simCore.test.ts` and `simPlayers.test.ts` (players passed through at 144, 60 and 20 frames a second; in the same
+  steps a scripted car stops short of one player while the car another player sits in passes through a third). The
+  first walk's fleet card, Sloane's answer to harm, the README, the manual's ethical kernel ("The car you sit in") and
+  the blueprint say so. `dist/index.html` grows by 2,327 bytes, from 12,059,574 to 12,061,901; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Unverified: nobody has driven it on a phone or a GPU yet,
+  and the shader change has run only in the WGSL host the tests use.
+
 - **The crowd's shader writes its hash once and its three cloths once, and the turtleneck reaches up the neck.**
   three's `hash` node was written out inline at every use (110 copies in the suit's near fragment stage, 39 in the
   vertex stage). `crowdBody.ts` `crowdHash` is one WGSL function with the same arithmetic, so each stage carries it
@@ -1997,6 +2047,44 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the stick and the look. Held sideways on foot the HUD's chips at the foot stand between the stick's zone and the
   buttons, wrapping there, so a long shop name cannot reach over the stick or Ping. `walkphone` hit-tests the Browse
   chip's middle and finds the chip there.
+
+- **A phone's Lakefront streets are lit at night, and the people near it are drawn.** On a lite boot (an entry-level
+  phone GPU, the Lite tier) the generated map's street window after dark was lamp heads and shopfronts glowing over
+  black streets, with one or two people in view: a lite boot builds no real lamp light (`world.ts` `LITE_WORLD`), the
+  region's lawn, pavement and asphalt had no painted light (only the procedural city's ground paints its pools), the
+  night's fill is a few thousandths (the tone curve shows it as black), and Lite drew a fixed 15% of the people out
+  to 80 m. Now the window's light is baked once at boot into a picture of the window seen from above, a texel a metre
+  (`src/01_Initialize_World/region/paintedLight.ts`, new; some 50 to 100 ms on this machine for the metropolis
+  window), from what stands there: red, the pool under every lamp's head (the spread of a point of light at the
+  head's height, ending at 16 m, so a crossing between eight lamps and the middle of a block are lit); green, the
+  light every glazed ground floor spills on the ground before it (shopfronts and the glass round every room, shop and
+  home, out to 10 m); blue and alpha, the floors inside the workplaces (shown only while their real fixtures are off)
+  and inside the shops and homes. The lawn, the pavement, the asphalt and the road markings read it with one texture
+  sample as an emissive term (`regionWorld.ts` `paintedGlow`, `PAINT_LIGHT`); a street the map left out has no lamps
+  and no pool; on the tiers that light real lamps the pools fade inside the lit lamps' reach as the city ground's do.
+  On a night no real lamp lights, the hemisphere fill gains the glow of a lit city (`world.ts` `CITY_GLOW`), so trees,
+  poles and people in light clothes keep a dim colour of their own; dark suits stay silhouettes. Lite's crowd draw
+  is now everyone within 45 m and nobody beyond (`governor.ts` `LITE`: density 1, draw distance 45 m, was 0.15 and
+  80 m), so nobody appears from nothing at 14 m; by the tests' own model of the GPU cull it draws 74% of what Minimal
+  draws (it drew 37%), still a step under Minimal (`governor.test.ts` restates the rule as the drawn count, not knob by
+  knob). A lite boot draws the same crowd on Minimal, the top of its automatic range (`governor.ts` `liteCrowd`), so
+  the one step up the governor can take it adds pixels and never thins the street round the visitor. With no lamp
+  lit (a lite boot, a headset, the day) the real light's focus is now off every map (`world.ts` `NO_REAL_LIGHT`): left
+  where the first update put it with a radius of 0, the pools' fade cut a disc a metre or two wide out of the painted
+  pools there for the whole session, on a lite boot right where the visitor started, in the procedural city too. No new render or compute pipeline, no change to the crowd kernels (the phone's kernel memory keeps its key),
+  one 680×680 RGBA texture with mips (about 2.4 MB); `dist/index.html` grows by 4,650 bytes, from 12,059,574 to
+  12,064,224, the limit in `tools/verify/page_dist.mjs` unchanged. Tests: `paintedLight.test.ts` (new) holds the bake
+  to hand-worked scenes and to the metropolis as the page builds it (every lamp head over a lit pool, every crossing
+  lit, every missing street dark, every room, shop and home lit in its channel), the texture's format and the four
+  materials' wiring; `shadowShaders.test.ts` finds one sample of the picture in the fragment stage of each painted
+  material, none in any vertex stage or other material, none without a street window, and the glow on the fill only
+  on nights no lamp lights. Pictures on the software WebGPU adapter (SwiftShader) at 720×1440 on Lite, 18:56 and
+  22:00, before and after from the same places: the street, pavement, lawn strip and road markings lit under the
+  lamps and before the shopfronts, a room's and a shop's floor lit, about nine people in the view that showed two;
+  Minimal and High photographed at night too (after only): the real lamp light round the camera, no pool doubled
+  under a lit lamp. Not fixed here: outside the 640 m street
+  window (15/16 of the map) there are still no lamps, people or cars. Unverified: no phone GPU has drawn it yet, nor
+  has the frame time on a Mali been measured.
 
 - **A newly published build of the web copy is what the next launch runs.** The service worker answered every launch
   from its copy and fetched a new build in the background, so the build a phone ran was always one launch behind the

@@ -174,7 +174,7 @@ test('the input shield: a second flag beside suspend that drops the pad\'s edges
 })
 
 test('the engine: the proposer\'s name, the two city knobs and the air-gap vouch reach the operator tier as senses with voiceOf before the elite vault; the sound loop lives once', () => {
-  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), nameOf, city: this\.cityKnobs\(\), contained: \(\) => airgapInstalled\(globalThis\), voiceOf, vault \}\)/)
+  assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ voice, speech: this\.speechOut\(\), diary, awareness: this\.awareness\(\), people: this\.people, nameOf, city: this\.cityKnobs\(\), contained: \(\) => airgapInstalled\(globalThis\), voiceOf, vault \}\)/)
   assert.match(ENGINE, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{[^}]*voiceOf, vault \}\)/, 'voiceWiring.test.ts\'s pin')
   assert.match(ENGINE, /^import type \{ CityKnobs \} from '\.\.\/06_Make_Decisions\/actions\.ts'$/m, 'a type only: the engine runs no action')
   assert.match(ENGINE, /const nameOf = \(agent: number\): string \| null => this\.nameOfAgent\?\.\(agent\) \?\? null/)

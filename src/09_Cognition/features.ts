@@ -308,6 +308,9 @@ const bar = (v: number): string => {
 }
 const signed = (b: number): string => `${b < 0 ? '-' : '+'}${Math.abs(b).toFixed(2)}`
 
+/** One inspector row without its tags: the id padded to 20, the bar, the value as 0.00 (personFeatures.ts prints the same rows). */
+export const featureRow = (id: string, value: number): string => `${id.padEnd(20)}  ${bar(value)}  ${fixed(value, 2)}`
+
 /**
  * The inspector's rows: the id padded to 20, the bar, the value as 0.00, then `clamp 0.80` and/or `bias +0.50` when
  * steered; the top k (all by default) of the steered, sparsified vector, largest first.
@@ -320,7 +323,7 @@ export function featureLines(acts: Float32Array, s: Steering, k?: number): strin
     const c = f ? entry(s.clamp, f.id) : undefined
     const b = f ? entry(s.bias, f.id) : undefined
     const tags = `${c !== undefined ? `  clamp ${fixed(c, 2)}` : ''}${b !== undefined && b !== 0 ? `  bias ${signed(b)}` : ''}`
-    return `${id.padEnd(20)}  ${bar(value)}  ${fixed(value, 2)}${tags}`
+    return `${featureRow(id, value)}${tags}`
   })
 }
 

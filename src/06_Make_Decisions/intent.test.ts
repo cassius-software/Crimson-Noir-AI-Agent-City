@@ -152,7 +152,7 @@ test('why-questions are chosen by category', () => {
   assert.equal(question('tweak the physics'), 'The console is the operator’s desk: commands and scripts over the running city. Is that what you’re after, or the everyday controls?')
   assert.equal(question("I don't know"), 'No pressure. Would you rather look around, change how the city looks, or how it runs?')
   assert.equal(question('pizza'), null, 'a goal nothing maps to is no dead end: the scouts go, and nothing is asked')
-  assert.equal(question('run people over'), 'Nothing here can hurt anyone — every car stops for people, always. Would you rather look around, change how the city looks, or how it runs?')
+  assert.equal(question('run people over'), 'Nothing here can hurt anyone — cars stop for people, and the one you drive passes through them without touching anyone, always. Would you rather look around, change how the city looks, or how it runs?')
 })
 
 test('why-questions follow the answers by depth', () => {
@@ -420,7 +420,7 @@ test('content rules: 14A wording, no exclamation marks, no syntax in anything th
   }
   // The refusal is pacifist and names no harm the city could do.
   const harm = new FiveWhys('run people over')
-  assert.match(harm.next()?.question ?? '', /^Nothing here can hurt anyone — every car stops for people, always\./)
+  assert.match(harm.next()?.question ?? '', /^Nothing here can hurt anyone — cars stop for people, and the one you drive passes through them without touching anyone, always\./)
   assert.match(harm.brief().unmapped[0], /^Harm to anyone: not something this city can do/)
   assert.deepEqual(harm.brief().plan, [])
 })

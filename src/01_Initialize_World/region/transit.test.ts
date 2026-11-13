@@ -537,7 +537,7 @@ test('the page and the worker build the same network from the same arguments, an
   assert.match(core, /this\.#craft = network && \(streets \|\| !r\) && o\.craft !== false \? new TrackFleet\(network\) : null/)
   assert.match(host, /craftBoxesOf\(init\.craftBoxes, region \? streets : null\)/)
   const world = src('../world.ts')
-  assert.match(world, /regionMeshes\(region\.pack, region\.layout, fbm, night, matrixMode\.globalState, region\.transit \?\? null\)/)
+  assert.match(world, /regionMeshes\(region\.pack, region\.layout, fbm, night, matrixMode\.globalState, region\.transit \?\? null, paint\)/)
   const smoke = src('../../../tools/browser/smoke.mjs')
   assert.match(smoke, /c\.kinds\.train === 1 && c\.kinds\.drone > 0 && c\.kinds\.plane === 1/)
   assert.match(smoke, /m\.name === 'RegionMarkings'/)

@@ -11,7 +11,18 @@
  *
  * In this city every pedestrian and the player's avatar count as people. "Instructions" are the player's
  * controls; AI drivers carry none, so for them the Third Law (keep the vehicle intact) applies directly.
- * What breaks if it is removed? Nothing stops a car from driving into a person.
+ *
+ * One car is ruled apart: the one a person is seated in (source 'seated'). It is not held for people, because it
+ * cannot touch one. No person's body ever pairs with a chassis (collision.ts), the crowd takes no push, no stagger
+ * and no step back from that car (03_Spawn_Agents/crowd.wgsl), the Sanctuary shields whoever it reaches and moves
+ * nobody for it (07_Execute_Actions/sanctuary.ts), and the Ring-0 audit still halts the realm (ring0.ts IMPACT) if a
+ * solid person stands inside its footprint (grown by RING0.contactMargin) while it moves faster than
+ * RING0.movingSpeed (0.5 m/s), or touches it while it closes on them faster than that. A standing car can hold a
+ * person who walked into it; that is harmless, since no chassis ever pairs with a person. Carrying out the seated
+ * person's instruction therefore breaks no First Law, and the Second Law stands for them. Every other car (an AI
+ * driver's, a parked one, one a script or the operator's console drives with nobody in it) is stopped for a person in
+ * its path exactly as before.
+ * What breaks if it is removed? Nothing stops a car nobody sits in from driving into a person.
  */
 import { KERNEL } from './civic.ts'
 
@@ -45,8 +56,13 @@ export const LAW_NAMES: Readonly<Record<GateLaw, string>> = Object.freeze({ 0: '
 export interface Intent { throttle: number; brake: number; steer: number }
 
 export interface Situation {
-  /** Who issued the intent: a person at the controls, or an AI driver. */
-  source: 'ai' | 'player'
+  /**
+   * Who issued the intent. 'ai': an AI driver (and a parked car's own brake). 'player': a person's instruction for a
+   * car nobody sits in (a script's or the console's intent, vehicles.ts drive). 'seated': a person seated at the wheel
+   * (drive with `seated`), whose car passes through people instead of being held for them. Anything else is ruled as
+   * 'ai': the strictest reading.
+   */
+  source: 'ai' | 'player' | 'seated'
   /** Chassis-forward speed, m/s (negative when reversing). */
   speed: number
   /** Metres from the front bumper to the nearest person in the forward corridor (Infinity if none). */
@@ -75,19 +91,26 @@ export function adjudicate(intent: Intent, s: Situation): Ruling {
   const reverse = s.speed < -STILL || intent.throttle < 0
   const stop = (reason: string): Ruling => ({ command: { throttle: 0, brake: KERNEL.maxBrake, steer: intent.steer }, law: 1, reason })
 
-  // First Law: a person inside the stopping envelope (plus standoff) in the direction of travel. Written as "not
-  // clear beyond it", so a reading that is not a number (a person's distance, or the car's own speed) stops the car:
-  // the law fails toward the person, never toward the throttle.
-  if (forward && !(s.personAhead > stoppingDistance(s.speed) + KERNEL.standoff)) {
-    return stop(`First Law: person ${s.personAhead.toFixed(1)} m ahead`)
-  }
-  if (reverse && !(s.personBehind > stoppingDistance(-s.speed) + KERNEL.standoff)) {
-    return stop(`First Law: person ${s.personBehind.toFixed(1)} m behind`)
+  // A person seated at the wheel: their car passes through people (the header says what keeps that harmless), so the
+  // people's distances are not read at all. Only this exact source passes; the car's own speed must still be a number.
+  const seated = s.source === 'seated'
+  if (seated) {
+    if (!Number.isFinite(s.speed)) return stop(`First Law: the car's own speed is ${s.speed}`)
+  } else {
+    // First Law: a person inside the stopping envelope (plus standoff) in the direction of travel. Written as "not
+    // clear beyond it", so a reading that is not a number (a person's distance, or the car's own speed) stops the car:
+    // the law fails toward the person, never toward the throttle.
+    if (forward && !(s.personAhead > stoppingDistance(s.speed) + KERNEL.standoff)) {
+      return stop(`First Law: person ${s.personAhead.toFixed(1)} m ahead`)
+    }
+    if (reverse && !(s.personBehind > stoppingDistance(-s.speed) + KERNEL.standoff)) {
+      return stop(`First Law: person ${s.personBehind.toFixed(1)} m behind`)
+    }
   }
 
   const selfRisk = forward && intent.throttle > 0 && s.obstacleAhead <= stoppingDistance(s.speed, KERNEL.selfDecel) + 1
   // Second Law: a person's instruction stands, even where the Third Law would have intervened.
-  if (s.source === 'player') {
+  if (seated || s.source === 'player') {
     return selfRisk
       ? { command: intent, law: 2, reason: 'Second Law: driver instruction outranks self-preservation' }
       : { command: intent, law: 0, reason: '' }

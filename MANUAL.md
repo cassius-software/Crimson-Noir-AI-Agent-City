@@ -266,13 +266,21 @@ lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on
 on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
 Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
 lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
-whose asphalt has no painted pools, so its streets are lit only where the real light reaches. Every indoor workplace
+and beyond their reach its ground is lit by paint too, from a picture rather than from the grid: the window seen from
+above, a texel a metre, baked once at boot from what stands there (`01_Initialize_World/region/paintedLight.ts`) and
+read by the lawn, the pavement, the asphalt and the road markings with one texture sample. It holds the pool under
+every lamp's head (the spread of a point of light at the head's height: half at 4.5 m, an eighth at 10 m, gone at
+16 m, so a crossing between eight lamps is lit and the middle of a block is not black), the light every glazed ground
+floor spills on the ground before it (shopfronts, and the glass round every room, shop and home, out to 10 m), and the
+lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. Every indoor workplace
 (the city's sixteen glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
 luminaire panel over each, on by day and by night. The
 lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
 lights of its cell, so the tier moves the count without recompiling a shader, and dusk costs no hitch. A lite profile
-builds none of this (every lamp is an emissive head over its pool, the rooms are lit by the sky), and under a headset
-the lamps go back to emissive heads while the headset presents.
+builds none of this: every lamp is an emissive head over its painted pool, a region's rooms are lit by their painted
+floors (the city's by the sky), and the night's fill gains the glow of a lit city (`world.ts` `CITY_GLOW`), since
+paint lights only the ground it is on. Under a headset the lamps go back to emissive heads over their pools while the
+headset presents.
 
 ### Sun shadows
 
@@ -1578,7 +1586,9 @@ anywhere in the product.
   A lower law never overrides a higher one:
   1. **Protect people.** If a person is inside the stopping envelope in the direction of travel, the
      command becomes a full emergency stop, whatever the driver asked for. The envelope is
-     `v·latency + v²/2a`, plus a 1.5 m standoff.
+     `v·latency + v²/2a`, plus a 1.5 m standoff. One car is ruled apart: the car a person sits in at the wheel
+     passes through people instead of stopping for them, because nothing lets it touch anyone (see **The car you
+     sit in**, below). Every scripted, AI-driven or empty car still stops.
   2. **Follow instructions.** Otherwise the player's controls stand, even when the Third Law would
      object.
   3. **Preserve itself.** AI drivers do not throttle into an obstacle they cannot stop for.
@@ -1596,8 +1606,8 @@ anywhere in the product.
 
   A stale reading therefore only ever brings a person nearer. A car moved by `recover` holds until the crowd has
   measured it where it now stands. Scripted intents are ruled on the same step's sensing as the player's own
-  controls. A sensor silent for over a second vouches for nobody, so every car holds. A lost sensor halts the
-  realm.
+  controls. A sensor silent for over a second vouches for nobody, so every car nobody sits in holds. A lost sensor
+  halts the realm.
 - **Sanctuary** (`07_Execute_Actions/sanctuary.ts`). This is the last line of defence, run before
   every Rapier step.
   - A person collider that a moving vehicle is about to reach flips from **Solid to Sensor**, so no
@@ -1610,7 +1620,26 @@ anywhere in the product.
   - The collider becomes solid again once every car is clear.
   - Wheel ray casts ignore sensors, so a car never rides over anyone.
   - The GPU pedestrians are never Rapier bodies, so they carry no kinetic impact to begin with. A car
-    that touches one only pushes them aside into a spring-damper stagger (a "safety nudge").
+    that touches one only pushes them aside into a spring-damper stagger (a "safety nudge"). The car you sit in
+    does not even do that.
+- **The car you sit in** (`07_Execute_Actions/vehicles.ts`, `simCore.ts`). While a person sits at its wheel (a
+  player's car on that player's own controls, with the Sanctuary on), the Bouncer rules it on the Second Law alone, so
+  driving into people does not stop it.
+  - Nobody is touched instead. Avatars and the shapes of a rig never meet a chassis in Rapier (their collision
+    groups); the GPU pedestrians it meets are not pushed, staggered or turned back (the crowd shader still senses
+    them, then skips the contact for a car marked as passing); the Sanctuary still flips every person it is about
+    to reach to Sensor and nudges nobody aside for it; and no pedestrian is promoted to a rig in its way.
+  - It does not wait on the crowd's readings at all, so a silent sensor or a `recover` does not hold it either.
+  - The pass outlives the seat. Leave the car rolling, or among people, and it keeps passing until it has stood
+    parked for 1.25 s (longer than any crowd reading is used for, so the reading that frees it was taken of the car
+    parked, on straight wheels) and stands at rest with nobody within 0.6 m of it, ahead, behind or beside, a fallen
+    pedestrian's legs and head counted as well as where they sit; only then is it solid for people again. A car an
+    AI or a script takes from there is ordinary at once, as their cars always are.
+  - The Ring-0 audit checks it like any car: a solid person inside its moving footprint is a kernel panic. Only the
+    unguarded-approach check is waived, and only while both the seated ruling and its occupant are on the car's
+    record.
+  - Switch the Sanctuary off (debug) and the First Law holds the seated car like any other.
+  - Every other car is held as before: a scripted car beside yours still stops for the person in its lane.
 - **Ring-0 audit** (`02_Define_The_Rules/ring0.ts`). After every physics step, inside the physics worker and
   before any state leaves it (so before anything is rendered or sent to hardware), an independent auditor (plain
   geometry, no Rapier query) checks every vehicle and every Rapier person (each avatar, and each of the thirteen
@@ -1719,7 +1748,8 @@ anywhere in the product.
   is moved onto the sidewalk beside it; a surveyed region keeps it as given) and send their controls in
   `StepRequest.players`, clamped exactly like player 1's (a run at most; NaN or infinite controls are no control).
   Every avatar is a person to every part of the kernel: the Bouncer measures each one exactly (`Fleet.setPeople`:
-  the nearest present person in each car's corridor holds the car, whoever is driving), the Sanctuary registers each
+  the nearest present person in each car's corridor holds the car, unless a player sits at its wheel: that car
+  passes through people instead, see The ethical kernel, "The car you sit in"), the Sanctuary registers each
   as a ward in player order and shields the one a car is about to reach, and the Ring-0 audit lists each with its
   own id, so a car that reaches one halts the realm naming that person; the only person exempt from a car's
   footprint is the player driving it. One driver per car and one car per driver: `interact` and `teleport` take a
@@ -1798,7 +1828,7 @@ while you type.
   counters. `stats --once` prints a single frame.
 - The core commands, as `help` prints them: `help [command]`, `stats [--once]`, `laws`, `kernel`,
   `topic [list [<filter>]|get <topic>|tree [<prefix>]|watch [<filter>]]`,
-  `feature [list|top <k>|watch|<NAME>|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
+  `feature [list|top <k>|watch|<NAME>|person <n>|people|steer <NAME> <-1..1>|clamp <NAME> <0..1>|release <NAME>|reset|prompt|about]`,
   `ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]`, `quality [auto|lite|peak|-1|0-5]`, `hardware`, `time [HH[:MM]]`, `audio [on|off|0-100]`, `ghost [on|off]`, `rain [on|off]`, `xr [vr|ar|off]`, `render [on|off]`,
   `captions [on|off]`, `haptics [on|off]`, `mic [on|off]`,
   `access [contrast auto|high|normal|vision none|protan|deutan|tritan|text 100|125|150|175|200|captions normal|large|huge|dwell on|off|scan on|off|pad both|left|right|announce on|off|reset]`,
@@ -1844,6 +1874,21 @@ while you type.
   nothing to train a dictionary on and nothing to clamp inside the model; every feature is hand-written over the
   city's own counters, and every steering line is fixed text. Steering reaches nothing of the laws, the Sanctuary or
   the Ring-0 auditor: it reads the snapshot and writes knobs through the operator's facade, and nothing else.
+  The same inspector reads one person (`09_Cognition/personFeatures.ts`). `feature person <n>` prints what pedestrian
+  n is measured doing, in one sentence, then a row per reading over its threshold, and `feature people` the share of
+  the crowd over each threshold, naming up to five people who read `STUCK`; both work while locked. The ten readings
+  are functions of what the crowd already sends the page a few times a second (where each person stands, the speed of
+  their last step, the activity the crowd kernel wrote for them) and of the frames before it: `STUCK` (metres stepped
+  without getting 1 m from where they stood, over 8, drained by standing, and read as 0 while waiting, working or
+  standing by), `CROWDED` (other people within the crowd kernel's own 2.5 m flocking radius, over 8), `YIELDING`,
+  `WAITING`, `CROSSING`, `SUMMONED` (on the way to you, or to a rally point you chose), `ARRIVED` (standing by there),
+  `WORKING`, `COMMUTING` (each 1 while the kernel reports that activity) and `PACE`. A car's step back on the way is
+  part of being called over, so it is never taken for what they were called away from. The sentence also goes into
+  the prompt of a person you hold, after where they stand (for example "Standing by for the player; before being
+  called over, working at a station indoors."). A surveyed region without a street window shows no crowd, and nobody
+  in it is read. These readings move nobody: no pedestrian's position, velocity, goal or activity is written, on any
+  crowd kernel, and they are hand-written like the city's, not learned (a pedestrian's whole state is 28 hand-written
+  floats, with no hidden activations to learn from).
 - `map` says which map the city shell walks. `map city` reloads into the procedural city (its 14,000 pedestrians and
   its traffic), `map lakefront` into the generated metropolis (no people or traffic of its own yet), and the choice
   is kept between visits until `map default` forgets it; the desktop app has no address bar, so this is its way to
@@ -3501,9 +3546,11 @@ are no toasts and no settings menu, and the console's `quality` command is the o
   bare `img-tec` only on 4 GB or less, so a D-Series is not lite), or Adreno 5xx and older, and any phone that reports
   2 GB of memory or less. Valhall and Immortalis, Adreno 6xx and newer, Xclipse, iPhones, desktops, laptops, the
   native shell and software rasterizers keep their profiles. A lite profile:
-  - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a thinner,
-    shorter crowd draw (density 0.15, detailed bodies within 8 m, always drawn within 6 m, nobody beyond 80 m). Its
-    automatic range is Lite to Minimal, so it never reaches a tier that needs post or shadows;
+  - starts on **Lite**, tier -1, below Minimal: half the base pixel ratio's edge, no shadows or post, and a smaller
+    crowd draw spent nearby (everyone within 45 m, detailed bodies within 8 m, nobody beyond: no lottery, so nobody
+    appears from nothing a few metres off). Its automatic range is Lite to Minimal, so it never reaches a tier that
+    needs post or shadows, and on Minimal it keeps Lite's crowd (a step up adds pixels, not people far off in place of
+    people near);
   - simulates 2,500 pedestrians and 12 cars unless `?crowd` or `?cars` says (a region's street window still caps the
     cars);
   - boots a lighter city, decided before anything compiles: the post chain capped off as with `?post=0` and never
