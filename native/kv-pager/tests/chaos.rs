@@ -21,7 +21,7 @@ use kv_pager::weights::gguf::{Gguf, UnitKey, WeightIndex};
 use kv_pager::weights::swarm::{group_swarm_by_expert, IoCost, Regime, Route, SwarmScheduler};
 use kv_pager::{AgentId, Eviction, LogOdds, PageError, PageTable, Token, BLOCK_TOKENS};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Barrier, Mutex};
+use std::sync::{Condvar, Mutex, PoisonError};
 
 #[test]
 fn chaotic_streams_keep_every_promise_under_every_keying() {
@@ -147,6 +147,78 @@ fn check_layer(planner: &SwarmScheduler, index: &WeightIndex, layer: u32, routes
     Ok(())
 }
 
+/// A barrier that a panicking thread breaks for everyone: the others' waits return None and they stop, so a regression
+/// that panics in one worker fails the test instead of leaving the rest waiting forever (std's Barrier has no poison).
+struct Rendezvous {
+    n: usize,
+    /// Threads arrived in this round, the round, and whether a thread panicked.
+    state: Mutex<(usize, u64, bool)>,
+    turn: Condvar,
+}
+
+impl Rendezvous {
+    fn new(n: usize) -> Self {
+        Rendezvous { n, state: Mutex::new((0, 0, false)), turn: Condvar::new() }
+    }
+
+    /// Some(true) for the one thread that arrived last (the leader), Some(false) for the others, None once broken.
+    fn wait(&self) -> Option<bool> {
+        let mut g = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if g.2 {
+            return None;
+        }
+        let round = g.1;
+        g.0 += 1;
+        if g.0 == self.n {
+            (g.0, g.1) = (0, round + 1);
+            self.turn.notify_all();
+            return Some(true);
+        }
+        while g.1 == round && !g.2 {
+            g = self.turn.wait(g).unwrap_or_else(PoisonError::into_inner);
+        }
+        (!g.2).then_some(false)
+    }
+
+    fn break_all(&self) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).2 = true;
+        self.turn.notify_all();
+    }
+}
+
+/// Breaks the rendezvous if its thread unwinds.
+struct BreakOnPanic<'a>(&'a Rendezvous);
+
+impl Drop for BreakOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.break_all();
+        }
+    }
+}
+
+#[test]
+fn a_rendezvous_is_broken_for_everyone_when_one_thread_panics() {
+    let rv = Rendezvous::new(4);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::thread::scope(|s| {
+            for t in 0..4 {
+                let rv = &rv;
+                s.spawn(move || {
+                    let _guard = BreakOnPanic(rv);
+                    for round in 0.. {
+                        assert!(!(t == 2 && round == 3), "a worker's regression");
+                        if rv.wait().is_none() {
+                            return;
+                        }
+                    }
+                });
+            }
+        })
+    }));
+    assert!(outcome.is_err(), "the panic reaches the test instead of a hang");
+}
+
 #[test]
 fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_the_table() {
     const THREADS: u32 = 16;
@@ -162,7 +234,7 @@ fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_
     let base: Vec<Token> = (0..2 * BLOCK_TOKENS as Token + 8).collect();
     let (pin, _) = pt.lock().unwrap().pin(&base).unwrap();
     let routes: Mutex<Vec<Route>> = Mutex::new(Vec::new());
-    let barrier = Barrier::new(THREADS as usize);
+    let barrier = Rendezvous::new(THREADS as usize);
     let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let fail = |m: String| failures.lock().unwrap().push(m);
     let refusals = std::sync::atomic::AtomicU64::new(0);
@@ -171,6 +243,7 @@ fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_
             let (pt, routes, barrier, base, index, planner, fail, refusals) =
                 (&pt, &routes, &barrier, &base, &index, &planner, &fail, &refusals);
             s.spawn(move || {
+                let _guard = BreakOnPanic(barrier);
                 for round in 0..ROUNDS {
                     // Spawn: half the agents share every page of the pin (its last page copied when they write into it),
                     // half are admitted with the prompt and a line of their own (its full pages found in the cache).
@@ -208,7 +281,8 @@ fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_
                                 last.insert(r.agent, r.experts.iter().sum());
                             }
                             routes.lock().unwrap().extend(ours);
-                            if barrier.wait().is_leader() {
+                            let Some(leader) = barrier.wait() else { return };
+                            if leader {
                                 let mut all = routes.lock().unwrap();
                                 if let Err(e) = check_layer(planner, index, layer, &all) {
                                     fail(format!("round {round}, step {step}: {e}"));
@@ -218,7 +292,9 @@ fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_
                                     fail(format!("round {round}, step {step}, layer {layer}: {e}"));
                                 }
                             }
-                            barrier.wait();
+                            if barrier.wait().is_none() {
+                                return;
+                            }
                         }
                         // The step's token, appended; an agent the pool cannot grow is released whole.
                         let ids: Vec<AgentId> = mine.keys().copied().collect();
@@ -247,7 +323,9 @@ fn a_swarm_of_1024_agents_routed_to_experts_on_one_pinned_prefix_never_corrupts_
                         g.release(*a).unwrap();
                     }
                     drop(g);
-                    barrier.wait();
+                    if barrier.wait().is_none() {
+                        return;
+                    }
                 }
             });
         }

@@ -36,6 +36,16 @@ const MAX_ARRAY_DEPTH: u32 = 8;
 const MIN_TENSOR_RECORD: u64 = 8 + 4 + 4 + 8;
 /// The smallest a metadata pair can be: key length, value type, a one-byte value.
 const MIN_KV_RECORD: u64 = 8 + 4 + 1;
+/// The most header `Gguf::open` reads. Real headers are a few MiB (a vocabulary of 256k tokens and its merges); a
+/// length field that asks for more is damage, not a model, and is refused before anything that large is allocated.
+pub const MAX_HEADER_BYTES: u64 = 256 << 20;
+/// The most layers and experts per layer an index accepts. Released models have at most a few hundred of either; a
+/// count beyond these is refused rather than allocated for.
+pub const MAX_LAYERS: u32 = 1 << 16;
+pub const MAX_EXPERTS: u32 = 1 << 16;
+/// The most expert slices an index holds (layers × experts × stacked tensors; the largest released models have under
+/// 100,000).
+pub const MAX_EXPERT_SLICES: usize = 1 << 22;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GgufError {
@@ -53,6 +63,10 @@ pub enum GgufError {
     UnknownTensorType { name: String, ggml_type: u32 },
     Overlap { first: String, second: String },
     DuplicateTensor(String),
+    /// The header asks for more than `MAX_HEADER_BYTES`.
+    HeaderTooLarge { needed: u64, limit: u64 },
+    /// A count no model has (`MAX_LAYERS`, `MAX_EXPERTS`, `MAX_EXPERT_SLICES`).
+    Implausible { what: String, count: u64, limit: u64 },
 }
 
 impl fmt::Display for GgufError {
@@ -72,6 +86,10 @@ impl fmt::Display for GgufError {
             GgufError::UnknownTensorType { name, ggml_type } => write!(f, "tensor {name}: unknown ggml type {ggml_type}"),
             GgufError::Overlap { first, second } => write!(f, "tensors {first} and {second} overlap"),
             GgufError::DuplicateTensor(n) => write!(f, "tensor {n} appears twice"),
+            GgufError::HeaderTooLarge { needed, limit } => {
+                write!(f, "the header asks for {needed} bytes, more than the {limit} any model's header needs")
+            }
+            GgufError::Implausible { what, count, limit } => write!(f, "{what} is {count}, beyond any model (at most {limit})"),
         }
     }
 }
@@ -379,12 +397,15 @@ impl Gguf {
     }
 
     /// Reads a GGUF file's header: the first 4 MiB, then four times more until the header fits (a vocabulary of a
-    /// quarter of a million tokens is a few MiB).
+    /// quarter of a million tokens is a few MiB), never more than `MAX_HEADER_BYTES`.
     pub fn open(path: &Path) -> Result<Self, GgufError> {
         let mut file = File::open(path)?;
         let file_len = file.metadata()?.len();
         let mut want = (4u64 << 20).min(file_len);
         loop {
+            if want > MAX_HEADER_BYTES {
+                return Err(GgufError::HeaderTooLarge { needed: want, limit: MAX_HEADER_BYTES });
+            }
             let mut prefix = Vec::with_capacity(want as usize);
             file.seek(SeekFrom::Start(0))?;
             (&mut file).take(want).read_to_end(&mut prefix)?;
@@ -496,6 +517,16 @@ impl WeightIndex {
             u32::try_from(v).map_err(|_| GgufError::BadTensor { name: what.to_string(), why: format!("{v} does not fit 32 bits") })
         };
         let (experts, experts_used) = (narrow("expert_count", experts)?, narrow("expert_used_count", experts_used)?);
+        let bound = |what: &str, count: u64, limit: u64| {
+            if count > limit {
+                Err(GgufError::Implausible { what: what.to_string(), count, limit })
+            } else {
+                Ok(())
+            }
+        };
+        bound("expert_count", u64::from(experts), u64::from(MAX_EXPERTS))?;
+        bound("block_count", block_count, u64::from(MAX_LAYERS))?;
+        let mut slices = 0usize;
         let mut units: BTreeMap<UnitKey, Unit> = BTreeMap::new();
         let mut push = |key: UnitKey, e: Extent| units.entry(key).or_insert_with(|| Unit { key, extents: Vec::new() }).extents.push(e);
         let mut top_layer = None;
@@ -504,6 +535,7 @@ impl WeightIndex {
                 push(UnitKey::Globals, Extent { offset: t.offset, len: t.bytes });
                 continue;
             };
+            bound(&format!("the layer of {}", t.name), u64::from(layer), u64::from(MAX_LAYERS) - 1)?;
             top_layer = top_layer.max(Some(layer));
             let stacked = tail.split('.').next().is_some_and(|base| base.ends_with("_exps"));
             if !stacked || experts == 0 {
@@ -517,6 +549,11 @@ impl WeightIndex {
                     why: format!("its outermost dimension is {outer}, not the {experts} experts"),
                 });
             }
+            if t.bytes == 0 {
+                return Err(GgufError::BadTensor { name: t.name.clone(), why: "it holds no bytes to split among experts".into() });
+            }
+            slices += experts as usize;
+            bound("the number of expert slices", slices as u64, MAX_EXPERT_SLICES as u64)?;
             let stride = t.bytes / outer;
             for e in 0..experts {
                 push(UnitKey::Expert { layer, expert: e }, Extent { offset: t.offset + u64::from(e) * stride, len: stride });
@@ -564,7 +601,7 @@ impl WeightIndex {
         for layer in 0..self.layers {
             total += self.layer_shared_bytes(layer);
             let per_expert = if self.experts == 0 { 0 } else { self.expert_bytes(layer, 0) };
-            total += per_expert * u64::from(self.experts_used);
+            total += per_expert * u64::from(self.experts_used.min(self.experts));
         }
         total
     }
@@ -621,10 +658,19 @@ pub mod write {
             out.extend_from_slice(&(s.len() as u64).to_le_bytes());
             out.extend_from_slice(s.as_bytes());
         };
+        // The layout below uses `alignment`; the file must say so, or a reader assumes the default and misplaces every
+        // tensor. A `general.alignment` in `meta` is written as given (a test of a damaged file names a wrong one).
+        let named = meta.iter().any(|(k, _)| *k == "general.alignment");
+        let say_alignment = !named && alignment != super::DEFAULT_ALIGNMENT;
         out.extend_from_slice(&GGUF_MAGIC.to_le_bytes());
         out.extend_from_slice(&3u32.to_le_bytes());
         out.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
-        out.extend_from_slice(&(meta.len() as u64).to_le_bytes());
+        out.extend_from_slice(&((meta.len() + usize::from(say_alignment)) as u64).to_le_bytes());
+        if say_alignment {
+            str_(&mut out, "general.alignment");
+            out.extend_from_slice(&4u32.to_le_bytes());
+            out.extend_from_slice(&u32::try_from(alignment).expect("an alignment that fits 32 bits").to_le_bytes());
+        }
         for (key, value) in meta {
             str_(&mut out, key);
             match value {

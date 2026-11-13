@@ -13,7 +13,9 @@
 //! - `Streamer` is the ring: a reader thread fills a fixed set of aligned buffers (two is double buffering) with the
 //!   units requested, in order, splitting a unit's reads over several file handles so the drive sees a queue, and hands
 //!   each back as a `Staged` whose drop returns its buffer. While the caller works on unit L, unit L+1 is being read;
-//!   with every buffer full, the reader waits, so memory stays bounded however far ahead the caller asks.
+//!   with every buffer full, the reader waits, so memory stays bounded however far ahead the caller asks. (A caller
+//!   that keeps every unit it took, as `collect` does, is given one more buffer per unit rather than a wait that could
+//!   never end; those buffers are let go as the units are dropped.)
 //!
 //! The buffers are ordinary aligned heap memory, not page-locked: wgpu offers no pinned host memory, and nothing in this
 //! crate runs a model's layers yet, so the GPU upload side is not built here.
@@ -24,7 +26,7 @@ use super::gguf::Extent;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -262,7 +264,14 @@ impl SectorFile {
         while done < buf.len() {
             match pread(&self.file, &mut buf[done..], offset + done as u64) {
                 Ok(0) => break,
-                Ok(n) => done += n,
+                Ok(n) => {
+                    done += n;
+                    // A short read that reached the end of the file: asking again would be an unaligned read on an
+                    // unbuffered handle (Windows refuses it, which would turn the handle buffered for good).
+                    if offset + done as u64 >= self.len {
+                        break;
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(e) if self.mode == IoMode::Direct && e.kind() == io::ErrorKind::InvalidInput => {
                     self.file = File::open(&self.path)?;
@@ -309,6 +318,16 @@ pub struct Staged {
     plan: ReadPlan,
     buf: Option<AlignedBuf>,
     back: Sender<AlignedBuf>,
+    ledger: Arc<Ledger>,
+    /// Whether `next` handed it to the caller (counted in `Ledger::held`).
+    handed: bool,
+}
+
+/// The ring's buffers the caller holds, and the buffers added beyond `depth` because it held them all.
+#[derive(Default)]
+struct Ledger {
+    held: AtomicUsize,
+    extra: AtomicUsize,
 }
 
 impl Staged {
@@ -326,7 +345,14 @@ impl Staged {
 impl Drop for Staged {
     fn drop(&mut self) {
         if let Some(b) = self.buf.take() {
-            let _ = self.back.send(b);
+            if self.handed {
+                self.ledger.held.fetch_sub(1, Ordering::AcqRel);
+            }
+            // A buffer added while the caller held every one is let go, so the read-ahead returns to `depth`.
+            let extra = self.ledger.extra.fetch_update(Ordering::AcqRel, Ordering::Acquire, |e| e.checked_sub(1));
+            if extra.is_err() {
+                let _ = self.back.send(b);
+            }
         }
     }
 }
@@ -341,6 +367,9 @@ pub struct Streamer {
     requests: Option<Sender<Request>>,
     ready: Option<Receiver<io::Result<Staged>>>,
     reader: Option<JoinHandle<()>>,
+    free_tx: Sender<AlignedBuf>,
+    ledger: Arc<Ledger>,
+    depth: usize,
     stop: Arc<AtomicBool>,
     read: Arc<AtomicU64>,
     mode: IoMode,
@@ -369,12 +398,23 @@ impl Streamer {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let read = Arc::new(AtomicU64::new(0));
-        let ring = Ring { ready: ready_tx, free_tx, free_rx, stop: Arc::clone(&stop), read: Arc::clone(&read) };
+        let ledger = Arc::new(Ledger::default());
+        let ring = Ring {
+            ready: ready_tx,
+            free_tx: free_tx.clone(),
+            free_rx,
+            stop: Arc::clone(&stop),
+            read: Arc::clone(&read),
+            ledger: Arc::clone(&ledger),
+        };
         let reader = thread::Builder::new().name("weights-reader".into()).spawn(move || reader_loop(files, req_rx, ring))?;
         Ok(Streamer {
             requests: Some(req_tx),
             ready: Some(ready_rx),
             reader: Some(reader),
+            free_tx,
+            ledger,
+            depth,
             stop,
             read,
             mode,
@@ -423,14 +463,29 @@ impl Streamer {
 impl Iterator for Streamer {
     type Item = io::Result<Staged>;
 
-    /// The oldest requested unit, waiting for its reads; None when nothing is pending.
+    /// The oldest requested unit, waiting for its reads; None when nothing is pending. A caller that holds every buffer
+    /// of the ring (`depth` units, or all it collected) and asks for another gets one more buffer rather than a wait
+    /// that could never end; the extra buffers are let go as the units are dropped.
     fn next(&mut self) -> Option<io::Result<Staged>> {
         if self.pending == 0 {
             return None;
         }
         self.pending -= 1;
+        let buffers = self.depth + self.ledger.extra.load(Ordering::Acquire);
+        if self.ledger.held.load(Ordering::Acquire) >= buffers {
+            self.ledger.extra.fetch_add(1, Ordering::AcqRel);
+            let _ = self.free_tx.send(AlignedBuf::new(0));
+        }
         let got = self.ready.as_ref().and_then(|r| r.recv().ok());
-        Some(got.unwrap_or_else(|| Err(io::Error::new(io::ErrorKind::BrokenPipe, "the reader has stopped"))))
+        Some(match got {
+            Some(Ok(mut unit)) => {
+                unit.handed = true;
+                self.ledger.held.fetch_add(1, Ordering::AcqRel);
+                Ok(unit)
+            }
+            Some(Err(e)) => Err(e),
+            None => Err(io::Error::new(io::ErrorKind::BrokenPipe, "the reader has stopped")),
+        })
     }
 }
 
@@ -454,10 +509,11 @@ struct Ring {
     free_rx: Receiver<AlignedBuf>,
     stop: Arc<AtomicBool>,
     read: Arc<AtomicU64>,
+    ledger: Arc<Ledger>,
 }
 
 fn reader_loop(mut files: Vec<SectorFile>, requests: Receiver<Request>, ring: Ring) {
-    let Ring { ready, free_tx, free_rx, stop, read } = ring;
+    let Ring { ready, free_tx, free_rx, stop, read, ledger } = ring;
     while let Ok(Request { ticket, plan }) = requests.recv() {
         if stop.load(Ordering::Acquire) {
             return;
@@ -485,6 +541,8 @@ fn reader_loop(mut files: Vec<SectorFile>, requests: Receiver<Request>, ring: Ri
                 plan,
                 buf: Some(buf),
                 back: free_tx.clone(),
+                ledger: Arc::clone(&ledger),
+                handed: false,
             }),
             Err(e) => {
                 let _ = free_tx.send(buf);

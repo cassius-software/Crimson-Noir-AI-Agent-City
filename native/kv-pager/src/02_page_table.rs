@@ -9,7 +9,7 @@
 //! contiguous.
 //!
 //! The pool is laid out as a structure of arrays (data-oriented, no block object): one array per field of a block
-//! (`refs`, `filled`, `parent`, `key`, `sealed`, `idle_since`), indexed by the physical block number, and every
+//! (`refs`, `filled`, `parent`, `key`, `sealed`, `idle_key`, `credit`), indexed by the physical block number, and every
 //! block's tokens side by side in one flat array (`tokens`, block `b` at `b * BLOCK_TOKENS`). The agents' block tables
 //! are one flat table too: a row of `capacity` entries per agent slot (no agent can map more distinct blocks than the
 //! pool has), padded with `NO_BLOCK`, which is the layout the GPU kernel reads, so `gpu_tables` is a row copy and
@@ -32,9 +32,10 @@
 //! is the eviction policy (`Eviction`). The default, `LogOdds`, keeps for each block the log-odds that it will be
 //! reused: a prior from where the block came from (a pinned prefix, a prompt, a generated token), raised by every cache
 //! hit and fork (Bayes' rule with a fixed Bayes factor), decayed toward a floor while the block is idle; the block least
-//! likely to be reused goes first, and with no reuse seen that is the one left longest ago, as under `Lru`, which
-//! remains available. Replayed against the same workloads (`chaos --evictions`), the default served as many cached
-//! prompt tokens as `Lru` or more in every one, and about 60% more where bursts of one-off prompts flood the pool.
+//! likely to be reused goes first. With no reuse seen, blocks of one provenance go in the order they were left, as
+//! under `Lru` (which remains available), and generated blocks before prompt blocks before pinned ones. Replayed
+//! against the same workloads (the `chaos` run), the default served as many cached prompt tokens as `Lru` or more in
+//! every one, and about 60% more where bursts of one-off prompts flood the pool.
 //!
 //! Allocation never overcommits: a request the pool cannot hold is refused whole, with nothing changed, so the host
 //! can wait or release instead of running out of memory in the middle of a step.
@@ -98,14 +99,21 @@ impl Tier {
 pub struct LogOdds {
     /// The share of a block's evidence kept per tick, in (0, 1].
     pub alpha: f64,
-    /// ln b of one reuse (a cache hit on the block, or a fork that shares it).
+    /// ln b of one reuse (a cache hit on the block, or a fork that shares it), at least `MIN_LN_BAYES_FACTOR`.
     pub ln_bayes_factor: f64,
 }
 
+/// The least evidence a reuse may count for. A reuse must raise a block's figure by more than the rounding of the
+/// figure's trip through the scale (and by more than nothing where the stored figure has decayed below the smallest
+/// float): with ln b = 0 a chain's revived head could be filed below its idle tail, and evicted first.
+pub const MIN_LN_BAYES_FACTOR: f64 = 1e-3;
+
 impl Default for LogOdds {
-    /// α = 0.99 a tick (idle evidence halves in about 69 agent arrivals and departures), b = 3 per reuse. Of the values
-    /// replayed (α 0.95 to 0.999, ln b 1.1 and 2), this kept the most in every workload but one: α = 0.999 kept a little
-    /// more of the city's asks and lost half its hits once the popular prompts changed.
+    /// α = 0.99 a tick (idle evidence halves in about 69 agent arrivals and departures), b = 3 per reuse. Replayed over
+    /// a grid (α 0.95 to 0.999, ln b 0.5 to 3, the `chaos` run's workloads), it kept within one point of the best value
+    /// on every workload and stayed there when the popular prompts changed, where α = 0.999, best on the city's asks,
+    /// lost half its hits; its neighbours (α 0.99 with ln b 2, α 0.995 with ln b 1.1) trade a few tenths of a point
+    /// between the workloads.
     fn default() -> Self {
         LogOdds { alpha: 0.99, ln_bayes_factor: 1.098_612_288_668_109_8 }
     }
@@ -286,7 +294,10 @@ impl PageTable {
     pub fn with_eviction(mut self, policy: Eviction) -> Self {
         if let Eviction::LogOdds(p) = policy {
             assert!(p.alpha > 0.0 && p.alpha <= 1.0, "alpha is a share kept per tick, in (0, 1]");
-            assert!(p.ln_bayes_factor >= 0.0 && p.ln_bayes_factor.is_finite(), "a reuse is evidence for reuse");
+            assert!(
+                p.ln_bayes_factor >= MIN_LN_BAYES_FACTOR && p.ln_bayes_factor.is_finite(),
+                "a reuse is evidence for reuse: ln b is at least MIN_LN_BAYES_FACTOR"
+            );
         }
         assert!(self.cache.is_empty(), "the policy is chosen before anything is cached");
         self.policy = policy;
@@ -727,6 +738,11 @@ impl PageTable {
                     return Err(format!("idle block {b} would be evicted after block {p}, which it follows"));
                 }
             }
+            // The block before it is still the one it was written after (not a recycled id holding other content).
+            let before = if p == NO_BLOCK { CHAIN_SEED } else { self.key[p as usize] };
+            if (self.keyer)(before, self.tokens_of_block(b as BlockId)) != k {
+                return Err(format!("cached block {b} is keyed for another block before it than block {p}"));
+            }
         }
         Ok(())
     }
@@ -744,7 +760,7 @@ impl PageTable {
         self.tokens[b * BLOCK_TOKENS..(b + 1) * BLOCK_TOKENS].fill(0);
     }
 
-    /// Takes a free block, or evicts the oldest idle cached one.
+    /// Takes a free block, or evicts the idle cached one first in the eviction order.
     fn take(&mut self) -> Option<BlockId> {
         let b = match self.free.pop() {
             Some(b) => b,

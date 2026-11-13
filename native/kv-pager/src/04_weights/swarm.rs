@@ -146,7 +146,8 @@ impl<'a> SwarmScheduler<'a> {
     }
 
     /// A whole step, layer-major: `routes[l]` is every active agent's routing at layer `l` (ignored for a dense
-    /// model). The globals are read first if wanted and not resident.
+    /// model). The globals (embeddings, output head) are not planned: every token reads them, so a host keeps them in
+    /// memory (`WeightIndex::unit(UnitKey::Globals)` says where they are).
     pub fn plan_step(&self, routes: &[Vec<Route>], resident: &dyn Fn(UnitKey) -> bool) -> Vec<LayerPlan> {
         (0..self.index.layers)
             .map(|l| self.plan_layer(l, routes.get(l as usize).map_or(&[][..], Vec::as_slice), resident))
@@ -156,8 +157,10 @@ impl<'a> SwarmScheduler<'a> {
     /// The smallest number of agents at which reading the whole of `layer` is strictly cheaper than reading the
     /// experts they are expected to be routed to, if every agent picks `experts_used` distinct experts uniformly at
     /// random (expected distinct experts: E · (1 − (1 − k/E)ⁿ)). None for a dense model, or when the sweep never wins
-    /// within `max_agents`. The routed reads are estimated from the sweep's own plan: its expert bytes in proportion to
-    /// the experts covered, and a request per routed expert slice whose lower neighbour is not routed too.
+    /// within `max_agents`. The routed reads are estimated from the sweep's own plan, as what they save and what they
+    /// add: the bytes of the experts expected unrouted saved, and a request added per routed expert slice whose lower
+    /// neighbour is not routed too. (Written as the difference, both vanish together as every expert gets routed, so
+    /// rounding cannot make the sweep look strictly cheaper where it only ties.)
     pub fn crossover_agents(&self, layer: u32, max_agents: u32) -> Option<u32> {
         let e = self.index.experts;
         let k = self.index.experts_used.min(e);
@@ -173,10 +176,11 @@ impl<'a> SwarmScheduler<'a> {
         for n in 1..=max_agents {
             let p_unused = (1.0 - k / e).powi(n as i32);
             let covered = 1.0 - p_unused;
-            let requests = (slices * e * covered * p_unused + shared.spans as f64).max(whole.reads.spans as f64);
-            let bytes = shared.read_bytes() as f64 + covered * expert_part;
-            let routed = requests * self.cost.sec_per_request + bytes / self.cost.bytes_per_sec;
-            if whole.seconds < routed {
+            // The spans' difference first (exact in integers), so a vanishing boundary count is not rounded up by it.
+            let fewer_in_sweep = whole.reads.spans as f64 - shared.spans as f64;
+            let added = (slices * e * covered * p_unused - fewer_in_sweep).max(0.0);
+            let saved = p_unused * expert_part / self.cost.bytes_per_sec;
+            if added * self.cost.sec_per_request > saved {
                 return Some(n);
             }
         }

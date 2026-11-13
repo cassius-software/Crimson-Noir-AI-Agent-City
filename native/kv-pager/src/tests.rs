@@ -417,3 +417,37 @@ fn the_log_odds_eviction_order_is_the_same_on_every_run_and_survives_rescaling()
     assert_eq!(run(5), run(5));
     assert_ne!(run(5), run(6));
 }
+
+#[test]
+#[should_panic(expected = "MIN_LN_BAYES_FACTOR")]
+fn a_reuse_that_counts_for_nothing_is_refused() {
+    let _ = PageTable::new(8).with_eviction(Eviction::LogOdds(LogOdds { alpha: 0.99, ln_bayes_factor: 0.0 }));
+}
+
+#[test]
+fn a_head_revived_after_its_evidence_decayed_below_the_smallest_float_is_still_evicted_after_its_tail() {
+    // α = 0.5 doubles the scale every tick: a rescale every ~332 ticks divides the idle figures by ~1e100, so after
+    // 1,100 ticks the idle head's and tail's stored figures are near the bottom of the floats, and reviving the head
+    // divides its figure by the scale again (to 0). The reuse's ln b, however small, must still lift it above its tail.
+    let policy = Eviction::LogOdds(LogOdds { alpha: 0.5, ln_bayes_factor: MIN_LN_BAYES_FACTOR });
+    let mut pt = PageTable::new(8).with_eviction(policy);
+    let chain = toks(0, 2 * BLOCK_TOKENS);
+    pt.admit(1, &chain).unwrap();
+    let (head, tail) = (pt.blocks_of(1).unwrap()[0], pt.blocks_of(1).unwrap()[1]);
+    pt.release(1).unwrap();
+    for id in 10..560 {
+        pt.admit(id, &[]).unwrap();
+        pt.release(id).unwrap();
+    }
+    pt.check().unwrap();
+    assert_eq!(pt.eviction_order(), vec![tail, head]);
+    let hit = pt.admit(2, &chain[..BLOCK_TOKENS]).unwrap();
+    assert_eq!(hit.cached_blocks, 1);
+    pt.release(2).unwrap();
+    pt.check().unwrap();
+    assert_eq!(pt.eviction_order(), vec![tail, head], "the tail still goes first");
+    // Filling the pool evicts the tail before the head, and the check sees a recycled parent.
+    pt.admit(3, &toks(1000, 7 * BLOCK_TOKENS)).unwrap();
+    pt.check().unwrap();
+    assert_eq!(pt.eviction_order(), vec![head]);
+}

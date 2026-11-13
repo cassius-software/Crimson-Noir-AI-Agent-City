@@ -257,10 +257,27 @@ struct StepReport {
     read_bytes: u64,
     useful_bytes: u64,
     estimate: f64,
+    /// The reader's time in its reads (the drive's share), and the step's wall time (checking every byte included).
+    read_seconds: f64,
     seconds: f64,
 }
 
-/// One decode step of `agents`: plan every layer, read the plans through the ring one layer ahead, check the bytes
+impl StepReport {
+    fn add(&mut self, r: &StepReport) {
+        self.whole_layers += r.whole_layers;
+        self.routed_layers += r.routed_layers;
+        self.read_bytes += r.read_bytes;
+        self.useful_bytes += r.useful_bytes;
+        self.estimate += r.estimate;
+        self.read_seconds += r.read_seconds;
+        self.seconds += r.seconds;
+    }
+}
+
+const NO_STEP: StepReport =
+    StepReport { whole_layers: 0, routed_layers: 0, read_bytes: 0, useful_bytes: 0, estimate: 0.0, read_seconds: 0.0, seconds: 0.0 };
+
+/// One decode step of `agents`: plan every layer, read the plans through the ring one layer ahead, check every byte
 /// (synthetic files), and time it.
 fn step(
     streamer: &mut Streamer,
@@ -276,7 +293,7 @@ fn step(
         .map(|l| routes(agents, index.experts, index.experts_used, routing, seed ^ (u64::from(l) << 16)))
         .collect();
     let plans = planner.plan_step(&all, &in_memory);
-    let mut r = StepReport { whole_layers: 0, routed_layers: 0, read_bytes: 0, useful_bytes: 0, estimate: 0.0, seconds: 0.0 };
+    let mut r = NO_STEP;
     let t = Instant::now();
     let mut wanted: Vec<Vec<Extent>> = Vec::new();
     for p in &plans {
@@ -293,13 +310,15 @@ fn step(
     for extents in &wanted {
         let staged = streamer.next().expect("one unit per request")?;
         r.read_bytes += staged.read_bytes;
+        r.read_seconds += staged.read_time.as_secs_f64();
         if synthetic {
             for (i, e) in extents.iter().enumerate() {
                 let got = staged.extent(i);
-                for at in [0, e.len / 2, e.len.saturating_sub(1)] {
-                    if e.len > 0 && got[at as usize] != byte_at(e.offset + at) {
-                        return Err(io::Error::other(format!("byte {} of the file read back wrong", e.offset + at)));
-                    }
+                if got.len() as u64 != e.len {
+                    return Err(io::Error::other(format!("{} bytes at {} came back as {}", e.len, e.offset, got.len())));
+                }
+                if let Some(at) = (0..e.len).find(|&at| got[at as usize] != byte_at(e.offset + at)) {
+                    return Err(io::Error::other(format!("byte {} of the file read back wrong", e.offset + at)));
                 }
             }
         }
@@ -411,29 +430,24 @@ fn main() -> io::Result<()> {
             if routing == Routing::Uniform { "uniform" } else { "skewed (Zipf)" },
             steps
         );
-        println!("  agents  layers whole/routed  MB read/step  useful MB  estimate ms  measured ms   MB/s   ms/agent");
+        println!("  agents  layers whole/routed  MB read/step  useful MB  estimate ms  read ms   MB/s   ms/agent  wall ms{}", if synthetic { " (every byte checked)" } else { "" });
         for &n in &agent_counts {
-            let mut total = StepReport { whole_layers: 0, routed_layers: 0, read_bytes: 0, useful_bytes: 0, estimate: 0.0, seconds: 0.0 };
+            let mut total = NO_STEP;
             for s in 0..steps {
-                let r = step(&mut streamer, &planner, &index, n, routing, u64::from(s) * 7919 + u64::from(n), synthetic)?;
-                total.whole_layers += r.whole_layers;
-                total.routed_layers += r.routed_layers;
-                total.read_bytes += r.read_bytes;
-                total.useful_bytes += r.useful_bytes;
-                total.estimate += r.estimate;
-                total.seconds += r.seconds;
+                total.add(&step(&mut streamer, &planner, &index, n, routing, u64::from(s) * 7919 + u64::from(n), synthetic)?);
             }
             let k = f64::from(steps.max(1));
             println!(
-                "  {n:>6}  {:>8.1}/{:<8.1}  {:>12.1}  {:>9.1}  {:>11.1}  {:>11.1}  {:>5.0}  {:>9.3}",
+                "  {n:>6}  {:>8.1}/{:<8.1}  {:>12.1}  {:>9.1}  {:>11.1}  {:>7.1}  {:>5.0}  {:>9.3}  {:>7.1}",
                 total.whole_layers as f64 / k,
                 total.routed_layers as f64 / k,
                 total.read_bytes as f64 / k / MB,
                 total.useful_bytes as f64 / k / MB,
                 total.estimate / k * 1e3,
-                total.seconds / k * 1e3,
-                total.read_bytes as f64 / total.seconds.max(1e-9) / MB,
-                total.seconds / k * 1e3 / f64::from(n.max(1))
+                total.read_seconds / k * 1e3,
+                total.read_bytes as f64 / total.read_seconds.max(1e-9) / MB,
+                total.read_seconds / k * 1e3 / f64::from(n.max(1)),
+                total.seconds / k * 1e3
             );
         }
         match planner.crossover_agents(0, 1 << 16) {

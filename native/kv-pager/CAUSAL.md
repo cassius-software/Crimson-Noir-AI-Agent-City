@@ -27,20 +27,20 @@ down in order.
 This is the case the stress run hits 90 times: a squad leader's prompt ends part-way into a page (114 tokens = 7 full
 pages + 2 tokens), 9 members fork from it, and each member then writes its own first token.
 
-1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:536`) clones the parent's block list and
+1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:547`) clones the parent's block list and
    adds one reference to each block. The tail page (2 tokens filled) now has `refs = 10`. No page is taken, and no
    byte moves on the GPU. *Cause of the next step:* a page with `refs > 1` must never be written, or one agent's
    write would appear in nine other agents' context.
-2. **The write finds the tail shared.** `PageTable::append` (`:482`) computes `offset = len % 16 = 2`. Because
-   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:491`).
-3. **A private page, or a refusal whole.** `take()` (`:492`, defined at `:748`) pops a free page, or evicts the
+2. **The write finds the tail shared.** `PageTable::append` (`:493`) computes `offset = len % 16 = 2`. Because
+   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:502`).
+3. **A private page, or a refusal whole.** `take()` (`:503`, defined at `:764`) pops a free page, or evicts the
    idle cached page first in the eviction order (below). If there is none, the append returns `OutOfBlocks { needed: 1, available: 0 }` *before
    anything changes*. The agent stalls; the pool is never overcommitted. That is the no-OOM guarantee.
 4. **Token ids copied, the shared page released once.** The new page gets the first `offset` token ids and the same
-   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:498`) drops `src` to `refs = 9`;
+   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:509`) drops `src` to `refs = 9`;
    the other nine agents still map it.
-5. **The table is repointed.** The agent's last block entry becomes the new page (`:525`), and the token goes into slot
-   `offset`. If that fills the page, `seal` (`:781`) keys it into the prefix cache (`:530`).
+5. **The table is repointed.** The agent's last block entry becomes the new page (`:536`), and the token goes into slot
+   `offset`. If that fills the page, `seal` (`:797`) keys it into the prefix cache (`:541`).
 6. **The host is told what to move.** `append` returns `Slot { block: new, offset: 2, copy_from: Some((src, 2)) }`.
    The page table owns ids only; the bytes are the host's job.
 7. **Bytes move on the GPU, through staging.** `Host::store` (`bin/stress.rs:182`) sees `copy_from` and calls
@@ -55,7 +55,7 @@ pages + 2 tokens), 9 members fork from it, and each member then writes its own f
 10. **Staging memory is returned.** `device.poll(Wait)` (`stress.rs:207`) runs after every submit. Without it, the
     queue's write staging grew 2050 → 3850 MiB over the run (measured with the DX12 allocator report). With it, the
     allocation stays flat at 2050 MiB.
-11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:603`) lays out the rows. The kernel
+11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:614`) lays out the rows. The kernel
     resolves each position through `block_table[seq * max_blocks + pos / 16]` (`paged_attention.wgsl:88`). The member
     now reads its private tail page, and the other nine still read the shared one.
 12. **Proof both ways.** The stress run checks every agent's attention against a CPU reference that uses only that
@@ -71,8 +71,9 @@ pages + 2 tokens), 9 members fork from it, and each member then writes its own f
   only a page whose parent is cached is cached itself. Among the idle tails, the default policy (`Eviction::LogOdds`)
   evicts the one least likely to be reused: each page carries the log-odds of reuse, a prior from where it came from
   (a pinned prefix 0.95, a prompt 0.50, a generated token 0.10), raised by every cache hit or fork (a Bayes factor of
-  3), decayed toward the floor while idle (α = 0.99 per admission, fork or release). With no reuse seen it is the order
-  of release, as `Eviction::Lru`, which remains available. The chaos run replays both on the same workloads.
+  3), decayed toward the floor while idle (α = 0.99 per admission, fork or release). With no reuse seen, pages of one
+  provenance go in the order they were released, as under `Eviction::Lru` (which remains available), and generated
+  pages before prompt pages before pinned ones. The chaos run replays both on the same workloads.
 - Pinned prefixes (`PageTable::pin`): a prompt mapped by the pin itself, so its pages are never evicted; agents share
   its full pages through the prefix cache, or every page with `fork_pin`, the partly filled last one copied on write.
 - The K/V in the stress run are synthetic: a hash of the token chain. The chain above is about where the bytes go,
