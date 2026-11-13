@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { APP_MODEL, SITE_DIR, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, manifestText, parseManifest, siteUrl, type SiteFetch, type SiteModelPin } from './siteModel.ts'
+import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, manifestText, parseManifest, siteUrl, type SiteFetch, type SiteModelPin } from './siteModel.ts'
 import { APP_READ_BYTES } from '../07_Execute_Actions/desktopShell.ts'
 import { localText } from './localCompute.ts'
 
@@ -65,6 +65,37 @@ test('the app\'s pin is its own record beside its licence, and the shell and the
   const conf = JSON.parse(read('../../src-tauri/tauri.model.conf.json')) as { bundle: { resources: Record<string, string> } }
   assert.deepEqual(conf.bundle.resources, Object.fromEntries([APP_MODEL.file, 'LICENSE', 'NOTICE'].map((f) => [`models/${f}`, `models/${f}`])))
   assert.match(read('../../src-tauri/.gitignore'), /^models$/m, 'the model is never committed')
+  // The NixOS package fetches the same file at the same revision, refuses other bytes, and writes the manifest the
+  // page reads from its pin's own values.
+  const nix = read('../../tools/nix/model.nix')
+  assert.ok(nix.includes(`file = "${APP_MODEL.file}";`), 'model.nix names the file')
+  assert.ok(nix.includes(`bytes = ${APP_MODEL.bytes};`), 'and its size')
+  assert.ok(nix.includes(`sha256 = "${APP_MODEL.sha256}";`), 'and its SHA-256, which fetchurl holds the download to')
+  assert.ok(nix.includes(`repo = "${APP_MODEL.repo}";`) && nix.includes(`revision = "${APP_MODEL.revision}";`), 'and where it comes from')
+  assert.match(nix, /url = "https:\/\/huggingface\.co\/\$\{repo\}\/resolve\/\$\{revision\}\/\$\{file\}";\n\s*name = file;\n\s*inherit sha256;/, 'one address, the pinned revision, named for the file (CI puts it in the store by that name)')
+  assert.match(nix, /manifest = builtins\.toJSON \{\n\s*v = 1;\n\s*inherit file bytes sha256;\n\s*\};/, 'the manifest parseManifest takes, from the same values')
+  assert.match(nix, /ln -s \$\{gguf\} \$dir\/\$\{file\}/, 'linked from its fetch, so the store holds it once')
+  for (const f of ['LICENSE', 'NOTICE']) assert.ok(nix.includes(`install -m444 \${../../third_party/qwen2.5-1.5b-instruct/${f}} $dir/${f}`), `its ${f} beside it`)
+  assert.match(nix, /license = lib\.licenses\.asl20;/)
+  assert.deepEqual(parseManifest(JSON.stringify({ bytes: APP_MODEL.bytes, file: APP_MODEL.file, sha256: APP_MODEL.sha256, v: 1 }), APP_MODEL), { file: APP_MODEL.file, bytes: APP_MODEL.bytes, sha256: APP_MODEL.sha256 }, 'builtins.toJSON sorts the keys; the page reads them in any order')
+  assert.match(notice, /The NixOS package \(the flake's `nix run` and its NixOS module\) carries the same file: tools\/nix\/model\.nix/)
+})
+
+test('launcherServes: only a page on http://127.0.0.1 with models=1 in its address, the NixOS launcher\'s, is served the launcher\'s model', () => {
+  assert.equal(LAUNCHER_WORD, 'models')
+  for (const href of ['http://127.0.0.1:4180/?models=1', 'http://127.0.0.1:4180/?vram=8.0&models=1', 'http://127.0.0.1:5000/index.html?quality=4&models=1#x']) assert.equal(launcherServes(href), true, href)
+  for (const href of [
+    'http://127.0.0.1:4180/', // a launcher with no model folder adds nothing
+    'http://127.0.0.1:4180/?models=0', // the command line said no
+    'http://127.0.0.1:4180/?models=true',
+    'http://localhost:4180/?models=1', // the launcher listens on 127.0.0.1 alone
+    'http://[::1]:4180/?models=1',
+    'https://127.0.0.1:4180/?models=1',
+    'https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/?models=1', // the web copy
+    'http://tauri.localhost/?models=1', // the Windows app
+    'file:///home/me/dist/index.html?models=1',
+    'not an address',
+  ]) assert.equal(launcherServes(href), false, href)
 })
 
 test('siteModel.ts names no address and fetches nothing itself: the fetch is handed in', () => {
@@ -180,6 +211,22 @@ test('fetchSiteModel from the app: the same checks, in the app\'s words (copied 
   await assert.rejects(fetchSiteModel(site({ body: more }).fetchFn, s.pin, () => {}, undefined, 'app'), /^Error: what the app sent is larger than the model/)
   const unread: SiteFetch = async () => { throw new Error('the app\'s model is not beside the app (os error 2)') }
   await assert.rejects(fetchSiteModel(unread, s.pin, () => {}, undefined, 'app'), /^Error: the app could not read the model it carries \(the app's model is not beside the app \(os error 2\)\): install the app again and try again$/)
+})
+
+test('fetchSiteModel from the launcher: the same checks, in the launcher\'s words (copied from the launcher, never "this site", "download" or "the app")', async () => {
+  const s = site()
+  const file = await fetchSiteModel(s.fetchFn, s.pin, () => {}, undefined, 'launcher')
+  assert.deepEqual(new Uint8Array(await file.arrayBuffer()), s.model)
+  const bad = s.model.slice()
+  bad[0] ^= 1
+  await assert.rejects(fetchSiteModel(site({ body: bad }).fetchFn, s.pin, () => {}, undefined, 'launcher'), /^Error: what the launcher sent is not the model this page was built for \(its SHA-256 differs\), so nothing was kept$/)
+  await assert.rejects(fetchSiteModel(site({ body: s.model.slice(0, 100) }).fetchFn, s.pin, () => {}, undefined, 'launcher'), /^Error: the copy from the launcher stopped at [\d,]+ of [\d,]+ bytes: try again$/)
+  const more = new Uint8Array(s.model.length + 1)
+  more.set(s.model)
+  await assert.rejects(fetchSiteModel(site({ body: more }).fetchFn, s.pin, () => {}, undefined, 'launcher'), /^Error: what the launcher sent is larger than the model/)
+  await assert.rejects(fetchSiteModel(site({ status: 404 }).fetchFn, s.pin, () => {}, undefined, 'launcher'), /^Error: the launcher did not send the model \(HTTP 404\)/)
+  const away: SiteFetch = async () => { throw new TypeError('Failed to fetch') }
+  await assert.rejects(fetchSiteModel(away, s.pin, () => {}, undefined, 'launcher'), /^Error: the launcher that opened this page could not be reached for its model \(Failed to fetch\): start the city again and try again$/)
 })
 
 test('fetchSiteModel stops when asked: before it starts, and mid-download, with the stop\'s own reason', async () => {

@@ -53,8 +53,9 @@ this browser: once the city is on screen it gets it by itself, its progress on S
 on the card, unless this browser could not run or keep it, another model or provider is chosen, the browser says it
 saves data or is on mobile data, or you stopped it before; then only when Sloane's card says no model answers and you
 tap **Get the model** (A model in this page, The site's model). The Windows app's installer carries a model beside the
-app, which the page copies into its own storage the same way, with nothing downloaded (The app's model).
-`dist/index.html` itself carries no model and asks for none.
+app, which the page copies into its own storage the same way, with nothing downloaded (The app's model); so does the
+NixOS package (`nix run` and its module), whose launcher serves the same model beside the page it opens (The
+launcher's model). `dist/index.html` itself carries no model and asks for none.
 The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
@@ -2575,10 +2576,11 @@ them that answers (`auto`):
 No model server ships with the product, and the page file carries no model: you run your own server, bring your own
 key, or keep a model file in the page (the page carries the runtime for one, never a model). The one exception is the
 web copy on GitHub Pages, which serves one small model beside its page, gets it by itself once the city is on screen
-where it can, and otherwise offers it in a tap on Sloane's card (A model in this page, The site's model). The other
-is the Windows app's installer (and its .msi), which carries a larger model beside the app and lets the page copy it
-the same way (The app's model). The bare .exe, the launcher, the flake and the OS media carry none. The city works
-exactly the same without any of them.
+where it can, and otherwise offers it in a tap on Sloane's card (A model in this page, The site's model). The others
+are the Windows app's installer (and its .msi), which carries a larger model beside the app, and the NixOS package
+(`nix run` and its module), whose launcher serves that same model beside its page; the page copies either the same
+way (The app's model, The launcher's model). The bare .exe, the launcher run from a checkout without `--models`, and
+the OS media carry none. The city works exactly the same without any of them.
 
 - **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
   whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
@@ -2907,8 +2909,9 @@ phone, which runs no model server, gets a model of its own. The page file carrie
 you choose is yours, under its own licence. The web copy on GitHub Pages also serves one small model beside its page,
 Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
 kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
-The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, which the page gets the same way (The app's
-model, below). `dist/index.html`, the bare .exe, the launcher, the flake and the OS media carry none. The parts:
+The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
+beside its page; the page gets it the same way (The app's model, The launcher's model, below). `dist/index.html`, the
+bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -3054,6 +3057,43 @@ model, below). `dist/index.html`, the bare .exe, the launcher, the flake and the
   installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
   how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Linux,
   Android and iPhone apps carry no model yet.
+- **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
+  `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
+  installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
+  file, at the same pinned revision (On NixOS).
+  - `tools/nix/model.nix` fetches it once with Nix's `fetchurl`, which refuses any bytes but the pinned SHA-256, and
+    makes a folder in the Nix store holding it (linked from its fetch, so the store keeps it once), its `LICENSE` and
+    `NOTICE`, and a `manifest.json` naming it. The launcher's package sets `AGENT_CITY_MODELS` to that folder by
+    default.
+  - The launcher serves the folder's plain files at `models/` beside the page, on the same `127.0.0.1` address, and
+    adds `models=1` to the page's address (`-- models=0` keeps the page from asking). A folder that cannot be read or
+    holds no `manifest.json` is said once on the terminal and left out, and the city opens without it.
+  - The page takes `models=1` on `http://127.0.0.1` as the sign that its launcher serves a model, and from there it is
+    the app's path: the same start once the city is on screen, the connection with no say (the copy never leaves the
+    machine), the same checks, the size and SHA-256 on every byte, the same keep and toasts. Its manifest must name
+    exactly the app's pin. The card and the HUD say it is copied from the launcher ("Copying from the launcher · 120 of
+    940 MB", "copying the launcher's model into the page 13%"). Any other page, the web copy, the Windows app, a
+    preview or a file, never asks for it.
+  - The browser profile keeps its own copy, so the model takes about 0.9 GB twice on the disk: in the Nix store and in
+    the profile's storage. `ask file forget Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` frees the profile's copy;
+    `programs.crimson-noir-agent-city.model = false;` builds the module's package without it, and `nix-collect-garbage`
+    then frees the store's.
+
+  What is verified: `model.nix`'s pin against the page's and its manifest's shape (`siteModel.test.ts`); the
+  launcher serving the folder's plain files and nothing else of the disk, with their sizes, its `models=1`, and a folder
+  without a manifest left out (`desktopLauncher.test.ts`); which pages take `models=1` and the launcher's words
+  (`siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`); in the container that wrote it, the module's option
+  evaluated by Nix (the model in the package by default and out of it with `model = false`), `model.nix` built with a
+  stand-in file of the pinned size, and the launcher's `--check` with a folder holding the tiny model (the page itself
+  reading the manifest and the model's size beside it); and the browser smoke's `launcher` scenario, run in that container on the
+  software adapter, in which the launcher's own server and a model folder laid out as the package lays it serve the
+  page with the tiny model in the app's pin's place, the page opened without `models=1` asks nothing under `models/`,
+  and with it asks for the manifest and the model once each with no click, keeps the model and loads it. Run by CI, and
+  not counted as verified above: the `nix` workflow putting the real model in the Nix store by its pin, building the
+  package with it and running `crimson-noir-agent-city --check`, which reads the manifest and the model's size beside
+  the page from the page itself, and the `launcher` scenario in the package's own Chromium; their first runs are the
+  pull request that adds them. Not verified: a real NixOS desktop, the copy of the real 0.9 GB file into a profile, and
+  how well and how fast the model converses there.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
   later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.
@@ -4580,7 +4620,10 @@ turns on
 `hardware.graphics.enable` (the Vulkan driver WebGPU needs; a configuration that sets it keeps its own value); and,
 unless `programs.crimson-noir-agent-city.dualsense = false;`, gives the signed-in user a DualSense's or DualSense
 Edge's raw HID node, over USB and Bluetooth, so the browser's WebHID can drive its trigger resistance, rumble and light
-bar (Hardware); the plain gamepad needs none of that. The page is the proprietary core (LICENSE, section 1) and its
+bar (Hardware); the plain gamepad needs none of that. Its package carries Sloane's model, Qwen2.5 1.5B Instruct
+(Apache-2.0, about 940 MB, fetched once from Hugging Face at a pinned revision and checked by its SHA-256), which the
+launcher serves beside the page (The launcher's model); `programs.crimson-noir-agent-city.model = false;` builds it
+without one. The page is the proprietary core (LICENSE, section 1) and its
 package says so (`meta.license` is unfree), so a configuration allows it by name, as above; one that already has an
 `allowUnfreePredicate` adds the name to its own. (A configuration that lists the flake's
 `packages.<system>.default` itself skips that check: the flake's own package set allows the page already.) A
@@ -4598,8 +4641,9 @@ Flakes are still an experimental Nix feature: a stock NixOS needs
 `nix.settings.experimental-features = [ "nix-command" "flakes" ];` (or `--extra-experimental-features "nix-command
 flakes"` on the command). In a checkout, `nix run .` does the same. The first run builds the page from source in Nix's
 sandbox (`tools/nix/page.nix`: npm installs the lockfile's packages for this platform, each fetched by its integrity
-hash, about 89 MB on x86-64, then `npm run build`; the result is byte for byte the page `npm run build` writes) and
-fetches Chromium from the NixOS binary cache. Its nixpkgs is the NixOS 26.05 release pinned in `flake.lock`, and
+hash, about 89 MB on x86-64, then `npm run build`; the result is byte for byte the page `npm run build` writes),
+fetches Chromium from the NixOS binary cache, and fetches Sloane's model, about 940 MB, from Hugging Face
+(`tools/nix/model.nix`; later runs find it in the store). Its nixpkgs is the NixOS 26.05 release pinned in `flake.lock`, and
 Chromium from it can fail to load the GPU driver of a newer NixOS (today's nixos-unstable driver needs a newer glibc
 than 26.05's): the city then starts without a GPU adapter. On such a system the module avoids it for good, or build
 from the system's nixpkgs: on a flake-built NixOS,
@@ -4611,7 +4655,8 @@ system's nixpkgs); on a channel-based one,
 **What the command does** (`crimson-noir-agent-city`, which is `tools/web/launch.mjs` with Node 24):
 - **Serves the page on `http://127.0.0.1:4180`, to this machine only,** with the two cross-origin isolation headers,
   so the physics realm and the page share one memory bridge as under `npm run preview`. It answers `/` (and
-  `/index.html`) and nothing else, uncached, so a rebuilt page shows on the next start. The address stays the same
+  `/index.html`), and the model folder's files at `models/` (below), and nothing else, uncached, so a rebuilt page
+  shows on the next start. The address stays the same
   from one run to the next because the page keeps its settings (the onboarding's answers, the map, a model key typed to
   the console) per address; `--port` moves it, and the page then starts as on a first visit. Ollama accepts the
   address by default (it allows `127.0.0.1` origins); another model server may need the origin allowed in its own
@@ -4630,17 +4675,21 @@ system's nixpkgs); on a channel-based one,
   on another launcher's server closes when that server stops.
 - **Words after `--`** become the page's query (URL options): `nix run github:cassius-software/Crimson-Noir-AI-Agent-City
   -- quality=4 map=lakefront players=2`. The switches: `--port N`, `--dir <folder>` (another build, such as a
-  checkout's `dist/`), `--no-browser` (serve only and print the address, for a browser of your own), `--check` (the
-  CI check below) and `--help`. `CHROME` names another browser, by path or as a command on `PATH`
+  checkout's `dist/`), `--models <folder>` (another model folder), `--no-browser` (serve only and print the address,
+  for a browser of your own), `--check` (the CI check below) and `--help`. `CHROME` names another browser, by path or as a command on `PATH`
   (`CHROME=google-chrome-stable`); `AGENT_CITY_CHROME_FLAGS` adds switches, each starting with `--` and with no space
   inside its value (an `--enable-features` list joins the launcher's own: Chromium keeps only the last list it is
-  given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
+  given); `AGENT_CITY_PORT`, `AGENT_CITY_DIST` and `AGENT_CITY_MODELS` set the port, the page and the model folder.
 - **The GPUs' memory.** Before it opens the window the launcher reads the GPUs' memory:
   `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` (MiB per GPU), else
   `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped (an integrated
   Radeon given 4 GB or more by its firmware is counted; not tried on one). It adds
   `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
   `-- vram=0` none; `--check` reads nothing.
+- **Sloane's model.** With a model folder (the package's own, `AGENT_CITY_MODELS`, or `--models <folder>`) the
+  launcher serves its plain files at `models/` beside the page and adds `models=1` to the address, and the page copies
+  the model into the browser profile's storage once the city is on screen, with nothing downloaded (The launcher's
+  model). A folder that cannot be read or holds no `manifest.json` is said once and left out.
 
 **Ollama with it.** `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service
 (`services.ollama`) on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider looks for it. Given a
@@ -4745,7 +4794,8 @@ which then has no unit; the option's variables kept when `services.ollama.enviro
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
-Peak for a few frames).
+Peak for a few frames). Sloane's model in the package, its `--check` and the `launcher` scenario in that Chromium are
+new and counted under The launcher's model.
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
 the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu

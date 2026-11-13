@@ -103,6 +103,10 @@
  *   itself whole: kept, said in a toast, loaded, and answering Sloane with the provider left at auto. Then, in a fresh
  *   browser, the model with one byte flipped: the page's own try says in a toast that its SHA-256 differs and keeps
  *   nothing, the card says why and offers the button, and with the right file back the same button keeps it;
+ * - launcher: the model the NixOS package's launcher serves beside its page (tools/web/launch.mjs, tools/nix/model.nix,
+ *   App.tsx launcherSource): the launcher's own server, a model folder laid out as the package lays it, the page with
+ *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
+ *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
  *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
  *   sizes and the walk's card stepping aside for it under 960 px;
@@ -163,7 +167,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,sitemodel,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,sitemodel,launcher,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
  * `--shard i/n` runs only part i of n of those scenarios (shard.mjs: split by how long each took in CI), as CI's
  * browser jobs do.
  * Needs `npm run build`.
@@ -172,7 +176,7 @@
  */
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -181,11 +185,12 @@ import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
 import { parseShard, shardOf } from './shard.mjs'
 import { APP_NAME, build as buildWeb, CACHED, ICONS } from '../web/pwa.mjs'
 import { placeModel } from '../web/siteModel.mjs'
+import { MODEL_MANIFEST, readModels, respond } from '../web/launch.mjs'
 import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { CHAT_MAX } from '../../src/07_Execute_Actions/onboarding/voice.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
 import { MODELS_DIR } from '../../src/09_Cognition/modelStore.ts'
-import { SITE_DIR, SITE_MANIFEST, SITE_MODEL } from '../../src/09_Cognition/siteModel.ts'
+import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, manifestText } from '../../src/09_Cognition/siteModel.ts'
 import { AUTO_KEY, STOPPED } from '../../src/09_Cognition/siteAuto.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -912,14 +917,30 @@ const KEPT_ON_A_PHONE = new RegExp(`^${TINY.replace('.', '\\.')} is kept in this
 /** What the sitemodel scenario says to Sloane: talk (intent.ts Brief.chat), which only a model answers. */
 const SMALL_TALK = "how's it going"
 
-/** The tiny model's pin in SITE_MODEL's shape (siteModel.ts): its file name, its size and its SHA-256. */
-function tinyPin() {
+/** The tiny model's pin in the shape of `base` (siteModel.ts SITE_MODEL or APP_MODEL): its file name, its size and its SHA-256. */
+function tinyPin(base = SITE_MODEL) {
   const bytes = readFileSync(tinyModel())
-  return Object.freeze({ ...SITE_MODEL, file: TINY, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
+  return Object.freeze({ ...base, file: TINY, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
 }
 
 /** `text` as a regular expression that matches it literally. */
 const literal = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * dist/index.html with the compiled pin `was` (SITE_MODEL or APP_MODEL: its file name, size and SHA-256, side by side
+ * as `file:…,bytes:…,sha256:…`) replaced by `pin`'s. The pin must be found exactly once, and its SHA-256 nowhere else,
+ * or the run stops here: the page's pin is not where this looks for it.
+ */
+function pinnedPage(was, pin) {
+  const q = '([`\'"])'
+  const at = new RegExp(`(\\bfile\\s*:\\s*)${q}${literal(was.file)}\\2(\\s*,\\s*bytes\\s*:\\s*)${literal(was.bytes)}(\\s*,\\s*sha256\\s*:\\s*)${q}${literal(was.sha256)}\\5`, 'g')
+  const page = readFileSync(DIST, 'utf8')
+  const n = page.match(at)?.length ?? 0
+  if (n !== 1) throw new Error(`dist/index.html holds the pin of ${was.file} (${was.bytes} bytes, sha256 ${was.sha256.slice(0, 8)}…) ${n} times, not once: rebuild it (npm run build), or find where the page's pin went`)
+  const html = page.replace(at, (_m, file, fq, bytes, sha, sq) => `${file}${fq}${pin.file}${fq}${bytes}${pin.bytes}${sha}${sq}${pin.sha256}${sq}`)
+  if (html.includes(was.sha256)) throw new Error(`dist/index.html holds the SHA-256 of ${was.file} somewhere besides its pin: the page would not be built for ${pin.file} alone`)
+  return html
+}
 
 /**
  * The web copy built for `pin` instead of the site's model (sitemodel), in `<dir>/web`: dist/index.html with
@@ -930,13 +951,7 @@ const literal = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
  * looks for it. (The page's notice names the file in its prose too; that line is left as it is.) Returns the folder.
  */
 async function siteCopy(pin, dir) {
-  const q = '([`\'"])'
-  const at = new RegExp(`(\\bfile\\s*:\\s*)${q}${literal(SITE_MODEL.file)}\\2(\\s*,\\s*bytes\\s*:\\s*)${literal(SITE_MODEL.bytes)}(\\s*,\\s*sha256\\s*:\\s*)${q}${literal(SITE_MODEL.sha256)}\\5`, 'g')
-  const page = readFileSync(DIST, 'utf8')
-  const n = page.match(at)?.length ?? 0
-  if (n !== 1) throw new Error(`dist/index.html holds SITE_MODEL (${SITE_MODEL.file}, ${SITE_MODEL.bytes} bytes, sha256 ${SITE_MODEL.sha256.slice(0, 8)}…) ${n} times, not once: rebuild it (npm run build), or find where the page's pin went`)
-  const html = page.replace(at, (_m, file, fq, bytes, sha, sq) => `${file}${fq}${pin.file}${fq}${bytes}${pin.bytes}${sha}${sq}${pin.sha256}${sq}`)
-  if (html.includes(SITE_MODEL.sha256)) throw new Error(`dist/index.html holds the site's SHA-256 somewhere besides its pin: the page would not be built for ${pin.file} alone`)
+  const html = pinnedPage(SITE_MODEL, pin)
   const from = join(dir, 'page')
   mkdirSync(from, { recursive: true })
   writeFileSync(join(from, 'index.html'), html)
@@ -2313,6 +2328,79 @@ const SCENARIOS = {
       }
     } finally {
       site?.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+
+  /**
+   * Sloane's model on the NixOS package: the launcher's own server (tools/web/launch.mjs respond) serves the page and a
+   * model folder laid out as tools/nix/model.nix lays it out (the model as a link to its file, the manifest, the
+   * licence and the notice), and the page is opened with models=1, as the launcher opens it when it serves one. The
+   * page is dist/index.html with APP_MODEL's pin, the desktop's model, swapped for the tiny model's (pinnedPage). Opened
+   * without models=1 it asks for nothing under models/; with it, the page gets the model by itself, with no click and
+   * the connection not looked at: the manifest, then the model, once each, from the launcher; kept (said in a toast),
+   * loaded, in the page's store, and the console says it came from the launcher. Run in the ci workflow's Chrome, and
+   * in nix.yml with the Chromium the NixOS package carries, which is the browser this path is for.
+   */
+  async launcher(chrome) {
+    const pin = tinyPin(APP_MODEL)
+    const path = `${SITE_DIR}${pin.file}`
+    const keptToast = new RegExp(`^${literal(TINY)} is kept in this page \\(${Math.round(pin.bytes / 1024)} KB\\): it answers whenever no model server on this machine does, and it is loading$`)
+    const loadedToast = new RegExp(`^${literal(TINY)} is loaded in this page \\(`)
+    const dir = mkdtempSync(join(tmpdir(), 'agent-city-launcher-'))
+    let server = null
+    try {
+      const models = join(dir, 'models')
+      mkdirSync(models)
+      symlinkSync(tinyModel(), join(models, pin.file))
+      writeFileSync(join(models, MODEL_MANIFEST), manifestText(pin))
+      for (const f of ['LICENSE', 'NOTICE']) copyFileSync(join(ROOT, 'third_party', 'qwen2.5-1.5b-instruct', f), join(models, f))
+      const answer = respond(Buffer.from(pinnedPage(APP_MODEL, pin)), '', readModels(models))
+      /** Every path asked of the launcher, in order. */
+      const served = []
+      server = createServer((req, res) => { served.push((req.url ?? '/').split('?')[0].replace(/^\//, '')); answer(req, res) })
+      await new Promise((r) => server.listen(0, '127.0.0.1', r))
+      const origin = `http://127.0.0.1:${server.address().port}`
+      /** What was asked for under models/ since `from` (an index into served). */
+      const under = (from = 0) => served.slice(from).filter((f) => f.startsWith(SITE_DIR))
+      /** The page's own word on its start (App.tsx: `Sloane's model: …`), once it has one since `from`. */
+      const said = async (r, from) => {
+        const end = Date.now() + 120_000
+        for (;;) {
+          const line = r.console.slice(from).find((l) => l.includes("Sloane's model: "))
+          if (line || Date.now() > end) return line ?? null
+          await new Promise((ok) => setTimeout(ok, 250))
+        }
+      }
+      const r = await open(chrome)
+      try {
+        // A launcher with no model folder adds nothing to the address: the page asks nothing under models/.
+        let logAt = r.console.length
+        await r.goto(`${origin}/?${LIGHT}`)
+        await r.booted()
+        const plain = await said(r, logAt)
+        check(!!plain && under().length === 0, 'launcher: opened without models=1 the page asks the launcher for nothing under models/', `${plain ?? 'no word from the page'}; ${under().join(', ') || 'nothing under models/'}`)
+
+        // As the launcher opens it with a model folder.
+        const autoAt = served.length
+        logAt = r.console.length
+        await r.goto(`${origin}/?${LIGHT}&${LAUNCHER_WORD}=1`)
+        await r.booted()
+        const got = await r.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => ${loadedToast}.test(b)) && t })()`, 180_000).catch(() => r.eval(MODEL_TOASTS))
+        check(got.some((b) => keptToast.test(b)) && got.some((b) => loadedToast.test(b)), 'launcher: with models=1 the page gets the launcher\'s model by itself: a toast says it is kept (the provider left as it was), another that it is loaded', got.join(' | ').slice(0, 300))
+        check(JSON.stringify(under(autoAt)) === JSON.stringify([SITE_MANIFEST, path]), 'launcher: it asked the launcher for the manifest and the model, once each, with no click', under(autoAt).join(', ') || 'nothing under models/')
+        const keptAuto = await r.eval(KEPT_IN_STORE)
+        check(keptAuto.length === 1 && keptAuto[0] === `meta.json + ${TINY}`, 'launcher: kept in the page\'s store', keptAuto.join('; ') || 'the store is empty')
+        const word = await said(r, logAt)
+        check(!!word && word.includes(TINY), 'launcher: the page says on its console that it kept the model', word ?? 'no word from the page')
+        await r.shot('launcher')
+        r.health('launcher')
+      } finally {
+        await r.b.close()
+      }
+    } finally {
+      server?.closeAllConnections()
+      server?.close()
       rmSync(dir, { recursive: true, force: true })
     }
   },

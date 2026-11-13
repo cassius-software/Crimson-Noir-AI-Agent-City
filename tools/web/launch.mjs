@@ -10,12 +10,17 @@
  * the next because the page keeps its settings (the onboarding, the map, the room token, a model key) per address,
  * and a local model server such as Ollama accepts a loopback address but not a page opened from a file. The browser
  * gets a profile of its own, so its WebGPU switches apply even while another Chrome window is open.
- * Usage: node tools/web/launch.mjs [key=value ...] [--port 4180] [--dir dist] [--x11] [--no-browser] [--check].
+ * With a model folder (--models, AGENT_CITY_MODELS: the NixOS package's is tools/nix/model.nix, Sloane's model with its
+ * licence and a manifest naming it) it also serves the files in that folder at models/ beside the page, and adds
+ * models=1 to the address, which tells the page to copy the model from there into its own storage once the city is on
+ * screen (src/App.tsx launcherSource); the page checks its size and SHA-256 on every byte, as it does the web copy's.
+ * Usage: node tools/web/launch.mjs [key=value ...] [--port 4180] [--dir dist] [--models DIR] [--x11] [--no-browser] [--check].
  * Each key=value becomes a query parameter of the page (quality=4, map=lakefront, players=2: MANUAL.md, On NixOS).
- * AGENT_CITY_PORT, AGENT_CITY_DIST, AGENT_CITY_X11=1 and AGENT_CITY_CHROME_FLAGS (extra switches, space separated) set
- * the same from the environment; CHROME names the browser (a path, or a command on PATH). `--check` is CI's proof that
- * the launcher's server serves the page so it runs: it serves the page on a free port to a headless browser on the
- * software adapter and exits 0 once the city draws frames, cross-origin isolated and with no exception on the page.
+ * AGENT_CITY_PORT, AGENT_CITY_DIST, AGENT_CITY_MODELS, AGENT_CITY_X11=1 and AGENT_CITY_CHROME_FLAGS (extra switches,
+ * space separated) set the same from the environment; CHROME names the browser (a path, or a command on PATH). `--check`
+ * is CI's proof that the launcher's server serves the page so it runs: it serves the page on a free port to a headless
+ * browser on the software adapter and exits 0 once the city draws frames, cross-origin isolated and with no exception
+ * on the page, and, with a model folder, once the page's own fetch reads the manifest and the model's size from it.
  * Before it opens the window it reads the GPUs' memory (nvidia-smi, else the amdgpu driver's files) and adds vram= to
  * the address, so auto may give Ollama a bigger model; vram= on the command line wins, and --check reads nothing.
  * What breaks if it is removed? `nix run` and the NixOS package have nothing to start; dist/index.html still plays
@@ -23,7 +28,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { createHmac, randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import { homedir, hostname } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -133,6 +138,7 @@ export function options(argv = process.argv.slice(2), env = process.env) {
   for (const w of extra) if (!w.startsWith('-')) throw new Error(`AGENT_CITY_CHROME_FLAGS takes switches only, each starting with -- and with no space in its value: ${w}`)
   const o = {
     dir: env.AGENT_CITY_DIST || join(ROOT, 'dist'),
+    models: env.AGENT_CITY_MODELS || null,
     port: Number(env.AGENT_CITY_PORT || PORT),
     query: new URLSearchParams(),
     x11: env.AGENT_CITY_X11 === '1',
@@ -150,6 +156,7 @@ export function options(argv = process.argv.slice(2), env = process.env) {
     }
     if (a === '--port') o.port = Number(value())
     else if (a === '--dir') o.dir = value()
+    else if (a === '--models') o.models = value()
     else if (a === '--x11') o.x11 = true
     else if (a === '--no-browser') o.browser = false
     else if (a === '--check') o.check = true
@@ -161,7 +168,35 @@ export function options(argv = process.argv.slice(2), env = process.env) {
   }
   if (!Number.isInteger(o.port) || o.port < 1 || o.port > 65535) throw new Error(`not a port: ${o.port}`)
   o.dir = resolve(o.dir)
+  if (o.models !== null) o.models = resolve(o.models)
   return o
+}
+
+/** What may be served from the model folder: one plain file name, nothing that climbs out (src/09_Cognition/siteModel.ts
+ *  asks for nothing else). */
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** The manifest the page reads first (src/09_Cognition/siteModel.ts SITE_MANIFEST, beside the page at models/). */
+export const MODEL_MANIFEST = 'manifest.json'
+
+/** Each served file's type, by its name. */
+const modelType = (name) => name.endsWith('.json') ? 'application/json; charset=utf-8' : /^[A-Z]+$/.test(name) ? 'text/plain; charset=utf-8' : 'application/octet-stream'
+
+/**
+ * The model folder's files the server answers for at /models/<name>, read once: each plain file name (a link, such as
+ * the Nix store's link to the model, is followed to its file) and its type; a folder, a dot file or anything else is
+ * left out. Throws, with the reason, where the folder cannot be read or holds no manifest.json.
+ */
+export function readModels(dir) {
+  const files = new Map()
+  for (const name of readdirSync(dir)) {
+    if (!MODEL_NAME.test(name) || name.includes('..')) continue
+    const path = join(dir, name)
+    try { if (!statSync(path).isFile()) continue } catch { continue }
+    files.set(name, { path, type: modelType(name) })
+  }
+  if (!files.has(MODEL_MANIFEST)) throw new Error(`${dir} holds no ${MODEL_MANIFEST}, so the page would find no model there`)
+  return files
 }
 
 /**
@@ -189,24 +224,48 @@ export function chromeFlags({ url, profile, x11 = false, extra = [], env = proce
   ]
 }
 
-/** Answers GET and HEAD for the page (/ and /index.html) and nothing else, every answer with HEADERS, and with the
- *  answer to a well-formed challenge when the launcher has a token. */
-export function respond(page, token = '') {
+/** Answers GET and HEAD for the page (/ and /index.html) and, with a model folder (readModels), its files at
+ *  /models/<name>; nothing else. Every answer has HEADERS, and the answer to a well-formed challenge when the launcher
+ *  has a token. */
+export function respond(page, token = '', models = null) {
   return (req, res) => {
     const nonce = req.headers[CHALLENGE.toLowerCase()]
     const headers = token && typeof nonce === 'string' && /^[0-9a-f]{32}$/.test(nonce) ? { ...HEADERS, [MARK]: proof(token, nonce) } : HEADERS
     // The path by plain string: a target no URL parser accepts (`//[`) must not throw out of the server.
     const path = (req.url ?? '/').split('?')[0]
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { ...headers, Allow: 'GET, HEAD' }).end(); return }
+    const file = models && path.startsWith('/models/') ? models.get(path.slice('/models/'.length)) : undefined
+    if (file) { sendFile(req, res, file, headers); return }
     if (path !== '/' && path !== '/index.html') { res.writeHead(404, headers).end(); return }
     res.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': page.length })
     res.end(req.method === 'HEAD' ? undefined : page)
   }
 }
 
-/** Serves the page on 127.0.0.1 at `port` (0 picks a free one); resolves to the server, rejects with the listen error. */
-export function serve(page, port, token = '') {
-  const server = createServer(respond(page, token))
+/** One file of the model folder, streamed from disk with its size; a file gone since the start is a 404, and a read
+ *  that fails half way ends the answer short, which the page counts as a copy that stopped. */
+function sendFile(req, res, file, headers) {
+  let bytes
+  try {
+    const st = statSync(file.path)
+    if (!st.isFile()) throw new Error('not a file')
+    bytes = st.size
+  } catch {
+    res.writeHead(404, headers).end()
+    return
+  }
+  res.writeHead(200, { ...headers, 'Content-Type': file.type, 'Content-Length': bytes })
+  if (req.method === 'HEAD') { res.end(); return }
+  const stream = createReadStream(file.path)
+  stream.on('error', () => res.destroy())
+  res.on('close', () => stream.destroy())
+  stream.pipe(res)
+}
+
+/** Serves the page (and the model folder's files, with `models`) on 127.0.0.1 at `port` (0 picks a free one); resolves
+ *  to the server, rejects with the listen error. */
+export function serve(page, port, token = '', models = null) {
+  const server = createServer(respond(page, token, models))
   return new Promise((ok, fail) => {
     server.once('error', fail)
     server.listen(port, '127.0.0.1', () => { server.off('error', fail); ok(server) })
@@ -288,11 +347,13 @@ function readPage(dir) {
 }
 
 /** CI's proof: the launcher's own server, a headless browser on the software adapter, frames drawn, isolated, no
- *  exception on the page. The window's switches, profile and fixed port are src/desktopLauncher.test.ts's to hold. */
+ *  exception on the page; with a model folder, the page's own fetch reads the manifest and the model's size beside it.
+ *  The window's switches, profile and fixed port are src/desktopLauncher.test.ts's to hold. */
 async function check(o) {
   const chrome = findChrome()
   if (!chrome) throw new Error('no Chrome or Chromium found: set CHROME')
-  const server = await serve(readPage(o.dir), 0)
+  const models = o.models === null ? null : readModels(o.models)
+  const server = await serve(readPage(o.dir), 0, '', models)
   const origin = `http://127.0.0.1:${server.address().port}`
   const browser = await Browser.launch(chrome, [...SOFTWARE_WEBGPU, '--window-size=960,540'])
   const errors = []
@@ -308,6 +369,16 @@ async function check(o) {
     console.log(`  cross-origin isolated: ${page.isolated}, SharedArrayBuffer: ${page.shared}`)
     console.log(`  exceptions: ${errors.length ? errors.slice(0, 3).join(' | ') : 'none'}`)
     ok = page.isolated && page.shared && errors.length === 0
+    if (models) {
+      // Asked as the page asks (siteModel.ts: models/ beside the page, nothing cached), from the page itself.
+      const m = await browser.eval(`(async () => {
+        const manifest = await (await fetch('models/${MODEL_MANIFEST}', { cache: 'no-store' })).json()
+        const head = await fetch('models/' + encodeURIComponent(manifest.file), { method: 'HEAD', cache: 'no-store' })
+        return { file: String(manifest.file), bytes: manifest.bytes, status: head.status, length: Number(head.headers.get('content-length')) }
+      })()`)
+      console.log(`  model beside the page: ${m.file}, ${m.length} of ${m.bytes} bytes (HTTP ${m.status})`)
+      ok = ok && m.status === 200 && Number.isSafeInteger(m.bytes) && m.bytes > 0 && m.length === m.bytes
+    }
   } finally {
     await browser.close()
     server.close()
@@ -316,16 +387,18 @@ async function check(o) {
 }
 
 const HELP = `Crimson Noir: Agent City launcher
-  crimson-noir-agent-city [key=value ...] [--port N] [--dir DIR] [--x11] [--no-browser] [--check]
+  crimson-noir-agent-city [key=value ...] [--port N] [--dir DIR] [--models DIR] [--x11] [--no-browser] [--check]
   key=value       a query parameter of the page (quality=4, map=lakefront, players=2, lite=1)
   vram=<GB>       the GPUs' memory for auto's Ollama model (default: read from nvidia-smi or the amdgpu driver; vram=0 for none)
   --port N        the port on 127.0.0.1 (default ${PORT}; the page keeps its settings per address)
   --dir DIR       the folder holding index.html (default: the build's dist/)
+  --models DIR    a folder holding Sloane's model and its manifest.json, served beside the page at models/ (default:
+                  the NixOS package's own; none outside it); the page copies the model from it by itself
   --x11           run the window under X11 (XWayland) when WebGPU will not start under Wayland
   --no-browser    serve only, and print the address
   --check         CI: boot the city headless on the software adapter and exit 0 once it draws
-Environment: AGENT_CITY_PORT, AGENT_CITY_DIST, AGENT_CITY_X11=1, AGENT_CITY_CHROME_FLAGS (switches only, no spaces
-inside a value), CHROME (a path, or a command on PATH such as google-chrome-stable).`
+Environment: AGENT_CITY_PORT, AGENT_CITY_DIST, AGENT_CITY_MODELS, AGENT_CITY_X11=1, AGENT_CITY_CHROME_FLAGS (switches
+only, no spaces inside a value), CHROME (a path, or a command on PATH such as google-chrome-stable).`
 
 /** Said when Nix's Chromium dies at start off NixOS: the likeliest cause, and the way round it. */
 const SANDBOX_HINT = `the browser stopped at start. Off NixOS, Nix's Chromium cannot start its sandbox where the distribution
@@ -337,12 +410,29 @@ function fromStore(chrome) {
   try { return realpathSync(chrome).startsWith('/nix/store/') } catch { return false }
 }
 
+/** The model folder to serve, or null: a folder that cannot be read or holds no manifest is said once and left out, as
+ *  the city runs without it. With one, the page's address gets models=1 (unless the command line set models= itself),
+ *  which is the page's sign that its launcher serves a model beside it. */
+export function serveModels(o, say = (line) => console.error(line)) {
+  if (o.models === null) return null
+  let models
+  try {
+    models = readModels(o.models)
+  } catch (e) {
+    say(`launcher: no model served beside the page: ${e instanceof Error ? e.message : e}`)
+    return null
+  }
+  if (!o.query.has('models')) o.query.set('models', '1')
+  return models
+}
+
 async function main() {
   const o = options()
   if (o.help) { console.log(HELP); return 0 }
   if (o.check) return (await check(o)) ? 0 : 1
 
   const page = readPage(o.dir)
+  const models = serveModels(o)
   const gpu = withVram(o.query)
   if (gpu) console.log(`this machine's GPUs: ${gpu.gb.toFixed(1)} GB (${gpu.from}): auto may give Ollama a bigger model by them (vram=${gpu.gb.toFixed(1)} in the page's address; vram=0 sizes nothing)`)
   const query = o.query.toString()
@@ -352,7 +442,7 @@ async function main() {
   const token = randomBytes(16).toString('hex')
   let server = null
   try {
-    server = await serve(page, o.port, token)
+    server = await serve(page, o.port, token, models)
     writeToken(file, token)
     // The file goes with the server: removed on the way out, unless a later launcher has taken the port since.
     process.on('exit', () => { try { if (readFileSync(file, 'utf8') === token) rmSync(file) } catch { /* gone already */ } })
@@ -363,6 +453,7 @@ async function main() {
     console.log(`the city is already served at ${url}`)
   }
   if (server) console.log(`serving the city at ${url} (this machine only; Ctrl+C stops it)`)
+  if (server && models) console.log(`  with Sloane's model beside it, from ${o.models}`)
   if (!o.browser) {
     if (!server) return 0
     console.log('open it in Chrome or Chromium with WebGPU (chrome://gpu: "WebGPU: Hardware accelerated")')

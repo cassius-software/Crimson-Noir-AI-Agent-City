@@ -1004,7 +1004,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                       </div>
                       <div
                         role="progressbar"
-                        aria-label={getting.step === 'download' ? (from === 'app' ? 'Copying the model from the app' : 'Downloading the model') : 'Keeping the model in this page'}
+                        aria-label={getting.step === 'download' ? (from === 'site' ? 'Downloading the model' : `Copying the model from ${copiedFrom(from)}`) : 'Keeping the model in this page'}
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={percent(getting)}
@@ -1167,7 +1167,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
       {getting && !(talking && talk?.state === 'none') && (
         <div className={`${tight ? 'mt-2 pt-2' : 'mt-3 pt-2.5'} flex items-center gap-3 border-t ${rule}`} data-site-strip={getting.step}>
           <span className={`min-w-0 shrink-0 text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting, from)}</span>
-          <span role="progressbar" aria-label={getting.step === 'download' ? (from === 'app' ? `Copying ${SLOANE.name}’s model from the app` : `Downloading ${SLOANE.name}’s model`) : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+          <span role="progressbar" aria-label={getting.step === 'download' ? (from === 'site' ? `Downloading ${SLOANE.name}’s model` : `Copying ${SLOANE.name}’s model from ${copiedFrom(from)}`) : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
             className={`block h-1 min-w-8 flex-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
             <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
           </span>
@@ -1229,25 +1229,30 @@ function percent(p: SiteModelProgress): number {
   return p.total > 0 ? Math.min(100, Math.max(0, Math.floor((p.done / p.total) * 100))) : 0
 }
 
+/** Where a model that is copied rather than downloaded comes from, in words: the app beside it, or the launcher. */
+function copiedFrom(from: SiteModelFrom): string {
+  return from === 'launcher' ? 'the launcher' : 'the app'
+}
+
 /**
  * The line over the bar while the site's model is got: megabytes while it downloads (kilobytes for a file under one
- * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept. The app's model is copied, not
- * downloaded: it is beside the app already.
+ * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept. The app's model and the launcher's
+ * are copied, not downloaded: they are on this machine already.
  */
 function gettingLine(p: SiteModelProgress, from: SiteModelFrom = 'site'): string {
   if (p.step === 'keep') return `Keeping it in this page · ${percent(p)}%`
-  const verb = from === 'app' ? 'Copying from the app' : 'Downloading'
+  const verb = from === 'site' ? 'Downloading' : `Copying from ${copiedFrom(from)}`
   if (p.total <= 0) return `${verb}…`
   const [unit, name] = p.total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
   return `${verb} · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
 }
 
-/** The hint under the site's model (or the app's): what it is, where it comes from, and where it stays. */
+/** The hint under the site's model (or the app's, or the launcher's): what it is, where it comes from, and where it stays. */
 function siteHint(site: SiteModelLine, from: SiteModelFrom = 'site'): string {
   if (site.kept) return `${site.title} is kept in this ${from === 'app' ? 'page' : 'browser'} already. `
-  return from === 'app'
-    ? `${site.title}, ${site.size}: it came with this app, and is checked against the copy the app was built for and kept in this page (Apache-2.0). `
-    : `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+  if (from === 'app') return `${site.title}, ${site.size}: it came with this app, and is checked against the copy the app was built for and kept in this page (Apache-2.0). `
+  if (from === 'launcher') return `${site.title}, ${site.size}: it came with this package and is served by its launcher on this machine, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+  return `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
 }
 
 function serverNote(origin: string): string {

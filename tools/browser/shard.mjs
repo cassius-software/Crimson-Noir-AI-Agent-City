@@ -13,13 +13,13 @@
 /**
  * Seconds each scenario took in CI's browser job (main's run for #111, 2026-11-11; `rest` from a later run, with its
  * staff steps added; `sitemodel` from its local run on SwiftShader with the page's own download added, 535 s, times
- * 1.5). Only the balance between the parts depends on these: a stale figure moves a scenario to the other part, never
- * out of the run.
+ * 1.5; `launcher` from its local run, 203 s, times 1.5). Only the balance between the parts depends on these: a stale figure
+ * moves a scenario to the other part, never out of the run.
  */
 export const SHARD_SECONDS = Object.freeze({
   desktop: 96, phone: 427, split: 134, file: 58, ultra: 348, peak: 153, lite: 96, tty: 1, pwa: 170, inpage: 225,
-  sitemodel: 800, actions: 65, walk: 104, walkshop: 82, walkhome: 85, walkphone: 125, lakefront: 93, homes: 119,
-  furnish: 191, rest: 230, fail: 251,
+  sitemodel: 800, launcher: 300, actions: 65, walk: 104, walkshop: 82, walkhome: 85, walkphone: 125, lakefront: 93,
+  homes: 119, furnish: 191, rest: 230, fail: 251,
 })
 
 /** What a scenario missing from SHARD_SECONDS counts as, s. */

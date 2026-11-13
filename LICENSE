@@ -84,9 +84,10 @@ whenever the page carries the module. The directory third_party/qwen2.5-0.5b-ins
 its notice and its SHA-256) of the one model the web copy serves beside its page, Qwen2.5 0.5B Instruct (Apache-2.0,
 Copyright 2024 Alibaba Cloud, as quantized by bartowski), whose weights are not in the repository and remain under
 their own licence, not under any licence above. The directory third_party/qwen2.5-1.5b-instruct/ is the same record of
-the one model the Windows installer carries beside the app, Qwen2.5 1.5B Instruct (Apache-2.0, Copyright 2024 Alibaba
-Cloud, as quantized by bartowski), whose weights are not in the repository either and remain under their own licence,
-not under any licence above.
+the one model the Windows installer carries beside the app and the NixOS package's launcher serves beside its page
+(tools/nix/model.nix fetches it), Qwen2.5 1.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud, as quantized by
+bartowski), whose weights are not in the repository either and remain under their own licence, not under any licence
+above.
 
 
 5. Prior releases of Crimson Noir OS

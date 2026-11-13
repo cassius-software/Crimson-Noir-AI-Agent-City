@@ -410,6 +410,17 @@ test('the Windows app\'s start: the same steps over the model it carries, with n
   assert.equal(kept, `${APP_MODEL.file} is kept in this page already`)
 })
 
+test('the NixOS launcher\'s start: the same steps over the model it serves beside the page, with no connection, in the launcher\'s words', async () => {
+  const p = page({ host: { link: () => null, offline: () => false } })
+  const run = createSiteAuto(p.h, APP_MODEL, 'Sloane', 'launcher')()
+  await until(() => p.work.calls.length === 1, 'the job is started')
+  assert.deepEqual(p.calls, ['seen', 'served', 'facts', 'hold', 'offer', 'refusal', 'begin', 'facts', 'onLink'])
+  p.work.calls[0].resolve(`${APP_MODEL.file} is kept in this page (940 MB)`)
+  assert.equal(await run, `${APP_MODEL.file} is kept in this page (940 MB)`)
+  assert.equal(await createSiteAuto(page({ host: { served: () => false } }).h, APP_MODEL, 'Sloane', 'launcher')(), 'only a page the launcher opened with models=1 is served its model')
+  assert.equal(await createSiteAuto(page({ host: { offer: async () => null } }).h, APP_MODEL, 'Sloane', 'launcher')(), 'the launcher serves no model beside the page (its package was built without one, or another server took its address)')
+})
+
 test('the start waits until the page is seen, and a city that ended or halted starts nothing', async () => {
   let show!: () => void
   const p = page({ host: { seen: () => new Promise<void>((resolve) => { show = resolve }) } })
