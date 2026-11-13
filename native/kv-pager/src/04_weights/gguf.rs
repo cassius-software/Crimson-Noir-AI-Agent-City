@@ -404,18 +404,40 @@ impl Gguf {
     pub fn open(path: &Path) -> Result<Self, GgufError> {
         let mut file = File::open(path)?;
         let file_len = file.metadata()?.len();
-        let mut want = (4u64 << 20).min(file_len);
-        loop {
+        Self::read_header(file_len, &mut |want| {
             let mut prefix = Vec::with_capacity(want as usize);
             file.seek(SeekFrom::Start(0))?;
             (&mut file).take(want).read_to_end(&mut prefix)?;
+            Ok(prefix)
+        })
+    }
+
+    /// `open`'s reads, for a file whose length was `file_len` when it was opened: `read(n)` gives its first n bytes, or
+    /// fewer where the file has got shorter since. Every read is longer than the one before, so it ends.
+    pub(super) fn read_header(file_len: u64, read: &mut dyn FnMut(u64) -> io::Result<Vec<u8>>) -> Result<Self, GgufError> {
+        let mut want = (4u64 << 20).min(file_len);
+        loop {
+            let prefix = read(want)?;
+            let got = prefix.len() as u64;
+            if got < want {
+                // Cut while being read (a damaged copy, a download writing over it): what is there now is all there is.
+                return match Gguf::parse(&prefix, got) {
+                    Err(GgufError::Truncated { at, needed, .. }) => Err(GgufError::Truncated { at, needed, file_len: got }),
+                    other => other,
+                };
+            }
             match Gguf::parse(&prefix, file_len) {
                 Err(GgufError::Truncated { at, needed, .. }) if want < file_len && at.saturating_add(needed) <= file_len => {
                     let end = at + needed;
                     if end > MAX_HEADER_BYTES {
                         return Err(GgufError::HeaderTooLarge { needed: end, limit: MAX_HEADER_BYTES });
                     }
-                    want = want.saturating_mul(4).min(MAX_HEADER_BYTES).max(end).min(file_len);
+                    let next = want.saturating_mul(4).min(MAX_HEADER_BYTES).max(end).min(file_len);
+                    if next <= want {
+                        // The parser asked for nothing past what it had: reading the same bytes again would not help.
+                        return Err(GgufError::Truncated { at, needed, file_len });
+                    }
+                    want = next;
                 }
                 Err(GgufError::Truncated { at, needed, .. }) => return Err(GgufError::Truncated { at, needed, file_len }),
                 other => return other,

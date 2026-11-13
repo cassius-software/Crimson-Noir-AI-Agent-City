@@ -423,7 +423,7 @@ impl Streamer {
         self.mode
     }
 
-    /// Units requested and not yet taken with `next`.
+    /// Units requested and not yet taken with `next_unit`.
     pub fn pending(&self) -> usize {
         self.pending
     }

@@ -284,6 +284,27 @@ fn a_header_that_fits_under_the_cap_is_read_even_when_four_times_the_last_read_w
 }
 
 #[test]
+fn a_file_cut_while_its_header_is_read_is_refused_after_a_few_reads_not_read_forever() {
+    // Its length said 1 GiB when it was opened; by the first read it is shorter. A key claims to run to 200 MiB in a
+    // file now 50 MiB long (reads would stop growing at the cap), and to 5 MiB in one now 3 MiB long.
+    for (key_len, now) in [(200u64 << 20, 50u64 << 20), (5 << 20, 3 << 20)] {
+        let mut head = gguf(&[("k", Meta::U32(1))], &[], 32);
+        head[24..32].copy_from_slice(&key_len.to_le_bytes());
+        let mut reads = 0;
+        let mut read = |want: u64| {
+            reads += 1;
+            assert!(reads <= 16, "the same reads again and again");
+            let mut b = head.clone();
+            b.resize(want.min(now) as usize, 0);
+            Ok(b)
+        };
+        let got = Gguf::read_header(1 << 30, &mut read);
+        assert!(matches!(got, Err(GgufError::Truncated { file_len, .. }) if file_len == now), "{got:?}");
+        assert!(reads <= 4, "{reads} reads");
+    }
+}
+
+#[test]
 fn the_writer_says_which_alignment_it_laid_the_tensors_out_at() {
     let bytes = gguf(&[], &[t("a", &[32], F32), t("b", &[32], F32)], 64);
     let g = parse(&bytes);
@@ -646,6 +667,40 @@ fn few_agents_read_only_their_experts_and_many_read_the_layer_in_one_sweep() {
     let n = s.crossover_agents(0, 10_000).unwrap();
     let d = disk.crossover_agents(0, 10_000).unwrap();
     assert!(d < n && n < 200, "a hard disk switches sooner ({d}) than an SSD ({n})");
+}
+
+#[test]
+fn the_estimate_counts_only_the_gaps_the_reads_do_not_merge() {
+    // Slices of 9,216 and 17,408 B on a drive moving 20,000 B in a request's time. With no merging, skipping a lone
+    // unrouted slice costs more than reading it, and the sweep wins once enough experts are routed. With gaps up to
+    // 64 KiB merged, every gap the routed reads still skip is longer than a request's worth: the sweep only ties, and
+    // the estimate must say never.
+    let cost = IoCost { bytes_per_sec: 2e9, sec_per_request: 10e-6 };
+    let none = |_: UnitKey| false;
+    for (layout, bytes) in [("written order", moe_ff(1, 64, 32, 64)), ("name order", moe_name_ordered(64, 64))] {
+        let idx = WeightIndex::build(&parse(&bytes)).unwrap();
+        let mut rng = Rng(11);
+        let mut sweep_strictly_cheaper = |s: &SwarmScheduler, agents: u32| {
+            (0..8).any(|_| {
+                let routes: Vec<Route> = (0..agents)
+                    .map(|a| {
+                        let x = rng.below(64) as u32;
+                        Route { agent: a, experts: vec![x, (x + 1 + rng.below(63) as u32) % 64] }
+                    })
+                    .collect();
+                let p = s.plan_layer(0, &routes, &none);
+                p.regime == Regime::WholeLayer && p.seconds < p.other_seconds
+            })
+        };
+        let unmerged = SwarmScheduler::new(&idx, cost, 0);
+        let n = unmerged.crossover_agents(0, 1 << 12).expect("without merging the sweep wins");
+        assert!([n, 2 * n, 4 * n].into_iter().any(|a| sweep_strictly_cheaper(&unmerged, a)), "{layout}: the plans agree");
+        let merged = SwarmScheduler::new(&idx, cost, 64 << 10);
+        assert_eq!(merged.crossover_agents(0, 1 << 12), None, "{layout}");
+        for agents in [1, 4, 16, n, 2 * n, 4 * n, 256] {
+            assert!(!sweep_strictly_cheaper(&merged, agents), "{layout}: {agents} agents");
+        }
+    }
 }
 
 #[test]

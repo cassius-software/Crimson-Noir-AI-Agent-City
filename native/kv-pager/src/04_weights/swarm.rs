@@ -156,33 +156,38 @@ impl<'a> SwarmScheduler<'a> {
 
     /// The smallest number of agents at which reading the whole of `layer` is strictly cheaper than reading the
     /// experts they are expected to be routed to, if every agent picks `experts_used` distinct experts uniformly at
-    /// random (expected distinct experts: E · (1 − (1 − k/E)ⁿ)). None for a dense model, or when the sweep never wins
-    /// within `max_agents`. The routed reads are estimated against the sweep's own plan, as what they save and what
-    /// they add: the bytes of the experts expected unrouted saved, and a request added per routed expert slice whose
-    /// lower neighbour is not routed (E · slices · covered · unrouted). Both carry the share expected unrouted, so they
-    /// vanish together as every expert gets routed and rounding cannot make the sweep look strictly cheaper where it
-    /// only ties. The estimate leaves out the few requests a layer's shared tensors add when unrouted slices cut them
-    /// off from each other (in llama.cpp's name order they sit on both sides of the stacked expert tensors), since they
-    /// merge back into one sweep exactly when every expert is routed, and the sector rounding of each gap (an unrouted
-    /// slice saves only its whole sectors, which matters for slices of a few sectors).
+    /// random (an expert is left unrouted with probability p = (1 − k/E)ⁿ). None for a dense model, or when the sweep
+    /// never wins within `max_agents`. The estimate counts, in each stacked tensor, the runs of unrouted experts (about
+    /// E · (1 − p)² · pʳ runs of r): a run longer than the merge gap is skipped by the routed reads, saving its bytes for
+    /// one more request, and a shorter one is read through, as by the sweep. Every term carries a power of p, so the
+    /// gain vanishes as every expert gets routed and rounding cannot make the sweep look strictly cheaper where it only
+    /// ties. Left out: the requests the shared tensors add when unrouted runs cut them off from each other (in
+    /// llama.cpp's name order they sit on both sides of the stacked tensors, and they merge back into one sweep exactly
+    /// when every expert is routed), runs that carry on from one tensor into the next, and sector rounding (a run saves
+    /// only its whole sectors, which matters for slices of a few sectors).
     pub fn crossover_agents(&self, layer: u32, max_agents: u32) -> Option<u32> {
         let e = self.index.experts;
         let k = self.index.experts_used.min(e);
         if !self.index.is_moe() || k == 0 {
             return None;
         }
-        let none = |_: UnitKey| false;
-        let whole = self.plan_layer(layer, &[Route { agent: 0, experts: (0..e).collect() }], &none);
-        let slices = self.index.unit(UnitKey::Expert { layer, expert: 0 })?.extents.len() as f64;
-        let shared = ReadPlan::new(&self.extents(&[UnitKey::Layer(layer)]), self.merge_gap);
-        let expert_part = whole.reads.read_bytes().saturating_sub(shared.read_bytes()) as f64;
+        // One slice length per stacked tensor: every expert's slice of a tensor is as long as expert 0's.
+        let lens: Vec<f64> = self.index.unit(UnitKey::Expert { layer, expert: 0 })?.extents.iter().map(|x| x.len as f64).collect();
+        let (bw, per_request, gap) = (self.cost.bytes_per_sec, self.cost.sec_per_request, self.merge_gap as f64);
         let (e, k) = (f64::from(e), f64::from(k));
         for n in 1..=max_agents {
-            let p_unused = (1.0 - k / e).powi(n as i32);
-            let covered = 1.0 - p_unused;
-            let added = slices * e * covered * p_unused;
-            let saved = p_unused * expert_part / self.cost.bytes_per_sec;
-            if added * self.cost.sec_per_request > saved {
+            let p = (1.0 - k / e).powi(n as i32);
+            let c = 1.0 - p;
+            // What the routed reads gain over the sweep. Runs of r ≥ r0 unrouted slices are skipped, r0 the shortest
+            // run longer than the gap; with Σ_{r ≥ r0} pʳ = p^r0 / c and Σ_{r ≥ r0} r · pʳ = p^r0 · (r0 − (r0 − 1) p) / c²,
+            // E · c² · Σ pʳ (r · len / bw − per_request) is the line below.
+            let mut gain = 0.0;
+            for &len in &lens {
+                let r0 = (gap / len).floor() + 1.0;
+                let pr = p.powf(r0);
+                gain += e * (pr * (r0 - (r0 - 1.0) * p) * len / bw - c * pr * per_request);
+            }
+            if gain < 0.0 {
                 return Some(n);
             }
         }
