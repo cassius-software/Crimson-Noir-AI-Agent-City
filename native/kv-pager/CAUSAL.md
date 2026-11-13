@@ -12,30 +12,35 @@ down in order.
 |---|---|---|---|
 | 01 | `src/01_geometry.rs` | A token has a size: `bytes_per_token` = layers × kv_heads × head_dim × 2 (K and V) × 2 B = 147,456 B for qwen3-vl:4b; a page is `BLOCK_TOKENS` = 16 tokens | Nothing can size a page, a pool or a dispatch |
 | 02 | `src/02_page_table.rs` | Tokens must live in physical pages the pool can reuse | The pool has pages but no owner; a host reserves whole contexts (112.5 GiB for 100 × 8,192) |
+| 02 | `src/02_page_table.rs` (pins, eviction) | Every agent's prompt opens with the same system prompt, and the pool is smaller than every prompt | Each agent maps its own copy of the shared prompt; the pool forgets the prompts asked most as soon as one-off prompts pass through |
 | 03 | `src/03_gpu/kernel.rs` + `paged_attention.wgsl` | The pages are read by attention through the block tables | The tables have no reader; the page size can drift from the kernel unnoticed (a test pins both) |
 | 03 | `src/03_gpu/pool.rs` (feature `gpu`) | The pages must exist on the device, and a copy-on-write must move bytes, not just ids | The table hands out ids of pages that hold nothing |
-| 04 | `src/bin/stress.rs` | The claims need a run on real hardware | No VRAM telemetry |
-| 04 | `src/bin/chaos/` + `tests/chaos.rs` | The table's promises are about sequences of operations | Regressions surface only as corrupt attention |
+| 04 | `src/04_weights/gguf.rs` (feature `weights`) | A model larger than memory is read from its GGUF file, so its layers and experts must be known as byte ranges | Nothing knows where a layer's or an expert's bytes are |
+| 04 | `src/04_weights/stream.rs` | Those ranges must arrive at the drive's speed, while the previous unit is used, without the OS cache thrashing | The ranges are known and nothing reads them |
+| 04 | `src/04_weights/swarm.rs` | Every agent's token runs through the same weights, so a step should read them once for the whole swarm | Each agent's step reads the weights again |
+| 05 | `src/bin/stress.rs` | The claims need a run on real hardware | No VRAM telemetry |
+| 05 | `src/bin/chaos/` + `tests/chaos.rs` | The table's promises are about sequences of operations; an eviction policy is only better if it keeps more | Regressions surface only as corrupt attention; the default policy is chosen blind |
+| 05 | `src/bin/stream.rs` | The streamer is worth what a real drive gives it | No measured drive speed; no planned costs for real model shapes |
 
 ## The copy-on-write divergence, cause by cause
 
 This is the case the stress run hits 90 times: a squad leader's prompt ends part-way into a page (114 tokens = 7 full
 pages + 2 tokens), 9 members fork from it, and each member then writes its own first token.
 
-1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:302`) clones the parent's block list and
+1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:536`) clones the parent's block list and
    adds one reference to each block. The tail page (2 tokens filled) now has `refs = 10`. No page is taken, and no
    byte moves on the GPU. *Cause of the next step:* a page with `refs > 1` must never be written, or one agent's
    write would appear in nine other agents' context.
-2. **The write finds the tail shared.** `PageTable::append` (`:252`) computes `offset = len % 16 = 2`. Because
-   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:257`).
-3. **A private page, or a refusal whole.** `take()` (`:258`, defined at `:403`) pops a free page, or evicts the
-   oldest idle cached page. If there is none, the append returns `OutOfBlocks { needed: 1, available: 0 }` *before
+2. **The write finds the tail shared.** `PageTable::append` (`:482`) computes `offset = len % 16 = 2`. Because
+   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:491`).
+3. **A private page, or a refusal whole.** `take()` (`:492`, defined at `:748`) pops a free page, or evicts the
+   idle cached page first in the eviction order (below). If there is none, the append returns `OutOfBlocks { needed: 1, available: 0 }` *before
    anything changes*. The agent stalls; the pool is never overcommitted. That is the no-OOM guarantee.
 4. **Token ids copied, the shared page released once.** The new page gets the first `offset` token ids and the same
-   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:265`) drops `src` to `refs = 9`;
+   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:498`) drops `src` to `refs = 9`;
    the other nine agents still map it.
-5. **The table is repointed.** The agent's last block entry becomes the new page (`:291`), and the token goes into slot
-   `offset`. If that fills the page, `seal` (`:427`) keys it into the prefix cache (`:294`).
+5. **The table is repointed.** The agent's last block entry becomes the new page (`:525`), and the token goes into slot
+   `offset`. If that fills the page, `seal` (`:781`) keys it into the prefix cache (`:530`).
 6. **The host is told what to move.** `append` returns `Slot { block: new, offset: 2, copy_from: Some((src, 2)) }`.
    The page table owns ids only; the bytes are the host's job.
 7. **Bytes move on the GPU, through staging.** `Host::store` (`bin/stress.rs:182`) sees `copy_from` and calls
@@ -50,7 +55,7 @@ pages + 2 tokens), 9 members fork from it, and each member then writes its own f
 10. **Staging memory is returned.** `device.poll(Wait)` (`stress.rs:207`) runs after every submit. Without it, the
     queue's write staging grew 2050 → 3850 MiB over the run (measured with the DX12 allocator report). With it, the
     allocation stays flat at 2050 MiB.
-11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:324`) lays out the rows. The kernel
+11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:603`) lays out the rows. The kernel
     resolves each position through `block_table[seq * max_blocks + pos / 16]` (`paged_attention.wgsl:88`). The member
     now reads its private tail page, and the other nine still read the shared one.
 12. **Proof both ways.** The stress run checks every agent's attention against a CPU reference that uses only that
@@ -62,6 +67,13 @@ pages + 2 tokens), 9 members fork from it, and each member then writes its own f
 
 - The page table isn't thread-safe by itself: every method takes `&mut self`. A host that shares it wraps it in a
   lock. The chaos run's shared-table mode does exactly that, with one op per lock hold.
-- Idle cached pages are evicted oldest-first by release time, not by use frequency.
+- Which idle cached page goes first. A chain is evicted from its tail, so a cached page never outlives its parent, and
+  only a page whose parent is cached is cached itself. Among the idle tails, the default policy (`Eviction::LogOdds`)
+  evicts the one least likely to be reused: each page carries the log-odds of reuse, a prior from where it came from
+  (a pinned prefix 0.95, a prompt 0.50, a generated token 0.10), raised by every cache hit or fork (a Bayes factor of
+  3), decayed toward the floor while idle (α = 0.99 per admission, fork or release). With no reuse seen it is the order
+  of release, as `Eviction::Lru`, which remains available. The chaos run replays both on the same workloads.
+- Pinned prefixes (`PageTable::pin`): a prompt mapped by the pin itself, so its pages are never evicted; agents share
+  its full pages through the prefix cache, or every page with `fork_pin`, the partly filled last one copied on write.
 - The K/V in the stress run are synthetic: a hash of the token chain. The chain above is about where the bytes go,
   not what a model would put in them.
