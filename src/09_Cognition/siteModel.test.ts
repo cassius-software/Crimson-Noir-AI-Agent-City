@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It holds the site's model to what the page was built for: the pin equals the SHA256SUMS
- * line and the notice beside the model's licence (third_party/qwen2.5-0.5b-instruct/), the file's name is one the
+ * line and the notice beside the model's licence (third_party/qwen2.5-0.5b-instruct/; the Windows app's, APP_MODEL,
+ * equally its own, and the shell's file and size and the installer's config name the same file), the file's name is one the
  * in-page model accepts as a text model, siteUrl admits only a models/ file beside the page on its own origin, the
  * manifest offers only exactly the pin, and fetchSiteModel turns into a File only what arrived whole, with the pinned
  * size and SHA-256 (a short body, a long one, a wrong hash, an HTTP error and a stop each end with no File and a plain
@@ -15,7 +16,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { SITE_DIR, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, manifestText, parseManifest, siteUrl, type SiteFetch, type SiteModelPin } from './siteModel.ts'
+import { APP_MODEL, SITE_DIR, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, manifestText, parseManifest, siteUrl, type SiteFetch, type SiteModelPin } from './siteModel.ts'
+import { APP_READ_BYTES } from '../07_Execute_Actions/desktopShell.ts'
 import { localText } from './localCompute.ts'
 
 // The tiny model is plain JavaScript (tools/ carries no types); a computed specifier keeps the page's typecheck off it.
@@ -38,6 +40,31 @@ test('the pin is the record beside the licence: the SHA256SUMS line, the notice\
   assert.ok(localText(SITE_MODEL.file), 'the in-page model takes the file as a text model, not an embedder')
   assert.ok(Object.isFrozen(SITE_MODEL))
   assert.equal(SITE_MANIFEST, `${SITE_DIR}manifest.json`)
+})
+
+test('the app\'s pin is its own record beside its licence, and the shell and the installer name the same file and size', () => {
+  assert.equal(read('../../third_party/qwen2.5-1.5b-instruct/SHA256SUMS'), `${APP_MODEL.sha256}  ${APP_MODEL.file}\n`)
+  const notice = read('../../third_party/qwen2.5-1.5b-instruct/NOTICE')
+  assert.ok(notice.includes(`${APP_MODEL.file}   ${APP_MODEL.bytes} bytes, sha256 ${APP_MODEL.sha256}`), 'the notice names the pinned file, size and hash')
+  assert.ok(notice.includes(APP_MODEL.revision) && notice.includes(APP_MODEL.repo), 'the notice names the repository and revision')
+  assert.match(read('../../third_party/qwen2.5-1.5b-instruct/LICENSE'), /Apache License\s+Version 2\.0, January 2004[\s\S]*Copyright 2024 Alibaba Cloud/)
+  assert.match(APP_MODEL.sha256, /^[0-9a-f]{64}$/)
+  assert.ok(Number.isSafeInteger(APP_MODEL.bytes) && APP_MODEL.bytes > 0)
+  assert.match(APP_MODEL.file, /^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$/)
+  assert.match(APP_MODEL.revision, /^[0-9a-f]{40}$/)
+  assert.ok(localText(APP_MODEL.file), 'the in-page model takes the file as a text model, not an embedder')
+  assert.ok(Object.isFrozen(APP_MODEL))
+  assert.notEqual(APP_MODEL.file, SITE_MODEL.file, 'two models, two names: a copy of one is never taken for the other')
+  // The shell's reading half names the same file and size, and gives at most what the page asks for in one read.
+  const rs = read('../../src-tauri/src/model_file.rs')
+  assert.match(rs, new RegExp(`pub const FILE: &str = "${APP_MODEL.file.replace(/\./g, '\\.')}";`))
+  assert.match(rs, new RegExp(`pub const BYTES: u64 = ${APP_MODEL.bytes.toLocaleString('en-US').replace(/,/g, '_')};`))
+  assert.match(rs, /pub const MAX_READ: u64 = 4 \* 1024 \* 1024;/)
+  assert.equal(APP_READ_BYTES, 4 * 1024 * 1024)
+  // The installer's config bundles exactly that file, its licence and its notice under models/.
+  const conf = JSON.parse(read('../../src-tauri/tauri.model.conf.json')) as { bundle: { resources: Record<string, string> } }
+  assert.deepEqual(conf.bundle.resources, Object.fromEntries([APP_MODEL.file, 'LICENSE', 'NOTICE'].map((f) => [`models/${f}`, `models/${f}`])))
+  assert.match(read('../../src-tauri/.gitignore'), /^models$/m, 'the model is never committed')
 })
 
 test('siteModel.ts names no address and fetches nothing itself: the fetch is handed in', () => {
@@ -138,6 +165,21 @@ test('fetchSiteModel refuses what is not the pinned model, with no File: a flipp
   }
   const away: SiteFetch = async () => { throw new TypeError('Failed to fetch') }
   await assert.rejects(fetchSiteModel(away, site().pin, () => {}), /this site could not be reached for the model \(Failed to fetch\)/)
+})
+
+test('fetchSiteModel from the app: the same checks, in the app\'s words (copied from the app, never "this site" or "download")', async () => {
+  const s = site()
+  const file = await fetchSiteModel(s.fetchFn, s.pin, () => {}, undefined, 'app')
+  assert.deepEqual(new Uint8Array(await file.arrayBuffer()), s.model)
+  const bad = s.model.slice()
+  bad[0] ^= 1
+  await assert.rejects(fetchSiteModel(site({ body: bad }).fetchFn, s.pin, () => {}, undefined, 'app'), /^Error: what the app sent is not the model this page was built for \(its SHA-256 differs\), so nothing was kept$/)
+  await assert.rejects(fetchSiteModel(site({ body: s.model.slice(0, 100) }).fetchFn, s.pin, () => {}, undefined, 'app'), /^Error: the copy from the app stopped at [\d,]+ of [\d,]+ bytes: try again$/)
+  const more = new Uint8Array(s.model.length + 1)
+  more.set(s.model)
+  await assert.rejects(fetchSiteModel(site({ body: more }).fetchFn, s.pin, () => {}, undefined, 'app'), /^Error: what the app sent is larger than the model/)
+  const unread: SiteFetch = async () => { throw new Error('the app\'s model is not beside the app (os error 2)') }
+  await assert.rejects(fetchSiteModel(unread, s.pin, () => {}, undefined, 'app'), /^Error: the app could not read the model it carries \(the app's model is not beside the app \(os error 2\)\): install the app again and try again$/)
 })
 
 test('fetchSiteModel stops when asked: before it starts, and mid-download, with the stop\'s own reason', async () => {

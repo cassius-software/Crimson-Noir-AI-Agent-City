@@ -52,7 +52,9 @@ GitHub Pages also asks the site it came from for one thing, the small model it s
 this browser: once the city is on screen it gets it by itself, its progress on Sloane's chip and card and a **Stop**
 on the card, unless this browser could not run or keep it, another model or provider is chosen, the browser says it
 saves data or is on mobile data, or you stopped it before; then only when Sloane's card says no model answers and you
-tap **Get the model** (A model in this page, The site's model). `dist/index.html` itself carries no model and asks for none.
+tap **Get the model** (A model in this page, The site's model). The Windows app's installer carries a model beside the
+app, which the page copies into its own storage the same way, with nothing downloaded (The app's model).
+`dist/index.html` itself carries no model and asks for none.
 The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
@@ -2572,8 +2574,10 @@ them that answers (`auto`):
 No model server ships with the product, and the page file carries no model: you run your own server, bring your own
 key, or keep a model file in the page (the page carries the runtime for one, never a model). The one exception is the
 web copy on GitHub Pages, which serves one small model beside its page, gets it by itself once the city is on screen
-where it can, and otherwise offers it in a tap on Sloane's card (A model in this page, The site's model); the Windows app, the launcher, the flake and the release builds carry
-none. The city works exactly the same without any of them.
+where it can, and otherwise offers it in a tap on Sloane's card (A model in this page, The site's model). The other
+is the Windows app's installer (and its .msi), which carries a larger model beside the app and lets the page copy it
+the same way (The app's model). The bare .exe, the launcher, the flake and the OS media carry none. The city works
+exactly the same without any of them.
 
 - **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
   whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
@@ -2901,7 +2905,9 @@ It needs no model server and no address, and once the file is kept nothing it do
 phone, which runs no model server, gets a model of its own. The page file carries the runtime, never a model: a file
 you choose is yours, under its own licence. The web copy on GitHub Pages also serves one small model beside its page,
 Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
-kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below); `dist/index.html`, the Windows app, the launcher, the flake and the release builds carry none. The parts:
+kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
+The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, which the page gets the same way (The app's
+model, below). `dist/index.html`, the bare .exe, the launcher, the flake and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -2914,7 +2920,8 @@ kept (a model server on this machine still answers first), or in one tap on Sloa
     above);
   - on the web copy, by itself once the city is on screen, or from Sloane's card, **Get the model · 379 MB**: the
     site's model (below), downloaded rather than picked, then kept and chosen as a picked file is (the tap also makes
-    `inpage` the provider).
+    `inpage` the provider); in the Windows app from its installer, the same way, **Get the model · 940 MB**: the app's
+    model (below), copied from beside the app rather than downloaded.
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
@@ -3007,6 +3014,43 @@ kept (a model server on this machine still answers first), or in one tap on Sloa
   browser keeping it by itself and Sloane answering with it, a flipped byte ending the page's own try with a toast and
   the card's tap still offered, and the tap. Not verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
   well and how fast this model converses, and any real phone or GPU.
+- **The app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/model.rs`, `07_Execute_Actions/desktopShell.ts`).
+  The Windows app's installer and its .msi carry one model beside the app, so Sloane talks from the first launch with
+  no model server and nothing to download: Qwen2.5 1.5B Instruct at Q4_K_M (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`,
+  986,048,768 bytes, about 0.9 GB), the same quantization by bartowski of the Qwen team's own weights (Apache-2.0,
+  Copyright 2024 Alibaba Cloud; `third_party/qwen2.5-1.5b-instruct/` holds its licence, its notice and its SHA-256).
+  It is larger than the site's model because a computer's in-page limits take it (How large a model, below) and it
+  answers better. The Windows workflow (`.github/workflows/windows-app.yml`) fetches it from Hugging Face at a pinned
+  revision whenever its cache, keyed by the whole pin, does not hold it, checks its size and SHA-256 against the pin on
+  every build (`node tools/web/siteModel.mjs app`, which puts it in `src-tauri/models/` with its `LICENSE` and
+  `NOTICE`), and builds both installers with `src-tauri/tauri.model.conf.json`, which bundles those three files into
+  the app's folder under `models/` (the NSIS installer stores them uncompressed: the model does not compress). A build
+  whose installer is smaller than nine tenths of the model fails. The bare .exe the workflow also publishes carries
+  none, and neither does an app built at home with `npm run app:build`. In the app:
+  - the shell lends the page two commands over that one file, and nothing else of the disk: `app_model` says whether
+    it is there with exactly the pinned size, and `app_model_read` reads up to 4 MiB of it from an offset, as base64
+    text, because the shell's answers reach the page as text (its binary path is a request the page's air gap refuses,
+    so Tauri uses the one that carries text). The page names no file and passes no path;
+  - from there it is the site's model's path, with the app's pin: the same start once the city is on screen, with the
+    same holds, except that the connection has no say (the copy never leaves the machine); the same checks before
+    anything is read (the device's limits, the page's storage with 64 MB spare); the size and SHA-256 checked on every
+    byte as it is read (`desktopShell.ts` `shellModelFetch` hands `fetchSiteModel` the reads in place of a download);
+    the same keep, choice and toasts, and the same **Stop**. The card and the HUD say it is copied from the app rather
+    than downloaded ("Copying from the app · 120 of 940 MB", "copying the app's model into the page 13%");
+  - the page keeps its own copy in its storage, as it keeps any model file, so the model takes about 0.9 GB twice on
+    the disk: once beside the app, once in the page's storage. `ask file forget Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`
+    frees the page's copy (the page copies it again on a later launch unless you chose otherwise); uninstalling the
+    app removes the one beside it.
+
+  What is verified: the pin against its record and the shell's file name and size, the installer config naming
+  exactly the model, its licence and its notice (`siteModel.test.ts`), the offer only for exactly the pin, the reads
+  in order, each asked once the last is taken, the first read before the fetch answers, a read that fails, odd
+  answers and a stop (`desktopShell.test.ts`), the page's own start in the app's words with no connection
+  (`siteAuto.test.ts`), the wiring (`chat.test.ts`), the placing and the workflow's order (`webApp.test.ts`), and the
+  shell's reads (`model_file.rs`'s own tests, run in the container that wrote them, not by CI). CI builds the
+  installers with the model in them. Not verified: the installed app on a physical Windows machine, the copy's speed
+  over the shell's text answers (about 240 reads), and how well and how fast the 1.5B model converses. The Windows
+  arm64 app (from the build matrix) and the Mac, Linux, Android and iPhone apps carry no model yet.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
   later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.

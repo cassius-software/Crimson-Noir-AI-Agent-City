@@ -136,7 +136,7 @@ wllama's JavaScript also carries feature tests from wasm-feature-detect (Apache-
 the runtime also carries the full text of each of these licenses at the end of `dist/index.html`, from
 `third_party/wllama/3.8.1/NOTICE`.
 
-**The model the web copy serves.** The page file, the Windows app and the release builds carry no model. The
+**The model the web copy serves.** The page file, the bare Windows .exe and the OS media carry no model. The
 published web copy of the page serves one model beside it, Qwen2.5 0.5B Instruct (the file
 `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site, by itself once the city is on
 screen in a browser that can run it (not on mobile data or data saver, and not once the visitor has stopped it) or when
@@ -145,6 +145,14 @@ License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by
 remains under its own licence, not under this product's licence: the full text of the Apache License 2.0 with that
 copyright line, and a notice of where the file comes from, are served beside it as `models/LICENSE` and
 `models/NOTICE`, from `third_party/qwen2.5-0.5b-instruct/`.
+
+**The model the Windows installer carries.** The Windows app's installer and its .msi carry one model beside the app,
+Qwen2.5 1.5B Instruct (the file `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`), which the app's page copies into its own storage
+once the city is on screen, or when the person taps for it. The model is the Qwen team's, Copyright 2024 Alibaba Cloud,
+licensed under the Apache License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by bartowski,
+shipped unchanged. It remains under its own licence, not under this product's licence: the full text of the Apache
+License 2.0 with that copyright line, and a notice of where the file comes from, are installed beside it as
+`models/LICENSE` and `models/NOTICE` in the app's folder, from `third_party/qwen2.5-1.5b-instruct/`.
 
 ## Map data (the surveyed region)
 
@@ -175,14 +183,16 @@ it can speak instead (`ask api chat`), llama.cpp only to identify the local serv
 that format (`ask provider llamacpp`) and the engine compiled into the in-page model runtime (`ask provider inpage`),
 Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
 (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
-unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the model the web copy serves
-beside its page for the in-page runtime (`09_Cognition/siteModel.ts`). No model server ships with the product, and the
-page file, the Windows app and the release builds carry no model: the operator's server, or a model file kept in their
-browser for the in-page runtime, holds the model under the model's own licence. The one model the product offers is
-Qwen2.5 0.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud; the file quantized by bartowski), which the web copy
-serves beside its page and fetches by itself once the city is on screen, or when the visitor taps for it, under its
-own licence
-(`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`). The network provider
+unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the models the web copy
+serves beside its page and the Windows installer carries beside the app, for the in-page runtime
+(`09_Cognition/siteModel.ts`). No model server ships with the product, and the page file, the bare Windows .exe and
+the OS media carry no model: the operator's server, or a model file kept in their browser for the in-page runtime,
+holds the model under the model's own licence. The two models the product offers are Qwen2.5 0.5B Instruct, which
+the web copy serves beside its page and fetches by itself once the city is on screen, or when the visitor taps for it
+(`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B
+Instruct, which the Windows installer carries beside the app (`third_party/qwen2.5-1.5b-instruct/`, installed beside
+it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright 2024 Alibaba Cloud, the files quantized by
+bartowski, each under its own licence. The network provider
 answers only with the operator's own key, which stays in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
 (`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
@@ -288,6 +298,12 @@ release; each one is something the release engineering could not confirm.
       when a visitor taps for it, and nothing of the visitor's goes with the request. Say so in a privacy notice if the
       web copy gets one. GitHub Pages has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the
       model, so about 250 new visitors a month from such browsers.
+    - **The Windows installer's model.** The installer and the .msi carry Qwen2.5 1.5B Instruct
+      (`third_party/qwen2.5-1.5b-instruct/`, pinned as `APP_MODEL` in the same file) the same way: bartowski's Q4_K_M
+      file, fetched at a pinned revision, checked and shipped unchanged with the Apache License 2.0 and a notice
+      installed beside it. The same two points apply to it: compare its LICENSE once with the one in
+      `Qwen/Qwen2.5-1.5B-Instruct`, and confirm the NOTICE is enough for a third party's quantization. Every installer
+      download is about 0.9 GB from GitHub's release storage.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

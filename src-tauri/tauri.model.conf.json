@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf": "models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+      "models/LICENSE": "models/LICENSE",
+      "models/NOTICE": "models/NOTICE"
+    },
+    "windows": {
+      "nsis": {
+        "compression": "none"
+      }
+    }
+  }
+}

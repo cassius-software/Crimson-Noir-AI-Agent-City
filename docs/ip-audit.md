@@ -129,6 +129,39 @@ code, and none of it is in the repository:
   4. The owner reviews the NOTICE, this entry and the pin before the change that adds them reaches main: the web
      workflow serves the model from the next publish of main on.
 
+### The model the Windows installer carries (`third_party/qwen2.5-1.5b-instruct/`, added 13 November 2026)
+
+The second set of model weights the product offers, so that a person who installs the Windows app can talk to Sloane
+from the first launch with no model of their own. It is held exactly as the web copy's model is (the entry above), and
+none of it is in the repository:
+
+- **What it is.** `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, sha256
+  `1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370`), as bartowski publishes it in the Hugging Face
+  repository `bartowski/Qwen2.5-1.5B-Instruct-GGUF` at revision `9eadc66189c7641e1ddd226b8267a9119b2ce2d4`: a GGUF
+  conversion of the Qwen team's Qwen2.5-1.5B-Instruct weights (Alibaba Cloud; Apache-2.0, Copyright 2024 Alibaba
+  Cloud) quantized to Q4_K_M with an importance matrix (llama.cpp release b3772). Of the Qwen2.5 instruct sizes, 0.5B,
+  1.5B, 7B, 14B and 32B are Apache-2.0; 3B and 72B are under Qwen's own licences, so they are not used. The size, the
+  hash, the revision and the licence named by both repositories were read from Hugging Face's API on 13 November 2026;
+  `site-model.yml` and `windows-app.yml` fetch the file and check the size and hash on every run.
+- **How it is held.** Never committed, never in the page and never in the bare .exe. `src/09_Cognition/siteModel.ts`
+  pins it (`APP_MODEL`), `SHA256SUMS` beside its licence holds the same line, and `src-tauri/src/model_file.rs` names
+  the same file and size; `siteModel.test.ts` holds the three equal. `.github/workflows/windows-app.yml` fetches the
+  file at the pinned revision when its cache does not hold it and, on every build, `tools/web/siteModel.mjs app`
+  checks its size and SHA-256 while copying it into `src-tauri/models/` (git-ignored) with `LICENSE` and `NOTICE`; a
+  mismatch fails the build and leaves no model behind. `src-tauri/tauri.model.conf.json` bundles those three files
+  into the installer and the .msi, which install them under `models/` in the app's folder. The app's page reads the
+  file only through the shell's two read-only commands and checks the same size and hash on every byte.
+- **The texts.** `LICENSE` is the same Apache License 2.0 text with Qwen's copyright line as the 0.5B record's (Qwen's
+  repository `Qwen/Qwen2.5-1.5B-Instruct` carries the Apache License 2.0 with "Copyright 2024 Alibaba Cloud" in its
+  appendix, as read on 13 November 2026); `NOTICE` says what the file is, where it comes from, at which revision, that
+  it is a quantization of Qwen's weights and that the product ships it unchanged. Both are installed beside the model.
+  `NOTICE.md` (a paragraph under "Third-party software", the trademark paragraph and operator note 14) and `LICENSE`
+  section 4 name the model and this directory.
+- **Open points, for the owner before a release.** The first two of the entry above apply here as well: compare
+  `LICENSE` once byte for byte with the copy in `Qwen/Qwen2.5-1.5B-Instruct`, and have counsel confirm that the NOTICE
+  is enough for a third party's quantization (the alternative is Qwen's own `Qwen/Qwen2.5-1.5B-Instruct-GGUF` file).
+  Every installer download is about 0.9 GB from GitHub's release storage.
+
 ## 2. The npm dependency tree (`package-lock.json`)
 
 Checked every entry of the lockfile by its `license` field (the test does the same on every run).

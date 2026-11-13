@@ -36,12 +36,12 @@ import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMe
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { figureFromAdapters } from './09_Cognition/modelFit.ts'
-import { shellGpuMemory } from './07_Execute_Actions/desktopShell.ts'
+import { shellGpuMemory, shellModel, shellModelFetch } from './07_Execute_Actions/desktopShell.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
 import { fits, holdTier, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
 import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
-import { SITE_MANIFEST, SITE_MODEL, fetchSiteModel, parseManifest, siteUrl, type SiteFetch, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelProgress } from './09_Cognition/siteModel.ts'
+import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
@@ -181,6 +181,61 @@ const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
  * says so, or when the visitor taps for it on Sloane's card.
  */
 const siteFetch: SiteFetch = (path, init) => window.fetch(siteUrl(path, window.location.href), init)
+
+/**
+ * Where this build gets Sloane's model (09_Cognition/siteModel.ts): the web copy from its own site, beside the page
+ * (SITE_MODEL over siteFetch, webSource); the Windows app from beside itself, where its installer put it (APP_MODEL
+ * over the shell's read of that one file, appSource: desktopShell.ts shellModelFetch). Everything after it (the
+ * device's and the storage's checks, the pin's size and SHA-256 on every byte, the keep, the page's own start, the
+ * card) is one and the same.
+ */
+interface ModelSource {
+  readonly from: SiteModelFrom
+  readonly pin: SiteModelPin
+  readonly fetch: SiteFetch
+  /** This page is one the source serves a model to at all: the web copy (it names a web app manifest), the app's window. */
+  served(): boolean
+  /** The source's offer of the pin: null where it has none; a throw where it could not say just now (asked again later). */
+  offer(signal: AbortSignal): Promise<SiteModelOffer | null>
+  /** Getting it uses the connection (the site's); the app's own file never leaves the machine. */
+  readonly online: boolean
+  /** The HUD's line while it is got, at `pct` percent. */
+  line(pct: number): string
+}
+
+/** The web copy's model, from its own site. */
+const webSource = Object.freeze<ModelSource>({
+  from: 'site',
+  pin: SITE_MODEL,
+  fetch: siteFetch,
+  // Only the web copy (the page tools/web/pwa.mjs builds, which names a web app manifest) is served with a model
+  // beside it: dist/index.html served by the launcher or a preview has nothing beside it to ask for.
+  served: () => /^https?:$/.test(window.location.protocol) && document.querySelector('link[rel="manifest"]') !== null,
+  // A site that answers with the manifest, or says it has none (404, 410), is asked once a visit; one that could not
+  // be reached, or could not answer just now (a 429, a 5xx), is asked again next time.
+  offer: async (signal) => {
+    const r = await siteFetch(SITE_MANIFEST, { cache: 'no-cache', signal })
+    if (r.ok) return parseManifest(await r.text())
+    void r.body?.cancel().catch(() => undefined)
+    if (r.status === 404 || r.status === 410) return null
+    throw new Error(`the site answered ${r.status}`)
+  },
+  online: true,
+  line: (pct) => `getting the model from this site ${pct}%`,
+})
+
+/** The Windows app's model, from beside the app, over the shell's read (`fetch`: desktopShell.ts shellModelFetch). */
+const appSource = (fetch: SiteFetch): ModelSource => Object.freeze<ModelSource>({
+  from: 'app',
+  pin: APP_MODEL,
+  fetch,
+  served: () => true,
+  // The shell says whether the file is there with exactly the pin's name and size (none: the bare .exe, an older
+  // app); asked once a visit, as the site's manifest is.
+  offer: () => shellModel(APP_MODEL),
+  online: false,
+  line: (pct) => `copying the app's model into the page ${pct}%`,
+})
 
 /** `make()` the first time it is asked for, and the same value every time after. */
 function once<T>(make: () => T): () => T {
@@ -1588,29 +1643,32 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           return picker ? picker.open() : Promise.reject(new Error('this page has no file picker'))
         }
         modelFileRef.current = () => keepAndSay(pickFiles())
-        // The model this site serves beside the page (09_Cognition/siteModel.ts): got by the page itself once the city is
-        // on screen where siteAuto.ts says so (below), or on the visitor's tap on Sloane's card when no model answers. The
-        // manifest is asked once a visit, when either first needs it, and the model is fetched only after the device's
+        // The model this site serves beside the page (09_Cognition/siteModel.ts), or in the Windows app the one its
+        // installer put beside the app (ModelSource above): got by the page itself once the city is on screen where
+        // siteAuto.ts says so (below), or on the visitor's tap on Sloane's card when no model answers. The
+        // manifest (the app: the shell's word that the file is there) is asked once a visit, when either first needs it, and the model is fetched only after the device's
         // limits (inPagePlan.ts fits) and the storage's room (modelStore.ts roomRefusal) have said yes, so nothing is
         // downloaded that could not be kept or run here. It arrives checked against the pin this page was built with, and
         // is then kept exactly as a picked file is (keepPicked: the copy, the model chosen, the desktop's warm load). One
         // job gets it at a time (siteJob.ts), whoever started it: the card and its chip show its progress and its Stop.
         // The city's end stops a download in flight.
         const siteEnd = new AbortController()
+        // The Windows app reads the model its installer put beside it, through the shell; any other page is the web
+        // copy's (or has nothing beside it: webSource.served).
+        const shellFetch = shellModelFetch(APP_MODEL)
+        const source = shellFetch ? appSource(shellFetch) : webSource
+        const pin = source.pin
         let offered: Promise<SiteModelOffer | null> | null = null
         // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
         const keptSite = async (): Promise<KeptModel | null> =>
-          (await PAGE_MODELS().list()).find((m) => m.name === SITE_MODEL.file && m.bytes === SITE_MODEL.bytes) ?? null
-        // Only the web copy (the page tools/web/pwa.mjs builds, which names a web app manifest) is served with a model
-        // beside it: dist/index.html served by the launcher, a preview or the Windows app has nothing beside it to ask for.
-        const webCopy = (): boolean => /^https?:$/.test(window.location.protocol) && document.querySelector('link[rel="manifest"]') !== null
-        /** Why this device or its storage cannot take the site's model now, or null (the same checks a tap meets). */
+          (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+        /** Why this device or its storage cannot take the model now, or null (the same checks a tap meets). */
         const siteRefusal = async (): Promise<string | null> => {
           const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
-          const fit = fits([{ name: SITE_MODEL.file, bytes: SITE_MODEL.bytes }], env, placement(env))
+          const fit = fits([{ name: pin.file, bytes: pin.bytes }], env, placement(env))
           if (!fit.ok) return fit.reason
           const room = await PAGE_MODELS().usage()
-          return room ? roomRefusal(SITE_MODEL.bytes, room) : null
+          return room ? roomRefusal(pin.bytes, room) : null
         }
         const autoRecord = createAutoRecord(autoStore(), autoLocks())
         /** What the page's own start decides by (siteAuto.ts AutoFacts), read now, with no request. */
@@ -1621,13 +1679,14 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           return {
             cannot: PAGE_MODEL_REFUSAL(),
             provider: local.settings().provider ?? 'auto',
-            own: chosen !== null && chosen !== SITE_MODEL.file ? chosen : (kept.find((m) => m.name !== SITE_MODEL.file)?.name ?? null),
+            own: chosen !== null && chosen !== pin.file ? chosen : (kept.find((m) => m.name !== pin.file)?.name ?? null),
             busy: keeping ? 'a model file is being kept in this page just now' : fetching ? 'the model this site serves is on its way already' : null,
-            kept: kept.some((m) => m.name === SITE_MODEL.file && m.bytes === SITE_MODEL.bytes),
+            kept: kept.some((m) => m.name === pin.file && m.bytes === pin.bytes),
             // The storage must answer, not only exist: a browser that blocks the site's data has the call and refuses it.
             lasting: caps.opfs && (await navigator.storage.getDirectory().then(() => true, () => false)),
             remembers: autoRecord.remembers(),
-            link: readLink(navigator),
+            // The app's copy never leaves the machine, so what the connection costs has no say in it.
+            link: source.online ? readLink(navigator) : null,
           }
         }
         /** Why the page's own download is not wanted now (the visitor chose a provider or a model of their own since). */
@@ -1635,7 +1694,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const provider = local.settings().provider ?? 'auto'
           if (provider !== 'auto' && provider !== 'inpage') return `the ${provider} provider is chosen`
           const chosen = inPage.settings().model
-          return chosen !== null && chosen !== SITE_MODEL.file ? `a model file of your own (${chosen}) is chosen` : null
+          return chosen !== null && chosen !== pin.file ? `a model file of your own (${chosen}) is chosen` : null
         }
         const siteJob = createSiteJob(async (how, onProgress, signal) => {
           const cannot = PAGE_MODEL_REFUSAL()
@@ -1670,8 +1729,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             if (refused !== null) throw new Error(refused)
             let shown = -1
             let shownPct = -1
-            keepLine = 'getting the model from this site 0%'
-            file = await fetchSiteModel(siteFetch, SITE_MODEL, (done, total) => {
+            keepLine = source.line(0)
+            file = await fetchSiteModel(source.fetch, pin, (done, total) => {
               // Told once a megabyte or a percent, not once a piece: the card and the HUD redraw for what a person can
               // see change (a percent, for a model of a few megabytes).
               const mb = Math.floor(done / 1024 ** 2)
@@ -1679,9 +1738,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
               if (mb === shown && pct === shownPct && done < total) return
               shown = mb
               shownPct = pct
-              keepLine = `getting the model from this site ${pct}%`
+              keepLine = source.line(pct)
               onProgress({ step: 'download', done, total })
-            }, AbortSignal.any([signal, siteEnd.signal]))
+            }, AbortSignal.any([signal, siteEnd.signal]), source.from)
             // A Stop, or the city's end, that came as the last bytes did: nothing is kept or chosen.
             signal.throwIfAborted()
             siteEnd.signal.throwIfAborted()
@@ -1700,22 +1759,15 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         }
         const siteHost = Object.freeze<SiteModelHost>({
           offer: async (): Promise<SiteModelLine | null> => {
-            if (PAGE_MODEL_REFUSAL() !== null || !webCopy()) return null
-            // A site that answers with the manifest, or says it has none (404, 410), is asked once a visit; one that could
-            // not be reached, or could not answer just now (a 429, a 5xx), is asked again next time.
-            offered ??= siteFetch(SITE_MANIFEST, { cache: 'no-cache', signal: siteEnd.signal })
-              .then(async (r) => {
-                if (r.ok) return parseManifest(await r.text())
-                void r.body?.cancel().catch(() => undefined)
-                if (r.status === 404 || r.status === 410) return null
-                throw new Error(`the site answered ${r.status}`)
-              })
-              .catch(() => { offered = null; return null })
+            if (PAGE_MODEL_REFUSAL() !== null || !source.served()) return null
+            // Asked once a visit, unless the source could not say just now (webSource.offer).
+            offered ??= source.offer(siteEnd.signal).catch(() => { offered = null; return null })
             const offer = await offered
             if (!offer) return null
-            return { title: SITE_MODEL.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
+            return { title: pin.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
           },
           job: siteJob,
+          from: source.from,
         })
         // The page gets the site's model by itself, once a city, when the city is first on screen (GuiShell's effect
         // below calls it once the veil is gone): siteAuto.ts createSiteAuto runs it (the browser can run and keep it,
@@ -1739,22 +1791,22 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             siteEnd.signal.addEventListener('abort', done, { once: true })
           }) : Promise.resolve()),
           ended: () => (siteEnd.signal.aborted ? 'the city ended' : lockedRef.current !== null ? 'the city halted' : null),
-          served: webCopy,
+          served: source.served,
           facts: siteFacts,
           offer: () => siteHost.offer(),
           refusal: siteRefusal,
-          link: () => readLink(navigator),
+          link: () => (source.online ? readLink(navigator) : null),
           onLink: (changed) => {
-            const l = connection()
+            const l = source.online ? connection() : undefined
             l?.addEventListener?.('change', changed)
             return () => l?.removeEventListener?.('change', changed)
           },
-          offline: () => navigator.onLine === false,
+          offline: () => source.online && navigator.onLine === false,
           record: autoRecord,
           job: siteJob,
           say: (line) => e.toast(MODEL_FILE, line),
           now: Date.now,
-        })
+        }, pin, 'Sloane', source.from)
         siteAutoRef.current = siteAuto
         stopSite = () => {
           siteJob.stop('page')

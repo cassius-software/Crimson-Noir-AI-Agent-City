@@ -23,6 +23,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
+# The carried model's reads as text for the page's IPC (src/model_file.rs); the version Tauri itself already builds.
+base64 = "0.22"
 
 # Mica behind the frosted glass title bar, Windows 11 only; the call is best effort (src/lib.rs).
 [target.'cfg(windows)'.dependencies]
