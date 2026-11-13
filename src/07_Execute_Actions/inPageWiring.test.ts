@@ -135,11 +135,14 @@ test('the Menu: a Model file item that calls the host inside its click handler, 
 })
 
 test('App: a file picked or dropped is kept, chosen, and the inpage provider answers; a desktop loads it at once, a phone only when asked', () => {
-  const keep = between(CITY, '        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void): Promise<string> => {', '\n        }\n')
+  const keep = between(CITY, '        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {', '\n        }\n')
   before(keep, 'kept = await inPage.keep(files, (done, total) => {', 'local.setProvider(\'inpage\')', 'chosen only once it is kept')
   // The site's model (siteModel.ts) is kept through this same path, its copy's progress told to Sloane's card as well.
   assert.match(keep, /keepLine = `keeping the model file in this page \$\{[^\n]*\n\s+onCopy\?\.\(done, total\)/)
   before(keep, 'local.setProvider(\'inpage\')', 'local.setModel(kept.name)', 'the provider, then its model')
+  // A file the page got by itself (the site's model, siteAuto.ts) leaves the provider as the visitor had it: under auto
+  // a model server on this machine still answers first, and the mind has chosen the file all the same.
+  assert.match(keep, /if \(provider \|\| local\.settings\(\)\.provider === 'inpage'\) \{\n\s+local\.setProvider\('inpage'\)\n\s+local\.setModel\(kept\.name\)\n\s+\}/)
   assert.match(keep, /keepLine = `keeping the model file in this page \$\{/, 'the copy\'s progress on the HUD\'s line')
   assert.match(keep, /\} finally \{\n\s+keeping = false\n\s+keepLine = null\n\s+\}/, 'the line is cleared however the copy ends')
   assert.match(keep, /const warm = !e\.profile\.mobile && !e\.profile\.lite\n\s+if \(warm\) void inPage\.load\(\)/, 'not on a phone or a lite profile (D12)')
@@ -155,7 +158,7 @@ test('App: a file picked or dropped is kept, chosen, and the inpage provider ans
 
 test('App: the page\'s lifecycle reaches the mind; a graphics reset notes the GPU before the mind is shut down; the console reaches it; it ends with the city', () => {
   assert.match(CITY, /const onVisibility = \(\): void => \{ if \(document\.hidden\) inPage\.background\(\); else inPage\.foreground\(\) \}/)
-  assert.match(CITY, /const onPageHide = \(\): void => \{ inPage\.leave\(\); inPage\.background\(\) \}/, 'a page that unloads takes its load\'s crash mark with it')
+  assert.match(CITY, /const onPageHide = \(\): void => \{ inPage\.leave\(\); inPage\.background\(\); autoRecord\.leave\(\) \}/, 'a page that unloads takes its load\'s crash mark with it, and the site model\'s try mark too')
   assert.match(CITY, /document\.addEventListener\('visibilitychange', onVisibility\)\n\s+window\.addEventListener\('pagehide', onPageHide\)/)
   const halt = between(CITY, '        e.onHalt = (reason) => {', '\n        }\n')
   assert.match(halt, /^ {10}if \(haltClass\(reason\) === 'gpu-reset'\) inPage\.noteGpuReset\(\)$/m)

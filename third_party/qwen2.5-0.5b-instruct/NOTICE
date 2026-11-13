@@ -8,8 +8,9 @@ tools/web/siteModel.mjs) fetches the file below from Hugging Face at the pinned 
 the pin) does not hold it, and on every publish of the web copy refuses it unless its size and SHA-256 are exactly
 these, and puts it in the published folder as
 models/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf, with this NOTICE and LICENSE beside it. The page fetches it from its own
-site only when the visitor taps for it, checks the same size and SHA-256 (src/09_Cognition/siteModel.ts SITE_MODEL),
-and keeps it in the visitor's browser.
+site, by itself once the city is on screen where it can run it (src/09_Cognition/siteAuto.ts) or when the visitor taps
+for it, checks the same size and SHA-256 (src/09_Cognition/siteModel.ts SITE_MODEL), and keeps it in the visitor's
+browser.
 
   Qwen2.5-0.5B-Instruct-Q4_K_M.gguf   397808192 bytes, sha256 6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653
   (SHA256SUMS beside this file has the same line)

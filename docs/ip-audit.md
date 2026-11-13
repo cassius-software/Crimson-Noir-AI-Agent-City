@@ -86,7 +86,8 @@ The one compiled third-party binary in the repository. It is not built here and 
 ### The model the web copy serves (`third_party/qwen2.5-0.5b-instruct/`, added 12 November 2026)
 
 The one set of model weights the product offers, so that a visitor to the web copy with no model of their own can talk
-to Sloane in one tap. It is weights, not code, and none of it is in the repository:
+to Sloane with no setup (the page gets it by itself once the city is on screen, or in one tap). It is weights, not
+code, and none of it is in the repository:
 
 - **What it is.** `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf` (397,808,192 bytes, sha256
   `6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653`), as bartowski publishes it in the Hugging Face
@@ -102,8 +103,9 @@ to Sloane in one tap. It is weights, not code, and none of it is in the reposito
   leaves no model behind. `place` refuses a folder that is not the web copy, so `dist/` (the single page that the
   Windows app, the flake and the release builds carry) never gets it, and `tools/verify/page_dist.mjs` still fails a
   `dist/` that holds a `.gguf`. `.github/workflows/site-model.yml` fetches and checks the pin on a pull request that
-  touches it. The page itself downloads the file from its own site only when a visitor taps for it, and checks the
-  same size and hash as it streams before anything is kept.
+  touches it. The page itself downloads the file from its own site, by itself once the city is on screen (where
+  `src/09_Cognition/siteAuto.ts` lets it) or when a visitor taps for it, and checks the same size and hash as it
+  streams before anything is kept.
 - **The texts.** `LICENSE` is the Apache License 2.0 with Qwen's copyright line ("Copyright 2024 Alibaba Cloud") in
   its appendix, the form Qwen's repositories carry. `NOTICE` says what the file is, where it comes from and at which
   revision, that it is a quantization of Qwen's weights, and that the product serves it unchanged; `SHA256SUMS` is

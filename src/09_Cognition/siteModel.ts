@@ -6,9 +6,11 @@
  * and no model file of their own can still talk to Sloane: a small GGUF (SITE_MODEL, pinned here by its file name, its
  * size and its SHA-256), put into dist-web/models/ by the web workflow (tools/web/siteModel.mjs, .github/workflows/
  * web.yml) after it has checked the same pin, and never in dist/ (the page file, the Windows app and the release
- * builds carry no model). The page learns that the model is there only when Sloane's card says no model answers, from
- * models/manifest.json beside it (parseManifest: an offer only when the manifest names exactly this pin), and fetches
- * it only when the visitor taps for it (fetchSiteModel): from the page's own origin and its own folder (siteUrl: a
+ * builds carry no model). The page learns that the model is there from models/manifest.json beside it (parseManifest:
+ * an offer only when the manifest names exactly this pin), asked once the city is on screen (siteAuto.ts says whether
+ * the page gets it by itself: where it can run and keep it, no other model was chosen and the connection does not say
+ * the data costs) or when Sloane's card says no model answers, and fetches it then or on the visitor's tap
+ * (fetchSiteModel, one job at a time: siteJob.ts): from the page's own origin and its own folder (siteUrl: a
  * models/ path relative to the page, never the origin's root, which on GitHub Pages is another site), counted and
  * hashed piece by piece as it arrives (integrity.ts sha256Stream), refused the moment it runs long, and turned into a
  * File only once every byte has passed. That File is then kept exactly as a picked file is (App.tsx keepPicked).
@@ -18,6 +20,7 @@
  * their own before Sloane can say a word.
  */
 import { hex, sha256Stream } from '../02_Define_The_Rules/integrity.ts'
+import type { SiteJob } from './siteJob.ts'
 
 /** The one model the web copy serves: what the page was built for, and what the workflow checks before it serves it. */
 export interface SiteModelPin {
@@ -197,10 +200,11 @@ export interface SiteModelProgress {
 /**
  * The page's handle on the site's model, for Sloane's card (App.tsx builds it over siteFetch, the model store and the
  * in-page mind). `offer` asks the served manifest once (null where this site serves no such model, or this browser
- * cannot run one); `get` checks the device and the storage first, downloads and checks the model, keeps it as a picked
- * file is kept and chooses it, and resolves with what it did (or, when this browser keeps it already, only chooses it).
+ * cannot run one); `job` gets it (siteJob.ts), started by the card's tap or by the page itself: its work checks the
+ * device and the storage first, downloads and checks the model, keeps it as a picked file is kept and chooses it, and
+ * resolves with what it did (or, when this browser keeps it already, only chooses it).
  */
 export interface SiteModelHost {
   offer(): Promise<SiteModelLine | null>
-  get(onProgress: (p: SiteModelProgress) => void, signal: AbortSignal): Promise<string>
+  readonly job: SiteJob
 }
