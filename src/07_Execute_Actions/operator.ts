@@ -223,6 +223,12 @@ export interface AnswerRequest {
    * prompt after the expertise; absent when nothing is steered, so the prompt is then as it was.
    */
   steering?: readonly string[]
+  /**
+   * A conversation (Sloane's chat, onboarding/voice.ts sloaneChat): every provider sends the talk prompt
+   * (09_Cognition/localCompute.ts TALK_PROMPT, through systemFor) instead of the base reality, since a conversation is
+   * bound to no one, carries no steering and never acts. Absent or false: the prompt is as it was.
+   */
+  talk?: boolean
 }
 
 /** What one of the people an answer speaks for remembers of the operator (Diary.recall), oldest first. */

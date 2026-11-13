@@ -14,16 +14,18 @@ import { test } from 'node:test'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 
-test('every provider renders the prompt through systemPrompt with the request\'s steering, and nothing else builds one', () => {
-  const call = /systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/g
+test('every provider renders the prompt through systemFor, which hands the request\'s steering to systemPrompt, and nothing else builds one', () => {
   const sites: [string, number][] = [['./localCompute.ts', 1], ['./router.ts', 3], ['./inPage.ts', 1]]
   for (const [file, n] of sites) {
     const src = read(file)
-    assert.equal(src.match(call)?.length ?? 0, n, `${file}: ${n} call(s) with the steering`)
-    // No call without it (a provider that forgot the lines).
-    assert.equal(src.match(/systemPrompt\(req\./g)?.length ?? 0, n, `${file}: every call carries the steering`)
+    assert.equal(src.match(/systemFor\(req\)/g)?.length ?? 0, n, `${file}: ${n} call(s) through the one builder`)
+    // No provider builds its own (one that forgot the lines would steer nothing).
+    assert.equal(src.match(/systemPrompt\(req\./g)?.length ?? 0, file === './localCompute.ts' ? 1 : 0, `${file}: no call of its own`)
   }
-  assert.match(read('./localCompute.ts'), /^export function systemPrompt\(tethers: readonly GateTether\[\], memories: readonly Memories\[\] = \[\], context: readonly AgentContext\[\] = \[\], steering: readonly string\[\] = \[\]\): string \{$/m)
+  const local = read('./localCompute.ts')
+  // A conversation (AnswerRequest.talk) carries no steering; every other request is rendered with it.
+  assert.match(local, /^export function systemFor\(req: Pick<MindRequest, 'tethers' \| 'memories' \| 'context' \| 'steering' \| 'talk'>\): string \{\n {2}return req\.talk === true \? TALK_PROMPT : systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)\n\}$/m)
+  assert.match(local, /^export function systemPrompt\(tethers: readonly GateTether\[\], memories: readonly Memories\[\] = \[\], context: readonly AgentContext\[\] = \[\], steering: readonly string\[\] = \[\]\): string \{$/m)
 })
 
 test('the operator tier alone puts steering on a request, from the steering it holds, and only when there is some', () => {

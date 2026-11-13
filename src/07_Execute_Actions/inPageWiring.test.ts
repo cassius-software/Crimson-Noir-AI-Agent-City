@@ -78,7 +78,7 @@ test('App: the mind plans by the engine\'s profile, holds the city\'s tier down 
   assert.match(device, /mobile: e\.profile\.mobile, lite: e\.profile\.lite, gpuClass: e\.profile\.gpuClass,/)
   assert.match(device, /cores: navigator\.hardwareConcurrency \|\| 4, memoryGb: deviceMemory\(\), isolated: canShareMemory\(\), f16: e\.gpuF16,/)
   assert.match(CITY_ROUTER, /busy: \(on, place\) => e\.holdQuality\(on && place \? holdTier\(device\(\), place\.gpu\) : null\),/, 'held while it works, let go after')
-  assert.match(CITY_ROUTER, /onPhase: \(text\) => \{ modelPhase = text \},/)
+  assert.match(CITY_ROUTER, /onPhase: \(text\) => \{\n\s*modelPhase = text\n\s*for \(const heard of phaseHeard\) heard\(text\)\n\s*\},/, 'the HUD\'s line, and Sloane\'s card while a conversation waits')
   assert.match(EFFECT, /s\.supplier\.recruiting = hudLine\(recruiter, router\?\.running \?\? 0, activityText\(answering, engine\.speaking, modelPhase \?\? keepLine\)\)/, 'the line the HUD already shows while a model works')
   const activity = between(APP, 'function activityText(', '\n}\n')
   assert.match(activity, /if \(!a\) return model \?/, 'with no answer waiting, what the model is doing')

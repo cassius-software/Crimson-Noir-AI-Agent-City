@@ -31,7 +31,7 @@ import type { Answer, AnswerRequest, Mind, Piece } from '../07_Execute_Actions/o
 import { blobReader, readGgufHeader } from './gguf.ts'
 import { capsLine, runtimeMode, type Caps } from './inPageCaps.ts'
 import { fits, HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, placement, START_MS, type GpuMode, type PlanEnv, type Placement } from './inPagePlan.ts'
-import { CognitionError, FIRST_PIECE_MS, promptHash, sentence, STALL_MS, systemPrompt, type SettingsStore } from './localCompute.ts'
+import { CognitionError, FIRST_PIECE_MS, promptHash, sentence, STALL_MS, systemFor, type SettingsStore } from './localCompute.ts'
 import { GONE, type KeptModel, type ModelStore } from './modelStore.ts'
 
 /** What a load asks of the runtime (inPagePlan.ts Placement), its signal and its two watchdogs (the runtime enforces them). */
@@ -637,7 +637,7 @@ export function createInPageMind(d: InPageDeps): InPageMind {
 
   /** The answer itself, with the model loaded: the system prompt and the prompt, streamed into `onPiece`. */
   async function speak(req: AnswerRequest, onPiece: (p: Piece) => void, place: Placement, stop: AbortSignal, own: AbortController): Promise<Answer> {
-    const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
+    const system = systemFor(req)
     const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: req.prompt }]
     let text = ''
     let thinking = 0

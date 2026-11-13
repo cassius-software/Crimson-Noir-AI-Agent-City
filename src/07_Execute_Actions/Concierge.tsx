@@ -36,7 +36,7 @@ import { GlyphKey } from './Hud.tsx'
 import type { SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
-import type { Chat, ChatTurn, Voice } from './onboarding/voice.ts'
+import { phaseLine, type Chat, type ChatTurn, type Voice } from './onboarding/voice.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
 import { heardGoal } from './onboarding/heard.ts'
 
@@ -73,8 +73,9 @@ const TEAM_ROWS = 6
 /** How a reply in the conversation stands (onboarding/voice.ts ChatResult, `waiting` while it streams in, and `stopped`
  *  by the person's Stop). */
 type TalkState = 'waiting' | 'said' | 'none' | 'slow' | 'held' | 'refused' | 'failed' | 'stopped'
-/** The reply on the card: which ask it answers, how it stands, the words so far, and why it failed (a router's reason). */
-interface Talk { readonly id: number; readonly state: TalkState; readonly text: string; readonly why: string }
+/** The reply on the card: which ask it answers, how it stands, the words so far, why it failed (a router's reason, or
+ *  the wait that ran out), and what the model is doing before its first words (loading, reading the prompt). */
+interface Talk { readonly id: number; readonly state: TalkState; readonly text: string; readonly why: string; readonly phase: string }
 /** Turns of the conversation kept for the visit (the model is shown the last of them, voice.ts CHAT_TURNS). */
 const TALK_KEPT = 16
 /** What Sloane says when no model answers this page: plainly that none does, and what they can still do. */
@@ -340,24 +341,24 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const id = asking.id
     const ctl = new AbortController()
     const put = (t: Partial<Talk>) => { if (!ctl.signal.aborted) setTalk((v) => (v?.id === id ? { ...v, ...t } : v)) }
-    chat.reply(asking.turns, ctl.signal, (soFar) => put({ text: soFar })).then((r) => {
+    chat.reply(asking.turns, ctl.signal, (soFar) => put({ text: soFar }), (phase) => put({ phase: phase ?? '' })).then((r) => {
       if (ctl.signal.aborted) return
       if (r.kind === 'said') {
         turnsRef.current = [...turnsRef.current, { who: 'sloane' as const, text: r.text }].slice(-TALK_KEPT)
-        put({ state: 'said', text: r.text, why: '' })
+        put({ state: 'said', text: r.text, why: '', phase: '' })
         return
       }
       // Words the screen refused are not kept as a turn: no later ask carries them.
       if (r.kind === 'refused' && turnsRef.current.at(-1)?.who === 'you') turnsRef.current = turnsRef.current.slice(0, -1)
-      put({ state: r.kind, text: '', why: r.kind === 'none' || r.kind === 'failed' ? r.why : '' })
-    }, (e: unknown) => put({ state: 'failed', text: '', why: e instanceof Error ? e.message : String(e) }))
+      put({ state: r.kind, text: '', why: r.kind === 'none' || r.kind === 'failed' || r.kind === 'slow' ? r.why : '', phase: '' })
+    }, (e: unknown) => put({ state: 'failed', text: '', why: e instanceof Error ? e.message : String(e), phase: '' }))
     return () => ctl.abort()
   }, [chat, asking])
   /** Puts the turns so far to Sloane (the last one the person's); with no conversation to ask, the plain line at once. */
   const askTurns = (turns: readonly ChatTurn[]) => {
     talkId.current += 1
     const id = talkId.current
-    setTalk({ id, state: chat ? 'waiting' : 'none', text: '', why: '' })
+    setTalk({ id, state: chat ? 'waiting' : 'none', text: '', why: '', phase: '' })
     setAsking(chat ? { id, turns } : null)
   }
   const talkOn = (text: string) => {
@@ -392,7 +393,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   /** The person's Stop: the ask ends (a model loading in this page for it stops loading, as any stop of an answer does). */
   const stopTalk = () => {
     setAsking(null)
-    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '' } : v))
+    setTalk((v) => (v && v.state === 'waiting' ? { ...v, state: 'stopped', text: '', why: '', phase: '' } : v))
     refocus()
   }
   /** The site's model on offer (siteModel.offer): undefined until the card first needs it, null where there is none. */
@@ -907,6 +908,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
             </p>
           )}
           <p aria-live="polite" aria-busy={talking && talk?.state === 'waiting'} className="mt-1 text-[14px] leading-snug">{line}</p>
+          {talking && talk?.state === 'waiting' && !talk.text && talk.phase && (
+            <p className={`mt-0.5 text-[11px] leading-snug ${muted}`} data-model-phase>{phaseLine(talk.phase)}</p>
+          )}
 
           {view === 'ask' && (
             <form onSubmit={submit} className={`${gap} flex items-center gap-2`}>

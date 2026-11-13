@@ -783,6 +783,21 @@ test('the first-piece and stall watchdogs end a quiet answer as timeout and let 
     assert.equal(o.got.filter((c) => c.text).length, 2)
     assert.equal(w.exits, 1)
   }
+  {
+    // Still reading the prompt (progress, no word yet): a stall then is said as that, as a slow phone can be for minutes.
+    const { world, runtime, w } = await loaded()
+    world.onChat = async (_inst, p) => {
+      await tick()
+      p.onData({ prompt_progress: { processed: 64, total: 600 } })
+      return never()
+    }
+    const o = chatOptions({ firstMs: 5_000, stallMs: 60 })
+    const { error, ms } = await rejection(runtime.chat(MESSAGES, o))
+    isCognition(error, 'timeout', 'the model in this page went quiet for 60 ms while reading the prompt: it may be too large for this device, or the prompt too long for it')
+    assert.ok(ms < 1000)
+    assert.deepEqual(o.got.map((c) => c.progress), [{ processed: 64, total: 600 }])
+    assert.equal(w.exits, 1)
+  }
 })
 
 test('a prompt longer than the context is model, and the same instance answers the next prompt', SETTLES, async () => {

@@ -31,7 +31,7 @@ import type { AnswerRequest, GateTether, Memories, Piece } from '../07_Execute_A
 import { createInPageMind, GUARD_KEY, type ChatMessage, type ChatOptions, type ChatResult, type InPageRuntime, type LoadOptions } from './inPage.ts'
 import { OPAQUE_REASON, runtimeMode, type Caps } from './inPageCaps.ts'
 import { HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, placement, START_MS, type PlanEnv } from './inPagePlan.ts'
-import { CognitionError, FIRST_PIECE_MS, promptHash, STALL_MS, systemPrompt } from './localCompute.ts'
+import { CognitionError, FIRST_PIECE_MS, promptHash, STALL_MS, systemPrompt, TALK_PROMPT } from './localCompute.ts'
 import { GONE, type KeptModel, type ModelStore } from './modelStore.ts'
 import { createMindRouter, INPAGE_SERVER } from './router.ts'
 
@@ -279,8 +279,9 @@ const crash = (model: string, gpu: boolean): string => JSON.stringify({ model, g
 
 test('the source: one system prompt, built as every provider builds it, and no wllama here', () => {
   const src = readFileSync(new URL('./inPage.ts', import.meta.url), 'utf8')
-  assert.equal((src.match(/systemPrompt\(/g) ?? []).length, 1, 'one call, and no mention of it as a call anywhere else')
-  assert.equal((src.match(/systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/g) ?? []).length, 1)
+  assert.equal((src.match(/systemFor\(/g) ?? []).length, 1, 'one call, and no mention of it as a call anywhere else')
+  assert.equal((src.match(/const system = systemFor\(req\)/g) ?? []).length, 1)
+  assert.doesNotMatch(src, /systemPrompt\(/, 'the prompt is built by the one builder every provider uses')
   assert.doesNotMatch(src, /@wllama|wllama-runtime|wllamaRuntime\.ts'/, 'the runtime is handed in; this file never imports it')
   assert.equal(GUARD_KEY, 'civic-simulation:inpage:loading:v1')
 })
@@ -889,6 +890,10 @@ test('what the runtime is handed: the shared system prompt and the prompt, its h
   const system = systemPrompt([TETHER], memories)
   assert.deepEqual(h.r.chats[0].messages, [{ role: 'system', content: system }, { role: 'user', content: 'hi' }])
   assert.equal(a.promptHash, promptHash(system))
+  // A conversation: the short talk prompt, whatever else the request carries (a phone reads every token of it first).
+  const talk = await h.mind.answer({ ...req(undefined, memories), talk: true }, () => {})
+  assert.deepEqual(h.r.chats[1].messages, [{ role: 'system', content: TALK_PROMPT }, { role: 'user', content: 'hi' }])
+  assert.equal(talk.promptHash, promptHash(TALK_PROMPT))
   const place = placement({ ...CPU_DESKTOP, gpuMode: 'auto', gpuFailed: false })
   const { signal: chatSignal, onChunk, ...chat } = h.r.chats[0].o
   assert.ok(chatSignal instanceof AbortSignal && typeof onChunk === 'function')
@@ -904,7 +909,7 @@ test('what the runtime is handed: the shared system prompt and the prompt, its h
   assert.equal(phone.mind.setThink?.(true), true)
   await phone.mind.answer(req(), () => {})
   const { signal: _p, ...phoneLoad } = phone.r.loads[0].o
-  assert.deepEqual(phoneLoad, { ctx: 4096, threads: 1, gpu: false, batch: 256, ubatch: 128, warmup: false, startMs: 8, loadMs: 7 })
+  assert.deepEqual(phoneLoad, { ctx: 4096, threads: 1, gpu: false, batch: 64, ubatch: 64, warmup: false, startMs: 8, loadMs: 7 })
   const { signal: _c, onChunk: _o, ...phoneChat } = phone.r.chats[0].o
   assert.deepEqual(phoneChat, { maxTokens: 512, think: true, firstMs: 5, stallMs: 6 })
 })
