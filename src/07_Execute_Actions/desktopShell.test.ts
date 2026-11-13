@@ -112,7 +112,7 @@ const modelShell = (model: Uint8Array, opts: { file?: string; bytes?: number; re
 const sample = (n: number): Uint8Array => Uint8Array.from({ length: n }, (_, i) => (i * 37 + 11) & 0xff)
 const pinOf = (model: Uint8Array): SiteModelPin => ({ ...APP_MODEL, file: 'tiny.gguf', bytes: model.length, sha256: createHash('sha256').update(model).digest('hex') })
 
-test('shellModel: the app\'s model is offered only when the shell names exactly the pin\'s file and size; else, or in a browser, or late, null', async () => {
+test('shellModel: the app\'s model is offered only when the shell names exactly the pin\'s file and size; else, or in a browser, null; a refusal or no answer in time throws, to be asked again', async () => {
   assert.equal(APP_MODEL_ASK_MS, 5000)
   const model = sample(1000)
   const pin = pinOf(model)
@@ -122,8 +122,13 @@ test('shellModel: the app\'s model is offered only when the shell names exactly 
   for (const answer of [null, undefined, {}, { file: 'tiny.gguf' }, { file: 'tiny.gguf', bytes: 999 }, { file: 'other.gguf', bytes: 1000 }, { file: 'tiny.gguf', bytes: '1000' }, 'tiny.gguf', [1000]]) {
     assert.equal(await shellModel(pin, modelShell(model, { answer: () => Promise.resolve(answer) }).g), null, JSON.stringify(answer))
   }
-  assert.equal(await shellModel(pin, modelShell(model, { answer: () => Promise.reject(new Error('command app_model not found')) }).g), null, 'an older app without the command')
-  assert.equal(await shellModel(pin, modelShell(model, { answer: () => new Promise(() => {}) }).g, 30), null, 'no answer in time')
+  await assert.rejects(shellModel(pin, modelShell(model, { answer: () => Promise.reject(new Error('the shell refused it')) }).g), /the shell refused it/, 'a refusal is not "none"')
+  await assert.rejects(shellModel(pin, modelShell(model, { answer: () => new Promise(() => {}) }).g, 30), /did not say within 30 ms/, 'nor is no answer in time')
+  // A quick answer leaves no wait timer behind.
+  const timers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length
+  const before = timers()
+  assert.ok(await shellModel(pin, modelShell(model).g, 60_000))
+  assert.equal(timers(), before, 'the wait is cleared once the shell answers')
   for (const g of [{}, { [SHELL_GLOBAL]: {} }, { [SHELL_GLOBAL]: { core: {} } }]) assert.equal(await shellModel(pin, g), null)
 })
 
@@ -142,7 +147,18 @@ test('shellModelFetch: the one file, read by read in order, each piece asked onl
   assert.deepEqual(s.reads, [{ offset: 0, len: 4096 }], 'the first read is made before the fetch answers, and no more')
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('content-length'), '10000')
-  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), model)
+  // Taken piece by piece: after each piece the page takes, exactly one read has been made for it, none ahead.
+  const reader = res.body!.getReader()
+  const tick = (): Promise<void> => new Promise((ok) => setTimeout(ok, 0))
+  const pieces: Uint8Array[] = []
+  for (let k = 1; ; k++) {
+    const r = await reader.read()
+    await tick()
+    if (r.done) break
+    assert.equal(s.reads.length, k, `piece ${k} taken: ${k} reads, none ahead`)
+    pieces.push(r.value)
+  }
+  assert.deepEqual(new Uint8Array(Buffer.concat(pieces)), model)
   assert.deepEqual(s.reads, [0, 4096, 8192, 10_000].map((offset) => ({ offset, len: 4096 })), 'in order, from where the last ended, to the empty read at the end')
   // The same file through the page's own check (siteModel.ts fetchSiteModel): kept whole, in the app's words.
   const file = await fetchSiteModel(shellModelFetch(pin, modelShell(model).g, 3000)!, pin, () => {}, undefined, 'app')

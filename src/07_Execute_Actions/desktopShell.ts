@@ -98,15 +98,26 @@ export const APP_MODEL_ASK_MS = 5000
 export const APP_READ_BYTES = 4 * 1024 * 1024
 
 /**
- * The model the app carries, as the site's manifest would offer it: null in a browser, in a shell without the command
- * (an older app), where the app carries none (the bare .exe, or any app but the Windows installer's) or one that is
- * not exactly `pin` by name and size, and when the shell does not answer within `waitMs`; it never throws. Its
- * SHA-256 is the pin's here; the page checks it on every byte it reads (siteModel.ts fetchSiteModel).
+ * The model the app carries, as the site's manifest would offer it: null in a browser, where the app carries none
+ * (the bare .exe, or any app but the Windows installer's: the shell answers nothing) or one that is not exactly `pin`
+ * by name and size. It throws where the shell could not say just now (it refused the command, or did not answer
+ * within `waitMs`), so the caller asks again later rather than taking that for "none" (App.tsx siteHost.offer); the
+ * page and the shell ship in one build, so there is no older shell without the command. Its SHA-256 is the pin's
+ * here; the page checks it on every byte it reads (siteModel.ts fetchSiteModel).
  */
 export async function shellModel(pin: SiteModelPin, g: object = globalThis, waitMs = APP_MODEL_ASK_MS): Promise<SiteModelOffer | null> {
   const invoke = shellInvoke(g)
   if (!invoke) return null
-  const answer = await soon(() => invoke('app_model'), waitMs)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`the app did not say within ${waitMs} ms whether it carries a model`)), waitMs)
+  })
+  let answer: unknown
+  try {
+    answer = await Promise.race([invoke('app_model'), late])
+  } finally {
+    clearTimeout(timer)
+  }
   if (typeof answer !== 'object' || answer === null) return null
   const a = answer as Record<string, unknown>
   return a.file === pin.file && a.bytes === pin.bytes ? { file: pin.file, bytes: pin.bytes, sha256: pin.sha256 } : null

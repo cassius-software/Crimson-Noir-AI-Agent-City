@@ -1040,6 +1040,17 @@ test('the app\'s model goes into the app\'s models/ folder, checked while copied
     await assert.rejects(siteTool.placeApp({ from: s.from, out: app, pin: { ...s.pin, sha256: '0'.repeat(64) } }), /the pin says/)
     assert.ok(!existsSync(join(app, 'models')), 'a mismatch leaves no model behind')
     await assert.rejects(siteTool.placeApp({ from: join(s.root, 'empty'), out: app, pin: s.pin }), /is missing/)
+    // A file fetched straight into models/ (or below it) is refused, never deleted before it is read.
+    for (const inside of ['models', join('models', 'sub')]) {
+      mkdirSync(join(app, inside), { recursive: true })
+      writeFileSync(join(app, inside, s.pin.file), s.model)
+      await assert.rejects(siteTool.placeApp({ from: join(app, inside), out: app, pin: s.pin }), /which app clears before it copies/)
+      assert.deepEqual(readFileSync(join(app, inside, s.pin.file)), s.model, `${inside}: the fetched file is still there`)
+    }
+    const beside = join(app, 'models-cache')
+    mkdirSync(beside)
+    writeFileSync(join(beside, s.pin.file), s.model)
+    assert.ok(await siteTool.placeApp({ from: beside, out: app, pin: s.pin }), 'a folder whose name only starts the same is not inside')
   } finally {
     s.done()
   }
@@ -1061,11 +1072,14 @@ test('the Windows workflow fetches the app\'s model by its pin, checks it on eve
   const carries = at('it does not carry the $MODEL_BYTES-byte model')
   const tidy = at('run: rm -rf src-tauri/target/release/bundle src-tauri/target/release/models')
   assert.ok(pin < cache && cache < fetchStep && fetchStep < place && place < build && build < msi && msi < carries && carries < tidy, 'pin, cache, fetch, check and place, installer, .msi, size check, tidy')
+  const collect = yml.slice(yml.lastIndexOf('- name:', carries), yml.indexOf('- uses:', carries))
+  assert.match(collect, /\n\s+env:\n\s+MODEL_BYTES: \$\{\{ steps\.model\.outputs\.bytes \}\}\n/, 'the size check reads the pinned size')
+  assert.match(collect, /: "\$\{MODEL_BYTES:\?/, 'and fails, rather than checking against 0, when it has none')
   const cacheStep = yml.slice(yml.lastIndexOf('- id: model-cache', cache), yml.indexOf('- name:', cache))
   assert.doesNotMatch(cacheStep, /restore-keys/, 'a new pin never restores an old file')
   const placeStep = yml.slice(yml.lastIndexOf('- name:', place), place)
   assert.doesNotMatch(placeStep, /\bif:/, 'the check runs on every build, the cached file included')
-  assert.doesNotMatch(yml, /cp src-tauri\/models|models\/\*.*out\/portable/, 'the bare .exe carries no model')
+  assert.doesNotMatch(yml, /models[^\n]*out\/portable|out\/portable[^\n]*models/, 'the bare .exe carries no model')
   // site-model.yml checks the app's pin on Linux too, on a pull request that touches it.
   const check = readFileSync(new URL('../.github/workflows/site-model.yml', import.meta.url), 'utf8')
   assert.match(check, /pull_request:\s+paths:[\s\S]*third_party\/qwen2\.5-1\.5b-instruct\/\*\*[\s\S]*src-tauri\/tauri\.model\.conf\.json/)

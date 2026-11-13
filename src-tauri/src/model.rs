@@ -14,7 +14,8 @@
 //! (src/07_Execute_Actions/desktopShell.ts shellModelFetch), checks its size and SHA-256 against its pin on every byte
 //! (src/09_Cognition/siteModel.ts APP_MODEL), and keeps it in its own storage as the web copy keeps the site's model.
 //! Both commands run off the main thread (`async`), so the window never waits on the disk.
-//! UNCONFIRMED on a physical Windows machine: written from the Tauri documentation, built by CI.
+//! UNCONFIRMED on a physical Windows machine: written from the Tauri documentation and Tauri 2.12.3's sources,
+//! checked with cargo check and clippy for x86_64-pc-windows-msvc; windows-app.yml builds it.
 //! What breaks if it is removed? The installer carries a model the page cannot reach, and Sloane waits for a model the
 //! person has to find.
 

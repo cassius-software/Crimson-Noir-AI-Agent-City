@@ -201,6 +201,8 @@ interface ModelSource {
   readonly online: boolean
   /** The HUD's line while it is got, at `pct` percent. */
   line(pct: number): string
+  /** What a pick, a drop or the page's own start is told while it is got. */
+  readonly coming: string
 }
 
 /** The web copy's model, from its own site. */
@@ -222,6 +224,7 @@ const webSource = Object.freeze<ModelSource>({
   },
   online: true,
   line: (pct) => `getting the model from this site ${pct}%`,
+  coming: 'the model this site serves is on its way to this page',
 })
 
 /** The Windows app's model, from beside the app, over the shell's read (`fetch`: desktopShell.ts shellModelFetch). */
@@ -230,11 +233,12 @@ const appSource = (fetch: SiteFetch): ModelSource => Object.freeze<ModelSource>(
   pin: APP_MODEL,
   fetch,
   served: () => true,
-  // The shell says whether the file is there with exactly the pin's name and size (none: the bare .exe, an older
-  // app); asked once a visit, as the site's manifest is.
+  // The shell says whether the file is there with exactly the pin's name and size (none: the bare .exe); asked once a
+  // visit, as the site's manifest is, and again later when the shell did not answer in time (shellModel throws).
   offer: () => shellModel(APP_MODEL),
   online: false,
   line: (pct) => `copying the app's model into the page ${pct}%`,
+  coming: "the app's model is being copied into this page",
 })
 
 /** `make()` the first time it is asked for, and the same value every time after. */
@@ -1591,6 +1595,10 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // once so the first ask does not wait, a phone only when asked. One file is copied at a time; files kept earlier
         // stay kept until forgotten. Where this page cannot run the model, inPage.keep refuses before anything is copied
         // or chosen, so the provider is left as it was.
+        // Where Sloane's model comes from on this build (ModelSource above): the Windows app reads the one its installer
+        // put beside it, through the shell; any other page is the web copy's (or has nothing beside it: webSource.served).
+        const shellFetch = shellModelFetch(APP_MODEL)
+        const source = shellFetch ? appSource(shellFetch) : webSource
         let keeping = false
         let hinted = false
         // Set while the site's model is got (below, by Sloane's card or by the page itself), from its start to its
@@ -1601,7 +1609,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // default, where a model server on this machine still answers first); the mind has chosen the file all the same.
         const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {
           if (keeping) throw new Error('a model file is being kept in this page already: wait for it to finish')
-          if (fetching) throw new Error('the model this site serves is on its way to this page: wait for it to finish, or stop it on Sloane\'s card')
+          if (fetching) throw new Error(`${source.coming}: wait for it to finish, or stop it on Sloane's card`)
           keeping = true
           keepLine = 'keeping the model file in this page'
           let kept: KeptModel
@@ -1653,10 +1661,6 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // job gets it at a time (siteJob.ts), whoever started it: the card and its chip show its progress and its Stop.
         // The city's end stops a download in flight.
         const siteEnd = new AbortController()
-        // The Windows app reads the model its installer put beside it, through the shell; any other page is the web
-        // copy's (or has nothing beside it: webSource.served).
-        const shellFetch = shellModelFetch(APP_MODEL)
-        const source = shellFetch ? appSource(shellFetch) : webSource
         const pin = source.pin
         let offered: Promise<SiteModelOffer | null> | null = null
         // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
@@ -1680,7 +1684,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             cannot: PAGE_MODEL_REFUSAL(),
             provider: local.settings().provider ?? 'auto',
             own: chosen !== null && chosen !== pin.file ? chosen : (kept.find((m) => m.name !== pin.file)?.name ?? null),
-            busy: keeping ? 'a model file is being kept in this page just now' : fetching ? 'the model this site serves is on its way already' : null,
+            busy: keeping ? 'a model file is being kept in this page just now' : fetching ? `${source.coming} already` : null,
             kept: kept.some((m) => m.name === pin.file && m.bytes === pin.bytes),
             // The storage must answer, not only exist: a browser that blocks the site's data has the call and refuses it.
             lasting: caps.opfs && (await navigator.storage.getDirectory().then(() => true, () => false)),

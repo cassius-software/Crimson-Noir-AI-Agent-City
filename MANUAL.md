@@ -1133,9 +1133,10 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   it (A model in this page, The site's model). While it comes, a line and a bar on the card show the megabytes and then
   the copy into the page (a hairline on Sloane's chip shows the same), and **Stop** ends the download and keeps
   nothing; a download that ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
-  the first answer takes longer". Where nothing serves that model beside the page (the Windows app, `dist/index.html`
+  the first answer takes longer". Where nothing serves that model beside the page (the bare Windows .exe, `dist/index.html`
   opened from a file or from a local server, the NixOS launcher and the flake), or where this browser cannot run a
-  model in the page, no such button shows. Then **Choose a model file** (the same picker as Menu › Model file; a small
+  model in the page, no such button shows; the Windows app's installer offers its own instead, **Get the model · 940
+  MB**, copied from beside the app rather than downloaded (The app's model). Then **Choose a model file** (the same picker as Menu › Model file; a small
   `.gguf` such as Qwen2.5 0.5B Instruct at Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this
   computer (Ollama, LM Studio, llama.cpp), with the `OLLAMA_ORIGINS` note on a page Ollama refuses by default
   (anything but localhost, 127.0.0.1 or 0.0.0.0), and **Ask again** once one is there. Where this browser cannot run a
@@ -3047,10 +3048,12 @@ model, below). `dist/index.html`, the bare .exe, the launcher, the flake and the
   in order, each asked once the last is taken, the first read before the fetch answers, a read that fails, odd
   answers and a stop (`desktopShell.test.ts`), the page's own start in the app's words with no connection
   (`siteAuto.test.ts`), the wiring (`chat.test.ts`), the placing and the workflow's order (`webApp.test.ts`), and the
-  shell's reads (`model_file.rs`'s own tests, run in the container that wrote them, not by CI). CI builds the
-  installers with the model in them. Not verified: the installed app on a physical Windows machine, the copy's speed
-  over the shell's text answers (about 240 reads), and how well and how fast the 1.5B model converses. The Windows
-  arm64 app (from the build matrix) and the Mac, Linux, Android and iPhone apps carry no model yet.
+  shell's reads (`model_file.rs`'s own tests, run in the container that wrote them, not by CI). Run by CI, and not
+  counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
+  each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
+  installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Linux,
+  Android and iPhone apps carry no model yet.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
   later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.

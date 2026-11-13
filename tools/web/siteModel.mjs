@@ -32,7 +32,7 @@
 import { createHash } from 'node:crypto'
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { once } from 'node:events'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { APP_MODEL, SITE_DIR, SITE_MODEL, manifestText } from '../../src/09_Cognition/siteModel.ts'
 
@@ -149,6 +149,11 @@ export async function placeApp({ from, out = APP_OUT, pin = APP_MODEL, licence =
   const src = join(from, pin.file)
   if (!existsSync(src)) throw new Error(`${src} is missing`)
   const dir = join(out, SITE_DIR)
+  // models/ is cleared before the copy: a source inside it would be deleted before it was read.
+  const rel = relative(resolve(dir), resolve(from))
+  if (rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`))) {
+    throw new Error(`${from} is inside ${dir}, which app clears before it copies: keep the fetched file in another folder`)
+  }
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   const part = join(dir, `${pin.file}.part`)

@@ -142,7 +142,8 @@ none of it is in the repository:
   Cloud) quantized to Q4_K_M with an importance matrix (llama.cpp release b3772). Of the Qwen2.5 instruct sizes, 0.5B,
   1.5B, 7B, 14B and 32B are Apache-2.0; 3B and 72B are under Qwen's own licences, so they are not used. The size, the
   hash, the revision and the licence named by both repositories were read from Hugging Face's API on 13 November 2026;
-  `site-model.yml` and `windows-app.yml` fetch the file and check the size and hash on every run.
+  `site-model.yml` (on a pull request that touches the pin, or run by hand) and `windows-app.yml` fetch the file when
+  their cache (keyed by the whole pin) does not hold it, and check its size and hash on every run, a cached file too.
 - **How it is held.** Never committed, never in the page and never in the bare .exe. `src/09_Cognition/siteModel.ts`
   pins it (`APP_MODEL`), `SHA256SUMS` beside its licence holds the same line, and `src-tauri/src/model_file.rs` names
   the same file and size; `siteModel.test.ts` holds the three equal. `.github/workflows/windows-app.yml` fetches the
