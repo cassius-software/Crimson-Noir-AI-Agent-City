@@ -26,6 +26,20 @@ serde = { version = "1", features = ["derive"] }
 # The carried model's reads as text for the page's IPC (src/model_file.rs); the version Tauri itself already builds.
 base64 = "0.22"
 
+[features]
+# The native model runner (src/runner.rs over native/llm: llama.cpp in the app's own process), compiled only where the
+# feature is on and the target is Linux; everywhere else the three commands answer that there is none. Off by default,
+# so no shipped build compiles llama.cpp or needs cmake and libclang to build.
+native-runner = ["dep:crimson-noir-llm"]
+# The tiny test model (tools/browser/tinyGguf.mjs tiny-a.gguf) as the carried model, for the WebKitGTK end-to-end job
+# alone (.github/workflows/native-e2e.yml). No release build passes it.
+tiny-model = ["native-runner"]
+
+# Linux only for now: the macOS, Android and iOS shells join in later slices, and Windows never (WebView2 runs the
+# model in the page). Optional, so the lockfile records it and nothing builds it unless native-runner is on.
+[target.'cfg(target_os = "linux")'.dependencies]
+crimson-noir-llm = { path = "../native/llm", optional = true }
+
 # Mica behind the frosted glass title bar, Windows 11 only; the call is best effort (src/lib.rs).
 [target.'cfg(windows)'.dependencies]
 window-vibrancy = "0.8"
@@ -33,6 +47,10 @@ window-vibrancy = "0.8"
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 # The GPUs' memory for auto's Ollama model (src/gpu.rs): DXGI through the windows crate Tauri's web view already uses.
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dxgi"] }
+
+[dev-dependencies]
+# The runner's tests read the wire file the page reads (native/llm/tests/wire.json); the version Tauri already builds.
+serde_json = "1"
 
 [profile.release]
 codegen-units = 1
