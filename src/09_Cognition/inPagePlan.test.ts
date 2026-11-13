@@ -16,11 +16,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, START_MS, fits, holdTier, placement,
+  HIDDEN_UNLOAD_MS, IDLE_UNLOAD_MS, LOAD_MS, PHONE_BATCH, START_MS, fits, holdTier, placement,
   type FileSize, type GpuMode, type Placement, type PlanEnv,
 } from './inPagePlan.ts'
 import { Governor, LITE_TIER, PEAK_TIER, TIERS } from '../05_Observe_Environment/governor.ts'
-import { ANSWER_TOKENS, CONTEXT_TOKENS } from './localCompute.ts'
+import { ANSWER_TOKENS, CONTEXT_TOKENS, STALL_MS } from './localCompute.ts'
 
 const GIB = 2 ** 30
 
@@ -57,8 +57,8 @@ test('every row of the table, placed in full', () => {
   const want: Record<keyof typeof ROWS, Placement> = {
     discrete: { gpu: true, threads: 8, ctx: 8192, batch: undefined, ubatch: undefined, maxTokens: 2048, warmup: true, think: false, profile: 'discrete' },
     integrated: { gpu: true, threads: 4, ctx: 8192, batch: 512, ubatch: 256, maxTokens: 2048, warmup: true, think: false, profile: 'integrated' },
-    phone: { gpu: false, threads: 4, ctx: 4096, batch: 256, ubatch: 128, maxTokens: 512, warmup: false, think: false, profile: 'phone' },
-    lite: { gpu: false, threads: 2, ctx: 4096, batch: 256, ubatch: 128, maxTokens: 512, warmup: false, think: false, profile: 'lite' },
+    phone: { gpu: false, threads: 4, ctx: 4096, batch: 64, ubatch: 64, maxTokens: 512, warmup: false, think: false, profile: 'phone' },
+    lite: { gpu: false, threads: 2, ctx: 4096, batch: 64, ubatch: 64, maxTokens: 512, warmup: false, think: false, profile: 'lite' },
   }
   for (const [row, e] of Object.entries(ROWS)) assert.deepEqual(placement(e), want[row as keyof typeof ROWS], row)
   // A desktop answers with the local server's context and length (localCompute.ts), so the page and a server agree.
@@ -69,7 +69,20 @@ test('every row of the table, placed in full', () => {
   p.ctx = 1
   p.batch = 1
   assert.equal(placement(PHONE).ctx, 4096)
-  assert.equal(placement(PHONE).batch, 256)
+  assert.equal(placement(PHONE).batch, 64)
+})
+
+test('a phone reads the prompt in steps short enough that its progress keeps the answer\'s watch alive at half a token a second', () => {
+  assert.equal(PHONE_BATCH, 64)
+  for (const e of [PHONE, LITE]) {
+    const p = placement(e)
+    assert.equal(p.batch, PHONE_BATCH)
+    assert.equal(p.ubatch, PHONE_BATCH, 'the micro-batch is never more than the batch')
+  }
+  // The runtime sends the prompt's progress after each step and gives up after STALL_MS with nothing (wllamaRuntime.ts):
+  // a step must take less than that at the slowest reading a phone holds a conversation at.
+  const slowest = 0.55 // tokens a second
+  assert.ok(PHONE_BATCH / slowest < STALL_MS / 1000, `${PHONE_BATCH} tokens at ${slowest}/s inside ${STALL_MS / 1000} s`)
 })
 
 test('the profile: lite before phone, phone before the GPU class, an unknown GPU counts as integrated', () => {

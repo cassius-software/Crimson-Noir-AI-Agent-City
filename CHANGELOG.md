@@ -40,6 +40,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   site until Sloane is spoken to, its Stop remembered on the next visit, a fresh browser keeping the model by itself and
   Sloane answering with it, and a flipped byte ending the try with the tap still offered. Not verified: a real download
   from GitHub Pages, any real phone, and how a phone's browser reports its connection.
+- **Shop locks on the wardrobe.** An option a shop sells is locked on the player's own look until it is bought
+  (`src/07_Execute_Actions/lookLock.ts`). A lock is what one worn catalogue line sells (the look slots it sets, less the
+  rolled sleeves a design comes with), open once that line is owned: the tailor's six coats, seven contrast trims, seven
+  scarves and the tie; the ink studio's twelve designs (each on every zone) and two inks; the watch shop's bag, two
+  watches, rank pin, folding umbrella and over-ear headphones. The coat itself is locked until any overcoat is owned, so
+  the coat palette's seventh colour, which no line sells, is still the tailor's. The atelier's limbs, glasses and
+  hearing aids are never locked (`FREE_SHOPS`): nobody buys their own body. The wardrobe card (`Customizer.tsx`) draws a
+  padlock and the price on a locked option (over a swatch, the padlock alone), names the shop under its row, and a press
+  on a locked option wears nothing and says the line, the shop, where it stands, the price and the level; a garment that
+  wears a locked piece is locked with it, and a design family opens on its first design that is free or bought. A
+  locked option stays a pressable button with `aria-disabled`, so switch scanning still reaches it. What the look wore
+  when the card opened stays on, and its option chosen, until it is taken off and the card closed; the card names those
+  pieces. A preset, Randomise, Reset or a pasted code is worn with what the shops still hold put back (`fitLook`: a coat
+  goes back to the jacket in the coat's cloth, a tie or a bag comes off), and the card says what it held. The console's
+  `look` passes the same lock (`changeLookLocked`, wired in `App.tsx` over the page's one shopkeeper): a held slot or
+  garment is refused in the card's words, and a preset, a code, `random` or `reset` is fitted, the first line saying
+  what was held. A purchase redraws the card. Agents' looks stay free. Tests: `lookLock.test.ts` (every locked line
+  holds what it sells until bought and not once bought or kept; the atelier never locks; a design is held on every zone;
+  the coat's colours; fitting the eight presets and 400 seeds' looks never leaves a held piece on; the console's words;
+  the wiring), and `lookWiring.test.ts` follows the tattoo section's new family press. Pictures of the card in
+  `/mnt/project-files/screenshots/shop-locks/`, drawn by the page in Chromium's software renderer.
+
 - **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
   heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to
   31 are spare and refused. Option 0 is as before, so every chosen look keeps its code. A heel is a tapered tube under
@@ -2547,6 +2569,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   yet loaded every brief began a load and killed it at 4 s. The rewording now asks nothing while that model is still to
   be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
   planner's sentence stands meanwhile.
+
+- **Sloane answers on a slow phone instead of "The model took too long to answer."** On a Mali-G52 phone (Brave,
+  Lite) the site's model never wrote a word. The page reads the whole prompt before the first token, and on the lite
+  profile it read about 600 tokens on one thread in steps of 256: below about two tokens a second, the gap between two
+  progress reports outlasts the 120 s stall wait (and the first piece's 300 s), and the reply is given up. The waits
+  are unchanged; the work inside them is smaller and said. A conversation (`AnswerRequest.talk`, set by
+  `onboarding/voice.ts` sloaneChat) now sends a short system prompt, the 14A conduct core and the guide's line
+  (`src/09_Cognition/localCompute.ts` TALK_PROMPT, through `systemFor`, which every provider uses): the expertise rule
+  and the city actions it leaves out were most of the prompt, and a conversation is bound to no one and never acts.
+  Phones and the lite profile read the prompt 64 tokens a step (`src/09_Cognition/inPagePlan.ts` PHONE_BATCH), so a
+  phone needs about half a token a second to stay inside the stall wait. The card says what the model is doing for
+  that reply before its first word ("Waiting for the model to finish another answer", "Loading the model in this
+  page…", "Reading the conversation · 40%"): the request's own phase (`AnswerRequest.onPhase`, reported by
+  `src/09_Cognition/inPage.ts`), never another answer's. A reply that still runs out says which wait ran out beside
+  **Ask again**; a stall while the prompt is still being read now says so (`src/09_Cognition/wllamaRuntime.ts`; it
+  said "in the middle of the answer"). The `ask` cache line counts a prompt that does not open with the base reality
+  (a conversation's) as paged apart, not as a fork. Verified by unit tests and the site-model browser run on headless
+  Chromium; the cause is read from the code and the phone's report, and the phone's own speed is unverified until it
+  is tried there.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

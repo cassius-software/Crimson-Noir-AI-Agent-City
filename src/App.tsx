@@ -69,6 +69,7 @@ import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
 import { HomeCard, type FurnishHooks } from './07_Execute_Actions/HomeCard.tsx'
 import { createShopkeeper, progressionPurse, type Shopkeeper } from './07_Execute_Actions/shopkeeper.ts'
+import { changeLookLocked, heldWords, type Owns } from './07_Execute_Actions/lookLock.ts'
 import { itemById, type StoreItem } from './07_Execute_Actions/storeCatalog.ts'
 import { DEED_BASE, PROPERTY_KINDS } from './01_Initialize_World/properties.ts'
 import { FURNITURE_BASE, SHAPE_IDS, comfortOf } from './02_Define_The_Rules/homeLayout.ts'
@@ -78,7 +79,7 @@ import { loadHomes, saveHomes, type HomeRecord } from './05_Observe_Environment/
 import { carry, loadStaff, postOf, postTo, saveStaff, standDownAt, type StaffRecord } from './05_Observe_Environment/staffStore.ts'
 import { loadProfile, seedFromName, type Profile } from './05_Observe_Environment/profile.ts'
 import { loadLook, saveLook } from './05_Observe_Environment/lookStore.ts'
-import { changeLook, describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
+import { describeLook, heightScale, LOOK_SLOTS, lookFromSeed, lookSwatch, type Look, type LookChange } from './03_Spawn_Agents/look.ts'
 import { PLAYER_INDEX } from './03_Spawn_Agents/crowdCompute.ts'
 import { clampPlayers } from './07_Execute_Actions/viewports.ts'
 import type { PlanStep } from './06_Make_Decisions/intent.ts'
@@ -317,9 +318,11 @@ function netBridge(net: NetControls, store: { load(): string | null; save(value:
  * look (lookStore.ts) and the player's body stay one thing: a change goes through `wear` (wearLook), which saves
  * it and re-dresses agent PLAYER_INDEX through the engine; `show` reads what is worn now, or what a pedestrian
  * wears (the engine's word, else the hash's look for that index). `random` without a seed draws one here, so the
- * pure change stays deterministic.
+ * pure change stays deterministic. Every change passes the shops' lock (lookLock.ts changeLookLocked, over `owns`):
+ * a slot or a garment a shop sells and nobody bought is refused in the lock's words, and a preset, a code, a seed's
+ * look or the reset is worn with what the shops still hold put back, the first line saying what.
  */
-function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void; lookOf(agent: number): Look | null; agents: number }): LookBridge {
+function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void; lookOf(agent: number): Look | null; agents: number; owns: Owns }): LookBridge {
   return Object.freeze({
     show: (agent?: number): string[] => {
       if (agent === undefined || agent === PLAYER_INDEX) return describeLook(host.worn())
@@ -328,10 +331,10 @@ function lookBridge(host: { worn(): Look; seed(): number; wear(look: Look): void
     },
     set: (change: LookChange): string[] => {
       const seeded = change.kind === 'random' && !Number.isFinite(change.seed) ? { kind: 'random' as const, seed: Math.floor(Math.random() * 0x7fffffff) } : change
-      const r = changeLook(host.worn(), seeded, host.seed())
+      const r = changeLookLocked(host.worn(), seeded, host.seed(), host.owns)
       if (r.look === null) throw new Error(r.error)
       host.wear(r.look)
-      return describeLook(r.look)
+      return r.held.length ? [`worn without what the shops still hold: ${heldWords(r.held)}`, ...describeLook(r.look)] : describeLook(r.look)
     },
   })
 }
@@ -1905,6 +1908,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             wear: wearLook,
             lookOf: (agent) => e.lookOf(agent),
             agents: e.recruitHost().agents,
+            owns: (line) => keeper.owns(line.id),
           }),
         }))
         // The fallback without a microphone, in the browser's console: recruit("Rust").
@@ -2113,6 +2117,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           roster={roster}
           onAgentLook={wearAgentLook}
           onHear={onHear}
+          keeper={keeper}
         />
       )}
       {hud && (

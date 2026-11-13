@@ -176,6 +176,22 @@ export const BASE_REALITY = [
 export const NO_ONE_BOUND = "No one is tethered for this request: you speak as the city's guide, and the expertise rule above does not apply."
 
 /**
+ * The system prompt for a conversation (AnswerRequest.talk: Sloane's chat): the 14A conduct core and the guide's line,
+ * nothing else. A conversation is bound to no one and never acts (its own framing, onboarding/voice.ts chatPrompt, says
+ * so), so the expertise rule and the city actions are left out: they were most of the prompt, and a phone running the
+ * model in its page on one thread reads a prompt at a token or two a second before it writes a word.
+ */
+export const TALK_PROMPT = [AGENT_SYSTEM_PROMPT_CORE, "No one is tethered for this request: you speak as the city's guide, in conversation."].join('\n')
+
+/**
+ * The system prompt every provider sends for `req`: TALK_PROMPT for a conversation (its people, memories, moment and
+ * steering, which a conversation does not carry, are not read), else systemPrompt with the request's steering.
+ */
+export function systemFor(req: Pick<MindRequest, 'tethers' | 'memories' | 'context' | 'steering' | 'talk'>): string {
+  return req.talk === true ? TALK_PROMPT : systemPrompt(req.tethers, req.memories, req.context, req.steering)
+}
+
+/**
  * The system prompt for an answer given for the people a task is bound to: the base reality, then who they are, the
  * skills they bring as the whole of the expertise, the operator's steering lines (09_Cognition/features.ts
  * steeringLines: fixed text, rarely changed, so it sits before the memories and the moment), and what each remembers
@@ -786,7 +802,7 @@ export function createLocalCompute({ fetch: fetchFn, store, defaults = {}, timeo
       return names
     },
     answer: async (req: MindRequest, onPiece: (p: Piece) => void, context?: number): Promise<Answer> => {
-      const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
+      const system = systemFor(req)
       const name = await modelFor(req.signal)
       // A model that takes longer to load may wait longer for its first piece; the same timeouts when nothing is longer.
       const extra = coldWait?.(name) ?? 0

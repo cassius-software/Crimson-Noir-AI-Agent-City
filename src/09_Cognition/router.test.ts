@@ -18,7 +18,7 @@ import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateH
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
-import { BASE_REALITY, CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemPrompt, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { BASE_REALITY, CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemFor, systemPrompt, TALK_PROMPT, type FetchLike, type SettingsStore } from './localCompute.ts'
 import { createMindRouter, DEFAULT_PROVIDER, INPAGE_SERVER, LLAMACPP_MODEL, LLAMACPP_SERVER, NO_INPAGE_RUNTIME, OPENAI_MODEL, OPENAI_SERVER, PROVIDER_TEXT, PROVIDERS, SCRIPTED_SERVER } from './router.ts'
 import { SCRIPTED } from './scripted.ts'
 
@@ -68,7 +68,7 @@ function keptInPage() {
       answer: async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
         calls.push('answer')
         onPiece({ kind: 'text', text: 'inpage says hi' })
-        return { text: 'inpage says hi', thinking: 0, tokens: 3, reason: 'stop', promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context)) }
+        return { text: 'inpage says hi', thinking: 0, tokens: 3, reason: 'stop', promptHash: promptHash(systemFor(req)) }
       },
     }
   }
@@ -253,6 +253,30 @@ test('every provider answers with the same system prompt, the conduct core first
   assert.throws(() => r.setServer('http://example.com'), /speaks only to a gateway on this machine/)
   assert.equal(r.setServer('http://localhost:4000'), 'http://localhost:4000', 'a gateway on this machine')
   assert.equal(r.setServer('https://127.0.0.1:8443/v1'), 'https://127.0.0.1:8443', 'https to this machine too')
+})
+
+test('a conversation (talk: true) is sent the talk prompt by every provider, with its hash, and is paged on its own', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory })
+  r.setKey('sk-ant-test')
+  for (const p of PROVIDERS) {
+    r.setProvider(p)
+    const a = await r.answer({ tethers: [], prompt: 'how is it going', signal: new AbortController().signal, talk: true }, () => {})
+    assert.equal(a.promptHash, promptHash(TALK_PROMPT), p)
+  }
+  const sent = srv.calls.filter((c) => c.body !== null)
+  assert.equal(sent.length, 5)
+  for (const c of sent) {
+    const b = c.body as { system?: string; messages?: { content: string }[] }
+    assert.equal(b.system ?? b.messages?.[0]?.content, TALK_PROMPT, c.url)
+  }
+  // The guide's line (nobody bound, not a conversation) and a conversation are two prompts, two pages.
+  r.setProvider('ollama')
+  await r.answer({ tethers: [], prompt: 'make it night', signal: new AbortController().signal }, () => {})
+  const guide = srv.calls.filter((c) => c.body !== null).at(-1)
+  assert.ok(guide)
+  assert.equal((guide.body as { system: string }).system, systemPrompt([]))
+  assert.match(r.settings().cache ?? '', /forked for 1 agent, 1 prompt paged apart · /, 'the guide\'s prompt forks the base reality; the conversation\'s, which does not open with it, is its own chain')
 })
 
 test('the scripted provider, chosen on purpose, ends an answer that plainly asks for one city action with the ACTION line on a line of its own; a plain question proposes nothing', async () => {

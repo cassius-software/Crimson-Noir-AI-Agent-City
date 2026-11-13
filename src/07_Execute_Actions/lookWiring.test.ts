@@ -441,12 +441,12 @@ test('the card\'s Tattoos section: headed where the left hand\'s row was, the zo
   // The zones the wardrobe has slots for, the section at the first, no row for any zone or the ink.
   assert.ok(card.includes('const CARD_ZONES = TATTOO_ZONES.filter((z) => (LOOK_SLOTS as readonly string[]).includes(z.slot))'))
   assert.ok(card.includes("const isTattooSlot = (slot: LookSlot): boolean => slot === 'tattooInk' || CARD_ZONES.some((z) => z.slot === slot)"))
-  before(card, "if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} t={t} />", 'if (isTattooSlot(slot)) return null', 'the section takes the first zone\'s place before the rows are dropped')
+  before(card, "if (slot === 'tattooHand') return <TattooSection key={slot} worn={worn} set={set} ink={optionRow('tattooInk')} lockOf={(zone, id) => lockOf(withLookSlot(worn, zone, id))} note={lockLine} t={t} />", 'if (isTattooSlot(slot)) return null', 'the section takes the first zone\'s place before the rows are dropped')
   before(card, 'if (isTattooSlot(slot)) return null', 'if (isSlider(slot)) {', 'dropped before a row is built')
   assert.equal(TATTOO_ZONES[0].slot, 'tattooHand', 'the first zone heads the section')
   // The ink is the card's own swatch row (the slot row every colour slot draws), inside the section.
   assert.ok(card.includes('const pills = optionRow(slot)'))
-  const section = between(card, 'function TattooSection(', '/** The wardrobe itself:')
+  const section = between(card, 'function TattooSection(', 'function LookEditor(')
   assert.ok(section.includes('{ink}'))
   // Three radiogroups of buttons, no select or field: switch scanning offers every button and presses it, and would
   // take a select for a typed field (scanning.ts).
@@ -466,7 +466,9 @@ test('the card\'s Tattoos section: headed where the left hand\'s row was, the zo
   assert.ok(section.includes("const [zone, setZone] = useState<LookSlot>(() => CARD_ZONES.find((z) => worn[z.slot] > 0)?.slot ?? 'tattooHand')"), 'it starts on the first zone that holds a design')
   // None clears the zone; another family wears its first design at once; a design is worn as picked.
   assert.ok(section.includes('onClick={() => set(zone, 0)}'))
-  assert.ok(section.includes('onClick={() => { if (family !== f) set(zone, TATTOO_BY_FAMILY[f][0]) }}'))
+  // A family opens on its first design that is free or bought (a design the ink studio sells is locked: lookLock.ts).
+  assert.ok(section.includes('onClick={() => { if (family !== f) set(zone, firstOpen(f)) }}'))
+  assert.ok(section.includes('const firstOpen = (f: number): number => TATTOO_BY_FAMILY[f].find((id) => lockOf(zone, id) === null) ?? TATTOO_BY_FAMILY[f][0]'))
   assert.ok(section.includes('onClick={() => set(zone, id)}'))
   assert.ok(section.includes('const family = design > 0 ? TATTOO_MOTIFS[design - 1].family : null'), 'the family shown is the design\'s')
   assert.ok(section.includes('{family !== null && ('), 'no design row under none')

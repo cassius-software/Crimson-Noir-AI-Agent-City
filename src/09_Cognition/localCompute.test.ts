@@ -26,7 +26,9 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
+import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
 import { createRng } from '../02_Define_The_Rules/degrees.ts'
+import { ACTION_RULES } from '../06_Make_Decisions/actions.ts'
 import { operatorBridge, type Answer, type GateTether, type Piece, type SimControls } from '../07_Execute_Actions/operator.ts'
 import type { RecruitView } from '../07_Execute_Actions/simProtocol.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
@@ -34,7 +36,7 @@ import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { TaskRouter, type SwarmSource } from '../08_Swarm/taskRouter.ts'
 import {
   ANSWER_MIN_TOKENS, ANSWER_TOKENS, BASE_REALITY, BYTES_MAX, CONTEXT_MAX, CONTEXT_TOKENS, CognitionError, chat, contextOf, createLocalCompute, DEFAULT_API, DEFAULT_MODEL, DEFAULT_SERVER, generate, installedModels, installedSizes, loopbackServer,
-  placementOf, sentence, systemPrompt, type FetchLike,
+  placementOf, promptHash, sentence, systemFor, systemPrompt, TALK_PROMPT, type FetchLike,
 } from './localCompute.ts'
 
 // ---------------------------------------------------------------- helpers
@@ -181,6 +183,33 @@ test('every agent\'s prompt starts with the same base reality, so a server that 
     assert.equal(prompts[0].slice(0, shared), `${BASE_REALITY}\nYou are answering for agent `, 'they part only where the person does')
   }
   assert.doesNotMatch(BASE_REALITY, /agent \d|Rust|Python|remembers,/, 'nothing of any one agent in it')
+})
+
+test('a conversation\'s prompt is the 14A core and the guide\'s line only: no expertise rule and no city actions, under half the guide\'s prompt', () => {
+  assert.equal(TALK_PROMPT, `${AGENT_SYSTEM_PROMPT_CORE}\nNo one is tethered for this request: you speak as the city's guide, in conversation.`)
+  assert.ok(TALK_PROMPT.startsWith(AGENT_SYSTEM_PROMPT_CORE), 'the 14A core opens it, as it opens every prompt')
+  for (const rule of ACTION_RULES) assert.ok(!TALK_PROMPT.includes(rule), 'a conversation never acts, so it is never told how')
+  assert.doesNotMatch(TALK_PROMPT, /ACTION|expertise|remember/)
+  // A phone reading the prompt on one thread pays for every token before the first word (inPagePlan.ts PHONE_BATCH).
+  assert.ok(TALK_PROMPT.length * 2 < systemPrompt([]).length, `${TALK_PROMPT.length} against ${systemPrompt([]).length} characters`)
+  // talk: true wins over whatever else the request carries; without it, the prompt is exactly as it was.
+  const bound: GateTether[] = [{ agent: 17, serial: 1, skills: ['Rust'] }]
+  const memories = [{ agent: 17, lines: ['met the operator at the pier'] }]
+  assert.equal(systemFor({ tethers: bound, memories, steering: ['Steering: anything.'], talk: true }), TALK_PROMPT)
+  assert.equal(systemFor({ tethers: [], talk: true }), TALK_PROMPT)
+  assert.equal(systemFor({ tethers: bound, memories, steering: ['Steering: anything.'] }), systemPrompt(bound, memories, [], ['Steering: anything.']))
+  assert.equal(systemFor({ tethers: [], talk: false }), systemPrompt([]))
+  assert.notEqual(promptHash(TALK_PROMPT), promptHash(systemPrompt([])), 'the audit tells a conversation from the guide')
+})
+
+test('a server on this machine is sent the talk prompt for a conversation, and the hash of what it was sent', async () => {
+  const { f, calls } = fakeFetch(() => streamed(SAMPLE))
+  const mind = createLocalCompute({ fetch: f })
+  const a = await mind.answer({ tethers: [], prompt: 'how is it going', signal: new AbortController().signal, talk: true }, () => {})
+  assert.equal(JSON.parse(String(calls[0].init?.body)).system, TALK_PROMPT)
+  assert.equal(a.promptHash, promptHash(TALK_PROMPT))
+  await mind.answer({ tethers: [], prompt: 'make it night', signal: new AbortController().signal }, () => {})
+  assert.equal(JSON.parse(String(calls[1].init?.body)).system, systemPrompt([]), 'not a conversation: as it was')
 })
 
 test('the system prompt carries what each bound person remembers, oldest first, and nothing of anyone else', () => {
