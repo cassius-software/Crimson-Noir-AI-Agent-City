@@ -224,6 +224,16 @@ function isEditable(t: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
 
+/** Why the model the app runs itself couldn't start (App.tsx, from 09_Cognition/nativeMind.ts), as the card says it. */
+export interface AppModelLine {
+  /** The app's reason, the model's file name already taken out (the card never names the model). */
+  readonly why: string
+  /** A model server can run beside the app (a computer, not a phone or tablet): the line about starting one stays. */
+  readonly servers: boolean
+  /** Whether the app's model is what answers now (the provider is auto or native): only then is the hint its. */
+  blamed(): boolean
+}
+
 export interface ConciergeProps {
   /** Show the Concierge (pass false while the boot veil covers the page, the HUD is hidden or the terminal is open). */
   visible: boolean
@@ -289,6 +299,12 @@ export interface ConciergeProps {
   /** Optional: why this page cannot run a model file (the browser lacks a piece), said in place of the picker. */
   noPageModel?: string | null
   /**
+   * Optional: why the model inside this app couldn't start, where the app runs one itself (09_Cognition/nativeMind.ts),
+   * said in place of the site's and the browser's hints when no model answers, while that model is what answers; on a
+   * computer still followed by the line about starting a model server. Null: the app runs none, or it can start.
+   */
+  appModel?: AppModelLine | null
+  /**
    * Optional: the model this site serves beside the page (09_Cognition/siteModel.ts, built by App.tsx), offered when no
    * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. The page may get it by itself
    * too (09_Cognition/siteAuto.ts): either way its one job (siteJob.ts) shows its progress and its Stop here, on the
@@ -305,7 +321,7 @@ export interface ConciergeProps {
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, siteModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, appModel = null, siteModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
@@ -887,6 +903,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const link = `text-[12px] font-medium underline-offset-2 hover:underline ${muted}`
   const done = brief ? brief.plan.filter((s) => dialogue.applied.includes(s.control)) : []
   const later = brief ? brief.plan.filter((s) => !dialogue.applied.includes(s.control)) : []
+  // Why the app's own model couldn't start, said only with no model answering and while that model is what answers.
+  const app = talk?.state === 'none' && appModel !== null && appModel.blamed() ? appModel : null
 
   // A speaker layout: Sloane's mark beside their name and line, everything they offer under the line.
   const card = (
@@ -1030,9 +1048,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   )}
                   {gotWhy && !getting && <p role="status" className={`mt-1.5 text-[11px] leading-snug break-words ${muted}`} data-site-why>{gotWhy}</p>}
                   <p className={`mt-2 text-[12px] leading-snug ${muted}`}>
-                    {site ? siteHint(site, from) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
-                    Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
-                    {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
+                    {app ? `${appHint(app.why)} ` : site ? siteHint(site, from) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
+                    {(!app || app.servers) && (<>
+                      Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
+                      {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
+                    </>)}
                   </p>
                   {talk.why && (
                     <details className={`mt-1 text-[11px] leading-snug ${muted}`}>
@@ -1253,6 +1273,11 @@ function siteHint(site: SiteModelLine, from: SiteModelFrom = 'site'): string {
   if (from === 'app') return `${site.title}, ${site.size}: it came with this app, and is checked against the copy the app was built for and kept in this page (Apache-2.0). `
   if (from === 'launcher') return `${site.title}, ${site.size}: it came with this package and is served by its launcher on this machine, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
   return `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+}
+
+/** The hint where the app's own model could not start: its reason, never the model's name (nativeMind.ts takes it out). */
+function appHint(why: string): string {
+  return `The model inside this app couldn’t start: ${why.replace(/[.\s]+$/, '')}.`
 }
 
 function serverNote(origin: string): string {

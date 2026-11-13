@@ -15,6 +15,38 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The page side of the native model runner: provider `native`.** The router has a seventh provider, `native`, the
+  model an app carries and runs itself (`src/09_Cognition/nativeMind.ts`), asked through the shell's three commands
+  (`native_model`, `native_generate` with a Tauri channel for the answer's events, `native_stop`) by `desktopShell.ts`
+  `shellRunner`, which sends the request as `{ req, onEvent }` and settles an answer only once its channel has ended (or
+  after 1 s without an end), so a reply that overtakes the channel's last message does not cut it off. Auto looks for it
+  after the servers on this machine and before a model file kept in this page (`ollama, llamacpp, openai, native,
+  inpage, claude`): found when the app says it can start its model, named with the app's reason when it cannot, and
+  unsaid where there is no runner (a browser, the Windows app, an app built before the runner), where every sentence of
+  a look reads as it did. An answer is sent the same two messages and system prompt the other providers send (the talk
+  prompt for a conversation), with a random 32-bit id, and hashed for the audit; its events become the card's phase
+  ("Preparing the model inside the app · N%", "Loading the model inside the app…", the prompt's share read), the HUD's
+  activity line in its own words, and its text, and nothing the runner sends after the answer settled reaches it. A Stop
+  settles at once and stops the runner by that id; a runner quiet past the first-piece or stall wait is a timeout and is
+  stopped too (never while it waits its turn, even as the file's check is reported to it); an answer the full context
+  cuts ends as cut (`length`), as the token cap does; the runner's own errors keep their code and words. A model that
+  will not load (or whose file fails its check) at the answer after the look that found it has failed for good: that
+  answer says there is none, with the app's reason (`offline`, so the script stands in), Sloane's card is told why,
+  under auto the same ask goes on to what answers next in order (a gateway, a model file kept in this page), and every
+  look and answer after it pass the app's model over; one answer's own failure while the model stands loaded stays that
+  answer's. In a shell without the runner's commands (today's Windows app) an answer chosen with `ask provider native`
+  is told there is none before any channel is made, as in a browser. The console's asks and the swarm's steps run over
+  it (no address for the loopback rule), the cloud fallback never moves its prompts, `ask` shows the file and how the
+  last answer ran, Sloane's brief is not reworded while the app's model is still to be loaded (the rewording would be
+  the answer that loads it), and Sloane's card says "The model inside this app couldn’t start:" with the reason (without
+  the model's file name) in place of the site's and the browser's hints, only while the provider is `auto` or `native`,
+  and on a computer still followed by the line about starting Ollama, LM Studio or a llama.cpp server (not on a phone or
+  tablet). The tests read `native/llm/tests/wire.json` and replay its request, every event, ending, error and status,
+  and what `native_model` answers in each status, through a fake shell, so a field renamed on the runner's side fails a
+  test on one side or the other (the commands' argument names come with the shell's commands). No app has the runner yet
+  (the shell's commands come in a later change), so in a browser and in today's apps auto finds and answers as before;
+  `ask provider` and `auto`'s line name the new provider. Not verified: any app, any device, or the channel's order
+  against the reply in a real web view.
 - **The native model runner's core.** `native/llm` is a new crate that runs Sloane's model in the app's own process
   through llama.cpp (`llama-cpp-2` 0.1.161, default features off), for the apps whose web view cannot run a model in the
   page (macOS, Linux and iOS are WebKit; Android's web view is not counted on). One thread named "model" owns the model

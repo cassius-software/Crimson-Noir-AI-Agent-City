@@ -877,6 +877,48 @@ test('a model running in this page (chosen, or found by auto) has no endpoint, s
   assert.throws(() => lop.ask(['Rust'], 'hi'), /^Error: choose a model first: ask model <name> \(type ask to list them\)$/)
 })
 
+/** The model the app runs itself (09_Cognition/nativeMind.ts), chosen or found by auto: 'this app' is its server, no address. */
+class AppMind extends FakeMind {
+  readonly how: { provider: string; found?: string }
+  constructor(how: { provider: string; found?: string }) {
+    super()
+    this.how = how
+    this.server = 'this app'
+    this.model = 'm.gguf'
+  }
+  override settings() {
+    return { ...super.settings(), ...this.how }
+  }
+}
+
+test('the model the app runs itself (chosen, or found by auto) has no endpoint, so the console\'s ask and the swarm run over it; the same words as a server\'s address are refused', async () => {
+  for (const how of [{ provider: 'native' }, { provider: 'auto', found: 'native' }]) {
+    const mind = new AppMind(how)
+    const op = operatorBridge(fakeSim(), new FakeGate(), mind, undefined, { contained: () => true })
+    op.unlock()
+    const run = op.swarm.run('name the parts', 1)
+    for (let i = 0; i < 50 && !mind.asked.length; i++) await ticks()
+    assert.equal(mind.asked.length, 1, `${JSON.stringify(how)}: the step was admitted and asked`)
+    mind.finish('The parts are three.')
+    const r = await within(run.result)
+    assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['answered', []]], JSON.stringify(how))
+    const ask = op.ask(['Rust'], 'hi')
+    assert.equal(ask.state, 'Authorized', `${JSON.stringify(how)}: the console's own ask passes the gate`)
+    for (let i = 0; i < 50 && mind.asked.length < 2; i++) await ticks()
+    mind.finish('Hi.')
+    await within(ask.result)
+  }
+  // 'this app' given as a server's address is no address on this machine: refused, so the runs above went ahead only
+  // because the app's own model has no endpoint at all.
+  const served = new AppMind({ provider: 'ollama' })
+  const op = operatorBridge(fakeSim(), new FakeGate(), served, undefined, { contained: () => true })
+  op.unlock()
+  const r = await within(op.swarm.run('name the parts', 1).result)
+  assert.deepEqual(r.steps.map((st) => [st.state, st.failed]), [['refused', ['LoopbackOnly']]])
+  assert.throws(() => op.ask(['Rust'], 'hi'), /^Error: ask: Zeroth Law: this app is not on this machine$/)
+  assert.equal(served.asked.length, 0)
+})
+
 test('leasedApi: the facade\'s shape, no safety member at any depth, frozen, plain arrows; every call goes through the lease, none once it refuses', () => {
   const sim = fakeSim()
   const api = scriptApi(sim)

@@ -181,7 +181,7 @@ export interface ReplSession { machine: Machine; noir: NoirSession }
 export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
-export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'ollama', 'openai', 'scripted'] as const
+export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'native', 'ollama', 'openai', 'scripted'] as const
 
 /** The harness names, for completion (commands.test.ts pins them to harness.ts, which this file must not import). */
 export const HARNESS_NAMES = ['brake-distance', 'first-law-floor', 'kernel-stop', 'sanctuary', 'spatial', 'traffic-lights'] as const
@@ -909,9 +909,11 @@ function swarmReportLines(r: SwarmReport): Line[] {
 function mindLines(m: MindStatus): Line[] {
   const auto = m.provider === 'auto'
   // Under auto, what it found decides the rows below (the gateway's key and effort when it found the Claude gateway;
-  // the runtime and storage rows when it found the model file kept in this page).
+  // the runtime and storage rows when it found the model file kept in this page; no address when it found the model the
+  // app runs itself, whose server is 'this app', 09_Cognition/nativeMind.ts NATIVE_SERVER).
   const network = m.provider === 'claude' || (auto && m.key !== undefined)
-  const inPage = m.provider === 'inpage' || (auto && m.runtime !== undefined)
+  const app = m.provider === 'native' || (auto && m.server === 'this app')
+  const inPage = !app && (m.provider === 'inpage' || (auto && m.runtime !== undefined))
   const scripted = m.provider === 'scripted'
   const lines: Line[] = []
   if (m.provider !== undefined) {
@@ -919,7 +921,8 @@ function mindLines(m: MindStatus): Line[] {
       : network ? 'claude: the Claude API through a gateway on this machine (ask provider ollama|llamacpp|openai for a model on this machine, scripted for none)'
         : scripted ? 'scripted: no backend; the script answers on this page, and nothing reaches any network (ask provider claude|ollama|llamacpp|openai for a model)'
           : inPage ? 'inpage: a model file kept in this page, run here on this device; nothing is addressed (ask file chooses the file, ask gpu where it runs)'
-            : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
+            : app ? 'native: the model this app carries, run by the app itself on this device; nothing is addressed (ask provider ollama|llamacpp|openai|claude for another)'
+              : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
   if (m.auto !== undefined) lines.push(out(row('found', m.auto)))
   // 'default' in the chat format is the placeholder the client resolves to the model the server has loaded (LM Studio
@@ -932,6 +935,7 @@ function mindLines(m: MindStatus): Line[] {
       : m.model
   if (scripted) lines.push(out(row('server', 'none: nothing is addressed')), out(row('model', 'none: the script')))
   else if (inPage) lines.push(out(row('server', 'none: the model runs in this page')), out(row('model', model)))
+  else if (app) lines.push(out(row('server', 'none: the app runs the model')), out(row('model', model)))
   else lines.push(out(row('server', network ? `${m.server}  (a gateway on this machine only)` : `${m.server}  (this machine only)`)), out(row('model', model)))
   // Under auto with the GPUs' memory given: the size of model it gives Ollama and why (09_Cognition/modelFit.ts fitLine).
   if (m.fit !== undefined) lines.push(out(row('fit', m.fit)))
@@ -946,9 +950,9 @@ function mindLines(m: MindStatus): Line[] {
   if (m.cache !== undefined) lines.push(out(row('cache', m.cache)))
   if (m.fallback !== undefined) lines.push(out(row('fallback', m.fallback)))
   if (m.scripted !== undefined) lines.push(out(row('scripted', m.scripted)))
-  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (auto ? 'no model answered on this machine' : network ? 'the gateway to the Claude API did not answer' : inPage ? 'the model in this page cannot run here' : 'the local model server did not answer')}`)]
+  if (m.installed === null) return [...lines, err(`ask: ${m.error ?? (auto ? 'no model answered on this machine' : network ? 'the gateway to the Claude API did not answer' : inPage ? 'the model in this page cannot run here' : app ? 'the model inside this app cannot start' : 'the local model server did not answer')}`)]
   if (scripted) return lines
-  if (!m.installed.length) return [...lines, out(row('installed', inPage ? 'no model file kept: Menu › Model file, or ask file' : 'no models'))]
+  if (!m.installed.length) return [...lines, out(row('installed', inPage ? 'no model file kept: Menu › Model file, or ask file' : app ? 'none: no app around this page runs a model itself' : 'no models'))]
   const answers = placeholder ? m.resolved : m.model
   lines.push(...m.installed.map((name, i) => out(row(i === 0 ? 'installed' : '', name === answers ? `${name}  (chosen)` : name))))
   if (m.model === null) lines.push(sys(inPage ? 'choose one of the files kept: ask model <name>' : 'choose one that writes text: ask model <name>'))

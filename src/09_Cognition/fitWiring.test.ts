@@ -85,7 +85,7 @@ test('the router is the module that sizes by modelFit.ts: it imports it, and its
 test('App: the Windows app\'s GPU reading is asked once, judged by figureFromAdapters, and handed to the city\'s router alone', () => {
   assert.ok(specifiers(APP).includes('./07_Execute_Actions/desktopShell.ts'), 'App imports the shell view')
   assert.match(APP, /^import \{ figureFromAdapters \} from '\.\/09_Cognition\/modelFit\.ts'$/m)
-  assert.match(APP, /^import \{ shellGpuMemory, shellModel, shellModelFetch \} from '\.\/07_Execute_Actions\/desktopShell\.ts'$/m, 'the GPU reading, and the app\'s model (siteModel.ts APP_MODEL)')
+  assert.match(APP, /^import \{ shellGpuMemory, shellModel, shellModelFetch, shellRunner \} from '\.\/07_Execute_Actions\/desktopShell\.ts'$/m, 'the GPU reading, the app\'s model (siteModel.ts APP_MODEL) and the app\'s own runner')
   assert.equal(count(APP_CODE, /\bshellGpuMemory\(/g), 1, 'asked in one place')
   const before = between(APP, '        let inPage!: InPageMind\n', '        const local = createMindRouter({')
   assert.match(before, /^ {8}let appVram: number \| null = null\n {8}void shellGpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}\)\n$/m, 'asked as the city\'s router is built, judged by figureFromAdapters')

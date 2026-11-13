@@ -9,6 +9,8 @@
  * operator tier's whole path (the console, the gateway, the 14A screen) runs the same over any provider: an
  * inadmissible prompt reaches no provider at all and is not remembered. The in-page provider is a stand-in here (the
  * host hands the real one, inPage.ts): with none handed, it keeps nothing, takes no server or key, and answers 'offline'.
+ * The app's own (nativeMind.ts) is the real one over a fake runner, and with none handed, one with no runner; in a
+ * shell without the runner's commands (the Windows app) it answers as with none, before any channel is made.
  * What breaks if it is removed? A swap could change what an agent is, or a prompt reach a server it should not.
  */
 import assert from 'node:assert/strict'
@@ -16,11 +18,13 @@ import { test } from 'node:test'
 import { AGENT_SYSTEM_PROMPT_CORE } from '../02_Define_The_Rules/conduct.ts'
 import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateHandle, type GateLease, type GateTether, type Mind, type Piece, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
+import { SHELL_GLOBAL, shellRunner } from '../07_Execute_Actions/desktopShell.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { CLAUDE_GATEWAY, DEFAULT_CLAUDE_MODEL } from './claudeApi.ts'
 import { BASE_REALITY, CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, promptHash, systemFor, systemPrompt, TALK_PROMPT, type FetchLike, type SettingsStore } from './localCompute.ts'
+import { createNativeMind, NATIVE_MODEL, NATIVE_SERVER, NO_RUNNER, type GenRequest } from './nativeMind.ts'
 import { createMindRouter, DEFAULT_PROVIDER, INPAGE_SERVER, LLAMACPP_MODEL, LLAMACPP_SERVER, NO_INPAGE_RUNTIME, OPENAI_MODEL, OPENAI_SERVER, PROVIDER_TEXT, PROVIDERS, SCRIPTED_SERVER } from './router.ts'
-import { SCRIPTED } from './scripted.ts'
+import { SCRIPTED, withScriptedFallback } from './scripted.ts'
 
 const enc = new TextEncoder()
 const stream = (text: string, type: string): Response => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(text)); c.close() } }), { status: 200, headers: { 'content-type': type } })
@@ -75,10 +79,30 @@ function keptInPage() {
   return { factory, calls, store: () => store }
 }
 
+/**
+ * The model the app runs itself (nativeMind.ts) over a fake runner that carries one file and answers every request at
+ * once; `sent` notes each request as the runner would get it. No request reaches any server.
+ */
+function carriedByApp() {
+  const sent: GenRequest[] = []
+  const factory = (): Mind => createNativeMind({
+    host: {
+      model: async () => ({ file: 'm.gguf', bytes: 1, status: { state: 'ready' } }),
+      generate: async (req, send) => {
+        sent.push(req)
+        send({ kind: 'text', text: 'native says hi' })
+        return { id: req.id, reason: 'eog', tokens: 3, promptTokens: 9, reused: 0, prefillMs: 1, genMs: 1, threads: 1, nCtx: 4096, nBatch: 256, gpu: false }
+      },
+      stop: async () => true,
+    },
+  })
+  return { factory, sent }
+}
+
 test('auto is the provider unless the operator chooses another; each provider has its own server and model', () => {
   const r = createMindRouter({ fetch: anyServer().f })
   assert.equal(DEFAULT_PROVIDER, 'auto')
-  assert.deepEqual(PROVIDERS, ['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'inpage', 'scripted'])
+  assert.deepEqual(PROVIDERS, ['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'native', 'inpage', 'scripted'])
   // Before an ask has looked: Ollama's settings stand for what auto will try first, and it says it has not looked.
   assert.deepEqual(r.settings(), { provider: 'auto', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined, auto: 'nothing found yet: the next ask looks on this machine' })
   assert.throws(() => r.setModel('x'), /auto has not found a model on this machine yet/)
@@ -88,7 +112,7 @@ test('auto is the provider unless the operator chooses another; each provider ha
   assert.deepEqual(r.settings(), { provider: 'ollama', server: DEFAULT_SERVER, model: DEFAULT_MODEL, think: false, api: 'generate', key: undefined, effort: undefined })
   assert.equal(r.setProvider('LlamaCpp'), 'llamacpp')
   assert.deepEqual(r.settings(), { provider: 'llamacpp', server: LLAMACPP_SERVER, model: LLAMACPP_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
-  assert.throws(() => r.setProvider('gpt'), /ask provider takes auto, claude, ollama, llamacpp, openai, inpage, scripted/)
+  assert.throws(() => r.setProvider('gpt'), /ask provider takes auto, claude, ollama, llamacpp, openai, native, inpage, scripted/)
   assert.equal(r.provider, 'llamacpp')
   assert.equal(r.setProvider('openai'), 'openai')
   assert.deepEqual(r.settings(), { provider: 'openai', server: OPENAI_SERVER, model: OPENAI_MODEL, think: false, api: 'chat', key: undefined, effort: undefined })
@@ -118,7 +142,7 @@ test('ask connect: the provider, its server and (claude) its key in one line; a 
   assert.throws(() => r.connect('ollama', 'http://localhost:11434', 'k'), /the ollama provider takes no key/)
   assert.throws(() => r.connect('scripted', 'http://localhost:1'), /takes no server and no key/)
   assert.throws(() => r.connect('auto', 'http://localhost:1'), /auto takes no server and no key/)
-  assert.throws(() => r.connect('gpt'), /ask connect takes auto, claude, ollama, llamacpp, openai, inpage, scripted/)
+  assert.throws(() => r.connect('gpt'), /ask connect takes auto, claude, ollama, llamacpp, openai, native, inpage, scripted/)
   assert.equal(r.connect('Ollama'), PROVIDER_TEXT.ollama)
   assert.equal(r.provider, 'ollama')
   // Kept: a new router over the same store wakes as the last connect left it, the openai server included.
@@ -172,6 +196,43 @@ test('the in-page provider with no runtime handed (Node, the onboarding page): i
   assert.equal(r.provider, 'ollama')
 })
 
+test('the native provider with no runner (a browser, Node): it lists nothing, makes no request, answers offline, and takes no server, model, think or key', async () => {
+  const srv = anyServer()
+  const r = createMindRouter({ fetch: srv.f })
+  assert.equal(PROVIDER_TEXT.native, 'native: the model this app carries, run by the app itself on this device; nothing is addressed')
+  assert.equal(r.connect('native'), PROVIDER_TEXT.native)
+  assert.equal(r.provider, 'native')
+  assert.deepEqual(r.settings(), { provider: 'native', server: NATIVE_SERVER, model: NATIVE_MODEL, key: undefined, effort: undefined })
+  assert.deepEqual(await r.installed(), [])
+  await assert.rejects(r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {}), (e: unknown) => e instanceof CognitionError && e.code === 'offline' && e.message === NO_RUNNER)
+  assert.throws(() => r.setServer('http://localhost:1'), /^Error: the native provider has no server: the app runs the model itself/)
+  assert.throws(() => r.setModel('x.gguf'), /^Error: the native provider runs the one model this app carries$/)
+  assert.throws(() => r.setThink!(true), /the native provider has no think switch/)
+  assert.deepEqual(srv.calls, [], 'nothing was asked of any server')
+  r.setProvider('ollama')
+  assert.throws(() => r.connect('native', 'http://localhost:8080'), /^Error: the native provider takes no server and no key: the app runs the model itself$/)
+  assert.throws(() => r.connect('native', '', 'sk-ant-x'), /the native provider takes no server and no key/)
+  assert.equal(r.provider, 'ollama')
+})
+
+test('the native provider chosen in a shell without the runner\'s commands (the Windows app): it answers that there is none, as in a browser, before any channel is made, and the script stands in', async () => {
+  let channels = 0
+  const invoked: string[] = []
+  // Tauri rejects a command the shell never registered with this plain string (tauri webview/mod.rs).
+  const core = {
+    invoke: (command: string): Promise<unknown> => { invoked.push(command); return Promise.reject(`Command ${command} not found`) },
+    Channel: class { onmessage: (m: unknown) => void = () => {}; constructor() { channels++ } },
+  }
+  const r = createMindRouter({ fetch: anyServer().f, native: () => createNativeMind({ host: shellRunner({ [SHELL_GLOBAL]: { core } }) }) })
+  r.connect('native')
+  const ask = { tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }
+  await assert.rejects(r.answer(ask, () => {}), (e: unknown) => e instanceof CognitionError && e.code === 'offline' && e.message === NO_RUNNER)
+  const a = await withScriptedFallback(r).answer(ask, () => {})
+  assert.deepEqual([a.reason, a.standIn], [SCRIPTED, NO_RUNNER])
+  assert.equal(channels, 0, 'no channel made, so none is left waiting for an end that never comes')
+  assert.deepEqual(invoked, ['native_model'], 'asked once whether the shell runs a model; never asked for an answer')
+})
+
 test('the in-page provider keeps its own settings in its own slice of the router\'s store: kept between visits, never read or changed by the router', () => {
   const store = memoryStore()
   const first = keptInPage()
@@ -215,7 +276,8 @@ test('the key: set, masked, cleared; the effort: one of the API\'s, or none; bot
 test('every provider answers with the same system prompt, the conduct core first; every one of them only on this machine, the Claude one through its gateway', async () => {
   const srv = anyServer()
   const page = keptInPage()
-  const r = createMindRouter({ fetch: srv.f, inPage: page.factory })
+  const app = carriedByApp()
+  const r = createMindRouter({ fetch: srv.f, inPage: page.factory, native: app.factory })
   r.setKey('sk-ant-test')
   const answers: string[] = []
   for (const p of PROVIDERS) {
@@ -223,14 +285,15 @@ test('every provider answers with the same system prompt, the conduct core first
     const a = await r.answer({ tethers: [TETHER], prompt: 'hi', signal: new AbortController().signal }, () => {})
     answers.push(a.text)
   }
-  assert.equal(answers[6].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
-  assert.deepEqual(answers.slice(0, 6), ['ollama says hi', 'claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi', 'inpage says hi'], 'auto found Ollama first')
+  assert.equal(answers[7].startsWith('You ask about "hi"'), true, 'the scripted provider answers from the script')
+  assert.deepEqual(answers.slice(0, 7), ['ollama says hi', 'claude says hi', 'ollama says hi', 'llama says hi', 'llama says hi', 'native says hi', 'inpage says hi'], 'auto found Ollama first')
   assert.deepEqual(page.calls, ['answer'], 'the page\'s own model answered once, for its own provider: auto found a server first and never asked it')
   const expected = systemPrompt([TETHER])
   assert.ok(expected.startsWith(AGENT_SYSTEM_PROMPT_CORE + '\n'), 'the core opens every prompt')
   assert.ok(BASE_REALITY.startsWith(AGENT_SYSTEM_PROMPT_CORE))
+  assert.deepEqual(app.sent.map((q) => q.messages), [[{ role: 'system', content: expected }, { role: 'user', content: 'hi' }]], 'the app\'s own model was asked once, for its own provider, with the same prompt')
   const sent = srv.calls.filter((c) => c.body !== null)
-  assert.equal(sent.length, 5, 'the in-page and scripted providers sent nothing')
+  assert.equal(sent.length, 5, 'the native, in-page and scripted providers sent nothing')
   const [auto, claude, ollama, llama, openai] = sent
   assert.equal(auto.url, 'http://localhost:11434/api/generate')
   assert.equal((auto.body as { system: string }).system, expected)
@@ -257,13 +320,15 @@ test('every provider answers with the same system prompt, the conduct core first
 
 test('a conversation (talk: true) is sent the talk prompt by every provider, with its hash, and is paged on its own', async () => {
   const srv = anyServer()
-  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory })
+  const app = carriedByApp()
+  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory, native: app.factory })
   r.setKey('sk-ant-test')
   for (const p of PROVIDERS) {
     r.setProvider(p)
     const a = await r.answer({ tethers: [], prompt: 'how is it going', signal: new AbortController().signal, talk: true }, () => {})
     assert.equal(a.promptHash, promptHash(TALK_PROMPT), p)
   }
+  assert.equal(app.sent[0]?.messages[0]?.content, TALK_PROMPT, 'the app\'s own model too')
   const sent = srv.calls.filter((c) => c.body !== null)
   assert.equal(sent.length, 5)
   for (const c of sent) {
@@ -332,9 +397,9 @@ function gate(): SkillGate {
   }
 }
 
-function bridgeOver(fetchFn: FetchLike, diary?: Diary, inPage?: (store: SettingsStore) => Mind): TerminalBridge {
+function bridgeOver(fetchFn: FetchLike, diary?: Diary, inPage?: (store: SettingsStore) => Mind, native?: () => Mind): TerminalBridge {
   const sim = {} as SimControls
-  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn, ...(inPage && { inPage }) }), undefined, { diary, contained: () => true })
+  const op = operatorBridge(sim, gate(), createMindRouter({ fetch: fetchFn, ...(inPage && { inPage }), ...(native && { native }) }), undefined, { diary, contained: () => true })
   return { operator: op } as unknown as TerminalBridge
 }
 
@@ -368,7 +433,7 @@ test('from the console: ask provider swaps, ask key keeps the key masked, ask al
   assert.deepEqual(claude?.[0], { kind: 'out', text: 'claude says hi' })
   assert.deepEqual(shell('ask key none', b, []).lines, [{ kind: 'out', text: 'key       none: cleared (the gateway on this machine adds the key)' }])
   assert.deepEqual(shell('ask effort none', b, []).lines, [{ kind: 'out', text: "effort    none: the provider's own default" }])
-  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes auto, claude, ollama, llamacpp, openai, inpage, scripted, then an optional server url and, for claude, a key' }])
+  assert.deepEqual(shell('ask provider gpt', b, []).lines, [{ kind: 'err', text: 'ask: ask connect takes auto, claude, ollama, llamacpp, openai, native, inpage, scripted, then an optional server url and, for claude, a key' }])
   // The scripted provider from the console: it reports itself, lists nothing to install, and answers from the script.
   assert.deepEqual(shell('ask provider scripted', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.scripted}` }])
   assert.deepEqual((await shell('ask', b, []).pending)?.slice(0, 3), [
@@ -407,6 +472,37 @@ test('from the console, the in-page provider with nothing kept: its own rows, an
   // The router's page has no model bridge (App wires one for the city): `ask file` says this page cannot hold one.
   assert.deepEqual(shell('ask file', b, []).lines, [{ kind: 'err', text: 'ask: this page cannot hold a model file' }])
   assert.deepEqual(srv.calls, [], 'nothing was asked of any server')
+})
+
+test('from the console, the native provider: its own rows, the file the app carries, how it ran the last answer; with no runner, none listed', async () => {
+  const srv = anyServer()
+  const app = carriedByApp()
+  const b = bridgeOver(srv.f, undefined, undefined, app.factory)
+  shell('operator unlock', b, [])
+  assert.deepEqual(shell('ask provider native', b, []).lines, [{ kind: 'out', text: `provider  ${PROVIDER_TEXT.native}` }])
+  const rows = [
+    { kind: 'out', text: 'provider  native: the model this app carries, run by the app itself on this device; nothing is addressed (ask provider ollama|llamacpp|openai|claude for another)' },
+    { kind: 'out', text: 'server    none: the app runs the model' },
+    { kind: 'out', text: 'model     m.gguf' },
+  ]
+  assert.deepEqual(await shell('ask', b, []).pending, [...rows, { kind: 'out', text: 'installed m.gguf  (chosen)' }])
+  const said = await shell('ask rust: hi', b, []).pending
+  assert.deepEqual(said?.[0], { kind: 'out', text: 'native says hi' })
+  const after = await shell('ask', b, []).pending
+  assert.deepEqual(after?.slice(0, 3), rows)
+  assert.deepEqual(after?.[3], { kind: 'out', text: 'runtime   the app itself, on the processor, 1 thread, 4096 tokens of context; last answer: 9 prompt tokens (0 kept from the one before) read in 0.0 s, 3 written in 0.0 s (3000.0 a second)' }, 'how the device ran it, read off the console')
+  assert.deepEqual(after?.at(-1), { kind: 'out', text: 'installed m.gguf  (chosen)' })
+  assert.deepEqual(shell('ask connect native http://localhost:8080', b, []).lines, [{ kind: 'err', text: 'ask: the native provider takes no server and no key: the app runs the model itself' }])
+  assert.deepEqual(srv.calls, [], 'nothing was asked of any server')
+  // No runner: nothing listed, in plain words.
+  const none = bridgeOver(srv.f)
+  shell('operator unlock', none, [])
+  shell('ask provider native', none, [])
+  assert.deepEqual(await shell('ask', none, []).pending, [
+    rows[0], rows[1],
+    { kind: 'out', text: 'model     the model this app carries' },
+    { kind: 'out', text: 'installed none: no app around this page runs a model itself' },
+  ])
 })
 
 test('14A over any provider: an inadmissible prompt reaches no server, streams nothing, answers "no reply" and is not remembered; a refusal by the model is the same no reply', async () => {
@@ -464,7 +560,7 @@ test('the prefix cache: no line before a prompt is paged; then every answer page
 
 test('every provider answers with the hash of the exact system prompt it sent, the Claude provider included (the audit\'s provenance)', async () => {
   const srv = anyServer()
-  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory })
+  const r = createMindRouter({ fetch: srv.f, inPage: keptInPage().factory, native: carriedByApp().factory })
   const expected = promptHash(systemPrompt([TETHER]))
   for (const p of PROVIDERS) {
     r.setProvider(p)

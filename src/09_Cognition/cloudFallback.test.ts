@@ -159,6 +159,16 @@ test('routing: the cloud provider only when slow, local, complex and present; th
     assert.equal((await kept.answer(complex, onPiece)).text, 'page says hi')
     assert.equal(cloud.asked.length, before, 'the complex prompt stayed in the page')
   }
+  // The model the app runs itself: never moved either, in its own words.
+  for (const how of [{ provider: 'native' }, { provider: 'auto', found: 'native' }]) {
+    const app = { ...fakeMind('app'), cloud, settings: () => ({ server: 'this app', model: 'm.gguf', ...how }) }
+    const kept = withCloudFallback(app, slow)
+    assert.equal(kept.fallback.throttled, false, JSON.stringify(how))
+    assert.equal(kept.settings().fallback, 'off: the model inside this app is never moved to the gateway')
+    const before: number = cloud.asked.length
+    assert.equal((await kept.answer(complex, onPiece)).text, 'app says hi')
+    assert.equal(cloud.asked.length, before, 'the complex prompt stayed in the app')
+  }
 
   // No cloud provider at all: the throttle does nothing but say so.
   const alone = fakeMind('alone', 'ollama')

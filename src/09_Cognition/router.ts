@@ -3,13 +3,14 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the cognition router: the one Mind the operator tier is handed (operator.ts Mind),
- * behind which any of six model providers answers, swapped at the console without a restart (ask provider <name>,
+ * behind which any of seven model providers answers, swapped at the console without a restart (ask provider <name>,
  * or in one line ask connect <provider> [<url>] [<key>]), or the first of them that answers (`auto`, the default):
  * - `auto`: at an ask, the first provider whose server answers on this machine, in AUTO_ORDER (the local model
- *   servers first, then a model file kept in this page, then the Claude gateway), kept for the visit and looked for
- *   again when it stops answering (and at `ask` alone); a model server installed with its defaults is used with
- *   nothing set at the console, at the newer default addresses too (KNOWN_SERVERS: llama-server's 9931, vLLM's 8000,
- *   SGLang's 30000), asked with the usual ones and used only when none lists a text model at its usual one;
+ *   servers first, then the model the app runs itself, then a model file kept in this page, then the Claude gateway),
+ *   kept for the visit and looked for again when it stops answering (and at `ask` alone); a model server installed
+ *   with its defaults is used with nothing set at the console, at the newer default addresses too (KNOWN_SERVERS:
+ *   llama-server's 9931, vLLM's 8000, SGLang's 30000), asked with the usual ones and used only when none lists a text
+ *   model at its usual one;
  * - `claude`: the Claude Messages API through a gateway on this machine (claudeApi.ts), with the key the operator
  *   gives the console;
  * - `ollama`: a local model server on this machine speaking the Ollama API (localCompute.ts generate);
@@ -18,6 +19,9 @@
  * - `openai`: any other server on this machine that speaks the OpenAI-compatible chat-completions format (LM Studio,
  *   vLLM, a loopback proxy), at its own address and with the model it lists; the same client as llamacpp, its own
  *   settings. OpenAI's own service is not one of them: the air gap admits loopback only;
+ * - `native`: the model an app carries and runs itself (nativeMind.ts over desktopShell.ts shellRunner), for the apps
+ *   whose web view cannot run one in the page; it addresses no server. Without a runner (a browser, the Windows app,
+ *   a Node test) it lists nothing and is never named, so every sentence below reads as it did before it;
  * - `inpage`: a model file the operator keeps in this page (Menu › Model file, or ask file), run by the page itself
  *   on this device; it addresses no server at all. The host hands the router that mind (App.tsx); without one (a Node
  *   test, the onboarding page) a stand-in keeps nothing, lists nothing and answers 'offline', so the script speaks;
@@ -26,7 +30,7 @@
  * Every provider answers with the same system prompt (the conduct core, the bound people's skills and memories), so a
  * swap changes nothing an agent is or knows. Each keeps its own server and model, remembered between visits in one
  * store; every provider only ever addresses a loopback origin (02_Define_The_Rules/airgap.ts is the gate), or none
- * at all (the in-page and scripted providers), so no prompt leaves this machine from the page. The 14A screen is not here: it is applied once for every provider in the
+ * at all (the native, in-page and scripted providers), so no prompt leaves this machine from the page. The 14A screen is not here: it is applied once for every provider in the
  * operator tier (gatedAsk), before a prompt reaches this router.
  * Under auto, given the GPUs' memory (ask vram, vram= in the address, or the Windows app's reading), it sizes
  * Ollama's model by what Ollama measured (modelFit.ts), and, for this visit, its context and answer cap too.
@@ -37,39 +41,44 @@ import type { Answer, AnswerRequest, GateTether, Mind, Piece } from '../07_Execu
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
 import { ANY_MODEL, BASE_REALITY, CognitionError, CONTEXT_TOKENS, createLocalCompute, DEFAULT_MODEL, installedModels, installedSizes, isolatedPage, localText, placementOf, promptHash, sameModel, systemFor, TIMEOUTS, type FetchLike, type Placement, type SettingsStore, type Timeouts, type Weighed } from './localCompute.ts'
 import { choose, coldWaitMs, contextVerdict, failed, figureOf, fitLine, FAILS_KEPT, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, remember, todaysPick, whereOf, widen, type Back, type Choice, type FitKept, type Wide } from './modelFit.ts'
+import { createNativeMind } from './nativeMind.ts'
 import { createPrefixCache } from './prefixCache.ts'
 import { SCRIPTED, scriptedAnswer } from './scripted.ts'
 
-export type Provider = 'auto' | 'claude' | 'ollama' | 'llamacpp' | 'openai' | 'inpage' | 'scripted'
-export const PROVIDERS: readonly Provider[] = Object.freeze(['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'inpage', 'scripted'])
-/** A provider auto may answer with: one that asks a model (a server, or the model file kept in this page). */
+export type Provider = 'auto' | 'claude' | 'ollama' | 'llamacpp' | 'openai' | 'native' | 'inpage' | 'scripted'
+export const PROVIDERS: readonly Provider[] = Object.freeze(['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'native', 'inpage', 'scripted'])
+/** A provider auto may answer with: one that asks a model (a server, the app's own, or the model file kept in this page). */
 export type Found = Exclude<Provider, 'auto' | 'scripted'>
 /**
- * The order auto looks in: the model servers on this machine (Ollama, llama.cpp, LM Studio's port), then the model
- * file kept in this page, then the Claude gateway.
+ * The order auto looks in: the model servers on this machine (Ollama, llama.cpp, LM Studio's port), then the model the
+ * app runs itself, then the model file kept in this page, then the Claude gateway.
  */
-export const AUTO_ORDER: readonly Found[] = Object.freeze(['ollama', 'llamacpp', 'openai', 'inpage', 'claude'])
+export const AUTO_ORDER: readonly Found[] = Object.freeze(['ollama', 'llamacpp', 'openai', 'native', 'inpage', 'claude'])
 /** How long each server has to answer auto's look, ms: a server on this machine answers in a moment, or not at all. */
 export const AUTO_LOOK_MS = 2000
 /**
- * The phases of auto's look, each in AUTO_ORDER: the servers on this machine, asked at once; then the model file kept
- * in this page, which no server answers for (so it never stands ahead of one); then the gateway, which asks the
- * Claude API, so it is asked only when nothing on this device will do.
+ * The phases of auto's look, each in AUTO_ORDER: the servers on this machine, asked at once; then the model the app
+ * runs itself, then the model file kept in this page, which no server answers for (so neither stands ahead of one);
+ * then the gateway, which asks the Claude API, so it is asked only when nothing on this device will do.
  */
 const LOOK_PHASES: readonly (readonly Found[])[] = Object.freeze([
-  AUTO_ORDER.filter((p) => p !== 'inpage' && p !== 'claude'),
+  AUTO_ORDER.filter((p) => p !== 'native' && p !== 'inpage' && p !== 'claude'),
+  AUTO_ORDER.filter((p) => p === 'native'),
   AUTO_ORDER.filter((p) => p === 'inpage'),
   AUTO_ORDER.filter((p) => p === 'claude'),
 ])
 /** Where the in-page provider is, in a look's sentence and in auto's found line. */
 const IN_PAGE_PLACE = 'the model file kept in this page'
+/** Where the native provider is, in a look's sentence (only when it cannot start) and in auto's found line. */
+const NATIVE_PLACE = 'the model this app carries'
 /** What each provider is, in the words the console prints after a swap. */
 export const PROVIDER_TEXT: Readonly<Record<Provider, string>> = Object.freeze({
-  auto: 'auto: the first model that answers on this machine (Ollama, a llama.cpp server, an OpenAI-compatible server such as LM Studio, vLLM or SGLang, a model file kept in this page, then the gateway to the Claude API), kept until it stops answering; the script when none does',
+  auto: 'auto: the first model that answers on this machine (Ollama, a llama.cpp server, an OpenAI-compatible server such as LM Studio, vLLM or SGLang, the model the app carries in an app that runs one itself, a model file kept in this page, then the gateway to the Claude API), kept until it stops answering; the script when none does',
   claude: 'claude: the Claude API through a gateway on this machine (best with the key in the gateway; ask key <key> keeps one in this browser)',
   ollama: 'ollama: a model server on this machine (the Ollama API)',
   llamacpp: 'llamacpp: a packaged model under a llama.cpp server on this machine',
   openai: 'openai: an OpenAI-compatible server on this machine (LM Studio, vLLM, SGLang, a loopback proxy; ask server <url> and ask model <name> point at it)',
+  native: 'native: the model this app carries, run by the app itself on this device; nothing is addressed',
   inpage: 'inpage: a model file kept in this page, run by the page itself on this device; nothing is addressed (Menu › Model file, or ask file, chooses one)',
   scripted: 'scripted: no backend; every answer is the deterministic script, and nothing reaches any network',
 })
@@ -174,7 +183,7 @@ export interface MindRouter extends Mind {
   setVram(value: string): string
   /**
    * One line: chooses the provider and, when given, its server (a loopback address) and, for the Claude provider,
-   * its key. The scripted and in-page providers take neither. Returns the provider's line (PROVIDER_TEXT) and what was set.
+   * its key. The scripted, native and in-page providers take neither. Returns the provider's line (PROVIDER_TEXT) and what was set.
    */
   connect(provider: string, url?: string, key?: string): string
   readonly provider: Provider
@@ -204,10 +213,12 @@ function noInPage(): Mind {
 
 /**
  * `inPage` builds the in-page provider over its own slice of the router's store (09_Cognition/inPage.ts, from the
- * host); without it the stand-in above answers for that provider.
+ * host); without it the stand-in above answers for that provider. `native` builds the app's own (nativeMind.ts, over
+ * the shell's runner); without it, one with no runner (it lists nothing and keeps nothing).
  */
-export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, vram, appVram }: {
+export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUTO_LOOK_MS, inPage = noInPage, native: nativeOf = () => createNativeMind({ host: null }), vram, appVram }: {
   fetch: FetchLike; store?: SettingsStore; timeouts?: Timeouts; lookMs?: number; inPage?: (store: SettingsStore) => Mind
+  native?: () => Mind
   /** the page's vram= query value, for auto's Ollama model (modelFit.ts) */
   vram?: string | null
   /** the Windows app's reading of the GPUs' memory, GB (modelFit.ts figureFromAdapters); null until it arrives, or none */
@@ -269,6 +280,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   const openai = createLocalCompute({ fetch: fetchFn, store: slice(kept, 'openai', keep), defaults: { server: OPENAI_SERVER, model: OPENAI_MODEL, api: 'chat' }, ...(timeouts && { timeouts }) })
   // The model file kept in this page: its own settings (the file chosen, think, the GPU) in its own slice.
   const inpage = inPage(slice(kept, 'inpage', keep))
+  // The model the app runs itself: one model, no server, nothing to keep.
+  const native = nativeOf()
   // No backend: the script answers (scripted.ts), with the same system prompt hashed, so an audit still says what
   // the people were told. It addresses nothing, so its server and model cannot be set. Chosen on purpose, it also
   // proposes the one city action a prompt plainly asks for (06_Make_Decisions/actions.ts scriptedAction), so the
@@ -287,7 +300,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemFor(req)) }
     },
   })
-  const byName = (p: Found): Mind => (p === 'claude' ? claude : p === 'ollama' ? ollama : p === 'openai' ? openai : p === 'inpage' ? inpage : llamacpp)
+  const byName = (p: Found): Mind => (p === 'claude' ? claude : p === 'ollama' ? ollama : p === 'openai' ? openai : p === 'native' ? native : p === 'inpage' ? inpage : llamacpp)
   // The prompt-prefix page table (prefixCache.ts): asked before every answer, its counts are the `cache` setting.
   const cache = createPrefixCache({ prefix: BASE_REALITY })
   const agentKey = (tethers: readonly GateTether[]): string => [...new Set(tethers.map((t) => t.agent))].sort((a, b) => a - b).join('+')
@@ -400,6 +413,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   /** Where a look asked a provider, as its sentence names it: its address, and the second round's ports there (same host). */
   const placeOf = (p: Found, also: readonly string[] = []): string => {
     if (p === 'inpage') return IN_PAGE_PLACE
+    if (p === 'native') return NATIVE_PLACE
     const ports = also.map((u) => u.slice(u.lastIndexOf(':')))
     const more = ports.length ? ` (also ${ports.length > 1 ? `${ports.slice(0, -1).join(', ')} and ${ports.at(-1)}` : ports[0]})` : ''
     return `${p} at ${byName(p).settings().server}${more}`
@@ -453,15 +467,15 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   /**
    * Looks for a model on this machine: asks the model servers on this machine in AUTO_ORDER for their models at once,
    * each for at most `lookMs`, and keeps the first in that order that answers with one that writes text here
-   * (localText: not an embedding model, not one of Ollama's cloud models); only when none does is the model file kept
-   * in this page asked (it makes no request and loads nothing: it lists what is kept, or says why it cannot run here),
-   * and only when that has none is the Claude gateway asked, since it asks the Claude API. With the servers go the
-   * newer default addresses of the providers still set to a known one (secondRound), asked at the same time (each
-   * list given `lookMs`, as the first round's are), read only when the servers at their own addresses gave nothing
-   * usable (adopt), and called off once the first round has settled with a text model. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
+   * (localText: not an embedding model, not one of Ollama's cloud models); only when none does is the app asked
+   * whether it runs a model itself, then the model file kept in this page (neither makes a request or loads anything:
+   * each lists what it has, or says why it cannot run here), and only when neither has one is the Claude gateway
+   * asked, since it asks the Claude API. With the servers go the newer default addresses of the providers still set
+   * to a known one (secondRound), asked at the same time (each list given `lookMs`, as the first round's are), read
+   * only when the servers at their own addresses gave nothing usable (adopt), and called off once the first round has settled with a text model. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
    * the default if it has it now, else the first such model. Throws the 'offline' failure (the script stands in for
    * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when
-   * a file is kept.
+   * a file is kept, and the app's only when it cannot start.
    */
   const look = async (signal?: AbortSignal): Promise<Mind> => {
     await settled(signal)
@@ -494,8 +508,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       // Running, but its list failed or could not be read: starting it again is not the fix.
       else if (e instanceof CognitionError && (e.code === 'server' || e.code === 'unreadable')) notes.push(`${at} is running but did not give its list of models (${e.message})`)
     }
-    // Whether the look's sentence names the page's own model: only when a file is kept there.
+    // Whether the look's sentence names the page's own model (only when a file is kept there), and the app's (only when
+    // it cannot start).
     let pageNamed = false
+    let appNamed = false
     for (const group of LOOK_PHASES) {
       const within = (): AbortSignal => (signal ? AbortSignal.any([signal, AbortSignal.timeout(lookMs)]) : AbortSignal.timeout(lookMs))
       const pending = Promise.all(group.map((p) => listOf(p, within()).then((names): string[] | unknown => names, (e: unknown) => e)))
@@ -510,6 +526,19 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         if (signal?.aborted) throw signal.reason
         for (const [i, p] of group.entries()) {
           const names = lists[i]
+          if (p === 'native') {
+            // The model the app runs itself: found whenever the app says it can start it (it carries one; nothing to
+            // choose). No runner (a browser, the Windows app) lists nothing and goes unsaid; one that cannot start is
+            // named with its reason, never as a server that may be refusing this page.
+            if (Array.isArray(names) && names.length) {
+              found = p
+              return native
+            }
+            if (Array.isArray(names)) continue
+            appNamed = true
+            notes.push(`native: ${names instanceof DOMException && names.name === 'TimeoutError' ? `the app did not say within ${lookMs / 1000} s whether ${NATIVE_PLACE} can start` : names instanceof Error ? names.message : String(names)}`)
+            continue
+          }
           if (p === 'inpage') {
             // The model file kept in this page: found when one is kept and chosen and this browser can run it. Why it
             // cannot is said only when a file is kept (with none, a look reads as it always has), and never as a server
@@ -559,7 +588,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const fixes = [...(unseen ? ["Ollama: add this page's origin to OLLAMA_ORIGINS"] : []), ...(vllmUnseen ? ['vLLM 0.32 and later: start it with --allowed-origins naming that origin'] : [])]
     if (fixes.length && isolatedPage()) notes.push(`one that is running may be refusing this page's origin, which looks the same from here (${fixes.join('; ')})`)
     lookNote = notes.map((n) => `; ${n}`).join('')
-    const where = AUTO_ORDER.filter((p) => p !== 'inpage' || pageNamed).map((p) => placeOf(p, also.get(p))).join(', ')
+    const where = AUTO_ORDER.filter((p) => (p !== 'inpage' || pageNamed) && (p !== 'native' || appNamed)).map((p) => placeOf(p, also.get(p))).join(', ')
     throw new CognitionError('offline', `no model is answering on this machine (looked for ${where})${lookNote}: start one, or choose one with ask provider <name>`)
   }
   /** The measurement under way, awaited before a look or an answer; a stop (the signal aborting) ends the wait at once. */
@@ -722,7 +751,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   /**
    * auto's answer: the provider found at the last look (looking first when there is none); when it stops answering
    * before any of the answer arrived, one more look, and the answer from whatever answers now. A model that would not
-   * load or run ('model', the in-page provider's own failure) is that answer's failure: never a reason to look again.
+   * load or run ('model', the in-page provider's own failure) is that answer's failure: never a reason to look again,
+   * except from the model the app runs itself, which stays failed once its load or its file's check fails and says so
+   * as there being none (nativeMind.ts): a look passes it over from then on, so that ask looks again even straight
+   * after the look that found it, and is answered by whatever answers next in order.
    * With a GPU figure, Ollama's model is chosen again from the list kept before it is sent, the answer is measured
    * after (R3), and a model auto moved to that Ollama will not load is set aside and the same ask answered once more
    * by the next one (R8). A grown context Ollama will not load goes back, and the same ask is answered once more at the
@@ -774,7 +806,9 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         // R8: once, and that answer is measured too (unless the settings change while it runs).
         if (again.model !== null && again.model !== sent.model) return once(req, onPiece, sending(again.server, again.model))
       }
-      if (first === null || arrived || req.signal.aborted || !(e instanceof CognitionError && (e.code === 'offline' || e.code === 'refused'))) throw e
+      // The app's own model answers 'offline' only once it has none to run (failed for good after the look that found
+      // it), and the next look passes it over: so it looks again even when this ask's own look found it.
+      if ((first === null && m !== native) || arrived || req.signal.aborted || !(e instanceof CognitionError && (e.code === 'offline' || e.code === 'refused'))) throw e
       const n = await look(req.signal)
       if (n !== ollama) return n.answer(req, onPiece)
       // Ollama again: the ask's one answer more. At a grown context (inside the gate) it is measured there, and goes back
@@ -793,6 +827,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   /** The provider that answers: the chosen one, or under auto the one found (null before a look finds one). */
   const answering = (): Provider | null => (kept.provider === 'auto' ? found : kept.provider)
   const autoLine = (): string => (found === 'inpage' ? `inpage: ${IN_PAGE_PLACE}, found ready to run on this device (ask provider inpage keeps it)`
+    : found === 'native' ? `native: ${NATIVE_PLACE}, found ready to run on this device (ask provider native keeps it)`
     : found !== null ? `${found} at ${byName(found).settings().server}, found answering on this machine (ask provider ${found} keeps it)` : `nothing found yet: the next ask looks on this machine${lookNote}`)
   /** The Ollama client's own first-piece wait, ms. */
   const firstMs = (timeouts ?? TIMEOUTS).firstMs
@@ -923,6 +958,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       if (n === 'scripted' && (u || k)) throw new Error('the scripted provider takes no server and no key: it answers on this page')
       if (n === 'auto' && (u || k)) throw new Error('auto takes no server and no key: it looks at each provider\'s own (ask connect <provider> <url> sets one)')
       if (n === 'inpage' && (u || k)) throw new Error('the inpage provider takes no server and no key: the model runs in this page (Menu › Model file, or ask file, chooses one)')
+      if (n === 'native' && (u || k)) throw new Error('the native provider takes no server and no key: the app runs the model itself')
       if (k && n !== 'claude') throw new Error(`the ${n} provider takes no key: a server on this machine needs none`)
       // Checked before anything changes, so a bad address leaves the provider as it was.
       const target = n === 'scripted' || n === 'auto' ? scripted : byName(n)
@@ -930,7 +966,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       // claude <key>`) is never echoed back to the screen.
       const said = /^https?:\/\/[^\s@]*$/i.test(u) ? `, not '${u}'` : ': the second word must be a server url such as http://localhost:8089 (a key alone goes in with ask key <key>)'
       if (u && n === 'claude' && claudeServer(u) === null) throw new Error(`the Claude provider speaks only to a gateway on this machine (localhost, 127.0.0.1 or [::1])${said}`)
-      if (u && n !== 'claude' && n !== 'scripted' && n !== 'auto' && n !== 'inpage' && claudeServer(u) === null) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1])${said}`)
+      if (u && n !== 'claude' && n !== 'scripted' && n !== 'auto' && n !== 'inpage' && n !== 'native' && claudeServer(u) === null) throw new Error(`the local model server must be on this machine (localhost, 127.0.0.1 or [::1])${said}`)
       generation++
       kept.provider = n
       const set: string[] = []

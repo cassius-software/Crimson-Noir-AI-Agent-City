@@ -6,18 +6,23 @@
  * Tauri's whole API shape counts, and the page keeps no Tauri package of its own, so the browser build stays what it
  * was. It also pins the shell's GPU reading: the page asks `gpu_memory` (src-tauri/src/gpu.rs) once, takes only a list
  * of numbers, never throws and never waits past GPU_READ_MS; the shell registers the command, lists hardware adapters
- * only, and answers elsewhere than Windows with an empty list. And it pins the page's way to the model the Windows
+ * only, and answers elsewhere than Windows with an empty list. It pins the page's way to the model the Windows
  * installer carries (src-tauri/src/model.rs): the offer only for exactly the pin, the fetch only of that one file,
  * read by read in order as base64 text, the first read before the fetch answers, a stop between reads, and the
- * shell's two commands over one fixed file with no path from the page.
+ * shell's two commands over one fixed file with no path from the page. And it pins the page's way to the app's own
+ * model (shellRunner): its three commands over `core.invoke`, the request sent as `{ req, onEvent }` with a channel
+ * of its own, every event of native/llm/tests/wire.json handed through as it came, and an answer settled only once
+ * its channel has ended (or after DRAIN_MS), so a reply that overtakes the last message never cuts it off.
  * What breaks if it is removed? A half-injected global could mount the title bar in a tab, a dependency could
  * quietly put Tauri's client into every browser build, or a shell that hangs or answers oddly could hold the page's
- * figure or throw at boot.
+ * figure or throw at boot; the request could reach the runner in a shape it refuses, or an answer lose its tail.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { APP_MODEL_ASK_MS, APP_READ_BYTES, desktopShell, fromBase64, GPU_READ_MS, SHELL_GLOBAL, shellGpuMemory, shellModel, shellModelFetch } from './desktopShell.ts'
+import { createNativeMind, type GenRequest } from '../09_Cognition/nativeMind.ts'
+import { APP_MODEL_ASK_MS, APP_READ_BYTES, desktopShell, DRAIN_MS, fromBase64, GPU_READ_MS, SHELL_GLOBAL, shellGpuMemory, shellModel, shellModelFetch, shellRunner } from './desktopShell.ts'
 import { APP_MODEL, fetchSiteModel, type SiteModelPin } from '../09_Cognition/siteModel.ts'
 
 test('a browser global, or one with a half-shaped API, is no desktop shell', () => {
@@ -234,4 +239,104 @@ test('the shell lends the page the carried model over one fixed file: two comman
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
   const app = /\[\[package\]\]\nname = "crimson-noir-app"[\s\S]*?dependencies = \[([^\]]*)\]/.exec(lock)
   assert.ok(app?.[1].includes('"base64 0.22.1"'), 'the committed lockfile carries the edge to the base64 Tauri already builds')
+})
+
+test('shellRunner: the runner\'s three commands over core.invoke, the request as { req, onEvent } with a channel of its own, every wire.json event handed through; null without invoke or Channel', async () => {
+  const wire = JSON.parse(readFileSync(new URL('../../native/llm/tests/wire.json', import.meta.url), 'utf8')) as { request: GenRequest; events: unknown[]; done: unknown[]; models: { file: string; status: { state: string } }[] }
+  class Bare { onmessage: (m: unknown) => void = () => {} }
+  for (const g of [{}, { [SHELL_GLOBAL]: {} }, { [SHELL_GLOBAL]: { core: { invoke: async () => null } } }, { [SHELL_GLOBAL]: { core: { Channel: Bare } } }, { [SHELL_GLOBAL]: { core: { invoke: async () => null, Channel: 'x' } } }]) {
+    assert.equal(shellRunner(g), null, JSON.stringify(g))
+  }
+  // Tauri's Channel serializes as its callback id, so the args are what Tauri would post; its end (the shell letting
+  // the channel go) calls cleanupCallback after every message.
+  let made = 0
+  let ended = 0
+  class Channel { readonly n = ++made; onmessage: (m: unknown) => void = () => {}; cleanupCallback() { ended++ } toJSON() { return `__CHANNEL__:${this.n}` } }
+  const calls: [string, Record<string, unknown> | undefined][] = []
+  const ready = wire.models.find((m) => m.status.state === 'ready')
+  assert.ok(ready)
+  const core = {
+    Channel,
+    invoke(this: unknown, command: string, args?: Record<string, unknown>): Promise<unknown> {
+      assert.equal(this, core, 'invoked on core, as Tauri expects')
+      calls.push([command, args])
+      if (command === 'native_model') return Promise.resolve(ready)
+      if (command === 'native_generate') {
+        const channel = args?.onEvent as Channel
+        for (const e of wire.events) channel.onmessage(e)
+        channel.cleanupCallback()
+        return Promise.resolve(wire.done[0])
+      }
+      return Promise.resolve(true)
+    },
+  }
+  const host = shellRunner({ [SHELL_GLOBAL]: { core } })
+  assert.ok(host)
+  assert.deepEqual(await host.model(), ready)
+  const got: unknown[] = []
+  assert.deepEqual(await host.generate(wire.request, (e) => got.push(e)), wire.done[0])
+  assert.deepEqual(got, wire.events, 'every event as the runner sent it')
+  assert.equal(ended, 1, 'Tauri\'s own cleanup still runs at the end')
+  assert.equal(await host.stop(42), true)
+  assert.deepEqual(calls.map(([c, a]) => [c, a === undefined ? 'none' : Object.keys(a)]), [['native_model', 'none'], ['native_generate', ['req', 'onEvent']], ['native_stop', ['id']]])
+  const gen = calls[1][1]
+  assert.equal(gen?.req, wire.request, 'the request under req as given, never spread beside the channel')
+  assert.ok(gen?.onEvent instanceof Channel)
+  assert.equal(JSON.stringify(gen), JSON.stringify({ req: wire.request, onEvent: '__CHANNEL__:1' }))
+  assert.deepEqual(calls[2][1], { id: 42 })
+  // Through the page's own mind: a channel per answer, and the request exactly the runner's shape.
+  const mind = createNativeMind({ host, maxTokens: () => 512 })
+  assert.deepEqual(await mind.installed(), [ready.file])
+  const a = await mind.answer({ tethers: [], prompt: 'Say hi.', signal: new AbortController().signal, talk: true }, () => {})
+  assert.equal(a.text, 'Hello')
+  assert.equal(made, 2)
+  const sent = calls.at(-1)?.[1]
+  assert.deepEqual(Object.keys(sent ?? {}), ['req', 'onEvent'])
+  const req = sent?.req as GenRequest
+  assert.deepEqual(Object.keys(req).sort(), Object.keys(wire.request).sort())
+  assert.deepEqual([req.messages.map((m) => m.role), req.messages[1].content, req.maxTokens, req.think], [['system', 'user'], 'Say hi.', 512, false])
+})
+
+test('shellRunner: an answer settles only once its channel has ended, every message handed over first (the reply can overtake them), or after DRAIN_MS with no end', async () => {
+  const wire = JSON.parse(readFileSync(new URL('../../native/llm/tests/wire.json', import.meta.url), 'utf8')) as { request: GenRequest; done: unknown[]; errors: unknown[] }
+  assert.equal(DRAIN_MS, 1000)
+  let channel!: { onmessage: (m: unknown) => void; cleanupCallback(): void }
+  let cleaned = 0
+  let reply: () => Promise<unknown> = async () => wire.done[0]
+  class Channel { onmessage: (m: unknown) => void = () => {}; cleanupCallback() { cleaned++ } }
+  const core = {
+    Channel,
+    invoke: (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (command !== 'native_generate') return Promise.resolve(null)
+      channel = args?.onEvent as Channel
+      return reply()
+    },
+  }
+  const host = shellRunner({ [SHELL_GLOBAL]: { core } })
+  assert.ok(host)
+  const later = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+  // The reply first, then the last message and the end, as the ipc fetch can deliver them.
+  const got: unknown[] = []
+  let settled = false
+  const p = host.generate(wire.request, (e) => got.push(e)).then((d) => { settled = true; return d })
+  await later(20)
+  assert.equal(settled, false, 'the reply alone does not settle it')
+  channel.onmessage({ kind: 'text', text: 'the tail' })
+  channel.cleanupCallback()
+  assert.deepEqual(await p, wire.done[0])
+  assert.deepEqual(got, [{ kind: 'text', text: 'the tail' }], 'the last message reached the answer before it settled')
+  assert.equal(cleaned, 1, 'Tauri\'s own cleanup still runs')
+  // A refusal waits for the end too.
+  reply = async () => { throw wire.errors[2] }
+  let refused = false
+  const q = host.generate(wire.request, () => {}).catch((e: unknown) => { refused = true; return e })
+  await later(20)
+  assert.equal(refused, false)
+  channel.cleanupCallback()
+  assert.equal(await q, wire.errors[2])
+  // A shell that never ends the channel: the reply is taken after DRAIN_MS.
+  reply = async () => wire.done[0]
+  const t0 = Date.now()
+  assert.deepEqual(await host.generate(wire.request, () => {}), wire.done[0])
+  assert.ok(Date.now() - t0 >= DRAIN_MS - 20, `${Date.now() - t0} ms`)
 })

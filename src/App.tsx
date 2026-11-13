@@ -36,7 +36,8 @@ import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMe
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
 import { createMindRouter } from './09_Cognition/router.ts'
 import { figureFromAdapters } from './09_Cognition/modelFit.ts'
-import { shellGpuMemory, shellModel, shellModelFetch } from './07_Execute_Actions/desktopShell.ts'
+import { shellGpuMemory, shellModel, shellModelFetch, shellRunner } from './07_Execute_Actions/desktopShell.ts'
+import { createNativeMind, type NativeMind } from './09_Cognition/nativeMind.ts'
 import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
 import { fits, holdTier, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
@@ -64,7 +65,7 @@ import { AUTO_RELOAD_KEY, autoReload, BOOT_STAGE, classify, explainHalt, firstSc
 import { GPU_BACK_FOR_MS, gpuBack, probeGpu, WebGPUUnavailableError, type GpuProbe } from './01_Initialize_World/gpuDevice.ts'
 import { crowdKernelOf } from './03_Spawn_Agents/crowdSensor.ts'
 import { KernelResetError } from './03_Spawn_Agents/crowdKernelMemory.ts'
-import { Concierge } from './07_Execute_Actions/Concierge.tsx'
+import { Concierge, type AppModelLine } from './07_Execute_Actions/Concierge.tsx'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
 import { HomeCard, type FurnishHooks } from './07_Execute_Actions/HomeCard.tsx'
@@ -956,6 +957,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [siteModel, setSiteModel] = useState<SiteModelHost | null>(null)
   /** Gets the site's model by itself (09_Cognition/siteAuto.ts), once the city is on screen: set with siteModel, run once a city. */
   const siteAutoRef = useRef<(() => Promise<string>) | null>(null)
+  /** Why the model the app runs itself couldn't start (09_Cognition/nativeMind.ts), said on Sloane's card; null elsewhere. */
+  const [appModel, setAppModel] = useState<AppModelLine | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
   const lookOpenRef = useRef(false)
   // The storefronts (01_Initialize_World/storefronts.ts): the one shopkeeper every purchase goes through, the shop whose
@@ -1464,6 +1467,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
         })
         let inPage!: InPageMind
+        let appMind!: NativeMind
         // The Windows app's reading of the GPUs' memory (src-tauri/src/gpu.rs), asked once as this router is built and
         // judged by modelFit.ts figureFromAdapters (the launcher's sum, DXGI's own floor); until it answers, and in a
         // browser, none.
@@ -1480,12 +1484,32 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
             onPhase: (text) => { modelPhase = text },
           })),
+          // The model the app runs itself (09_Cognition/nativeMind.ts), where the shell has a runner (none in a browser):
+          // its answers capped as the model in this page's are on this device (shorter on a phone), the city's tier held
+          // down while it answers (it runs on the processor, or on Apple silicon's GPU, whose tier is the integrated one
+          // either way), and the same HUD line; why it cannot start goes to Sloane's card, said there only while it is
+          // what answers (auto or native), and on a computer, where a model server can run beside the app, still with
+          // the line about starting one (not on a phone or tablet).
+          native: () => (appMind = createNativeMind({
+            host: shellRunner(),
+            maxTokens: () => placement({ ...device(), gpuMode: 'auto', gpuFailed: false }).maxTokens,
+            busy: (on) => e.holdQuality(on ? holdTier(device(), false) : null),
+            onPhase: (text) => { modelPhase = text },
+            onFailed: (why) => setAppModel((was) => why === null ? null : was?.why === why ? was : {
+              why,
+              servers: !e.profile.mobile,
+              blamed: () => local.provider === 'auto' || local.provider === 'native',
+            }),
+          })),
           // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
           vram: options.vram,
           // The Windows app's figure, below the address's and the console's.
           appVram: () => appVram,
         })
         inPageMind = inPage
+        // Whether the app runs a model and how it stands, asked once as the router is built (it answers from memory; a
+        // shell without the runner's commands says so at once): the rewording below waits while that model is cold.
+        void appMind.installed().catch(() => [])
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -1922,12 +1946,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // with is still to be loaded either: the rewording's deadline would stop that load with its answer (inPage.ts:
         // an answer's stop ends its load), so the planner's sentence stands until the model is in. Under auto the file
         // answers only when no server does: once a look has found a server the rewording asks again, and until a look has
-        // said, one runs (it loads nothing) and the rewording waits for it.
+        // said, one runs (it loads nothing) and the rewording waits for it. Nor while the model the app runs itself is
+        // still to be loaded (nativeMind.ts cold): the rewording would be the answer that loads it, and a conversation
+        // asked meanwhile would read as waiting for another answer for the whole load.
         let looking = false
         const pageCold = (): boolean => {
           const s = local.settings()
+          // The app's model counts as cold until the app says it is loaded, or one answer has run.
+          if (s.provider === 'native' || (s.provider === 'auto' && s.found === 'native')) return appMind.cold()
           if (s.provider === 'inpage') return inPage.cold(true)
-          if (s.provider !== 'auto' || !inPage.cold(false)) return false
+          // Under auto, until a look has said, the model the app runs itself may be what answers: while it is cold the
+          // look runs and the rewording waits for it, as for a file kept in this page.
+          if (s.provider !== 'auto' || (!inPage.cold(false) && !(s.found === undefined && appMind.cold()))) return false
           if (s.found === undefined && !looking) {
             looking = true
             void local.installed().catch(() => []).finally(() => { looking = false })
@@ -2081,6 +2111,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       setSloane(null)
       setSloaneTalk(null)
       setSiteModel(null)
+      setAppModel(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
@@ -2160,6 +2191,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           onPickModel={onModelFile}
           noPageModel={PAGE_MODEL_REFUSAL()}
           siteModel={siteModel}
+          appModel={appModel}
           beside={walking && fw.card !== null}
           zoom={access.scale / 100}
           onOpen={setSloaneOpen}

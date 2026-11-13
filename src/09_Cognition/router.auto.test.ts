@@ -4,25 +4,31 @@
 /**
  * Why does this file exist? It proves the router's auto provider (router.ts), the default: at an ask it finds the
  * first model server answering on this machine in AUTO_ORDER (Ollama, llama.cpp, an OpenAI-compatible server such as
- * LM Studio, then a model file kept in this page, then the Claude gateway) and answers with it; it asks the newer
+ * LM Studio, then the model the app runs itself, then a model file kept in this page, then the Claude gateway) and
+ * answers with it; it asks the newer
  * default addresses with them (llama-server's 9931, vLLM's 8000, SGLang's 30000), never past an address the operator
  * set that is not one of the known ones, and uses them only when none lists a text model at its own address, keeping the one
  * found as that provider's; it passes over a
  * server that is down, hangs, refuses this page or has no model that writes text, and says why; it gives an Ollama
  * without the default model the first text model it has; it looks again when the one it found stops answering, but
  * never once its answer has begun; the page's own model is only listed by a look (never answered or loaded), named
- * only when a file is kept, found only when one is chosen, and never taken for a server refusing the page; and with
+ * only when a file is kept, found only when one is chosen, and never taken for a server refusing the page; the app's
+ * own model (nativeMind.ts over a fake runner) is found after the servers and before the page's, unsaid with no runner
+ * and named with its reason when it cannot start, and one whose model fails to load at the answer after the look that
+ * found it hands that same ask on to what answers next and is never asked again; and with
  * nothing answering it fails the way the script stands in for, so the operator hears canned words labelled as such.
  * A chat-format server refusing a prompt too long for its window costs an ask one more request at most, never a look.
  * What breaks if it is removed? A fresh machine with a model server running could still get only the script, or an
  * answer from a server the operator never meant to use.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { operatorBridge, type Answer, type AnswerRequest, type Diary, type GateHandle, type GateLease, type Mind, type Piece, type SimControls, type SkillGate } from '../07_Execute_Actions/operator.ts'
 import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, type FetchLike } from './localCompute.ts'
+import { createNativeMind, type NativeHost } from './nativeMind.ts'
 import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, KNOWN_SERVERS, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT, VLLM_SERVER } from './router.ts'
 import { SCRIPTED, withScriptedFallback } from './scripted.ts'
 
@@ -103,7 +109,7 @@ const req = (signal = new AbortController().signal): AnswerRequest => ({ tethers
 const ask = async (r: { answer(q: AnswerRequest, on: (p: Piece) => void): Promise<{ text: string }> }, q = req()): Promise<string> => (await r.answer(q, () => {})).text
 
 test('auto looks in AUTO_ORDER: the servers on this machine at once, the first in that order that answers with a model wins, and it is kept', async () => {
-  assert.deepEqual([...AUTO_ORDER], ['ollama', 'llamacpp', 'openai', 'inpage', 'claude'])
+  assert.deepEqual([...AUTO_ORDER], ['ollama', 'llamacpp', 'openai', 'native', 'inpage', 'claude'])
   const m = machine({ 11434: [DEFAULT_MODEL], 8080: ['local.gguf'], 1234: ['lm-model'], 8089: ['claude-opus-5-5'] })
   const r = createMindRouter({ fetch: m.f })
   assert.equal(await ask(r), '11434 says hi')
@@ -449,6 +455,129 @@ test('a model file kept in this page is found after the servers on this machine 
   const l = createMindRouter({ fetch: m.f, lookMs: 50, inPage: q.factory })
   assert.equal(await ask(l), '8080 says hi')
   assert.deepEqual(q.calls, [])
+})
+
+/** The runner's words, one of each (native/llm/tests/wire.json). */
+const WIRE = JSON.parse(readFileSync(new URL('../../native/llm/tests/wire.json', import.meta.url), 'utf8')) as { statuses: { state: string; reason?: string }[]; done: unknown[] }
+
+/** The app's own model (nativeMind.ts) over a fake runner in `status` (null: it carries none), noting each command. */
+function app(status: unknown) {
+  const calls: string[] = []
+  const host: NativeHost = {
+    model: async () => { calls.push('model'); return status === null ? null : { file: 'm.gguf', bytes: 1, status } },
+    generate: async (_req, send) => { calls.push('generate'); send({ kind: 'text', text: 'native says hi' }); return WIRE.done[0] },
+    stop: async () => { calls.push('stop'); return true },
+  }
+  return { factory: () => createNativeMind({ host }), calls }
+}
+
+test('the model the app runs itself is found after the servers on this machine and before the model file kept in this page; with no runner it goes unsaid; one that cannot start is named with its reason', async () => {
+  const ready = WIRE.statuses.find((s) => s.state === 'ready')
+  const m = machine({ 8089: ['gateway-model'] })
+  const p = page('tiny.gguf')
+  const a = app(ready)
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, inPage: p.factory, native: a.factory })
+  assert.equal(await ask(r), 'native says hi')
+  const s = r.settings()
+  assert.equal(s.found, 'native')
+  assert.equal(s.auto, 'native: the model this app carries, found ready to run on this device (ask provider native keeps it)')
+  assert.deepEqual([s.server, s.model, s.key], ['this app', 'm.gguf', undefined])
+  assert.deepEqual(m.calls.map((c) => new URL(c.url).port), ['11434', '8080', '1234', '9931', '8000', '30000'], 'the servers were asked first; the gateway never was')
+  assert.deepEqual(a.calls, ['model', 'generate'])
+  assert.deepEqual(p.calls, [], 'the file kept in this page was not even listed')
+  // A server earlier in the order answers: it wins, and the app is not even asked.
+  const served = machine({ 8080: ['local.gguf'] })
+  const b = app(ready)
+  assert.equal(await ask(createMindRouter({ fetch: served.f, lookMs: 50, native: b.factory })), '8080 says hi')
+  assert.deepEqual(b.calls, [])
+  // No runner (a browser; the Windows app answers null; an app built before the runner has no command): the look's
+  // sentence is the one it always was, and the file kept in this page is found after it as before.
+  const down = machine({})
+  const said = async (native?: () => Mind, inPage?: () => Mind): Promise<string> => {
+    try {
+      return await ask(createMindRouter({ fetch: down.f, lookMs: 50, ...(native && { native }), ...(inPage && { inPage }) }))
+    } catch (e) {
+      return (e as Error).message
+    }
+  }
+  const plain = await said()
+  assert.equal(plain, `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), claude at http://localhost:8089): start one, or choose one with ask provider <name>`)
+  assert.equal(await said(() => createNativeMind({ host: null })), plain)
+  assert.equal(await said(app(null).factory), plain)
+  const older: NativeHost = { model: async () => { throw new Error('Command native_model not found') }, generate: async () => null, stop: async () => false }
+  assert.equal(await said(() => createNativeMind({ host: older })), plain)
+  assert.equal(await said(app(null).factory, page('tiny.gguf').factory), 'inpage says hi')
+  // A runner that cannot start here: named with its reason, and the look goes on to the page's own model.
+  const failed = WIRE.statuses.find((s) => s.state === 'failed')
+  assert.equal(await said(app(failed).factory), `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), the model this app carries, claude at http://localhost:8089); native: ${failed?.reason}: start one, or choose one with ask provider <name>`)
+  assert.equal(await said(app(failed).factory, page('tiny.gguf').factory), 'inpage says hi')
+  // A runner that does not say within the look's wait: named as such (an open IPC call keeps the process alive, as the
+  // shell would).
+  const quiet: NativeHost = { model: () => new Promise(() => { const open = setInterval(() => {}, 1000); setTimeout(() => clearInterval(open), 300) }), generate: async () => null, stop: async () => false }
+  assert.equal(await said(() => createNativeMind({ host: quiet })), `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), the model this app carries, claude at http://localhost:8089); native: the app did not say within 0.05 s whether the model this app carries can start: start one, or choose one with ask provider <name>`)
+})
+
+/**
+ * The app's own model over a runner a look finds ready, whose model then fails to load at the first answer, for good
+ * (engine.rs fail: the status turns failed and every answer after it is refused); `told` is what the card hears.
+ */
+function failsToLoad(why: string) {
+  const calls: string[] = []
+  const told: (string | null)[] = []
+  let status: unknown = WIRE.statuses.find((s) => s.state === 'ready')
+  const host: NativeHost = {
+    model: async () => { calls.push('model'); return { file: 'm.gguf', bytes: 1, status } },
+    generate: async () => {
+      calls.push('generate')
+      status = { state: 'failed', reason: why, refused: false }
+      throw { code: 'model', message: why }
+    },
+    stop: async () => { calls.push('stop'); return true },
+  }
+  return { factory: () => createNativeMind({ host, onFailed: (w) => told.push(w) }), calls, told }
+}
+
+test('the model the app runs itself failing for good at the answer after the look that found it: that same ask goes on to what answers next, the card hears why, and no ask after it asks the runner', async () => {
+  const why = "the app's model could not be loaded (out of memory)"
+  // A gateway answers: the same ask is its, and so is every ask after it.
+  const m = machine({ 8089: ['gateway-model'] })
+  const a = failsToLoad(why)
+  const r = createMindRouter({ fetch: m.f, lookMs: 50, native: a.factory })
+  assert.equal(await ask(r), '8089 says hi')
+  assert.equal(r.settings().found, 'claude')
+  assert.deepEqual(a.told, [null, why, why], 'found able to start; then why it cannot, from the answer and the look after it')
+  assert.equal(await ask(r), '8089 says hi')
+  assert.deepEqual(a.calls, ['model', 'generate', 'model'], 'the look, the one answer, and how it stands after it; the look after that asked nothing')
+  // The model file kept in this page answers just as well, after it in the order.
+  const b = failsToLoad(why)
+  assert.equal(await ask(createMindRouter({ fetch: machine({}).f, lookMs: 50, native: b.factory, inPage: page('tiny.gguf').factory })), 'inpage says hi')
+  // Nothing else: the ask fails offline naming the app's reason (the script stands in for it), and so does the next,
+  // without asking the runner for an answer again.
+  const c = failsToLoad(why)
+  const alone = createMindRouter({ fetch: machine({}).f, lookMs: 50, native: c.factory })
+  const none = `no model is answering on this machine (looked for ollama at ${DEFAULT_SERVER}, llamacpp at ${LLAMACPP_SERVER} (also :9931), openai at ${OPENAI_SERVER} (also :8000 and :30000), the model this app carries, claude at http://localhost:8089); native: ${why}: start one, or choose one with ask provider <name>`
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(alone.answer(req(), () => {}), (e: unknown) => e instanceof CognitionError && e.code === 'offline' && e.message === none)
+  }
+  assert.equal(c.calls.filter((x) => x === 'generate').length, 1)
+  assert.equal(alone.settings().found, undefined, 'nothing found')
+  assert.deepEqual(c.told, [null, why, why, why], 'the first look, the answer, and each look after it')
+  const scripted = await withScriptedFallback(alone).answer(req(), () => {})
+  assert.deepEqual([scripted.reason, scripted.standIn], [SCRIPTED, none])
+  // A failure of one answer while the runner stands loaded (a conversation too long for its context) is that answer's:
+  // never a look, and the runner is asked again at the next ask.
+  const calls: string[] = []
+  const loaded: NativeHost = {
+    model: async () => { calls.push('model'); return { file: 'm.gguf', bytes: 1, status: WIRE.statuses.find((s) => s.state === 'loaded') } },
+    generate: async () => { calls.push('generate'); throw { code: 'model', message: 'the conversation is longer than the model\'s context' } },
+    stop: async () => true,
+  }
+  const per = createMindRouter({ fetch: machine({ 8089: ['gateway-model'] }).f, lookMs: 50, native: () => createNativeMind({ host: loaded }) })
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(per.answer(req(), () => {}), (e: unknown) => e instanceof CognitionError && e.code === 'model' && e.message === 'the conversation is longer than the model\'s context')
+    assert.equal(per.settings().found, 'native')
+  }
+  assert.deepEqual(calls, ['model', 'generate', 'model', 'generate', 'model'], 'each failure asked how it stands; no second look')
 })
 
 test('a look only lists the model file kept in this page: it never answers with it and never loads it', async () => {
