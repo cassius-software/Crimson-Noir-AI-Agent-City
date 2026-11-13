@@ -93,9 +93,9 @@
  *   tiny model placed beside it by tools/web/siteModel.mjs, as the web workflow places the real one, served as a static
  *   host serves it, to a desktop. A fresh visit with the model's answer held halfway: once the city is on screen the
  *   page asks for the manifest and the model with no click, Sloane's card shows its progress and its Stop, and the Stop
- *   keeps nothing and is remembered (a reload asks the site for nothing). "how's it going" typed into Sloane's goal field
- *   then finds no model, and the card offers Get the model with its size, the page having asked this site for the
- *   manifest alone; one click downloads it with its progress on the card, keeps it in the page's storage and asks the
+ *   keeps nothing and is remembered. On the next visit "how's it going" typed into Sloane's goal field finds no model,
+ *   and the card offers Get the model with its size, the page having asked this site for the manifest alone (the Stop
+ *   held it back); one click downloads it with its progress on the card, keeps it in the page's storage and asks the
  *   turn again by itself, and the model answers it (CHAT_MAX a's); the toast says it is loaded, `ask` says the inpage
  *   provider answers with it, kept and chosen, and the service worker's cache holds nothing under models/. The visit is
  *   audited as inpage's is: every request stays in blob:, data: or the page's own origin (but for Sloane's look for a
@@ -1021,16 +1021,18 @@ const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = wind
   return true })()`
 
 /**
- * A first visit to `url` as far as Sloane's answer to SMALL_TALK (sitemodel): the city booted, the name question
- * skipped with Esc and the greeting put away with Esc, the chip clicked (again, should a line of Sloane's own have
- * taken its place), the words typed into the goal field and sent with Enter. Returns the card (SLOANE_TALK) once
+ * A visit to `url` (null: the page as it is, booted already) as far as Sloane's answer to SMALL_TALK (sitemodel): the
+ * city booted, the name question skipped with Esc and the greeting put away with Esc, the chip clicked (again, should
+ * a line of Sloane's own have taken its place), the words typed into the goal field and sent with Enter. Returns the card (SLOANE_TALK) once
  * `until` (a page expression) holds, by default once it offers the site's model in a conversation no model answered,
  * or as it is after two minutes, and what went wrong on the way there.
  */
 async function talkToSloane(p, url, until = `(() => { const t = ${SLOANE_TALK}; return t.state === 'none' && t.offer !== null && t })()`) {
   const notes = []
-  await p.goto(url)
-  await p.booted()
+  if (url !== null) {
+    await p.goto(url)
+    await p.booted()
+  }
   await p.eval(CARD_TRAIL).catch(() => {})
   if (await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
   else notes.push('the name question never took the keyboard')
@@ -2125,10 +2127,11 @@ const SCENARIOS = {
   },
 
   /**
-   * The one tap to a model on the web copy (see the file's comment). The copy is built here for the tiny model
-   * (siteCopy) and served by serveStatic, which notes every path asked for: the manifest alone before the click, the
-   * model once after it. The first visit is audited from its start (watchTargets); the second, in a fresh browser, gets
-   * the model with one byte flipped, then the right one again.
+   * The site's model on the web copy, got by the page itself and by the one tap (see the file's comment). The copy is
+   * built here for the tiny model (siteCopy) and served by serveStatic, which notes every path asked for. The first
+   * browser is audited from its start (watchTargets): the page's own download, stopped; the next visit's tap. A second
+   * browser gets it by itself, whole, and answers with it on its next visit; a third gets it with one byte flipped,
+   * says why in the same visit, then keeps the right one from the button.
    */
   async sitemodel(chrome) {
     const pin = tinyPin()
@@ -2164,18 +2167,16 @@ const SCENARIOS = {
         check(!!stop && stopped?.off === STOPPED && !stopped.mark && none.length === 0, 'sitemodel: its Stop takes the strip away, keeps nothing, and is remembered',
           `${stop ? 'clicked' : 'no Stop to click'}; record ${JSON.stringify(stopped)}; ${none.join('; ') || 'the store is empty'}`)
         site.flow()
-        const reloadAt = served.length
-        await reload(p, url)
-        await p.waitFor('!document.querySelector(\'.boot-veil\')', 30_000).catch(() => {})
-        await settle(() => false, 5_000)
-        check(models(reloadAt).length === 0 && (await p.eval(SITE_STRIP)) === null, 'sitemodel: after the Stop a reload asks this site for nothing by itself', models(reloadAt).join(', ') || 'nothing under models/')
 
-        // The tap: "how's it going" finds no model, the card offers the site's, and one click gets it.
+        // The next visit, after the Stop: the page gets nothing by itself (it would have asked for the model long before
+        // the card's offer shows), "how's it going" finds no model, the card offers the site's, and one click gets it.
         const talkAt = served.length
         const first = await talkToSloane(p, url)
         check(first.card?.state === 'none' && first.card.offer === offer, `sitemodel: "${SMALL_TALK}" to Sloane with no model brings the card's offer of the site's model, with its size`,
           `${JSON.stringify({ state: first.card?.state, offer: first.card?.offer })}${first.notes.length ? `; ${first.notes.join('; ')}` : ''}`)
-        check(JSON.stringify(models(talkAt)) === JSON.stringify([SITE_MANIFEST]), 'sitemodel: before the click the page has asked this site for the manifest alone, once, and for no byte of the model', models(talkAt).join(', ') || 'nothing under models/')
+        const stripAfter = await p.eval(SITE_STRIP)
+        check(JSON.stringify(models(talkAt)) === JSON.stringify([SITE_MANIFEST]) && stripAfter === null, 'sitemodel: after the Stop the next visit gets nothing by itself: before the click the page has asked this site for the manifest alone, once, and for no byte of the model',
+          `${models(talkAt).join(', ') || 'nothing under models/'}${stripAfter ? `; a strip shows: ${JSON.stringify(stripAfter)}` : ''}`)
 
         // The click: the model downloaded with its progress on the card, kept, and the last turn asked again.
         const servedAt = served.length
@@ -2270,7 +2271,8 @@ const SCENARIOS = {
         const failRecord = await q.eval(AUTO_RECORD)
         check(told.some((b) => /^Sloane's model was not kept: .*its SHA-256 differs/.test(b)) && failRecord?.fails === 1 && !failRecord.mark, 'sitemodel: with one byte flipped the page\'s own try says in a toast that its SHA-256 differs, and its record waits before the next',
           `${told.join(' | ').slice(0, 300)}; record ${JSON.stringify(failRecord)}`)
-        const again = await talkToSloane(q, url)
+        // The same visit (a reload would be a new visit, with no job to say why): the card's offer, and why.
+        const again = await talkToSloane(q, null)
         check(again.card?.state === 'none' && again.card.offer === offer && /its SHA-256 differs/.test(again.card.why ?? ''), 'sitemodel: the card then offers the site\'s model, and says why the last try ended short',
           `${JSON.stringify({ state: again.card?.state, offer: again.card?.offer, why: again.card?.why })}${again.notes.length ? `; ${again.notes.join('; ')}` : ''}`)
         const nothing = await q.eval(KEPT_IN_STORE)
