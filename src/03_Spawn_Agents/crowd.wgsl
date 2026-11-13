@@ -4,7 +4,8 @@
 // Why does this file exist? It is the whole pedestrian population's brain and body: GPU spawn,
 // spatial-hash flocking, sidewalk navigation with signal-controlled crosswalks and a Perception check
 // to notice the walk signal, the Reflex save to get out of a vehicle's path, the 14A safety nudge (a
-// car that touches someone only pushes them aside), First-Law hazard sensing for every car (nearest
+// car that touches someone only pushes them aside; the car a person is seated in touches nobody and is given
+// neither), First-Law hazard sensing for every car (nearest
 // person in its corridor ahead and behind), spring-damper staggers, the Ring-0 flag for a non-finite
 // pedestrian state, the operator's summons (a person asked over walks to the operator along the sidewalk
 // and stops to talk, the safety reflexes still first), the workday (one person in WORK_ONE_IN has a station in
@@ -71,7 +72,9 @@ const EXP_MASK: u32 = 0x7f800000u;
 
 struct Car {
   a: vec4f, // x, z, heading, speed (forward = (sin heading, cos heading))
-  b: vec4f, // half width, half length, path curvature (1/m, + = turning left), corridor reach (m)
+  // half width, half length, path curvature (1/m, + = turning left), corridor reach (m; read squared, so its sign is
+  // free: negative marks a car that passes through people, one with a person seated at its wheel)
+  b: vec4f,
 }
 
 // One person the operator asked over (skills.ts, simCore.ts): walk to `at` and stop there. agent 0 (the player's
@@ -908,6 +911,9 @@ fn simulate(@builtin(global_invocation_id) gid: vec3u) {
       let behind = corridorGap(-lz, -lx, car.b.x, car.b.y, car.b.z, CAR_AXLE);
       if (behind >= 0.0) { atomicMin(&hazards[MAX_CARS + j], u32(behind * 100.0)); }
     }
+    // A car that passes through people is sensed above like any other and is nothing else to anyone: no push, no
+    // stagger, no step back. Standing, it is still walked round (the detour below), and anyone in it walks out.
+    if (car.b.w < 0.0) { continue; }
     // The contact and the save are the vehicle layer's: off the mask, a car passes through this person (and the
     // person through the car) with no push, no stagger, no step back; the sensing above still counted them.
     let hw = (car.b.x + BODY_PAD) * vehicles;

@@ -3,8 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the First Law's last line of defence inside Rapier. The bouncer
- * (laws.ts) brakes every car for a person in its path, but a person can step out closer than any car can
- * stop. Before every world.step() the sanctuary sweeps each moving vehicle's footprint over the coming
+ * (laws.ts) brakes every car nobody sits in for a person in its path, but a person can step out closer than any
+ * car can stop. Before every world.step() the sanctuary sweeps each moving vehicle's footprint over the coming
  * step; the moment one would reach a person, that person's collider flips from Solid to Sensor in the same
  * call. A sensor takes part in no contact, so the vehicle passes with no impulse on either side. The person
  * is nudged sideways out of the footprint (never through a wall) and turns solid again once every vehicle
@@ -14,6 +14,10 @@
  * not Rapier bodies (crowd.wgsl nudges them itself); the Rapier people are the players' avatars and, while a pedestrian near the operator is promoted
  * to a physical body, each segment of that body, registered as a ward of its own and rebound (rebind) each
  * time its slot is built again.
+ * One car is not braked for anybody: the one a person is seated in passes through people (02_Define_The_Rules/laws.ts,
+ * source 'seated'; a footprint's `passage`). The sanctuary shields whoever that car reaches exactly as it shields
+ * for any other, and moves nobody for it: no nudge out of its footprint, moving or standing, so the person it passes
+ * through stays where they stand and turns solid again once it is clear of them.
  * What breaks if it is removed? A car that reaches the avatar runs into an immovable kinematic capsule: the
  * car stops dead or rebounds, and a vehicle collides with a person, which 14A forbids.
  */
@@ -46,6 +50,12 @@ export interface VehicleFootprint {
   /** Chassis-forward speed, m/s. Informational. */
   speed: number
   heading: number
+  /**
+   * True for a car that passes through people (a person seated at its wheel, or one they left that has not yet come
+   * to a stand clear of everyone: vehicles.ts). It shields like any car and is never pushed against: nobody is nudged
+   * out of its way or out of its footprint. Absent: an ordinary car.
+   */
+  passage?: boolean
 }
 
 export interface Nudge { dx: number; dz: number }
@@ -256,8 +266,9 @@ export class Sanctuary {
         // passing vehicle to clear a parked one), and the vehicle already pushed against keeps its turn
         // within a rank, so a person between two vehicles is not bounced from one to the other. A vehicle
         // pulling away is never pushed against: it clears the person by itself, and one standing just behind it,
-        // shielded for being CLOSE, stays where they stand.
-        if (passing || sweeping || (near && !receding)) {
+        // shielded for being CLOSE, stays where they stand. Nor is a car that passes through people: nobody is
+        // moved for it, in its path or standing in it.
+        if (v.passage !== true && (passing || sweeping || (near && !receding))) {
           const rank = (sweeping || passing ? 4 : 2) + (v.id === ward.sideOf ? 1 : 0)
           if (rank > pushRank || (rank === pushRank && gap < pushGap)) {
             push = v

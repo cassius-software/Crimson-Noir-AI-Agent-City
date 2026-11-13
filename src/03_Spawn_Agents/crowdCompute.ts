@@ -115,6 +115,12 @@ export interface CarState {
   halfLength: number
   /** Path curvature tan(steer) / wheelbase, 1/m, signed like steer: positive = turning left. */
   curvature: number
+  /**
+   * True for a car that passes through people (07_Execute_Actions/vehicles.ts: a person seated at its wheel, until it
+   * stands clear of everyone after they leave): sensed like any other, and nothing else to anyone, with no push, no
+   * stagger and no step back. Packed as the sign of the corridor reach (packCrowdParams). Absent: an ordinary car.
+   */
+  passage?: boolean
 }
 
 /** What the page's cull pass needs each frame. */
@@ -408,7 +414,10 @@ function packCrowdParams(f: Float32Array, u: Uint32Array, frame: number, agentCo
     // A missing, NaN or infinite curvature would bend the First-Law corridor unpredictably (WGSL leaves
     // non-finite values undefined); sense a straight path instead.
     f[o + 4] = c.halfWidth; f[o + 5] = c.halfLength; f[o + 6] = Number.isFinite(c.curvature) ? c.curvature : 0
-    f[o + 7] = corridorReach(c)
+    // The reach is a distance the shader only ever reads squared, so its sign is free: negative marks a car that
+    // passes through people (crowd.wgsl skips its contact and its save). Strictly true only: anything else is ordinary.
+    const reach = corridorReach(c)
+    f[o + 7] = c.passage === true ? -reach : reach
   }
 }
 

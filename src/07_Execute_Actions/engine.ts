@@ -85,7 +85,7 @@ import { TopicBus, UNS, childLines, publishSnapshot, topicLines } from '../05_Ob
 import type { NoirTables } from './terminal/noirscript/index.ts'
 import type { AgentTelemetry } from '../05_Observe_Environment/agv.ts'
 import {
-  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
+  Governor, MSAA, aoCandidate, classifyHardware, defaultCars, defaultLanes, knobsOf, laneCeiling, liteCrowd, liteJoinHint, msaaCandidate, peakCandidate, profileDevice,
   readDeviceHints, tierRange,
   type DeviceHints, type DeviceProfile, type HardwareClass, type QualityKnobs,
 } from '../05_Observe_Environment/governor.ts'
@@ -121,6 +121,7 @@ import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
 import { FrameRate, withCloudFallback } from '../09_Cognition/cloudFallback.ts'
 import { withScriptedFallback } from '../09_Cognition/scripted.ts'
 import { describeSurroundings, paintWord, ShortTermMemory, type AgentContext } from '../08_Swarm/shortTerm.ts'
+import { PersonReadings } from '../09_Cognition/personFeatures.ts'
 import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice, type EliteVault } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
@@ -779,6 +780,12 @@ export class Engine {
   private crowdXZ = new Float32Array(0)
   /** Every pedestrian's x, y, z, heading copied from a crowd frame at most CROWD_COPY_MS apart (the ping's capsules, 08_Swarm/ping.ts PingWorld.frame). */
   private crowdPose = new Float32Array(0)
+  /**
+   * What each pedestrian is measured doing (09_Cognition/personFeatures.ts), read from the same crowd frames at the same
+   * pace as crowdPose: the feature inspector's `person` and `people`, and the line of what a held person is doing in
+   * their prompt. Read-only: nothing of it goes back to the crowd.
+   */
+  private readonly people = new PersonReadings()
   /** The ping: the head's look ray, the last thing it met, the board of marks standing, and a point to project them. */
   private readonly ray: AimRay = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 }
   private readonly lastPick: Pick = { kind: 'point', index: -1, x: 0, y: 0, z: 0, distance: 0 }
@@ -1197,7 +1204,10 @@ export class Engine {
       // shore wall. A surveyed region has no window and none of it.
       const transit = pack && layout && streets && hollow ? regionTransit(hollow.pack, layout, streets) : null
       const plan = hollow ? [...hollow.plan, ...(transit?.plan ?? [])] : []
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit } : null, lite ? LITE_WORLD : FULL_WORLD)
+      // The lots whose floors the window's painted light shows lit (region/paintedLight.ts): the workplaces', whose
+      // ceilings hang real fixtures wherever lamps are lit, and the shops' and the homes', which have none.
+      const interiors = hollow ? [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))] : []
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit, interiors } : null, lite ? LITE_WORLD : FULL_WORLD)
       // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
       // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
       // VTOL routes and racetrack as the page does.
@@ -1267,9 +1277,10 @@ export class Engine {
       const governor = options.quality === 'auto'
         ? new Governor({ tier: profile.startTier, auto: true, targetMs, pacerMs, lite, hardware, ...range })
         : new Governor({ tier: options.quality, auto: false, targetMs, pacerMs, lite, hardware, ...range })
-      // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach.
-      const mask = (k: QualityKnobs): QualityKnobs => ({ ...k, shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
-      const first = governor.knobs()
+      // A lite boot built no clustered lighting (LITE_WORLD), so its lamps stay unlit at every tier it could reach, and
+      // its crowd is Lite's on Minimal too (governor.ts liteCrowd: a step up adds pixels, not distant dots for near people).
+      const mask = (k: QualityKnobs): QualityKnobs => ({ ...(lite ? liteCrowd(k) : k), shadows: k.shadows && options.shadows, post: k.post && options.post, lampLights: lite ? 0 : k.lampLights })
+      const first = mask(governor.knobs())
       // In a region without a street window nobody of the procedural crowd is drawn (they walk the procedural grid,
       // kilometres from the region).
       const hidden = (c: CullSettings): CullSettings => (empty ? { ...c, maxDistance: 0 } : c)
@@ -1293,7 +1304,7 @@ export class Engine {
         setLampLights: (count) => world.setLampLights(count),
         setShadowTaps: (count) => world.setShadowTaps(count),
       }
-      const applied = mask(first)
+      const applied = first
       applyQuality(applied, targets)
 
       const view0 = new CrowdView(options.agents, world.matrixMode.globalState)
@@ -1936,7 +1947,7 @@ export class Engine {
   /** The swarm's here and now for the operator tier (operator.ts Awareness): its contexts read from this page's copies, its moments kept here. */
   private awareness(): Awareness {
     return Object.freeze({
-      context: (agent: number): AgentContext | null => ({ agent, identity: this.identityOf?.(agent) ?? null, surroundings: this.surroundingsOf(agent), recent: this.moments.recent(agent) }),
+      context: (agent: number): AgentContext | null => ({ agent, identity: this.identityOf?.(agent) ?? null, surroundings: this.surroundingsOf(agent), doing: this.people.sentence(agent), recent: this.moments.recent(agent) }),
       remember: (agent: number, who: string, what: string): void => {
         const at = this.standingOf(agent)
         this.moments.remember(agent, { who, what, where: this.placeOf(at.x, at.z), at: this.simTime, clock: formatClock(this.hours) })
@@ -2379,14 +2390,17 @@ export class Engine {
     this.fresh = true
     // The answer to the one request in flight: player 1's step as the room's move (netFrame reports it while joined).
     if (this.netClient?.status === 'joined') this.netMove = this.netMoveOf(s)
-    // Where they stand, for SimControls.crowd.positions (the frame's first 4 floats per person are its position), a few
-    // times a second: before the upload, which hands the buffer back to the worker.
+    // Where they stand, for SimControls.crowd.positions (the frame's first 4 floats per person are its position), and
+    // what each is measured doing (the person readings), a few times a second: before the upload, which hands the
+    // buffer back to the worker. A surveyed region without a street window shows no crowd (the telemetry counts
+    // nobody there), so nobody in it is read.
     const now = performance.now()
     if (s.crowdFrame && now - this.crowdCopiedAt >= CROWD_COPY_MS) {
       const n = this.options.agents, frame = s.crowdFrame
       if (frame.length >= 4 * n) {
         if (this.crowdPose.length !== 4 * n) this.crowdPose = new Float32Array(4 * n)
         this.crowdPose.set(frame.subarray(0, 4 * n))
+        if (!(this.places && !this.streets)) this.people.observe(frame, n, s.simTime)
         this.crowdCopiedAt = now
       }
     }
@@ -3544,7 +3558,7 @@ export class Engine {
       // (rain mode and the sound, for the city actions an agent proposes), never over the engine itself; its scripts
       // and the allowed actions are bound to the swarm through the gate. `contained` is what this host vouches to the
       // Ring-0 action gate: the air gap main.tsx installed on this page's global is still there (airgap.ts).
-      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf, vault }),
+      operator: operatorBridge(this.simControls(), gate, mind, undefined, { voice, speech: this.speechOut(), diary, awareness: this.awareness(), people: this.people, nameOf, city: this.cityKnobs(), contained: () => airgapInstalled(globalThis), voiceOf, vault }),
       record: Object.freeze({
         start: (source: RecorderSource) => this.startRecording(source),
         stop: () => this.stopRecording(),

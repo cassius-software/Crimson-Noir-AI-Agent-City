@@ -310,7 +310,7 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
       'Why does this matter? Because the city is yours to direct, and directing starts with being understood.',
     ])
     case 'fleet': return Object.freeze([
-      'Why do the cars never run anyone over? Because every car’s wish to move is checked against the First Law before the wheels turn: a person in the way, and the car stops, whoever is driving, you included.',
+      'Why do the cars never run anyone over? Because every car’s wish to move is checked against the First Law before the wheels turn: a person in the way, and the car stops. Yours is the one exception, and it still harms nobody: while you sit at the wheel it passes through people, and nobody is pushed or moved.',
       'Why do they stop at the lights? Because every junction runs a real signal cycle and the cars read it; so can you, on the console, with stats.',
       'Why do parked cars stay parked? Because a parked car is in a mode the realm keeps until someone at its door asks for it; nobody drives off in one on their own.',
       'Why does the readout count “interventions”? Because every time a law overruled a driver it is counted, per law, so you can watch the city keep its promise.',

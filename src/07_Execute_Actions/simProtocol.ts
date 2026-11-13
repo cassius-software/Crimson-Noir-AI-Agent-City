@@ -285,8 +285,9 @@ export type SimCommand =
   /**
    * A network room (10_Network): on while the page is joined to one, off when it leaves. Player 1 becomes a ghost
    * (player.ts setGhost, sanctuary.ts ghost: only fixed geometry stops them and no vehicle can touch them, while the
-   * Bouncer still brakes every car for them), the cars' tuning returns to the authored car, and the commands that
-   * would move a car behind the room's back (tune, setMode, recover, intent, reset and the fault injections) are refused:
+   * Bouncer still brakes every car nobody sits in for them), the cars' tuning returns to the authored car, and the
+   * commands that would move a car behind the room's back (tune, setMode, recover, intent, reset and the fault
+   * injections) are refused:
    * the room's authority replays player 1's walk and car and must find the same physics.
    */
   | { c: 'room'; on: boolean }

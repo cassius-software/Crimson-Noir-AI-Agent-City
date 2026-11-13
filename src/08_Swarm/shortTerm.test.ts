@@ -103,3 +103,17 @@ test('a hired agent\'s identity comes first in their section, under the heading,
   assert.deepEqual(contextLines({ agent: 1, identity: '  ', surroundings: null, recent: [] }), [], 'a blank identity is none')
   assert.deepEqual(contextLines({ agent: 1, identity: null, surroundings: null, recent: [] }), [])
 })
+
+test('what the crowd measured someone doing sits after where they are and before the moments, alone is enough for a heading, and keeps to its share of the budget', () => {
+  const recent = [{ who: 'the player', what: 'said hello', where: 'Lakefront Metro', at: 1, clock: '09:00' }]
+  const doing = 'Standing by for the player; before being called over, working at a station indoors.'
+  assert.deepEqual(contextLines({ agent: 17, identity: 'You go by Nova.', surroundings: 'Standing at Lakefront Metro.', doing, recent }), [
+    'Agent 17, right now:', '- You go by Nova.', '- Standing at Lakefront Metro.', `- ${doing}`, 'Just before this, oldest first:', '- 09:00 Lakefront Metro: the player said hello',
+  ])
+  assert.deepEqual(contextLines({ agent: 1, surroundings: null, doing: 'Walking the streets.', recent: [] }), ['Agent 1, right now:', '- Walking the streets.'])
+  for (const none of [null, undefined, '', '   ']) assert.deepEqual(contextLines({ agent: 1, surroundings: null, doing: none, recent: [] }), [], `doing ${JSON.stringify(none)} is none`)
+  const long = contextLines({ agent: 2, surroundings: null, doing: 'D'.repeat(400), recent: [] }, 300)
+  assert.ok(long[1].length <= 102, `${long[1].length}: a third of the budget, and the dash`)
+  // Absent, the section is exactly what it was before the line existed.
+  assert.deepEqual(contextLines({ agent: 17, surroundings: 'Standing at Lakefront Metro.', recent }), contextLines({ agent: 17, surroundings: 'Standing at Lakefront Metro.', doing: null, recent }))
+})
