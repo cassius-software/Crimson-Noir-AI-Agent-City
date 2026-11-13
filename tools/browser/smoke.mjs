@@ -111,8 +111,12 @@
  * - walkphone: the first walk on an iPhone: the walk's card steps aside while Sloane asks the name, then stands clear of
  *   her chip, the minimap and every touch control held upright, between the thumbs held sideways at three phone
  *   sizes (above a shop's Browse chip), under her chip moved up to the top row where that band is short (125 % in the
- *   shop, 175 %), under the touch Menu's sheet, below her chip at the wheel upright, and away at the wheel sideways
- *   until the visitor is on foot again;
+ *   shop, 175 %), under the touch Menu's sheet; on an Android phone's page held upright (360 x 552, the browser's bars
+ *   taken) the card folds to its strip under the HUD's header at a touch on the look area and opens from it at a tap,
+ *   clear of her chip and every control, the HUD's chips at the foot stand above the stick and left of the buttons, and
+ *   the shop's Browse chip takes a tap; beside a car there (the band under her chip short) the open card stands above
+ *   her chip, never over it; at the wheel upright the card is folded and, opened from its strip, below her chip and
+ *   above the car's buttons; away at the wheel sideways until the visitor is on foot again;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -2570,7 +2574,7 @@ const SCENARIOS = {
       // each touch control but the look area (the right half of the screen, under everything).
       const boxes = () => p.eval(`(() => {
         const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom) } : null }
-        const others = [['sloane', document.querySelector('aside[data-concierge]')], ['chip', document.querySelector('[data-concierge="chip"]')], ['minimap', document.querySelector('[data-hud="minimap"]')], ['foot', document.querySelector('[data-hud="foot"]')],
+        const others = [['sloane', document.querySelector('aside[data-concierge]')], ['chip', document.querySelector('[data-concierge="chip"]')], ['minimap', document.querySelector('[data-hud="minimap"]')], ['foot', document.querySelector('[data-hud="foot"]')], ['strip', document.querySelector('[data-walk-strip]')],
           ...[...document.querySelectorAll('[data-touch]')].filter((e) => e.getAttribute('data-touch') !== 'look').map((e) => [e.getAttribute('data-touch'), e])]
         return { w: innerWidth, h: innerHeight, walk: box(document.querySelector('[data-walk]')), others: others.map(([k, e]) => ({ k, ...box(e) })).filter((o) => o.l !== undefined) } })()`)
       // A tap where a thumb would put it (a touch screen's buttons answer the pointer, not a click): on the shown button
@@ -2683,7 +2687,59 @@ const SCENARIOS = {
       await view(IPHONE.width, IPHONE.height)
       const at100 = await setText(100)
       check(!sideways.some((x) => /over|off|tall|covered|no card|missing|false/.test(x)) && at100, 'walkphone: held sideways, the walk\'s card stands between the thumbs above the HUD\'s chips, or, where that band is short, under Sloane\'s chip moved up to the top row, clear of everything, its button reachable and on top', sideways.join('; '))
-      // At the wheel: sideways the car's buttons fill the band, so the card steps aside; upright it keeps under her chip.
+      // An Android phone's page held upright (360 x 552 CSS px: a 360 px wide phone under its browser's address bar and
+      // toolbar), still in the shop. The band between Sloane's chip and the thumbs is all the city there is, so the card
+      // folds to a strip under the HUD's header: a touch on the look area folds it, a tap on the strip opens it, and open
+      // it stands clear of her chip, the strip, the minimap, the HUD's chips and every control. The HUD's chips at the
+      // foot (the shop's Browse chip, the captions) stand above the stick and left of the buttons, and take a tap: the
+      // HUD's layer is over the touch layer, whose look area covers the right half.
+      {
+        await view(360, 552)
+        const folds = []
+        const strip = () => p.eval(`(() => { const s = document.querySelector('[data-walk-strip]'); if (!s) return null; const r = s.getBoundingClientRect(); return { open: s.getAttribute('aria-expanded') === 'true', stage: s.getAttribute('data-walk-strip'), at: [r.x + r.width / 2, r.y + r.height / 2], hit: s.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) } })()`)
+        // A point on the look area that nothing stands over (found, not assumed: the card's and the chips' boxes move).
+        const lookAt = () => p.eval(`(() => { for (let y = Math.round(innerHeight * 0.2); y < innerHeight * 0.8; y += 8) for (let x = innerWidth - 24; x > innerWidth / 2; x -= 8) { const e = document.elementFromPoint(x, y); if (e && e.closest('[data-touch="look"]')) return [x, y] } return null })()`)
+        const tapAt = async (at, id) => { await p.touch('touchStart', [[at[0], at[1], id]]); await p.touch('touchEnd', []); await p.frames(3); await new Promise((r) => setTimeout(r, 300)) }
+        let st = await strip()
+        if (!st) folds.push('no strip')
+        else {
+          if (!st.hit) folds.push('the strip does not take a tap')
+          if (!st.open) { await tapAt(st.at, 60); st = await strip() }
+          const opened = await boxes()
+          if (!st?.open || !opened.walk) folds.push('the strip did not open the card')
+          else {
+            const bad = clear(opened)
+            for (const k of ['chip', 'minimap', 'stick', 'strip']) if (!opened.others.some((o) => o.k === k)) bad.push(`missing ${k}`)
+            if (!(await reachable())) bad.push('its button is covered or gone')
+            if (bad.length) folds.push(`open: ${bad.join(', ')}`)
+          }
+          const look = await lookAt()
+          if (!look) folds.push('no free point on the look area')
+          else {
+            await tapAt(look, 61)
+            st = await strip()
+            const gone = await p.eval(`!document.querySelector('[data-walk]')`)
+            if (!gone || st?.open !== false) folds.push(`a touch on the look area left the card open (${gone}, ${st?.open})`)
+          }
+          await tapAt((await strip()).at, 62)
+          st = await strip()
+          if (!st?.open || !(await p.eval(`!!document.querySelector('[data-walk-show]')`))) folds.push('a tap on the strip did not open it again')
+        }
+        const foot = await p.eval(`(() => {
+          const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+          const f = document.querySelector('[data-hud="foot"]'), shop = document.querySelector('[data-hint="shop"]')
+          const controls = [...document.querySelectorAll('[data-touch]')].filter((e) => e.getAttribute('data-touch') !== 'look' && e.getBoundingClientRect().width > 0)
+          const meets = (a, b) => a.r > b.l + 1 && a.l < b.r - 1 && a.b > b.t + 1 && a.t < b.b - 1
+          const r = shop?.getBoundingClientRect()
+          return { foot: !!f, under: f ? controls.filter((c) => meets(box(f), box(c))).map((c) => c.getAttribute('data-touch')) : [], shop: !!shop, hit: !!r && shop.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) } })()`)
+        if (!foot.foot || !foot.shop) folds.push(`no HUD chips at the foot (${foot.foot}, shop ${foot.shop})`)
+        if (foot.under.length) folds.push(`the HUD's chips at the foot under ${foot.under.join(', ')}`)
+        if (foot.shop && !foot.hit) folds.push('the Browse chip does not take a tap')
+        await p.shot('walk-phone-android-upright')
+        check(folds.length === 0, 'walkphone: on an Android phone\'s page upright (360 x 552) the card folds to its strip at a touch on the look area and opens from it, clear of everything; the HUD\'s chips at the foot stand clear of the stick and the buttons, and the Browse chip takes a tap', folds.join('; ') || `strip ${st?.stage}`)
+      }
+      // At the wheel: sideways the car's buttons fill the band, so the card steps aside; upright it is folded to its strip
+      // (getting into a car folds it), and opened from the strip it keeps under her chip, above the car's buttons.
       await view(IPHONE.width, IPHONE.height)
       const car = await p.eval(nearestCarParked(0))
       let inCar = false
@@ -2693,18 +2749,41 @@ const SCENARIOS = {
           await p.eval(`(() => { const P = window.__SIM__.engine.sim.state.poses; window.__SIM__.teleport(P[${car} * 28] + ${ox}, P[${car} * 28 + 2] + ${oz}) })()`)
           if (await p.waitFor('window.__SIM__.snapshot().input.nearVehicle', 15_000).then(() => true, () => false)) break
         }
+        // Beside the car on the Android page upright (360 x 552) the Enter car button stands above the Menu, so the band
+        // under her chip is short: the open card stands above her chip instead, over the HUD's header, the strip and the
+        // minimap (none takes a touch while it is open: it keeps its own), never over her chip (the stages ask for a tap
+        // on it) nor a control.
+        await view(360, 552)
+        if (await p.eval(`document.querySelector('[data-walk-strip]')?.getAttribute('aria-expanded') === 'false'`)) await tapOn({ pick: `(b) => b.hasAttribute('data-walk-strip')` }, 30)
+        await p.waitFor(`!!document.querySelector('[data-walk]')`, 5_000).catch(() => {})
+        await p.frames(2)
+        const beside = await boxes()
+        const near = !beside.walk ? ['no card'] : beside.others.filter((o) => o.k !== 'strip' && o.k !== 'minimap' && meets(beside.walk, o)).map((o) => `over ${o.k}`)
+        if (!(await p.eval(`[...document.querySelectorAll('[data-touch]')].some((b) => b.textContent.trim() === 'Enter car' && b.getBoundingClientRect().width > 0)`))) near.push('no Enter car button')
+        if (beside.walk && (beside.walk.t < -1 || beside.walk.b > beside.h + 1)) near.push(`off screen ${JSON.stringify(beside.walk)}`)
+        const chipBox = beside.others.find((o) => o.k === 'chip')
+        if (beside.walk && chipBox && beside.walk.b > chipBox.t + 1) near.push('not above her chip')
+        if (await p.eval(`document.querySelector('[data-walk]')?.hasAttribute('data-walk-through') ?? true`)) near.push('lets touches through above her chip')
+        if (!(await reachable())) near.push('its button is covered or gone')
+        await p.shot('walk-phone-beside-car')
+        check(near.length === 0, 'walkphone: beside a car on the Android page upright the open card stands above Sloane\'s chip, clear of it and of every control, and keeps its touches', near.join('; ') || `${beside.walk.t}..${beside.walk.b}, her chip at ${chipBox?.t}`)
+        await view(IPHONE.width, IPHONE.height)
         if (await tapOn('Enter car', 31)) inCar = await p.waitFor(`window.__SIM__.snapshot().input.mode === 'vehicle'`, 20_000).then(() => true, () => false)
       }
       if (inCar) {
         await p.frames(3)
         const parked = await p.eval(`!document.querySelector('[data-walk]')`)
         await view(390, 844)
+        const folded = await p.eval(`!document.querySelector('[data-walk]') && document.querySelector('[data-walk-strip]')?.getAttribute('aria-expanded') === 'false'`)
+        if (folded) await tapOn({ pick: `(b) => b.hasAttribute('data-walk-strip')` }, 33)
+        await p.waitFor(`!!document.querySelector('[data-walk]')`, 5_000).catch(() => {})
+        await p.frames(2)
         const wheel = await boxes()
         await p.shot('walk-phone-wheel')
         await view(IPHONE.width, IPHONE.height)
         await tapOn('Exit car', 32)
         const out = await p.waitFor(`window.__SIM__.snapshot().input.mode !== 'vehicle' && !!document.querySelector('[data-walk-show]')`, 20_000).then(() => true, () => false)
-        check(parked && clear(wheel).length === 0 && out, 'walkphone: at the wheel the card steps aside held sideways, keeps under her chip and above the car\'s buttons upright, and is back on foot', `sideways away ${parked}; upright ${JSON.stringify(wheel.walk)} ${clear(wheel).join(', ')}; back on foot ${out}`)
+        check(parked && folded && clear(wheel).length === 0 && out, 'walkphone: at the wheel the card steps aside held sideways, is folded upright and, opened from its strip, keeps under her chip and above the car\'s buttons, and is back on foot', `sideways away ${parked}; upright folded ${folded}, opened ${JSON.stringify(wheel.walk)} ${clear(wheel).join(', ')}; back on foot ${out}`)
       } else check(false, 'walkphone: the Enter car button enters the nearest car', `car ${car}`)
       p.health('walkphone')
     } finally { await p.b.close() }

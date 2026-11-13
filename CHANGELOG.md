@@ -1816,6 +1816,31 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **A phone held upright shows the city, not a stack of cards.** On a 360 x 552 page (a 360 px wide Android phone
+  under its browser's bars) the HUD's header, its readout, the recruiter's last line, Sloane's chip, the first walk's
+  card and the captions stacked down the screen until the walk's card was a 67 px strip and the captions ran under
+  the stick and the Run button. Now on every compact tall screen (a phone held upright, a tablet, a narrow window) the
+  HUD is one panel beside the minimap, the frame rate under the clock and the walk signals and the quality tier on its
+  last line (the First Law's count, the sensor flips and the input rate are the console's there; `Hud.tsx`), and
+  Sloane's open card starts 7.5 rem down instead of 8.75. On a compact screen a recruit's or a rally's last outcome is
+  shown for eight seconds from when it first shows and then let go (`recruitment.ts` `hudLine` gives it an ordinal,
+  `news`; the swarm at work, an answer coming and a microphone failure are state and stay). On a phone held upright
+  with the touch controls on screen (under 640 px across): the first walk's card folds to a one-line strip under the
+  HUD's panel (the stage's number and title; `onboarding/FirstWalk.tsx`, the slot in `walkSlot.ts`); the card opens for
+  each new line and at a tap on the strip, shows Sloane's line cut to the lines its band holds (two to six, measured
+  from the card as laid out: `onboarding/walkFold.ts` `fitLines`) over the stage's button with More for the rest, and
+  folds at the next touch outside it, after ten metres on the move or on getting into a car (at the wheel a new line is
+  spoken, told to a screen reader beside the strip, and the strip's dot pulses). It stands under Sloane's chip above
+  the HUD's chips at the foot, or above the controls alone where that band is short, or above her chip, over the HUD's
+  header and minimap, where even that is short (beside a car, at the wheel): never over her chip (`--chip-head`, published by
+  `Concierge.tsx`). It has no close and no skip, folded or open, and the walk still ends only in the console. The
+  captions and a shop's or a home's chip stand above the stick and left of the buttons (`--touch-stick-top`, published
+  by `TouchControls.tsx`), each caption wrapping to two lines, and one message at a time stands under her chip. At the
+  wheel upright a progress check made while a message is up is not shown on the HUD (its chime and tap still mark it),
+  so the column never runs on under her chip. A tablet keeps the whole walk card, and a phone held sideways and a
+  desktop keep their places. The browser smoke's `walkphone` checks the fold, the strip and the Browse chip on a 360 x
+  552 page in a shop, and the folded card opened from its strip at the wheel.
+
 - **The car you sit in passes through people instead of stopping for them.** On the live copy the player's car
   stopped dead in front of anyone in its path: the First Law held every car, the player's included, for a person
   inside its stopping envelope. Now the car a player sits in, on that player's own controls with the Sanctuary on, is
@@ -2049,6 +2074,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   software WebGPU adapter (SwiftShader), show the band gone under suit trousers, a knee boot and a bare leg, the line
   gone at both wrists with the sleeves down and rolled, and a steel watch on a rolled sleeve's wrist with no gap above
   it. Unverified: no hardware GPU has drawn it yet.
+- **On a phone the shop's Browse chip, a home's chip and the microphone's badge take a tap.** The HUD's layer stood
+  under the touch controls' layer, whose look area covers the right half of the screen and whose stick zone covers the
+  bottom left, so a tap on those buttons turned the view or moved the stick instead. The HUD's layer now stands over
+  the touch layer and under Sloane's and every card; its panels still take no pointer, so every touch on them reaches
+  the stick and the look. Held sideways on foot the HUD's chips at the foot stand between the stick's zone and the
+  buttons, wrapping there, so a long shop name cannot reach over the stick or Ping. `walkphone` hit-tests the Browse
+  chip's middle and finds the chip there.
+
 - **A phone's Lakefront streets are lit at night, and the people near it are drawn.** On a lite boot (an entry-level
   phone GPU, the Lite tier) the generated map's street window after dark was lamp heads and shopfronts glowing over
   black streets, with one or two people in view: a lite boot builds no real lamp light (`world.ts` `LITE_WORLD`), the

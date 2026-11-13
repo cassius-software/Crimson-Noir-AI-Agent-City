@@ -164,6 +164,8 @@ export class Recruiter extends EventTarget {
   #micDetail = ''
   #heard = ''
   #last = ''
+  /** How many outcomes (a recruit's, a rally's) have been told so far: the newest one's ordinal. */
+  #outcomes = 0
   #recognition: RecognitionLike | null = null
   /** The operator asked for the microphone and has not stopped it: an ended session restarts. */
   #wantListening = false
@@ -215,6 +217,13 @@ export class Recruiter extends EventTarget {
   /** The last transcript heard, and the last outcome. */
   get heard(): string { return this.#heard }
   get last(): string { return this.#last }
+  /** The ordinal of the outcome `last` reads (0 before the first): the same words told again count again. */
+  get outcomes(): number { return this.#outcomes }
+  /** An outcome becomes the last one. (The microphone's failures are written to `last` directly: they are its state.) */
+  #tell(line: string): void {
+    this.#last = line
+    this.#outcomes++
+  }
 
   /** Pedestrian `agent`'s state: Active once the worker reports them arrived, Interviewing from the ask until then. */
   stateOf(agent: number): AgentState {
@@ -433,13 +442,13 @@ export class Recruiter extends EventTarget {
   }
 
   #refuse(skill: Skill | null, reason: string): RecruitOutcome {
-    this.#last = skill ? `${skill}: ${reason}` : reason
+    this.#tell(skill ? `${skill}: ${reason}` : reason)
     this.#emit('refused', { skill, reason })
     return { ok: false, skill, agent: -1, distance: -1, message: this.#last }
   }
 
   #refuseRally(agent: number, reason: string, x = NaN, z = NaN): RallyOutcome {
-    this.#last = `rally: ${reason}`
+    this.#tell(`rally: ${reason}`)
     this.#emit('rally', { agent: Number.isInteger(agent) ? agent : -1, x, z, ok: false, reason })
     return { ok: false, message: this.#last }
   }
@@ -474,24 +483,24 @@ export class Recruiter extends EventTarget {
           this.#states.set(ev.agent, ev.skill)
           const x = this.#xz?.[2 * ev.agent], z = this.#xz?.[2 * ev.agent + 1]
           if (x !== undefined && z !== undefined) this.#host.cue(x, z)
-          this.#last = `${ev.skill}: someone ${ev.distance.toFixed(1)} m away is coming over`
+          this.#tell(`${ev.skill}: someone ${ev.distance.toFixed(1)} m away is coming over`)
           p.resolve({ ok: true, skill: p.skill, agent: ev.agent, distance: ev.distance, message: this.#last })
         } else {
           p.resolve(this.#refuse(p.skill, ev.reason))
         }
       } else if (ev.e === 'active') {
-        this.#last = `${ev.skill}: tethered · ${ev.skills.join(', ')}`
+        this.#tell(`${ev.skill}: tethered · ${ev.skills.join(', ')}`)
         this.#emit('active', { agent: ev.agent, skill: ev.skill, skills: [...ev.skills] })
       } else if (ev.e === 'released') {
         this.#states.delete(ev.agent)
-        this.#last = `${ev.skill}: ${ev.reason}`
+        this.#tell(`${ev.skill}: ${ev.reason}`)
         this.#emit('released', { agent: ev.agent, skill: ev.skill, reason: ev.reason })
       } else if (ev.e === 'rally') {
         const p = this.#rallies.get(ev.agent)
         if (!p) continue // not one of the page's (or given up on): nothing to answer
         this.#rallies.delete(ev.agent)
         if (ev.ok) {
-          this.#last = `rally: someone is walking to (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`
+          this.#tell(`rally: someone is walking to (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`)
           this.#emit('rally', { agent: ev.agent, x: p.x, z: p.z, ok: true, reason: '' })
           p.resolve({ ok: true, message: this.#last })
         } else {
@@ -652,9 +661,12 @@ export function micLine(m: { state: MicState; detail: string }): string {
  * What the HUD shows: whether the microphone is open, and one line about the swarm (every skill the Active recruits
  * bring, who is still walking over, and how many operator tasks, scripts or answers, are running bound to it: `tasks`,
  * from the task gateway), or the last outcome when nobody is over. `activity` (an answer streaming in) comes first,
- * so it stays in view when the line is cut short.
+ * so it stays in view when the line is cut short. `news` is 0 while the line is state, which stays (the swarm at work,
+ * a task bound, an answer coming, the microphone's failure, nothing at all); when the line is only the last outcome of a
+ * recruit or a rally it is that outcome's ordinal, and a phone's HUD shows such a line for a few seconds and lets it
+ * go (the same words told again have a new ordinal, and show again).
  */
-export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: boolean; line: string } {
+export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: boolean; line: string; news: number } {
   const list = r.recruits
   const active = list.filter((x) => x.arrived).length
   const coming = list.filter((x) => !x.arrived).map((x) => x.skill)
@@ -664,7 +676,8 @@ export function hudLine(r: Recruiter, tasks = 0, activity = ''): { listening: bo
     ...(coming.length ? [`coming over · ${coming.join(', ')}`] : []),
     ...(tasks > 0 ? [`${tasks} ${tasks === 1 ? 'task' : 'tasks'} bound`] : []),
   ]
-  return { listening: r.mic.state === 'listening', line: parts.length ? parts.join(' · ') : r.last }
+  const told = parts.length === 0 && r.last !== '' && !r.last.startsWith('voice: ')
+  return { listening: r.mic.state === 'listening', line: parts.length ? parts.join(' · ') : r.last, news: told ? r.outcomes : 0 }
 }
 
 /**

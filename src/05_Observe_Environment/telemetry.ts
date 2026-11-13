@@ -219,9 +219,11 @@ export interface SipocSnapshot {
     progress?: HudProgress
     /**
      * Recruitment (08_Swarm/recruitment.ts), added by the host: whether the microphone is open (on-device speech
-     * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome).
+     * recognition), and one line about the Active swarm's skills and who is coming over (or the last outcome: then
+     * `news` is that outcome's ordinal, and a compact HUD shows the line for a few seconds and lets it go; 0 or absent,
+     * the line is state and stays).
      */
-    recruiting?: { listening: boolean; line: string }
+    recruiting?: { listening: boolean; line: string; news?: number }
     /**
      * The microphone (04_Connect_Hardware/microphone.ts), added by the host: its phase and detail for the HUD's pill
      * (the browser's own indicator is never on without it), whether the page itself is speaking (Sloane; the pill
