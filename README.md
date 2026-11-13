@@ -13,6 +13,7 @@
 
 <p align="center">
   <a href="https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/"><strong>Launch the live build</strong></a> ·
+  <a href="https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current"><strong>Current downloads</strong></a> ·
   <a href="MANUAL.md"><strong>Operator Manual</strong></a> ·
   <a href="docs/noirscript.md"><strong>NoirScript</strong></a> ·
   <a href="docs/zero-trust-audit.md"><strong>Containment audit</strong></a> ·
@@ -157,7 +158,7 @@ npm run build:matrix -- --targets all       # everything it can; the rest skippe
 # Bare-metal UEFI bootable image (Linux or macOS, with mtools, sgdisk and xorriso)
 sh crimson_noir_os/tools/build-image.sh
 ```
-Nine targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64 and aarch64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all. Nothing is signed or notarized, the `.ipa` needs re-signing to install, and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
+Nine targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64 and aarch64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all, and the `current` workflow builds all nine again from every commit on `main` that CI passes and keeps them on the [current build](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current) pre-release (`MANUAL.md`, *The current build*), as the live build follows `main`. Nothing is signed or notarized, the `.ipa` needs re-signing to install, and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
 
 ---
 

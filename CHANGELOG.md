@@ -15,6 +15,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The downloads follow main: the current build** (`.github/workflows/current.yml`, `tools/build/current.mjs`,
+  `src/currentBuild.test.ts`). Each time ci passes on a commit on main, the new `current` workflow builds all nine
+  targets of the build matrix from that commit (the Windows x64 app through `windows-app.yml`, the other eight,
+  Crimson Noir OS's x86-64 and aarch64 media among them, through `build-matrix.yml`; both workflows now also take a
+  `workflow_call` with the commit as `ref`) and puts the files on one GitHub pre-release, "Crimson Noir: Agent City,
+  current build", tag `current`, replacing the last green commit's, as `web.yml` keeps the web copy. It makes no
+  numbered release and no tag but `current`, and the release is never "Latest". The UEFI jobs still bake twice,
+  compare the bytes and boot in QEMU before they upload; a target whose job fails keeps its last files, and the notes
+  and `current.json` say which commit each file comes from (the run is then red; the iOS build stays best effort).
+  It builds only a commit on main that ci passed on and publishes only one at least as new as the release's; files
+  whose bytes did not change are not uploaded again; `SHA256SUMS` covers every file. On a pull request that touches
+  it, it builds everything and runs the publish as a dry run with read-only access. The bare Windows executables are
+  now published as `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`: both were `crimson-noir-app.exe`, so on a
+  `v*` release the second upload would have replaced the first. Eleven tests hold the publish step against a stand-in
+  for GitHub (a first publish, a later one with a failed target and a version change, a stale commit, a commit off
+  main, a dry run, the pick, the command line) and the workflows' triggers, access and calls. Nothing has been
+  published yet: the first real run is the first green ci on main after the merge.
+
 - **A heel.** The look genome's accessory word (word 6) gains the heel at bits 19 and 20 (none, as before; a block
   heel of 4 cm; a mid heel of 6 cm; a high heel of 8 cm), the last of the bits the umbrella's entry held for it; 29 to
   31 are spare and refused. Option 0 is as before, so every chosen look keeps its code. A heel is a tapered tube under

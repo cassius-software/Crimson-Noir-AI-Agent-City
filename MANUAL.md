@@ -4141,10 +4141,12 @@ around the very same `dist/index.html`, built by `npm run app:build` (the Vite b
 `beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
 every pull request and push to main (artifacts `windows-installer-<version>`, `windows-msi-<version>` and
 `windows-portable-<version>`) and, when a `v*` tag is pushed, puts all three on the tag's release beside the OS media.
+The current build (below) carries the same three files from every commit on main that ci passes.
 
 - **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
   the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
-  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact runs from any
+  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact
+  (`crimson-noir-app_<version>_x64.exe`; the Windows on Arm one ends `_arm64.exe`) runs from any
   folder; both need the WebView2 runtime, which Windows 10 and 11 carry (the installer fetches it if a machine has
   none).
 - **The window.** It has no system decorations: the page draws the title bar (`src/07_Execute_Actions/TitleBar.tsx`),
@@ -4234,10 +4236,53 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
   `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
   `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
-  itself. Only GitHub's own actions run in it.
+  itself. `current.yml` calls it with each commit on main that ci passes, for the current build (below). Only
+  GitHub's own actions run in it.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
   an engine lacks it the app shows the same recovery card as a browser without WebGPU.
+
+## The current build
+
+Every download follows `main`, as the web copy does. Each time ci passes on a commit on main, the `current` workflow
+(`.github/workflows/current.yml`) builds all nine targets of the build matrix from that commit, the Windows x64 app
+through `windows-app.yml` and the other eight through `build-matrix.yml` (both called with the commit), and
+`tools/build/current.mjs` puts the files on one GitHub pre-release, **Crimson Noir: Agent City, current build**, under
+the tag `current`: <https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current>. The next green
+commit replaces them the same way. It is not a numbered release: the latest numbered release keeps its "Latest" label,
+numbered releases are still cut by hand from a pushed tag (`build-release.yml`), and `current` is the only tag this
+workflow makes or moves.
+
+- **What is on it.** Windows x64 and arm64 (the NSIS installer, the `.msi`, the bare `.exe` as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), the
+  macOS `.dmg` and zipped `.app`, the Android `.apk`, the iOS `.ipa`, Crimson Noir OS's x86-64 media (`BOOTX64.EFI`,
+  `crimson_noir_os.img`, `crimson_noir_os.iso`, with `containment.nix`, `containment.lock`, `NOTICE.txt` and `LICENSE`,
+  as a numbered release carries them) and its aarch64 media (`BOOTAA64.EFI`, `crimson_noir_os-aarch64.img` and
+  `.iso`), then `SHA256SUMS` over every file and `current.json`, which records the commit, run and time that made each
+  target's files. The notes list every file with its commit. File names carry the version in `package.json`
+  (`1.0.0-stable-beta` today); the commit tells one current build from the next. A file's address stays the same from
+  one build to the next while its name does: `https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/download/current/<file>`.
+- **What is checked first.** ci on that very commit (the page's type check, lint, tests and build, the city in Chrome,
+  the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani
+  harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
+  baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
+  the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
+  build matrix above.
+- **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
+  commit it built, and the notes and `current.json` say which commit that was; the run is red so it is seen. The iOS
+  build is best effort, as in the build matrix, and never turns the run red.
+- **It never steps back.** Only a commit on main that ci passed on is built, and it is published only while it is
+  still on main and at least as new as what the release holds (asked again after the build). One run at a time: a
+  newer commit's run waiting takes the place of an older one waiting, so during a burst of merges the release follows
+  the last green commit. Files whose bytes did not change (the UEFI media are reproducible) are not uploaded again.
+- **Checking a download.** `sha256sum --check --ignore-missing SHA256SUMS` in the folder you downloaded into.
+- **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds main's tip if ci
+  passed on it there, and with "force" even when the release already holds that commit.
+- **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
+  everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
+  notes it would write, and the log what it would upload, keep and delete.
+- **NixOS** needs none of this: `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds main's tip from
+  source (below).
 
 ## On an iPhone (the web app)
 

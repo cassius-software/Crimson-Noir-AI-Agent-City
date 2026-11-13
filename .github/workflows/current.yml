@@ -1,0 +1,218 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It keeps every download current with main, as web.yml keeps the web copy: each time ci
+# passes on main, it builds every target of tools/build/matrix.mjs from that commit (the Windows x64 app through
+# windows-app.yml, the other eight through build-matrix.yml: Windows on Arm, Linux x64 and arm64, macOS, Android, iOS,
+# and Crimson Noir OS's UEFI media for x86-64 and aarch64), both called here with the commit as their input, and
+# tools/build/current.mjs puts the files on one GitHub pre-release, "Crimson Noir: Agent City, current build", tag
+# `current`, replacing what the last green commit left there.
+# - The gates: ci on that very commit (the page's tests and build, the browser smoke, the Rust workspace on CPU and a
+#   software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani harnesses), which is what
+#   starts this workflow; then each job uploads only after its own checks, and each UEFI job only after baking its
+#   media a second time from a clean build, comparing the bytes and booting the image in QEMU (self-test, tutorial,
+#   terminal, power-off) and the ISO. A target whose job failed keeps the files of the last commit it built, the notes
+#   and current.json on the release say which commit each file comes from, and the run is red (the iOS build is best
+#   effort, as in build-matrix.yml, and never turns it red).
+# - It never steps back: it builds only a commit on main that ci passed on, and publishes it only while it is still on
+#   main and at least as new as what the release holds (asked again after the build). One run at a time; a newer
+#   commit's run waiting takes the place of an older one waiting, so during a burst of merges the release follows the
+#   last green commit, as the web copy does.
+# - It makes no numbered release and no tag but `current`, which it moves to each commit it publishes. The release is
+#   a pre-release and never "Latest"; numbered releases stay build-release.yml's, from a tag a person pushes. The tag
+#   is moved with the workflow's own token, for which GitHub starts no workflow (build-release.yml takes v* and
+#   stable-* tags only anyway).
+# - On a pull request that touches this file, its tool or the two workflows it calls, it builds everything the same
+#   way and runs the publish step as a dry run, with read-only access: it prints what it would upload, keep and
+#   delete, writes the notes to the run's summary, and publishes nothing.
+# - By hand (Actions > current > Run workflow, on main), only when an automatic run failed: it builds main's tip if ci
+#   passed on it there, and with "force" even when the release already holds that commit.
+# - Only GitHub's own actions run here. The release can be updated only while it is not immutable (immutable releases
+#   are a repository setting, off here).
+# What breaks if it is removed? The downloads wait for the next numbered release; the web copy still follows main.
+
+name: current
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/current.yml
+      - .github/workflows/windows-app.yml
+      - .github/workflows/build-matrix.yml
+      - tools/build/current.mjs
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build and publish main's tip even when the release already holds it
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+# One publication at a time, never cancelled halfway; a newer run waiting takes the place of an older one waiting. A
+# ci that did not pass on main publishes nothing, so its run waits in a group of its own and never takes a real one's
+# place. A pull request's dry runs have a group of their own, and a newer push to it cancels the older run.
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'pull_request' && format('current-pr-{0}', github.event.pull_request.number)) ||
+    ((github.event_name == 'workflow_dispatch' ||
+    (github.event.workflow_run.conclusion == 'success' &&
+    (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    && 'current') || format('current-skip-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Which commit to build, if any.
+  pick:
+    # A green ci on main in this repository (a push, or ci run by hand there), this run started by hand, or a pull
+    # request's dry run. A fork's pull request from a branch it named main also reports head_branch main, so the
+    # event and the repository are checked as well.
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      ci: ${{ steps.pick.outputs.ci }}
+      dry: ${{ steps.pick.outputs.dry }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: pick
+        name: The commit ci passed on main, unless the release already holds it or a newer one (a pull request's head, for a dry run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          TESTED: ${{ github.event.workflow_run.head_sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              printf 'sha=%s\ndry=true\n' "$PR_HEAD" >> "$GITHUB_OUTPUT"
+              echo "a dry run of the publish for $PR_HEAD"
+              exit 0 ;;
+            workflow_dispatch)
+              [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it on main: the current build follows main alone"; exit 1; }
+              args=(--sha "$GITHUB_SHA" --strict)
+              if [ "$FORCE" = true ]; then args+=(--force); fi ;;
+            *) args=(--sha "$TESTED") ;;
+          esac
+          node tools/build/current.mjs pick "${args[@]}" | tee -a "$GITHUB_OUTPUT"
+
+  # The Windows x64 app (installer, .msi, bare .exe), as windows-app.yml builds it on every change. Its release job
+  # runs on a v* tag alone, so it never runs here; the write access below is only the ceiling GitHub asks a caller to
+  # grant for it, and the build job keeps windows-app.yml's read-only access.
+  windows:
+    needs: pick
+    if: needs.pick.outputs.sha != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/windows-app.yml
+    with:
+      ref: ${{ needs.pick.outputs.sha }}
+
+  # The other eight targets, each on its own runner, as build-matrix.yml builds them (the UEFI jobs bake twice and
+  # boot in QEMU before they upload). The same ceiling as above for its release job, which runs on a v* tag alone.
+  matrix:
+    needs: pick
+    if: needs.pick.outputs.sha != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-matrix.yml
+    with:
+      ref: ${{ needs.pick.outputs.sha }}
+
+  # Everything that built onto the release; runs when a build failed too, so the others still go up.
+  publish:
+    needs: [pick, windows, matrix]
+    if: ${{ !cancelled() && needs.pick.outputs.sha != '' && needs.pick.outputs.dry != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The built commit's version and the x86-64 media's notices
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
+          path: built
+          persist-credentials: false
+          sparse-checkout: crimson_noir_os
+      - uses: actions/download-artifact@v4
+        with:
+          path: media
+      - name: Publish to the current release (uploads, deletions, SHA256SUMS, current.json, the tag, the notes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.pick.outputs.sha }}
+          CI_RUN: ${{ needs.pick.outputs.ci }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node tools/build/current.mjs publish --media media --source built --sha "$SHA" --ci "$CI_RUN" --run "$RUN" \
+            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY"
+
+  # A pull request's run: the same step as a dry run, with read-only access.
+  dry-run:
+    needs: [pick, windows, matrix]
+    if: ${{ !cancelled() && needs.pick.outputs.sha != '' && needs.pick.outputs.dry == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The built commit's version and the x86-64 media's notices
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
+          path: built
+          persist-credentials: false
+          sparse-checkout: crimson_noir_os
+      - uses: actions/download-artifact@v4
+        with:
+          path: media
+      - name: What a publish would do (nothing is written)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.pick.outputs.sha }}
+        run: |
+          node tools/build/current.mjs publish --dry-run --media media --source built --sha "$SHA" \
+            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY"
