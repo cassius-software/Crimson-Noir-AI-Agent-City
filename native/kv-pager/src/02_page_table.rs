@@ -99,7 +99,8 @@ impl Tier {
 pub struct LogOdds {
     /// The share of a block's evidence kept per tick, in (0, 1].
     pub alpha: f64,
-    /// ln b of one reuse (a cache hit on the block, or a fork that shares it), at least `MIN_LN_BAYES_FACTOR`.
+    /// ln b of one reuse (a cache hit on the block, or a fork that shares it), from `MIN_LN_BAYES_FACTOR` to
+    /// `MAX_LN_BAYES_FACTOR`.
     pub ln_bayes_factor: f64,
 }
 
@@ -107,6 +108,12 @@ pub struct LogOdds {
 /// figure's trip through the scale (and by more than nothing where the stored figure has decayed below the smallest
 /// float): with ln b = 0 a chain's revived head could be filed below its idle tail, and evicted first.
 pub const MIN_LN_BAYES_FACTOR: f64 = 1e-3;
+
+/// The most evidence a reuse may count for: b itself is a float (ln b below ln f64::MAX, about 709.8). The bound also
+/// keeps an idle block's stored figure finite: its evidence (at most this times the reuses it saw) times the scale (at
+/// most `RESCALE_ABOVE`) stays far below f64::MAX for any count of reuses a u64 can hold, where an ln b near 1e208
+/// would store an infinity after one reuse and tie every such block with every other.
+pub const MAX_LN_BAYES_FACTOR: f64 = 700.0;
 
 impl Default for LogOdds {
     /// α = 0.99 a tick (idle evidence halves in about 69 agent arrivals and departures), b = 3 per reuse. Replayed over
@@ -294,10 +301,8 @@ impl PageTable {
     pub fn with_eviction(mut self, policy: Eviction) -> Self {
         if let Eviction::LogOdds(p) = policy {
             assert!(p.alpha > 0.0 && p.alpha <= 1.0, "alpha is a share kept per tick, in (0, 1]");
-            assert!(
-                p.ln_bayes_factor >= MIN_LN_BAYES_FACTOR && p.ln_bayes_factor.is_finite(),
-                "a reuse is evidence for reuse: ln b is at least MIN_LN_BAYES_FACTOR"
-            );
+            assert!(p.ln_bayes_factor >= MIN_LN_BAYES_FACTOR, "a reuse is evidence for reuse: ln b is at least MIN_LN_BAYES_FACTOR");
+            assert!(p.ln_bayes_factor <= MAX_LN_BAYES_FACTOR, "b is a float: ln b is at most MAX_LN_BAYES_FACTOR");
         }
         assert!(self.cache.is_empty(), "the policy is chosen before anything is cached");
         self.policy = policy;

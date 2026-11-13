@@ -27,36 +27,36 @@ down in order.
 This is the case the stress run hits 90 times: a squad leader's prompt ends part-way into a page (114 tokens = 7 full
 pages + 2 tokens), 9 members fork from it, and each member then writes its own first token.
 
-1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:547`) clones the parent's block list and
+1. **Fork shares, allocates nothing.** `PageTable::fork` (`02_page_table.rs:552`) clones the parent's block list and
    adds one reference to each block. The tail page (2 tokens filled) now has `refs = 10`. No page is taken, and no
    byte moves on the GPU. *Cause of the next step:* a page with `refs > 1` must never be written, or one agent's
    write would appear in nine other agents' context.
-2. **The write finds the tail shared.** `PageTable::append` (`:493`) computes `offset = len % 16 = 2`. Because
-   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:502`).
-3. **A private page, or a refusal whole.** `take()` (`:503`, defined at `:764`) pops a free page, or evicts the
+2. **The write finds the tail shared.** `PageTable::append` (`:498`) computes `offset = len % 16 = 2`. Because
+   `offset > 0` and the last page's `refs > 1`, it takes the copy-on-write branch (`:507`).
+3. **A private page, or a refusal whole.** `take()` (`:508`, defined at `:769`) pops a free page, or evicts the
    idle cached page first in the eviction order (below). If there is none, the append returns `OutOfBlocks { needed: 1, available: 0 }` *before
    anything changes*. The agent stalls; the pool is never overcommitted. That is the no-OOM guarantee.
 4. **Token ids copied, the shared page released once.** The new page gets the first `offset` token ids and the same
-   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:509`) drops `src` to `refs = 9`;
+   `parent` (so the chain check in `check()` still holds). `release_block(src)` (`:514`) drops `src` to `refs = 9`;
    the other nine agents still map it.
-5. **The table is repointed.** The agent's last block entry becomes the new page (`:536`), and the token goes into slot
-   `offset`. If that fills the page, `seal` (`:797`) keys it into the prefix cache (`:541`).
+5. **The table is repointed.** The agent's last block entry becomes the new page (`:541`), and the token goes into slot
+   `offset`. If that fills the page, `seal` (`:802`) keys it into the prefix cache (`:546`).
 6. **The host is told what to move.** `append` returns `Slot { block: new, offset: 2, copy_from: Some((src, 2)) }`.
    The page table owns ids only; the bytes are the host's job.
-7. **Bytes move on the GPU, through staging.** `Host::store` (`bin/stress.rs:182`) sees `copy_from` and calls
-   `KvPool::encode_copy` (`03_gpu/pool.rs:164`). For each of 36 layers × {K, V}, it copies slots `0..offset` of `src`
+7. **Bytes move on the GPU, through staging.** `Host::store` (`bin/stress.rs:185`) sees `copy_from` and calls
+   `KvPool::encode_copy` (`03_gpu/pool.rs:167`). For each of 36 layers × {K, V}, it copies slots `0..offset` of `src`
    to the staging buffer, then from staging into `dst`. WebGPU forbids a buffer-to-itself copy, so the bytes can't
    go directly. The layout is slot-major (`[block][slot][kv_head][dim]`), so this is one contiguous range per buffer,
    and it never covers slot `offset`.
-8. **The new token's K/V are queued.** `write_token` (`pool.rs:153`) queues slot `offset` of `dst`, for every layer.
-9. **Order within the submit is safe by construction.** `flush` (`stress.rs:204`) submits. wgpu applies queued writes
+8. **The new token's K/V are queued.** `write_token` (`pool.rs:156`) queues slot `offset` of `dst`, for every layer.
+9. **Order within the submit is safe by construction.** `flush` (`stress.rs:207`) submits. wgpu applies queued writes
    before the submit's commands. The copies still can't clobber the new token, because they only cover slots
    `< offset`. And `src` can't be freed and reused inside the same phase, because a copy-on-write leaves `src.refs ≥ 1`.
-10. **Staging memory is returned.** `device.poll(Wait)` (`stress.rs:207`) runs after every submit. Without it, the
+10. **Staging memory is returned.** `device.poll(Wait)` (`stress.rs:210`) runs after every submit. Without it, the
     queue's write staging grew 2050 → 3850 MiB over the run (measured with the DX12 allocator report). With it, the
     allocation stays flat at 2050 MiB.
-11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:614`) lays out the rows. The kernel
-    resolves each position through `block_table[seq * max_blocks + pos / 16]` (`paged_attention.wgsl:88`). The member
+11. **The kernel reads the diverged table.** `gpu_tables` (`02_page_table.rs:619`) lays out the rows. The kernel
+    resolves each position through `block_table[seq * max_blocks + pos / 16]` (`paged_attention.wgsl:91`). The member
     now reads its private tail page, and the other nine still read the shared one.
 12. **Proof both ways.** The stress run checks every agent's attention against a CPU reference that uses only that
     agent's own tokens: max error 4.1e-7. With `--skip-cow-copy` (step 7 removed), the new page's slots `0..offset` hold

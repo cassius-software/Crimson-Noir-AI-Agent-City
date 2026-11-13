@@ -308,7 +308,7 @@ fn step(
         wanted.push(extents);
     }
     for extents in &wanted {
-        let staged = streamer.next().expect("one unit per request")?;
+        let staged = streamer.next_unit().expect("one unit per request")?;
         r.read_bytes += staged.read_bytes;
         r.read_seconds += staged.read_time.as_secs_f64();
         if synthetic {

@@ -425,6 +425,39 @@ fn a_reuse_that_counts_for_nothing_is_refused() {
 }
 
 #[test]
+#[should_panic(expected = "MAX_LN_BAYES_FACTOR")]
+fn a_reuse_counted_beyond_any_float_factor_is_refused() {
+    let _ = PageTable::new(8).with_eviction(Eviction::LogOdds(LogOdds { alpha: 0.99, ln_bayes_factor: 1e300 }));
+}
+
+#[test]
+#[should_panic(expected = "MIN_LN_BAYES_FACTOR")]
+fn a_reuse_counted_as_no_number_is_refused() {
+    let _ = PageTable::new(8).with_eviction(Eviction::LogOdds(LogOdds { alpha: 0.99, ln_bayes_factor: f64::NAN }));
+}
+
+#[test]
+fn the_most_evidence_a_reuse_may_count_for_keeps_every_figure_finite_across_rescales() {
+    // α = 0.5 rescales every ~332 ticks, so the chain is left idle at every size of the scale up to its ceiling, each
+    // time after another hit on both of its blocks.
+    let policy = Eviction::LogOdds(LogOdds { alpha: 0.5, ln_bayes_factor: MAX_LN_BAYES_FACTOR });
+    let mut pt = PageTable::new(8).with_eviction(policy);
+    let chain = toks(0, 2 * BLOCK_TOKENS);
+    pt.admit(1, &chain).unwrap();
+    let (head, tail) = (pt.blocks_of(1).unwrap()[0], pt.blocks_of(1).unwrap()[1]);
+    pt.release(1).unwrap();
+    for id in 2..800 {
+        assert_eq!(pt.admit(id, &chain).unwrap().cached_blocks, 2);
+        pt.release(id).unwrap();
+        for b in [head, tail] {
+            assert!(pt.reuse_log_odds(b).is_finite(), "block {b} after ask {id}");
+        }
+        assert_eq!(pt.eviction_order(), vec![tail, head]);
+        pt.check().unwrap();
+    }
+}
+
+#[test]
 fn a_head_revived_after_its_evidence_decayed_below_the_smallest_float_is_still_evicted_after_its_tail() {
     // α = 0.5 doubles the scale every tick: a rescale every ~332 ticks divides the idle figures by ~1e100, so after
     // 1,100 ticks the idle head's and tail's stored figures are near the bottom of the floats, and reviving the head

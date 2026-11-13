@@ -20,11 +20,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   file's header (versions 2 and 3; every ggml type's block size checked against llama.cpp master's on 2026-11-13) and
   indexes each layer's shared tensors, and each mixture-of-experts expert's slice of the stacked `_exps` tensors, as
   byte ranges; a damaged header is refused with its reason (the test mutates headers 4,000 times and none panics),
-  and counts no model has (more than 65,536 layers or experts, a header over 256 MiB) are refused before anything is
-  allocated for them.
+  and counts no model has (more than 65,536 layers or experts or 262,144 expert slices, a header over 256 MiB) are
+  refused before anything is allocated for them.
   `stream.rs` reads those ranges sector-aligned (4,096 bytes) and unbuffered where the system allows it (`O_DIRECT`
   on Linux and Android, `FILE_FLAG_NO_BUFFERING` on Windows; buffered elsewhere, or where the file system refuses)
-  into a ring of reusable buffers that reads one unit ahead of the caller and never more than the ring holds.
+  into a ring of reusable buffers that reads one unit ahead of the caller and never more than the ring holds; a caller
+  that holds every buffer and asks for more is refused (`WouldBlock`) rather than left waiting (a test drops 600
+  units on another thread while their owner keeps asking, and it never hangs).
   `swarm.rs` plans one decode step of every agent: each layer read once (layer-major), the experts the agents'
   routers picked grouped so each is read once however many agents chose it (`group_swarm_by_expert`), and per layer
   either the whole layer or only the routed experts, whichever a cost model of the drive (its bandwidth and its cost
@@ -1876,8 +1878,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the chaos run on the same workloads (`cargo run --release --bin chaos`), against least-recently-used: the city's asks (256 agents, 20,000 asks) kept 72.4 → 72.8 %, 73.0 → 73.3 % and 73.5 → 73.8 %
   of prompt tokens in the cache at 120, 240 and 480 pages; four prompt families cut by bursts of one-off prompts 59.7
   → 95.8 % (90.5 % and 94.2 % when the families change every 100 and every 300 asks); the fuzzer's streams 5 to 6 %
-  more prefix-hit tokens at 8 and 32 pages and the same at 128. A reuse counts for a Bayes factor of at least
-  e^0.001 (with none, a chain's revived head could be filed below its idle tail). The order uses no `ln` or `exp` at
+  more prefix-hit tokens at 8 and 32 pages and the same at 128. A reuse counts for a Bayes factor between e^0.001
+  and e^700 (with none, a chain's revived head could be filed below its idle tail; with more, a stored figure could
+  overflow to infinity). The order uses no `ln` or `exp` at
   run time and is the same on every run (a test replays 80 streams twice and compares it after every operation).
   `Eviction::Lru` remains.
   The WebAssembly page table the page uses (`src/09_Cognition/kvPager.wasm.ts`) is rebuilt with it, 56,379 → 64,335

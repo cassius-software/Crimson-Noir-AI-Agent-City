@@ -13,9 +13,9 @@
 //! - `Streamer` is the ring: a reader thread fills a fixed set of aligned buffers (two is double buffering) with the
 //!   units requested, in order, splitting a unit's reads over several file handles so the drive sees a queue, and hands
 //!   each back as a `Staged` whose drop returns its buffer. While the caller works on unit L, unit L+1 is being read;
-//!   with every buffer full, the reader waits, so memory stays bounded however far ahead the caller asks. (A caller
-//!   that keeps every unit it took, as `collect` does, is given one more buffer per unit rather than a wait that could
-//!   never end; those buffers are let go as the units are dropped.)
+//!   with every buffer full, the reader waits, so memory stays bounded however far ahead the caller asks. A caller that
+//!   holds every buffer and asks for another unit is refused (`WouldBlock`) rather than left waiting for a drop that,
+//!   from its own thread, would never come.
 //!
 //! The buffers are ordinary aligned heap memory, not page-locked: wgpu offers no pinned host memory, and nothing in this
 //! crate runs a model's layers yet, so the GPU upload side is not built here.
@@ -318,16 +318,10 @@ pub struct Staged {
     plan: ReadPlan,
     buf: Option<AlignedBuf>,
     back: Sender<AlignedBuf>,
-    ledger: Arc<Ledger>,
-    /// Whether `next` handed it to the caller (counted in `Ledger::held`).
+    /// The ring's count of units handed to the caller and not yet dropped.
+    held: Arc<AtomicUsize>,
+    /// Whether `next_unit` handed it to the caller (counted in `held`).
     handed: bool,
-}
-
-/// The ring's buffers the caller holds, and the buffers added beyond `depth` because it held them all.
-#[derive(Default)]
-struct Ledger {
-    held: AtomicUsize,
-    extra: AtomicUsize,
 }
 
 impl Staged {
@@ -342,16 +336,24 @@ impl Staged {
     }
 }
 
+impl std::fmt::Debug for Staged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Staged")
+            .field("ticket", &self.ticket)
+            .field("extents", &self.extents())
+            .field("read_bytes", &self.read_bytes)
+            .field("read_time", &self.read_time)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for Staged {
     fn drop(&mut self) {
         if let Some(b) = self.buf.take() {
+            // The buffer is back in the ring before the count says so, so a caller that sees a free slot finds it.
+            let _ = self.back.send(b);
             if self.handed {
-                self.ledger.held.fetch_sub(1, Ordering::AcqRel);
-            }
-            // A buffer added while the caller held every one is let go, so the read-ahead returns to `depth`.
-            let extra = self.ledger.extra.fetch_update(Ordering::AcqRel, Ordering::Acquire, |e| e.checked_sub(1));
-            if extra.is_err() {
-                let _ = self.back.send(b);
+                self.held.fetch_sub(1, Ordering::AcqRel);
             }
         }
     }
@@ -367,8 +369,7 @@ pub struct Streamer {
     requests: Option<Sender<Request>>,
     ready: Option<Receiver<io::Result<Staged>>>,
     reader: Option<JoinHandle<()>>,
-    free_tx: Sender<AlignedBuf>,
-    ledger: Arc<Ledger>,
+    held: Arc<AtomicUsize>,
     depth: usize,
     stop: Arc<AtomicBool>,
     read: Arc<AtomicU64>,
@@ -398,22 +399,14 @@ impl Streamer {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let read = Arc::new(AtomicU64::new(0));
-        let ledger = Arc::new(Ledger::default());
-        let ring = Ring {
-            ready: ready_tx,
-            free_tx: free_tx.clone(),
-            free_rx,
-            stop: Arc::clone(&stop),
-            read: Arc::clone(&read),
-            ledger: Arc::clone(&ledger),
-        };
+        let held = Arc::new(AtomicUsize::new(0));
+        let ring = Ring { ready: ready_tx, free_tx, free_rx, stop: Arc::clone(&stop), read: Arc::clone(&read), held: Arc::clone(&held) };
         let reader = thread::Builder::new().name("weights-reader".into()).spawn(move || reader_loop(files, req_rx, ring))?;
         Ok(Streamer {
             requests: Some(req_tx),
             ready: Some(ready_rx),
             reader: Some(reader),
-            free_tx,
-            ledger,
+            held,
             depth,
             stop,
             read,
@@ -440,7 +433,7 @@ impl Streamer {
         self.read.load(Ordering::Acquire)
     }
 
-    /// Queues a unit (its extents) for reading and returns its ticket. Units arrive from `next` in request order.
+    /// Queues a unit (its extents) for reading and returns its ticket. Units arrive from `next_unit` in request order.
     pub fn request(&mut self, extents: &[Extent]) -> io::Result<u64> {
         if let Some(e) = extents.iter().find(|e| e.offset.checked_add(e.len).is_none_or(|end| end > self.file_len)) {
             return Err(io::Error::new(
@@ -458,29 +451,35 @@ impl Streamer {
         self.pending += 1;
         Ok(ticket)
     }
-}
 
-impl Iterator for Streamer {
-    type Item = io::Result<Staged>;
+    /// Units taken with `next_unit` and not yet dropped (on any thread).
+    pub fn held(&self) -> usize {
+        self.held.load(Ordering::Acquire)
+    }
 
-    /// The oldest requested unit, waiting for its reads; None when nothing is pending. A caller that holds every buffer
-    /// of the ring (`depth` units, or all it collected) and asks for another gets one more buffer rather than a wait
-    /// that could never end; the extra buffers are let go as the units are dropped.
-    fn next(&mut self) -> Option<io::Result<Staged>> {
+    /// The oldest requested unit, waiting for its reads; None when nothing is pending. While the caller holds every
+    /// buffer of the ring (`depth` units taken and not dropped) the reader can read nothing more, so instead of a wait
+    /// that from the holder's own thread would never end, this returns `WouldBlock` and the unit stays pending: drop a
+    /// unit (or let the thread holding it drop it) and ask again. Not an `Iterator`, so that `collect` cannot hold every
+    /// buffer and loop on the refusals.
+    pub fn next_unit(&mut self) -> Option<io::Result<Staged>> {
         if self.pending == 0 {
             return None;
         }
-        self.pending -= 1;
-        let buffers = self.depth + self.ledger.extra.load(Ordering::Acquire);
-        if self.ledger.held.load(Ordering::Acquire) >= buffers {
-            self.ledger.extra.fetch_add(1, Ordering::AcqRel);
-            let _ = self.free_tx.send(AlignedBuf::new(0));
+        // `held` only falls behind `next_unit`'s back (a drop sends its buffer back before it counts down), so below
+        // `depth` a buffer is free, being filled or ready, and the wait below ends.
+        if self.held.load(Ordering::Acquire) >= self.depth {
+            return Some(Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!("all {} buffers of the ring are held: drop a unit before taking another", self.depth),
+            )));
         }
+        self.pending -= 1;
         let got = self.ready.as_ref().and_then(|r| r.recv().ok());
         Some(match got {
             Some(Ok(mut unit)) => {
                 unit.handed = true;
-                self.ledger.held.fetch_add(1, Ordering::AcqRel);
+                self.held.fetch_add(1, Ordering::AcqRel);
                 Ok(unit)
             }
             Some(Err(e)) => Err(e),
@@ -509,11 +508,11 @@ struct Ring {
     free_rx: Receiver<AlignedBuf>,
     stop: Arc<AtomicBool>,
     read: Arc<AtomicU64>,
-    ledger: Arc<Ledger>,
+    held: Arc<AtomicUsize>,
 }
 
 fn reader_loop(mut files: Vec<SectorFile>, requests: Receiver<Request>, ring: Ring) {
-    let Ring { ready, free_tx, free_rx, stop, read, ledger } = ring;
+    let Ring { ready, free_tx, free_rx, stop, read, held } = ring;
     while let Ok(Request { ticket, plan }) = requests.recv() {
         if stop.load(Ordering::Acquire) {
             return;
@@ -541,7 +540,7 @@ fn reader_loop(mut files: Vec<SectorFile>, requests: Receiver<Request>, ring: Ri
                 plan,
                 buf: Some(buf),
                 back: free_tx.clone(),
-                ledger: Arc::clone(&ledger),
+                held: Arc::clone(&held),
                 handed: false,
             }),
             Err(e) => {

@@ -157,10 +157,14 @@ impl<'a> SwarmScheduler<'a> {
     /// The smallest number of agents at which reading the whole of `layer` is strictly cheaper than reading the
     /// experts they are expected to be routed to, if every agent picks `experts_used` distinct experts uniformly at
     /// random (expected distinct experts: E · (1 − (1 − k/E)ⁿ)). None for a dense model, or when the sweep never wins
-    /// within `max_agents`. The routed reads are estimated from the sweep's own plan, as what they save and what they
-    /// add: the bytes of the experts expected unrouted saved, and a request added per routed expert slice whose lower
-    /// neighbour is not routed too. (Written as the difference, both vanish together as every expert gets routed, so
-    /// rounding cannot make the sweep look strictly cheaper where it only ties.)
+    /// within `max_agents`. The routed reads are estimated against the sweep's own plan, as what they save and what
+    /// they add: the bytes of the experts expected unrouted saved, and a request added per routed expert slice whose
+    /// lower neighbour is not routed (E · slices · covered · unrouted). Both carry the share expected unrouted, so they
+    /// vanish together as every expert gets routed and rounding cannot make the sweep look strictly cheaper where it
+    /// only ties. The estimate leaves out the few requests a layer's shared tensors add when unrouted slices cut them
+    /// off from each other (in llama.cpp's name order they sit on both sides of the stacked expert tensors), since they
+    /// merge back into one sweep exactly when every expert is routed, and the sector rounding of each gap (an unrouted
+    /// slice saves only its whole sectors, which matters for slices of a few sectors).
     pub fn crossover_agents(&self, layer: u32, max_agents: u32) -> Option<u32> {
         let e = self.index.experts;
         let k = self.index.experts_used.min(e);
@@ -176,9 +180,7 @@ impl<'a> SwarmScheduler<'a> {
         for n in 1..=max_agents {
             let p_unused = (1.0 - k / e).powi(n as i32);
             let covered = 1.0 - p_unused;
-            // The spans' difference first (exact in integers), so a vanishing boundary count is not rounded up by it.
-            let fewer_in_sweep = whole.reads.spans as f64 - shared.spans as f64;
-            let added = (slices * e * covered * p_unused - fewer_in_sweep).max(0.0);
+            let added = slices * e * covered * p_unused;
             let saved = p_unused * expert_part / self.cost.bytes_per_sec;
             if added * self.cost.sec_per_request > saved {
                 return Some(n);

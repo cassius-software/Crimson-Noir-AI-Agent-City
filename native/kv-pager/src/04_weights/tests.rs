@@ -52,6 +52,10 @@ fn moe_ff(layers: u32, experts: u64, alignment: u64, ff: u64) -> Vec<u8> {
     }
     tensors.push(t("output_norm.weight", &[256], F32));
     tensors.push(t("output.weight", &[256, 50], Q6_K));
+    moe_file(layers, experts, alignment, &tensors)
+}
+
+fn moe_file(layers: u32, experts: u64, alignment: u64, tensors: &[Tensor]) -> Vec<u8> {
     let meta = [
         ("general.architecture", Meta::Str("qwen3moe".into())),
         ("general.alignment", Meta::U32(alignment as u32)),
@@ -60,7 +64,24 @@ fn moe_ff(layers: u32, experts: u64, alignment: u64, ff: u64) -> Vec<u8> {
         ("qwen3moe.expert_used_count", Meta::U32(2)),
         ("tokenizer.ggml.tokens", Meta::Strs((0..50).map(|i| format!("tok{i}")).collect())),
     ];
-    gguf(&meta, &tensors, alignment)
+    gguf(&meta, tensors, alignment)
+}
+
+/// One layer laid out as llama.cpp's converter writes a block, in name order: the shared tensors fall on both sides
+/// of the stacked expert tensors (attn_*, ffn_down_exps, ffn_gate_exps, ffn_gate_inp, ffn_norm, ffn_up_exps).
+fn moe_name_ordered(experts: u64, ff: u64) -> Vec<u8> {
+    let mut tensors = vec![
+        t("blk.0.attn_norm.weight", &[256], F32),
+        t("blk.0.attn_q.weight", &[256, 64], Q4_K),
+        t("blk.0.ffn_down_exps.weight", &[ff, 256, experts], Q8_0),
+        t("blk.0.ffn_gate_exps.weight", &[256, ff, experts], Q4_K),
+        t("blk.0.ffn_gate_inp.weight", &[256, experts], F32),
+        t("blk.0.ffn_norm.weight", &[256], F32),
+        t("blk.0.ffn_up_exps.weight", &[256, ff, experts], Q4_K),
+    ];
+    tensors.insert(0, t("token_embd.weight", &[256, 50], F16));
+    tensors.push(t("output.weight", &[256, 50], Q6_K));
+    moe_file(1, experts, 32, &tensors)
 }
 
 fn dense() -> Vec<u8> {
@@ -235,7 +256,31 @@ fn a_length_field_asking_for_more_than_any_header_is_refused_without_reading_it(
     head[24..32].copy_from_slice(&900_000_000u64.to_le_bytes());
     let f = TempFile::new("long-key", &head);
     std::fs::OpenOptions::new().write(true).open(&f.0).unwrap().set_len(1 << 30).unwrap();
-    assert!(matches!(Gguf::open(&f.0), Err(GgufError::HeaderTooLarge { .. })), "{:?}", Gguf::open(&f.0).err());
+    // Refused with what the header asked for (the key's end), not with the size of a read.
+    match Gguf::open(&f.0) {
+        Err(GgufError::HeaderTooLarge { needed, limit }) => {
+            assert_eq!(limit, MAX_HEADER_BYTES);
+            assert!((900_000_000..900_000_100).contains(&needed), "{needed}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_header_that_fits_under_the_cap_is_read_even_when_four_times_the_last_read_would_not() {
+    // A 64 MiB string, then a 1 MiB one: the reads grow from 4 MiB to just past 64 MiB (where the first string ends),
+    // and four times that is past the cap while the header (65 MiB) is far under it, so the last read is the cap.
+    let meta = [
+        ("general.architecture", Meta::Str("llama".into())),
+        ("a.long", Meta::Str("x".repeat(64 << 20))),
+        ("a.short", Meta::Str("y".repeat(1 << 20))),
+    ];
+    let bytes = gguf(&meta, &[t("blk.0.attn_q.weight", &[256, 4], Q4_K)], 32);
+    let f = TempFile::new("big-header", &bytes);
+    std::fs::OpenOptions::new().write(true).open(&f.0).unwrap().set_len(1 << 30).unwrap();
+    let g = Gguf::open(&f.0).unwrap();
+    assert_eq!(g.tensors.len(), 1);
+    assert!(g.data_start > 65 << 20);
 }
 
 #[test]
@@ -375,13 +420,13 @@ fn the_streamer_hands_back_every_units_exact_bytes_in_request_order_in_either_mo
             s.request(&extents_of(&idx, *k)).unwrap();
         }
         for (i, k) in keys.iter().enumerate() {
-            let staged = s.next().unwrap().unwrap();
+            let staged = s.next_unit().unwrap().unwrap();
             assert_eq!(staged.ticket, i as u64);
             for (j, e) in extents_of(&idx, *k).iter().enumerate() {
                 assert_eq!(staged.extent(j), &bytes[e.offset as usize..e.end() as usize], "{mode:?} {k:?} extent {j}");
             }
         }
-        assert!(s.next().is_none());
+        assert!(s.next_unit().is_none());
     }
 }
 
@@ -395,7 +440,7 @@ fn the_next_unit_is_read_while_the_caller_holds_this_one_and_no_further() {
     for k in &keys {
         s.request(&extents_of(&idx, *k)).unwrap();
     }
-    let first = s.next().unwrap().unwrap();
+    let first = s.next_unit().unwrap().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while s.units_read() < 2 {
         assert!(Instant::now() < deadline, "unit 1 was not read while unit 0 was held");
@@ -410,7 +455,7 @@ fn the_next_unit_is_read_while_the_caller_holds_this_one_and_no_further() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let mut n = 1;
-    for u in s {
+    while let Some(u) = s.next_unit() {
         u.unwrap();
         n += 1;
     }
@@ -418,41 +463,97 @@ fn the_next_unit_is_read_while_the_caller_holds_this_one_and_no_further() {
 }
 
 #[test]
-fn a_caller_that_keeps_every_unit_it_took_is_never_left_waiting_and_the_read_ahead_returns_to_depth() {
+fn a_caller_holding_every_buffer_is_refused_rather_than_left_waiting_and_the_unit_stays_queued() {
     let bytes = moe(4, 8, 32);
     let f = TempFile::new("hold", &bytes);
     let idx = WeightIndex::build(&Gguf::open(&f.0).unwrap()).unwrap();
     let keys: Vec<UnitKey> = idx.units().map(|u| u.key).collect();
-    let mut s = Streamer::open(&f.0, StreamConfig { mode: IoMode::Buffered, depth: 1, threads: 2, merge_gap: 0 }).unwrap();
+    let depth = 2;
+    let mut s = Streamer::open(&f.0, StreamConfig { mode: IoMode::Buffered, depth, threads: 2, merge_gap: 0 }).unwrap();
     for k in &keys {
         s.request(&extents_of(&idx, *k)).unwrap();
     }
-    // `collect` keeps every unit: with one buffer in the ring, the second `next` used to wait forever.
-    let (tx, rx) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        let units: Vec<_> = s.by_ref().collect();
-        tx.send(units.into_iter().map(|u| u.unwrap()).collect::<Vec<_>>()).unwrap();
-        s
-    });
-    let units = rx.recv_timeout(Duration::from_secs(20)).expect("collecting every unit with one buffer returned");
-    let mut s = worker.join().unwrap();
-    assert_eq!(units.len(), keys.len());
-    for (unit, k) in units.iter().zip(&keys) {
-        for (j, e) in extents_of(&idx, *k).iter().enumerate() {
-            assert_eq!(unit.extent(j), &bytes[e.offset as usize..e.end() as usize]);
-        }
+    let mut held: Vec<_> = (0..depth).map(|_| s.next_unit().unwrap().unwrap()).collect();
+    assert_eq!(s.held(), depth);
+    // Asked again and again, the streamer refuses at once (a wait here, on the holder's thread, would never end).
+    for _ in 0..3 {
+        assert_eq!(s.next_unit().unwrap().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
     }
-    drop(units);
-    // Every extra buffer is let go: holding one unit again, the reader reads nothing ahead (depth 1).
-    let before = s.units_read();
-    for k in &keys[..3] {
-        s.request(&extents_of(&idx, *k)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(s.units_read(), depth as u64, "every buffer held: nothing is read ahead");
+    // A unit dropped on another thread gives its buffer back, and the refused unit comes next, in order and whole.
+    let one = held.remove(0);
+    std::thread::spawn(move || drop(one)).join().unwrap();
+    assert_eq!(s.held(), depth - 1);
+    let next = s.next_unit().unwrap().unwrap();
+    assert_eq!(next.ticket, depth as u64);
+    for (j, e) in extents_of(&idx, keys[depth]).iter().enumerate() {
+        assert_eq!(next.extent(j), &bytes[e.offset as usize..e.end() as usize]);
     }
-    let held = s.next().unwrap().unwrap();
-    std::thread::sleep(Duration::from_millis(150));
-    assert_eq!(s.units_read(), before + 1, "one buffer, held by the caller: no read-ahead");
+    drop(next);
     drop(held);
-    assert_eq!(s.by_ref().map(|u| u.unwrap().ticket).collect::<Vec<_>>().len(), 2);
+    assert_eq!(s.held(), 0);
+    let mut n = depth + 1;
+    while let Some(u) = s.next_unit() {
+        assert_eq!(u.unwrap().ticket, n as u64);
+        n += 1;
+    }
+    assert_eq!(n, keys.len());
+}
+
+#[test]
+fn units_dropped_on_other_threads_while_the_owner_asks_never_hang_it_nor_let_the_reader_past_the_ring() {
+    let bytes = moe(4, 8, 32);
+    let f = TempFile::new("relay", &bytes);
+    let idx = WeightIndex::build(&Gguf::open(&f.0).unwrap()).unwrap();
+    let keys: Vec<UnitKey> = idx.units().map(|u| u.key).collect();
+    let depth = 3;
+    let units = 600;
+    let wanted: Vec<Vec<Extent>> = (0..units).map(|i| extents_of(&idx, keys[i % keys.len()])).collect();
+    let mut s = Streamer::open(&f.0, StreamConfig { mode: IoMode::Buffered, depth, threads: 2, merge_gap: 0 }).unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let owner = std::thread::spawn(move || {
+        let (pass_tx, pass_rx) = std::sync::mpsc::channel::<Staged>();
+        // The consumer checks each unit on its own thread and drops it there, sometimes at once, sometimes after a yield.
+        let consumer = std::thread::spawn(move || {
+            let mut n = 0u64;
+            for unit in pass_rx {
+                for (j, e) in wanted[unit.ticket as usize].iter().enumerate() {
+                    assert_eq!(unit.extent(j), &bytes[e.offset as usize..e.end() as usize], "unit {}", unit.ticket);
+                }
+                if n.is_multiple_of(3) {
+                    std::thread::yield_now();
+                }
+                n += 1;
+            }
+            n
+        });
+        for i in 0..units {
+            s.request(&extents_of(&idx, keys[i % keys.len()])).unwrap();
+        }
+        let (mut taken, mut refused) = (0u64, 0u64);
+        while let Some(got) = s.next_unit() {
+            match got {
+                Ok(unit) => {
+                    assert_eq!(unit.ticket, taken);
+                    taken += 1;
+                    pass_tx.send(unit).unwrap();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    refused += 1;
+                    std::thread::yield_now();
+                }
+                Err(e) => panic!("{e}"),
+            }
+            assert!(s.held() <= depth);
+            assert!(s.units_read() <= taken + depth as u64, "the reader read past the ring");
+        }
+        drop(pass_tx);
+        done_tx.send((taken, refused, consumer.join().unwrap())).unwrap();
+    });
+    let (taken, _refused, checked) = done_rx.recv_timeout(Duration::from_secs(60)).expect("the owner never hung");
+    owner.join().unwrap();
+    assert_eq!((taken, checked), (units as u64, units as u64));
 }
 
 #[test]
@@ -466,7 +567,7 @@ fn a_request_outside_the_file_is_refused_and_dropping_the_streamer_mid_stream_re
     for _ in 0..6 {
         s.request(&[Extent { offset: 0, len }]).unwrap();
     }
-    let held = s.next().unwrap().unwrap();
+    let held = s.next_unit().unwrap().unwrap();
     assert_eq!(held.extent(0), &bytes[..]);
     drop(s); // the reader is blocked waiting for `held`'s buffer: it must still stop
     drop(held);
@@ -550,21 +651,24 @@ fn few_agents_read_only_their_experts_and_many_read_the_layer_in_one_sweep() {
 #[test]
 fn where_every_expert_slice_costs_more_than_a_request_the_sweep_is_never_strictly_cheaper() {
     // Slices of 73,728 B and more; on any drive moving less than that in one request's time, skipping an unrouted
-    // expert always pays, so the estimate must say never (it used to find a crossover in the last bit of rounding).
-    let bytes = moe_ff(1, 64, 32, 512);
-    let idx = WeightIndex::build(&parse(&bytes)).unwrap();
-    let smallest = (0..64).flat_map(|e| idx.unit(UnitKey::Expert { layer: 0, expert: e }).unwrap().extents.clone()).map(|x| x.len).min().unwrap();
-    assert_eq!(smallest, 73_728);
-    let none = |_: UnitKey| false;
-    for i in 0..20 {
-        for j in 1..20 {
-            let bytes_per_sec = 0.5e9 + f64::from(i) * 0.2e9;
-            let sec_per_request = f64::from(j) / 20.0 * smallest as f64 / bytes_per_sec;
-            let s = SwarmScheduler::new(&idx, IoCost { bytes_per_sec, sec_per_request }, 0);
-            // 4,096 agents leave e^-128 of the experts unrouted: well inside the rounding that used to decide.
-            assert_eq!(s.crossover_agents(0, 1 << 12), None, "{bytes_per_sec} B/s, {sec_per_request} s");
-            let all_but_one = Route { agent: 0, experts: (1..64).collect() };
-            assert_eq!(s.plan_layer(0, &[all_but_one], &none).regime, Regime::RoutedExperts);
+    // expert always pays, so the estimate must say never (it used to find a crossover in the last bit of rounding, and
+    // in name order, where the shared tensors are two spans and the whole layer one, in the span count).
+    for (layout, bytes) in [("written order", moe_ff(1, 64, 32, 512)), ("name order", moe_name_ordered(64, 512))] {
+        let idx = WeightIndex::build(&parse(&bytes)).unwrap();
+        let slices = (0..64).flat_map(|e| idx.unit(UnitKey::Expert { layer: 0, expert: e }).unwrap().extents.clone());
+        let smallest = slices.map(|x| x.len).min().unwrap();
+        assert_eq!(smallest, 73_728);
+        let none = |_: UnitKey| false;
+        for i in 0..20 {
+            for j in 1..20 {
+                let bytes_per_sec = 0.5e9 + f64::from(i) * 0.2e9;
+                let sec_per_request = f64::from(j) / 20.0 * smallest as f64 / bytes_per_sec;
+                let s = SwarmScheduler::new(&idx, IoCost { bytes_per_sec, sec_per_request }, 0);
+                // 4,096 agents leave e^-128 of the experts unrouted: well inside the rounding that used to decide.
+                assert_eq!(s.crossover_agents(0, 1 << 12), None, "{layout}: {bytes_per_sec} B/s, {sec_per_request} s");
+                let all_but_one = Route { agent: 0, experts: (1..64).collect() };
+                assert_eq!(s.plan_layer(0, &[all_but_one], &none).regime, Regime::RoutedExperts, "{layout}");
+            }
         }
     }
 }

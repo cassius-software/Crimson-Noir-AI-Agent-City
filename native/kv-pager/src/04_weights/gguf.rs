@@ -43,9 +43,11 @@ pub const MAX_HEADER_BYTES: u64 = 256 << 20;
 /// count beyond these is refused rather than allocated for.
 pub const MAX_LAYERS: u32 = 1 << 16;
 pub const MAX_EXPERTS: u32 = 1 << 16;
-/// The most expert slices an index holds (layers × experts × stacked tensors; the largest released models have under
-/// 100,000).
-pub const MAX_EXPERT_SLICES: usize = 1 << 22;
+/// The most expert slices an index holds (layers × experts × stacked tensors: the largest released models have under
+/// 100,000, about 61 layers of 384 experts with three stacked tensors each). A slice costs the index its 16-byte extent,
+/// and at worst (a damaged header that gives every slice an expert of its own) an entry of about 150 bytes, so the cap
+/// keeps such a header to a few tens of MB of index.
+pub const MAX_EXPERT_SLICES: usize = 1 << 18;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GgufError {
@@ -396,22 +398,24 @@ impl Gguf {
         Ok(Gguf { version, alignment, data_start, file_len, meta, tensors })
     }
 
-    /// Reads a GGUF file's header: the first 4 MiB, then four times more until the header fits (a vocabulary of a
-    /// quarter of a million tokens is a few MiB), never more than `MAX_HEADER_BYTES`.
+    /// Reads a GGUF file's header: the first 4 MiB, then four times more (at least to the end of what the last read
+    /// cut off) until the header fits (a vocabulary of a quarter of a million tokens is a few MiB), never more than
+    /// `MAX_HEADER_BYTES`: a header that asks for more is refused with the size it asked for.
     pub fn open(path: &Path) -> Result<Self, GgufError> {
         let mut file = File::open(path)?;
         let file_len = file.metadata()?.len();
         let mut want = (4u64 << 20).min(file_len);
         loop {
-            if want > MAX_HEADER_BYTES {
-                return Err(GgufError::HeaderTooLarge { needed: want, limit: MAX_HEADER_BYTES });
-            }
             let mut prefix = Vec::with_capacity(want as usize);
             file.seek(SeekFrom::Start(0))?;
             (&mut file).take(want).read_to_end(&mut prefix)?;
             match Gguf::parse(&prefix, file_len) {
                 Err(GgufError::Truncated { at, needed, .. }) if want < file_len && at.saturating_add(needed) <= file_len => {
-                    want = want.saturating_mul(4).max(at + needed).min(file_len);
+                    let end = at + needed;
+                    if end > MAX_HEADER_BYTES {
+                        return Err(GgufError::HeaderTooLarge { needed: end, limit: MAX_HEADER_BYTES });
+                    }
+                    want = want.saturating_mul(4).min(MAX_HEADER_BYTES).max(end).min(file_len);
                 }
                 Err(GgufError::Truncated { at, needed, .. }) => return Err(GgufError::Truncated { at, needed, file_len }),
                 other => return other,
