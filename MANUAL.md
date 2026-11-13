@@ -4282,11 +4282,13 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
   place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
   release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
-  attempt picked: such a re-run turns red when a newer commit is green, so someone runs the workflow by hand.
+  attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub cannot
+  say), so someone runs the workflow by hand.
 - **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
   `current.json` holds it, so the release always has one of the two (`gh release upload --clobber` deletes the old
-  file before it uploads the new one). A commit counts as published only when the release holds exactly what its
-  record says and the notes name it; otherwise the next run builds it again.
+  file before it uploads the new one; a staged copy left alone by a stopped run goes back up as `current.json` before
+  anything replaces it). A commit counts as published only when the release holds exactly what its record says and
+  the notes name it; otherwise the next run builds it again.
 - **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
   four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
   commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
@@ -4295,9 +4297,9 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   make one at a commit whose workflow files match main's tip; so when a move is refused, the release is set on a
   stand-in tag, `current-next`, while `current` is made again, then set back (its download addresses answer 404 for
   those few seconds; the release is never on a tag being deleted, which would turn it into a draft). A run that stops
-  halfway leaves the release on `current-next`; the next run sets it back on `current` without ever deleting an
-  existing `current`, and if the stopped run had already deleted it, makes it again as soon as GitHub allows (once the
-  commit has main's tip's workflow files). When GitHub refuses the stand-in as well (a later commit on main changed a
+  halfway leaves the release on `current-next`; the next run sets it back on `current` (an existing `current` is not
+  deleted for this, and if the stopped run had already deleted it, it is made again as soon as GitHub allows, once
+  the commit has main's tip's workflow files), then moves the tag as usual. When GitHub refuses the stand-in as well (a later commit on main changed a
   workflow), the tag stays where it was, the files are published all the same, and the notes say where the tag and
   GitHub's source code archives are; the next publish tries again.
 - **Checking a download.** `sha256sum --check --ignore-missing SHA256SUMS` in the folder you downloaded into

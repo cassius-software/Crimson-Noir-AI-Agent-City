@@ -188,7 +188,7 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
       }
       if (sub === 'delete-asset') {
         assert.ok(argv.includes('--yes'))
-        rel.assets.delete(argv[3])
+        if (!rel.assets.delete(argv[3])) return { ok: false, out: '', err: `asset ${argv[3]} not found in release current` }
         return ok('')
       }
       if (sub === 'edit') {
@@ -533,7 +533,7 @@ test('it stops, writing nothing, when it cannot read the release\'s current.json
     assert.throws(() => c.publish({ media, stage: join(t.dir, 's3'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .*, which the release holds, with .*: nothing was published/)
     // And when GitHub cannot say whether the commit is on main, it stops rather than guess.
     gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c2}...`) ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
-    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3b'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .* with main's tip .*: nothing was picked or published/)
+    assert.throws(() => c.publish({ media, stage: join(t.dir, 's3b'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /GitHub could not compare .* with main's tip .*, so whether it is on main is unknown/)
     gh.s.fail = null
     assert.equal(gh.s.writes.length, writes, 'nothing written')
     assert.ok(gh.s.release?.assets.has('Crimson.Noir.Agent.City_1.0.0-stable-beta_arm64.deb'), 'linux-arm64\'s last file is still there')
@@ -690,6 +690,62 @@ test('tag steps GitHub half-answers: a make whose answer was lost counts once th
   } finally { t.done() }
 })
 
+test('a stand-in left at the very commit, which tidying could not delete, is never taken for GitHub\'s leave: the swap deletes it first, and when GitHub then refuses, current stays', () => {
+  const t = scratch()
+  try {
+    const [x, y, z] = [commitOf(21), commitOf(22), commitOf(23)]
+    const gh = fakeGitHub([commitOf(20), x])
+    c.publish({ media: artifacts(join(t.dir, 'm0'), allBuilt('a')), stage: join(t.dir, 's0'), sha: x, repo: REPO, log: quiet }, gh.gh)
+    gh.s.history.push(y)
+    gh.s.workflows[y] = 'w1'
+    // A first run for y makes the stand-in, then cannot set the release on it: the release stays on current at x.
+    gh.s.fail = (argv) => (argv.includes('tag_name=current-next') ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('b')), stage: join(t.dir, 's1'), sha: y, repo: REPO, log: quiet, wait: 0 }, gh.gh), /set the release on the tag current-next/)
+    assert.deepEqual([...gh.s.refs.entries()].sort(), [['current', x], ['current-next', y]])
+    // z changes a workflow again and has not passed ci; the next run's tidy fails once to read the stand-in.
+    gh.s.history.push(z)
+    gh.s.workflows[z] = 'w2'
+    let once = true
+    gh.s.fail = (argv) => (once && argv[argv.length - 1].endsWith('git/ref/tags/current-next') ? ((once = false), { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' }) : null)
+    const r = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: y, repo: REPO, log: quiet, wait: 0 }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.tag, { at: x, how: 'refused' })
+    assert.deepEqual([...gh.s.refs.entries()], [['current', x]], 'current was never deleted; the stand-in is gone')
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.equal(gh.s.everDraft, false)
+  } finally { t.done() }
+})
+
+test('two record uploads failing in a row never leave the release without one: a staged copy left alone goes back up as current.json before anything replaces it; a delete whose answer was lost counts once the file is gone', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([commitOf(0), c1, c2, c3], { green: [c1, c2, c3] })
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    gh.s.failUpload = (name) => name === 'current.json'
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload current\.json/)
+    assert.deepEqual(['current.json', 'current.next.json'].map((n) => gh.s.release?.assets.has(n)), [false, true])
+    gh.s.failUpload = (name) => name === 'current.next.json'
+    const noArm = allBuilt('c')
+    delete noArm['matrix-linux-arm64']
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm3'), noArm), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload current\.next\.json/)
+    gh.s.failUpload = null
+    assert.ok(gh.s.release?.assets.has('current.json'), 'the record survived')
+    assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c2)
+    // The next run finishes, linux-arm64 keeping c2's file; deleting the staged copy loses its answer once.
+    let lost = true
+    const flaky: Gh = (argv) => {
+      if (lost && argv[1] === 'delete-asset' && argv[3] === 'current.next.json') { lost = false; gh.gh(argv); return { ok: false, out: '', err: 'gh: connection reset' } }
+      return gh.gh(argv)
+    }
+    const r = c.publish({ media: artifacts(join(t.dir, 'm4'), noArm), stage: join(t.dir, 's4'), sha: c3, repo: REPO, log: quiet, wait: 0 }, flaky)
+    assert.equal(r.status, 'published')
+    assert.equal(r.plan.state.targets['linux-arm64'].commit, c2)
+    assert.ok(gh.s.release?.assets.has('Crimson.Noir.Agent.City_1.0.0-stable-beta_arm64.deb'))
+    assert.ok(!gh.s.release?.assets.has('current.next.json'))
+  } finally { t.done() }
+})
+
 test('a re-run of the failed jobs, which keeps an earlier attempt\'s pick, fails when a newer commit on main is green, so someone runs the workflow by hand', () => {
   const t = scratch()
   const err: string[] = []
@@ -700,10 +756,19 @@ test('a re-run of the failed jobs, which keeps an earlier attempt\'s pick, fails
     const gh = fakeGitHub([c1, c2], { green: [c1, c2] })
     const run = (sha: string, dir: string, extra: string[]) => c.main(['publish', '--repo', REPO, '--media', artifacts(join(t.dir, dir), allBuilt(dir)), '--sha', sha, '--stage', join(t.dir, `s-${dir}`), ...extra], gh.gh)
     assert.equal(run(c1, 'a', ['--reused-pick']), 1)
-    assert.match(err.splice(0).join('\n'), new RegExp(`::error::this re-run kept the commit an earlier attempt picked, ${c1}; ${c2} is newer and ci passed on it`))
+    assert.match(err.splice(0).join('\n'), new RegExp(`::error::this re-run kept the commit an earlier attempt picked, ${c1}, and published it; ${c2} is newer and ci passed on it`))
     assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c1, 'what it built is still published')
+    // GitHub not answering the comparison is said in red too, not taken for "nothing newer".
+    // (Only once this run has written its notes: the publish itself asks the same question first.)
+    const mark = gh.s.calls.length
+    gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c1}...${c2}`) && gh.s.calls.slice(mark).some((a) => a[1] === 'edit') ? { ok: false, out: '', err: 'gh: You have exceeded a secondary rate limit (HTTP 403)' } : null)
+    assert.equal(run(c1, 'a2', ['--reused-pick']), 1)
+    assert.match(err.splice(0).join('\n'), new RegExp(`::error::this re-run kept .*; GitHub could not compare that with ${c2}, the newest commit on main ci passed on \\(no answer\\)`))
+    gh.s.fail = null
     assert.equal(run(c2, 'b', ['--reused-pick']), 0, 'the newest green: nothing to say')
-    assert.equal(run(c1, 'c', []), 0, 'a first attempt: stale, and quiet')
+    assert.equal(run(c1, 'c', ['--reused-pick']), 0, 'stale, but the release already holds the newest green commit: nothing to say')
+    assert.deepEqual(err.splice(0), [])
+    assert.equal(run(c1, 'd', []), 0, 'a first attempt: stale, and quiet')
   } finally {
     console.error = error
     t.done()

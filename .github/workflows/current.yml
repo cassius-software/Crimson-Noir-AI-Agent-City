@@ -19,8 +19,8 @@
 #   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
 #   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
 #   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
-#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red when a newer commit is
-#   green: retry a failed run with Run workflow (or "Re-run all jobs") instead.
+#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then
+#   holds the newest green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
 # - It makes no numbered release. Its only tags are `current`, which it puts at each commit it publishes, and a
 #   stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (tools/build/current.mjs says
 #   why); when GitHub refuses the stand-in too, `current` stays where it was and the notes say so. The release is a
@@ -60,9 +60,10 @@ on:
 permissions: {}
 
 # One publication at a time, never cancelled halfway; a run that comes while another waits takes its place, and pick
-# then builds the newest green commit, whichever run it is. A ci that did not pass on main, or a run by hand anywhere
-# but main, publishes nothing, so its run waits in a group of its own and never takes a real one's place. A pull
-# request's dry runs have a group of their own, and a newer push to it cancels the older run.
+# then builds the newest green commit, whichever run it is (except a re-run of failed jobs, which keeps its earlier
+# pick; publish then turns red unless the release holds the newest green commit). A ci that did not pass on main, or
+# a run by hand anywhere but main, publishes nothing, so its run waits in a group of its own and never takes a real
+# one's place. A pull request's dry runs have a group of their own, and a newer push to it cancels the older run.
 concurrency:
   group: >-
     ${{ (github.event_name == 'pull_request' && format('current-pr-{0}', github.event.pull_request.number)) ||

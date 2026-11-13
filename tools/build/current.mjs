@@ -17,7 +17,8 @@
  *   and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
  *   exits 1 rather than pass the commit over. `--strict` exits 1 when refused (not on main, nothing green), for a
  *   run by hand.
- * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--summary <file>] [--dry-run]`:
+ * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>]
+ *   [--summary <file>] [--dry-run] [--reused-pick]`:
  *   <dir> holds the run's artifacts, one folder each (`matrix-<id>`, and `windows-installer-*`, `windows-msi-*`,
  *   `windows-portable-*` for windows-x64, which counts as built only with all three); a target whose artifact is
  *   missing failed its job, whose uploads come after its gates (a UEFI job's bake twice and QEMU boot). It asks again
@@ -28,7 +29,9 @@
  *   (every built file), deletes the files no target names any more and rewrites the notes. A target that failed keeps
  *   the files of the last commit it built while the release still holds them byte for byte, and the notes say so; the
  *   exit is then 1, except for the iOS build (best effort, as in build-matrix.yml). `--reused-pick` (a re-run of the
- *   failed jobs, which keeps an earlier attempt's pick) exits 1 when a newer commit on main is green.
+ *   failed jobs, which keeps an earlier attempt's pick) exits 1 unless the release then holds the newest green commit
+ *   on main, or GitHub says it holds a newer one. `--stage` is the folder the files are copied into, named as GitHub
+ *   keeps them, before they go up (a fresh temporary folder, removed afterwards, when not given).
  *   `--source` is a checkout of the built commit: its package.json gives the version the notes name, and
  *   crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with the x86-64 media, as
  *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan and the notes, and writes nothing
@@ -39,9 +42,9 @@
  *   `current` is made again there, the release goes back onto it and the stand-in is deleted: the release is never on
  *   a tag being deleted (that would turn it into a draft, and publishing it again would notify everyone watching), and
  *   for those few seconds its download addresses answer 404. A run that stops halfway leaves the release on
- *   `current-next`; the next run sets it back on `current`, never deleting an existing `current`, and makes `current`
+ *   `current-next`; the next run sets it back on `current` (an existing `current` is not deleted for this; it is made
  *   only if the stopped run had already deleted it, which GitHub allows once the commit has main's tip's workflow
- *   files. When GitHub refuses the stand-in as well (a later commit on main changed a workflow), the tag stays where
+ *   files), then moves the tag as usual. When GitHub refuses the stand-in as well (a later commit on main changed a workflow), the tag stays where
  *   it was, the files are still published, and the notes and current.json say where the tag is; the next publish
  *   tries again.
  * GitHub is reached only through the `gh` command line (GH_TOKEN, GH_REPO), run with argument vectors, never a shell.
@@ -329,7 +332,7 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
   if (sha === tip) return true
   const { r, status } = compared(gh, repo, sha, tip, wait)
   if (notFound(r)) return false
-  if (status === null) throw new Error(`GitHub could not compare ${sha} with main's tip ${tip} (${r.err.trim() || 'no answer'}): nothing was picked or published`)
+  if (status === null) throw new Error(`GitHub could not compare ${sha} with main's tip ${tip} (${r.err.trim() || 'no answer'}), so whether it is on main is unknown`)
   return status === 'ahead'
 }
 
@@ -441,11 +444,20 @@ export function tagAt(gh, repo, name) {
  */
 export function placeTag(gh, repo, sha, release, { log = console.log, wait = 15000 } = {}) {
   const ref = (name) => `repos/${repo}/git/refs/tags/${name}`
-  // A make whose first try landed though its answer was lost comes back "already exists" on the next try: the tag is
-  // read before that counts as a failure.
+  // A make whose try landed though its answer was lost comes back "already exists" on the next try: only then is the
+  // tag read, and taken as made when it is at the commit. A tag that was there before this call is never taken for
+  // GitHub's leave to make one now.
   const make = (name, at) => {
-    const r = attempt(gh, ['api', '-X', 'POST', '-f', `ref=refs/tags/${name}`, '-f', `sha=${at}`, `repos/${repo}/git/refs`], `make the tag ${name}`, wait)
-    return !r.ok && /already exists/i.test(r.err) && tagAt(gh, repo, name) === at ? { ...r, ok: true } : r
+    let r
+    let lost = false
+    for (let i = 1; i <= 3; i++) {
+      r = gh(['api', '-X', 'POST', '-f', `ref=refs/tags/${name}`, '-f', `sha=${at}`, `repos/${repo}/git/refs`])
+      if (r.ok) return r
+      if (answered(r)) return lost && /already exists/i.test(r.err) && tagAt(gh, repo, name) === at ? { ...r, ok: true } : r
+      lost = true
+      if (i < 3) { console.error(`make the tag ${name} failed (${r.err.trim()}); trying again (${i}/2)`); pause(wait) }
+    }
+    return r
   }
   // Gone counts as deleted only when GitHub says the tag does not exist and a read agrees; any other answer (a rule
   // that forbids deleting tags, say) throws before anything else is changed.
@@ -501,7 +513,9 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
     return { at: sha, how: 'remade' }
   }
 
-  // The swap through the stand-in. If GitHub refuses the stand-in, nothing has changed and the tag stays.
+  // The swap through the stand-in. If GitHub refuses the stand-in, nothing has changed and the tag stays. A stand-in
+  // still there (tidy only warns) is deleted first, and if that fails the run stops here, with nothing changed.
+  if (tagAt(gh, repo, NEXT) !== null) drop(NEXT)
   const next = make(NEXT, sha)
   if (!next.ok) {
     if (!refused(next)) throw new Error(`make the tag ${NEXT} at ${sha}: ${next.err.trim() || 'failed'}`)
@@ -511,10 +525,16 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
   stand(NEXT)
   release.tag = NEXT
   try { drop(TAG) } catch (e) {
-    // current is still there (a rule that forbids deleting tags, say): the release goes straight back onto it.
-    stand(TAG)
-    release.tag = TAG
-    tidy()
+    // When current is still there (a rule that forbids deleting tags, say), the release goes straight back onto it.
+    // When it may be gone, the release stays on the stand-in: setting it on a missing tag would have GitHub make that
+    // tag at the release's target, and the next run makes it properly.
+    let still = false
+    try { still = tagAt(gh, repo, TAG) !== null } catch { still = false }
+    if (still) {
+      stand(TAG)
+      release.tag = TAG
+      tidy()
+    }
     throw e
   }
   must(make(TAG, sha), `make the tag ${TAG} again at ${sha} (the release is on ${NEXT}; the next run finishes this)`)
@@ -564,7 +584,7 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
     if (s === 'behind' && dryRun) log(`the release holds ${state.commit}, newer than ${sha}: a real publish would stop here; the plan below is as if it did not`)
     else if (s === 'behind') {
       log(`::notice::the release already holds ${state.commit}, newer than ${sha}: nothing was published`)
-      return { status: 'stale', plan: null, tag: null }
+      return { status: 'stale', plan: null, tag: null, held: state.commit }
     }
     else if (s === null && !dryRun) throw new Error(`GitHub could not compare ${state.commit}, which the release holds, with ${sha}: nothing was published`)
     else if (s !== 'ahead' && !dryRun) log(`::warning::GitHub compares ${state.commit} and ${sha} as ${s}; publishing ${sha}, which is on main`)
@@ -590,12 +610,29 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
   writeFileSync(notesFile, p.notes)
   const R = ['--repo', repo]
   const upload = (path, what) => retry(gh, ['release', 'upload', TAG, path, '--clobber', ...R], `upload ${what}`, { wait })
+  // A delete whose answer was lost fails again with "not found" on the next try: the release is read, and a file no
+  // longer there counts as deleted.
+  const removeAsset = (name) => {
+    let r
+    for (let i = 1; i <= 3; i++) {
+      r = gh(['release', 'delete-asset', TAG, name, '--yes', ...R])
+      if (r.ok || !getRelease(gh, repo)?.assets.some((a) => a.name === name)) return
+      if (i < 3) { console.error(`delete ${name} failed (${r.err.trim()}); trying again (${i}/2)`); pause(wait) }
+    }
+    throw new Error(`delete ${name}: ${r.err.trim() || 'failed'}`)
+  }
   const record = `${JSON.stringify(p.state, null, 2)}\n`
   if (!release) {
     retry(gh, ['release', 'create', TAG, '--verify-tag', '--prerelease', '--latest=false', '--title', TITLE, '--notes-file', notesFile, ...R], `gh release create ${TAG}`, { wait })
     // An empty record first, so a first run that stops partway leaves a release whose files the next run can account for.
     writeFileSync(join(stage, STATE), `${JSON.stringify({ schema: 1, tag: TAG, targets: {} })}\n`)
     upload(join(stage, STATE), `an empty ${STATE}`)
+  }
+  // Only the staged copy is left (an earlier run stopped inside current.json's --clobber): it goes back up as
+  // current.json first, with nothing for gh to delete, so the staged copy is never the only record when it is replaced.
+  if (release && release.assets.some((a) => a.name === STAGED) && !release.assets.some((a) => a.name === STATE)) {
+    writeFileSync(join(stage, STATE), `${JSON.stringify(state, null, 2)}\n`)
+    upload(join(stage, STATE), `${STATE} (from ${STAGED})`)
   }
   for (const f of p.uploads) upload(f.path, f.name)
   // The record goes up under its staged name before current.json is replaced, and is deleted once current.json holds
@@ -604,10 +641,10 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
   upload(join(stage, STAGED), STAGED)
   writeFileSync(join(stage, STATE), record)
   upload(join(stage, STATE), STATE)
-  retry(gh, ['release', 'delete-asset', TAG, STAGED, '--yes', ...R], `delete ${STAGED}`, { wait })
+  removeAsset(STAGED)
   writeFileSync(join(stage, SUMS), p.sums)
   upload(join(stage, SUMS), SUMS)
-  for (const n of p.deletes) retry(gh, ['release', 'delete-asset', TAG, n, '--yes', ...R], `delete ${n}`, { wait })
+  for (const n of p.deletes) removeAsset(n)
   retry(gh, ['release', 'edit', TAG, '--title', TITLE, '--notes-file', notesFile, '--prerelease', '--latest=false', ...R], `gh release edit ${TAG}`, { wait })
 
   // What the release now holds is what the plan says: on the tag `current`, every file at its size (and its digest
@@ -641,7 +678,7 @@ export function main(argv, gh = realGh) {
   const [cmd] = argv
   const repo = arg('repo') ?? process.env.GH_REPO
   if (!['pick', 'publish'].includes(cmd) || flag('help')) {
-    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--summary <file>] [--dry-run]\n(GH_REPO names the repository, or --repo owner/name)')
+    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
     return cmd && !flag('help') ? 1 : 0
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo ?? '')) { console.error('::error::GH_REPO (or --repo owner/name) must name the repository'); return 1 }
@@ -663,20 +700,30 @@ export function main(argv, gh = realGh) {
     }, gh)
     if (arg('summary') && r.plan) appendFileSync(arg('summary'), `## The current build${r.status === 'planned' ? ' (dry run: nothing was published)' : ''}\n\n${r.plan.notes}\n`)
     if (!arg('stage')) rmSync(stage, { recursive: true, force: true })
-    // "Re-run failed jobs" keeps pick's answer from the earlier attempt, and its place in the queue can have cancelled
-    // the run waiting for a newer green commit: said in red, so someone runs the workflow by hand.
-    if (flag('reused-pick') && r.status !== 'planned') {
-      const g = newestGreen(gh, repo)
-      if (g && g.sha !== arg('sha') && compare(gh, repo, arg('sha'), g.sha) === 'ahead') {
-        console.error(`::error::this re-run kept the commit an earlier attempt picked, ${arg('sha')}; ${g.sha} is newer and ci passed on it, and its own run may have been cancelled: Actions > current > Run workflow, on main`)
-        return 1
-      }
-    }
+    let code = 0
     if (r.plan?.failed.length) {
       for (const id of r.plan.failed) console.error(`::error::${id} was not built at ${arg('sha')}${r.plan.state.targets[id] ? `; the release keeps its files from ${r.plan.state.targets[id].commit}` : ''}`)
-      return 1
+      code = 1
     }
-    return 0
+    // "Re-run failed jobs" keeps pick's answer from the earlier attempt, and its place in the queue can have cancelled
+    // the run waiting for a newer green commit. Unless the release now holds the newest green commit (or GitHub says
+    // it holds a newer one), that is said in red, so someone runs the workflow by hand; an unanswered question too.
+    if (flag('reused-pick') && r.status !== 'planned') {
+      const held = r.status === 'stale' ? r.held : arg('sha')
+      const by = `this re-run kept the commit an earlier attempt picked, ${arg('sha')}${r.status === 'stale' ? ` (the release already holds ${held})` : ', and published it'}`
+      try {
+        const g = newestGreen(gh, repo)
+        const s = g && g.sha !== held ? compare(gh, repo, held, g.sha) : 'identical'
+        if (s !== 'behind' && s !== 'identical') {
+          console.error(`::error::${by}; ${s === 'ahead' ? `${g.sha} is newer and ci passed on it` : `GitHub could not compare that with ${g.sha}, the newest commit on main ci passed on (${s ?? 'no answer'})`}, and its own run may have been cancelled: Actions > current > Run workflow, on main`)
+          code = 1
+        }
+      } catch (e) {
+        console.error(`::error::${by}; whether a newer commit on main is green could not be checked (${e.message}): Actions > current > Run workflow, on main, if one is`)
+        code = 1
+      }
+    }
+    return code
   } catch (e) {
     console.error(`::error::${e.message}`)
     return 1
