@@ -196,14 +196,18 @@ export function chatSoFar(text: string): string {
 }
 
 /**
- * Sloane's card's small line for what the model in this page is doing for a reply before its first words (the request's
- * own phase, 09_Cognition/inPage.ts): waiting for another answer, its load, or how much of the prompt it has read, so a
- * phone that takes minutes shows that it is working.
+ * Sloane's card's small line for what the model in this page (or the one the app runs itself) is doing for a reply
+ * before its first words (the request's own phase, 09_Cognition/inPage.ts and nativeMind.ts): waiting for another
+ * answer, its first-run check, its load, or how much of the prompt it has read, so a phone that takes minutes shows that
+ * it is working.
  */
 export function phaseLine(phase: string): string {
   const read = /^reading the prompt (\d{1,3})%$/.exec(phase)
   if (read) return `Reading the conversation · ${read[1]}%`
+  const preparing = /^preparing the model in the app (\d{1,3})%$/.exec(phase)
+  if (preparing) return `Preparing the model inside the app · ${preparing[1]}%`
   if (phase === 'loading the model in this page') return 'Loading the model in this page…'
+  if (phase === 'loading the model in the app') return 'Loading the model inside the app…'
   return phase ? phase[0].toUpperCase() + phase.slice(1) : ''
 }
 

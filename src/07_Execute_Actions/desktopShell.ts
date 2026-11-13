@@ -11,10 +11,12 @@
  * It is also the page's way to the model the Windows app's installer puts beside the app (src-tauri/src/model.rs:
  * `app_model` says whether it is there, `app_model_read` reads a piece of it): shellModel and shellModelFetch, which
  * hand App.tsx the same offer and fetch the web copy gets from its site (09_Cognition/siteModel.ts), so the page holds
- * the app's model to its pin exactly as it holds the site's.
+ * the app's model to its pin exactly as it holds the site's. And it is the page's one way to the model the app runs
+ * itself (shellRunner: `native_model`, `native_generate`, `native_stop`), which 09_Cognition/nativeMind.ts asks.
  * What breaks if it is removed? The title bar cannot tell a window from a tab, and has nothing to drive; the Windows
- * app gives auto no GPU figure, and carries a model the page cannot reach.
+ * app gives auto no GPU figure, and carries a model the page cannot reach; the page cannot ask the app's own model.
  */
+import type { NativeHost } from '../09_Cognition/nativeMind.ts'
 import { SITE_DIR, type SiteFetch, type SiteModelOffer, type SiteModelPin } from '../09_Cognition/siteModel.ts'
 
 /** The window commands the title bar uses, as Tauri's `getCurrentWindow()` exposes them. */
@@ -62,16 +64,24 @@ export async function shellGpuMemory(g: object = globalThis, waitMs = GPU_READ_M
   return Array.isArray(answer) && answer.every((b) => typeof b === 'number') ? answer : null
 }
 
+/** The part of Tauri's `core` namespace the page calls: `invoke` (always on `core`, as Tauri expects) and `Channel`. */
+type ShellCore = { invoke(command: string, args?: Record<string, unknown>): Promise<unknown>; Channel?: unknown }
+
+/** Tauri's `core` namespace on the injected global when it has `invoke`, or null. */
+function shellCoreOf(g: object): ShellCore | null {
+  const api = (g as Record<string, unknown>)[SHELL_GLOBAL]
+  const core = typeof api === 'object' && api !== null ? (api as { core?: { invoke?: unknown } }).core : undefined
+  return typeof core === 'object' && core !== null && typeof core.invoke === 'function' ? (core as ShellCore) : null
+}
+
 /** One of the shell's commands, asked on Tauri's `core` as it expects. */
 type ShellInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 /** Tauri's `core.invoke`, bound to `core`, or null in a browser (or a global without it). */
 function shellInvoke(g: object): ShellInvoke | null {
-  const api = (g as Record<string, unknown>)[SHELL_GLOBAL]
-  const core = typeof api === 'object' && api !== null ? (api as { core?: { invoke?: unknown } }).core : undefined
-  if (typeof core !== 'object' || core === null || typeof core.invoke !== 'function') return null
-  const invoke = core.invoke as ShellInvoke
-  return (command, args) => Promise.resolve().then(() => invoke.call(core, command, args))
+  const core = shellCoreOf(g)
+  if (core === null) return null
+  return (command, args) => Promise.resolve().then(() => core.invoke(command, args))
 }
 
 /** What `ask` resolves to within `waitMs`, or null when it is late or throws; it never throws itself. */
@@ -173,4 +183,49 @@ export function shellModelFetch(pin: SiteModelPin, g: object = globalThis, chunk
     }, { highWaterMark: 0 })
     return new Response(body, { status: 200, headers: { 'content-type': 'application/octet-stream', 'content-length': String(pin.bytes) } })
   }
+}
+
+/**
+ * How long an answer's reply waits for its channel's end, ms: Tauri sends the end once the shell lets the channel go,
+ * after its last message; without one (a shell that kept it) the reply is taken anyway.
+ */
+export const DRAIN_MS = 1000
+
+/**
+ * The app's own model runner (src-tauri: `native_model`, `native_generate`, `native_stop`; native/llm), or null where
+ * the global has no `core.invoke` or no `core.Channel` (a browser). An answer's events come back on a Tauri channel
+ * made for it: each is a small JSON message the shell hands straight to the page, never a request the air gap would
+ * see. The request goes as `{ req, onEvent }`, the names the shell's command takes. The command's reply comes back
+ * over the ipc fetch and can overtake the channel's last message, so the answer settles only once the channel has
+ * ended (Tauri hands every earlier message to `onmessage` first, then calls the channel's `cleanupCallback`), or
+ * after DRAIN_MS. Whether the app runs a model at all is the runner's own answer (nativeMind.ts): every shell has
+ * invoke and Channel.
+ */
+export function shellRunner(g: object = globalThis): NativeHost | null {
+  const core = shellCoreOf(g)
+  const Channel = core?.Channel
+  if (core === null || typeof Channel !== 'function') return null
+  const Made = Channel as new () => { onmessage: (message: unknown) => void; cleanupCallback?: () => void }
+  return Object.freeze<NativeHost>({
+    model: () => core.invoke('native_model'),
+    generate: (req, onEvent) => {
+      const channel = new Made()
+      channel.onmessage = onEvent
+      let drained!: () => void
+      const end = new Promise<void>((resolve) => { drained = resolve })
+      const cleanup = channel.cleanupCallback
+      channel.cleanupCallback = function (this: unknown) {
+        try { cleanup?.call(this) } finally { drained() }
+      }
+      const ended = (): Promise<void> => {
+        let t: ReturnType<typeof setTimeout> | undefined
+        return Promise.race([end, new Promise<void>((r) => { t = setTimeout(r, DRAIN_MS) })]).finally(() => clearTimeout(t))
+      }
+      return core.invoke('native_generate', { req, onEvent: channel }).then(
+        (done) => ended().then(() => done),
+        (e: unknown) => ended().then(() => { throw e }),
+      )
+    },
+    stop: (id) => core.invoke('native_stop', { id }),
+  })
 }

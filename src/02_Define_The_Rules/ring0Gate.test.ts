@@ -284,6 +284,10 @@ test('a model is answered through Mind.answer in the providers, their wrappers, 
   // The two that reach a model's own API are named for the router and the in-page runtime only.
   assert.deepEqual(having(/\bclaudeAnswer\b/), ['09_Cognition/claudeApi.ts', '09_Cognition/router.ts'])
   assert.deepEqual(having(/\bcreateChatCompletion\b/), ['09_Cognition/wllamaRuntime.ts'])
+  // The model the app runs itself is reached through the shell's three commands in one place (desktopShell.ts
+  // shellRunner), which only its mind (nativeMind.ts) and the host that hands it over use.
+  assert.deepEqual(having(/\bnative_(?:model|generate|stop)\b/), ['07_Execute_Actions/desktopShell.ts'])
+  assert.deepEqual(having(/\bshellRunner\b/), ['07_Execute_Actions/desktopShell.ts', 'App.tsx'])
 })
 
 test('the operator tier: every ask passes admitAsk before the gateway and the model; the one answer call is behind the 14A screen; the keeper is built with the vouch', () => {

@@ -79,6 +79,8 @@ test('App: the mind plans by the engine\'s profile, holds the city\'s tier down 
   assert.match(device, /cores: navigator\.hardwareConcurrency \|\| 4, memoryGb: deviceMemory\(\), isolated: canShareMemory\(\), f16: e\.gpuF16,/)
   assert.match(CITY_ROUTER, /busy: \(on, place\) => e\.holdQuality\(on && place \? holdTier\(device\(\), place\.gpu\) : null\),/, 'held while it works, let go after')
   assert.match(CITY_ROUTER, /onPhase: \(text\) => \{ modelPhase = text \},/)
+  // The model the app runs itself (09_Cognition/nativeMind.ts) shows its phase on the same line.
+  assert.match(CITY_ROUTER, /native: \(\) => \(appMind = createNativeMind\(\{\n\s*host: shellRunner\(\),\n\s*maxTokens: [^\n]+\n\s*busy: [^\n]+\n\s*onPhase: \(text\) => \{ modelPhase = text \},\n\s*onFailed: /)
   assert.match(EFFECT, /s\.supplier\.recruiting = hudLine\(recruiter, router\?\.running \?\? 0, activityText\(answering, engine\.speaking, modelPhase \?\? keepLine\)\)/, 'the line the HUD already shows while a model works')
   const activity = between(APP, 'function activityText(', '\n}\n')
   assert.match(activity, /if \(!a\) return model \?/, 'with no answer waiting, what the model is doing')

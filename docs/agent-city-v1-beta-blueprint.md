@@ -397,14 +397,21 @@ lists a text model. The Claude provider answers when chosen with `ask provider c
 earlier in that order. The router test above is now "auto is the provider unless the operator chooses another; each
 provider has its own server and model", and `router.auto.test.ts` proves the looking.
 
-**Extended (a model in the page, after the stable beta).** The router now has six providers (`claude`, `ollama`,
-`llamacpp`, `openai`, `inpage` and `scripted`) with `auto` over them, and `AUTO_ORDER` is `ollama`, `llamacpp`,
+**Extended (a model in the page, after the stable beta).** The router then had six providers (`claude`, `ollama`,
+`llamacpp`, `openai`, `inpage` and `scripted`) with `auto` over them, and `AUTO_ORDER` was `ollama`, `llamacpp`,
 `openai`, `inpage`, `claude`. `inpage` (`09_Cognition/inPage.ts`) answers with a GGUF model file the operator keeps in the page,
 run inside it by wllama 3.8.1 (llama.cpp compiled to WebAssembly, pinned in `third_party/wllama/3.8.1/` and embedded in
 `dist/index.html`); it addresses nothing, so the directive's "packaged quantized local models offline" now also
 holds on a phone with no model server. Auto finds it only when a file is kept and chosen, after the servers on this
 machine and before the gateway; with nothing kept every look reads as it did. Still no model ships with the product:
 the page carries the runtime, and the file is the operator's. The MANUAL's A model in this page has the whole of it.
+
+**Extended (the model the app runs itself, 13 November 2026).** A seventh provider, `native`
+(`09_Cognition/nativeMind.ts`), asks the model an app carries and runs itself (llama.cpp in the app's own process,
+`native/llm`) through the shell's runner, and `AUTO_ORDER` is now `ollama`, `llamacpp`, `openai`, `native`, `inpage`,
+`claude`. Where there is no runner (a browser, the Windows app, an app built before the runner) it lists nothing, so
+every look reads as it did. No app has the runner yet: the page's half is proven against a fake shell that replays
+`native/llm/tests/wire.json`.
 
 ### 8.4 Pings and closed captions
 

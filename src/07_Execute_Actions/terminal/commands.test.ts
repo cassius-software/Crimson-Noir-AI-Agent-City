@@ -1862,7 +1862,7 @@ test('completion: command names, then arguments, as whole lines', () => {
   assert.deepEqual(complete('ask s'), ['ask security:', 'ask server', 'ask shaders:', 'ask stop'])
   assert.equal(complete('ask ').length, SKILL_ARGS.length + 12)
   assert.deepEqual(complete('ask m'), ['ask model'])
-  assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
+  assert.deepEqual(complete('ask provider '), ['ask provider auto', 'ask provider claude', 'ask provider inpage', 'ask provider llamacpp', 'ask provider native', 'ask provider ollama', 'ask provider openai', 'ask provider scripted'])
   assert.deepEqual(complete('ask f'), ['ask file'])
   assert.deepEqual(complete('ask file '), ['ask file forget', 'ask file load', 'ask file log', 'ask file unload'])
   assert.deepEqual(complete('ask file lo'), ['ask file load', 'ask file log'])
@@ -2694,13 +2694,40 @@ test('ask alone over a model running in this page: no server, the runtime and st
   assert.deepEqual((await run('ask', b, []).pending)?.at(-1), { kind: 'err', text: 'ask: this browser cannot run a model in this page (no JSPI)' })
 })
 
+test('ask alone over the model the app runs itself: no server, the file it carries, how it ran the last answer; chosen or found by auto', async () => {
+  const b = unlocked()
+  const runtime = 'the app itself, on the processor, 4 threads, 4096 tokens of context; last answer: 187 prompt tokens (120 kept from the one before) read in 0.3 s, 9 written in 0.8 s (11.0 a second)'
+  b.operator.mind = { server: 'this app', model: 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf', provider: 'native', runtime }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: ['Qwen2.5-0.5B-Instruct-Q4_K_M.gguf'] })
+  const rows = [
+    { kind: 'out', text: 'server    none: the app runs the model' },
+    { kind: 'out', text: 'model     Qwen2.5-0.5B-Instruct-Q4_K_M.gguf' },
+    { kind: 'out', text: `runtime   ${runtime}` },
+    { kind: 'out', text: 'installed Qwen2.5-0.5B-Instruct-Q4_K_M.gguf  (chosen)' },
+  ]
+  assert.deepEqual(await run('ask', b, []).pending, [
+    { kind: 'out', text: 'provider  native: the model this app carries, run by the app itself on this device; nothing is addressed (ask provider ollama|llamacpp|openai|claude for another)' },
+    ...rows,
+  ])
+  // Found by auto: auto's own provider line and the found line, then the same rows (its runtime row never read as the page's).
+  b.operator.mind = { ...b.operator.mind, provider: 'auto' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, auto: 'native: the model this app carries, found ready to run on this device (ask provider native keeps it)', installed: ['Qwen2.5-0.5B-Instruct-Q4_K_M.gguf'] })
+  const found = (await run('ask', b, []).pending) ?? []
+  assert.match(found[0]?.text ?? '', /^provider {2}auto: /)
+  assert.deepEqual(found.slice(1), [{ kind: 'out', text: 'found     native: the model this app carries, found ready to run on this device (ask provider native keeps it)' }, ...rows])
+  // It cannot start: the reason, as the runner gives it.
+  b.operator.mind = { server: 'this app', model: 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf', provider: 'native' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: null, error: "this computer's processor is older than the app's model needs (it lacks AVX2)" })
+  assert.deepEqual((await run('ask', b, []).pending)?.at(-1), { kind: 'err', text: "ask: this computer's processor is older than the app's model needs (it lacks AVX2)" })
+})
+
 test('ask connect: the provider, its address and a key in one line, through the bridge alone; a bare connect is refused; the key never shows', () => {
   const b = unlocked()
   assert.deepEqual(run('ask connect ollama', b, []).lines, [{ kind: 'out', text: 'provider  ollama: connected' }])
   assert.deepEqual(run('ask connect openai http://localhost:1234', b, []).lines, [{ kind: 'out', text: 'provider  openai: connected; server http://localhost:1234' }])
   assert.deepEqual(run('ask connect claude http://localhost:8089 sk-ant-secret', b, []).lines, [{ kind: 'out', text: 'provider  claude: connected; server http://localhost:8089; key ••••' }])
   assert.deepEqual(b.operator.opCalls.filter((c) => c.startsWith('askConnect')), ['askConnect ollama - -', 'askConnect openai http://localhost:1234 -', 'askConnect claude http://localhost:8089 <key>'])
-  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <auto|claude|inpage|llamacpp|ollama|openai|scripted> [<url>] [<key>]'])
+  assert.deepEqual(texts(run('ask connect', b, [])), ['usage: ask connect <auto|claude|inpage|llamacpp|native|ollama|openai|scripted> [<url>] [<key>]'])
   assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-secret'), 'ask connect claude http://localhost:8089 ••••')
   assert.equal(redactForHistory('ask connect ollama http://localhost:11434'), 'ask connect ollama http://localhost:11434')
   // A key typed where the url goes (the url is optional) is dotted too, with anything after it.

@@ -6,9 +6,11 @@
  * card goes to the page's mind with Sloane's framing and the turns so far, streams back screened by the 14A screen (a
  * refused word stops the model and shows nothing), never carries an action line (a conversation never acts), and ends
  * as `none` with the router's reason when no model answers, so the card says so plainly and offers the ways to get one
- * instead of sending scouts. The card reaches the model only through that Chat (never a Mind), App hands it the picker
- * and the browser's refusal, and the brief's rewording never asks while the model this page would answer with is still to
- * be loaded (an answer's stop ends its load, so the 4 s rewording used to kill every load it started).
+ * instead of sending scouts. The card reaches the model only through that Chat (never a Mind), App hands it the picker,
+ * the browser's refusal and why the app's own model couldn't start (in place of the site's and the browser's hints,
+ * only while that model is what answers, and on a computer still with the line about starting a model server), and
+ * the brief's rewording never asks while the model this page, or the app, would answer with is still to be loaded (an
+ * answer's stop ends its load, so the 4 s rewording used to kill every load it started).
  * What breaks if it is removed? Small talk could fall back to the scouts and a flat "not yet", a model's reply could be
  * shown unscreened or act, or the rewording could go back to killing the in-page model while it loads.
  */
@@ -239,6 +241,10 @@ test('the phase line: the prompt read as the conversation with its share, the lo
   assert.equal(phaseLine('reading the prompt 42%'), 'Reading the conversation · 42%')
   assert.equal(phaseLine('reading the prompt 100%'), 'Reading the conversation · 100%')
   assert.equal(phaseLine('loading the model in this page'), 'Loading the model in this page…')
+  // The model the app runs itself (09_Cognition/nativeMind.ts): its first-run check with its share, its load.
+  assert.equal(phaseLine('loading the model in the app'), 'Loading the model inside the app…')
+  assert.equal(phaseLine('preparing the model in the app 1%'), 'Preparing the model inside the app · 1%')
+  assert.equal(phaseLine('preparing the model in the app 100%'), 'Preparing the model inside the app · 100%')
   assert.equal(phaseLine('waiting for the model to finish another answer'), 'Waiting for the model to finish another answer')
   assert.equal(phaseLine('thinking'), 'Thinking')
   assert.equal(phaseLine(''), '')
@@ -262,6 +268,13 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /Qwen2\.5 0\.5B Instruct at Q4_K_M, about 0\.4 GB/)
   assert.match(card, /Or start Ollama, LM Studio or a llama\.cpp server on this computer and ask again/)
   assert.match(card, /in OLLAMA_ORIGINS/, 'a page Ollama refuses by default says how to allow it')
+  // Where the app runs its own model and it could not start: its reason in place of the site's and the browser's hints
+  // only, said only while that model is what answers (the provider auto or native, never another one chosen), and the
+  // line about starting a model server kept wherever one can run beside the app (a computer, not a phone or tablet).
+  assert.match(card, /const app = talk\?\.state === 'none' && appModel !== null && appModel\.blamed\(\) \? appModel : null/)
+  assert.match(card, /\{app \? `\$\{appHint\(app\.why\)\} ` : site \? siteHint\(site, from\) : onPickModel && !noPageModel \? `\$\{SMALL_MODEL_HINT\} ` : noPageModel \? /, 'in place of the site\'s and the browser\'s hints')
+  assert.match(card, /\{\(!app \|\| app\.servers\) && \(<>\n\s*Or start Ollama, LM Studio or a llama\.cpp server on this computer and ask again/, 'still said on a computer')
+  assert.match(card, /return `The model inside this app couldn’t start: \$\{why\.replace\(\/\[\.\\s\]\+\$\/, ''\)\}\.`/)
   assert.match(card, /const open = view === 'goal' && \(!dialogue\.brief \|\| dialogue\.brief\.chat === true\)/, 'words heard while the conversation is open are its next turn')
   // A second message never cuts short a reply still on its way (a model loading in this page for it would load again):
   // the next turn waits for it, or for the person's own Stop, and the chip opens the conversation as it stands.
@@ -274,12 +287,22 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /const refocus = \(\) => \{\n\s*focusNext\.current = true/, 'Stop and Ask again hand focus back to the field')
 })
 
-test('App: the card gets Sloane\'s conversation, the picker and the browser\'s refusal; the rewording waits for a model file to be loaded', () => {
+test('App: the card gets Sloane\'s conversation, the picker, the browser\'s refusal and why the app\'s model couldn\'t start; the rewording waits for a model file, or the app\'s model, to be loaded', () => {
   const src = read('App.tsx')
   assert.match(src, /setSloaneTalk\(sloaneChat\(mind, \(\) => local\.settings\(\)\.provider !== 'scripted'\)\)/)
   assert.match(src, /chat=\{sloaneTalk\}\s*onPickModel=\{onModelFile\}\s*noPageModel=\{PAGE_MODEL_REFUSAL\(\)\}/)
+  // Why the app's own model couldn't start, as its mind hears it (09_Cognition/nativeMind.ts onFailed): blamed only
+  // while it is what answers, the server line kept where the device is no phone or tablet.
+  assert.match(src, /siteModel=\{siteModel\}\s*appModel=\{appModel\}/)
+  assert.match(src, /onFailed: \(why\) => setAppModel\(\(was\) => why === null \? null : was\?\.why === why \? was : \{\n\s*why,\n\s*servers: !e\.profile\.mobile,\n\s*blamed: \(\) => local\.provider === 'auto' \|\| local\.provider === 'native',\n\s*\}\),/)
+  assert.match(src, /setSiteModel\(null\)\n\s*setAppModel\(null\)/, 'a city that goes takes the reason with it')
+  // The rewording never asks while the model the app runs itself is still to be loaded (it would be the answer that
+  // loads it): asked of that mind (nativeMind.ts cold), the one the router was handed.
+  assert.match(src, /native: \(\) => \(appMind = createNativeMind\(\{\n\s*host: shellRunner\(\),/)
+  assert.match(src, /const s = local\.settings\(\)\n(\s*\/\/[^\n]*\n)*\s*if \(s\.provider === 'native' \|\| \(s\.provider === 'auto' && s\.found === 'native'\)\) return appMind\.cold\(\)\n\s*if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
   assert.match(src, /if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
-  assert.match(src, /if \(s\.provider !== 'auto' \|\| !inPage\.cold\(false\)\) return false/)
+  assert.match(src, /if \(s\.provider !== 'auto' \|\| \(!inPage\.cold\(false\) && !\(s\.found === undefined && appMind\.cold\(\)\)\)\) return false/)
+  assert.match(src, /inPageMind = inPage\n(\s*\/\/[^\n]*\n)*\s*void appMind\.installed\(\)\.catch\(\(\) => \[\]\)/, 'asked once as the router is built')
   assert.match(src, /return s\.found === undefined \|\| s\.found === 'inpage'/, 'under auto, only while the file is what would answer')
   assert.match(src, /setSloane\(null\)\n\s*setSloaneTalk\(null\)/, 'a city that goes takes the conversation with it')
 })

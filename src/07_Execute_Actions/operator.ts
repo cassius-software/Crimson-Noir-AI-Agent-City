@@ -181,7 +181,8 @@ export interface Mind {
    * is spoken to in (absent: the mind has one only). `provider`: which model provider answers (absent: the mind has one
    * only); `key`: the network provider's key, masked (null: none set); `effort`: how hard it works (absent: its default).
    * `runtime` and `storage`: for a model run in this page (09_Cognition/inPage.ts), what runs it and how, and where its
-   * file is kept, one line each (absent for a model behind a server).
+   * file is kept, one line each (absent for a model behind a server); `runtime` for the model the app runs itself
+   * (09_Cognition/nativeMind.ts): how it ran the last answer.
    */
   settings(): { server: string; model: string | null; think?: boolean; api?: string; provider?: string; key?: string | null; effort?: string; cache?: string; fallback?: string; scripted?: string; auto?: string; found?: string; resolved?: string; runtime?: string; storage?: string; fit?: string }
   setServer(url: string): string
@@ -544,7 +545,7 @@ export interface MindStatus {
   readonly fit?: string
   /** The model the server's placeholder name stood for at the last answer (09_Cognition/localCompute.ts ANY_MODEL). */
   readonly resolved?: string
-  /** A model run in this page: what runs it and how, and where its file is kept, one line each (absent for a server). */
+  /** A model run in this page (or by the app itself: runtime only): what runs it and how, and where its file is kept, one line each (absent for a server). */
   readonly runtime?: string
   readonly storage?: string
   readonly installed: readonly string[] | null
@@ -1094,12 +1095,12 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   /** What the host vouches to the gate (null: nothing, which admits nothing). */
   const contained = (): Vouched => (senses.contained ? senses.contained() === true : null)
   /**
-   * The answering provider's server, for the gate's loopback bound: none for the scripted provider or a model running
-   * in this page (neither addresses a server).
+   * The answering provider's server, for the gate's loopback bound: none for the scripted provider, a model running
+   * in this page or the model the app runs itself (none of them addresses a server).
    */
   const endpoint = (): string | null => {
     const p = answeringProvider(mind)
-    return p === 'scripted' || p === 'inpage' ? null : mind.settings().server
+    return p === 'scripted' || p === 'inpage' || p === 'native' ? null : mind.settings().server
   }
   let unlocked = false
   let running: string | null = null

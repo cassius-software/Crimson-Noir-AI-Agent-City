@@ -1097,9 +1097,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
   model kept in this page; never with the provider set to scripted, and never while the model file this page would
   answer with is still to be loaded, since the rewording's 4 s deadline would stop that load: under auto that is only
-  until a look finds a server), screened like the
-  onboarding's rewording and with every number kept; the planner's sentence stands until it answers and whenever it
-  does not.
+  until a look finds a server; nor while the model the app runs itself is still to be loaded, which the rewording
+  would otherwise be the answer to load), screened like the onboarding's rewording and with every number kept; the
+  planner's sentence stands until it answers and whenever it does not.
 - **Talk to Sloane.** A message that is talk and nothing else ("hi", "how's it going", "good evening", "who are you",
   "are you a robot?", "thanks") and a question nothing in the city maps to ("what is the meaning of life?") are a
   conversation, not a goal (`intent.ts` Brief.chat): nobody is sent, nothing is applied and no why is asked. A talk word
@@ -2111,8 +2111,8 @@ Ring-0 elite tier above it, below). While unlocked:
 - `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have the
   skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the server, the
   model, the masked key and the effort, and what the server has; `ask provider
-  auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
-  server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
+  auto|claude|ollama|llamacpp|openai|native|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider,
+  its server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
   effort <level>`, `ask model <name>` (`ask model auto`, under `ask provider ollama` or while auto has found Ollama or
   nothing yet, hands Ollama's model back to auto), `ask vram <GB>|0|auto`
   (the GPUs' memory, so auto may give Ollama a bigger model it already has) and `ask server <url>` set it up;
@@ -2501,14 +2501,15 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
 ### The model providers (`ask`)
 
 `ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
-`09_Cognition/router.ts` is the router: one `Mind` behind which six providers answer, swapped at the console
+`09_Cognition/router.ts` is the router: one `Mind` behind which seven providers answer, swapped at the console
 without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line), or the first of
 them that answers (`auto`):
 
 - **`auto`**, the provider unless you choose another: at an ask, the first model server answering on this machine,
   in this order: Ollama (`http://localhost:11434`), a llama.cpp server (`http://localhost:8080`), an
-  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
-  below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
+  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then the model the app carries in an app that
+  runs one itself (`native`, below), then a model file kept in this page (`inpage`, below), then the Claude gateway
+  (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
   model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
   the newer default addresses, asked at the same moment and each given 2 s too: a llama.cpp server at
@@ -2522,7 +2523,10 @@ them that answers (`auto`):
   you chose for it with `ask model` (the reason says so), and never asks the gateway's address. Nothing listening
   there is the usual case, and port 8000 is many a web server's, so the reason names a server there only when it
   refuses this page, has no text model or lacks the model you chose (and, on an isolated page, vLLM's flag when
-  nothing answered on 8000). Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  nothing answered on 8000). Only when neither finds one is the app asked whether it runs a model itself (`native`):
+  it is found when the app says it can start the model it carries, is named with the app's reason when it cannot,
+  and goes unmentioned where there is no such app (a browser, the Windows app). Only then is the page's own model
+  considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -2560,6 +2564,28 @@ them that answers (`auto`):
   rather than a second one loaded beside it. A model is judged by its own name, not the
   folders of a file path a llama.cpp server lists. OpenAI's own service is not reachable: the air gap admits loopback addresses
   only, so a hosted model needs a gateway on this machine, like the Claude provider's.
+- **`native`**: the model an app carries, run by the app itself on this device (`09_Cognition/nativeMind.ts`,
+  asking the shell's runner in `native/llm` through `07_Execute_Actions/desktopShell.ts` `shellRunner`), for the apps
+  whose web view cannot run a model inside the page. No server, no address and no request leave the app: the shell
+  answers three commands (`native_model`, `native_generate` with a channel for the answer's words, `native_stop`), and
+  what the runner says (the model it carries and how that stands, the events, endings and errors) is in the words
+  `native/llm/tests/wire.json` holds. It has one model and no think switch, and takes no server and no key. `ask`
+  alone shows the file it carries and, after an answer, a `runtime` row with how the device ran it (threads, context,
+  the prompt's tokens and how many were kept from the answer before, the time to read it, the tokens written and how
+  fast). An answer that fills the context is cut, as one at the token cap is. Sloane's card shows its first-run check
+  and its load ("Preparing the model inside the app · 42%", "Loading the model inside the app…"); an answer waiting
+  behind another says it waits, and none of its waits runs out meanwhile. When no model answers and the app's model
+  could not start, the card says "The model inside this app couldn’t start:" and the app's reason (without the model's
+  file name) in place of the site's and the browser's hints, while the provider is `auto` or `native`; on a computer
+  it still says to start Ollama, LM Studio or a llama.cpp server, on a phone or tablet it does not. A model that will
+  not load (or whose file fails its check) at its first answer has failed for good: that answer says there is none,
+  with the app's reason (so the script stands in), the card says why, and under `auto` the same ask goes on to what
+  answers next in order and the app's model is passed over from then on; one answer's own failure while the model
+  stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
+  page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
+  model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
+  app has none of the runner's commands (the Windows app), it lists nothing and an answer is told there is none, so
+  the script stands in. No app has the runner yet: this is the page's half, proven against a fake runner.
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -2599,11 +2625,11 @@ the OS media carry none. The city works exactly the same without any of them.
   catalogue's own words, never the model's.
 - **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the Claude
   provider also the key, masked (its first six and last four characters, never the whole) and the effort. `ask
-  provider auto|claude|ollama|llamacpp|openai|inpage|scripted` swaps, and `ask connect <provider> [<url>] [<key>]`
-  swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server
-  <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
-  `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
-  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
+  provider auto|claude|ollama|llamacpp|openai|native|inpage|scripted` swaps, and `ask connect <provider> [<url>]
+  [<key>]` swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and
+  `ask server <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none`
+  clears it; `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default
+  when unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
   `ask vram <GB>|0|auto` gives the GPUs' memory for auto's Ollama model (below). Each provider keeps its own server
   and model between visits, in one store in this browser's local storage (`civic-simulation:cognition:v2`; the GPU
   figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
