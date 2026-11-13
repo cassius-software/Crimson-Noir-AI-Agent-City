@@ -1110,7 +1110,13 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   scouts") sends them, and what maps to nothing else is the conversation's next turn. While a reply is on its way the
   next message waits in the field (a heard one too) and **Stop** ends the ask; a reply that lands while the card is put
   away is shown and said when it opens. Sloane's own wait is bounded only by the router's (the first piece, a stall, a
-  load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model
+  load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. Until the first word
+  the card says what the model in this page is doing for that reply, and only for it ("Waiting for the model to finish
+  another answer", "Loading the model in this page…", then "Reading the conversation · 40%"),
+  and a reply that runs out of time says which wait ran out ("the model in this page wrote nothing for 5 minutes …") beside **Ask again**.
+  A conversation is sent a short system prompt of its own (`localCompute.ts` TALK_PROMPT: the 14A conduct core and the
+  guide's line, without the expertise rule or the city actions, since a conversation is bound to no one and never
+  acts), because a model running in the page reads every token of the prompt before it writes one. With no model
   answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
   ways to get one. On the web copy the first is the model that site serves beside the page, in one tap: **Get the
   model · 379 MB** (the size is on the button before anything is downloaded), or **Use the model kept here** once this
@@ -2960,7 +2966,8 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
 
   The processor's limit is WebAssembly's: a page has 4 GB of memory in all, and the weights are read into it, so the
   model, its context and its working memory must fit together. On the GPU the weights go to the GPU's own memory.
-  Phones and the lite profile also read the prompt in smaller batches and skip the warm-up. A warning shows on the
+  Phones and the lite profile also read the prompt 64 tokens at a time (`PHONE_BATCH`, so progress comes often enough
+  for the 120 s stall wait on a slow processor) and skip the warm-up. A warning shows on the
   runtime row and in the line that says the model loaded. The context is a ceiling: a model trained on less (its
   header says how much) loads with what it was trained on, which the runtime row and the load line then show.
 - **Which file.** An instruct (chat) model: llama.cpp writes the prompt with the chat template the file carries.

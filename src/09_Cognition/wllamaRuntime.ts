@@ -620,6 +620,9 @@ export function createWllamaRuntime(o: WllamaRuntimeOptions = {}): InPageRuntime
     let predicted: number | null = null
     let completion: number | null = null
     let dog: ReturnType<typeof setTimeout> | undefined
+    // Whether a word (or a thought) has come yet: until then the model is still reading the prompt, as a slow phone
+    // can be for minutes, and a stall then is said as that.
+    let wrote = false
     const quiet = (ms: number, why: string): void => {
       clearTimeout(dog)
       dog = setTimeout(() => op.lose(new CognitionError('timeout', why), true, 'the answer went quiet'), ms)
@@ -643,13 +646,16 @@ export function createWllamaRuntime(o: WllamaRuntimeOptions = {}): InPageRuntime
         onData: (chunk: unknown) => {
           // Chunks still arrive after a stop and after the answer settled (spike): none of them is the answer's.
           if (op.over() || co.signal.aborted || typeof chunk !== 'object' || chunk === null) return
-          quiet(co.stallMs, `the model in this page went quiet for ${span(co.stallMs)} in the middle of the answer`)
           const c = chunk as Chunk
+          const piece = pieceOf(c)
+          if (piece?.text !== undefined || piece?.thinking !== undefined) wrote = true
+          quiet(co.stallMs, wrote
+            ? `the model in this page went quiet for ${span(co.stallMs)} in the middle of the answer`
+            : `the model in this page went quiet for ${span(co.stallMs)} while reading the prompt: it may be too large for this device, or the prompt too long for it`)
           const f = c.choices?.[0]?.finish_reason
           if (typeof f === 'string' && f) finish = f
           predicted = count(c.timings?.predicted_n) ?? predicted
           completion = count(c.usage?.completion_tokens) ?? completion
-          const piece = pieceOf(c)
           if (piece === null) return
           try {
             co.onChunk(piece)

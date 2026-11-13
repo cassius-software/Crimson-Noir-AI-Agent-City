@@ -2523,6 +2523,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   be loaded (`InPageMind.cold()`, checked in `src/App.tsx`; under auto only until a look finds a server); the
   planner's sentence stands meanwhile.
 
+- **Sloane answers on a slow phone instead of "The model took too long to answer."** On a Mali-G52 phone (Brave,
+  Lite) the site's model never wrote a word. The page reads the whole prompt before the first token, and on the lite
+  profile it read about 600 tokens on one thread in steps of 256: below about two tokens a second, the gap between two
+  progress reports outlasts the 120 s stall wait (and the first piece's 300 s), and the reply is given up. The waits
+  are unchanged; the work inside them is smaller and said. A conversation (`AnswerRequest.talk`, set by
+  `onboarding/voice.ts` sloaneChat) now sends a short system prompt, the 14A conduct core and the guide's line
+  (`src/09_Cognition/localCompute.ts` TALK_PROMPT, through `systemFor`, which every provider uses): the expertise rule
+  and the city actions it leaves out were most of the prompt, and a conversation is bound to no one and never acts.
+  Phones and the lite profile read the prompt 64 tokens a step (`src/09_Cognition/inPagePlan.ts` PHONE_BATCH), so a
+  phone needs about half a token a second to stay inside the stall wait. The card says what the model is doing for
+  that reply before its first word ("Waiting for the model to finish another answer", "Loading the model in this
+  page…", "Reading the conversation · 40%"): the request's own phase (`AnswerRequest.onPhase`, reported by
+  `src/09_Cognition/inPage.ts`), never another answer's. A reply that still runs out says which wait ran out beside
+  **Ask again**; a stall while the prompt is still being read now says so (`src/09_Cognition/wllamaRuntime.ts`; it
+  said "in the middle of the answer"). The `ask` cache line counts a prompt that does not open with the base reality
+  (a conversation's) as paged apart, not as a fork. Verified by unit tests and the site-model browser run on headless
+  Chromium; the cause is read from the code and the phone's report, and the phone's own speed is unverified until it
+  is tried there.
+
 ## [1.0.0-stable-beta] - 2026-10-12
 
 The V2 stable release overhaul (Phase 21, PRs #17, #18 and #19) and Phase 2 (PRs #20, #21 and #22), with everything

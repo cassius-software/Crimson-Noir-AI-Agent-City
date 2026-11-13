@@ -35,7 +35,7 @@
 import { scriptedAction } from '../06_Make_Decisions/actions.ts'
 import type { Answer, AnswerRequest, GateTether, Mind, Piece } from '../07_Execute_Actions/operator.ts'
 import { CLAUDE_GATEWAY, claudeAnswer, claudeModels, claudeServer, DEFAULT_CLAUDE_MODEL, EFFORTS, isEffort, maskKey } from './claudeApi.ts'
-import { ANY_MODEL, BASE_REALITY, CognitionError, CONTEXT_TOKENS, createLocalCompute, DEFAULT_MODEL, installedModels, installedSizes, isolatedPage, localText, placementOf, promptHash, sameModel, systemPrompt, TIMEOUTS, type FetchLike, type Placement, type SettingsStore, type Timeouts, type Weighed } from './localCompute.ts'
+import { ANY_MODEL, BASE_REALITY, CognitionError, CONTEXT_TOKENS, createLocalCompute, DEFAULT_MODEL, installedModels, installedSizes, isolatedPage, localText, placementOf, promptHash, sameModel, systemFor, TIMEOUTS, type FetchLike, type Placement, type SettingsStore, type Timeouts, type Weighed } from './localCompute.ts'
 import { choose, coldWaitMs, contextVerdict, failed, figureOf, fitLine, FAILS_KEPT, PACE_FLOOR, PACE_TOKENS, parseVram, readFit, remember, todaysPick, whereOf, widen, type Back, type Choice, type FitKept, type Wide } from './modelFit.ts'
 import { createPrefixCache } from './prefixCache.ts'
 import { SCRIPTED, scriptedAnswer } from './scripted.ts'
@@ -284,7 +284,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       const line = scriptedAction(req.prompt)
       const text = scriptedAnswer(req) + (line ? `\n${line}` : '')
       onPiece({ kind: 'text', text })
-      return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemPrompt(req.tethers, req.memories, req.context, req.steering)) }
+      return { text, thinking: 0, tokens: 0, reason: SCRIPTED, promptHash: promptHash(systemFor(req)) }
     },
   })
   const byName = (p: Found): Mind => (p === 'claude' ? claude : p === 'ollama' ? ollama : p === 'openai' ? openai : p === 'inpage' ? inpage : llamacpp)
@@ -295,7 +295,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   // The Claude provider answers with the hash of the exact system prompt it sent, as the local providers do (the
   // swarm's memory records it, so an audit can prove what the model was given).
   const claudeAnswerHashed = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
-    const system = systemPrompt(req.tethers, req.memories, req.context, req.steering)
+    const system = systemFor(req)
     const answer = await claudeAnswer(fetchFn, {
       server: kept.claude.server, key: kept.claude.key ?? '', model: kept.claude.model, system, prompt: req.prompt, signal: req.signal,
       ...(kept.claude.effort && { effort: kept.claude.effort }),
@@ -945,7 +945,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     // `ask` alone under auto looks again (a server started since the last look is found) and lists what that one has.
     installed: async (signal?: AbortSignal) => (kept.provider === 'auto' ? (await look(signal)).installed(signal) : active().installed(signal)),
     answer: async (req, onPiece) => {
-      await cache.page(agentKey(req.tethers), systemPrompt(req.tethers, req.memories, req.context, req.steering))
+      // A conversation's prompt is its own page, apart from the guide's (nobody bound) that the rewording uses.
+      await cache.page(req.talk === true ? 'talk' : agentKey(req.tethers), systemFor(req))
       if (kept.provider === 'auto') return autoAnswer(req, onPiece)
       // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
       const m = active()
