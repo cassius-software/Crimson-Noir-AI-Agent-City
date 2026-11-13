@@ -167,12 +167,15 @@ none of it is in the repository:
   file with Nix's `fetchurl` from the same Hugging Face address, which refuses any bytes but the pinned SHA-256; the
   folder it builds in the Nix store holds a link to the fetched file, the same `LICENSE` and `NOTICE` from this
   directory, and a manifest naming the file. Each machine that builds the package fetches the file itself, so the
-  product does not redistribute it to Nix users; a binary cache that serves the built package would, with the
-  `LICENSE` and `NOTICE` in the same store path. CI's `nix.yml` puts the file in its runner's store from its cache
-  (keyed by the whole pin, the same key the Windows workflow uses), checked by its SHA-256, so the build there fetches
-  nothing. The launcher serves the folder beside the page on `127.0.0.1` only, and the page checks the same size and
-  hash on every byte. `programs.crimson-noir-agent-city.model = false` builds the module's package without it. The
-  same open points apply.
+  product does not redistribute it to Nix users; a binary cache that serves the built package would. The file sits in
+  its own fixed-output store path (`…-Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`), and the `LICENSE`, `NOTICE` and manifest sit
+  in the package's model folder (`…-crimson-noir-agent-city-model`), which links to it: a cache serving the package's
+  closure serves both, but it could serve the file's path on its own. CI's `nix.yml` puts the file in its runner's store
+  from its own Linux cache keyed by the whole pin (the Windows workflow uses the same key, but an entry saved on Windows
+  is not restored on Linux), else from Hugging Face at the pinned revision, checked by its SHA-256 either way, so the
+  build there fetches nothing. The launcher serves the folder beside the page on `127.0.0.1` only, and the page checks
+  the same size and hash on every byte. `programs.crimson-noir-agent-city.model = false` builds the module's package
+  without it. The same open points apply.
 
 ## 2. The npm dependency tree (`package-lock.json`)
 

@@ -2339,8 +2339,8 @@ const SCENARIOS = {
    * page is dist/index.html with APP_MODEL's pin, the desktop's model, swapped for the tiny model's (pinnedPage). Opened
    * without models=1 it asks for nothing under models/; with it, the page gets the model by itself, with no click and
    * the connection not looked at: the manifest, then the model, once each, from the launcher; kept (said in a toast),
-   * loaded, in the page's store, and the console says it came from the launcher. Run in the ci workflow's Chrome, and
-   * in nix.yml with the Chromium the NixOS package carries, which is the browser this path is for.
+   * loaded, in the page's store, and the page says on its console that it kept the model. Run in the ci workflow's
+   * Chrome, and in nix.yml with the Chromium the NixOS package carries, which is the browser this path is for.
    */
   async launcher(chrome) {
     const pin = tinyPin(APP_MODEL)

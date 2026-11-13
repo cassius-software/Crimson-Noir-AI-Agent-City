@@ -26,10 +26,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`src/App.tsx` `launcherSource`): the same start once the city is on screen, with the connection given no say, the
   same checks on every byte, and the card saying it is copied from the launcher. `programs.crimson-noir-agent-city.model
   = false;` builds the module's package without it. `nix.yml` puts the model in the runner's store by its pin before
-  `nix flake check` (from the cache the Windows workflow also fills, checked by its SHA-256), `--check` now reads the
-  manifest and the model's size from the page itself, and the browser smoke's new `launcher` scenario runs in ci and in
-  the package's Chromium. `siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`, `desktopLauncher.test.ts` and
-  `browserShard.test.ts` cover the pin, the words, the wiring, the server and the workflow. Not verified: a real NixOS
+  `nix flake check` (from a cache keyed by its pin, the same key the Windows workflow uses, one cached file per runner
+  system, else from Hugging Face; checked by its SHA-256), `--check` now reads the manifest and the model's size from
+  the page itself, and the browser smoke's new `launcher` scenario runs in ci and in the package's Chromium.
+  `siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`, `desktopLauncher.test.ts` and `browserShard.test.ts` cover
+  the pin, the words, the wiring, the server and the workflow. Not verified: a real NixOS
   desktop, the copy of the real 0.9 GB file into a browser profile, and how the model converses there.
 - **The Windows installer carries Sloane's model.** The Windows app's NSIS installer and its .msi now carry Qwen2.5
   1.5B Instruct at Q4_K_M (Apache-2.0, Copyright 2024 Alibaba Cloud; `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768

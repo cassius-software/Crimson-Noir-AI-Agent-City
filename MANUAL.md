@@ -3076,8 +3076,9 @@ bare .exe and the OS media carry none. The parts:
     preview or a file, never asks for it.
   - The browser profile keeps its own copy, so the model takes about 0.9 GB twice on the disk: in the Nix store and in
     the profile's storage. `ask file forget Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` frees the profile's copy;
-    `programs.crimson-noir-agent-city.model = false;` builds the module's package without it, and `nix-collect-garbage`
-    then frees the store's.
+    `programs.crimson-noir-agent-city.model = false;` builds the module's package without it. The store's copy is
+    freed once no system generation still holds it: `sudo nix-collect-garbage -d` (or `--delete-older-than`) deletes
+    the older generations and then collects it (standard Nix behaviour, not tried here).
 
   What is verified: `model.nix`'s pin against the page's and its manifest's shape (`siteModel.test.ts`); the
   launcher serving the folder's plain files and nothing else of the disk, with their sizes, its `models=1`, and a folder

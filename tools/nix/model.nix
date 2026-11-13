@@ -4,13 +4,13 @@
 #
 # Why does this file exist? It is Sloane's model for the NixOS package, so the city a Nix user starts can talk from the
 # first launch with nothing to find or download by hand: Qwen2.5 1.5B Instruct at Q4_K_M (Apache-2.0), the same file the
-# Windows installer carries (src/09_Cognition/siteModel.ts APP_MODEL; src/desktopLauncher.test.ts holds this file's pin
-# to it). fetchurl gets it once, from Hugging Face at the pinned revision, and refuses any other bytes (the SHA-256
-# below). This folder puts it beside its LICENSE and NOTICE (third_party/qwen2.5-1.5b-instruct/) and the manifest the
-# page reads, which says what tools/web/siteModel.mjs writes for the web copy. The launcher (tools/web/launch.mjs)
-# serves the folder beside the page at models/, and the page copies the model into its own storage once the city is on
-# screen, checking its size and SHA-256 on every byte. The model is linked from its fetch's store path, not copied, so
-# the store holds it once.
+# Windows installer carries (src/09_Cognition/siteModel.ts APP_MODEL; src/09_Cognition/siteModel.test.ts holds this
+# file's pin to it). fetchurl gets it once, from Hugging Face at the pinned revision, and refuses any other bytes (the
+# SHA-256 below). This folder puts it beside its LICENSE and NOTICE (third_party/qwen2.5-1.5b-instruct/) and the
+# manifest the page reads, which says what tools/web/siteModel.mjs writes for the web copy. The launcher
+# (tools/web/launch.mjs) serves the folder beside the page at models/, and the page copies the model into its own
+# storage once the city is on screen, checking its size and SHA-256 on every byte. The model is linked from its fetch's
+# store path, not copied, so the store holds it once.
 # What breaks if it is removed? The NixOS package carries no model, and Sloane waits for one the person has to find.
 {
   lib,

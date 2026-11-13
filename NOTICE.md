@@ -315,8 +315,9 @@ release; each one is something the release engineering could not confirm.
     - **The NixOS package's model.** The same file again (`tools/nix/model.nix`, the same pin), fetched by each
       machine that builds the package straight from Hugging Face at the pinned revision (about 0.9 GB, once a machine),
       so the product does not redistribute it there; the Nix store keeps it beside the same LICENSE and NOTICE. The
-      same two points apply. A binary cache that serves the built package would redistribute it, with the LICENSE and
-      NOTICE beside it in the same store path.
+      same two points apply. A binary cache that serves the built package would redistribute it: the file is its own
+      store path, and the LICENSE and NOTICE sit in the package's model folder that links to it, so a cache serving
+      the package's closure serves them together but could serve the file's path alone.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 
