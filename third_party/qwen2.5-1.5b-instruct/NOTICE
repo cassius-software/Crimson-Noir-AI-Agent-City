@@ -1,15 +1,24 @@
-Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the Windows installer and the NixOS package carry
-================================================================================================
+Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the desktop apps carry
+=====================================================================
 
-This directory records the one model the Windows installer of Crimson Noir: Agent City carries beside the app, so a
-person who installs it can talk to Sloane from the first launch with no model of their own. The model's weights are
-NOT in this repository, NOT in the page file (dist/index.html) and NOT in the bare .exe: the Windows workflow
-(.github/workflows/windows-app.yml, through tools/web/siteModel.mjs) fetches the file below from Hugging Face at the
-pinned revision whenever its cache (keyed by the pin) does not hold it, refuses it unless its size and SHA-256 are
-exactly these, and puts it into the installer (src-tauri/tauri.model.conf.json) as
-models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf in the app's folder, with this NOTICE and LICENSE beside it. The page reads it
-through the app (src-tauri/src/model.rs) once the city is on screen, checks the same size and SHA-256
-(src/09_Cognition/siteModel.ts APP_MODEL), and keeps a copy in the app's own page storage.
+This directory records the one model the desktop apps of Crimson Noir: Agent City carry beside the app, so a person
+who installs one can talk to Sloane from the first launch with no model of their own. Three carry it: the Windows
+installer (and its .msi), the Linux packages (the .deb, the .rpm and the AppImage) and the NixOS package. The
+model's weights are NOT in this repository, NOT in the page file (dist/index.html) and NOT in the bare .exe.
+
+The Windows installer: the Windows workflow (.github/workflows/windows-app.yml, through tools/web/siteModel.mjs)
+fetches the file below from Hugging Face at the pinned revision whenever its cache (keyed by the pin) does not hold
+it, refuses it unless its size and SHA-256 are exactly these, and puts it into the installer
+(src-tauri/tauri.model.conf.json) as models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf in the app's folder, with this NOTICE and
+LICENSE beside it. The page reads it through the app (src-tauri/src/model.rs) once the city is on screen, checks the
+same size and SHA-256 (src/09_Cognition/siteModel.ts APP_MODEL), and keeps a copy in the app's own page storage.
+
+The Linux packages: the build matrix (.github/workflows/build-matrix.yml, its x86-64 and Arm jobs) fetches and checks
+the same file the same way and the same overlay puts it in each package, installed as
+/usr/lib/Crimson Noir Agent City/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf (in the AppImage, at the same path inside
+its image), with this NOTICE and LICENSE beside it. The Linux app does not hand the file to its page: its own process
+runs it (the native model runner, src-tauri/src/runner.rs over native/llm, with llama.cpp compiled in; see
+third_party/llama.cpp/), after checking the same size and SHA-256 once.
 
 The NixOS package (the flake's `nix run` and its NixOS module) carries the same file: tools/nix/model.nix fetches it
 from the same address with Nix's fetchurl, which refuses any bytes but these, and puts it in a folder of the Nix store

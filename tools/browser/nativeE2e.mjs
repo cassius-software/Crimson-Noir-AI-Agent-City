@@ -49,8 +49,16 @@
  *   number is free again.
  * It also records, without asserting, whether the page reaches Sloane's card in this web view at all, or shows the
  * recovery card (risk K1: no WebGPU in WebKitGTK).
+ * With --packaged it drives an installed app instead (build-matrix.yml installs its .deb and passes /usr/bin/<binary>),
+ * with the model the package carries, named by --file and --bytes (the pin, so CI passes the real model's), and asserts
+ * only what holds for any model: the same web view checks; native_model answers exactly { file, bytes, status } with
+ * that file and size, its status reaching ready; and one answer of at most PACKAGED_TOKENS (16) tokens, asked through
+ * the mind, arrives as text events (after the load and the prompt read) and ends with a reason, the model's own end or
+ * the cap, the mind naming the carried file.
  *   node tools/browser/nativeE2e.mjs --app src-tauri/target/debug/crimson-noir-app [--driver tauri-driver]
  *                                    [--port 4444] [--out report.json]
+ *   node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file <model file> --bytes <size>
+ *                                    [--driver tauri-driver] [--port 4444] [--out report.json]
  * It needs the repository's node_modules (vite), a display (xvfb-run in .github/workflows/native-e2e.yml), tauri-driver
  * and WebKitWebDriver. The exit code is 1 when any check fails; the report (--out) holds every check, the bundled
  * modules and the K1 observation.
@@ -68,8 +76,12 @@ import { HPARAMS } from './tinyGguf.mjs'
 
 const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined }
 const APP = arg('app')
-if (!APP) {
-  console.error('usage: node tools/browser/nativeE2e.mjs --app <the app built with --features tiny-model> [--driver tauri-driver] [--port 4444] [--out report.json]')
+/** An installed app and the model its package carries (--packaged --file --bytes), or the tiny-model build. */
+const PACKAGED = process.argv.includes('--packaged')
+const CARRIED = PACKAGED ? Object.freeze({ file: arg('file'), bytes: Number(arg('bytes')) }) : null
+if (!APP || (PACKAGED && (!CARRIED.file || !Number.isSafeInteger(CARRIED.bytes) || CARRIED.bytes <= 0))) {
+  console.error('usage: node tools/browser/nativeE2e.mjs --app <the app built with --features tiny-model> [--driver tauri-driver] [--port 4444] [--out report.json]\n' +
+    '       node tools/browser/nativeE2e.mjs --packaged --app <the installed app> --file <the carried model> --bytes <its size> [--driver tauri-driver] [--port 4444] [--out report.json]')
   process.exit(2)
 }
 const DRIVER = arg('driver') ?? 'tauri-driver'
@@ -84,14 +96,23 @@ const MIND = 'src/09_Cognition/nativeMind.ts'
 const TINY = Object.freeze({ file: 'tiny-a.gguf', bytes: 156_992 })
 /** The runner's plan on a computer (src-tauri/src/runner.rs): the context is lowered to what the model was trained on. */
 const PLAN = Object.freeze({ nCtx: Math.min(8192, HPARAMS.nCtxTrain), nBatch: 512, maxTokens: 2048, threadsCap: 8 })
+/** The one answer asked of an installed app (--packaged), at most this many tokens. */
+const PACKAGED_TOKENS = 16
 /** Long answers being made when the page reloads: the first is made, the others wait their turn behind it. */
 const LONG_ANSWERS = 32
 /** Stops sent right behind their request: in the same task through shellRunner, and through the mind's own abort. */
 const RACES = Object.freeze({ shell: 24, mind: 12 })
 /** How late the held answer's channel hands over each message and its end, ms: well under DRAIN_MS (1,000). */
 const HOLD_MS = 300
+/**
+ * WebDriver's script timeout, ms: below Node fetch's 300 s headers timeout (wd() would fail with "fetch failed"), and
+ * above every in-page wait, so a script that waited in vain still returns what it saw.
+ */
+const SCRIPT_MS = 180_000
+/** How long the installed app's carried file may take to check (a gigabyte), ms: 30 s below SCRIPT_MS. */
+const PACKAGED_MODEL_MS = 150_000
 
-const report = { app: resolve(APP), checks: [], bundle: null, k1: null, env: null, rate: null, races: null }
+const report = { app: resolve(APP), packaged: CARRIED, checks: [], bundle: null, k1: null, env: null, rate: null, races: null }
 let failed = 0
 function check(ok, what, detail) {
   report.checks.push({ ok: !!ok, what, ...(detail === undefined ? {} : { detail }) })
@@ -323,10 +344,10 @@ for (;;) {
   await sleep(250)
 }`
 
-/** What the app carries, through the page's own shellRunner, until the file's check is over. */
+/** What the app carries, through the page's own shellRunner, until the file's check is over (60 s, or `args[0]` ms). */
 const MODEL = String.raw`
 const host = own.shellRunner()
-const deadline = Date.now() + 60000
+const deadline = Date.now() + (args[0] || 60000)
 const seen = []
 for (;;) {
   const m = await host.model()
@@ -544,6 +565,48 @@ function answered(name, r, asked, { first = false, holdMs = 0 } = {}) {
 
 // ---- The run ----------------------------------------------------------------------------------------------------
 
+/**
+ * An installed app (--packaged): the web view checks, the model its package carries, and one short answer through the
+ * mind. Nothing here depends on the model's words: any model ends its answer by itself or at the cap.
+ */
+async function packaged() {
+  report.env = await page(ENV)
+  const env = report.env
+  console.log(`web view: ${env.agent}; origin ${env.origin}; webgpu ${env.webgpu}; memory64 ${env.memory64}`)
+  check(env.bootDone, 'the installed app\'s page ran its module (window.__bootDone, main.tsx)', env)
+  check(env.shell, 'the page has Tauri\'s core.invoke and core.Channel (withGlobalTauri)')
+  check(env.jspi === false, 'WebKitGTK reports no JSPI: the app takes the native runner, not the model in the page', env)
+  check(env.fetchFixed && /is not on this machine/.test(env.refusal ?? ''), 'the air gap holds: fetch is fixed and refuses Tauri\'s ipc:// address, so commands take the message path', env.refusal)
+
+  report.k1 = await page(K1)
+  console.log(`K1 (recorded, not asserted): ${JSON.stringify(report.k1)}`)
+
+  await inject('the installed app\'s page')
+
+  const model = await page(MODEL, PACKAGED_MODEL_MS)
+  const m = model.m
+  check(m && m.file === CARRIED.file && m.bytes === CARRIED.bytes && Object.keys(m).sort().join(' ') === 'bytes file status',
+    `native_model answers exactly { file: "${CARRIED.file}", bytes: ${CARRIED.bytes}, status }: the file the package carries`, m)
+  check(m && m.status && m.status.state === 'ready', `native_model's status reaches ready once the carried file is checked (seen: ${model.seen.join(' -> ')})`, m && m.status)
+
+  const r = await page(ANSWER, PACKAGED_TOKENS)
+  check(Array.isArray(r.installed) && r.installed.join(',') === CARRIED.file, `the mind lists the carried model, ${CARRIED.file}`, r.installed)
+  check(r.error === null && r.answer && typeof r.answer.text === 'string' && r.answer.text.trim() !== '', 'the mind answers with text', r.error ?? r.answer)
+  check(r.asked.length === 1 && r.asked[0].req.maxTokens === PACKAGED_TOKENS, `the mind asked shellRunner's generate once, for at most ${PACKAGED_TOKENS} tokens`, r.asked.map((a) => a.req))
+  const g = r.asked[0]
+  const d = g && g.done
+  const texts = g ? g.events.filter((e) => e && e.kind === 'text') : []
+  check(texts.length > 0 && textOf(g.events).trim() !== '', `the answer arrives as text events (${texts.length})`, g && kinds(g.events))
+  const seq = g ? kinds(g.events).join(',') + ',' : ''
+  check(/^(loading,)+(read,)+(text,)+$/.test(seq), 'the events come in order: the load, the prompt read, then the text', seq.slice(0, 300))
+  check(d && !g.error && d.id === g.req.id && (d.reason === 'eog' || d.reason === 'maxTokens') && d.tokens >= 1 && d.tokens <= PACKAGED_TOKENS,
+    `the answer ends with a reason, the model's own end or the cap, after 1 to ${PACKAGED_TOKENS} tokens`, d ?? (g && g.error))
+  check(d && d.gpu === false && d.threads >= 1 && d.threads <= PLAN.threadsCap && d.nBatch === PLAN.nBatch, 'the plan is the computer\'s (the processor, 1-8 threads)', d && { threads: d.threads, nCtx: d.nCtx, nBatch: d.nBatch, gpu: d.gpu })
+  check(r.settings.server === 'this app' && r.settings.model === CARRIED.file, 'the mind names this app and the carried file', r.settings)
+  report.answer = d ? { text: textOf(g.events), reason: d.reason, tokens: d.tokens, promptTokens: d.promptTokens, prefillMs: d.prefillMs, genMs: d.genMs, threads: d.threads, nCtx: d.nCtx, wallMs: g.ms } : null
+  console.log(`answer: ${JSON.stringify(report.answer)}`)
+}
+
 async function run() {
   report.env = await page(ENV)
   const env = report.env
@@ -657,8 +720,8 @@ try {
   }
   const session = await wd('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: report.app } } } })
   sid = session.sessionId
-  await wd('POST', `/session/${sid}/timeouts`, { script: 180_000, pageLoad: 180_000 })
-  await run()
+  await wd('POST', `/session/${sid}/timeouts`, { script: SCRIPT_MS, pageLoad: SCRIPT_MS })
+  await (PACKAGED ? packaged() : run())
 } catch (e) {
   check(false, 'the run finished', e instanceof Error ? e.message : String(e))
 } finally {

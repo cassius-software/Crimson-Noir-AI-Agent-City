@@ -19,7 +19,7 @@ import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // A computed specifier: the script is tooling under tools/, outside the page's build, loaded as the test's own module.
@@ -29,7 +29,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SCRIPT = join(ROOT, 'tools', 'build', 'matrix.mjs')
 const WORKFLOW = readFileSync(join(ROOT, '.github', 'workflows', 'build-matrix.yml'), 'utf8')
 
-interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string }
+interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string }
 interface Target { id: string; artifact: string; hosts: string[]; arch?: string; tools?: string[]; env?: string[]; unsupported?: string; note?: string; plan?: (ctx: object) => Step[] }
 interface Host { platform: string; arch: string; env: Record<string, string>; has: (cmd: string) => boolean }
 
@@ -57,7 +57,8 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
     const steps = t.plan(CTX)
     assert.ok(steps.length > 0, t.id)
     for (const s of steps) {
-      if (s.kind !== 'run') { assert.equal(s.kind, 'sign-apk', `${t.id}: ${s.kind}`); continue }
+      // Besides programs: the APK's signing, and on Linux a file the build needs (the model) and folders it tidies.
+      if (s.kind !== 'run') { assert.ok(s.kind === 'sign-apk' || (t.id.startsWith('linux-') && (s.kind === 'need' || s.kind === 'tidy')), `${t.id}: ${s.kind}`); continue }
       assert.ok(typeof s.cmd === 'string' && Array.isArray(s.argv), `${t.id}: ${JSON.stringify(s)}`)
       // No shell: the one `sh` is the repository's own media script, run by path with its arguments.
       if (s.cmd === 'sh') assert.deepEqual(s.argv!.slice(0, 1), ['tools/build-image.sh'], t.id)
@@ -101,6 +102,23 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
       const config = JSON.parse(b.argv![b.argv!.indexOf('--config') + 1])
       assert.deepEqual(config, { version: '1.0.0', bundle: { linux: { rpm: { release: '0.stable.beta' } } } }, t.id)
       assert.equal(steps.find((s) => s.argv?.[1] === 'build')!.argv![steps.find((s) => s.argv?.[1] === 'build')!.argv!.indexOf('--bundles') + 1], 'deb,appimage', t.id)
+      // The native runner and the model overlay, in the build and in the .rpm's bundle step alike.
+      const build = steps.find((s) => s.argv?.[1] === 'build')!.argv!
+      assert.equal(build[build.indexOf('--features') + 1], 'native-runner', t.id)
+      for (const step of [build, b.argv!]) assert.ok(step.includes(m.MODEL_CONFIG), `${t.id}: ${step.join(' ')}`)
+      // The model, its licence and its notice must be in place before the build, and nothing else is fetched here.
+      const needs = steps.filter((s) => s.kind === 'need').map((s) => relative(ROOT, s.path!).replace(/\\/g, '/'))
+      assert.deepEqual(needs, m.modelResources().map((r: string) => `src-tauri/${r}`), t.id)
+      assert.ok(steps.findIndex((s) => s.kind === 'need') < steps.findIndex((s) => s.argv?.[1] === 'build'), t.id)
+      // The bundler's staging copies (each a copy of the model) go before the .rpm is packaged.
+      const tidy = steps.findIndex((s) => s.kind === 'tidy')
+      assert.ok(tidy > steps.findIndex((s) => s.argv?.[1] === 'build') && tidy < steps.indexOf(b), t.id)
+      assert.equal((t as Target & { move?: boolean }).move, true, `${t.id}: its files are moved into out/, not copied`)
+      assert.ok(t.tools!.includes('cmake'), t.id)
+    } else {
+      // Every other target builds exactly as before: no runner, no model, no overlay.
+      for (const st of steps) assert.ok(!st.argv?.includes('native-runner') && !st.argv?.includes(m.MODEL_CONFIG), `${t.id}: ${st.argv?.join(' ')}`)
+      assert.ok(!steps.some((st) => st.kind === 'need' || st.kind === 'tidy'), t.id)
     }
     if (t.id.startsWith('uefi-')) {
       // The UEFI application carries no page, and its media come from the repository's own script, given the target.
@@ -244,7 +262,7 @@ test('the command line: --list names the nine; a dry run of all exits 0, builds 
 })
 
 test('the workflow: every buildable target but Windows x64 on a runner of its own, the same command a person runs, GitHub\'s own actions alone, a pull-request trigger so it runs before it is merged, and the release upload on a v* tag', () => {
-  const jobs = [['windows-arm64', 'windows-latest'], ['linux-x64', 'ubuntu-24.04'], ['linux-arm64', 'ubuntu-24.04-arm'], ['macos-universal', 'macos-15'], ['android-apk', 'ubuntu-24.04'], ['ios-ipa', 'macos-15'], ['uefi-x64', 'ubuntu-24.04'], ['uefi-arm64', 'ubuntu-24.04']]
+  const jobs = [['windows-arm64', 'windows-latest'], ['linux-x64', 'ubuntu-22.04'], ['linux-arm64', 'ubuntu-22.04-arm'], ['macos-universal', 'macos-15'], ['android-apk', 'ubuntu-24.04'], ['ios-ipa', 'macos-15'], ['uefi-x64', 'ubuntu-24.04'], ['uefi-arm64', 'ubuntu-24.04']]
   for (const [id, runner] of jobs) {
     assert.match(WORKFLOW, new RegExp(`^ {10}- target: ${id}\\n {12}runner: ${runner}$`, 'm'), id)
   }
@@ -272,6 +290,72 @@ test('the workflow: every buildable target but Windows x64 on a runner of its ow
   const release = readFileSync(join(ROOT, '.github', 'workflows', 'build-release.yml'), 'utf8')
   assert.match(release, /for wf in windows-app\.yml build-matrix\.yml; do/)
   assert.match(release, /gh workflow run "\$wf" --ref "\$\{GITHUB_REF_NAME\}" -f "tag=\$TAG"/)
+})
+
+/** One step of the build job: from its `- name:` (or `- id:`) line to the next step. */
+function jobStep(flow: string, marker: string): string {
+  const at = flow.indexOf(marker)
+  assert.ok(at > 0, marker)
+  const start = flow.lastIndexOf('\n      - ', at)
+  const next = flow.indexOf('\n      - ', at)
+  return flow.slice(start, next < 0 ? undefined : next)
+}
+
+test('the Linux jobs: Ubuntu 22.04, the model by its pin as the Windows app gets it, room on the disk, the package checks before any upload, and the installed app asked on x86-64', () => {
+  const W = WORKFLOW
+  // The libraries, with cmake and libclang for llama.cpp, the package checks' tools, WebKitWebDriver and Xvfb; each
+  // checked present, and llama.cpp's HTTP library kept from finding OpenSSL.
+  const apt = jobStep(W, "The Linux shell's libraries")
+  for (const pkg of ['libwebkit2gtk-4.1-dev', 'libgtk-3-dev', 'cmake', 'libclang-dev', 'rpm', 'squashfs-tools', 'webkit2gtk-driver', 'xvfb', 'patchelf', 'file']) assert.match(apt, new RegExp(`[ \\n]${pkg.replace(/[.]/g, '\\.')}(?= |\\n|$)`), pkg)
+  assert.match(apt, /command -v cmake rpm unsquashfs WebKitWebDriver xvfb-run/)
+  assert.match(apt, /echo "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON" >> "\$GITHUB_ENV"/)
+  // The model exactly as windows-app.yml gets it: the pin, a cache keyed by it, Hugging Face only on a miss, then the
+  // check and the copy on every build.
+  const app = readFileSync(join(ROOT, '.github', 'workflows', 'windows-app.yml'), 'utf8')
+  for (const line of ['run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"', 'path: ${{ runner.temp }}/app-model', 'key: ${{ steps.model.outputs.key }}',
+    'curl --proto \'=https\' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"', 'node tools/web/siteModel.mjs app --from "$RUNNER_TEMP/app-model"']) {
+    assert.ok(app.includes(line), `windows-app.yml: ${line}`)
+    assert.ok(W.includes(line), `build-matrix.yml: ${line}`)
+  }
+  const linux = "startsWith(matrix.target, 'linux-')"
+  assert.match(jobStep(W, '- id: model\n'), new RegExp(`if: ${linux.replace(/[()|.]/g, '\\$&')}\n`))
+  assert.match(jobStep(W, '- id: model-cache'), /if: startsWith\(matrix\.target, 'linux-'\)\n/)
+  assert.match(jobStep(W, 'from Hugging Face, at the pinned revision'), /if: startsWith\(matrix\.target, 'linux-'\) && steps\.model-cache\.outputs\.cache-hit != 'true'\n/)
+  // A Linux cache key names the runner's image, so objects built against another glibc's headers are never restored.
+  assert.match(W, /key: build-matrix-\$\{\{ matrix\.target \}\}-\$\{\{ startsWith\(matrix\.target, 'linux-'\) && format\('\{0\}-', matrix\.runner\) \|\| '' \}\}\$\{\{ env\.RUST_TOOLCHAIN \}\}-/)
+  // The order: room, libraries, the model, the build, the three checks, then tauri-driver, the install and the run,
+  // and only then the upload; the cache leaves the packages and the model's copies out.
+  const order = ['Room on the disk for the model', "The Linux shell's libraries", '- id: model\n', 'siteModel.mjs app --from', 'node tools/build/matrix.mjs --targets "${{ matrix.target }}" --out out',
+    'linuxAudit.mjs packages --dir "out/${{ matrix.target }}" --file "$MODEL_FILE" --bytes "$MODEL_BYTES" --binary src-tauri/target/release/crimson-noir-app',
+    'linuxAudit.mjs glibc --deb out/${{ matrix.target }}/*.deb',
+    'linuxAudit.mjs symbols --deb out/${{ matrix.target }}/*.deb --map src-tauri/target/release/crimson-noir-app.map --deps src-tauri/target/release/deps',
+    'cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked', 'sudo apt-get install -y -q --no-install-recommends ./out/linux-x64/*.deb',
+    'xvfb-run -a node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file "$MODEL_FILE" --bytes "$MODEL_BYTES"',
+    'name: matrix-${{ matrix.target }}', 'rm -rf src-tauri/target/release/bundle src-tauri/target/release/models'].map((x) => W.indexOf(x))
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
+  for (const name of ['The Linux packages carry the model', 'The glibc floor', 'No download, HTTP or subprocess code']) assert.match(jobStep(W, name), /if: startsWith\(matrix\.target, 'linux-'\)\n/, name)
+  for (const name of ['tauri-driver ${{ env.TAURI_DRIVER_VERSION }}', 'The .deb installed on this runner']) assert.match(jobStep(W, name), /if: matrix\.target == 'linux-x64'\n/, name)
+  assert.match(W, /TAURI_DRIVER_VERSION: '2\.1\.0'/)
+  assert.equal(readFileSync(join(ROOT, '.github', 'workflows', 'native-e2e.yml'), 'utf8').match(/TAURI_DRIVER_VERSION: '([\d.]+)'/)?.[1], '2.1.0', 'the version native-e2e.yml installs')
+  // The packaged run is told the pin's file and size, never a name written here.
+  const run = jobStep(W, 'The .deb installed on this runner')
+  assert.match(run, /MODEL_FILE: \$\{\{ steps\.model\.outputs\.file \}\}\n {10}MODEL_BYTES: \$\{\{ steps\.model\.outputs\.bytes \}\}/)
+  assert.doesNotMatch(run, /Qwen|gguf/)
+  // The disk: printed between the heavy steps, room made in each job that holds every target's files, and the Linux
+  // packages (mostly the model, which does not compress) uploaded as they are.
+  assert.ok((W.match(/df -h \//g) ?? []).length >= 8, 'df -h between the heavy steps')
+  const room = 'sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL'
+  assert.equal(W.split(room).length - 1, 2, 'the Linux jobs and the release job make room')
+  const release = W.slice(W.indexOf('\n  release:\n'))
+  assert.ok(release.indexOf(room) > 0 && release.indexOf(room) < release.indexOf('actions/download-artifact'), 'the release job makes room before it downloads')
+  assert.match(W, /compression-level: \$\{\{ startsWith\(matrix\.target, 'linux-'\) && '0' \|\| '6' \}\}/)
+  // The paths that change what the Linux jobs build or check.
+  for (const path of ['native/llm/**', 'src/09_Cognition/siteModel.ts', 'tools/web/siteModel.mjs', 'third_party/qwen2.5-1.5b-instruct/**', 'third_party/llama.cpp/**', 'tools/browser/nativeE2e.mjs', 'tools/browser/tinyGguf.mjs']) assert.ok(W.includes(`      - ${path}\n`), path)
+  // No other job turns the runner on or fetches the model: the conditions name the Linux targets alone.
+  const job = W.slice(W.indexOf('\n    steps:\n'), W.indexOf('\n  summary:\n'))
+  for (const step of job.split('\n      - ').slice(1).filter((st) => /siteModel\.mjs|linuxAudit|nativeE2e|app-model/.test(st))) {
+    assert.match(step, /if: (?:startsWith\(matrix\.target, 'linux-'\)|matrix\.target == 'linux-x64')/, step.slice(0, 120))
+  }
 })
 
 test('the Windows app\'s workflow packages an .msi from the same binary, with the numbers as WiX\'s version, and keeps it as an artifact and on a tag\'s release', () => {

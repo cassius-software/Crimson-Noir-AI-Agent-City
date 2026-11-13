@@ -20,6 +20,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { spawnSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -120,16 +121,36 @@ test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and 
   const order = [
     'cargo clippy --manifest-path native/llm/Cargo.toml --release --locked --all-targets -- -D warnings',
     'cargo test --manifest-path native/llm/Cargo.toml --release --locked\n',
-    'node tools/web/siteModel.mjs pin',
+    'node tools/web/siteModel.mjs pin | tee',
     'node tools/web/siteModel.mjs check --from',
     '--test real -- --ignored',
+    // Then the desktop's model on the x86-64 job: its own pin, its own cache, checked, and the Linux plan's test.
+    'node tools/web/siteModel.mjs pin --pin app | tee',
+    'path: ${{ runner.temp }}/app-model\n          key: ${{ steps.app-model.outputs.key }}',
+    '"$URL" -o "$RUNNER_TEMP/app-model/$FILE"',
+    'node tools/web/siteModel.mjs check --pin app --from "$RUNNER_TEMP/app-model"',
+    'APP_GGUF="$RUNNER_TEMP/app-model/$FILE" cargo test --manifest-path native/llm/Cargo.toml --release --locked --test desktop -- --ignored',
   ].map((s) => WORKFLOW.indexOf(s))
   assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
-  // Nothing that must run is skipped or allowed to fail: the apt step (Linux only), the Hugging Face fetch (cache miss
-  // only) and the cache trim (always) are the only conditions, and no job or step may fail without failing the run.
+  // Nothing that must run is skipped or allowed to fail: the apt step (Linux only), the Hugging Face fetches (cache
+  // miss only), the desktop's model (the x86-64 job alone: one gigabyte download is enough) and the cache trim
+  // (always) are the only conditions, and no job or step may fail without failing the run.
   assert.doesNotMatch(WORKFLOW, /continue-on-error/, 'a failing step fails the job')
   const conditions = [...WORKFLOW.matchAll(/^[ \t]*(?:- )?if:\s*(.*)$/gm)].map((m) => m[1])
-  assert.deepEqual(conditions, ["runner.os == 'Linux'", "steps.model-cache.outputs.cache-hit != 'true'", 'always()'])
+  const x86 = "matrix.runner == 'ubuntu-24.04'"
+  assert.deepEqual(conditions, ["runner.os == 'Linux'", "steps.model-cache.outputs.cache-hit != 'true'", x86, x86, `${x86} && steps.app-model-cache.outputs.cache-hit != 'true'`, x86, x86, 'always()'])
+  for (const path of ['third_party/qwen2.5-1.5b-instruct/**']) assert.equal(WORKFLOW.split(`- ${path}`).length - 1, 2, `${path} under both pull_request and push`)
+  // The test reads a few greedy tokens of the desktop's model with the Linux app's own plan (src-tauri/src/runner.rs).
+  const desktop = read(ROOT, 'native', 'llm', 'tests', 'desktop.rs')
+  const runner = read(ROOT, 'src-tauri', 'src', 'runner.rs')
+  const plan = /Plan \{ n_ctx: (\d+), n_batch: (\d+), threads: half_the_threads\((\d+)\), gpu: Gpu::Off, max_tokens: (\d+), sampling: Sampling::Greedy \}/.exec(desktop)
+  assert.ok(plan, 'the Linux plan, greedy')
+  assert.deepEqual(plan.slice(1).map(Number), ['N_CTX: u32', 'N_BATCH: u32', 'THREADS_CAP: i32', 'MAX_TOKENS: u32'].map((c) => Number(new RegExp(`pub const ${c.replace(/[()]/g, '\\$&')} = (\\d+);`).exec(runner)?.[1])))
+  assert.match(desktop, /#\[ignore = "needs APP_GGUF/)
+  const carried = /pub const FILE: &str = "([^"]+)";/.exec(read(ROOT, 'src-tauri', 'src', 'model_file.rs'))?.[1]
+  assert.ok(carried && desktop.includes(`const APP_FILE: &str = "${carried}";`), 'the file the shell carries (model_file.rs FILE)')
+  assert.match(desktop, /ask\(&engine, req\(1, messages, 8\)\)/, 'a few tokens')
+  assert.match(desktop, /matches!\(done\.reason, Reason::Eog \| Reason::MaxTokens\)/)
   // Not in ci.yml: it runs on every change and wakes the self-healing workflow, whose sandbox cannot build llama.cpp.
   assert.ok(!read(ROOT, '.github', 'workflows', 'ci.yml').includes('native/llm'))
   assert.ok(!read(ROOT, 'tools', 'selfheal', 'checks.sh').includes('native/llm'))
@@ -232,4 +253,66 @@ test('native-e2e.yml drives the shell\'s commands in WebKitGTK with the tiny mod
   assert.ok(hold >= 100 && hold <= DRAIN_MS / 2, `HOLD_MS ${hold}`)
   assert.match(script, /const held = await page\(ANSWER, 64, HOLD_MS\)\n {2}answered\(.*, held, 64, \{ holdMs: HOLD_MS \}\)/)
   assert.match(script, /window\.__nativeE2eHold = holdMs\nlet r\ntry \{ r = await ask\(mind\) \} finally \{ window\.__nativeE2eHold = 0 \}/)
+})
+
+test('the installed Linux app is asked through nativeE2e.mjs --packaged: the carried file and size from its arguments, one answer of at most 16 tokens', () => {
+  const script = read(ROOT, 'tools', 'browser', 'nativeE2e.mjs')
+  assert.match(script, /^const PACKAGED = process\.argv\.includes\('--packaged'\)$/m)
+  assert.match(script, /^const CARRIED = PACKAGED \? Object\.freeze\(\{ file: arg\('file'\), bytes: Number\(arg\('bytes'\)\) \}\) : null$/m)
+  assert.match(script, /^const PACKAGED_TOKENS = 16$/m)
+  assert.match(script, /await \(PACKAGED \? packaged\(\) : run\(\)\)/)
+  const body = script.slice(script.indexOf('async function packaged()'), script.indexOf('\nasync function run()'))
+  assert.ok(body.length > 500, 'packaged() is there')
+  // The carried file and size are the arguments' (CI passes the pin's), never the tiny model's.
+  assert.doesNotMatch(body, /TINY|tiny-a|156[_,]?992/)
+  assert.match(body, /m\.file === CARRIED\.file && m\.bytes === CARRIED\.bytes && Object\.keys\(m\)\.sort\(\)\.join\(' '\) === 'bytes file status'/)
+  assert.match(body, /m\.status\.state === 'ready'/)
+  // A gigabyte's check takes longer than the tiny model's, and the in-page wait ends well before WebDriver's script
+  // timeout, so a run whose model never settles still reports what native_model answered and the states it went
+  // through, instead of an opaque script timeout; the script timeout stays below Node fetch's 300 s headers timeout.
+  assert.match(body, /await page\(MODEL, PACKAGED_MODEL_MS\)/)
+  const constant = (name: string): number => Number(new RegExp(`^const ${name} = ([\\d_]+)$`, 'm').exec(script)?.[1].replaceAll('_', '') ?? NaN)
+  const wait = constant('PACKAGED_MODEL_MS')
+  const scriptMs = constant('SCRIPT_MS')
+  assert.ok(wait > 60_000 && wait <= scriptMs - 20_000, `the in-page wait (${wait} ms) ends at least 20 s before the script timeout (${scriptMs} ms)`)
+  assert.ok(scriptMs < 300_000, 'below Node fetch\'s 300 s headers timeout')
+  assert.match(script, /timeouts`, \{ script: SCRIPT_MS, pageLoad: SCRIPT_MS \}/)
+  assert.doesNotMatch(script, /page\([A-Z_]+, (?:1[89]\d|[2-9]\d\d)_000\)/, 'no in-page wait as long as the script timeout')
+  // One answer through the page's own mind, as text events, ending with a reason within the cap.
+  assert.match(body, /await page\(ANSWER, PACKAGED_TOKENS\)/)
+  assert.match(body, /texts\.length > 0 && textOf\(g\.events\)\.trim\(\) !== ''/)
+  assert.match(body, /\(d\.reason === 'eog' \|\| d\.reason === 'maxTokens'\) && d\.tokens >= 1 && d\.tokens <= PACKAGED_TOKENS/)
+  assert.match(body, /\^\(loading,\)\+\(read,\)\+\(text,\)\+\$/)
+  // Without the file or its size it refuses to start (exit 2), before tauri-driver is started.
+  for (const args of [['--packaged', '--app', '/nowhere'], ['--packaged', '--app', '/nowhere', '--file', 'x.gguf'], ['--packaged', '--app', '/nowhere', '--file', 'x.gguf', '--bytes', 'many']]) {
+    const r = spawnSync(process.execPath, [join(ROOT, 'tools', 'browser', 'nativeE2e.mjs'), ...args, '--driver', '/nowhere/tauri-driver'], { cwd: ROOT, encoding: 'utf8' })
+    assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`)
+    assert.match(r.stderr, /--packaged --app <the installed app> --file <the carried model> --bytes <its size>/)
+  }
+  // build-matrix.yml's x86-64 job runs it against the installed binary with the pin's file and size.
+  const matrix = read(ROOT, '.github', 'workflows', 'build-matrix.yml')
+  assert.ok(matrix.includes('xvfb-run -a node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file "$MODEL_FILE" --bytes "$MODEL_BYTES"'))
+  assert.ok(read(ROOT, 'src-tauri', 'Cargo.toml').includes('name = "crimson-noir-app"'), 'the binary the .deb installs as /usr/bin/crimson-noir-app')
+})
+
+test('main sets GGML_NO_BACKTRACE first, where the runner is compiled, so llama.cpp never starts a debugger on the app', () => {
+  const main = read(ROOT, 'src-tauri', 'src', 'main.rs')
+  const body = main.slice(main.indexOf('fn main() {'))
+  const code = body.split('\n').slice(1).map((l) => l.trim()).filter((l) => l && !l.startsWith('//'))
+  assert.deepEqual(code.slice(0, 3), ['#[cfg(all(target_os = "linux", feature = "native-runner"))]', 'std::env::set_var("GGML_NO_BACKTRACE", "1");', 'crimson_noir_app_lib::run()'])
+  assert.match(body, /\/\/ SAFETY: /)
+  assert.match(read(ROOT, 'src-tauri', 'Cargo.toml'), /^edition = "2021"$/m, 'set_var is safe in edition 2021; an edition 2024 build needs an unsafe block here')
+  // The Rust test beside the runner pins the same lines.
+  assert.match(read(ROOT, 'src-tauri', 'src', 'runner.rs'), /fn main_turns_off_llama_cpp_debugger_backtrace_first_where_the_runner_is_compiled\(\)/)
+  // ggml's crash handler (fork and execlp of a debugger) is linked, so wherever the docs or a step name say the binary
+  // keeps no subprocess code of llama.cpp, they say it of llama.cpp's common library, which the symbol audit checks.
+  const docs = [['MANUAL.md'], ['CHANGELOG.md'], ['NOTICE.md'], ['docs', 'ip-audit.md'], ['.github', 'workflows', 'build-matrix.yml'], ['tools', 'build', 'linuxAudit.mjs']]
+  for (const path of docs) {
+    const flat = read(ROOT, ...path).replace(/\s+/g, ' ')
+    for (const m of flat.matchAll(/subprocess code of llama\.cpp('s common library)?/g)) {
+      assert.ok(m[1], `${path.join('/')}: "${flat.slice(Math.max(0, m.index - 80), m.index + 60)}" says it of all of llama.cpp`)
+    }
+    assert.doesNotMatch(flat, /llama\.cpp's (?:download|process|[\w ,]* subprocess) (?:and process )?code/, `${path.join('/')}: the claim names llama.cpp as a whole`)
+  }
+  assert.match(read(ROOT, 'MANUAL.md').replace(/\s+/g, ' '), /ggml's crash handler, which can start a debugger, is linked, and `main` switches it off with `GGML_NO_BACKTRACE`/)
 })

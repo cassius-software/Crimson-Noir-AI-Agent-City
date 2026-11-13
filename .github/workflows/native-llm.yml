@@ -8,7 +8,11 @@
 # run), and then the real-model tests on the site's model (Qwen2.5 0.5B Instruct, the phones' model): its turn markers,
 # its template, an answer that ends by itself, and the kept context giving the same greedy answer. The model comes
 # from the cache keyed by its pin (the web workflow's key; an entry saved on another system is not restored here),
-# else from Hugging Face at the pinned revision, and is checked against the pin's size and SHA-256 either way.
+# else from Hugging Face at the pinned revision, and is checked against the pin's size and SHA-256 either way. The
+# x86-64 job then does the same for the desktop's model (Qwen2.5 1.5B Instruct, which the Linux packages carry: the
+# pin is APP_MODEL, the cache key that pin's) and reads a few tokens of its greedy answer with the Linux app's own plan
+# (src-tauri/src/runner.rs: an 8192-token context, 512-token batches, half the threads up to eight, the CPU alone);
+# one job is enough for a gigabyte download, and build-matrix's x86-64 job asks the installed app the same way.
 # It runs on a pull request or a push to main that touches the crate, the tiny model's writer, the pin or this file
 # (a push to main seeds the caches pull requests restore), and by hand. It is not part of ci.yml, which runs on every
 # change and whose failures wake the self-healing workflow: its sandbox has no cmake or libclang for llama.cpp.
@@ -23,6 +27,7 @@ on:
       - tools/browser/tinyGguf.mjs
       - src/09_Cognition/siteModel.ts
       - tools/web/siteModel.mjs
+      - third_party/qwen2.5-1.5b-instruct/**
       - .github/workflows/native-llm.yml
   push:
     branches: [main]
@@ -31,6 +36,7 @@ on:
       - tools/browser/tinyGguf.mjs
       - src/09_Cognition/siteModel.ts
       - tools/web/siteModel.mjs
+      - third_party/qwen2.5-1.5b-instruct/**
       - .github/workflows/native-llm.yml
   workflow_dispatch:
 
@@ -115,6 +121,32 @@ jobs:
         env:
           FILE: ${{ steps.model.outputs.file }}
         run: REAL_GGUF="$RUNNER_TEMP/site-model/$FILE" cargo test --manifest-path native/llm/Cargo.toml --release --locked --test real -- --ignored --nocapture --test-threads=1
+      - id: app-model
+        name: The desktop's model, by the page's own pin (APP_MODEL), on the x86-64 job alone
+        if: matrix.runner == 'ubuntu-24.04'
+        run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
+      - id: app-model-cache
+        if: matrix.runner == 'ubuntu-24.04'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/app-model
+          key: ${{ steps.app-model.outputs.key }}
+      - name: The desktop's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: matrix.runner == 'ubuntu-24.04' && steps.app-model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.app-model.outputs.url }}
+          FILE: ${{ steps.app-model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
+      - name: It is exactly the pinned file (size and SHA-256)
+        if: matrix.runner == 'ubuntu-24.04'
+        run: node tools/web/siteModel.mjs check --pin app --from "$RUNNER_TEMP/app-model"
+      - name: The desktop's model with the Linux app's plan, a few tokens of its greedy answer
+        if: matrix.runner == 'ubuntu-24.04'
+        env:
+          FILE: ${{ steps.app-model.outputs.file }}
+        run: APP_GGUF="$RUNNER_TEMP/app-model/$FILE" cargo test --manifest-path native/llm/Cargo.toml --release --locked --test desktop -- --ignored --nocapture --test-threads=1
       - name: Leave llama.cpp's CMake build folder out of the cache (its libraries are already inside the crate's rlib)
         if: always()
         run: rm -rf native/llm/target/release/build/llama-cpp-sys-2-*/out/build

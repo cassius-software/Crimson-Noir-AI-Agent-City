@@ -14,7 +14,7 @@ text file of the repository but this document.
 
 | Claim in the plan | Finding |
 |---|---|
-| `vkQuake3` / `ioquake3` C code is linked or bundled | **Not present.** No file in `src/`, `native/`, `crimson_noir_os/`, `src-tauri/`, `tools/`, `world/`, `brand/`, `deploy/`, `.github/` or `docs/` contains `vkquake`, `ioquake`, `ioq3`, `quake3`, `Quake III`, `id tech`, `Id Software` or any Quake source, and there is no C or C++ source in the repository at all (the one compiled third-party module, the in-page model runtime below, has none of these names in its bytes either, and no GPL marker). The renderer is Three.js (MIT) over WebGPU with the product's own WGSL; the OS image renders with `wgpu` (MIT OR Apache-2.0). There is no BSP, PVS or Quake-derived culler to replace. |
+| `vkQuake3` / `ioquake3` C code is linked or bundled | **Not present.** No file in `src/`, `native/`, `crimson_noir_os/`, `src-tauri/`, `tools/`, `world/`, `brand/`, `deploy/`, `.github/` or `docs/` contains `vkquake`, `ioquake`, `ioq3`, `quake3`, `Quake III`, `id tech`, `Id Software` or any Quake source, and there is no C or C++ source in the repository at all (the one compiled third-party module, the in-page model runtime below, has none of these names in its bytes either, and no GPL marker; llama.cpp, which the Linux app compiles in, comes from a crate's vendored copy in the build's cargo registry, not from the repository, and is MIT: its entry below). The renderer is Three.js (MIT) over WebGPU with the product's own WGSL; the OS image renders with `wgpu` (MIT OR Apache-2.0). There is no BSP, PVS or Quake-derived culler to replace. |
 | MakeHuman / MPFB Python source is bundled | **Not present.** No `makehuman` or `mpfb` anywhere. The pedestrians are procedural meshes built in `src/03_Spawn_Agents/` (`humanoid.ts` lofts the body from rings written in that file, with its own fifteen-bone skeleton, skin weights, slider arithmetic, and a head whose skull regions and features (eyes, brows, nose, lips, ears) and face sliders are hand-written rings and arithmetic in the same file, as are the coat and the scarf, and the jacket's lines (`GARMENT`) that `crowd.ts`'s fragment stage cuts from the rest position, and the walk and the gaze (each leg solved from where its foot is, the head and the chest turned by arithmetic; no motion-capture data or animation clip from anywhere); `crowdBody.ts` is the WGSL of the same); no exported character mesh, skeleton, rig, blendshape, face scan or morph target from any character tool is in the repository, so there is nothing to re-licence. The CC0 gate (`src/01_Initialize_World/assets/cc0.ts`) is a filter over asset names (it purges weapon words), not a store of CC0 meshes; the plan misread its name. |
 | Pathfinder 2e ability scores (`STR`, `DEX`, …) in production code | **Since 7 November 2026: six attribute modifiers, under ORC (§7).** At the time of this audit: **no ability scores.** No ability score (`STR`, `DEX`, `CON`, `INT`, `WIS`, `CHA`) or ability modifier is in the code. What the product does borrow under the ORC Licence is listed in `NOTICE.md` ("Licensed Material"): the four degrees of success, the proficiency ranks **with their bonuses** (`RANK_BONUS` in `src/02_Define_The_Rules/degrees.ts`: untrained +0, trained +2, expert +4, master +6, legendary +8, plus the level from trained up, which is the Pathfinder 2e proficiency table), fortune/misfortune and the exact outcome odds (`degrees.ts`, mirrored in `crowd.wgsl`), and the checks built on them, among them a Reflex-style save (`YIELD_SAVE` in `src/02_Define_The_Rules/civic.ts`, a modifier against a DC; the same wording is in `crowd.wgsl`). The "Vance" persona JSON the plan refers to is in the plan's own source document, not in this repository (the file `context engineered system prompt` at the root is a 22-line research-analyst prompt with no stat block). Renaming scores that do not exist changes nothing; see §4 on the ORC point that does exist. |
 
@@ -129,11 +129,11 @@ code, and none of it is in the repository:
   4. The owner reviews the NOTICE, this entry and the pin before the change that adds them reaches main: the web
      workflow serves the model from the next publish of main on.
 
-### The model the Windows installer carries (`third_party/qwen2.5-1.5b-instruct/`, added 13 November 2026)
+### The model the desktop apps carry (`third_party/qwen2.5-1.5b-instruct/`, added 13 November 2026)
 
-The second set of model weights the product offers, so that a person who installs the Windows app can talk to Sloane
-from the first launch with no model of their own. It is held exactly as the web copy's model is (the entry above), and
-none of it is in the repository:
+The second set of model weights the product offers, so that a person who installs the Windows app, the Linux app or
+the NixOS package can talk to Sloane from the first launch with no model of their own. It is held exactly as the web
+copy's model is (the entry above), and none of it is in the repository:
 
 - **What it is.** `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, sha256
   `1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370`), as bartowski publishes it in the Hugging Face
@@ -176,6 +176,55 @@ none of it is in the repository:
   build there fetches nothing. The launcher serves the folder beside the page on `127.0.0.1` only, and the page checks
   the same size and hash on every byte. `programs.crimson-noir-agent-city.model = false` builds the module's package
   without it. The same open points apply.
+- **The Linux packages (added 13 November 2026).** The same file, at the same pin, in the Linux packages: the .deb,
+  the .rpm and the AppImage that `build-matrix.yml` builds on x86-64 and Arm, published on a numbered release and on
+  the `current` pre-release. Its Linux jobs fetch and check the file exactly as `windows-app.yml` does (the pin's own
+  cache key, Hugging Face only on a miss, `tools/web/siteModel.mjs app` on every build), and the same overlay
+  (`src-tauri/tauri.model.conf.json`) bundles it, its `LICENSE` and its `NOTICE` under
+  `/usr/lib/Crimson Noir Agent City/models/` (in the AppImage, the same path inside its image).
+  `tools/build/linuxAudit.mjs packages` fails the job unless each package holds the three there, the model at exactly
+  the pinned size. The Linux app does not hand the file to its page: its own process runs it with llama.cpp compiled
+  in (the next entry). Each package is about 1 GB, six on each release. The same open points apply.
+
+### The native model runner in the Linux app (`third_party/llama.cpp/`, added 13 November 2026)
+
+The Linux app runs the model it carries in its own process (`src-tauri/src/runner.rs` over `native/llm`), so compiled
+C and C++ of a third party is in a shipped build for the first time:
+
+- **What it is.** llama.cpp's model library (`libllama`) and ggml (`ggml`, `ggml-base`, `ggml-cpu`), compiled from the
+  sources the Rust crate `llama-cpp-sys-2` 0.1.161 vendors (crates.io; the llama-cpp-rs repository at commit
+  `e7af607ebd5ec2932709ef918c17cca2f9b0fce4`) and linked statically into the app's executable through `llama-cpp-2`
+  0.1.161. llama.cpp and ggml are MIT, "Copyright (c) 2023-2026 The ggml authors" (the vendored `LICENSE`). Two parts
+  carry their own MIT lines in their sources: ggml's CPU matrix multiplication from llamafile (`sgemm.cpp`, Copyright
+  2024 Mozilla Foundation) and its YaRN rotary scaling (`ops.cpp`, Copyright (c) 2023 Jeffrey Quesnelle and Bowen
+  Peng). The two crates are MIT OR Apache-2.0. Read from the crates and the vendored sources in this session's registry
+  cache, 13 November 2026; the link map of a local build names the archive members linked (llama's and ggml's own
+  objects, none of llama.cpp's common library, cpp-httplib or its vendored libraries).
+- **The crates the runner adds to the Linux app** (`cargo tree --target x86_64-unknown-linux-gnu`, with the feature
+  against without it; each licence from the crate's manifest in the registry cache). Linked: `crimson-noir-llm` (the
+  product's own), `llama-cpp-2` and `llama-cpp-sys-2` (MIT OR Apache-2.0), `enumflags2` (MIT OR Apache-2.0), and
+  `tracing` and `tracing-core` (MIT). Build time only: the proc-macro crates `enumflags2_derive` (MIT OR Apache-2.0)
+  and `tracing-attributes` (MIT), which run in the compiler and are not in the binary, `bindgen` (BSD-3-Clause),
+  `clang-sys` (Apache-2.0), `libloading` (ISC), `cexpr` and `minimal-lexical` (Apache-2.0 or MIT), `nom` (MIT),
+  `cmake`, `either`, `find_cuda_helper`, `itertools`, `jobserver`, `prettyplease` and `shlex` (MIT OR Apache-2.0).
+  Every other crate of `native/llm/Cargo.lock` was already in the app.
+- **How it is held.** Nothing of llama.cpp is in the repository. Only the Linux release builds compile it (cargo
+  feature `native-runner`, which `tools/build/matrix.mjs` passes for linux-x64 and linux-arm64 alone); the Windows,
+  macOS, Android and iOS builds, the page and the OS media do not. `tools/build/linuxAudit.mjs symbols` fails a Linux
+  build whose binary keeps any download, Hugging Face cache, Docker, HTTP or subprocess code of llama.cpp's common
+  library, cpp-httplib, OpenSSL or curl (from the linker's map and the libraries), or holds their strings, imports a
+  network call or needs OpenSSL, curl or OpenMP.
+- **The texts.** `third_party/llama.cpp/LICENSE` is the vendored `LICENSE`, byte for byte (sha256
+  `94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d`); `third_party/llama.cpp/NOTICE` says what is
+  compiled in, from where, and under which lines. The model overlay installs both in every Linux package as
+  `/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE` and `NOTICE`, and the package check fails without them.
+  `NOTICE.md` has a paragraph under "Third-party software" and names llama.cpp in its trademark paragraph.
+- **Open points, for the owner before a release.** llama.cpp's `unicode-data.cpp` (linked) is generated from the
+  Unicode Character Database, whose licence (Unicode-3.0) asks for its notice in copies of the data: have counsel say
+  whether the NOTICE should carry it (the Tauri tree already brings Unicode-3.0 crates, the same question). The
+  crates linked into the app (the list above, and the Tauri stack's in §3) carry their MIT and Apache-2.0 notices in
+  their sources only; the Linux packages install no collected notice of them yet, as the Windows installer installs
+  none.
 
 ## 2. The npm dependency tree (`package-lock.json`)
 
@@ -221,10 +270,11 @@ cargo license --manifest-path native/llm/Cargo.toml
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
 - **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
   the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
-  the macOS, Linux, Android and iOS apps). It is compiled into no shipped build yet; only its tests run
-  (`native-llm.yml`), and the Linux app built for the end-to-end test alone (`native-e2e.yml`, feature
-  `tiny-model`). Linked into it (19 crates): `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the
-  sys crate is llama-cpp-rs at commit e7af607e), which compile the llama.cpp and ggml sources they vendor (MIT,
+  the macOS, Linux, Android and iOS apps). Since 13 November 2026 the Linux app's release builds compile it
+  (`build-matrix.yml`, feature `native-runner`; §1, "The native model runner in the Linux app"); its tests run in
+  `native-llm.yml`, and `native-e2e.yml` builds the Linux app with the tiny test model. Linked into it (19 crates):
+  `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the sys crate is llama-cpp-rs at commit e7af607e),
+  which compile the llama.cpp and ggml sources they vendor (MIT,
   Copyright 2023-2026 The ggml authors); `serde`, `serde_core`, `sha2`, `digest`, `block-buffer`, `crypto-common`,
   `cpufeatures`, `typenum`, `libc`, `thiserror`, `enumflags2`, `cfg-if`, `once_cell` and `pin-project-lite` (MIT OR
   Apache-2.0); and `tracing`, `tracing-core` and `generic-array` (MIT). Build time only, among them: `bindgen`
@@ -232,12 +282,12 @@ cargo license --manifest-path native/llm/Cargo.toml
   the proc-macro crates (MIT OR Apache-2.0, except `tracing-attributes`, which is MIT; `unicode-ident` adds
   Unicode-3.0), `nom` (MIT), `memchr`, `walkdir` and `same-file` (Unlicense OR MIT; `winapi-util`, also Unlicense OR
   MIT, on Windows only), and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available).
-  The notice for what llama.cpp compiles in (ggml, the llamafile matrix code, the YaRN code, and what its common
-  library brings) lands with the first app build that carries the runner.
+  The notice for what llama.cpp compiles in (ggml, the llamafile matrix multiplication, the YaRN code) is
+  `third_party/llama.cpp/NOTICE`, installed with the Linux app; none of its common library is linked.
 - **`src-tauri/Cargo.lock` (427 crates; 407 before 13 November 2026)**: the 20 added are the native runner's crate and
-  what it brings (the list above), recorded because the app names it as an optional, Linux-only dependency behind the
-  `native-runner` feature, which is off by default: no shipped build compiles them, and the Windows and macOS builds
-  link exactly what they did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
+  what it brings (the list above), an optional, Linux-only dependency behind the `native-runner` feature, which is
+  off by default: the Linux release builds turn it on (§1), and the Windows and macOS builds link exactly what they
+  did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
   `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.
@@ -252,13 +302,21 @@ cargo license --manifest-path native/llm/Cargo.toml
   provided the source of those files stays available to recipients and their notices are kept. **For counsel:**
   confirm that reading for this product, and whether `NOTICE.md` should name these crates and where their source
   is (crates.io). Nothing here was modified, and no MPL file is copied into the repository.
-  **Two more to confirm:** the crates compiled **only for Linux targets**, `libappindicator`/`libappindicator-sys`
-  (the tray on Linux; the crate itself is believed to be LGPL-3.0, wrapping an LGPL system library) and
-  `libdbus-sys` (links the system `libdbus`, AFL-2.1 OR GPL-2.0 as a system library). Neither is compiled into the
-  product that ships: `windows-app.yml` builds the Windows installer and executable only, where the tray and the
-  webview come from `windows`/`webview2-com` (Microsoft's WebView2 runtime is a system component, not redistributed).
-  If a Linux build of the app is ever published, these two need a decision (the Tauri project's own position is that
-  dynamic linking to them is fine; counsel should confirm it for a proprietary product).
+  **Two more to confirm:** the crates recorded **only for Linux targets**, `libappindicator`/`libappindicator-sys`
+  (the tray on Linux, wrapping an LGPL system library; the crates' own manifests in the registry cache say Apache-2.0
+  OR MIT) and `libdbus-sys` (links the system `libdbus`, AFL-2.1 OR GPL-2.0 as a system library). `libdbus-sys` is
+  compiled into the Linux app (through `tao` → `dbus`) and links the system `libdbus-1` dynamically (the binary needs
+  `libdbus-1.so.3`); the build matrix publishes that app as `.deb`, `.rpm` and `.AppImage` (on a numbered release and
+  on the `current` pre-release). `libappindicator`/`libappindicator-sys` are in the lockfile only as dependencies of
+  `tray-icon`, an optional Tauri feature this app does not turn on, so no build compiles them (`cargo tree --target
+  x86_64-unknown-linux-gnu -i libappindicator` prints nothing, with the runner's feature or without it). The Windows
+  installer and executable compile neither, since the tray and the webview come from `windows`/`webview2-com`
+  (Microsoft's WebView2 runtime is a system component, not redistributed). `libdbus-sys` therefore needs a decision
+  (the Tauri project's own position is that dynamic linking to it is fine; counsel should confirm it for a proprietary
+  product), and `libappindicator` would need one if the tray feature is ever turned on. The AppImage also carries a
+  copy of `libdbus-1.so.3` itself, with its package's copyright file (an `unsquashfs` listing of the AppImage the
+  rehearsal built on Ubuntu 24.04, 13 November 2026), so for the AppImage the question is redistributing that library
+  as well as linking to it.
 
 ## 4. The ORC Licence point that is real
 
