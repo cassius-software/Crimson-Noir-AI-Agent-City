@@ -73,10 +73,13 @@ test('the operator tier: the context rides every request beside the memories, an
   const src = read('../operator.ts')
   assert.match(src, /memories: remembered\(lease\.bound\), \.\.\.\(awareness && \{ context: aware\(lease\.bound\) \}\)/)
   assert.match(src, /awareness\?\.remember\(t\.agent, 'the player', `asked "/)
+  // Every provider renders the request through systemFor, which hands the context (and the memories and steering) to
+  // systemPrompt unless the request is a conversation (AnswerRequest.talk, which carries none of them).
   const local = read('../../09_Cognition/localCompute.ts')
-  assert.match(local, /systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/)
+  assert.match(local, /return req\.talk === true \? TALK_PROMPT : systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/)
+  assert.equal((local.match(/systemFor\(req\)/g) ?? []).length, 1, 'the local servers')
   const router = read('../../09_Cognition/router.ts')
-  assert.equal((router.match(/systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/g) ?? []).length, 3, 'the Claude provider, the scripted provider and the prefix page table')
+  assert.equal((router.match(/systemFor\(req\)/g) ?? []).length, 3, 'the Claude provider, the scripted provider and the prefix page table')
   const inPage = read('../../09_Cognition/inPage.ts')
-  assert.equal((inPage.match(/systemPrompt\(req\.tethers, req\.memories, req\.context, req\.steering\)/g) ?? []).length, 1, 'the model kept in this page')
+  assert.equal((inPage.match(/systemFor\(req\)/g) ?? []).length, 1, 'the model kept in this page')
 })

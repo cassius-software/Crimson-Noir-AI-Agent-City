@@ -213,6 +213,10 @@ p.record[16]                                     // credits, read-only by conven
   | `look` | 512-767 | the retail storefronts |
   | `property` | 0-63 (the seven homes are 0-6) | the properties |
   | `furniture` | 0-511 | the furnishing of the properties |
+
+  A storefront's worn line (`look` 512 + its catalogue id) is also what opens it in the wardrobe: until its bit is
+  set, the wardrobe card and the console's `look` lock what the line sells on the player's own look
+  (`src/07_Execute_Actions/lookLock.ts`). The customizer's own range has no paid unlocks yet.
 - **Arguments.** `buy(space, index, levelReq, price)`: `levelReq` a whole number from 1 to 20, `price` a whole number
   of credits from 0 to 2,000,000,000 (0 is a free unlock).
 - **Results.** `PURCHASE.bought` (0), `owned` (1, nothing charged), `level` (2), `credits` (3), `invalid` (4), checked
