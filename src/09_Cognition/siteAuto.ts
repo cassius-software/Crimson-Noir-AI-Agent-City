@@ -21,11 +21,13 @@
  * too). createSiteAuto runs the page's own start in that order, reads the facts again once it holds the lock, and
  * records how the try ended. Nothing here fetches, reads the DOM or the global: the facts, the storage, the locks and
  * the page's own steps are handed in, so the Node tests hand it fakes.
+ * The Windows app runs the same start over the model its installer puts beside the app (siteModel.ts APP_MODEL, read
+ * through the shell): its host reports no connection (the copy never leaves the machine), and the words say "app".
  * What breaks if it is removed? The served model would wait for a tap again on every platform, or a page that cannot
  * keep it, a phone on mobile data or a device that dies in the copy would download it on every visit.
  */
 import type { SiteJob, SiteJobState } from './siteJob.ts'
-import { SITE_MODEL, type SiteModelPin } from './siteModel.ts'
+import { SITE_MODEL, type SiteModelFrom, type SiteModelPin } from './siteModel.ts'
 
 /** Where the record is kept between visits (the page's local storage). */
 export const AUTO_KEY = 'civic-simulation:sitemodel:auto:v1'
@@ -385,7 +387,7 @@ export interface AutoHost {
   seen(): Promise<void>
   /** Why nothing more may start (the city ended or halted), or null. */
   ended(): string | null
-  /** The page is the web copy, served with a model beside it. */
+  /** The page is the web copy, served with a model beside it (or the Windows app, which can read the one it carries). */
   served(): boolean
   /** The facts, read now, with no request. */
   facts(): Promise<AutoFacts>
@@ -393,7 +395,7 @@ export interface AutoHost {
   offer(): Promise<{ readonly kept: boolean } | null>
   /** Why this device or its storage cannot take it now (the checks a tap meets), or null. */
   refusal(): Promise<string | null>
-  /** The connection as the browser reports it now. */
+  /** The connection as the browser reports it now (null where the copy uses none: the app's own file). */
   link(): Link | null
   /** Calls back on each change of the connection; returns the unsubscribe. */
   onLink(changed: () => void): () => void
@@ -405,6 +407,12 @@ export interface AutoHost {
   say(line: string): void
   now(): number
 }
+
+/** The page's own start's words for where the model comes from (siteModel.ts SiteModelFrom). */
+const WHERE = Object.freeze({
+  site: Object.freeze({ unserved: 'only the web copy is served with a model beside it', none: 'this site serves no model beside the page' }),
+  app: Object.freeze({ unserved: 'this app cannot read a model of its own', none: 'this app carries no model (the installer puts one beside the app; the bare .exe has none)' }),
+})
 
 /**
  * How a try that ended short is recorded: as a pause when the connection says why (it turned costly, or dropped) or
@@ -426,7 +434,8 @@ function outcomeOf(end: SiteJobState, link: string | null, offline: boolean): Au
  * halt) holds it back. The connection turning costly while it downloads stops it. How it ended goes in the record,
  * and to the visitor in a toast: kept, ended short (why), or waiting for a better connection.
  */
-export function createSiteAuto(h: AutoHost, pin: SiteModelPin = SITE_MODEL, who = 'Sloane'): () => Promise<string> {
+export function createSiteAuto(h: AutoHost, pin: SiteModelPin = SITE_MODEL, who = 'Sloane', from: SiteModelFrom = 'site'): () => Promise<string> {
+  const where = WHERE[from]
   let ran = false
   return async () => {
     if (ran) return 'the page has looked already this visit'
@@ -434,13 +443,13 @@ export function createSiteAuto(h: AutoHost, pin: SiteModelPin = SITE_MODEL, who 
     await h.seen()
     const ended = h.ended()
     if (ended !== null) return ended
-    if (!h.served()) return 'only the web copy is served with a model beside it'
+    if (!h.served()) return where.unserved
     const first = autoVerdict(await h.facts(), pin)
     if (!first.go) return first.why
     const held = await h.record.hold(h.now())
     if (held !== null) return held
     const offer = await h.offer()
-    if (!offer) return 'this site serves no model beside the page'
+    if (!offer) return where.none
     if (offer.kept) return `${pin.file} is kept in this page already`
     const refused = await h.refusal()
     if (refused !== null) return refused

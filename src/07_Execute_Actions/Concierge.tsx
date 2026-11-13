@@ -33,7 +33,7 @@ import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from 
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
-import type { SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
+import type { SiteModelFrom, SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
 import type { SiteJobState } from '../09_Cognition/siteJob.ts'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
@@ -405,6 +405,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const job = useSyncExternalStore(siteModel?.job.subscribe ?? NO_SUBSCRIBE, siteModel?.job.state ?? NO_JOB, NO_JOB)
   /** How far it has come while it runs, or null. */
   const getting: SiteModelProgress | null = job?.phase === 'running' ? job : null
+  /** Where it comes from, for the words: this site, or the app that carries it (copied, not downloaded). */
+  const from: SiteModelFrom = siteModel?.from ?? 'site'
   /** Why the last try to get it ended short (a plain sentence), or ''. */
   const gotWhy = job?.phase === 'failed' ? job.why : ''
   /** The last tapped try that ended short whose reason the card has shown: one that came while the card was away keeps
@@ -997,12 +999,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   {getting ? (
                     <div data-site-model={getting.step}>
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                        <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
+                        <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting, from)}</span>
                         {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} aria-label={`Stop getting ${SLOANE.name}’s model`} data-action="stop-model">Stop</button>}
                       </div>
                       <div
                         role="progressbar"
-                        aria-label={getting.step === 'download' ? 'Downloading the model' : 'Keeping the model in this page'}
+                        aria-label={getting.step === 'download' ? (from === 'app' ? 'Copying the model from the app' : 'Downloading the model') : 'Keeping the model in this page'}
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={percent(getting)}
@@ -1028,7 +1030,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   )}
                   {gotWhy && !getting && <p role="status" className={`mt-1.5 text-[11px] leading-snug break-words ${muted}`} data-site-why>{gotWhy}</p>}
                   <p className={`mt-2 text-[12px] leading-snug ${muted}`}>
-                    {site ? siteHint(site) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
+                    {site ? siteHint(site, from) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
                     Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
                     {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
                   </p>
@@ -1164,8 +1166,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
 
       {getting && !(talking && talk?.state === 'none') && (
         <div className={`${tight ? 'mt-2 pt-2' : 'mt-3 pt-2.5'} flex items-center gap-3 border-t ${rule}`} data-site-strip={getting.step}>
-          <span className={`min-w-0 shrink-0 text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
-          <span role="progressbar" aria-label={getting.step === 'download' ? `Downloading ${SLOANE.name}’s model` : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+          <span className={`min-w-0 shrink-0 text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting, from)}</span>
+          <span role="progressbar" aria-label={getting.step === 'download' ? (from === 'app' ? `Copying ${SLOANE.name}’s model from the app` : `Downloading ${SLOANE.name}’s model`) : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
             className={`block h-1 min-w-8 flex-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
             <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
           </span>
@@ -1229,19 +1231,22 @@ function percent(p: SiteModelProgress): number {
 
 /**
  * The line over the bar while the site's model is got: megabytes while it downloads (kilobytes for a file under one
- * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept.
+ * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept. The app's model is copied, not
+ * downloaded: it is beside the app already.
  */
-function gettingLine(p: SiteModelProgress): string {
+function gettingLine(p: SiteModelProgress, from: SiteModelFrom = 'site'): string {
   if (p.step === 'keep') return `Keeping it in this page · ${percent(p)}%`
-  if (p.total <= 0) return 'Downloading…'
+  const verb = from === 'app' ? 'Copying from the app' : 'Downloading'
+  if (p.total <= 0) return `${verb}…`
   const [unit, name] = p.total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
-  return `Downloading · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
+  return `${verb} · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
 }
 
-/** The hint under the site's model: what it is, where it comes from, and where it stays. */
-function siteHint(site: SiteModelLine): string {
-  return site.kept
-    ? `${site.title} is kept in this browser already. `
+/** The hint under the site's model (or the app's): what it is, where it comes from, and where it stays. */
+function siteHint(site: SiteModelLine, from: SiteModelFrom = 'site'): string {
+  if (site.kept) return `${site.title} is kept in this ${from === 'app' ? 'page' : 'browser'} already. `
+  return from === 'app'
+    ? `${site.title}, ${site.size}: it came with this app, and is checked against the copy the app was built for and kept in this page (Apache-2.0). `
     : `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
 }
 

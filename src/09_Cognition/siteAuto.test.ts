@@ -21,7 +21,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { AUTO_KEY, AUTO_LOCK, BACKOFF_MS, STOPPED, autoVerdict, createAutoRecord, createSiteAuto, linkHold, readLink, type AutoFacts, type AutoHost, type AutoLocks, type AutoRecord, type AutoStore, type AutoTry, type Link } from './siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteGet, type SiteJobHow } from './siteJob.ts'
-import { SITE_MODEL, type SiteModelProgress } from './siteModel.ts'
+import { APP_MODEL, SITE_MODEL, type SiteModelProgress } from './siteModel.ts'
 
 /** A page's local storage in memory; `broken` makes every call throw. */
 function memoryStore(broken = false): AutoStore & { map: Map<string, string> } {
@@ -393,6 +393,21 @@ test('the start: once seen, the facts, the record, the manifest, the room, the l
   assert.equal(p.saved(), null, 'kept: nothing left in the record')
   assert.equal(await auto(), 'the page has looked already this visit', 'once a city')
   assert.equal(p.work.calls.length, 1)
+})
+
+test('the Windows app\'s start: the same steps over the model it carries, with no connection, in the app\'s words', async () => {
+  // The host reports no connection (the copy never leaves the machine), so nothing about the link holds it back.
+  const p = page({ host: { link: () => null, offline: () => false } })
+  const run = createSiteAuto(p.h, APP_MODEL, 'Sloane', 'app')()
+  await until(() => p.work.calls.length === 1, 'the job is started')
+  assert.deepEqual(p.calls, ['seen', 'served', 'facts', 'hold', 'offer', 'refusal', 'begin', 'facts', 'onLink'])
+  p.work.calls[0].resolve(`${APP_MODEL.file} is kept in this page (940 MB)`)
+  assert.equal(await run, `${APP_MODEL.file} is kept in this page (940 MB)`)
+  // What it says where it cannot: the app's words, never the site's.
+  assert.equal(await createSiteAuto(page({ host: { served: () => false } }).h, APP_MODEL, 'Sloane', 'app')(), 'this app cannot read a model of its own')
+  assert.equal(await createSiteAuto(page({ host: { offer: async () => null } }).h, APP_MODEL, 'Sloane', 'app')(), 'this app carries no model (the installer puts one beside the app; the bare .exe has none)')
+  const kept = await createSiteAuto(page({ host: { offer: async () => ({ kept: true }) } }).h, APP_MODEL, 'Sloane', 'app')()
+  assert.equal(kept, `${APP_MODEL.file} is kept in this page already`)
 })
 
 test('the start waits until the page is seen, and a city that ended or halted starts nothing', async () => {

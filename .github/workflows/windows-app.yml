@@ -17,6 +17,11 @@
 # for a call. The concurrency group carries the commit, so a push to main never cancels a call's build.
 # The bare .exe is published as crimson-noir-app_<version>_x64.exe, so it never shares a name with the Windows on Arm
 # one build-matrix.yml makes (crimson-noir-app_<version>_arm64.exe) on a release that carries both.
+# The installer and the .msi carry a model beside the app (src-tauri/tauri.model.conf.json: Qwen2.5 1.5B Instruct,
+# Apache-2.0, with its LICENSE and NOTICE), so Sloane talks from the first launch: the file is fetched from Hugging Face
+# at the page's own pin (src/09_Cognition/siteModel.ts APP_MODEL) whenever the cache keyed by that pin does not hold
+# it, and checked byte for byte on every build before it goes in (tools/web/siteModel.mjs app). The bare .exe carries
+# none: it is the app alone.
 # What breaks if it is removed? Nobody gets an .exe without a Windows machine with Rust, Node and NSIS on it.
 
 name: windows-app
@@ -82,16 +87,34 @@ jobs:
           key: windows-app-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: windows-app-${{ env.RUST_TOOLCHAIN }}-
       - run: npm ci --no-audit --no-fund
-      - name: The page, then the app (npm run build, cargo build --release, the NSIS installer)
+      - id: model
+        name: The app's model, by the page's own pin (src/09_Cognition/siteModel.ts APP_MODEL)
+        run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
+      - id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/app-model
+          key: ${{ steps.model.outputs.key }}
+      - name: The app's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
+      - name: Checked byte for byte, then into src-tauri/models/ with its LICENSE and NOTICE (on every build, a cached file too)
+        run: node tools/web/siteModel.mjs app --from "$RUNNER_TEMP/app-model"
+      - name: The page, then the app (npm run build, cargo build --release, the NSIS installer with the model)
         # The cache above restores src-tauri/target with the installers of earlier versions still in bundle/nsis;
         # they go first, so only this version's installer is collected below.
         run: |
           rm -rf src-tauri/target/release/bundle
-          npm run app:build
+          npm run app:build -- --config src-tauri/tauri.model.conf.json
       - name: The .msi from the same binary (tauri bundle packages it without compiling; WiX gets the version's numbers)
         run: |
           numbers=$(node -p "require('./package.json').version.split(/[-+]/)[0]")
-          node node_modules/@tauri-apps/cli/tauri.js bundle --bundles msi --config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"$numbers\"}}}}"
+          node node_modules/@tauri-apps/cli/tauri.js bundle --bundles msi --config src-tauri/tauri.model.conf.json --config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"$numbers\"}}}}"
       - name: Collect the installers and the bare executable
         id: version
         run: |
@@ -104,6 +127,15 @@ jobs:
           ls -l out/installer out/msi out/portable
           [ "$(ls out/installer | wc -l)" = 1 ] || { echo "::error::expected exactly one installer for $version"; exit 1; }
           [ "$(ls out/msi | wc -l)" = 1 ] || { echo "::error::expected exactly one .msi for $version"; exit 1; }
+          # Each installer carries the model: neither can be smaller than nine tenths of it (the .msi's cabinet may
+          # squeeze it a little; the NSIS installer stores it as it is).
+          : "${MODEL_BYTES:?the pinned size of the model is missing}"
+          for f in out/installer/* out/msi/*; do
+            size=$(stat -c %s "$f")
+            [ "$size" -gt "$((MODEL_BYTES / 10 * 9))" ] || { echo "::error::$f is $size bytes: it does not carry the $MODEL_BYTES-byte model"; exit 1; }
+          done
+        env:
+          MODEL_BYTES: ${{ steps.model.outputs.bytes }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ steps.version.outputs.version }}
@@ -119,6 +151,8 @@ jobs:
           name: windows-portable-${{ steps.version.outputs.version }}
           path: out/portable/
           if-no-files-found: error
+      - name: The installers and the model's copies stay out of the build cache (saved after this job)
+        run: rm -rf src-tauri/target/release/bundle src-tauri/target/release/models
 
   # On a v* tag: the installer and the executable onto the tag's release. build-release.yml creates that release once
   # its bake is done (a quarter of an hour or more after the push); this job waits for it, and creates it only when

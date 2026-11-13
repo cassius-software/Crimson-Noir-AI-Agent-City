@@ -1,0 +1,31 @@
+Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the Windows app's installer carries
+===================================================================================
+
+This directory records the one model the Windows installer of Crimson Noir: Agent City carries beside the app, so a
+person who installs it can talk to Sloane from the first launch with no model of their own. The model's weights are
+NOT in this repository, NOT in the page file (dist/index.html) and NOT in the bare .exe: the Windows workflow
+(.github/workflows/windows-app.yml, through tools/web/siteModel.mjs) fetches the file below from Hugging Face at the
+pinned revision whenever its cache (keyed by the pin) does not hold it, refuses it unless its size and SHA-256 are
+exactly these, and puts it into the installer (src-tauri/tauri.model.conf.json) as
+models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf in the app's folder, with this NOTICE and LICENSE beside it. The page reads it
+through the app (src-tauri/src/model.rs) once the city is on screen, checks the same size and SHA-256
+(src/09_Cognition/siteModel.ts APP_MODEL), and keeps a copy in the app's own page storage.
+
+  Qwen2.5-1.5B-Instruct-Q4_K_M.gguf   986048768 bytes, sha256 1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370
+  (SHA256SUMS beside this file has the same line)
+
+Where it comes from
+-------------------
+
+- The model: Qwen2.5-1.5B-Instruct, by the Qwen team, Alibaba Cloud. Licence: Apache License 2.0. Copyright 2024
+  Alibaba Cloud. The licence text is LICENSE beside this file: the Apache License 2.0 with that copyright line, as the
+  Qwen repository on Hugging Face (Qwen/Qwen2.5-1.5B-Instruct) carries it. The repository has no NOTICE file.
+- The file: a GGUF conversion of those weights quantized to Q4_K_M with an importance matrix by bartowski, published
+  as bartowski/Qwen2.5-1.5B-Instruct-GGUF on Hugging Face, revision 9eadc66189c7641e1ddd226b8267a9119b2ce2d4
+  (quantized with llama.cpp release b3772; the repository names its licence as apache-2.0 and carries no licence file
+  of its own). Under section 4(b) of the licence: the file is that conversion of Qwen's weights (format and numeric
+  precision changed by the quantization); Crimson Noir: Agent City ships it exactly as published and changes nothing
+  in it.
+
+The model remains under its own licence, not under the product's licence. "Qwen" is a name of Alibaba Cloud, used
+here only to say which model this is.

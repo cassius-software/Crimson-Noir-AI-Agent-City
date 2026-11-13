@@ -16,8 +16,11 @@
  * File only once every byte has passed. That File is then kept exactly as a picked file is (App.tsx keepPicked).
  * Nothing here fetches by itself: the fetch is handed in (App.tsx siteFetch, under the global air gap, which admits
  * the page's own origin as the content policy's connect-src 'self' does).
+ * The Windows app carries a model of its own the same way (APP_MODEL, beside the app rather than beside a page): the
+ * shell lends the page a read of that one file (src-tauri/src/model.rs, desktopShell.ts shellModelFetch), handed in
+ * here in place of the site's fetch, and the same checks hold it to its pin.
  * What breaks if it is removed? A fresh visitor to the web copy is back to finding a model file or a model server of
- * their own before Sloane can say a word.
+ * their own before Sloane can say a word, and so is a fresh install of the Windows app.
  */
 import { hex, sha256Stream } from '../02_Define_The_Rules/integrity.ts'
 import type { SiteJob } from './siteJob.ts'
@@ -51,6 +54,30 @@ export const SITE_MODEL: SiteModelPin = Object.freeze({
   revision: '41ba88dbac95fed2528c92514c131d73eb5a174b',
   title: 'Qwen2.5 0.5B Instruct',
 })
+
+/**
+ * Qwen2.5 1.5B Instruct at Q4_K_M, the same quantization by bartowski of Qwen's own weights (Apache-2.0, Copyright
+ * 2024 Alibaba Cloud; third_party/qwen2.5-1.5b-instruct/ holds the licence and the notice): the model the Windows app's
+ * installer carries beside the app (src-tauri/tauri.model.conf.json, src-tauri/src/model.rs), which the page copies
+ * into its own storage once the city is on screen, as the web copy gets SITE_MODEL. About 0.9 GB: a desktop's in-page
+ * limits take it (inPagePlan.ts), and it answers better than the 0.5B. Its byte count and hash equal the SHA256SUMS
+ * line beside its notice, and src-tauri/src/model_file.rs names the same file and size (siteModel.test.ts).
+ */
+export const APP_MODEL: SiteModelPin = Object.freeze({
+  file: 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf',
+  bytes: 986_048_768,
+  sha256: '1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370',
+  repo: 'bartowski/Qwen2.5-1.5B-Instruct-GGUF',
+  revision: '9eadc66189c7641e1ddd226b8267a9119b2ce2d4',
+  title: 'Qwen2.5 1.5B Instruct',
+})
+
+/**
+ * Where the pinned model comes from: `site`, the web copy's own site, beside the page (SITE_MODEL); `app`, the Windows
+ * app that carries it beside itself (APP_MODEL, read through the shell: desktopShell.ts shellModelFetch). The words a
+ * visitor reads follow it; the checks are the same.
+ */
+export type SiteModelFrom = 'site' | 'app'
 
 /** The folder beside the page that holds the served model, its manifest and its licence. */
 export const SITE_DIR = 'models/'
@@ -115,32 +142,37 @@ const MIB = 1024 * 1024
  * The plain sentence for a download that ended short of the model: whole megabytes while they differ, bytes once it
  * stopped inside the last megabyte, so a download that ended short never reads "379 of 379 MB".
  */
-const shortOf = (got: number, pin: SiteModelPin): string => {
+const shortOf = (got: number, pin: SiteModelPin, from: SiteModelFrom = 'site'): string => {
   const mb = (n: number): number => Math.floor(n / MIB)
   const at = mb(got) < mb(pin.bytes) ? `${mb(got)} of ${mb(pin.bytes)} MB` : `${got.toLocaleString('en-US')} of ${pin.bytes.toLocaleString('en-US')} bytes`
-  return `the download stopped at ${at}: try again`
+  return `${from === 'app' ? 'the copy from the app' : 'the download'} stopped at ${at}: try again`
 }
 
+/** Who sent the model, in a sentence. */
+const sender = (from: SiteModelFrom): string => (from === 'app' ? 'the app' : 'this site')
+
 /**
- * The pinned model from this site, as a File named for it, once all of it has arrived and its size and SHA-256 are
- * the pin's. `onBytes(done, total)` is told as it arrives. The response is not kept in the browser's HTTP cache (the
- * page's model store keeps the one copy); it is counted and hashed as it streams, and refused the moment it runs past
- * the pin's size. Rejects with a plain sentence: the site did not send it (its HTTP status), the download stopped
- * short, what arrived is not the pinned model, or it arrived whole and checked but the browser could not hold it.
- * Aborting `signal` stops the download and rejects with its reason, up to the moment the File is returned.
+ * The pinned model from this site (or, `from` 'app', from the app that carries it), as a File named for it, once all
+ * of it has arrived and its size and SHA-256 are the pin's. `onBytes(done, total)` is told as it arrives. The response
+ * is not kept in the browser's HTTP cache (the page's model store keeps the one copy); it is counted and hashed as it
+ * streams, and refused the moment it runs past the pin's size. Rejects with a plain sentence: the site did not send it
+ * (its HTTP status), the download stopped short, what arrived is not the pinned model, or it arrived whole and checked
+ * but the browser could not hold it. Aborting `signal` stops the download and rejects with its reason, up to the
+ * moment the File is returned.
  */
-export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, onBytes: (done: number, total: number) => void, signal?: AbortSignal): Promise<File> {
+export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, onBytes: (done: number, total: number) => void, signal?: AbortSignal, from: SiteModelFrom = 'site'): Promise<File> {
   signal?.throwIfAborted()
   let res: Response
   try {
     res = await siteFetch(`${SITE_DIR}${pin.file}`, { cache: 'no-store', signal })
   } catch (e) {
     signal?.throwIfAborted()
-    throw new Error(`this site could not be reached for the model (${e instanceof Error ? e.message : String(e)}): check the connection and try again`)
+    const why = e instanceof Error ? e.message : String(e)
+    throw new Error(from === 'app' ? `the app could not read the model it carries (${why}): install the app again and try again` : `this site could not be reached for the model (${why}): check the connection and try again`)
   }
   if (!res.ok || !res.body) {
     void res.body?.cancel().catch(() => undefined)
-    throw new Error(`this site did not send the model (HTTP ${res.status}${res.status === 429 ? ', too many downloads for now' : ''}): try again later`)
+    throw new Error(`${sender(from)} did not send the model (HTTP ${res.status}${res.status === 429 ? ', too many downloads for now' : ''}): try again later`)
   }
   const hash = sha256Stream()
   let got = 0
@@ -157,14 +189,14 @@ export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, on
   const check = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, ctl) {
       got += chunk.byteLength
-      if (got > pin.bytes) refuse(`what this site sent is larger than the model this page was built for (${pin.file}), so nothing was kept`)
+      if (got > pin.bytes) refuse(`what ${sender(from)} sent is larger than the model this page was built for (${pin.file}), so nothing was kept`)
       hash.update(chunk)
       onBytes(got, pin.bytes)
       ctl.enqueue(chunk)
     },
     flush() {
-      if (got < pin.bytes) refuse(shortOf(got, pin))
-      if (hex(hash.digest()) !== pin.sha256) refuse('what this site sent is not the model this page was built for (its SHA-256 differs), so nothing was kept')
+      if (got < pin.bytes) refuse(shortOf(got, pin, from))
+      if (hex(hash.digest()) !== pin.sha256) refuse(`what ${sender(from)} sent is not the model this page was built for (its SHA-256 differs), so nothing was kept`)
       checked = true
     },
   })
@@ -176,7 +208,7 @@ export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, on
     // The size and hash refusals say their own; a body that broke off mid-way says so by the bytes that did arrive.
     if (refused !== null) throw new Error(refused)
     if (checked) throw new Error(`the model arrived whole and checked, but this browser could not hold it (${e instanceof Error ? e.message : String(e)}), so nothing was kept: close other tabs or free some storage, and try again`)
-    throw new Error(shortOf(got, pin))
+    throw new Error(shortOf(got, pin, from))
   }
   // A stop that came as the last bytes did, while the browser was still making them one file: nothing is handed on.
   signal?.throwIfAborted()
@@ -207,4 +239,6 @@ export interface SiteModelProgress {
 export interface SiteModelHost {
   offer(): Promise<SiteModelLine | null>
   readonly job: SiteJob
+  /** Where the model comes from, for the card's words: this site (the default) or the app that carries it. */
+  readonly from?: SiteModelFrom
 }

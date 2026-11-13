@@ -15,6 +15,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The Windows installer carries Sloane's model.** The Windows app's NSIS installer and its .msi now carry Qwen2.5
+  1.5B Instruct at Q4_K_M (Apache-2.0, Copyright 2024 Alibaba Cloud; `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768
+  bytes, as bartowski quantized it) beside the app, with its `LICENSE` and `NOTICE`
+  (`third_party/qwen2.5-1.5b-instruct/`, `src-tauri/tauri.model.conf.json`). `windows-app.yml` fetches it from Hugging
+  Face at its pin (`src/09_Cognition/siteModel.ts` `APP_MODEL`) when its cache does not hold it, checks its size and
+  SHA-256 on every build (`tools/web/siteModel.mjs app`), builds both installers with it, and fails a build whose
+  installer is smaller than nine tenths of the model; `site-model.yml` checks the pin on Linux too. The shell lends the
+  page two read-only commands over that one file (`src-tauri/src/model.rs`: `app_model`, whether it is there at its
+  size; `app_model_read`, up to 4 MiB from an offset as base64 text), and the page reads it through them
+  (`src/07_Execute_Actions/desktopShell.ts` `shellModel`, `shellModelFetch`) along the web copy's path: the same start
+  once the city is on screen, holds, checks on every byte, keep, card and **Stop**, with the connection given no say
+  and the card saying the model is copied from the app. The page keeps its own copy, so the model takes about 0.9 GB
+  twice on disk. The bare .exe carries no model. `siteModel.test.ts`, `desktopShell.test.ts`, `siteAuto.test.ts`,
+  `chat.test.ts` and `webApp.test.ts` cover the pin, the reads, the start, the wiring and the workflow. Not verified:
+  the installed app on a physical Windows machine, the copy's speed over the shell's text answers, and how the 1.5B
+  model converses. The Windows arm64 app and the other platforms' apps carry no model yet.
 - **The web copy gets Sloane's model by itself.** Once the city is on screen (the veil gone, the city not halted, the
   tab in view), a page on the web copy that can run and keep a model gets the model the site serves beside it (Qwen2.5
   0.5B Instruct, Apache-2.0) with no click, checked against its pin exactly as the tap's download is, and keeps and

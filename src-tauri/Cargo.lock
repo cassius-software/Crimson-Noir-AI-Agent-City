@@ -410,6 +410,7 @@ dependencies = [
 name = "crimson-noir-app"
 version = "1.0.0-stable-beta"
 dependencies = [
+ "base64 0.22.1",
  "hidapi",
  "serde",
  "tauri",

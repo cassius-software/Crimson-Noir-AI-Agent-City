@@ -6,9 +6,11 @@
 # wrong pin would be found only once it had already stopped the live copy following main. This workflow fetches the
 # pinned file the same way on a pull request that touches the pin, the tool or the model's record, and checks it with
 # the same tool (tools/web/siteModel.mjs check, then place into a stand-in web copy), so a wrong pin is red before it
-# can be merged. Run by hand, it checks the pin as main has it.
+# can be merged. Run by hand, it checks the pin as main has it. The app's pin (APP_MODEL, the model the Windows
+# installer carries) is checked the same way in a job of its own, on Linux, so a wrong one is red here in minutes and
+# not only after the Windows build has fetched it.
 # What breaks if it is removed? A pin that names a file Hugging Face does not serve, or a size or hash that is off,
-# would pass review and break the next publish of the web copy.
+# would pass review and break the next publish of the web copy (or, for the app's, the next Windows build).
 
 name: site-model
 
@@ -18,8 +20,11 @@ on:
       - src/09_Cognition/siteModel.ts
       - tools/web/siteModel.mjs
       - third_party/qwen2.5-0.5b-instruct/**
+      - third_party/qwen2.5-1.5b-instruct/**
+      - src-tauri/tauri.model.conf.json
       - .github/workflows/site-model.yml
       - .github/workflows/web.yml
+      - .github/workflows/windows-app.yml
   workflow_dispatch:
 
 permissions:
@@ -65,3 +70,37 @@ jobs:
           node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out "$RUNNER_TEMP/web"
           ls -l "$RUNNER_TEMP/web/models"
           cat "$RUNNER_TEMP/web/models/manifest.json"
+
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: model
+        name: The app's model, by the page's own pin
+        run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
+      - id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/app-model
+          key: ${{ steps.model.outputs.key }}
+      - name: The app's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
+      - name: It is exactly the pinned file (size and SHA-256)
+        run: node tools/web/siteModel.mjs check --pin app --from "$RUNNER_TEMP/app-model"
+      - name: It goes into a stand-in app folder with its licence and notice, as the installer takes it
+        run: |
+          mkdir -p "$RUNNER_TEMP/app"
+          node tools/web/siteModel.mjs app --from "$RUNNER_TEMP/app-model" --out "$RUNNER_TEMP/app"
+          ls -l "$RUNNER_TEMP/app/models"

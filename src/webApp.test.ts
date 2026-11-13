@@ -29,7 +29,7 @@ import { test } from 'node:test'
 import { Script, createContext } from 'node:vm'
 import { BRAND } from './brand.ts'
 import { BUILD_META } from './07_Execute_Actions/bootFailure.ts'
-import { SITE_MODEL, manifestText, type SiteModelPin } from './09_Cognition/siteModel.ts'
+import { APP_MODEL, SITE_MODEL, manifestText, type SiteModelPin } from './09_Cognition/siteModel.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
@@ -908,9 +908,11 @@ test('the site\'s model folder is left to the network: no model in the worker\'s
 const SITE: string = '../tools/web/siteModel.mjs'
 const siteTool = (await import(SITE)) as {
   LICENCE_FILES: readonly string[]
-  pinLines(pin?: SiteModelPin): string[]
+  PINS: Readonly<Record<string, { pin: SiteModelPin; licence: string; prefix: string }>>
+  pinLines(pin?: SiteModelPin, prefix?: string): string[]
   checkModel(o: { from: string; pin?: SiteModelPin }): Promise<{ bytes: number; sha256: string }>
   placeModel(o: { from: string; out: string; pin?: SiteModelPin; licence?: string }): Promise<string[]>
+  placeApp(o: { from: string; out?: string; pin?: SiteModelPin; licence?: string }): Promise<string[]>
 }
 
 /** A model file of `bytes` in a fresh folder, a pin for it, and a stand-in web copy (its index.html names the manifest, or not). */
@@ -1005,4 +1007,84 @@ test('the web workflow places the checked model after the build and before the u
   const check = readFileSync(new URL('../.github/workflows/site-model.yml', import.meta.url), 'utf8')
   assert.match(check, /pull_request:\s+paths:[\s\S]*src\/09_Cognition\/siteModel\.ts[\s\S]*tools\/web\/siteModel\.mjs/)
   assert.match(check, /node tools\/web\/siteModel\.mjs check --from "\$RUNNER_TEMP\/site-model"/)
+})
+
+test('the app\'s pin is the page\'s too: its own cache key, its own licence, fetched at its pinned revision', () => {
+  assert.deepEqual(Object.keys(siteTool.PINS), ['site', 'app'])
+  assert.equal(siteTool.PINS.site.pin, SITE_MODEL)
+  assert.equal(siteTool.PINS.app.pin, APP_MODEL)
+  assert.match(siteTool.PINS.app.licence, /third_party[\\/]qwen2\.5-1\.5b-instruct$/)
+  const where = createHash('sha256').update(`${APP_MODEL.repo}\n${APP_MODEL.revision}\n${APP_MODEL.file}\n${APP_MODEL.bytes}`).digest('hex').slice(0, 16)
+  assert.deepEqual(siteTool.pinLines(APP_MODEL, siteTool.PINS.app.prefix), [
+    `key=app-model-${APP_MODEL.sha256}-${where}`,
+    `file=${APP_MODEL.file}`,
+    `bytes=${APP_MODEL.bytes}`,
+    `sha256=${APP_MODEL.sha256}`,
+    `url=https://huggingface.co/${APP_MODEL.repo}/resolve/${APP_MODEL.revision}/${APP_MODEL.file}`,
+  ])
+  assert.equal(siteTool.pinLines()[0]?.startsWith('key=site-model-'), true, 'the site\'s key is as it was, so its cache still holds')
+})
+
+test('the app\'s model goes into the app\'s models/ folder, checked while copied, with its licence and notice alone; a mismatch leaves nothing', async () => {
+  const s = staged()
+  const app = join(s.root, 'src-tauri')
+  try {
+    // Something an earlier run left there goes: the installer carries exactly the model and its licence.
+    mkdirSync(join(app, 'models'), { recursive: true })
+    writeFileSync(join(app, 'models', 'stale.gguf'), 'old')
+    const files = await siteTool.placeApp({ from: s.from, out: app, pin: s.pin })
+    assert.deepEqual(files, ['models/tiny-a.gguf', 'models/LICENSE', 'models/NOTICE'])
+    assert.deepEqual(readFileSync(join(app, 'models', 'tiny-a.gguf')), s.model)
+    for (const f of siteTool.LICENCE_FILES) assert.equal(readFileSync(join(app, 'models', f), 'utf8'), readFileSync(new URL(`../third_party/qwen2.5-1.5b-instruct/${f}`, import.meta.url), 'utf8'))
+    assert.deepEqual(readdirSync(join(app, 'models')).sort(), ['LICENSE', 'NOTICE', 'tiny-a.gguf'], 'no manifest, no .part file, nothing stale')
+    await assert.rejects(siteTool.placeApp({ from: s.from, out: app, pin: { ...s.pin, sha256: '0'.repeat(64) } }), /the pin says/)
+    assert.ok(!existsSync(join(app, 'models')), 'a mismatch leaves no model behind')
+    await assert.rejects(siteTool.placeApp({ from: join(s.root, 'empty'), out: app, pin: s.pin }), /is missing/)
+    // A file fetched straight into models/ (or below it) is refused, never deleted before it is read.
+    for (const inside of ['models', join('models', 'sub')]) {
+      mkdirSync(join(app, inside), { recursive: true })
+      writeFileSync(join(app, inside, s.pin.file), s.model)
+      await assert.rejects(siteTool.placeApp({ from: join(app, inside), out: app, pin: s.pin }), /which app clears before it copies/)
+      assert.deepEqual(readFileSync(join(app, inside, s.pin.file)), s.model, `${inside}: the fetched file is still there`)
+    }
+    const beside = join(app, 'models-cache')
+    mkdirSync(beside)
+    writeFileSync(join(beside, s.pin.file), s.model)
+    assert.ok(await siteTool.placeApp({ from: beside, out: app, pin: s.pin }), 'a folder whose name only starts the same is not inside')
+  } finally {
+    s.done()
+  }
+})
+
+test('the Windows workflow fetches the app\'s model by its pin, checks it on every build, and builds both installers with it', () => {
+  const yml = readFileSync(new URL('../.github/workflows/windows-app.yml', import.meta.url), 'utf8')
+  const at = (needle: string): number => {
+    const i = yml.indexOf(needle)
+    assert.ok(i >= 0, needle)
+    return i
+  }
+  const pin = at('run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"')
+  const cache = at('key: ${{ steps.model.outputs.key }}')
+  const fetchStep = at('if: steps.model-cache.outputs.cache-hit != \'true\'')
+  const place = at('run: node tools/web/siteModel.mjs app --from "$RUNNER_TEMP/app-model"')
+  const build = at('npm run app:build -- --config src-tauri/tauri.model.conf.json')
+  const msi = at('bundle --bundles msi --config src-tauri/tauri.model.conf.json --config')
+  const carries = at('it does not carry the $MODEL_BYTES-byte model')
+  const tidy = at('run: rm -rf src-tauri/target/release/bundle src-tauri/target/release/models')
+  assert.ok(pin < cache && cache < fetchStep && fetchStep < place && place < build && build < msi && msi < carries && carries < tidy, 'pin, cache, fetch, check and place, installer, .msi, size check, tidy')
+  const collect = yml.slice(yml.lastIndexOf('- name:', carries), yml.indexOf('- uses:', carries))
+  assert.match(collect, /\n\s+env:\n\s+MODEL_BYTES: \$\{\{ steps\.model\.outputs\.bytes \}\}\n/, 'the size check reads the pinned size')
+  assert.match(collect, /: "\$\{MODEL_BYTES:\?/, 'and fails, rather than checking against 0, when it has none')
+  // Bash reads a quote inside "${VAR:?word}" as opening a quote (the step died with "unexpected EOF while looking for
+  // matching `''" on CI): no apostrophe in any such word in this workflow.
+  for (const m of yml.matchAll(/\$\{\w+:[?\-=+][^}]*\}/g)) assert.ok(!m[0].includes("'"), `no quote inside ${m[0]}`)
+  const cacheStep = yml.slice(yml.lastIndexOf('- id: model-cache', cache), yml.indexOf('- name:', cache))
+  assert.doesNotMatch(cacheStep, /restore-keys/, 'a new pin never restores an old file')
+  const placeStep = yml.slice(yml.lastIndexOf('- name:', place), place)
+  assert.doesNotMatch(placeStep, /\bif:/, 'the check runs on every build, the cached file included')
+  assert.doesNotMatch(yml, /models[^\n]*out\/portable|out\/portable[^\n]*models/, 'the bare .exe carries no model')
+  // site-model.yml checks the app's pin on Linux too, on a pull request that touches it.
+  const check = readFileSync(new URL('../.github/workflows/site-model.yml', import.meta.url), 'utf8')
+  assert.match(check, /pull_request:\s+paths:[\s\S]*third_party\/qwen2\.5-1\.5b-instruct\/\*\*[\s\S]*src-tauri\/tauri\.model\.conf\.json/)
+  assert.match(check, /\n {2}app:\n[\s\S]*node tools\/web\/siteModel\.mjs check --pin app --from "\$RUNNER_TEMP\/app-model"/)
 })
