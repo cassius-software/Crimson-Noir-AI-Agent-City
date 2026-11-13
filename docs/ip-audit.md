@@ -209,6 +209,7 @@ cargo install cargo-license
 cargo license --manifest-path crimson_noir_os/Cargo.toml
 cargo license --manifest-path native/kv-pager/Cargo.toml
 cargo license --manifest-path src-tauri/Cargo.toml
+cargo license --manifest-path native/llm/Cargo.toml
 ```
 
 - **`crimson_noir_os/Cargo.lock` (152 crates)** and **`native/kv-pager/Cargo.lock` (126 crates)**: the `wgpu` stack
@@ -218,6 +219,20 @@ cargo license --manifest-path src-tauri/Cargo.toml
   image contains no Linux kernel or other GPL code and links only `font8x8` (MIT) at runtime.
 - **`native/routing/Cargo.lock`** and **`native/kv-pager-wasm/Cargo.lock`**: no third-party crates at all (the
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
+- **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
+  the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
+  the macOS, Linux, Android and iOS apps). It is compiled into no shipped build yet; only its tests run
+  (`native-llm.yml`). Linked into it (19 crates): `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the
+  sys crate is llama-cpp-rs at commit e7af607e), which compile the llama.cpp and ggml sources they vendor (MIT,
+  Copyright 2023-2026 The ggml authors); `serde`, `serde_core`, `sha2`, `digest`, `block-buffer`, `crypto-common`,
+  `cpufeatures`, `typenum`, `libc`, `thiserror`, `enumflags2`, `cfg-if`, `once_cell` and `pin-project-lite` (MIT OR
+  Apache-2.0); and `tracing`, `tracing-core` and `generic-array` (MIT). Build time only, among them: `bindgen`
+  (BSD-3-Clause), `clang-sys` (Apache-2.0), `libloading` (ISC), `cmake`, `cc`, `regex`, `glob` (MIT OR Apache-2.0),
+  the proc-macro crates (MIT OR Apache-2.0, except `tracing-attributes`, which is MIT; `unicode-ident` adds
+  Unicode-3.0), `nom` (MIT), `memchr`, `walkdir` and `same-file` (Unlicense OR MIT; `winapi-util`, also Unlicense OR
+  MIT, on Windows only), and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available).
+  The notice for what llama.cpp compiles in (ggml, the llamafile matrix code, the YaRN code, and what its common
+  library brings) lands with the first app build that carries the runner.
 - **`src-tauri/Cargo.lock` (407 crates)**: the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
@@ -285,7 +300,7 @@ in the licence files changed.
 
 ## 6. Left for a machine with registry access
 
-1. Run the three `cargo license` commands above and attach the output to this document.
+1. Run the four `cargo license` commands above and attach the output to this document.
 2. Consider adding `cargo deny check licenses` (with an allow-list of MIT, Apache-2.0, BSD, ISC, Zlib and
    Unicode-3.0, plus per-crate exceptions for MPL-2.0 naming `option-ext` and, if `cargo tree` shows them in the
    Windows build, the Servo CSS crates, once counsel has confirmed the MPL reading in §3) to `ci.yml` beside the

@@ -22,7 +22,7 @@ const WRITER: string = '../../tools/browser/tinyGguf.mjs'
 type Kv = readonly [string, number, unknown, number?]
 const { tinyGguf, tinyGgufFiles, ggufBytes, ggufKvs, GGUF_TYPE: T, CHAT_TEMPLATE, sha256 } = (await import(WRITER)) as {
   tinyGguf(o?: { letter?: string; split?: boolean }): Uint8Array & Uint8Array[]
-  tinyGgufFiles(o?: { letter?: string; split?: boolean }): { name: string; bytes: Uint8Array }[]
+  tinyGgufFiles(o?: { letter?: string; split?: boolean; plain?: boolean }): { name: string; bytes: Uint8Array }[]
   ggufBytes(kvs: readonly Kv[], tensors?: readonly unknown[], o?: { version?: number }): Uint8Array
   ggufKvs(kvs: readonly Kv[]): Uint8Array
   GGUF_TYPE: Readonly<Record<'U8' | 'I8' | 'U16' | 'I16' | 'U32' | 'I32' | 'F32' | 'BOOL' | 'STRING' | 'ARRAY' | 'U64' | 'I64' | 'F64', number>>
@@ -131,6 +131,19 @@ test('the tiny model in two shards: split.no and split.count, the later shard ha
   assert.deepEqual(textModel(first, files[0].name), { ok: true })
   assert.deepEqual(textModel(second, files[1].name), { ok: true })
   assert.deepEqual(shardOrder([files[1].name, files[0].name]), { ok: true, order: [1, 0] })
+})
+
+test('the tiny model without a chat template (for the native runner\'s ChatML fallback): the same model, less the template', async () => {
+  const [plain] = tinyGgufFiles({ plain: true })
+  assert.equal(plain.name, 'tiny-a-plain.gguf')
+  const h = await readGgufHeader(memory(plain.bytes).read, plain.bytes.length)
+  assert.deepEqual(h, { version: 3, arch: 'llama', name: 'tiny-a', fileType: 0, contextLength: 6144, hasTemplate: false } satisfies GgufHeader)
+  assert.deepEqual(textModel(h, plain.name), { ok: true })
+  // Only the template's key and value are gone (and the tensor data stays aligned): the weights are the same bytes.
+  const whole = tinyGguf()
+  assert.ok(plain.bytes.length < whole.length && whole.length - plain.bytes.length < CHAT_TEMPLATE.length + 64)
+  assert.deepEqual(plain.bytes.slice(-4096), whole.slice(-4096))
+  assert.throws(() => tinyGgufFiles({ split: true, plain: true }), /not split/)
 })
 
 test('every value type, nested arrays and a large vocabulary before the chat template: read in growing chunks, the architecture\'s keys found in any order', async () => {
