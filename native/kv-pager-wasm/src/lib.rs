@@ -57,6 +57,8 @@ fn code(e: PageError) -> i32 {
         PageError::OutOfBlocks { .. } => ERR_OUT_OF_BLOCKS,
         PageError::UnknownAgent(_) => ERR_UNKNOWN_AGENT,
         PageError::AgentExists(_) => ERR_AGENT_EXISTS,
+        // The page never pins: the wrapper exposes no pin, so no call can name one.
+        PageError::UnknownPin(_) => ERR_UNKNOWN_AGENT,
     }
 }
 
