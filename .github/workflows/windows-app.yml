@@ -12,6 +12,11 @@
 # A tag that build-release.yml makes itself (a "Run workflow" bake of a tag that did not exist) is made with the
 # workflow's own token, and GitHub starts no tag-push run for such a tag; so build-release.yml dispatches this
 # workflow with the tag as its input, which builds that tag's commit and uploads to its release the same way.
+# current.yml calls it (workflow_call) with a commit on main ci passed on, as `ref`: the build job builds that commit
+# and leaves the same three artifacts, which current.yml puts on the `current` pre-release; the release job never runs
+# for a call. The concurrency group carries the commit, so a push to main never cancels a call's build.
+# The bare .exe is published as crimson-noir-app_<version>_x64.exe, so it never shares a name with the Windows on Arm
+# one build-matrix.yml makes (crimson-noir-app_<version>_arm64.exe) on a release that carries both.
 # What breaks if it is removed? Nobody gets an .exe without a Windows machine with Rust, Node and NSIS on it.
 
 name: windows-app
@@ -27,12 +32,18 @@ on:
         description: A v* tag whose commit to build and whose GitHub Release to upload the app to (empty builds this ref, artifacts only)
         required: false
         type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build, for artifacts alone (current.yml)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-app-${{ inputs.tag || github.ref }}
+  group: windows-app-${{ inputs.ref || inputs.tag || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -52,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -89,7 +100,7 @@ jobs:
           mkdir -p out/installer out/msi out/portable
           cp src-tauri/target/release/bundle/nsis/*"_${version}_"*-setup.exe out/installer/
           cp src-tauri/target/release/bundle/msi/*"_${version}_"*.msi out/msi/
-          cp src-tauri/target/release/*.exe out/portable/
+          for exe in src-tauri/target/release/*.exe; do cp "$exe" "out/portable/$(basename "$exe" .exe)_${version}_x64.exe"; done
           ls -l out/installer out/msi out/portable
           [ "$(ls out/installer | wc -l)" = 1 ] || { echo "::error::expected exactly one installer for $version"; exit 1; }
           [ "$(ls out/msi | wc -l)" = 1 ] || { echo "::error::expected exactly one .msi for $version"; exit 1; }

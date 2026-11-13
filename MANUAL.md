@@ -4170,10 +4170,12 @@ around the very same `dist/index.html`, built by `npm run app:build` (the Vite b
 `beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
 every pull request and push to main (artifacts `windows-installer-<version>`, `windows-msi-<version>` and
 `windows-portable-<version>`) and, when a `v*` tag is pushed, puts all three on the tag's release beside the OS media.
+The current build (below) carries the same three files from every commit on main that ci passes.
 
 - **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
   the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
-  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact runs from any
+  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact
+  (`crimson-noir-app_<version>_x64.exe`; the Windows on Arm one ends `_arm64.exe`) runs from any
   folder; both need the WebView2 runtime, which Windows 10 and 11 carry (the installer fetches it if a machine has
   none).
 - **The window.** It has no system decorations: the page draws the title bar (`src/07_Execute_Actions/TitleBar.tsx`),
@@ -4263,10 +4265,84 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
   `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
   `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
-  itself. Only GitHub's own actions run in it.
+  itself. `current.yml` calls it with each commit on main that ci passes, for the current build (below). Only
+  GitHub's own actions run in it.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
   an engine lacks it the app shows the same recovery card as a browser without WebGPU.
+
+## The current build
+
+Every download follows `main`, as the web copy does. Each time ci passes on a commit on main, the `current` workflow
+(`.github/workflows/current.yml`) builds all nine targets of the build matrix from that commit, the Windows x64 app
+through `windows-app.yml` and the other eight through `build-matrix.yml` (both called with the commit), and
+`tools/build/current.mjs` puts the files on one GitHub pre-release, **Crimson Noir: Agent City, current build**, under
+the tag `current`: <https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current>. The next green
+commit replaces them the same way. It is not a numbered release: the latest numbered release keeps its "Latest" label,
+numbered releases are still cut by hand from a pushed tag (`build-release.yml`), and this workflow's only tags are
+`current` and a stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (see below).
+
+- **What is on it.** Windows x64 and arm64 (the NSIS installer, the `.msi`, the bare `.exe` as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), the
+  macOS `.dmg` and zipped `.app`, the Android `.apk` (with the `.apk.idsig` apksigner writes beside it, its v4
+  signature for streaming installs; a phone does not need it), the iOS `.ipa`, Crimson Noir OS's x86-64 media
+  (`BOOTX64.EFI`, `crimson_noir_os.img`, `crimson_noir_os.iso`, with `containment.nix`, `containment.lock`,
+  `NOTICE.txt` and `LICENSE`, as a numbered release carries them) and its aarch64 media (`BOOTAA64.EFI`,
+  `crimson_noir_os-aarch64.img` and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
+  the commit, run and time that made each target's files. The notes list every file with its commit. The apps' file
+  names carry the version in `package.json` at the commit they were built from (`1.0.0-stable-beta` today; the `.rpm`
+  as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each
+  file's row in the notes, tell one current build from the next. A file's address stays the same from one build to the next while its name does
+  (except for the few seconds the tag is made again, below):
+  `https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/download/current/<file>`.
+- **What is checked first.** ci on that very commit (the page's type check, lint, tests and build, the city in Chrome,
+  the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani
+  harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
+  baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
+  the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
+  build matrix above.
+- **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
+  commit it built, as long as the release still holds those very bytes, and the notes and `current.json` say which
+  commit that was; the run is red so it is seen. The iOS build is best effort, as in the build matrix, and never turns
+  the run red.
+- **It never steps back.** Only a commit on main that ci passed on is built, and it is published only while it is
+  still on main and at least as new as what the release holds (asked again after the build). When the release's
+  record cannot be read, or GitHub cannot say whether a commit is on main or compare it with the release's, nothing is
+  written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
+  place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
+  release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
+  attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
+  holds a newer one), and red too when GitHub cannot answer, so someone runs the workflow by hand.
+- **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
+  `current.json` holds it, so the release always has one of the two (`gh release upload --clobber` deletes the old
+  file before it uploads the new one). A staged copy left by a stopped run is the newest record, so it goes up as
+  `current.json` before anything replaces it, and a release that holds neither (its first run stopped before the
+  record, or its files were deleted by hand) gets an empty `current.json` before any file. A commit counts as
+  published only when the release holds exactly what its record says, `SHA256SUMS` lists those files, and the notes
+  name the commit and that publish's time; otherwise the next run builds it again.
+- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
+  four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
+  commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
+- **The tag.** `current` is put at the commit before any file is written. GitHub is reported (not yet seen here) to
+  let the workflow's own token move a tag only when no workflow file changed between the two commits, and to let it
+  make one at a commit whose workflow files match main's tip; so when a move is refused, the release is set on a
+  stand-in tag, `current-next`, while `current` is made again, then set back (its download addresses answer 404 for
+  those few seconds; the release is never on a tag being deleted, which would turn it into a draft). A run that stops
+  halfway leaves the release on `current-next`; the next run sets it back on `current` (an existing `current` is not
+  deleted for this, and if the stopped run had already deleted it, it is made again as soon as GitHub allows, once
+  the commit has main's tip's workflow files), then moves the tag as usual. When GitHub refuses the stand-in as well
+  (a later commit on main changed a workflow), the tag stays where it was, the files are published all the same, and
+  the notes say where the tag and GitHub's source code archives are; the next publish tries again.
+- **Checking a download.** `sha256sum --check --ignore-missing SHA256SUMS` in the folder you downloaded into
+  (`SHA256SUMS` lists every file but itself and `current.json`).
+- **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds the newest
+  commit on main that ci passed on, and with "force" even when the release already holds that commit. Retry a failed
+  run this way (or with "Re-run all jobs"), not with "Re-run failed jobs".
+- **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
+  everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
+  notes it would write, and the log what it would upload, keep and delete.
+- **NixOS** needs none of this: `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds main's tip from
+  source (below).
 
 ## On an iPhone (the web app)
 

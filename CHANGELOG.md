@@ -15,6 +15,45 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The downloads follow main: the current build** (`.github/workflows/current.yml`, `tools/build/current.mjs`,
+  `src/currentBuild.test.ts`). Each time ci passes on a commit on main, the new `current` workflow builds all nine
+  targets of the build matrix from that commit (the Windows x64 app through `windows-app.yml`, the other eight,
+  Crimson Noir OS's x86-64 and aarch64 media among them, through `build-matrix.yml`; both workflows now also take a
+  `workflow_call` with the commit as `ref`) and puts the files on one GitHub pre-release, "Crimson Noir: Agent City,
+  current build", tag `current`, replacing the last green commit's, as `web.yml` keeps the web copy. It makes no
+  numbered release, its only tags are `current` and a stand-in, `current-next`, for a few seconds when GitHub
+  refuses to move `current`, and the release is never "Latest". The UEFI jobs still bake twice, compare the bytes and
+  boot in QEMU before they upload; a target whose job fails keeps its last files while the release still holds those
+  very bytes (checked by SHA-256, since the UEFI images keep one size from commit to commit), and the notes and
+  `current.json` say which commit each file comes from (the run is then red; the iOS build stays best effort). It
+  builds the newest commit on main that ci passed on, whichever run starts, and publishes only one at least as new as
+  the release's; when GitHub cannot say whether a commit is on main or compare it with the release's, or the
+  release's record cannot be read, it writes nothing and the run is red. The record goes up as `current.next.json`
+  before `current.json` is replaced (gh's `--clobber` deletes the old file first), so the release always has one, a
+  staged copy left by a stopped run goes up as `current.json` first, and a release with neither gets an empty record
+  before any file; a commit counts as published only when the release holds exactly what its record says, with
+  `SHA256SUMS` listing those files and the notes naming the commit and that publish's time. A "Re-run failed jobs",
+  which keeps an earlier attempt's pick, turns red unless the release then holds the newest green commit (or a newer
+  one), and when GitHub cannot answer. Files whose bytes did not change are not uploaded again (usually the UEFI applications and the notices: the images carry their commit's time and GUIDs and
+  change with every commit); `SHA256SUMS` covers every built file. The tag is put at the commit before any file is
+  written. GitHub is reported to refuse a tag move with the workflow's own token across a change to a workflow file,
+  and to allow a new tag at a commit whose workflow files match main's tip, so after a refused move the release
+  stands on `current-next` while `current` is made again (never on a tag being deleted, which would turn it into a
+  draft); a run stopped halfway is set back on `current` by the next without deleting it, and when GitHub refuses
+  the stand-in too, the files are published and the notes say where the tag stayed. On a pull request that touches
+  it, it builds everything and runs the publish as a dry run with read-only access; on this change's own pull request
+  that run built all nine targets. The bare Windows executables are now published as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`: both were `crimson-noir-app.exe`, so on a `v*` release the
+  second upload would have replaced the first. Twenty-six tests hold the publish step against a stand-in for GitHub
+  that keeps its reported tag rules and gh's delete-then-upload (a first publish, a later one with a failed target and
+  a version change, the tag remade through the stand-in, refused, and set back after a run stopped halfway, a leftover
+  stand-in, half-answers from GitHub including a lost answer while `current` is remade, an unreadable or missing
+  record, two record uploads failing in a row, a staged record beside an older one, a release with no record, a
+  replaced file, a publish that stopped after its record, a second publish of one commit stopped the same way, a stale
+  commit, a commit off main, a re-run of failed jobs, a dry run, the pick, the command line) and the workflows'
+  triggers, queue, access and calls. How GitHub treats the tags is taken from reports of its behaviour, not yet seen
+  here: nothing has been published yet, and the first real run is the first green ci on main after the merge.
+
 - **Shop locks on the wardrobe.** An option a shop sells is locked on the player's own look until it is bought
   (`src/07_Execute_Actions/lookLock.ts`). A lock is what one worn catalogue line sells (the look slots it sets, less the
   rolled sleeves a design comes with), open once that line is owned: the tailor's six coats, seven contrast trims, seven
