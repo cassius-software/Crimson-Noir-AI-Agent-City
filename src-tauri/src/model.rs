@@ -14,6 +14,8 @@
 //! (src/07_Execute_Actions/desktopShell.ts shellModelFetch), checks its size and SHA-256 against its pin on every byte
 //! (src/09_Cognition/siteModel.ts APP_MODEL), and keeps it in its own storage as the web copy keeps the site's model.
 //! Both commands run off the main thread (`async`), so the window never waits on the disk.
+//! Where the app runs the model itself (runner.rs: the native-runner feature on Linux), `app_model` answers nothing,
+//! so the page never copies a model over IPC into its own storage on a shell that runs it natively.
 //! UNCONFIRMED on a physical Windows machine: written from the Tauri documentation and Tauri 2.12.3's sources,
 //! checked with cargo check and clippy for x86_64-pc-windows-msvc; windows-app.yml builds it.
 //! What breaks if it is removed? The installer carries a model the page cannot reach, and Sloane waits for a model the
@@ -39,9 +41,13 @@ fn model_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().resolve(format!("models/{FILE}"), BaseDirectory::Resource).ok()
 }
 
-/// The carried model's name and size, or nothing where the app carries none (or one of another size).
+/// The carried model's name and size, or nothing where the app carries none (or one of another size), and nothing
+/// where the app runs the model itself.
 #[tauri::command(async)]
 pub fn app_model(app: AppHandle) -> Option<AppModel> {
+    if crate::runner::COMPILED {
+        return None;
+    }
     let path = model_path(&app)?;
     is_model(&path, BYTES).then_some(AppModel { file: FILE, bytes: BYTES })
 }

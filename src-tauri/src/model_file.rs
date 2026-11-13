@@ -7,6 +7,10 @@
 //! The file and its size are the page's pin (src/09_Cognition/siteModel.ts APP_MODEL; siteModel.test.ts holds the two
 //! to each other). The page checks the SHA-256 itself, on every byte it reads, so a changed file is refused there;
 //! here a file of any other size is not the model at all and is never read.
+//! It also names the model the app's own runner is handed (runner.rs, where it is compiled): the computer's model (the
+//! same file, with its SHA-256), the phone's (the page's SITE_MODEL), or, in the end-to-end test's build alone
+//! (feature tiny-model), the tiny test model tools/browser/tinyGguf.mjs writes; siteModel.test.ts holds every pin
+//! here to the page's.
 //! What breaks if it is removed? The shell has nothing to read the carried model with, and the page cannot get it.
 
 use std::fs::File;
@@ -19,8 +23,42 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 pub const FILE: &str = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf";
 /// Its exact size in bytes.
 pub const BYTES: u64 = 986_048_768;
+/// Its SHA-256 (the page's APP_MODEL), which the runner checks once before it first loads the file.
+pub const APP_SHA256: &str = "1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370";
 /// The most one read gives, bytes (src/07_Execute_Actions/desktopShell.ts APP_READ_BYTES asks for exactly this).
 pub const MAX_READ: u64 = 4 * 1024 * 1024;
+
+/// The phones' model (the page's SITE_MODEL), for the Android and iOS runners: its file, exact size and SHA-256.
+pub const PHONE_FILE: &str = "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf";
+pub const PHONE_BYTES: u64 = 397_808_192;
+pub const PHONE_SHA256: &str = "6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653";
+
+/// The tiny test model (tools/browser/tinyGguf.mjs tiny-a.gguf), carried only by the end-to-end test's build
+/// (feature tiny-model, .github/workflows/native-e2e.yml): it writes "aaaa..." whatever it is asked.
+pub const TINY_FILE: &str = "tiny-a.gguf";
+pub const TINY_BYTES: u64 = 156_992;
+pub const TINY_SHA256: &str = "985fdc04bc165a0f649bd303659e1c4cd3746a8b061f446d7bfb7a150d6825fa";
+
+/// A model the runner can be handed: its file under `models/` in the app's resources, exact size and SHA-256.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Carried {
+    pub file: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+
+/// The model this build's runner is handed: the tiny test model with the tiny-model feature, else the phones' model
+/// on a phone and the computer's on a computer. Read only where the runner is compiled (runner.rs `COMPILED`).
+#[cfg_attr(not(all(target_os = "linux", feature = "native-runner")), allow(dead_code))]
+pub const fn carried() -> Carried {
+    if cfg!(feature = "tiny-model") {
+        Carried { file: TINY_FILE, bytes: TINY_BYTES, sha256: TINY_SHA256 }
+    } else if cfg!(mobile) {
+        Carried { file: PHONE_FILE, bytes: PHONE_BYTES, sha256: PHONE_SHA256 }
+    } else {
+        Carried { file: FILE, bytes: BYTES, sha256: APP_SHA256 }
+    }
+}
 
 /// Whether `path` is the model: a file of exactly `bytes`. A missing file, a folder or any other size is not.
 pub fn is_model(path: &Path, bytes: u64) -> bool {
@@ -116,6 +154,19 @@ mod tests {
         assert!(is_model(&path, 100));
         assert!(!is_model(&path, 99));
         assert!(!is_model(path.parent().unwrap(), 100));
+    }
+
+    #[test]
+    fn the_runner_is_handed_the_tiny_model_only_in_the_test_build_and_the_computers_model_on_a_computer() {
+        let c = carried();
+        if cfg!(feature = "tiny-model") {
+            assert_eq!(c, Carried { file: "tiny-a.gguf", bytes: 156_992, sha256: TINY_SHA256 });
+        } else {
+            assert_eq!(c, Carried { file: FILE, bytes: BYTES, sha256: APP_SHA256 });
+        }
+        for sha in [APP_SHA256, PHONE_SHA256, TINY_SHA256] {
+            assert!(sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)), "{sha}");
+        }
     }
 
     #[test]

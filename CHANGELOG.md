@@ -15,6 +15,49 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The shell lends the native model runner to the page.** `src-tauri/src/runner.rs` registers three commands in
+  every build, in the order the design gives: `native_model`, `native_generate` (the answer's events on the page's own
+  Tauri channel; the wait for its end runs on Tauri's blocking pool, never on an async worker) and `native_stop`.
+  `native_generate` is async, so a stop the page sends right behind it can reach the runner before the request does:
+  the runner keeps such a stop (the last 64 numbers, forgotten at a page load) and stops that answer as it arrives, so
+  it ends `stopped`. The runner is compiled only with the new `native-runner` cargo feature on Linux, off by default,
+  and starts only when the app carries its model as the resource `models/<file>` (a Rust test holds that without the
+  file no runner starts and `native_model` answers none), checked against its pin once, then stamped in the app's data
+  folder, on the processor alone with the page's own figures (context 8,192, batch 512, half the threads up to 8,
+  answers up to 2,048 tokens). Everywhere else (Windows, macOS, a build without the feature) the same commands answer no
+  model, `offline` with a plain sentence, and false. A page that starts loading stops every answer it asked for
+  (`on_page_load`), and `app_model` answers nothing wherever the runner is compiled, so the page never copies a model in
+  there. `model_file.rs` adds the computer's SHA-256 and the phones' pin, and `tiny-model` (which turns on
+  `native-runner`) hands the runner the tiny test model instead; `siteModel.test.ts` holds every pin to the page's. No
+  shipped build changes: `build-matrix.yml` and `windows-app.yml` build with the feature off, so they compile no
+  llama.cpp and need no cmake or libclang; `src-tauri/Cargo.lock` records the runner's crates as optional, with cc,
+  cmake and bindgen at `native/llm`'s versions. `hid.rs`'s Windows-only items may go unused elsewhere, so the shell's
+  clippy with `-D warnings` is clean on Linux as well. The new `native-e2e.yml` (ubuntu-24.04, outside `ci.yml`) builds
+  the page, writes the tiny model, builds the app (a debug build) with `tiny-model` and
+  `src-tauri/tauri.tiny.conf.json`, runs the shell's own Rust tests and clippy (`-D warnings`) with the runner and the
+  tiny model and again with the feature off, installs tauri-driver 2.1.0 and runs `tools/browser/nativeE2e.mjs` under
+  Xvfb. That script bundles the page's own `shellRunner` and `createNativeMind` from their sources with vite (already
+  a devDependency; the entry goes to a temporary folder), injects them into the app's page in WebKitGTK over
+  WebDriver (spoken with fetch) after the page's module ran, and asks through them, under the page's CSP and air gap.
+  It asserts that the web view has no JSPI and its air gap refuses Tauri's `ipc://` fetch; `native_model` answers
+  `tiny-a.gguf`, 156,992 bytes, ready, and the mind lists that file and calls the model still to be loaded; the first
+  answer through the mind is 16 "a"s, `length`, 16 tokens, which the runner ended at its cap with exactly the tokens
+  asked, its events in order (the load, its fractions rising to 1, then the prompt read, then the text) and the
+  asker's phases in order; a longer one comes in several events, each under 8 KiB; one whose channel's every message,
+  and then its end, the script hands to `shellRunner` 300 ms late, as a reply that overtakes them would find them, still
+  comes whole through the mind, because `shellRunner` waits for the channel's end before it hands back the reply (tried
+  here with a `shellRunner` that does not wait: only this answer's checks failed, as Tauri sent every other channel's
+  end before the reply); a Stop at the first piece rejects at once with `AbortError` and the runner ends that answer
+  `stopped`; a 1 ms first-piece wait rejects with a `timeout` error and the runner's answer ends `stopped`; a stop sent
+  right behind its request stops it every time (24 times through `shellRunner`, 12 through the mind); a number still
+  being answered is refused with a sentence; and a reload while 32 long answers are queued (each one asked while another
+  is made is told it waits) stops them all: the new page's first request, through its own mind, waits for nothing and
+  completes well before they could have ended by themselves. The workflow runs on a change to the shell, the runner, any
+  module the script bundles (`nativeRunner.test.ts` holds that list to their imports), `main.tsx` or `index.html`.
+  Recorded, not asserted (risk K1): WebKitGTK 2.52 under Xvfb has no WebGPU, so the page shows its recovery card (whose
+  heading names WebView2, the Windows web view), not Sloane's card. Not verified: the macOS, Android and iOS shells, any
+  carried model but the tiny one, a Linux machine with a GPU, speed, and `native-e2e.yml` on GitHub's runners (its steps
+  were run here by hand, in order).
 - **The page side of the native model runner: provider `native`.** The router has a seventh provider, `native`, the
   model an app carries and runs itself (`src/09_Cognition/nativeMind.ts`), asked through the shell's three commands
   (`native_model`, `native_generate` with a Tauri channel for the answer's events, `native_stop`) by `desktopShell.ts`

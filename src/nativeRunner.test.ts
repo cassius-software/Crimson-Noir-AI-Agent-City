@@ -9,16 +9,21 @@
  * that reach no network and start no process, the wire file (tests/wire.json) with every key of every event, ending,
  * error, status and carried model the page will read, and native-llm.yml running the crate's tests and the real
  * model's on x86-64 Linux, Arm Linux and Apple Silicon, with GitHub's own actions alone, outside ci.yml, with no step
- * it must run skipped or allowed to fail. The crate's behaviour is tested by its own Rust tests (native/llm/tests);
- * this file keeps their frame.
+ * it must run skipped or allowed to fail. It pins native-e2e.yml too: the shell's own Rust tests and clippy, with the
+ * runner and with the feature off, then the shell's commands driven in WebKitGTK on ubuntu-24.04 with the tiny model
+ * (tools/browser/nativeE2e.mjs, which asks through the page's own shellRunner and createNativeMind, bundled from their
+ * sources, one answer with its channel held back), on the paths that can change them (every module those two import
+ * among them), its steps in order, GitHub's own actions alone, outside ci.yml and the self-healing checks. The crate's
+ * behaviour is tested by its own Rust tests (native/llm/tests); this file keeps their frame.
  * What breaks if it is removed? A floating binding version, an OpenMP dependency, a network call in the runner, or a
  * workflow that silently skips the real model could all land unseen.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DRAIN_MS } from './07_Execute_Actions/desktopShell.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CRATE = join(ROOT, 'native', 'llm')
@@ -128,4 +133,103 @@ test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and 
   // Not in ci.yml: it runs on every change and wakes the self-healing workflow, whose sandbox cannot build llama.cpp.
   assert.ok(!read(ROOT, '.github', 'workflows', 'ci.yml').includes('native/llm'))
   assert.ok(!read(ROOT, 'tools', 'selfheal', 'checks.sh').includes('native/llm'))
+})
+
+/**
+ * The page modules `entries` draw in, as repository paths: every relative import and re-export that is not
+ * type-only, followed to the end (a superset of what a bundler keeps).
+ */
+function closure(entries: string[]): string[] {
+  const seen = new Set<string>()
+  const walk = (file: string): void => {
+    const rel = relative(ROOT, file)
+    if (seen.has(rel)) return
+    seen.add(rel)
+    const text = readFileSync(file, 'utf8')
+    for (const m of text.matchAll(/^(?:import|export)\s+(?!type\b)[^'";]*?from\s+'(\.[^']+)'/gm)) walk(join(dirname(file), m[1]))
+    for (const m of text.matchAll(/^import\s+'(\.[^']+)'/gm)) walk(join(dirname(file), m[1]))
+  }
+  for (const e of entries) walk(join(ROOT, e))
+  return [...seen].sort()
+}
+
+test('native-e2e.yml drives the shell\'s commands in WebKitGTK with the tiny model, on the paths that change them, outside ci.yml', () => {
+  const flow = read(ROOT, '.github', 'workflows', 'native-e2e.yml')
+  assert.match(flow, /^# Copyright \(c\) 2026 Julian Cassius Subban\n# SPDX-License-Identifier: MIT\n/)
+  assert.match(flow, /^name: native-e2e$/m)
+  assert.match(flow, /^ {4}runs-on: ubuntu-24\.04$/m)
+  assert.equal([...flow.matchAll(/runs-on:/g)].length, 1, 'one job, on one runner')
+  assert.match(flow, /^permissions:\n {2}contents: read$/m)
+  for (const uses of flow.matchAll(/uses: ([^\s@]+)@/g)) assert.ok(uses[1].startsWith('actions/'), uses[1])
+  assert.match(flow, /- uses: actions\/checkout@v4\n {8}with:\n {10}persist-credentials: false/)
+  assert.match(flow, /RUST_TOOLCHAIN: '1\.97\.0'/)
+  assert.match(flow, /TAURI_DRIVER_VERSION: '\d+\.\d+\.\d+'/, 'tauri-driver at an exact version')
+  // The triggers: a pull request and a push to main on exactly these paths, and by hand: the shell and the runner, the
+  // page modules the script bundles with every module they import, the page's boot and policy, and the tools.
+  const BUNDLED = closure(['src/07_Execute_Actions/desktopShell.ts', 'src/09_Cognition/nativeMind.ts'])
+  assert.ok(BUNDLED.includes('src/02_Define_The_Rules/airgap.ts') && BUNDLED.length >= 10, BUNDLED.join(', '))
+  const PATHS = ['src-tauri/**', 'native/llm/**', ...BUNDLED, 'src/main.tsx', 'index.html', 'tools/browser/tinyGguf.mjs', 'tools/browser/nativeE2e.mjs', '.github/workflows/native-e2e.yml']
+  const on = flow.slice(flow.indexOf('\non:\n'), flow.indexOf('\npermissions:'))
+  const listed = (block: string): string[] => [...block.matchAll(/^ {6}- (.+)$/gm)].map((m) => m[1])
+  assert.deepEqual(listed(on.slice(on.indexOf('pull_request:'), on.indexOf('push:'))), PATHS)
+  assert.deepEqual(listed(on.slice(on.indexOf('push:'), on.indexOf('workflow_dispatch:'))), PATHS)
+  assert.match(on, /push:\n {4}branches: \[main\]/)
+  assert.match(on, /\n {2}workflow_dispatch:\n?$/)
+  // The steps in order: Rust with clippy, the libraries (with WebKitWebDriver, Xvfb, cmake and libclang), the page, the
+  // tiny model where the overlay takes it from, the app with the feature and that overlay, the shell's Rust tests and
+  // clippy with the runner and the tiny model then with the feature off (the stub every shipped build runs),
+  // tauri-driver, then the run under Xvfb.
+  const order = [
+    'rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy',
+    'libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev webkit2gtk-driver xvfb cmake libclang-dev',
+    'npm ci --no-audit --no-fund',
+    'run: npm run build',
+    'node tools/browser/tinyGguf.mjs src-tauri/models',
+    'TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo build --manifest-path src-tauri/Cargo.toml --locked --features tiny-model,tauri/custom-protocol\n',
+    'test -f src-tauri/target/debug/models/tiny-a.gguf',
+    'TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo test --manifest-path src-tauri/Cargo.toml --locked --features tiny-model,tauri/custom-protocol\n',
+    'TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --features tiny-model,tauri/custom-protocol -- -D warnings\n',
+    'cargo test --manifest-path src-tauri/Cargo.toml --locked\n',
+    'cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings\n',
+    'cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked',
+    'xvfb-run -a node tools/browser/nativeE2e.mjs --app src-tauri/target/debug/crimson-noir-app',
+  ].map((s) => flow.indexOf(s))
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
+  // Nothing that must run is skipped or allowed to fail: only the report's upload and the cache trim run always.
+  assert.doesNotMatch(flow, /continue-on-error/)
+  assert.deepEqual([...flow.matchAll(/^[ \t]*(?:- )?if:\s*(.*)$/gm)].map((m) => m[1]), ['always()', 'always()'])
+  // Not in ci.yml (every change, and its failures wake the self-healing workflow) nor in the self-healing checks.
+  for (const other of [read(ROOT, '.github', 'workflows', 'ci.yml'), read(ROOT, 'tools', 'selfheal', 'checks.sh')]) {
+    assert.ok(!other.includes('native-e2e') && !other.includes('nativeE2e') && !other.includes('tiny-model'))
+  }
+  // The script speaks WebDriver with fetch alone, starts tauri-driver and nothing else, and adds no dependency: vite
+  // (already the page's build tool) and Node's own modules.
+  const script = read(ROOT, 'tools', 'browser', 'nativeE2e.mjs')
+  assert.match(script, /^#!\/usr\/bin\/env node\n\/\/ Copyright \(c\) 2026 Julian Cassius Subban\n\/\/ SPDX-License-Identifier: MIT\n/)
+  const imports = [...script.matchAll(/^import .* from '([^']+)'$/gm)].map((m) => m[1]).sort()
+  assert.ok(imports.includes('vite') && imports.every((i) => i === 'vite' || i === './tinyGguf.mjs' || i.startsWith('node:')), imports.join(', '))
+  const pkg = JSON.parse(read(ROOT, 'package.json')) as { devDependencies?: Record<string, string> }
+  assert.ok(pkg.devDependencies?.vite, 'vite is already a devDependency')
+  assert.equal([...script.matchAll(/\bspawn\(/g)].length, 1, 'one process: tauri-driver')
+  assert.match(script, /executeAsync|execute\/async/)
+  // The page's own shellRunner and createNativeMind, bundled from their sources (an entry in a temporary folder, an
+  // IIFE kept in memory), injected after the page's module ran and again after the reload, and asked through.
+  assert.match(script, /const SHELL = 'src\/07_Execute_Actions\/desktopShell\.ts'/)
+  assert.match(script, /const MIND = 'src\/09_Cognition\/nativeMind\.ts'/)
+  assert.match(script, /`import \{ shellRunner \} from \$\{from\(SHELL\)\}`/)
+  assert.match(script, /`import \{ createNativeMind, LOADING_APP \} from \$\{from\(MIND\)\}`/)
+  assert.match(script, /mkdtempSync\(join\(tmpdir\(\), 'native-e2e-'\)\)/, 'the entry is written to a temporary folder')
+  assert.match(script, /write: false, minify: false, target: 'es2022', lib: \{ entry, formats: \['iife'\]/)
+  assert.match(script, /execute\/sync`, \{ script: `\$\{report\.bundle\.code\}/)
+  assert.match(script, /await inject\('the first page'\)/)
+  assert.match(script, /await wd\('POST', `\/session\/\$\{sid\}\/refresh`, \{\}\)\n {2}await inject\('after the reload'\)/)
+  assert.match(script, /const host = own\.shellRunner\(\)/)
+  assert.ok(script.split('own.createNativeMind({ host: w.host').length - 1 >= 5, 'the answers, the Stop, the wait and the new page asked through the mind')
+  assert.doesNotMatch(script, /core\.invoke\(/, 'every command goes through the page\'s own shellRunner')
+  // One answer's channel held back, each message and then its end, well within the wait for the end, so that answer
+  // comes whole only through a shellRunner that waits for the end before it hands back the reply.
+  const hold = Number(/^const HOLD_MS = (\d+)$/m.exec(script)?.[1])
+  assert.ok(hold >= 100 && hold <= DRAIN_MS / 2, `HOLD_MS ${hold}`)
+  assert.match(script, /const held = await page\(ANSWER, 64, HOLD_MS\)\n {2}answered\(.*, held, 64, \{ holdMs: HOLD_MS \}\)/)
+  assert.match(script, /window\.__nativeE2eHold = holdMs\nlet r\ntry \{ r = await ask\(mind\) \} finally \{ window\.__nativeE2eHold = 0 \}/)
 })
