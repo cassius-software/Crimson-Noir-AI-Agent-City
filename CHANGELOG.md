@@ -15,6 +15,27 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **What each person in the crowd is doing, read one at a time** (`src/09_Cognition/personFeatures.ts`,
+  `personFeatures.test.ts`). The feature inspector gains a reading of one pedestrian: ten hand-written readings in
+  [0, 1] with a JumpReLU threshold each, from the crowd frames the page already receives (where each person stands,
+  the speed of their last step, the activity the crowd kernel wrote for them) and from the frames before it, read at
+  the same pace as the positions the page already copies (every 250 ms). `STUCK` is metres stepped without getting
+  1 m from where they stood (drained by standing, and read as 0 while waiting, working or standing by where the
+  operator called them); `CROWDED` counts the people within the crowd kernel's own 2.5 m flocking radius; the other
+  eight name the kernel's activities (`SUMMONED` and `ARRIVED` cover a rally point as well as the operator) and the
+  pace. The console takes `feature person <n>` (one person's sentence and rows) and `feature people` (the share of the
+  crowd over each threshold, the stuck ones named), both while locked. A held person's prompt gains one line of what
+  they were measured doing, including what the operator called them away from, which a car's step back on the way
+  does not replace (`08_Swarm/shortTerm.ts` `AgentContext.doing`); absent, the prompt is as before. A surveyed region
+  without a street window, whose crowd the telemetry already counts as nobody, is not read. Nothing is written to the
+  crowd on any kernel, so the narrow and light rungs, the First-Law sensing and the readback are unchanged.
+  `dist/index.html` grows by 7,652 bytes, from 12,059,574 to 12,067,226; the limit in `tools/verify/page_dist.mjs` is
+  unchanged. Seventeen tests, one of them running the reading over `crowd.wgsl` on the CPU (`crowdHost.ts`) through
+  the realm for 15 s of 299 people: every activity decoded matches the realm's own readout, and nobody read `STUCK`.
+  This came from a pasted sparse-autoencoder steering pass that was not merged as written: the per-agent 256-float
+  state it steered does not exist (a pedestrian is 28 floats in `crowd.wgsl`). The rest of that check was done on the
+  pasted files outside the repository and is in the pull request, not in CI.
+
 - **An umbrella and headphones.** The look genome's accessory word (word 6) gains the umbrella at bits 15 and 16
   (none, as before; folding; walking; open) and the headphones at 17 and 18 (none, as before; over-ear; on-ear;
   earbuds). Bits 19 and 20 stay held for the heel; 29 to 31 are spare and refused. Option 0 of each is as before, so

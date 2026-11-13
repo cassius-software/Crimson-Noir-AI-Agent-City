@@ -162,7 +162,7 @@ export interface OperatorBridge {
 /**
  * The feature inspector (09_Cognition/features.ts) over the operator tier: the named features of the city read from
  * the newest snapshot, the operator's steering (a bias in [-1, 1] or a clamp in [0, 1] per feature) and the fixed lines
- * it adds to every provider's system prompt. Every row comes formatted. Reads work while locked; steer, clamp,
+ * it adds to every provider's system prompt, and each pedestrian's own readings (person, people). Every row comes formatted. Reads work while locked; steer, clamp,
  * release and reset throw while locked, and a RangeError names an unknown feature or a value out of range.
  */
 export interface FeaturesBridge {
@@ -174,6 +174,10 @@ export interface FeaturesBridge {
   prompt(): string[]
   /** What the inspector is and is not, plainly. */
   explain(): string[]
+  /** One pedestrian as the crowd measured them (09_Cognition/personFeatures.ts): who and what they are doing, then a row per reading over its threshold; null when nothing is known of them. */
+  person(agent: number): string[] | null
+  /** The crowd's per-person readings: how many were measured, then each reading's share of them, the stuck ones named. */
+  people(): string[]
   /** Leans a feature by a bias in [-1, 1]: the line kept, then each tuning knob it moved, one line each. */
   steer(name: string, bias: number): string[]
   /** Holds a feature's lane at a value in [0, 1]; returns the line kept. */
@@ -678,7 +682,7 @@ export function offlineBridge(brand: TerminalBridge['brand']): TerminalBridge {
     ping: { at: down, list: down, newest: down, clear: down },
     operator: {
       unlock: down, lock: down, unlocked: down, exec: down, tuning: down, tune: down,
-      features: { lines: down, about: down, prompt: down, explain: down, steer: down, clamp: down, release: down, reset: down },
+      features: { lines: down, about: down, prompt: down, explain: down, person: down, people: down, steer: down, clamp: down, release: down, reset: down },
       elite: { status: down, unlocked: down, unlock: down, lock: down, set: down, writes: down },
       ask: down, askStatus: down, askSet: down, askConnect: down, askStop: down, say: down, sayStatus: down, saySet: down, sayStop: down,
       api: down, harnesses: down, harness: down,
