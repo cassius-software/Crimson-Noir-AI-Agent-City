@@ -945,11 +945,32 @@ async function siteCopy(pin, dir) {
 /** A page expression: the centre of the element `q` matches, once a click there lands on it (null until then). */
 const hitOf = (q) => `(() => { const e = document.querySelector(${JSON.stringify(q)}); if (!e) return null; const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2
   return r.width > 0 && e.contains(document.elementFromPoint(x, y)) ? [x, y] : null })()`
-/** Clicks (x, y) with the mouse's left button, as a person does. */
-async function clickAt(p, [x, y]) {
-  await p.mouse('mouseMoved', x, y)
-  await p.mouse('mousePressed', x, y, 1)
-  await p.mouse('mouseReleased', x, y)
+/**
+ * Clicks the element `q` matches with the mouse's left button, as a person does, trying for up to `ms`: returns where
+ * it pressed, or null when a click could not land on it in that time. A click that misses lands on the city's canvas,
+ * which takes the pointer (input.ts capturePointer), and headless Chrome grants the lock: every later click then goes
+ * to the canvas wherever it is pressed (sitemodel's second visit on CI, three chip clicks all on the canvas). So the
+ * lock is let go first, and the centre is found again with the mouse over it and pressed only where it still is (a
+ * chip or card still settling, or a layout that moved between the look and the press).
+ */
+async function clickOn(p, q, ms) {
+  await p.eval('(document.pointerLockElement && document.exitPointerLock(), true)').catch(() => {})
+  await p.waitFor('document.pointerLockElement === null', 5_000).catch(() => {})
+  const end = Date.now() + ms
+  for (;;) {
+    const at = await p.eval(hitOf(q)).catch(() => null)
+    if (at) {
+      await p.mouse('mouseMoved', at[0], at[1])
+      const still = await p.eval(hitOf(q)).catch(() => null)
+      if (still && Math.abs(still[0] - at[0]) < 1 && Math.abs(still[1] - at[1]) < 1) {
+        await p.mouse('mousePressed', still[0], still[1], 1)
+        await p.mouse('mouseReleased', still[0], still[1])
+        return still
+      }
+    }
+    if (Date.now() > end) return null
+    await new Promise((r) => setTimeout(r, 250))
+  }
 }
 
 /**
@@ -988,8 +1009,8 @@ const WHERE_KEYS = `(() => { const a = document.activeElement, c = document.quer
 
 /**
  * A page expression: starts a trail (once a page) of the views Sloane's card goes through ('nothing' while it is
- * hidden), where the keyboard was and whether the visitor was on foot each time, and every key, pointer press, click
- * and focus the page saw, each with its time in ms; the last 40 are kept. talkToSloane reports it when the goal field
+ * hidden), where the keyboard was and whether the visitor was on foot each time, and every key, pointer press, click,
+ * focus and pointer lock the page saw, each with its time in ms; the last 40 are kept. talkToSloane reports it when the goal field
  * never took the keyboard.
  */
 const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = window.__cardTrail = [], t0 = performance.now()
@@ -1001,6 +1022,7 @@ const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = wind
   new MutationObserver(() => { const v = view(); if (v !== last) { note('view ' + last + ' > ' + v + ', keys on ' + on(document.activeElement) + ', ' + mode()); last = v } })
     .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-concierge'] })
   for (const type of ['keydown', 'pointerdown', 'click', 'focusin']) window.addEventListener(type, (e) => note(type + ' ' + (e.key ?? e.pointerType ?? '') + ' on ' + on(e.target)), true)
+  document.addEventListener('pointerlockchange', () => note('pointer lock on ' + on(document.pointerLockElement)))
   return true })()`
 
 /**
@@ -1020,16 +1042,14 @@ async function talkToSloane(p, url) {
   if (await p.waitFor(`!!document.querySelector('aside[data-concierge="greet"]')`, 10_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
   let field = false
   for (let i = 0; i < 3 && !field; i++) {
-    const chip = await p.waitFor(hitOf('[data-concierge="chip"]'), 30_000).catch(() => null)
+    const chip = await clickOn(p, '[data-concierge="chip"]', 30_000)
     if (!chip) { notes.push(`no chip to click (${await p.eval(WHERE_KEYS)})`); break }
-    await clickAt(p, chip)
     field = await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your goal'`, 10_000).then(() => true, () => false)
     if (!field) notes.push(`the chip's click left ${await p.eval(WHERE_KEYS)}`)
   }
   // A goal field on screen that did not take the keyboard by itself is clicked into, as a person would.
-  const box = field ? null : await p.waitFor(hitOf('aside[data-concierge] [aria-label="Your goal"]'), 5_000).catch(() => null)
+  const box = field ? null : await clickOn(p, 'aside[data-concierge] [aria-label="Your goal"]', 5_000)
   if (box) {
-    await clickAt(p, box)
     field = await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your goal'`, 5_000).then(() => true, () => false)
   }
   if (!field) {
@@ -2140,8 +2160,7 @@ const SCENARIOS = {
         const tapAt = watch.requests.length
         const servedAt = served.length
         await p.eval(SITE_WATCH)
-        const button = await p.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (button) await clickAt(p, button)
+        const button = await clickOn(p, 'aside[data-concierge] [data-action="site-model"]', 10_000)
         const t0 = Date.now()
         const end = await p.waitFor(`(() => { const t = ${SLOANE_TALK}, s = window.__smokeSite; return (t.state === 'said' || t.why || (s.states.includes('waiting') && t.state !== 'waiting')) && t })()`, 300_000).catch(() => p.eval(SLOANE_TALK))
         const ms = Date.now() - t0
@@ -2157,8 +2176,7 @@ const SCENARIOS = {
         const toasts = await p.waitFor(`(() => { const t = window.__SIM__.engine.toasts.filter((t) => t.title === ${JSON.stringify(MODEL_FILE)}).map((t) => t.body); return t.some((b) => !/^keeping|^reload once/.test(b)) && t })()`, 60_000)
           .catch(() => p.eval(`window.__SIM__.engine.toasts.map((t) => t.title + ': ' + t.body)`))
         check(toasts.some((b) => new RegExp(`^${TINY.replace('.', '\\.')} is loaded in this page \\(`).test(b)), 'sitemodel: the toast says the model is loaded in this page', toasts.join(' | ').slice(0, 300))
-        const close = await p.waitFor(hitOf('aside[data-concierge] button[aria-label="Close"]'), 10_000).catch(() => null)
-        if (close) await clickAt(p, close)
+        await clickOn(p, 'aside[data-concierge] button[aria-label="Close"]', 10_000)
         check(await p.openConsole(), 'sitemodel: with the card put away, the tilde key opens the console')
         await p.command('operator unlock', /unlocked/)
         const status = await p.command('ask', /installed|ask: /, 60_000)
@@ -2204,8 +2222,7 @@ const SCENARIOS = {
         check(again.card?.state === 'none' && again.card.offer === offer, 'sitemodel: a fresh browser is offered the site\'s model the same way',
           `${JSON.stringify({ state: again.card?.state, offer: again.card?.offer })}${again.notes.length ? `; ${again.notes.join('; ')}` : ''}`)
         const servedAt = served.length
-        const button = await q.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (button) await clickAt(q, button)
+        const button = await clickOn(q, 'aside[data-concierge] [data-action="site-model"]', 10_000)
         const refused = await q.waitFor(`(() => { const t = ${SLOANE_TALK}; return t.why && t.getting === null && t })()`, 120_000).catch(() => q.eval(SLOANE_TALK))
         check(/its SHA-256 differs/.test(refused?.why ?? '') && refused.offer === offer && refused.state === 'none', 'sitemodel: with one byte flipped the card says its SHA-256 differs, and the button is back',
           `${button ? 'clicked' : 'no button to click'}; ${refused?.state}, ${refused?.offer}: ${refused?.why}`)
@@ -2213,8 +2230,7 @@ const SCENARIOS = {
         check(none.length === 0 && JSON.stringify(models(servedAt)) === JSON.stringify([path]), 'sitemodel: nothing of it was kept (the page\'s model store is empty), and it was fetched once',
           `${none.length ? none.join('; ') : 'the store is empty'}; ${models(servedAt).join(', ') || 'nothing under models/'}`)
         writeFileSync(file, good)
-        const retry = await q.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (retry) await clickAt(q, retry)
+        const retry = await clickOn(q, 'aside[data-concierge] [data-action="site-model"]', 10_000)
         const asked = await q.waitFor(`(() => { const t = ${SLOANE_TALK}; return (t.state === 'waiting' || t.state === 'said' || (t.why && t.getting === null)) && t })()`, 120_000).catch(() => q.eval(SLOANE_TALK))
         const keptNow = await q.eval(KEPT_IN_STORE)
         check((asked?.state === 'waiting' || asked?.state === 'said') && keptNow.length === 1 && keptNow[0] === `meta.json + ${TINY}`, 'sitemodel: with the right file back, the same button keeps it and the turn is asked again',

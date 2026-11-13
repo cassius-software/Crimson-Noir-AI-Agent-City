@@ -2603,6 +2603,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Chromium; the cause is read from the code and the phone's report, and the phone's own speed is unverified until it
   is tried there.
 
+- **The browser smoke's clicks on Sloane's card no longer fail together after one miss.** `sitemodel`'s second visit
+  failed once in a while on CI (main 05d00af, browser (2)): the card's trail showed the first click on Sloane's chip
+  landing on the city's canvas, and the two retries landing there too. A click on the canvas takes the pointer
+  (`src/04_Connect_Hardware/input.ts` capturePointer), headless Chrome grants the lock, and under the lock every click
+  goes to the canvas wherever it is pressed. `tools/browser/smoke.mjs` clicks through `clickOn` now: it lets the lock
+  go first, finds the element's centre again with the mouse over it, and presses only where the element still is.
+  The card's trail notes pointer lock changes too. Checked locally by forcing a first click onto the canvas: the
+  scenario passed.
+
 ## [1.0.0-stable-beta] - 2026-10-12
 
 The V2 stable release overhaul (Phase 21, PRs #17, #18 and #19) and Phase 2 (PRs #20, #21 and #22), with everything
