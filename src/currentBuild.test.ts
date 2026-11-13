@@ -624,7 +624,7 @@ test('pick builds a commit again when its publish stopped after writing the reco
     assert.equal(JSON.parse(gh.s.release?.assets.get('current.json')?.body.toString('utf8') ?? '{}').commit, c2, 'the record says c2')
     assert.equal(c.pick({ sha: c2, repo: REPO }, gh.gh).sha, c2, 'but the old version\'s files are still there: build it again')
     c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('b', '1.0.1-stable-beta')), stage: join(t.dir, 's3'), source: source(join(t.dir, 'src3'), '1.0.1-stable-beta'), sha: c2, repo: REPO, log: quiet }, gh.gh)
-    assert.match(c.pick({ sha: c2, repo: REPO }, gh.gh).skip, /already holds .* for every target/)
+    assert.match(c.pick({ sha: c2, repo: REPO }, gh.gh).skip, /already holds .* for every required target/)
 
     gh.s.green.add(c3)
     gh.s.history.push(commitOf(4))
@@ -746,6 +746,110 @@ test('two record uploads failing in a row never leave the release without one: a
   } finally { t.done() }
 })
 
+test('a staged record beside an older current.json is the newest: it goes up as current.json before the staged copy is replaced, so a failed staged upload never steps the record back', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3, c4] = [commitOf(1), commitOf(2), commitOf(3), commitOf(4)]
+    const gh = fakeGitHub([commitOf(0), c1, c2, c3, c4])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    // c2's run uploads its files and the staged record, then current.json's upload fails before gh deletes the old one.
+    gh.s.fail = (argv) => (argv[1] === 'upload' && basename(argv[3]) === 'current.json' ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload current\.json/)
+    gh.s.fail = null
+    const recorded = (n: string) => JSON.parse(gh.s.release?.assets.get(n)?.body.toString('utf8') ?? '{}').commit
+    assert.deepEqual([recorded('current.json'), recorded('current.next.json')], [c1, c2])
+    // c3's run, linux-arm64 failed: its staged record's upload fails after gh deleted c2's.
+    const noArm = allBuilt('c')
+    delete noArm['matrix-linux-arm64']
+    gh.s.failUpload = (name) => name === 'current.next.json'
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm3'), noArm), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload current\.next\.json/)
+    gh.s.failUpload = null
+    assert.ok(!gh.s.release?.assets.has('current.next.json'))
+    assert.equal(recorded('current.json'), c2, 'current.json holds c2, not c1')
+    // c1 is refused as older, and c4 with linux-arm64 failed again keeps c2's arm64 file.
+    assert.equal(c.publish({ media: artifacts(join(t.dir, 'm4'), allBuilt('x')), stage: join(t.dir, 's4'), sha: c1, repo: REPO, log: quiet }, gh.gh).status, 'stale')
+    const r = c.publish({ media: artifacts(join(t.dir, 'm5'), noArm), stage: join(t.dir, 's5'), sha: c4, repo: REPO, log: quiet }, gh.gh)
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.plan.dropped, [])
+    assert.equal(r.plan.state.targets['linux-arm64'].commit, c2)
+    assert.equal(gh.s.release?.assets.get('Crimson.Noir.Agent.City_1.0.0-stable-beta_arm64.deb')?.body.toString('utf8'), 'arm deb b')
+  } finally { t.done() }
+})
+
+test('a release with no record gets an empty one before any file, whether its first run stopped before the record or its files were deleted by hand, so a run stopped among its uploads never strands it', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([commitOf(0), c1, c2, c3])
+    // The first run makes the tag and the release, then cannot upload the empty record.
+    gh.s.fail = (argv) => (argv[1] === 'upload' && basename(argv[3]) === 'current.json' ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload an empty current\.json/)
+    assert.equal(gh.s.release?.assets.size, 0)
+    // The next run stops among its uploads (the macOS image fails).
+    const dmg = 'Crimson.Noir.Agent.City_1.0.0-stable-beta_universal.dmg'
+    gh.s.fail = (argv) => (argv[1] === 'upload' && basename(argv[3]) === dmg ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, log: quiet, wait: 0 }, gh.gh), /upload Crimson\.Noir\.Agent\.City_1\.0\.0-stable-beta_universal\.dmg/)
+    assert.ok(gh.s.release?.assets.has('current.json') && gh.s.release.assets.size > 1, 'files went up after an empty record')
+    gh.s.fail = null
+    assert.equal(c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('c')), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet }, gh.gh).status, 'published')
+    // Every file deleted by hand: the release is empty, and the same holds.
+    for (const n of [...(gh.s.release?.assets.keys() ?? [])]) gh.s.release?.assets.delete(n)
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm4'), allBuilt('d')), stage: join(t.dir, 's4'), sha: c3, repo: REPO, log: quiet, wait: 0 }, (argv: string[]) => (argv[1] === 'upload' && basename(argv[3]) === dmg ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : gh.gh(argv))), /upload Crimson/)
+    assert.ok(gh.s.release?.assets.has('current.json'))
+    assert.equal(c.publish({ media: artifacts(join(t.dir, 'm5'), allBuilt('d')), stage: join(t.dir, 's5'), sha: c3, repo: REPO, log: quiet }, gh.gh).status, 'published')
+  } finally { t.done() }
+})
+
+test('the swap goes on when deleting current lost its answer and the read confirming it failed, but a second read finds it gone: the release ends on current at the commit', () => {
+  const t = scratch()
+  try {
+    const [x, y] = [commitOf(31), commitOf(32)]
+    const gh = fakeGitHub([commitOf(30), x])
+    c.publish({ media: artifacts(join(t.dir, 'm0'), allBuilt('a')), stage: join(t.dir, 's0'), sha: x, repo: REPO, log: quiet }, gh.gh)
+    gh.s.history.push(y)
+    gh.s.workflows[y] = 'w1'
+    // The delete lands with its answer lost; the retry hears "Reference does not exist"; the read confirming it fails once.
+    let step = 0
+    const flaky: Gh = (argv) => {
+      const path = argv[argv.length - 1]
+      if (step === 0 && argv.includes('DELETE') && path.endsWith('git/refs/tags/current')) { step = 1; gh.gh(argv); return { ok: false, out: '', err: 'gh: connection reset' } }
+      if (step === 1 && !argv.includes('-X') && path.endsWith('git/ref/tags/current')) { step = 2; return { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } }
+      return gh.gh(argv)
+    }
+    const r = c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('b')), stage: join(t.dir, 's1'), sha: y, repo: REPO, log: quiet, wait: 0 }, flaky)
+    assert.equal(step, 2, 'both faults happened')
+    assert.equal(r.status, 'published')
+    assert.deepEqual(r.tag, { at: y, how: 'remade' })
+    assert.deepEqual([...gh.s.refs.entries()], [['current', y]])
+    assert.equal(gh.s.release?.tag, 'current')
+    assert.equal(gh.s.everDraft, false)
+  } finally { t.done() }
+})
+
+test('pick builds a commit again when a second publish of it stopped after its record, though the first one\'s notes name the commit: SHA256SUMS must list the recorded files and the notes carry that publish\'s time', () => {
+  const t = scratch()
+  try {
+    const c1 = commitOf(1)
+    const gh = fakeGitHub([commitOf(0), c1])
+    const [t1, t2] = ['2026-11-13T02:00:00.000Z', '2026-11-13T03:00:00.000Z']
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c1, repo: REPO, time: t1, log: quiet }, gh.gh)
+    assert.ok(c.pick({ sha: c1, repo: REPO }, gh.gh).skip)
+    const noSums = (argv: string[]) => (argv[1] === 'upload' && basename(argv[3]) === 'SHA256SUMS' ? { ok: false, out: '', err: 'gh: Bad Gateway (HTTP 502)' } : null)
+    // The same bytes again, stopped before SHA256SUMS: only the notes' time tells the publishes apart.
+    gh.s.fail = noSums
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('a')), stage: join(t.dir, 's2'), sha: c1, repo: REPO, time: t2, log: quiet, wait: 0 }, gh.gh), /upload SHA256SUMS/)
+    gh.s.fail = null
+    assert.equal(c.pick({ sha: c1, repo: REPO }, gh.gh).sha, c1)
+    // New bytes under the first publish's time, stopped the same way: SHA256SUMS no longer lists the recorded files.
+    c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('a')), stage: join(t.dir, 's3'), sha: c1, repo: REPO, time: t1, log: quiet }, gh.gh)
+    assert.ok(c.pick({ sha: c1, repo: REPO }, gh.gh).skip)
+    gh.s.fail = noSums
+    assert.throws(() => c.publish({ media: artifacts(join(t.dir, 'm4'), allBuilt('b')), stage: join(t.dir, 's4'), sha: c1, repo: REPO, time: t1, log: quiet, wait: 0 }, gh.gh), /upload SHA256SUMS/)
+    gh.s.fail = null
+    assert.equal(c.pick({ sha: c1, repo: REPO }, gh.gh).sha, c1)
+  } finally { t.done() }
+})
+
 test('a re-run of the failed jobs, which keeps an earlier attempt\'s pick, fails when a newer commit on main is green, so someone runs the workflow by hand', () => {
   const t = scratch()
   const err: string[] = []
@@ -795,7 +899,7 @@ test('pick: the newest commit on main that ci passed on, whichever commit starte
     assert.match(none.skip, /ci has not passed/)
     c.publish({ media: artifacts(join(t.dir, 'm'), allBuilt('a')), stage: join(t.dir, 's'), sha: c2, repo: REPO, log: quiet }, gh.gh)
     const done = c.pick({ sha: c2, repo: REPO }, gh.gh)
-    assert.match(done.skip, /already holds .* for every target/)
+    assert.match(done.skip, /already holds .* for every required target/)
     assert.equal(done.refused, false)
     assert.equal(c.pick({ sha: c2, force: true, repo: REPO }, gh.gh).sha, c2)
     c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('c')), stage: join(t.dir, 's3'), sha: c3, repo: REPO, log: quiet }, gh.gh)

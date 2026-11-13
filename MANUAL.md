@@ -4262,8 +4262,8 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   `crimson_noir_os-aarch64.img` and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
   the commit, run and time that made each target's files. The notes list every file with its commit. The apps' file
   names carry the version in `package.json` at the commit they were built from (`1.0.0-stable-beta` today; the `.rpm`
-  as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each file's row in the notes, tell one
-  current build from the next. A file's address stays the same from one build to the next while its name does
+  as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each
+  file's row in the notes, tell one current build from the next. A file's address stays the same from one build to the next while its name does
   (except for the few seconds the tag is made again, below):
   `https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/download/current/<file>`.
 - **What is checked first.** ci on that very commit (the page's type check, lint, tests and build, the city in Chrome,
@@ -4282,13 +4282,15 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
   place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
   release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
-  attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub cannot
-  say), so someone runs the workflow by hand.
+  attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
+  holds a newer one), and red too when GitHub cannot answer, so someone runs the workflow by hand.
 - **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
   `current.json` holds it, so the release always has one of the two (`gh release upload --clobber` deletes the old
-  file before it uploads the new one; a staged copy left alone by a stopped run goes back up as `current.json` before
-  anything replaces it). A commit counts as published only when the release holds exactly what its record says and
-  the notes name it; otherwise the next run builds it again.
+  file before it uploads the new one). A staged copy left by a stopped run is the newest record, so it goes up as
+  `current.json` before anything replaces it, and a release that holds neither (its first run stopped before the
+  record, or its files were deleted by hand) gets an empty `current.json` before any file. A commit counts as
+  published only when the release holds exactly what its record says, `SHA256SUMS` lists those files, and the notes
+  name the commit and that publish's time; otherwise the next run builds it again.
 - **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
   four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
   commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
@@ -4299,9 +4301,9 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   those few seconds; the release is never on a tag being deleted, which would turn it into a draft). A run that stops
   halfway leaves the release on `current-next`; the next run sets it back on `current` (an existing `current` is not
   deleted for this, and if the stopped run had already deleted it, it is made again as soon as GitHub allows, once
-  the commit has main's tip's workflow files), then moves the tag as usual. When GitHub refuses the stand-in as well (a later commit on main changed a
-  workflow), the tag stays where it was, the files are published all the same, and the notes say where the tag and
-  GitHub's source code archives are; the next publish tries again.
+  the commit has main's tip's workflow files), then moves the tag as usual. When GitHub refuses the stand-in as well
+  (a later commit on main changed a workflow), the tag stays where it was, the files are published all the same, and
+  the notes say where the tag and GitHub's source code archives are; the next publish tries again.
 - **Checking a download.** `sha256sum --check --ignore-missing SHA256SUMS` in the folder you downloaded into
   (`SHA256SUMS` lists every file but itself and `current.json`).
 - **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds the newest

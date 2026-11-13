@@ -13,8 +13,8 @@
  *   `sha=<commit>` and `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) for the newest commit on main that ci
  *   passed on there (a push or a run by hand, never a pull request's run), so a run that took a waiting run's place
  *   still builds the newest green commit; nothing on stdout, and why on stderr, when the given commit is not on main,
- *   no commit on main passed ci, the release already holds a newer one, or it holds that one for every target
- *   and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
+ *   no commit on main passed ci, the release already holds a newer one, or it holds that one for every required
+ *   target (the iOS build is best effort) and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
  *   exits 1 rather than pass the commit over. `--strict` exits 1 when refused (not on main, nothing green), for a
  *   run by hand.
  * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>]
@@ -31,11 +31,11 @@
  *   exit is then 1, except for the iOS build (best effort, as in build-matrix.yml). `--reused-pick` (a re-run of the
  *   failed jobs, which keeps an earlier attempt's pick) exits 1 unless the release then holds the newest green commit
  *   on main, or GitHub says it holds a newer one. `--stage` is the folder the files are copied into, named as GitHub
- *   keeps them, before they go up (a fresh temporary folder, removed afterwards, when not given).
+ *   keeps them, before they go up (a fresh temporary folder, removed when the command ends, when not given).
  *   `--source` is a checkout of the built commit: its package.json gives the version the notes name, and
  *   crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with the x86-64 media, as
- *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan and the notes, and writes nothing
- *   (a pull request's run of the workflow).
+ *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan, writes the notes to --summary
+ *   when given, and writes nothing to GitHub (a pull request's run of the workflow).
  * - The tag. GitHub is reported (not yet seen here) to let the workflow's own token move a tag only when no workflow
  *   file differs between where it was and where it goes, and to let it make a tag at a commit whose workflow files
  *   match main's tip. So when a move is refused, the release is set on a stand-in tag, `current-next`, at the commit,
@@ -44,9 +44,9 @@
  *   for those few seconds its download addresses answer 404. A run that stops halfway leaves the release on
  *   `current-next`; the next run sets it back on `current` (an existing `current` is not deleted for this; it is made
  *   only if the stopped run had already deleted it, which GitHub allows once the commit has main's tip's workflow
- *   files), then moves the tag as usual. When GitHub refuses the stand-in as well (a later commit on main changed a workflow), the tag stays where
- *   it was, the files are still published, and the notes and current.json say where the tag is; the next publish
- *   tries again.
+ *   files), then moves the tag as usual. When GitHub refuses the stand-in as well (a later commit on main changed a
+ *   workflow), the tag stays where it was, the files are still published, and the notes and current.json say where
+ *   the tag is; the next publish tries again.
  * GitHub is reached only through the `gh` command line (GH_TOKEN, GH_REPO), run with argument vectors, never a shell.
  * What breaks if it is removed? The workflow has nothing to publish with, and the downloads wait for the next
  * numbered release; the web copy still follows main (web.yml).
@@ -131,6 +131,7 @@ export function sha256File(path) {
   } finally { closeSync(fd) }
   return h.digest('hex')
 }
+const sha256Text = (text) => createHash('sha256').update(text).digest('hex')
 
 /**
  * The targets the run built, from its artifacts in `media` (one folder each, as actions/download-artifact leaves
@@ -192,6 +193,8 @@ export function readStateText(text) {
 }
 
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+/** SHA256SUMS for these files, in the format `sha256sum --check` reads. */
+const sumsOf = (files) => [...files].sort(byName).map((f) => `${f.sha256}  ${f.name}`).join('\n') + '\n'
 
 /**
  * What a publish does, worked out before anything is written: the new current.json (each target built now at this
@@ -235,7 +238,7 @@ export function plan({ state, built, sha, run = '', ci = '', time, version = 'un
   const deletes = have ? [...have.keys()].filter((n) => !keep.has(n)).sort() : []
   const missing = IDS.filter((id) => !built[id])
   const failed = missing.filter((id) => !BEST_EFFORT.includes(id))
-  const sums = [...files].sort(byName).map((f) => `${f.sha256}  ${f.name}`).join('\n') + '\n'
+  const sums = sumsOf(files)
   const next = { schema: 1, tag: TAG, tagAt, commit: sha, time, run, ci, version, targets }
   return { state: next, uploads, deletes, sums, missing, failed, dropped, notes: notes(next, { repo, missing }) }
 }
@@ -385,8 +388,10 @@ export function readState(gh, repo, release, { wait = 5000 } = {}) {
 
 /**
  * Whether the release holds exactly what its record says, finished: on the tag `current`, every recorded file there
- * with its size and digest, nothing else but SHA256SUMS and current.json, no staged record left, and the notes naming
- * the commit. A run that stopped after writing the record fails this, so pick builds the commit again.
+ * with its size and digest, SHA256SUMS listing them (where GitHub gives its digest), nothing else but current.json, no
+ * staged record left, and the notes naming the commit and the time of the publish that wrote the record. A run that
+ * stopped after writing the record fails this, even when an earlier publish of the same commit left its notes, so
+ * pick builds the commit again.
  */
 export function holds(release, state) {
   if (!release || release.tag !== TAG || !state.commit) return false
@@ -394,7 +399,10 @@ export function holds(release, state) {
   const have = new Map(release.assets.map((a) => [a.name, a]))
   const same = (f) => { const a = have.get(f.name); return Boolean(a) && a.size === f.size && (!a.digest || a.digest === `sha256:${f.sha256}`) }
   const wanted = new Set([...files.map((f) => f.name), SUMS, STATE])
-  return files.every(same) && have.has(SUMS) && have.has(STATE) && [...have.keys()].every((n) => wanted.has(n)) && (release.notes ?? '').includes(state.commit)
+  const sums = have.get(SUMS)
+  const listed = Boolean(sums) && (!sums.digest || sums.digest === `sha256:${sha256Text(sumsOf(files))}`)
+  const text = release.notes ?? ''
+  return files.every(same) && listed && have.has(STATE) && [...have.keys()].every((n) => wanted.has(n)) && text.includes(state.commit) && (!state.time || text.includes(when(state.time)))
 }
 
 function pause(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
@@ -526,16 +534,17 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
   release.tag = NEXT
   try { drop(TAG) } catch (e) {
     // When current is still there (a rule that forbids deleting tags, say), the release goes straight back onto it.
-    // When it may be gone, the release stays on the stand-in: setting it on a missing tag would have GitHub make that
-    // tag at the release's target, and the next run makes it properly.
-    let still = false
-    try { still = tagAt(gh, repo, TAG) !== null } catch { still = false }
+    // When the read fails, current may or may not be gone, so the release stays on the stand-in: setting it on a
+    // missing tag would have GitHub make that tag at the release's target, and the next run makes it properly. When
+    // the read says current is gone, that is what a delete leaves, and the swap goes on below.
+    let still
+    try { still = tagAt(gh, repo, TAG) !== null } catch { throw e }
     if (still) {
       stand(TAG)
       release.tag = TAG
       tidy()
+      throw e
     }
-    throw e
   }
   must(make(TAG, sha), `make the tag ${TAG} again at ${sha} (the release is on ${NEXT}; the next run finishes this)`)
   stand(TAG)
@@ -562,7 +571,7 @@ export function pick({ sha, force = false, repo, wait = 5000 }, gh) {
   // Already done only when the release holds that commit for every required target and the publish finished (see holds).
   const required = IDS.filter((id) => !BEST_EFFORT.includes(id))
   if (!force && state.commit === green.sha && required.every((id) => state.targets[id]?.commit === green.sha) && holds(release, state)) {
-    return { skip: `the release already holds ${green.sha} for every target (run by hand with force to build it again)`, refused: false }
+    return { skip: `the release already holds ${green.sha} for every required target, the iOS build being best effort (run by hand with force to build it again)`, refused: false }
   }
   return { sha: green.sha, ci: green.ci, note }
 }
@@ -622,15 +631,17 @@ export function publish({ media, stage, source, sha, ci = '', run = '', repo, dr
     throw new Error(`delete ${name}: ${r.err.trim() || 'failed'}`)
   }
   const record = `${JSON.stringify(p.state, null, 2)}\n`
-  if (!release) {
-    retry(gh, ['release', 'create', TAG, '--verify-tag', '--prerelease', '--latest=false', '--title', TITLE, '--notes-file', notesFile, ...R], `gh release create ${TAG}`, { wait })
-    // An empty record first, so a first run that stops partway leaves a release whose files the next run can account for.
+  if (!release) retry(gh, ['release', 'create', TAG, '--verify-tag', '--prerelease', '--latest=false', '--title', TITLE, '--notes-file', notesFile, ...R], `gh release create ${TAG}`, { wait })
+  // An empty record before any file whenever the release holds neither record (a new release, one whose first run
+  // stopped before its record went up, or one whose files were deleted by hand; readState has found it with no files),
+  // so a run that stops partway always leaves a release whose files the next run can account for.
+  if (!release || !release.assets.some((a) => a.name === STATE || a.name === STAGED)) {
     writeFileSync(join(stage, STATE), `${JSON.stringify({ schema: 1, tag: TAG, targets: {} })}\n`)
     upload(join(stage, STATE), `an empty ${STATE}`)
   }
-  // Only the staged copy is left (an earlier run stopped inside current.json's --clobber): it goes back up as
-  // current.json first, with nothing for gh to delete, so the staged copy is never the only record when it is replaced.
-  if (release && release.assets.some((a) => a.name === STAGED) && !release.assets.some((a) => a.name === STATE)) {
+  // A staged copy left by a stopped run is the newest record (readState read it): it goes up as current.json first,
+  // while the staged copy is still there, so when the staged copy is replaced below, current.json is never older.
+  if (release && release.assets.some((a) => a.name === STAGED)) {
     writeFileSync(join(stage, STATE), `${JSON.stringify(state, null, 2)}\n`)
     upload(join(stage, STATE), `${STATE} (from ${STAGED})`)
   }
@@ -694,12 +705,16 @@ export function main(argv, gh = realGh) {
       return 0
     }
     const stage = arg('stage') ?? mkdtempSync(join(tmpdir(), 'current-stage-'))
-    const r = publish({
-      media: resolve(arg('media') ?? 'media'), stage: resolve(stage), source: arg('source') && resolve(arg('source')),
-      sha: arg('sha'), ci: arg('ci') ?? '', run: arg('run') ?? '', repo, dryRun: flag('dry-run'),
-    }, gh)
-    if (arg('summary') && r.plan) appendFileSync(arg('summary'), `## The current build${r.status === 'planned' ? ' (dry run: nothing was published)' : ''}\n\n${r.plan.notes}\n`)
-    if (!arg('stage')) rmSync(stage, { recursive: true, force: true })
+    let r
+    try {
+      r = publish({
+        media: resolve(arg('media') ?? 'media'), stage: resolve(stage), source: arg('source') && resolve(arg('source')),
+        sha: arg('sha'), ci: arg('ci') ?? '', run: arg('run') ?? '', repo, dryRun: flag('dry-run'),
+      }, gh)
+      if (arg('summary') && r.plan) appendFileSync(arg('summary'), `## The current build${r.status === 'planned' ? ' (dry run: nothing was published)' : ''}\n\n${r.plan.notes}\n`)
+    } finally {
+      if (!arg('stage')) rmSync(stage, { recursive: true, force: true })
+    }
     let code = 0
     if (r.plan?.failed.length) {
       for (const id of r.plan.failed) console.error(`::error::${id} was not built at ${arg('sha')}${r.plan.state.targets[id] ? `; the release keeps its files from ${r.plan.state.targets[id].commit}` : ''}`)
