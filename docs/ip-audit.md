@@ -218,6 +218,17 @@ cargo license --manifest-path src-tauri/Cargo.toml
   image contains no Linux kernel or other GPL code and links only `font8x8` (MIT) at runtime.
 - **`native/routing/Cargo.lock`** and **`native/kv-pager-wasm/Cargo.lock`**: no third-party crates at all (the
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
+- **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
+  the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
+  the macOS, Linux, Android and iOS apps). It is compiled into no shipped build yet; only its tests run
+  (`native-llm.yml`). Linked into it: `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the sys crate
+  is llama-cpp-rs at commit e7af607e), which compile the llama.cpp and ggml sources they vendor (MIT, Copyright
+  2023-2026 The ggml authors), and `serde`, `sha2`, `libc`, `thiserror`, `tracing`, `enumflags2`, `cfg-if`,
+  `once_cell` (MIT, or MIT OR Apache-2.0). Build time only: `bindgen` (BSD-3-Clause), `clang-sys` (Apache-2.0),
+  `libloading` (ISC), `cmake`, `cc`, the proc-macro crates (MIT OR Apache-2.0; `unicode-ident` adds Unicode-3.0),
+  and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available). The notice for what
+  llama.cpp compiles in (ggml, the llamafile matrix code, the YaRN code, and what its common library brings) lands with
+  the first app build that carries the runner.
 - **`src-tauri/Cargo.lock` (407 crates)**: the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;

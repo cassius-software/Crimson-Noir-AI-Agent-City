@@ -15,12 +15,14 @@
  *   The text therefore comes from the weights (the letter 'b' writes "bbbb"), never from the prompt, and the model
  *   never writes its end-of-text token: it proves the plumbing and the stream, not a template, attention or stopping;
  * - a minimal tokenizer.chat_template, and an optional split into two gguf-split shards (split.no u16, split.count
- *   u16, split.tensors.count i32) named -00001-of-00002 and -00002-of-00002.
+ *   u16, split.tensors.count i32) named -00001-of-00002 and -00002-of-00002, or a plain form with no chat template
+ *   (tiny-a-plain.gguf), for the native runner's test that falls back to ChatML (native/llm).
  * The bytes are deterministic: the 'a' model is 156,992 B with sha256 985fdc04…825fa, its shards 107,104 B and
  * 50,112 B. wllama 3.8.1 (llama.cpp b11364) loads both forms. The writer under it, ggufBytes, also writes any
  * metadata a test needs (every GGUF value type, nested arrays), for src/09_Cognition/gguf.test.ts, and ggufKvs the
  * metadata pairs alone.
- *   node tools/browser/tinyGguf.mjs <outDir> [--split]   writes tiny-a.gguf, or its two shards with --split
+ *   node tools/browser/tinyGguf.mjs <outDir> [--split | --plain]   writes tiny-a.gguf, its two shards with --split,
+ *                                                                   or tiny-a-plain.gguf (no chat template) with --plain
  * The files are written to a run's temporary folder; they are never committed or shipped. Node only, no dependencies.
  * What breaks if it is removed? The in-page model has nothing to load in CI, and the GGUF header reader is tested only
  * on bytes written by hand.
@@ -142,7 +144,7 @@ function tensors(token) {
   return out
 }
 
-function modelKvs(letter) {
+function modelKvs(letter, template = true) {
   const h = HPARAMS
   const tokens = ['<unk>', '<s>', '</s>']
   const types = [2, 3, 3] // UNKNOWN, CONTROL, CONTROL
@@ -172,7 +174,7 @@ function modelKvs(letter) {
     ['tokenizer.ggml.eos_token_id', T.U32, 2],
     ['tokenizer.ggml.add_bos_token', T.BOOL, true],
     ['tokenizer.ggml.add_eos_token', T.BOOL, false],
-    ['tokenizer.chat_template', T.STRING, CHAT_TEMPLATE],
+    ...(template ? [['tokenizer.chat_template', T.STRING, CHAT_TEMPLATE]] : []),
   ]
 }
 
@@ -219,9 +221,11 @@ export function ggufBytes(kvs, tensorList = [], { version = 3 } = {}) {
  * `tiny-<letter>-00001-of-00002.gguf` (all the metadata and the first half of the tensors) and
  * `tiny-<letter>-00002-of-00002.gguf` (only the split keys and the rest). `letter` is a lower-case a to z.
  */
-export function tinyGgufFiles({ letter = 'a', split = false } = {}) {
+export function tinyGgufFiles({ letter = 'a', split = false, plain = false } = {}) {
   if (typeof letter !== 'string' || !/^[a-z]$/.test(letter)) throw new Error(`the letter must be one of a to z, not ${JSON.stringify(letter)}`)
+  if (split && plain) throw new Error('a plain model is written as one file, not split')
   const all = tensors(byteToken(letter.charCodeAt(0)))
+  if (plain) return [{ name: `tiny-${letter}-plain.gguf`, bytes: ggufBytes(modelKvs(letter, false), all) }]
   if (!split) return [{ name: `tiny-${letter}.gguf`, bytes: ggufBytes(modelKvs(letter), all) }]
   const cut = Math.ceil(all.length / 2)
   const splitKvs = (no) => [
@@ -246,12 +250,13 @@ export const sha256 = (u8) => createHash('sha256').update(u8).digest('hex')
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const args = process.argv.slice(2)
   const outDir = args.find((a) => !a.startsWith('--'))
-  if (!outDir || args.some((a) => a.startsWith('--') && a !== '--split')) {
-    console.error('usage: node tools/browser/tinyGguf.mjs <outDir> [--split]')
+  const flags = args.filter((a) => a.startsWith('--'))
+  if (!outDir || flags.some((a) => a !== '--split' && a !== '--plain') || flags.length > 1) {
+    console.error('usage: node tools/browser/tinyGguf.mjs <outDir> [--split | --plain]')
     process.exit(2)
   }
   mkdirSync(outDir, { recursive: true })
-  for (const f of tinyGgufFiles({ split: args.includes('--split') })) {
+  for (const f of tinyGgufFiles({ split: flags.includes('--split'), plain: flags.includes('--plain') })) {
     writeFileSync(join(outDir, f.name), f.bytes)
     console.log(`${f.name}\t${f.bytes.length} B\tsha256 ${sha256(f.bytes)}`)
   }

@@ -15,6 +15,25 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The native model runner's core.** `native/llm` is a new crate that runs Sloane's model in the app's own process
+  through llama.cpp (`llama-cpp-2` 0.1.161, default features off), for the apps whose web view cannot run a model in
+  the page (macOS, Linux and iOS are WebKit; Android's web view is not counted on). One thread named "model" owns the
+  model and its context. It checks the processor first: x86-64 needs AVX2, FMA, F16C and BMI2, and an older processor
+  gets a sentence, not a crash. It checks the model file against its pin once (size and SHA-256) and stamps it, or
+  copies it out of a package and checks every byte on the way, refused before it starts when it would not fit. The
+  model loads on the first answer. An answer is rendered with the model's own chat template (ChatML when it has none),
+  reads only what the context does not already hold, streams whole characters in events of at most 1,024 bytes (under
+  the 8 KiB Tauri's channel hands straight to the page), and ends at the model's end of turn, the cap, a full context
+  or a stop read between decode calls. A turn marker spelled out as text never reaches the page. Answers run in order,
+  and a queued one is told it waits; a stop during the load leaves the model loaded. Every error is a plain sentence.
+  The shared words (request, events, endings, errors, statuses) are in `native/llm/tests/wire.json`, which the page's
+  side will read. A new workflow, `native-llm.yml`, builds the crate with the app's release profile on x86-64 Linux, Arm
+  Linux and Apple Silicon. On each it runs clippy, the crate's tests on the tiny model
+  (`tools/browser/tinyGguf.mjs`, which now also writes a model without a chat template with `--plain`) and the
+  real-model tests on the site's Qwen2.5 0.5B: its turn markers read as single tokens, its ChatML exactly, an answer
+  that ends by itself, and the same greedy answer with the kept context as without. `src/nativeRunner.test.ts` pins
+  the binding's version and features, a runner with no network or process code, the wire file and the workflow. No app
+  uses the runner yet. Not verified: any app, Metal or another GPU, Android or iOS, and speed on real hardware.
 - **The NixOS package carries Sloane's model.** `nix run` and the NixOS module's package now carry the Windows
   installer's model, Qwen2.5 1.5B Instruct at Q4_K_M (Apache-2.0), with its `LICENSE` and `NOTICE`:
   `tools/nix/model.nix` fetches it from Hugging Face at the same pin with Nix's `fetchurl` (any other bytes are refused)

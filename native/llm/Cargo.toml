@@ -1,0 +1,41 @@
+# Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+# SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+# Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+# Why does this file exist? It is the native model runner's crate: llama.cpp in the app's own process, for the shells
+# whose web view cannot run a model in the page (macOS, Linux, Android and iOS: WebKit, or a web view without JSPI and
+# Memory64). It has no Tauri dependency, so its tests run on any CI runner (.github/workflows/native-llm.yml); the
+# shell lends its commands to the page in a later slice. Windows never compiles it: WebView2 runs the in-page model.
+# What breaks if it is removed? Nothing yet in the product; the apps on those platforms have no way to run a model.
+[package]
+name = "crimson-noir-llm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+description = "Sloane's model run in the app itself: llama.cpp in process, one model thread, a token stream and a stop"
+license-file = "../../LICENSE"
+
+[dependencies]
+# The exact pair. llama-cpp-2 asks for llama-cpp-sys-2 "0.1.161" with a caret, so the sys line keeps the two in step.
+# default-features = false drops OpenMP (libgomp at run time) and the Android shared C++ library. llama.cpp's common
+# library is still built: llama-cpp-2 depends on the sys crate with its default features, and the sys default is it.
+llama-cpp-2 = { version = "=0.1.161", default-features = false }
+llama-cpp-sys-2 = { version = "=0.1.161", default-features = false }
+serde = { version = "1", features = ["derive"] }
+# The model file's SHA-256, checked once and remembered (src/verify.rs); the version src-tauri already builds.
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+# statvfs, so a copy that cannot fit is refused before it starts (src/verify.rs free_bytes).
+libc = "0.2"
+
+[dev-dependencies]
+serde_json = "1"
+
+# The same as src-tauri's, so a timing measured in a test means what it means in the app.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
