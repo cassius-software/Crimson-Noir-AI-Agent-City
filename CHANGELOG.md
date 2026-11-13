@@ -1881,7 +1881,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   run time and is the same on every run (a test replays 80 streams twice and compares it after every operation).
   `Eviction::Lru` remains.
   The WebAssembly page table the page uses (`src/09_Cognition/kvPager.wasm.ts`) is rebuilt with it, 56,379 → 64,335
-  bytes, and its tests pass unchanged; `dist/index.html` grows by about 10 KB (the module's base64), to 12,106,878
+  bytes, and its tests pass unchanged; `dist/index.html` grows by about 10 KB (the module's base64), to 12,113,848
   bytes, and the limit in `tools/verify/page_dist.mjs` is unchanged.
 
 - **A phone held upright shows the city, not a stack of cards.** On a 360 x 552 page (a 360 px wide Android phone
