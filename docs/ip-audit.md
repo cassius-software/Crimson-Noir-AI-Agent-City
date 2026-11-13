@@ -162,6 +162,20 @@ none of it is in the repository:
   `LICENSE` once byte for byte with the copy in `Qwen/Qwen2.5-1.5B-Instruct`, and have counsel confirm that the NOTICE
   is enough for a third party's quantization (the alternative is Qwen's own `Qwen/Qwen2.5-1.5B-Instruct-GGUF` file).
   Every installer download is about 0.9 GB from GitHub's release storage.
+- **The NixOS package (added 13 November 2026).** The same file, at the same pin, for the flake's `nix run` and its
+  NixOS module. `tools/nix/model.nix` names the pin (`siteModel.test.ts` holds it equal to `APP_MODEL`) and fetches the
+  file with Nix's `fetchurl` from the same Hugging Face address, which refuses any bytes but the pinned SHA-256; the
+  folder it builds in the Nix store holds a link to the fetched file, the same `LICENSE` and `NOTICE` from this
+  directory, and a manifest naming the file. Each machine that builds the package fetches the file itself, so the
+  product does not redistribute it to Nix users; a binary cache that serves the built package would. The file sits in
+  its own fixed-output store path (`…-Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`), and the `LICENSE`, `NOTICE` and manifest sit
+  in the package's model folder (`…-crimson-noir-agent-city-model`), which links to it: a cache serving the package's
+  closure serves both, but it could serve the file's path on its own. CI's `nix.yml` puts the file in its runner's store
+  from its own Linux cache keyed by the whole pin (the Windows workflow uses the same key, but an entry saved on Windows
+  is not restored on Linux), else from Hugging Face at the pinned revision, checked by its SHA-256 either way, so the
+  build there fetches nothing. The launcher serves the folder beside the page on `127.0.0.1` only, and the page checks
+  the same size and hash on every byte. `programs.crimson-noir-agent-city.model = false` builds the module's package
+  without it. The same open points apply.
 
 ## 2. The npm dependency tree (`package-lock.json`)
 

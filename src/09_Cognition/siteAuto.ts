@@ -395,7 +395,7 @@ export interface AutoHost {
   offer(): Promise<{ readonly kept: boolean } | null>
   /** Why this device or its storage cannot take it now (the checks a tap meets), or null. */
   refusal(): Promise<string | null>
-  /** The connection as the browser reports it now (null where the copy uses none: the app's own file). */
+  /** The connection as the browser reports it now (null where the copy uses none: the app's own file, the launcher's). */
   link(): Link | null
   /** Calls back on each change of the connection; returns the unsubscribe. */
   onLink(changed: () => void): () => void
@@ -412,6 +412,7 @@ export interface AutoHost {
 const WHERE = Object.freeze({
   site: Object.freeze({ unserved: 'only the web copy is served with a model beside it', none: 'this site serves no model beside the page' }),
   app: Object.freeze({ unserved: 'this app cannot read a model of its own', none: 'this app carries no model (the installer puts one beside the app; the bare .exe has none)' }),
+  launcher: Object.freeze({ unserved: 'only a page the launcher opened with models=1 is served its model', none: 'the launcher serves no model beside the page (its package was built without one, or another server took its address)' }),
 })
 
 /**
@@ -428,11 +429,12 @@ function outcomeOf(end: SiteJobState, link: string | null, offline: boolean): Au
 
 /**
  * The page's own start, run once a city (the returned function says why it did or did not get the model, for the
- * console): once the page is in view, on the web copy only, the facts (autoVerdict), the record's holds, the site's
- * manifest naming the pin, the device's and the storage's room, then the lock; once the lock is this tab's the facts
- * are read again, so what changed while it asked (the connection, a pick, a provider, another tab's keep, the city's
- * halt) holds it back. The connection turning costly while it downloads stops it. How it ended goes in the record,
- * and to the visitor in a toast: kept, ended short (why), or waiting for a better connection.
+ * console): once the page is in view, where its source serves it a model (the web copy, the Windows app, the page the
+ * NixOS launcher opened), the facts (autoVerdict), the record's holds, the site's manifest naming the pin, the
+ * device's and the storage's room, then the lock; once the lock is this tab's the facts are read again, so what
+ * changed while it asked (the connection, a pick, a provider, another tab's keep, the city's halt) holds it back. The
+ * connection turning costly while it downloads stops it. How it ended goes in the record, and to the visitor in a
+ * toast: kept, ended short (why), or waiting for a better connection.
  */
 export function createSiteAuto(h: AutoHost, pin: SiteModelPin = SITE_MODEL, who = 'Sloane', from: SiteModelFrom = 'site'): () => Promise<string> {
   const where = WHERE[from]

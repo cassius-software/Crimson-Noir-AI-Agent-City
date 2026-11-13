@@ -41,7 +41,7 @@ import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
 import { fits, holdTier, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
 import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
-import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
+import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
@@ -178,26 +178,29 @@ const pageFetch = loopbackFetch((url, init) => window.fetch(url, init))
  * The one fetch beyond this machine: a file the web copy serves beside the page (09_Cognition/siteModel.ts siteUrl, a
  * models/ path on the page's own origin, which the air gap main.tsx installed admits as connect-src 'self' does), only
  * for the site's model: its manifest and the model itself, got by the page once the city is on screen where siteAuto.ts
- * says so, or when the visitor taps for it on Sloane's card.
+ * says so, or when the visitor taps for it on Sloane's card. The NixOS launcher's page asks the same of its own origin,
+ * which is this machine's (launcherSource).
  */
 const siteFetch: SiteFetch = (path, init) => window.fetch(siteUrl(path, window.location.href), init)
 
 /**
  * Where this build gets Sloane's model (09_Cognition/siteModel.ts): the web copy from its own site, beside the page
  * (SITE_MODEL over siteFetch, webSource); the Windows app from beside itself, where its installer put it (APP_MODEL
- * over the shell's read of that one file, appSource: desktopShell.ts shellModelFetch). Everything after it (the
- * device's and the storage's checks, the pin's size and SHA-256 on every byte, the keep, the page's own start, the
- * card) is one and the same.
+ * over the shell's read of that one file, appSource: desktopShell.ts shellModelFetch); the NixOS package from its
+ * launcher, which serves it beside the page on 127.0.0.1 (APP_MODEL over siteFetch, launcherSource: tools/web/launch.mjs,
+ * tools/nix/model.nix). Everything after it (the device's and the storage's checks, the pin's size and SHA-256 on every
+ * byte, the keep, the page's own start, the card) is one and the same.
  */
 interface ModelSource {
   readonly from: SiteModelFrom
   readonly pin: SiteModelPin
   readonly fetch: SiteFetch
-  /** This page is one the source serves a model to at all: the web copy (it names a web app manifest), the app's window. */
+  /** This page is one the source serves a model to at all: the web copy (it names a web app manifest), the app's
+   *  window, the page the launcher opened with models=1. */
   served(): boolean
   /** The source's offer of the pin: null where it has none; a throw where it could not say just now (asked again later). */
   offer(signal: AbortSignal): Promise<SiteModelOffer | null>
-  /** Getting it uses the connection (the site's); the app's own file never leaves the machine. */
+  /** Getting it uses the connection (the site's); the app's own file and the launcher's never leave the machine. */
   readonly online: boolean
   /** The HUD's line while it is got, at `pct` percent. */
   line(pct: number): string
@@ -205,23 +208,28 @@ interface ModelSource {
   readonly coming: string
 }
 
+/**
+ * The offer of `pin` in the manifest served beside the page (09_Cognition/siteModel.ts SITE_MANIFEST). A server that
+ * answers with the manifest, or says it has none (404, 410), is asked once a visit; one that could not be reached, or
+ * could not answer just now (a 429, a 5xx), is asked again next time.
+ */
+const manifestOffer = (pin: SiteModelPin, who: string) => async (signal: AbortSignal): Promise<SiteModelOffer | null> => {
+  const r = await siteFetch(SITE_MANIFEST, { cache: 'no-cache', signal })
+  if (r.ok) return parseManifest(await r.text(), pin)
+  void r.body?.cancel().catch(() => undefined)
+  if (r.status === 404 || r.status === 410) return null
+  throw new Error(`${who} answered ${r.status}`)
+}
+
 /** The web copy's model, from its own site. */
 const webSource = Object.freeze<ModelSource>({
   from: 'site',
   pin: SITE_MODEL,
   fetch: siteFetch,
-  // Only the web copy (the page tools/web/pwa.mjs builds, which names a web app manifest) is served with a model
-  // beside it: dist/index.html served by the launcher or a preview has nothing beside it to ask for.
+  // Only the web copy (the page tools/web/pwa.mjs builds, which names a web app manifest) is served with this model
+  // beside it: dist/index.html served by a preview has nothing beside it to ask for (the launcher's is launcherSource).
   served: () => /^https?:$/.test(window.location.protocol) && document.querySelector('link[rel="manifest"]') !== null,
-  // A site that answers with the manifest, or says it has none (404, 410), is asked once a visit; one that could not
-  // be reached, or could not answer just now (a 429, a 5xx), is asked again next time.
-  offer: async (signal) => {
-    const r = await siteFetch(SITE_MANIFEST, { cache: 'no-cache', signal })
-    if (r.ok) return parseManifest(await r.text())
-    void r.body?.cancel().catch(() => undefined)
-    if (r.status === 404 || r.status === 410) return null
-    throw new Error(`the site answered ${r.status}`)
-  },
+  offer: manifestOffer(SITE_MODEL, 'the site'),
   online: true,
   line: (pct) => `getting the model from this site ${pct}%`,
   coming: 'the model this site serves is on its way to this page',
@@ -239,6 +247,22 @@ const appSource = (fetch: SiteFetch): ModelSource => Object.freeze<ModelSource>(
   online: false,
   line: (pct) => `copying the app's model into the page ${pct}%`,
   coming: "the app's model is being copied into this page",
+})
+
+/**
+ * The NixOS package's model, served beside the page by the launcher that opened it (tools/web/launch.mjs, from the
+ * package's tools/nix/model.nix): the desktop's model, as the Windows app's, asked of the page's own origin on
+ * 127.0.0.1, so nothing leaves the machine and the connection is not looked at.
+ */
+const launcherSource = Object.freeze<ModelSource>({
+  from: 'launcher',
+  pin: APP_MODEL,
+  fetch: siteFetch,
+  served: () => launcherServes(window.location.href),
+  offer: manifestOffer(APP_MODEL, 'the launcher'),
+  online: false,
+  line: (pct) => `copying the launcher's model into the page ${pct}%`,
+  coming: "the launcher's model is being copied into this page",
 })
 
 /** `make()` the first time it is asked for, and the same value every time after. */
@@ -1596,9 +1620,10 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // stay kept until forgotten. Where this page cannot run the model, inPage.keep refuses before anything is copied
         // or chosen, so the provider is left as it was.
         // Where Sloane's model comes from on this build (ModelSource above): the Windows app reads the one its installer
-        // put beside it, through the shell; any other page is the web copy's (or has nothing beside it: webSource.served).
+        // put beside it, through the shell; the page the NixOS launcher opened with models=1 asks the launcher; any
+        // other page is the web copy's (or has nothing beside it: webSource.served).
         const shellFetch = shellModelFetch(APP_MODEL)
-        const source = shellFetch ? appSource(shellFetch) : webSource
+        const source = shellFetch ? appSource(shellFetch) : launcherServes(window.location.href) ? launcherSource : webSource
         let keeping = false
         let hinted = false
         // Set while the site's model is got (below, by Sloane's card or by the page itself), from its start to its

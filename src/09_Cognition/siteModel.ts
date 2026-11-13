@@ -58,10 +58,11 @@ export const SITE_MODEL: SiteModelPin = Object.freeze({
 /**
  * Qwen2.5 1.5B Instruct at Q4_K_M, the same quantization by bartowski of Qwen's own weights (Apache-2.0, Copyright
  * 2024 Alibaba Cloud; third_party/qwen2.5-1.5b-instruct/ holds the licence and the notice): the model the Windows app's
- * installer carries beside the app (src-tauri/tauri.model.conf.json, src-tauri/src/model.rs), which the page copies
- * into its own storage once the city is on screen, as the web copy gets SITE_MODEL. About 0.9 GB: a desktop's in-page
- * limits take it (inPagePlan.ts), and it answers better than the 0.5B. Its byte count and hash equal the SHA256SUMS
- * line beside its notice, and src-tauri/src/model_file.rs names the same file and size (siteModel.test.ts).
+ * installer carries beside the app (src-tauri/tauri.model.conf.json, src-tauri/src/model.rs) and the NixOS package's
+ * launcher serves beside the page (tools/nix/model.nix, tools/web/launch.mjs), which the page copies into its own
+ * storage once the city is on screen, as the web copy gets SITE_MODEL. About 0.9 GB: a desktop's in-page limits take
+ * it (inPagePlan.ts), and it answers better than the 0.5B. Its byte count and hash equal the SHA256SUMS line beside its
+ * notice, and src-tauri/src/model_file.rs and tools/nix/model.nix name the same file and size (siteModel.test.ts).
  */
 export const APP_MODEL: SiteModelPin = Object.freeze({
   file: 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf',
@@ -74,10 +75,29 @@ export const APP_MODEL: SiteModelPin = Object.freeze({
 
 /**
  * Where the pinned model comes from: `site`, the web copy's own site, beside the page (SITE_MODEL); `app`, the Windows
- * app that carries it beside itself (APP_MODEL, read through the shell: desktopShell.ts shellModelFetch). The words a
- * visitor reads follow it; the checks are the same.
+ * app that carries it beside itself (APP_MODEL, read through the shell: desktopShell.ts shellModelFetch); `launcher`,
+ * the NixOS package's launcher on this machine, which serves it beside the page it opened (APP_MODEL, at models/ on
+ * 127.0.0.1: launcherServes). The words a visitor reads follow it; the checks are the same.
  */
-export type SiteModelFrom = 'site' | 'app'
+export type SiteModelFrom = 'site' | 'app' | 'launcher'
+
+/** The word the NixOS launcher adds to the address when it serves a model beside the page (tools/web/launch.mjs
+ *  serveModels): models=1. */
+export const LAUNCHER_WORD = 'models'
+
+/**
+ * Whether the page at `href` was opened by the NixOS launcher with a model beside it: served over plain http from
+ * 127.0.0.1, the one address the launcher listens on, with models=1 in its address. Any other page (the web copy, the
+ * Windows app, a preview, a file) asks it for nothing.
+ */
+export function launcherServes(href: string): boolean {
+  try {
+    const u = new URL(href)
+    return u.protocol === 'http:' && u.hostname === '127.0.0.1' && u.searchParams.get(LAUNCHER_WORD) === '1'
+  } catch {
+    return false
+  }
+}
 
 /** The folder beside the page that holds the served model, its manifest and its licence. */
 export const SITE_DIR = 'models/'
@@ -145,14 +165,22 @@ const MIB = 1024 * 1024
 const shortOf = (got: number, pin: SiteModelPin, from: SiteModelFrom = 'site'): string => {
   const mb = (n: number): number => Math.floor(n / MIB)
   const at = mb(got) < mb(pin.bytes) ? `${mb(got)} of ${mb(pin.bytes)} MB` : `${got.toLocaleString('en-US')} of ${pin.bytes.toLocaleString('en-US')} bytes`
-  return `${from === 'app' ? 'the copy from the app' : 'the download'} stopped at ${at}: try again`
+  return `${from === 'site' ? 'the download' : `the copy from ${sender(from)}`} stopped at ${at}: try again`
 }
 
 /** Who sent the model, in a sentence. */
-const sender = (from: SiteModelFrom): string => (from === 'app' ? 'the app' : 'this site')
+const sender = (from: SiteModelFrom): string => (from === 'app' ? 'the app' : from === 'launcher' ? 'the launcher' : 'this site')
+
+/** Why the model could not be asked for at all, in a sentence: what failed, and what to do. */
+const unreached = (from: SiteModelFrom, why: string): string => {
+  if (from === 'app') return `the app could not read the model it carries (${why}): install the app again and try again`
+  if (from === 'launcher') return `the launcher that opened this page could not be reached for its model (${why}): start the city again and try again`
+  return `this site could not be reached for the model (${why}): check the connection and try again`
+}
 
 /**
- * The pinned model from this site (or, `from` 'app', from the app that carries it), as a File named for it, once all
+ * The pinned model from this site (or, `from` 'app', from the app that carries it; 'launcher', from the launcher that
+ * serves it beside the page), as a File named for it, once all
  * of it has arrived and its size and SHA-256 are the pin's. `onBytes(done, total)` is told as it arrives. The response
  * is not kept in the browser's HTTP cache (the page's model store keeps the one copy); it is counted and hashed as it
  * streams, and refused the moment it runs past the pin's size. Rejects with a plain sentence: the site did not send it
@@ -168,7 +196,7 @@ export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, on
   } catch (e) {
     signal?.throwIfAborted()
     const why = e instanceof Error ? e.message : String(e)
-    throw new Error(from === 'app' ? `the app could not read the model it carries (${why}): install the app again and try again` : `this site could not be reached for the model (${why}): check the connection and try again`)
+    throw new Error(unreached(from, why))
   }
   if (!res.ok || !res.body) {
     void res.body?.cancel().catch(() => undefined)

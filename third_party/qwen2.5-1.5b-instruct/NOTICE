@@ -1,5 +1,5 @@
-Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the Windows app's installer carries
-===================================================================================
+Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the Windows installer and the NixOS package carry
+================================================================================================
 
 This directory records the one model the Windows installer of Crimson Noir: Agent City carries beside the app, so a
 person who installs it can talk to Sloane from the first launch with no model of their own. The model's weights are
@@ -10,6 +10,13 @@ exactly these, and puts it into the installer (src-tauri/tauri.model.conf.json) 
 models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf in the app's folder, with this NOTICE and LICENSE beside it. The page reads it
 through the app (src-tauri/src/model.rs) once the city is on screen, checks the same size and SHA-256
 (src/09_Cognition/siteModel.ts APP_MODEL), and keeps a copy in the app's own page storage.
+
+The NixOS package (the flake's `nix run` and its NixOS module) carries the same file: tools/nix/model.nix fetches it
+from the same address with Nix's fetchurl, which refuses any bytes but these, and puts it in a folder of the Nix store
+with this NOTICE, LICENSE and a manifest naming it. The package's launcher (tools/web/launch.mjs) serves that folder
+beside the page at models/ on 127.0.0.1, and the page copies the model into its browser profile's storage the same
+way, checked the same way. A configuration that sets programs.crimson-noir-agent-city.model = false builds the package
+without it.
 
   Qwen2.5-1.5B-Instruct-Q4_K_M.gguf   986048768 bytes, sha256 1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370
   (SHA256SUMS beside this file has the same line)

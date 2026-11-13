@@ -154,6 +154,14 @@ shipped unchanged. It remains under its own licence, not under this product's li
 License 2.0 with that copyright line, and a notice of where the file comes from, are installed beside it as
 `models/LICENSE` and `models/NOTICE` in the app's folder, from `third_party/qwen2.5-1.5b-instruct/`.
 
+**The model the NixOS package carries.** The NixOS package (the flake's `nix run` and its NixOS module) carries the
+same file: `tools/nix/model.nix` fetches it from Hugging Face at the pinned revision with Nix's fetchurl, which refuses
+any other bytes, and keeps it in the Nix store beside the same `LICENSE` and `NOTICE` from
+`third_party/qwen2.5-1.5b-instruct/`. The package's launcher serves that folder beside the page on this machine
+(`127.0.0.1`) as `models/`, and the page copies the model into the browser profile's storage once the city is on screen,
+or when the person taps for it. A configuration that sets `programs.crimson-noir-agent-city.model = false` builds the
+package without it.
+
 ## Map data (the surveyed region)
 
 Every build carries a region whose geometry is surveyed open data (walked with `?region=on`; the pilot build,
@@ -184,14 +192,14 @@ that format (`ask provider llamacpp`) and the engine compiled into the in-page m
 Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
 (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
 unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the models the web copy
-serves beside its page and the Windows installer carries beside the app, for the in-page runtime
+serves beside its page and the Windows installer and the NixOS package carry, for the in-page runtime
 (`09_Cognition/siteModel.ts`). No model server ships with the product, and the page file, the bare Windows .exe and
 the OS media carry no model: the operator's server, or a model file kept in their browser for the in-page runtime,
 holds the model under the model's own licence. The two models the product offers are Qwen2.5 0.5B Instruct, which
 the web copy serves beside its page and fetches by itself once the city is on screen, or when the visitor taps for it
 (`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B
-Instruct, which the Windows installer carries beside the app (`third_party/qwen2.5-1.5b-instruct/`, installed beside
-it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright 2024 Alibaba Cloud, the files quantized by
+Instruct, which the Windows installer carries beside the app and the NixOS package's launcher serves beside its page
+(`third_party/qwen2.5-1.5b-instruct/`, beside it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright 2024 Alibaba Cloud, the files quantized by
 bartowski, each under its own licence. The network provider
 answers only with the operator's own key, which stays in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
@@ -304,6 +312,12 @@ release; each one is something the release engineering could not confirm.
       installed beside it. The same two points apply to it: compare its LICENSE once with the one in
       `Qwen/Qwen2.5-1.5B-Instruct`, and confirm the NOTICE is enough for a third party's quantization. Every installer
       download is about 0.9 GB from GitHub's release storage.
+    - **The NixOS package's model.** The same file again (`tools/nix/model.nix`, the same pin), fetched by each
+      machine that builds the package straight from Hugging Face at the pinned revision (about 0.9 GB, once a machine),
+      so the product does not redistribute it there; the Nix store keeps it beside the same LICENSE and NOTICE. The
+      same two points apply. A binary cache that serves the built package would redistribute it: the file is its own
+      store path, and the LICENSE and NOTICE sit in the package's model folder that links to it, so a cache serving
+      the package's closure serves them together but could serve the file's path alone.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

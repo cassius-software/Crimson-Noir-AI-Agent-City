@@ -6,6 +6,9 @@
 # `crimson-noir-agent-city` command that serves the page on http://127.0.0.1:4180 and opens it in Chromium as an app
 # window with WebGPU on Vulkan, an app-menu entry and an icon. It is what `nix run` runs and what the NixOS module
 # installs. CHROME and AGENT_CITY_DIST are defaults only, so CHROME=google-chrome-stable or another page still win.
+# With `model` (tools/nix/model.nix: Sloane's model, its licence and its manifest), AGENT_CITY_MODELS defaults to that
+# folder, which the launcher serves beside the page at models/ so the page gets the model with nothing downloaded;
+# `model = null` builds the package without it (programs.crimson-noir-agent-city.model = false in the module).
 # The launcher is MIT; the page it serves and the icon are not, so both stay in the page's package (tools/nix/page.nix)
 # and this one only links the icon.
 # What breaks if it is removed? `nix run` and the module have no command to start the city.
@@ -18,10 +21,17 @@
   nodejs_24,
   chromium,
   page,
+  model ? null,
 }:
 
 let
   root = ../..;
+  # The folder of the model, the page's models/; none without a model.
+  modelFlags = lib.optionals (model != null) [
+    "--set-default"
+    "AGENT_CITY_MODELS"
+    "${model}/share/crimson-noir-agent-city/models"
+  ];
 in
 stdenvNoCC.mkDerivation {
   pname = "crimson-noir-agent-city";
@@ -71,10 +81,10 @@ stdenvNoCC.mkDerivation {
     makeWrapper ${lib.getExe nodejs_24} $out/bin/crimson-noir-agent-city \
       --add-flags $out/libexec/crimson-noir-agent-city/web/launch.mjs \
       --set-default AGENT_CITY_DIST ${page}/share/crimson-noir-agent-city \
-      --set-default CHROME ${lib.getExe chromium}
+      --set-default CHROME ${lib.getExe chromium} ${lib.escapeShellArgs modelFlags}
     runHook postInstall
   '';
-  passthru = { inherit page chromium; };
+  passthru = { inherit page chromium model; };
   meta = {
     description = "Crimson Noir: Agent City, served on this machine and opened in Chromium with WebGPU";
     homepage = "https://github.com/cassius-software/Crimson-Noir-AI-Agent-City";

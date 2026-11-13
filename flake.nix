@@ -5,7 +5,8 @@
 # Why does this file exist? It makes the city one command on NixOS:
 #   nix run github:cassius-software/Crimson-Noir-AI-Agent-City
 # builds the page from source (tools/nix/page.nix), serves it on http://127.0.0.1:4180 and opens it in Chromium with
-# WebGPU on Vulkan (tools/nix/app.nix, tools/web/launch.mjs). nixosModules.default installs it built from the system's
+# WebGPU on Vulkan (tools/nix/app.nix, tools/web/launch.mjs), with Sloane's model served beside the page so she talks
+# from the first launch (tools/nix/model.nix). nixosModules.default installs it built from the system's
 # own nixpkgs, so its Chromium can load the system's GPU driver, and turns on what a NixOS desktop needs
 # (tools/nix/module.nix); vmTests boots that module's Ollama option in a NixOS VM (tools/nix/ollama-test.nix). Another
 # Linux with Nix runs it too, but Nix's Chromium cannot load that system's GPU driver: there CHROME names the
@@ -48,7 +49,8 @@
       packages = forAll (
         _: pkgs: rec {
           page = pkgs.callPackage ./tools/nix/page.nix { };
-          crimson-noir-agent-city = pkgs.callPackage ./tools/nix/app.nix { inherit page; };
+          model = pkgs.callPackage ./tools/nix/model.nix { };
+          crimson-noir-agent-city = pkgs.callPackage ./tools/nix/app.nix { inherit page model; };
           default = crimson-noir-agent-city;
         }
       );
@@ -86,7 +88,9 @@
         system: pkgs: {
           inherit (self.packages.${system}) page crimson-noir-agent-city;
           # The module evaluated on a minimal system: the launcher installed, the graphics driver on, the DualSense
-          # rules in place, the package's derivation evaluated once the page is allowed and refused while it is not;
+          # rules in place, the package's derivation evaluated once the page is allowed and refused while it is not,
+          # Sloane's model in the package by default (the flake's own pin, Apache-2.0 so no unfree allowance) and out
+          # of it with model = false;
           # and its Ollama option alone: on loopback at 11434, the Vulkan build unless another is chosen, the graphics
           # driver for Vulkan and CUDA only, CUDA refused until unfree packages are allowed, origins, models and the
           # integrated GPU only when asked for, Ollama's cloud off (OLLAMA_NO_CLOUD=1) unless asked for, the system's
@@ -123,6 +127,11 @@
                 }).config;
               config = city { nixpkgs.config.allowUnfreePredicate = allowPage; };
               refused = city { };
+              lean = city {
+                nixpkgs.config.allowUnfreePredicate = allowPage;
+                programs.crimson-noir-agent-city.model = false;
+              };
+              model = config.programs.crimson-noir-agent-city.package.model;
               names = map (p: p.pname or p.name) config.environment.systemPackages;
               rules = map (p: p.name) config.services.udev.packages;
               llm =
@@ -249,6 +258,9 @@
             assert lib.elem "crimson-noir-dualsense-udev-rules" rules;
             assert lib.isString config.programs.crimson-noir-agent-city.package.drvPath;
             assert !(builtins.tryEval refused.programs.crimson-noir-agent-city.package.drvPath).success;
+            assert model.gguf.outputHash == self.packages.${system}.model.gguf.outputHash && model.meta.license.free;
+            assert lean.programs.crimson-noir-agent-city.package.model == null;
+            assert lib.isString lean.programs.crimson-noir-agent-city.package.drvPath;
             assert !config.services.ollama.enable;
             assert plain.config.services.ollama.enable;
             assert (env plain).OLLAMA_HOST == "127.0.0.1:11434";

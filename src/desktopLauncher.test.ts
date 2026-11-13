@@ -4,9 +4,10 @@
 /**
  * Why does this file exist? It pins the desktop launcher `nix run` starts (tools/web/launch.mjs) and the flake around
  * it: the address stays http://127.0.0.1:4180 unless told otherwise (the page keeps its settings per address), every
- * answer carries the two isolation headers the shared bridge needs, nothing but the page is served and no request can
- * crash the server, a second launch trusts the port only when it signs a fresh nonce with this user's token (which is
- * itself never sent), Chrome gets one
+ * answer carries the two isolation headers the shared bridge needs, nothing but the page (and, with a model folder, the
+ * plain files in it at models/, Sloane's model and its manifest, which the NixOS package carries: tools/nix/model.nix)
+ * is served and no request can crash the server, a second launch trusts the port only when it signs a fresh nonce with
+ * this user's token (which is itself never sent), Chrome gets one
  * --enable-features list (it keeps only the last one it is given, so a second list would drop Vulkan), CHROME may
  * name a command, and the Nix files keep the shape CI's nix workflow relies on. That workflow boots the city from the
  * Nix package in Chromium; this file catches the same mistakes without Nix.
@@ -35,9 +36,12 @@ const launcher = (await import(LAUNCH)) as {
   MARK: string
   proof(token: string, nonce: string): string
   HEADERS: Readonly<Record<string, string>>
-  options(argv: string[], env: Record<string, string | undefined>): { dir: string; port: number; query: URLSearchParams; x11: boolean; browser: boolean; check: boolean; help: boolean; extra: string[] }
+  options(argv: string[], env: Record<string, string | undefined>): LaunchOptions
   chromeFlags(o: { url: string; profile: string; x11?: boolean; extra?: string[]; env?: Record<string, string | undefined> }): string[]
-  serve(page: Buffer, port: number, token?: string): Promise<Server>
+  serve(page: Buffer, port: number, token?: string, models?: ModelFiles | null): Promise<Server>
+  MODEL_MANIFEST: string
+  readModels(dir: string): ModelFiles
+  serveModels(o: LaunchOptions, say?: (line: string) => void): ModelFiles | null
   tokenFile(dir: string, port: number): string
   ours(port: number, file: string): Promise<boolean>
   profileOwner(profile: string): number | null
@@ -46,6 +50,8 @@ const launcher = (await import(LAUNCH)) as {
   gpuMemory(o?: { smi?: () => string | null; drm?: string; list?: (d: string) => string[]; read?: (f: string) => string }): { gb: number; from: 'nvidia-smi' | 'amdgpu' } | null
   withVram(q: URLSearchParams, probe?: () => { gb: number; from: string } | null): { gb: number; from: string } | null
 }
+type LaunchOptions = { dir: string; models: string | null; port: number; query: URLSearchParams; x11: boolean; browser: boolean; check: boolean; help: boolean; extra: string[] }
+type ModelFiles = Map<string, { path: string; type: string }>
 const CDP: string = '../tools/browser/cdp.mjs'
 const cdp = (await import(CDP)) as { findChrome(explicit?: string): string | null }
 const HEADERS_TOOL: string = '../tools/license/headers.mjs'
@@ -60,6 +66,10 @@ test('the address is 127.0.0.1:4180 by default; key=value words become the page\
   assert.equal(d.dir, resolve('/srv/page'))
   assert.equal(d.query.toString(), '')
   assert.ok(d.browser && !d.check && !d.x11)
+  assert.equal(d.models, null, 'no model folder unless one is named (the NixOS package names its own)')
+  assert.equal(launcher.options([], { AGENT_CITY_MODELS: '/srv/models' }).models, resolve('/srv/models'))
+  assert.equal(launcher.options(['--models', 'rel/models'], { AGENT_CITY_MODELS: '/srv/models' }).models, resolve('rel/models'), 'the command line wins')
+  assert.throws(() => launcher.options(['--models'], {}), /--models needs a value/)
 
   const o = launcher.options(['quality=4', 'map=lakefront', 'debug', '--port', '4190', '--x11'], { AGENT_CITY_DIST: '/srv/page' })
   assert.equal(o.query.toString(), 'quality=4&map=lakefront&debug=')
@@ -110,12 +120,12 @@ test('Chrome gets its own profile, an app window, WebGPU, and exactly one --enab
 
 /** One request to the server, with the request target exactly as given; resolves to the status, headers and body. A
  *  server that never answers fails it in 5 s, so a handler that throws fails the test instead of hanging the run. */
-function ask(port: number, method: string, path: string, headers: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
+function ask(port: number, method: string, path: string, headers: Record<string, string> = {}): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string; bytes: Buffer }> {
   return new Promise((ok, fail) => {
     const req = request({ host: '127.0.0.1', port, method, path, headers, timeout: 5000 }, (res) => {
-      let body = ''
-      res.on('data', (c) => { body += c })
-      res.on('end', () => ok({ status: res.statusCode ?? 0, headers: res.headers, body }))
+      const chunks: Buffer[] = []
+      res.on('data', (c: Buffer) => { chunks.push(c) })
+      res.on('end', () => { const bytes = Buffer.concat(chunks); ok({ status: res.statusCode ?? 0, headers: res.headers, body: bytes.toString(), bytes }) })
     })
     req.on('timeout', () => req.destroy(new Error(`no answer to ${method} ${path}`)))
     req.on('error', fail)
@@ -175,6 +185,105 @@ test('the launcher serves the page alone, to loopback, every answer isolated and
     assert.equal((await ask(port, 'HEAD', '/', { [launcher.CHALLENGE]: 'ab'.repeat(16) })).headers[launcher.MARK.toLowerCase()], undefined, 'no token, no answer (--check)')
   } finally {
     shut(plain)
+  }
+})
+
+/** A model folder as tools/nix/model.nix lays it out: the manifest, licence files, and the model as a link to a file
+ *  elsewhere (the store's fetch); with a dot file and a subfolder that must never be served. */
+function modelFolder() {
+  const root = mkdtempSync(join(tmpdir(), 'cn-models-'))
+  const dir = join(root, 'models')
+  mkdirSync(dir)
+  const model = Buffer.from(Array.from({ length: 70_000 }, (_, i) => i % 251))
+  writeFileSync(join(root, 'Tiny-Q4_K_M.gguf'), model)
+  symlinkSync(join(root, 'Tiny-Q4_K_M.gguf'), join(dir, 'Tiny-Q4_K_M.gguf'))
+  const manifest = JSON.stringify({ bytes: model.length, file: 'Tiny-Q4_K_M.gguf', sha256: 'ab'.repeat(32), v: 1 })
+  writeFileSync(join(dir, 'manifest.json'), `${manifest}\n`)
+  writeFileSync(join(dir, 'LICENSE'), 'Apache License\n')
+  writeFileSync(join(dir, '.secret'), 'no')
+  mkdirSync(join(dir, 'sub'))
+  writeFileSync(join(dir, 'sub', 'x'), 'no')
+  writeFileSync(join(root, 'outside.txt'), 'no')
+  return { root, dir, model, manifest }
+}
+
+test('with a model folder the launcher serves its plain files at /models/, with their sizes and isolated, and nothing else of the disk', async () => {
+  const page = Buffer.from('<!doctype html><title>city</title>')
+  const f = modelFolder()
+  try {
+    const models = launcher.readModels(f.dir)
+    assert.deepEqual([...models.keys()].sort(), ['LICENSE', 'Tiny-Q4_K_M.gguf', 'manifest.json'], 'a dot file and a folder are left out')
+    const server = await launcher.serve(page, 0, 'tok', models)
+    try {
+      const port = (server.address() as { port: number }).port
+      const manifest = await ask(port, 'GET', '/models/manifest.json')
+      assert.equal(manifest.status, 200)
+      assert.equal(manifest.body, `${f.manifest}\n`)
+      assert.equal(manifest.headers['content-type'], 'application/json; charset=utf-8')
+      const gguf = await ask(port, 'GET', '/models/Tiny-Q4_K_M.gguf')
+      assert.equal(gguf.status, 200, 'the link is followed to its file')
+      assert.equal(gguf.headers['content-length'], String(f.model.length))
+      assert.equal(gguf.headers['content-type'], 'application/octet-stream')
+      assert.ok(gguf.bytes.equals(f.model), 'every byte, in order')
+      const head = await ask(port, 'HEAD', '/models/Tiny-Q4_K_M.gguf')
+      assert.equal(head.status, 200)
+      assert.equal(head.headers['content-length'], String(f.model.length), 'a HEAD gives the size, as --check asks it')
+      assert.equal(head.body, '')
+      assert.equal((await ask(port, 'GET', '/models/LICENSE')).headers['content-type'], 'text/plain; charset=utf-8')
+      for (const path of ['/models/.secret', '/models/sub', '/models/sub/x', '/models/../outside.txt', '/models/%2e%2e/outside.txt', '/models/', '/models', '/models/missing.gguf', '/manifest.json', '/models/manifest.json/']) {
+        assert.equal((await ask(port, 'GET', path)).status, 404, path)
+      }
+      assert.equal((await ask(port, 'POST', '/models/manifest.json')).status, 405)
+      assert.equal((await ask(port, 'GET', '/')).body, page.toString(), 'the page is served as before')
+      for (const r of [manifest, gguf, head]) {
+        assert.equal(r.headers['cross-origin-opener-policy'], 'same-origin')
+        assert.equal(r.headers['cross-origin-embedder-policy'], 'require-corp')
+        assert.equal(r.headers['cache-control'], 'no-store', 'the page keeps the one copy; the browser\'s cache keeps none')
+      }
+      // A file gone since the start is a 404, not a crash.
+      rmSync(join(f.dir, 'LICENSE'))
+      assert.equal((await ask(port, 'GET', '/models/LICENSE')).status, 404)
+      assert.equal((await ask(port, 'GET', '/')).status, 200, 'the server outlived it')
+    } finally {
+      shut(server)
+    }
+    const plain = await launcher.serve(page, 0)
+    try {
+      assert.equal((await ask((plain.address() as { port: number }).port, 'GET', '/models/manifest.json')).status, 404, 'without a folder, no /models/ at all')
+    } finally {
+      shut(plain)
+    }
+  } finally {
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('serveModels: a folder with a manifest is served and the address gets models=1; a folder without one is said once and left out', () => {
+  const f = modelFolder()
+  try {
+    const said: string[] = []
+    const o = launcher.options(['--models', f.dir, 'vram=8.0'], {})
+    assert.ok(launcher.serveModels(o, (l) => said.push(l)))
+    assert.equal(o.query.toString(), 'vram=8.0&models=1', 'the page\'s sign that a model is beside it')
+    assert.equal(said.length, 0, 'nothing to say')
+    const own = launcher.options(['--models', f.dir, 'models=0'], {})
+    assert.ok(launcher.serveModels(own, (l) => said.push(l)))
+    assert.equal(own.query.get('models'), '0', 'models= on the command line wins')
+    const none = launcher.options([], {})
+    assert.equal(launcher.serveModels(none, (l) => said.push(l)), null)
+    assert.equal(none.query.has('models'), false)
+    rmSync(join(f.dir, 'manifest.json'))
+    assert.throws(() => launcher.readModels(f.dir), /holds no manifest\.json/)
+    const bare = launcher.options(['--models', f.dir], {})
+    assert.equal(launcher.serveModels(bare, (l) => said.push(l)), null, 'the city still opens, without the model')
+    assert.equal(bare.query.has('models'), false, 'and the page is not told to ask for one')
+    const gone = launcher.options(['--models', join(f.root, 'nowhere')], {})
+    assert.equal(launcher.serveModels(gone, (l) => said.push(l)), null)
+    assert.equal(said.length, 2)
+    assert.ok(said.every((l) => l.startsWith('launcher: no model served beside the page: ')), said.join(' | '))
+    assert.equal(launcher.MODEL_MANIFEST, 'manifest.json')
+  } finally {
+    rmSync(f.root, { recursive: true, force: true })
   }
 })
 
@@ -280,7 +389,13 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
 
   const app = read('tools/nix/app.nix')
   assert.match(app, /--set-default AGENT_CITY_DIST \$\{page\}\/share\/crimson-noir-agent-city/)
-  assert.match(app, /--set-default CHROME \$\{lib\.getExe chromium\}/, 'CHROME stays a default, so another browser can be named')
+  assert.match(app, /--set-default CHROME \$\{lib\.getExe chromium\} \$\{lib\.escapeShellArgs modelFlags\}/, 'CHROME stays a default, so another browser can be named')
+  // Sloane's model: the package's folder of it is the launcher's default, and none without a model.
+  assert.match(app, /^ {2}model \? null,$/m)
+  assert.match(app, /modelFlags = lib\.optionals \(model != null\) \[\n\s*"--set-default"\n\s*"AGENT_CITY_MODELS"\n\s*"\$\{model\}\/share\/crimson-noir-agent-city\/models"\n\s*\];/)
+  assert.match(app, /passthru = \{ inherit page chromium model; \};/)
+  assert.match(flake, /model = pkgs\.callPackage \.\/tools\/nix\/model\.nix \{ \};\n\s*crimson-noir-agent-city = pkgs\.callPackage \.\/tools\/nix\/app\.nix \{ inherit page model; \};/, 'nix run carries the model')
+  assert.equal(headers.licenseOf('tools/nix/model.nix'), 'mit')
   assert.match(app, /mainProgram = "crimson-noir-agent-city";/, 'what nix run starts')
   assert.match(app, new RegExp(`startupWMClass = "${launcher.APP_CLASS}";`), 'the menu entry finds the X11 window launch.mjs opens')
   assert.ok(app.includes(`name = "${launcher.WAYLAND_APP_ID}";`), 'a hidden entry names the Wayland window')
@@ -289,6 +404,9 @@ test('the flake builds the page with npm\'s lockfile and wraps the launcher with
 
   const module = read('tools/nix/module.nix')
   assert.match(module, /hardware\.graphics\.enable = lib\.mkDefault true;/, 'Chromium\'s WebGPU needs the Vulkan driver')
+  assert.match(module, /model = if cfg\.model then pkgs\.callPackage \.\/model\.nix \{ \} else null;/, 'the module\'s package carries the model unless told not to')
+  assert.match(module, /^ {4}model = lib\.mkOption \{\n {6}type = lib\.types\.bool;\n {6}default = true;/m, 'by default')
+  for (const proof of ['model.gguf.outputHash == self.packages.${system}.model.gguf.outputHash && model.meta.license.free', 'lean.programs.crimson-noir-agent-city.package.model == null', 'lib.isString lean.programs.crimson-noir-agent-city.package.drvPath']) assert.ok(flake.includes(proof), `nix flake check proves ${proof}`)
   assert.match(module, /destination = "\/etc\/udev\/rules\.d\/70-[\w-]+\.rules";/, 'uaccess rules before 73-seat-late')
   assert.doesNotMatch(module, /services\.udev\.extraRules\s*=/, 'extraRules land in 99-local.rules, after uaccess is applied')
   // The Ollama option: its own enable, a package per backend (nixpkgs 26.05 removed services.ollama.acceleration), loopback.
@@ -349,6 +467,30 @@ test('CI boots the Ollama option in a NixOS VM, in a job of its own outside nix 
   const nixStep = vmJob.indexOf('- name: Nix, with its daemon')
   assert.ok(kvmStep !== -1 && kvmStep < kvmCheck && kvmCheck < nixStep && nixStep < vmJob.indexOf('install-nix'), 'KVM is checked, in its own step, before Nix is installed')
   assert.match(vmJob, /run: nix build -L --no-link \.#vmTests\.x86_64-linux\.ollama$/m)
+})
+
+test('CI puts Sloane\'s model in Nix\'s store by its pin before nix flake check, so the package builds with it and fetches nothing', () => {
+  const jobs = read('.github/workflows/nix.yml').split(/^jobs:$/m)[1] ?? ''
+  const flakeJob = jobs.split(/^ {2}vm:$/m)[0] ?? ''
+  const steps = [
+    'node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"',
+    'key: ${{ steps.model.outputs.key }}',
+    "if: steps.model-cache.outputs.cache-hit != 'true'",
+    'curl --proto \'=https\' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"',
+    'echo "$SHA256  $RUNNER_TEMP/app-model/$FILE" | sha256sum -c -',
+    'added="$(nix-store --add-fixed sha256 "$RUNNER_TEMP/app-model/$FILE")"',
+    'wanted="$(nix eval --raw .#model.gguf.outPath)"',
+    '[ "$added" = "$wanted" ] || {',
+    'run: nix flake check --print-build-logs',
+    '/bin/crimson-noir-agent-city" --check',
+  ]
+  const at = steps.map((t) => flakeJob.indexOf(t))
+  at.forEach((i, k) => assert.ok(i >= 0, `the flake job has ${steps[k]}`))
+  for (let k = 1; k < at.length; k++) assert.ok(at[k - 1] < at[k], `${steps[k - 1]} comes before ${steps[k]}`)
+  assert.ok(flakeJob.indexOf('npm ci --no-audit --no-fund') < at[0], 'the pin is read with the page\'s own TypeScript, after npm ci')
+  assert.match(flakeJob, /SHA256: \$\{\{ steps\.model\.outputs\.sha256 \}\}/)
+  assert.match(flakeJob, /: "\$\{FILE:\?[^}]+\}" "\$\{SHA256:\?[^}]+\}"/, 'an empty pin fails the step instead of checking nothing')
+  assert.match(flakeJob, /path: \$\{\{ runner\.temp \}\}\/app-model\n/, 'the Windows workflow\'s folder and key: one pin, one cached file per runner system')
 })
 
 test('Nix leaves nothing the repository\'s walkers, the page build or git would pick up', () => {
@@ -455,6 +597,15 @@ test('--check never probes the GPU, the help names vram=, the ceiling is the pag
   const help = /const HELP = `([^`]*)`/.exec(src)
   assert.ok(help, 'the launcher has its HELP text')
   assert.match(help[1], /vram=<GB>/)
+  assert.match(help[1], /--models DIR/)
+  assert.match(help[1], /AGENT_CITY_MODELS/)
+  // --check, with a model folder, asks for the manifest and the model's size from the page itself, as the page asks.
+  const checkFn = src.slice(src.indexOf('async function check(o) {'), src.indexOf('const HELP = '))
+  assert.match(checkFn, /const models = o\.models === null \? null : readModels\(o\.models\)\n\s*const server = await serve\(readPage\(o\.dir\), 0, '', models\)/)
+  assert.match(checkFn, /fetch\('models\/\$\{MODEL_MANIFEST\}', \{ cache: 'no-store' \}\)/)
+  assert.match(checkFn, /ok = ok && m\.status === 200 && Number\.isSafeInteger\(m\.bytes\) && m\.bytes > 0 && m\.length === m\.bytes/)
+  assert.match(src, /const page = readPage\(o\.dir\)\n\s*const models = serveModels\(o\)\n/, 'main serves the folder, and says so when it cannot')
+  assert.match(src, /server = await serve\(page, o\.port, token, models\)/)
   assert.equal(launcher.VRAM_MAX_GB, VRAM_MAX_GB, 'the launcher never hands the page a figure it would ignore')
   assert.doesNotMatch(src, /\bexecSync?\s*\(|shell:\s*true/)
   assert.match(src, /spawnSync\('nvidia-smi', \[/, 'nvidia-smi by name with an argument list')

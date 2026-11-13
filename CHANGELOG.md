@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The NixOS package carries Sloane's model.** `nix run` and the NixOS module's package now carry the Windows
+  installer's model, Qwen2.5 1.5B Instruct at Q4_K_M (Apache-2.0), with its `LICENSE` and `NOTICE`:
+  `tools/nix/model.nix` fetches it from Hugging Face at the same pin with Nix's `fetchurl` (any other bytes are refused)
+  and builds a store folder holding it, its licence files and a manifest; the launcher's package points
+  `AGENT_CITY_MODELS` at it. The launcher (`tools/web/launch.mjs`, also `--models <folder>`) serves the folder's plain
+  files at `models/` beside the page on `127.0.0.1` and adds `models=1` to the page's address; a folder it cannot read
+  or that holds no manifest is said once and left out. The page takes `models=1` on `http://127.0.0.1`
+  (`src/09_Cognition/siteModel.ts` `launcherServes`) as its launcher's model and copies it along the app's path
+  (`src/App.tsx` `launcherSource`): the same start once the city is on screen, with the connection given no say, the
+  same checks on every byte, and the card saying it is copied from the launcher. `programs.crimson-noir-agent-city.model
+  = false;` builds the module's package without it. `nix.yml` puts the model in the runner's store by its pin before
+  `nix flake check` (from a cache keyed by its pin, the same key the Windows workflow uses, one cached file per runner
+  system, else from Hugging Face; checked by its SHA-256), `--check` now reads the manifest and the model's size from
+  the page itself, and the browser smoke's new `launcher` scenario runs in ci and in the package's Chromium.
+  `siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`, `desktopLauncher.test.ts` and `browserShard.test.ts` cover
+  the pin, the words, the wiring, the server and the workflow. Not verified: a real NixOS
+  desktop, the copy of the real 0.9 GB file into a browser profile, and how the model converses there.
 - **The Windows installer carries Sloane's model.** The Windows app's NSIS installer and its .msi now carry Qwen2.5
   1.5B Instruct at Q4_K_M (Apache-2.0, Copyright 2024 Alibaba Cloud; `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768
   bytes, as bartowski quantized it) beside the app, with its `LICENSE` and `NOTICE`
