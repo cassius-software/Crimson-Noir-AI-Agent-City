@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? The page reads the runner's events by their names. tests/wire.json holds one of every
-//! request, event, ending, error and status, as the runner writes them; this test fails when a name or a shape in
-//! src/wire.rs no longer matches it, and the page's tests read the same file, so the two sides cannot drift apart
-//! unnoticed. `UPDATE_WIRE=1 cargo test --test wire` rewrites it after a deliberate change.
+//! request, event, ending, error and status, and what the app carries in each status (`native_model`'s answer), as
+//! the runner writes them; this test fails when a name or a shape in src/wire.rs no longer matches it, and the page's
+//! tests read the same file, so the two sides cannot drift apart unnoticed. `UPDATE_WIRE=1 cargo test --test wire`
+//! rewrites it after a deliberate change.
 //! What breaks if it is removed? A renamed field reaches the page unseen, and its events are silently ignored.
 
 use crimson_noir_llm::wire::TEXT_MAX;
-use crimson_noir_llm::{ErrorCode, GenDone, GenRequest, Message, Reason, Role, RunError, RunEvent, Status};
+use crimson_noir_llm::{ErrorCode, GenDone, GenRequest, Message, NativeModel, Reason, Role, RunError, RunEvent, Status};
 use serde_json::{json, Value};
 
 fn every() -> Value {
@@ -55,7 +56,13 @@ fn every() -> Value {
         Status::Loaded,
         Status::Failed { reason: "a plain sentence".into(), refused: true },
     ];
-    json!({ "request": request, "events": events, "done": done, "errors": errors, "statuses": statuses })
+    // What `native_model` answers, once in each status.
+    let models = statuses
+        .iter()
+        .cloned()
+        .map(|status| NativeModel { file: "tiny-a.gguf".into(), bytes: 156_992, status })
+        .collect::<Vec<_>>();
+    json!({ "request": request, "events": events, "done": done, "errors": errors, "statuses": statuses, "models": models })
 }
 
 #[test]
@@ -72,6 +79,8 @@ fn the_wire_matches_the_file_the_page_reads() {
     assert_eq!(serde_json::to_value(&events).unwrap(), file["events"]);
     let statuses: Vec<Status> = serde_json::from_value(file["statuses"].clone()).unwrap();
     assert_eq!(serde_json::to_value(&statuses).unwrap(), file["statuses"]);
+    let models: Vec<NativeModel> = serde_json::from_value(file["models"].clone()).unwrap();
+    assert_eq!(serde_json::to_value(&models).unwrap(), file["models"]);
 }
 
 #[test]

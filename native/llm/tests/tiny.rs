@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It drives the runner end to end on the tiny model (tools/browser/tinyGguf.mjs), whose
-//! greedy text is known before it runs ("aaaa…", one letter per token, whatever the prompt): loading by path and by
-//! its first shard, the template and its ChatML fallback, the stream and its order, the caps, a stop from another
-//! thread and from a page that went away, the queue, a stop during a load, the context kept between answers, a file
+//! greedy text is known before it runs ("aaaa…", one letter per token, whatever the prompt): loading by path, the
+//! refusal of a split model, the template and its ChatML fallback, the stream and its order, the caps, a stop from
+//! another thread and from a page that went away (nothing sent after it during a copy or a load), the queue and who is
+//! told it waits when two answers are asked at once, a stop during a load, the context kept between answers, a file
 //! copied out of a package, and every refusal as a sentence. The tiny model ignores its prompt, so what it proves is
 //! the runner's plumbing; tests/real.rs proves the real model's tokens and kernels.
 //! What breaks if it is removed? The runner's behaviour is checked nowhere.
@@ -12,12 +13,14 @@
 mod common;
 
 use std::fs::File;
-use std::io;
-use std::sync::{Arc, Mutex};
+use std::io::{self, Read};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 
 use common::*;
-use crimson_noir_llm::{Engine, ErrorCode, Plan, Reason, Role, RunEvent, Source, Status};
+use crimson_noir_llm::{Answer, Engine, ErrorCode, Plan, Reason, Role, RunEvent, Sink, Source, Status};
 
 #[test]
 fn loads_by_path_and_streams_the_known_text_in_order() {
@@ -46,12 +49,28 @@ fn loads_by_path_and_streams_the_known_text_in_order() {
 }
 
 #[test]
-fn loads_a_model_split_in_two_by_its_first_shard() {
+fn a_model_split_in_parts_is_refused_without_loading() {
+    // A pin covers one file, and llama.cpp would open the second part by itself, unchecked.
     let path = tiny("tiny-a-00001-of-00002.gguf");
     let engine = Engine::start(pin_of(&path), Source::Path(path), plan(), scratch("split"));
-    let (events, answer) = ask(&engine, req(1, chat(), 4));
-    assert_eq!(answer.unwrap().reason, Reason::MaxTokens);
-    assert_eq!(text_of(&events), "aaaa");
+    let err = ask(&engine, req(1, chat(), 4)).1.unwrap_err();
+    assert_eq!(err.code, ErrorCode::Model);
+    assert_eq!(
+        err.message,
+        "the app's model (tiny-a-00001-of-00002.gguf) is one of 2 parts of a split model, and the runner loads only \
+         one checked file"
+    );
+    assert!(matches!(engine.status(), Status::Failed { refused: false, .. }));
+    assert_eq!(engine.loads(), 0);
+    // Copied out of a package under a split name, it is refused before anything is opened.
+    let data = scratch("split-copy");
+    let source = Source::Copy {
+        open: Box::new(|| panic!("a split model is never opened")),
+        dest: data.join("models").join("tiny-a-00001-of-00002.gguf"),
+    };
+    let copied = Engine::start(pin_of(&tiny("tiny-a-00001-of-00002.gguf")), source, plan(), data);
+    assert!(ask(&copied, req(1, chat(), 4)).1.unwrap_err().message.contains("parts of a split model"));
+    assert_eq!(copied.loads(), 0);
 }
 
 #[test]
@@ -105,14 +124,14 @@ fn a_stop_from_another_thread_ends_the_answer_early() {
     let path = tiny("tiny-a.gguf");
     let engine = Arc::new(Engine::start(pin_of(&path), Source::Path(path), plan(), scratch("stop")));
     let stopper = engine.clone();
-    let texts = Arc::new(Mutex::new(String::new()));
+    let texts = Arc::new(Mutex::new(Vec::new()));
     let into = texts.clone();
     let answer = engine
         .submit(
             req(7, chat(), 4000),
             Box::new(move |e| {
                 if let RunEvent::Text { text } = e {
-                    into.lock().unwrap().push_str(&text);
+                    into.lock().unwrap().push(text);
                     assert!(stopper.stop(7), "the answer is live");
                 }
                 true
@@ -123,7 +142,8 @@ fn a_stop_from_another_thread_ends_the_answer_early() {
         .unwrap();
     assert_eq!(answer.reason, Reason::Stopped);
     assert!(answer.tokens > 0 && answer.tokens < 4000, "{answer:?}");
-    assert!(texts.lock().unwrap().len() as u32 <= answer.tokens);
+    // The first token goes out at once, and the stop made at it ends the answer there: no text after it.
+    assert_eq!(*texts.lock().unwrap(), vec!["a".to_string()]);
     assert!(!engine.stop(7), "a finished answer is forgotten");
 }
 
@@ -166,6 +186,73 @@ fn answers_run_in_order_and_a_queued_one_is_told_it_waits() {
     let last_a = log.iter().rposition(|(w, _)| *w == 'A').unwrap();
     let first_b_read = log.iter().position(|(w, e)| *w == 'B' && matches!(e, RunEvent::Read { .. })).unwrap();
     assert!(last_a < first_b_read, "B is read only after A is done");
+}
+
+#[test]
+fn of_two_answers_asked_at_once_only_the_one_queued_second_is_told_it_waits() {
+    let path = tiny("tiny-a.gguf");
+    // One thread: the test is about the queue, and on a busy runner llama.cpp's threads would only spin, waiting.
+    let one_thread = Plan { threads: 1, ..plan() };
+    let engine = Arc::new(Engine::start(pin_of(&path), Source::Path(path), one_thread, scratch("at-once")));
+    assert!(ask(&engine, req(1, chat(), 1)).1.is_ok(), "loaded, and idle from here");
+    for round in 0..1000u32 {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let together = Arc::new(Barrier::new(2));
+        let askers: Vec<_> = (0..2u32)
+            .map(|k| {
+                let (engine, log, together) = (engine.clone(), log.clone(), together.clone());
+                thread::spawn(move || {
+                    together.wait();
+                    let sink: Sink = Box::new(move |e| {
+                        log.lock().unwrap().push((k, e));
+                        true
+                    });
+                    engine.submit(req(10 + 2 * round + k, chat(), 1), sink).recv().unwrap().unwrap();
+                })
+            })
+            .collect();
+        for asker in askers {
+            asker.join().unwrap();
+        }
+        let log = log.lock().unwrap();
+        let told: Vec<u32> = log.iter().filter(|(_, e)| *e == RunEvent::Waiting).map(|(k, _)| *k).collect();
+        // The model thread reads one answer after the other, so the first Read is the answer that ran first.
+        let ran_first = log.iter().find(|(_, e)| matches!(e, RunEvent::Read { .. })).map(|(k, _)| *k);
+        assert!(ran_first.is_some(), "round {round}: {log:?}");
+        assert!(told.len() <= 1, "round {round}: only one can wait for the other: {log:?}");
+        if let Some(&waited) = told.first() {
+            assert_ne!(ran_first, Some(waited), "round {round}: the answer told it waits ran first: {log:?}");
+        }
+    }
+}
+
+#[test]
+fn a_job_stopped_during_the_load_is_told_nothing_more() {
+    let path = tiny("tiny-a.gguf");
+    let engine = Arc::new(Engine::start(pin_of(&path), Source::Path(path), plan(), scratch("load-quiet")));
+    let stopper = engine.clone();
+    let (stopped, after) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+    let (now, later) = (stopped.clone(), after.clone());
+    let answer = engine
+        .submit(
+            req(1, chat(), 8),
+            Box::new(move |e| {
+                if now.load(Ordering::SeqCst) {
+                    later.fetch_add(1, Ordering::SeqCst);
+                } else if matches!(e, RunEvent::Loading { .. }) {
+                    assert!(stopper.stop(1), "the answer is live");
+                    now.store(true, Ordering::SeqCst);
+                }
+                true
+            }),
+        )
+        .recv()
+        .unwrap()
+        .unwrap();
+    assert!(stopped.load(Ordering::SeqCst), "the load was told");
+    assert_eq!((answer.reason, answer.tokens), (Reason::Stopped, 0));
+    assert_eq!(after.load(Ordering::SeqCst), 0, "no event reached the job after its stop");
+    assert_eq!(engine.loads(), 1, "the load went on");
 }
 
 #[test]
@@ -254,6 +341,80 @@ fn a_model_inside_a_package_is_copied_out_once_and_checked() {
     drop(engine);
     let again = Engine::start(pin, source(false), plan(), data);
     assert_eq!(ask(&again, req(1, chat(), 2)).1.unwrap().tokens, 2);
+}
+
+/// A package reader that hands out the model a little at a time (Android's asset reader on a first run, every piece
+/// a step of the copy's progress), and runs `at_end` when it has handed out the last byte.
+struct Trickle {
+    file: File,
+    at_end: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Read for Trickle {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = buf.len().min(1024);
+        let got = self.file.read(&mut buf[..n])?;
+        if got == 0 {
+            if let Some(at_end) = self.at_end.take() {
+                at_end();
+            }
+        }
+        Ok(got)
+    }
+}
+
+#[test]
+fn a_job_stopped_during_the_copy_is_answered_before_it_ends_and_told_nothing_more() {
+    // A page that reloads during the first-run copy: stop_all at the first Preparing event.
+    let path = tiny("tiny-a.gguf");
+    let data = scratch("copy-quiet");
+    let (go, gate) = mpsc::channel::<()>();
+    let pending: Arc<Mutex<Option<Receiver<Answer>>>> = Arc::new(Mutex::new(None));
+    // What the stopped job's answer channel held when the reader handed out its last byte.
+    let at_copy_end = Arc::new(Mutex::new(None));
+    let (slot, seen, from) = (pending.clone(), at_copy_end.clone(), path.clone());
+    let source = Source::Copy {
+        open: Box::new(move || {
+            // The copy starts once the job is queued, so the job is told of it from its first piece.
+            let _ = gate.recv();
+            let at_end = Box::new(move || {
+                let answered = slot.lock().unwrap().take().map(|answer| answer.try_recv());
+                *seen.lock().unwrap() = Some(answered);
+            });
+            Ok(Box::new(Trickle { file: File::open(from)?, at_end: Some(at_end) }) as Box<dyn Read>)
+        }),
+        dest: data.join("models").join("tiny-a.gguf"),
+    };
+    let engine = Arc::new(Engine::start(pin_of(&path), source, plan(), data));
+    let stopper = engine.clone();
+    let (stopped, after) = (mpsc::channel::<()>(), Arc::new(AtomicUsize::new(0)));
+    let (told_stop, later) = (stopped.0, after.clone());
+    let mut done = false;
+    let answer = engine.submit(
+        req(1, chat(), 4),
+        Box::new(move |e| {
+            if done {
+                later.fetch_add(1, Ordering::SeqCst);
+            } else if matches!(e, RunEvent::Preparing { .. }) {
+                stopper.stop_all();
+                done = true;
+                told_stop.send(()).unwrap();
+            }
+            true
+        }),
+    );
+    *pending.lock().unwrap() = Some(answer);
+    go.send(()).unwrap();
+    // Asked only after the stop_all, so it is not stopped with the first; it comes after the copy and the load.
+    stopped.1.recv().unwrap();
+    let (events, next) = ask(&engine, req(2, chat(), 2));
+    assert_eq!((next.unwrap().tokens, text_of(&events).as_str()), (2, "aa"));
+    assert_eq!(after.load(Ordering::SeqCst), 0, "no event reached the stopped job after stop_all");
+    let answered = at_copy_end.lock().unwrap().take();
+    match answered {
+        Some(Some(Ok(Ok(done)))) => assert_eq!((done.id, done.reason, done.tokens), (1, Reason::Stopped, 0)),
+        other => panic!("the stopped job was not answered before the copy ended: {other:?}"),
+    }
 }
 
 #[test]

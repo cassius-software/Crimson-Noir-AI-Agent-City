@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? The runner loads only the model the app was built with: the file's name, its exact size
-//! and its SHA-256 are its pin (the page's own: src/09_Cognition/siteModel.ts). Reading a gigabyte to hash it on every
-//! launch would cost seconds, so the hash is checked once and remembered in a stamp beside the app's data (the pin's
-//! hash, the size and the file's modification time); a stamp that does not match any of them is checked again.
+//! and its SHA-256 are its pin (the page's own: src/09_Cognition/siteModel.ts). A pin covers one file, never the parts
+//! of a split model: llama.cpp opens a first part's siblings by itself, unchecked, so a name that `split_parts` reads
+//! as one part of several is refused before anything is read. Reading a gigabyte to hash it on every launch would cost
+//! seconds, so the hash is checked once and remembered in a stamp beside the app's data (the pin's hash, the size and
+//! the file's modification time); a stamp that does not match any of them is checked again.
 //! Where a platform keeps the model inside its package (Android's assets), `copy_checked` copies it out to a real file
 //! that llama.cpp can map, hashing every byte on the way, into a `.part` file renamed only once the hash is right,
 //! after making sure the copy fits.
@@ -70,6 +72,21 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// How many parts the split model that `path` is one part of has, by its name: `<prefix>-NNNNN-of-MMMMM.gguf` with
+/// MMMMM above 1, the names llama.cpp's gguf-split writes. Loading the first part makes llama.cpp map the others, which
+/// no pin covers; `None` for any other name.
+pub fn split_parts(path: &Path) -> Option<u32> {
+    let stem = path.file_name()?.to_str()?.strip_suffix(".gguf")?;
+    let (rest, count) = stem.rsplit_once("-of-")?;
+    let (_, no) = rest.rsplit_once('-')?;
+    let five_digits = |s: &str| s.len() == 5 && s.bytes().all(|b| b.is_ascii_digit());
+    if !five_digits(no) || !five_digits(count) {
+        return None;
+    }
+    let n: u32 = count.parse().ok()?;
+    (n > 1).then_some(n)
+}
+
 /// `path` is the pinned file: the right size, and either a matching stamp or the right SHA-256 (then stamped).
 /// `progress(done, total)` while hashing. The error is a sentence the page can show.
 pub fn check_file(path: &Path, pin: &Pin, stamp_dir: &Path, mut progress: impl FnMut(u64, u64)) -> Result<Checked, String> {
@@ -128,9 +145,10 @@ pub fn free_bytes(dir: &Path) -> Option<u64> {
     }
 }
 
-/// Copies the pinned model from `reader` to `dest`, checking the size and SHA-256 of every byte, through `dest.part`
-/// renamed into place only when both are right (and synced). Refused before it starts when `free(dir)` says the copy
-/// and `SPARE` do not fit. A failed copy leaves no `.part` behind. `progress(done, total)` after each piece.
+/// Copies the pinned model from `reader` to `dest`, checking the size and SHA-256 of every byte, through `<stem>.part`
+/// beside `dest` (models/m.part for models/m.gguf), renamed into place only when both are right (and synced). Refused
+/// before it starts when `free(dir)` says the copy and `SPARE` do not fit. A failed copy leaves no `.part` behind, and
+/// one left by a killed copy is removed before the space check. `progress(done, total)` after each piece.
 pub fn copy_checked(
     reader: &mut dyn Read,
     dest: &Path,
@@ -140,6 +158,9 @@ pub fn copy_checked(
 ) -> Result<(), String> {
     let dir = dest.parent().ok_or_else(|| "the model's folder has no parent".to_string())?;
     fs::create_dir_all(dir).map_err(|e| format!("the model's folder could not be made ({e})"))?;
+    let part = dest.with_extension("part");
+    // A copy killed part way (the app ended by the system) leaves its .part, and its bytes are not free until it goes.
+    let _ = fs::remove_file(&part);
     if let Some(have) = free(dir) {
         if have < pin.bytes.saturating_add(SPARE) {
             return Err(format!(
@@ -149,7 +170,6 @@ pub fn copy_checked(
             ));
         }
     }
-    let part = dest.with_extension("part");
     let result = (|| -> Result<(), String> {
         let mut out = File::create(&part).map_err(|e| format!("the model could not be written ({e})"))?;
         let mut hasher = Sha256::new();
@@ -279,6 +299,40 @@ mod tests {
         assert_eq!(fs::read(&dest).unwrap(), data);
         stamp(&dest, &pin, &dir);
         assert_eq!(check_file(&dest, &pin, &dir, |_, _| panic!("read")), Ok(Checked::Stamp));
+    }
+
+    #[test]
+    fn a_part_left_by_a_killed_copy_is_removed_before_the_space_check() {
+        let dir = scratch("stale");
+        let data = vec![9u8; PIECE + 77];
+        let pin = pin_of(&data);
+        let dest = dir.join("models").join("m.gguf");
+        let part = dest.with_extension("part");
+        fs::create_dir_all(part.parent().unwrap()).unwrap();
+        fs::write(&part, vec![0u8; 4 << 20]).unwrap();
+        // The device has room for the copy only once the stale 4 MiB part is gone.
+        let need = pin.bytes + SPARE;
+        let free = |_: &Path| Some(if part.exists() { need + (1 << 20) - (4 << 20) } else { need + (1 << 20) });
+        copy_checked(&mut Cursor::new(&data), &dest, &pin, free, |_, _| {}).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), data);
+        assert!(!part.exists());
+    }
+
+    #[test]
+    fn a_split_model_is_known_by_its_name() {
+        let parts = |name: &str| split_parts(Path::new("models").join(name).as_path());
+        assert_eq!(parts("tiny-a-00001-of-00002.gguf"), Some(2));
+        assert_eq!(parts("big-model-q4_k_m-00003-of-00004.gguf"), Some(4));
+        assert_eq!(parts("m-00002-of-00002.gguf"), Some(2));
+        // Look-alikes that llama.cpp loads as one file.
+        assert_eq!(parts("m-00001-of-00001.gguf"), None, "one part is the whole model");
+        assert_eq!(parts("tiny-a.gguf"), None);
+        assert_eq!(parts("Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"), None);
+        assert_eq!(parts("m-0001-of-0002.gguf"), None, "four digits");
+        assert_eq!(parts("m-00001-of-00002.bin"), None);
+        assert_eq!(parts("m-00001-of-00002.gguf.part"), None);
+        assert_eq!(parts("m00001-of-00002.gguf"), None, "no dash before the part's number");
+        assert_eq!(parts("m-0000a-of-00002.gguf"), None);
     }
 
     #[test]

@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use crimson_noir_llm::{Answer, Engine, GenRequest, Gpu, Message, Pin, Plan, Role, RunEvent, Sampling};
 use sha2::{Digest, Sha256};
 
-/// The folder tools/browser/tinyGguf.mjs wrote: tiny-a.gguf, its two shards (--split) and tiny-a-plain.gguf (--plain).
+/// The folder tools/browser/tinyGguf.mjs wrote: tiny-a.gguf, its two shards (--split, for the refusal of a split
+/// model) and tiny-a-plain.gguf (--plain).
 pub fn tiny_dir() -> PathBuf {
     let dir = std::env::var_os("TINY_GGUF_DIR").map(PathBuf::from).unwrap_or_default();
     assert!(

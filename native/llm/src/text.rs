@@ -7,8 +7,9 @@
 //! - `Utf8Hold` holds back the bytes of a character not yet complete, so the page only ever gets whole characters;
 //! - `StopText` holds back a tail that could still become a turn marker (`<|im_end|>`, `<|im_start|>`), and ends the
 //!   answer where one is spelled out, so a marker never reaches Sloane's card;
-//! - `Batcher` gathers the pieces into text events of at most `TEXT_MAX` bytes, sent at least every `FLUSH_MS`, so the
-//!   page gets a steady stream without one message per token.
+//! - `Batcher` gathers the pieces into text events of at most `TEXT_MAX` bytes, no more than one every `FLUSH_MS`
+//!   (full pieces aside) while tokens come fast and each token at once when they come slower (there is no timer: held
+//!   text goes out with the next token or at the end), so the page gets a steady stream without one message per token.
 //!
 //! What breaks if it is removed? Broken characters, stray turn markers and a message per token reach the page.
 
@@ -16,7 +17,8 @@ use std::time::{Duration, Instant};
 
 use crate::wire::TEXT_MAX;
 
-/// How long text may wait in the batcher before it is sent.
+/// The least time between two text events, full `TEXT_MAX` pieces and the answer's last aside; text held meanwhile
+/// goes out with the next token, or at the end.
 pub const FLUSH_MS: u64 = 30;
 
 /// The template's turn markers, which end an answer if the model spells one out as text.
@@ -110,26 +112,23 @@ impl StopText {
 #[derive(Debug)]
 pub struct Batcher {
     buf: String,
-    since: Option<Instant>,
+    /// When the last event was sent; `None` before the first.
+    last: Option<Instant>,
     flush: Duration,
 }
 
 impl Default for Batcher {
     fn default() -> Self {
-        Batcher { buf: String::new(), since: None, flush: Duration::from_millis(FLUSH_MS) }
+        Batcher { buf: String::new(), last: None, flush: Duration::from_millis(FLUSH_MS) }
     }
 }
 
 impl Batcher {
-    /// Adds text and answers the events due now: every full `TEXT_MAX` piece, and the rest once it has waited
-    /// `FLUSH_MS` since its first byte.
+    /// Adds text and answers the events due now: every full `TEXT_MAX` piece, and the rest when `FLUSH_MS` has passed
+    /// since the last event (or none has been sent yet), so a slow token goes out as soon as it is made and fast ones
+    /// are gathered.
     pub fn push(&mut self, text: &str, now: Instant) -> Vec<String> {
-        if !text.is_empty() {
-            if self.buf.is_empty() {
-                self.since = Some(now);
-            }
-            self.buf.push_str(text);
-        }
+        self.buf.push_str(text);
         let mut out = Vec::new();
         while self.buf.len() >= TEXT_MAX {
             let mut cut = TEXT_MAX;
@@ -138,20 +137,17 @@ impl Batcher {
             }
             out.push(self.buf[..cut].to_string());
             self.buf.drain(..cut);
-            self.since = if self.buf.is_empty() { None } else { Some(now) };
+            self.last = Some(now);
         }
-        if let Some(since) = self.since {
-            if now.duration_since(since) >= self.flush && !self.buf.is_empty() {
-                out.push(std::mem::take(&mut self.buf));
-                self.since = None;
-            }
+        if !self.buf.is_empty() && self.last.is_none_or(|last| now.duration_since(last) >= self.flush) {
+            out.push(std::mem::take(&mut self.buf));
+            self.last = Some(now);
         }
         out
     }
 
     /// Whatever is left, at the end of the answer.
     pub fn finish(&mut self) -> Option<String> {
-        self.since = None;
         if self.buf.is_empty() {
             None
         } else {
@@ -222,18 +218,53 @@ mod tests {
     }
 
     #[test]
-    fn batcher_sends_full_pieces_at_once_and_the_rest_after_the_flush_time() {
+    fn batcher_sends_a_slow_token_at_once() {
+        let ms = Duration::from_millis;
         let t0 = Instant::now();
         let mut b = Batcher::default();
-        assert!(b.push("abc", t0).is_empty());
-        assert!(b.push("d", t0 + Duration::from_millis(10)).is_empty());
-        assert_eq!(b.push("", t0 + Duration::from_millis(FLUSH_MS)), vec!["abcd".to_string()]);
-        let big = "é".repeat(TEXT_MAX); // 2 bytes each: 2 x TEXT_MAX bytes
-        let out = b.push(&big, t0);
-        assert_eq!(out.len(), 2);
-        assert!(out.iter().all(|p| p.len() <= TEXT_MAX && p.len() >= TEXT_MAX - 1));
+        // Nothing sent yet: the first text goes out at once, not with the next token.
+        assert_eq!(b.push("Hello", t0), vec!["Hello".to_string()]);
+        // Tokens slower than FLUSH_MS each go out in their own event; none waits for the next decode.
+        for (i, t) in [",", " detective", "."].iter().enumerate() {
+            assert_eq!(b.push(t, t0 + ms(200 * (i as u64 + 1))), vec![t.to_string()]);
+        }
         assert_eq!(b.finish(), None);
-        b.push("x", t0);
-        assert_eq!(b.finish(), Some("x".to_string()));
+    }
+
+    #[test]
+    fn batcher_sends_fast_tokens_at_most_one_event_per_flush_time() {
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut b = Batcher::default();
+        assert_eq!(b.push("a", t0), vec!["a".to_string()]);
+        // A token every 5 ms: held until FLUSH_MS has passed since the last event, then sent together.
+        let mut events = Vec::new();
+        for i in 1..=60u64 {
+            for text in b.push("b", t0 + ms(5 * i)) {
+                events.push((5 * i, text));
+            }
+        }
+        assert!(events.windows(2).all(|w| w[1].0 - w[0].0 >= FLUSH_MS), "{events:?}");
+        assert_eq!(events.first().map(|e| e.0), Some(FLUSH_MS));
+        let sent: String = events.iter().map(|e| e.1.as_str()).collect::<String>() + &b.finish().unwrap_or_default();
+        assert_eq!(sent, "b".repeat(60), "nothing lost or reordered");
+        // An empty push sends what is held once it is due.
+        assert!(b.push("c", t0 + ms(301)).is_empty());
+        assert_eq!(b.push("", t0 + ms(301 + FLUSH_MS)), vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn batcher_cuts_full_pieces_on_character_boundaries_at_once() {
+        let t0 = Instant::now();
+        let mut b = Batcher::default();
+        assert_eq!(b.push("x", t0), vec!["x".to_string()]);
+        // 1 + 2 x TEXT_MAX bytes ("é" is 2): the first cut would fall inside an "é", so it comes one byte early.
+        let big = format!("a{}", "é".repeat(TEXT_MAX));
+        // Within FLUSH_MS of the last event, full pieces still go out at once; the short rest is held.
+        let out = b.push(&big, t0);
+        assert_eq!(out.iter().map(String::len).collect::<Vec<_>>(), vec![TEXT_MAX - 1, TEXT_MAX]);
+        assert_eq!(b.finish(), Some("é".to_string()));
+        assert_eq!(out.concat() + "é", big);
+        assert_eq!(b.finish(), None);
     }
 }

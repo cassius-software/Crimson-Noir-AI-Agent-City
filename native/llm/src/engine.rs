@@ -4,14 +4,16 @@
 //! Why does this file exist? llama.cpp's context belongs to one thread at a time, and a model is too big to load
 //! twice, so the runner is one thread named "model" that owns the backend's model and its context, and every answer is
 //! a job sent to it. On start the thread checks the processor (`guard`) and the model file (`verify`: once, then a
-//! stamp; or copied out of a package), then waits; the model loads on the first answer, not at launch, so an app that
-//! is never asked never spends the memory. Jobs run in the order they came: one sent while another is being made is
-//! told it waits. A job is stopped by its flag, read between decode calls (one token, or one chunk of prompt), and a
-//! page that goes away stops its jobs (`stop_all`, and a sink that answers false). A stop never cancels a load: the
-//! next answer would only load again.
+//! stamp; or copied out of a package; one part of a split model is refused), then waits; the model loads on the first
+//! answer, not at launch, so an app that is never asked never spends the memory. Jobs run in the order they came: one
+//! sent while another is being made is told it waits. A job is stopped by its flag, read between decode calls (one
+//! token, or one chunk of prompt), and a page that goes away stops its jobs (`stop_all`, and a sink that answers
+//! false). A stopped job is sent nothing more, and one stopped while the file is checked or copied is answered at the
+//! next piece read, not when the file is done. A stop never cancels a load: the next answer would only load again.
 //! What breaks if it is removed? Nothing can ask the model for an answer.
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::io::{self, Read};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -46,8 +48,11 @@ pub enum Source {
     Copy { open: Opener, dest: PathBuf },
 }
 
-/// Whether the model's layers go to a GPU. `Off` keeps every device out of the model (on Apple, Metal is compiled
-/// into every build, and llama.cpp would otherwise start it even with no layer on it).
+/// Whether the model's layers go to a GPU. `Off` keeps every device out of the model and its context (split mode None,
+/// main GPU -1, no op offload), so no work runs on a GPU. It does not stop Metal from starting: wherever Metal is
+/// compiled in (every Apple build but watchOS), llama.cpp's backend start registers it, which creates the device and a
+/// command queue and compiles its whole shader library, whatever the plan. A CPU-only Apple app that must not pay for
+/// that is built with GGML_METAL=OFF (llama-cpp-sys-2 passes GGML_* environment variables to CMake).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gpu {
     Off,
@@ -95,6 +100,9 @@ impl Job {
 struct Shared {
     status: Mutex<Status>,
     live: Mutex<HashMap<u32, Arc<AtomicBool>>>,
+    /// Held from counting a job to queueing it, so being told it waits and its place in the queue agree. The model
+    /// thread never takes it, and it is never taken inside `live`.
+    submit: Mutex<()>,
     /// Jobs sent and not yet answered.
     pending: AtomicUsize,
     /// Models loaded by this engine (one, once it has answered).
@@ -119,6 +127,7 @@ impl Engine {
         let shared = Arc::new(Shared {
             status: Mutex::new(Status::Preparing { done: 0, total: pin.bytes }),
             live: Mutex::new(HashMap::new()),
+            submit: Mutex::new(()),
             pending: AtomicUsize::new(0),
             loads: AtomicUsize::new(0),
         });
@@ -160,7 +169,11 @@ impl Engine {
             }
             live.insert(id, stop.clone());
         }
-        if self.shared.pending.fetch_add(1, Ordering::SeqCst) > 0 && !sink(RunEvent::Waiting) {
+        // Counted and queued in one turn, so a job told it waits is queued behind another. The sink (a channel send)
+        // returns at once and never submits, so holding the turn across it is safe.
+        let _turn = lock(&self.shared.submit);
+        let waits = self.shared.pending.fetch_add(1, Ordering::SeqCst) > 0;
+        if waits && !stop.load(Ordering::Relaxed) && !sink(RunEvent::Waiting) {
             stop.store(true, Ordering::Relaxed);
         }
         if let Err(mpsc::SendError(job)) = self.tx.send(Job { req, sink, stop, reply }) {
@@ -253,7 +266,7 @@ fn worker(pin: Pin, source: Source, plan: Plan, stamp_dir: PathBuf, rx: Receiver
     if let Some(why) = guard::cpu_refusal() {
         return fail(&shared, &mut queue, why, true);
     }
-    let path = match prepare(&pin, source, &stamp_dir, &shared, &mut queue) {
+    let path = match prepare(&pin, source, &stamp_dir, &shared, &mut queue, &plan) {
         Ok(path) => path,
         Err(why) => return fail(&shared, &mut queue, why, false),
     };
@@ -303,15 +316,41 @@ fn worker(pin: Pin, source: Source, plan: Plan, stamp_dir: PathBuf, rx: Receiver
 }
 
 /// Checks (or copies out and checks) the model file; jobs that come meanwhile are told how far it has got.
-fn prepare(pin: &Pin, source: Source, stamp_dir: &Path, shared: &Shared, queue: &mut Queue) -> Result<PathBuf, String> {
+fn prepare(
+    pin: &Pin,
+    source: Source,
+    stamp_dir: &Path,
+    shared: &Shared,
+    queue: &mut Queue,
+    plan: &Plan,
+) -> Result<PathBuf, String> {
+    // The file llama.cpp is handed. A pin covers one file, and llama.cpp opens a split model's other parts by itself.
+    let target = match &source {
+        Source::Path(path) => path,
+        Source::Copy { dest, .. } => dest,
+    };
+    if let Some(n) = verify::split_parts(target) {
+        return Err(format!(
+            "the app's model ({}) is one of {n} parts of a split model, and the runner loads only one checked file",
+            pin.file
+        ));
+    }
     let mut last = u64::MAX;
     let mut progress = |done: u64, total: u64| {
         set(shared, Status::Preparing { done, total });
         queue.gather();
+        // A job stopped meanwhile (its own stop, or stop_all on a page load) is answered now and told nothing more.
+        let (gone, keep): (VecDeque<Job>, VecDeque<Job>) =
+            std::mem::take(&mut queue.early).into_iter().partition(Job::stopped);
+        queue.early = keep;
+        for job in gone {
+            let stopped = untouched(job.req.id, Reason::Stopped, plan);
+            finish(shared, job, Ok(stopped));
+        }
         let pct = done.saturating_mul(100) / total.max(1);
         if pct != last {
             last = pct;
-            for job in queue.early.iter_mut() {
+            for job in queue.early.iter_mut().filter(|job| !job.stopped()) {
                 if !(job.sink)(RunEvent::Preparing { done, total }) {
                     job.stop.store(true, Ordering::Relaxed);
                 }
@@ -327,6 +366,8 @@ fn prepare(pin: &Pin, source: Source, stamp_dir: &Path, shared: &Shared, queue: 
             if verify::check_file(&dest, pin, stamp_dir, &mut progress).is_ok() {
                 return Ok(dest);
             }
+            // A file there that is not the pinned model (an older one) goes now, so it holds no space during the copy.
+            let _ = fs::remove_file(&dest);
             let mut reader = open().map_err(|e| format!("the app's model could not be opened in its package ({e})"))?;
             verify::copy_checked(&mut *reader, &dest, pin, verify::free_bytes, &mut progress)?;
             verify::stamp(&dest, pin, stamp_dir);
@@ -344,7 +385,8 @@ fn load(backend: &LlamaBackend, path: &Path, plan: &Plan, job: Job) -> Result<(L
     let stop_on_gone = stop.clone();
     let mut last = -1.0f32;
     let params = LlamaModelParams::default().with_use_mmap(true).with_progress_callback(move |fraction| {
-        if fraction >= 1.0 || fraction - last >= 0.02 {
+        // A stopped job is told nothing more (the load itself goes on).
+        if !stop_on_gone.load(Ordering::Relaxed) && (fraction >= 1.0 || fraction - last >= 0.02) {
             last = fraction;
             if !(lock(&for_load))(RunEvent::Loading { fraction }) {
                 stop_on_gone.store(true, Ordering::Relaxed);

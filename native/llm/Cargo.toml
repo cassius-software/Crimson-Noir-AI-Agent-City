@@ -17,8 +17,10 @@ license-file = "../../LICENSE"
 
 [dependencies]
 # The exact pair. llama-cpp-2 asks for llama-cpp-sys-2 "0.1.161" with a caret, so the sys line keeps the two in step.
-# default-features = false drops OpenMP (libgomp at run time) and the Android shared C++ library. llama.cpp's common
-# library is still built: llama-cpp-2 depends on the sys crate with its default features, and the sys default is it.
+# default-features = false drops OpenMP (libgomp at run time). llama.cpp's common library is still built: llama-cpp-2
+# depends on the sys crate with its default features, and the sys default is it. On Android that wrapper is built by cc,
+# which links libc++_shared.so unless the sys crate's static-stdcxx is on (llama-cpp-sys-2 build.rs:739-743, 1526-1535),
+# so the Android slice must turn on llama-cpp-2's android-static-stdcxx for Android targets (design D8).
 llama-cpp-2 = { version = "=0.1.161", default-features = false }
 llama-cpp-sys-2 = { version = "=0.1.161", default-features = false }
 serde = { version = "1", features = ["derive"] }

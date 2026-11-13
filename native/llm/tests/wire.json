@@ -90,6 +90,40 @@
       "text": "Hello"
     }
   ],
+  "models": [
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "done": 0,
+        "state": "preparing",
+        "total": 397808192
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "state": "ready"
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "state": "loaded"
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "reason": "a plain sentence",
+        "refused": true,
+        "state": "failed"
+      }
+    }
+  ],
   "request": {
     "id": 42,
     "maxTokens": 512,

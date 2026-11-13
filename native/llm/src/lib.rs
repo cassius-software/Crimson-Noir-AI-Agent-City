@@ -9,14 +9,17 @@
 //! This crate is that runner, with no Tauri in it, so every part of it is tested on a plain CI runner:
 //! - one thread named "model" owns llama.cpp's backend, the loaded model and its context (`engine`);
 //! - the model file is checked against its pin (size, SHA-256) once and remembered, or copied out and checked on the
-//!   way where the platform keeps it inside a package (`verify`);
+//!   way where the platform keeps it inside a package (`verify`); a pin covers one file, so one part of a split model
+//!   is refused, since llama.cpp would open its other parts unchecked;
 //! - an answer is a job: the chat rendered with the model's own template, the prompt read in chunks (reusing what the
 //!   last answer left in the context), then one token at a time, streamed as small text events (`gen`, `text`);
-//! - a Stop sets the job's flag, read between decode calls; jobs run in order, and a queued one is told it waits;
+//! - a Stop sets the job's flag, read between decode calls, and a stopped job is sent nothing more; jobs run in order,
+//!   and a queued one is told it waits;
 //! - what the shell and the page exchange is plain data with fixed names (`wire`), pinned by tests/wire.json.
 //!
 //! The shell (src-tauri) chooses the plan for its platform (context, batch, threads, GPU) and the pin of the model it
-//! carries; nothing here reads the network, starts a process or opens any file but the one model file and its stamp.
+//! carries. Nothing in the crate's Rust code reads the network, starts a process or opens any file but the model file,
+//! its `.part` while copying and its stamp (the C++ it links is not covered: ggml forks a debugger when it aborts).
 //! What breaks if it is removed? The apps on macOS, Linux, Android and iOS have nothing to run a model with.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -32,4 +35,4 @@ pub mod wire;
 pub use backend::backend;
 pub use engine::{half_the_threads, Answer, Engine, Gpu, Opener, Plan, Sampling, Sink, Source};
 pub use verify::Pin;
-pub use wire::{ErrorCode, GenDone, GenRequest, Message, Reason, Role, RunError, RunEvent, Status};
+pub use wire::{ErrorCode, GenDone, GenRequest, Message, NativeModel, Reason, Role, RunError, RunEvent, Status};

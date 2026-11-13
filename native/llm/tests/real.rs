@@ -77,8 +77,12 @@ fn real_model_answers_and_ends_its_turn_by_itself() {
 #[ignore = "needs REAL_GGUF: the site's Qwen2.5 0.5B, 0.4 GB"]
 fn real_model_gives_the_same_greedy_answer_with_the_kept_context_as_without() {
     let path = real();
+    // One token per decode in both engines. llama.cpp's CPU kernels for one token and for a batch round differently
+    // (its server README: logits are not bit-for-bit identical across batch sizes), so only a wrong reuse can change
+    // the text here.
+    let plan = Plan { n_batch: 1, ..phone_plan() };
     let first = vec![msg(Role::System, "You are a helpful assistant."), msg(Role::User, "Name three colours.")];
-    let kept = Engine::start(pin_of(&path), Source::Path(path.clone()), phone_plan(), scratch("kept"));
+    let kept = Engine::start(pin_of(&path), Source::Path(path.clone()), plan, scratch("kept"));
     let (events, _) = ask(&kept, req(1, first.clone(), 24));
     let mut second = first;
     second.push(msg(Role::Assistant, &text_of(&events)));
@@ -86,7 +90,7 @@ fn real_model_gives_the_same_greedy_answer_with_the_kept_context_as_without() {
     let (with_events, with) = ask(&kept, req(2, second.clone(), 16));
     let with = with.unwrap();
     assert!(with.reused > 10, "the second answer kept the first's context: {with:?}");
-    let fresh = Engine::start(pin_of(&path), Source::Path(path), phone_plan(), scratch("fresh"));
+    let fresh = Engine::start(pin_of(&path), Source::Path(path), plan, scratch("fresh"));
     let (fresh_events, fresh_done) = ask(&fresh, req(1, second, 16));
     assert_eq!(fresh_done.unwrap().reused, 0);
     assert_eq!(text_of(&with_events), text_of(&fresh_events), "the kept context changes nothing in the answer");

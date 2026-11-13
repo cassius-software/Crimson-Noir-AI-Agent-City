@@ -6,8 +6,9 @@
 //! What the context still holds from the last answer is kept: only the tokens after the common prefix are read, in
 //! chunks of the plan's batch, the stop flag read between chunks. Then one token at a time: sampled, ended at the
 //! model's end-of-turn (or any control token, which starts another turn), passed through the text filters (`text`) and
-//! streamed, decoded, and the stop flag read again. The context never holds a token it was not given, so the next
-//! answer can trust what it keeps; a failed decode clears it.
+//! streamed, decoded, and the stop flag read again. Once it is set nothing more is sent, not even the text the filters
+//! still hold. The context never holds a token it was not given, so the next answer can trust what it keeps; a failed
+//! decode clears it.
 //! What breaks if it is removed? The runner has no way to make an answer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -96,7 +97,14 @@ impl<'m> State<'m> {
         }
         let reused = common as u32;
         let n_batch = self.plan.n_batch.max(1) as usize;
-        let mut alive = sink(RunEvent::Read { done: reused, total });
+        // A stopped job is told nothing more: not how far the prompt is read, and not the text held back below.
+        let mut read = |done: usize, alive: &mut bool| {
+            if *alive && !stop.load(Ordering::Relaxed) {
+                *alive = sink(RunEvent::Read { done: u32::try_from(done).unwrap_or(u32::MAX), total });
+            }
+        };
+        let mut alive = true;
+        read(common, &mut alive);
         let mut batch = LlamaBatch::new(n_batch, 1);
         let mut pos = common;
         for chunk in tokens[common..].chunks(n_batch) {
@@ -117,7 +125,7 @@ impl<'m> State<'m> {
             }
             pos += chunk.len();
             self.cached.extend_from_slice(chunk);
-            alive = sink(RunEvent::Read { done: pos as u32, total });
+            read(pos, &mut alive);
         }
         let t1 = Instant::now();
 
@@ -130,7 +138,7 @@ impl<'m> State<'m> {
         let mut one = LlamaBatch::new(1, 1);
         let mut made = 0u32;
         let mut send = |text: String, alive: &mut bool| {
-            if !text.is_empty() && *alive {
+            if !text.is_empty() && *alive && !stop.load(Ordering::Relaxed) {
                 *alive = sink(RunEvent::Text { text });
             }
         };

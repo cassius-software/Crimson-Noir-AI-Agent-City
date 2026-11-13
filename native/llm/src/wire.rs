@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? It is everything the page and the runner say to each other, as plain data with fixed
-//! names: the request for an answer, the events streamed while it is made, how it ended, and why it could not be made.
+//! names: the request for an answer, the events streamed while it is made, how it ended, why it could not be made,
+//! and what the app carries and where its runner stands.
 //! The page reads the same names (tests/wire.json holds one of each, written from these types by tests/wire.rs, so a
 //! renamed field fails a test on both sides). Every event is small: a text event carries at most `TEXT_MAX` bytes, so
 //! its JSON stays under the 8 KiB that Tauri's channel delivers straight into the page.
@@ -141,4 +142,16 @@ pub enum Status {
     Loaded,
     /// It cannot run here, and why (a plain sentence); `refused` when it is this device.
     Failed { reason: String, refused: bool },
+}
+
+/// What the app carries and where its runner stands: `native_model` answers `Option<NativeModel>`, None where the app
+/// runs no model.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeModel {
+    /// The model file's name, as its pin has it.
+    pub file: String,
+    /// Its size in bytes.
+    pub bytes: u64,
+    pub status: Status,
 }

@@ -5,10 +5,12 @@
  * Why does this file exist? It pins the native model runner's crate (native/llm: llama.cpp in the app's own process,
  * for the macOS, Linux, Android and iOS apps) and the workflow that tests it, from the page's side of the repository:
  * the binding at one exact version with its default features off (no OpenMP library at run time), the lockfile
- * holding exactly that version, sources that reach no network and start no process, the wire file (tests/wire.json)
- * naming every event, ending, error and status the page will read, and native-llm.yml running the crate's tests and
- * the real model's on x86-64 Linux, Arm Linux and Apple Silicon, with GitHub's own actions alone, outside ci.yml.
- * The crate's behaviour is tested by its own Rust tests (native/llm/tests); this file keeps the frame they run in.
+ * holding exactly that version and the build crates (cc, cmake, bindgen) at the app lockfile's versions, Rust sources
+ * that reach no network and start no process, the wire file (tests/wire.json) with every key of every event, ending,
+ * error, status and carried model the page will read, and native-llm.yml running the crate's tests and the real
+ * model's on x86-64 Linux, Arm Linux and Apple Silicon, with GitHub's own actions alone, outside ci.yml, with no step
+ * it must run skipped or allowed to fail. The crate's behaviour is tested by its own Rust tests (native/llm/tests);
+ * this file keeps their frame.
  * What breaks if it is removed? A floating binding version, an OpenMP dependency, a network call in the runner, or a
  * workflow that silently skips the real model could all land unseen.
  */
@@ -40,7 +42,21 @@ test('the binding is pinned to one version, its default features off, and the lo
   }
 })
 
-test('the runner reaches no network and starts no process', () => {
+test('the build crates match the app\'s lockfile, so CI builds llama.cpp as the app will', () => {
+  const versions = (lock: string, name: string): string[] =>
+    [...lock.matchAll(new RegExp(`\\nname = "${name}"\\nversion = "([^"]+)"`, 'g'))].map((m) => m[1])
+  const crate = read(CRATE, 'Cargo.lock')
+  const app = read(ROOT, 'src-tauri', 'Cargo.lock')
+  for (const name of ['cc', 'cmake', 'bindgen']) {
+    const ours = versions(crate, name)
+    assert.equal(ours.length, 1, `${name} in native/llm/Cargo.lock`)
+    // cmake and bindgen come into src-tauri/Cargo.lock with the runner; from then on they must match too.
+    const theirs = versions(app, name)
+    if (theirs.length > 0) assert.deepEqual(theirs, ours, `${name} in native/llm/Cargo.lock and src-tauri/Cargo.lock`)
+  }
+})
+
+test('the runner\'s Rust sources reach no network and start no process', () => {
   const dir = join(CRATE, 'src')
   const sources = readdirSync(dir).filter((f) => f.endsWith('.rs'))
   assert.ok(sources.length >= 8, sources.join(', '))
@@ -52,20 +68,37 @@ test('the runner reaches no network and starts no process', () => {
   }
 })
 
-test('the wire file names every event, ending, error and status the page will read', () => {
+test('the wire file names every event, ending, error, status and carried model the page will read', () => {
   const wire = JSON.parse(read(CRATE, 'tests', 'wire.json')) as {
-    request: Record<string, unknown>
+    request: { messages: { role: string }[] } & Record<string, unknown>
     events: { kind: string }[]
     done: { reason: string }[]
-    errors: { code: string; message: string }[]
+    errors: { code: string }[]
     statuses: { state: string }[]
+    models: ({ status: { state: string } } & Record<string, unknown>)[]
   }
-  assert.deepEqual(Object.keys(wire.request).sort(), ['id', 'maxTokens', 'messages', 'think'])
-  assert.deepEqual(wire.events.map((e) => e.kind), ['waiting', 'preparing', 'loading', 'read', 'text'])
-  assert.deepEqual(wire.done.map((d) => d.reason), ['eog', 'maxTokens', 'stopped', 'context'])
-  assert.deepEqual(Object.keys(wire.done[0]).sort(), ['genMs', 'gpu', 'id', 'nBatch', 'nCtx', 'prefillMs', 'promptTokens', 'reason', 'reused', 'threads', 'tokens'])
-  assert.deepEqual(wire.errors.map((e) => e.code), ['offline', 'refused', 'model'])
-  assert.deepEqual(wire.statuses.map((s) => s.state), ['preparing', 'ready', 'loaded', 'failed'])
+  // Every key of every entry, so a renamed payload field (fraction, text, content, refused...) fails here too.
+  const keys = (o: object): string => Object.keys(o).sort().join(' ')
+  assert.equal(keys(wire), 'done errors events models request statuses')
+  assert.equal(keys(wire.request), 'id maxTokens messages think')
+  assert.deepEqual(wire.request.messages.map((m) => [m.role, keys(m)]), [
+    ['system', 'content role'], ['user', 'content role'], ['assistant', 'content role'],
+  ])
+  assert.deepEqual(wire.events.map((e) => [e.kind, keys(e)]), [
+    ['waiting', 'kind'], ['preparing', 'done kind total'], ['loading', 'fraction kind'], ['read', 'done kind total'],
+    ['text', 'kind text'],
+  ])
+  const DONE = 'genMs gpu id nBatch nCtx prefillMs promptTokens reason reused threads tokens'
+  const reasons = ['eog', 'maxTokens', 'stopped', 'context']
+  assert.deepEqual(wire.done.map((d) => [d.reason, keys(d)]), reasons.map((r) => [r, DONE]))
+  const codes = ['offline', 'refused', 'model']
+  assert.deepEqual(wire.errors.map((e) => [e.code, keys(e)]), codes.map((c) => [c, 'code message']))
+  assert.deepEqual(wire.statuses.map((s) => [s.state, keys(s)]), [
+    ['preparing', 'done state total'], ['ready', 'state'], ['loaded', 'state'], ['failed', 'reason refused state'],
+  ])
+  // What native_model answers, once in each status, the status exactly as the statuses above.
+  assert.deepEqual(wire.models.map((m) => [m.status.state, keys(m)]), wire.statuses.map((s) => [s.state, 'bytes file status']))
+  assert.deepEqual(wire.models.map((m) => m.status), wire.statuses)
 })
 
 test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and Apple Silicon, with GitHub\'s own actions alone', () => {
@@ -87,6 +120,11 @@ test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and 
     '--test real -- --ignored',
   ].map((s) => WORKFLOW.indexOf(s))
   assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
+  // Nothing that must run is skipped or allowed to fail: the apt step (Linux only), the Hugging Face fetch (cache miss
+  // only) and the cache trim (always) are the only conditions, and no job or step may fail without failing the run.
+  assert.doesNotMatch(WORKFLOW, /continue-on-error/, 'a failing step fails the job')
+  const conditions = [...WORKFLOW.matchAll(/^[ \t]*(?:- )?if:\s*(.*)$/gm)].map((m) => m[1])
+  assert.deepEqual(conditions, ["runner.os == 'Linux'", "steps.model-cache.outputs.cache-hit != 'true'", 'always()'])
   // Not in ci.yml: it runs on every change and wakes the self-healing workflow, whose sandbox cannot build llama.cpp.
   assert.ok(!read(ROOT, '.github', 'workflows', 'ci.yml').includes('native/llm'))
   assert.ok(!read(ROOT, 'tools', 'selfheal', 'checks.sh').includes('native/llm'))
