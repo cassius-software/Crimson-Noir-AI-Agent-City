@@ -73,6 +73,15 @@ export function rpmRelease(version) {
   return pre ? `0.${pre.replace(/-/g, '.')}` : '1'
 }
 
+/**
+ * The bare Windows executable's published name: its own name with the version and the architecture
+ * (crimson-noir-app_1.0.0-stable-beta_x64.exe), as the installers carry them, so the x64 and arm64 builds never share a
+ * name on a release that carries both (one would replace the other there).
+ */
+export function portableName(exe, version, arch) {
+  return `${exe.replace(/\.exe$/i, '')}_${version}_${arch}.exe`
+}
+
 /** A desktop build's --config: the page is not built again, and the .msi gets the numbers WiX takes. */
 function desktopConfig(version) {
   return JSON.stringify({ build: { beforeBuildCommand: '' }, bundle: { windows: { wix: { version: installerVersion(version) } } } })
@@ -121,7 +130,7 @@ export const TARGETS = Object.freeze([
     collect: ({ version }) => [
       ...globs(join(ROOT, 'src-tauri/target/release/bundle/nsis'), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')),
       ...globs(join(ROOT, 'src-tauri/target/release/bundle/msi'), (n) => n.includes(`_${version}_`) && n.endsWith('.msi')),
-      ...globs(join(ROOT, 'src-tauri/target/release'), (n) => n.endsWith('.exe')),
+      ...globs(join(ROOT, 'src-tauri/target/release'), (n) => n.endsWith('.exe')).map(([p, n]) => [p, portableName(n, version, 'x64')]),
     ],
     note: 'the .msi\'s own version is the numbers alone (WiX takes no pre-release tag); windows-app.yml builds this target, its .msi included, on every pull request and push to main',
   },
@@ -132,7 +141,7 @@ export const TARGETS = Object.freeze([
     collect: ({ version }) => [
       ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release/bundle/nsis`), (n) => n.includes(`_${version}_`) && n.endsWith('-setup.exe')),
       ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release/bundle/msi`), (n) => n.includes(`_${version}_`) && n.endsWith('.msi')),
-      ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release`), (n) => n.endsWith('.exe')),
+      ...globs(join(ROOT, `src-tauri/target/${TRIPLES.windowsArm64}/release`), (n) => n.endsWith('.exe')).map(([p, n]) => [p, portableName(n, version, 'arm64')]),
     ],
     note: 'the .msi\'s own version is the numbers alone (WiX takes no pre-release tag); not run on a Windows on Arm machine yet',
   },
