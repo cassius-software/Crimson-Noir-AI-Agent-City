@@ -74,7 +74,8 @@ test('App: the team runner over the page\'s own parts, ticked from the frame loo
 
 test('the Concierge rewords through a Voice and shows the team: no Mind, no .answer( of a model, the planner\'s sentence until the words arrive', () => {
   const card = read('07_Execute_Actions/Concierge.tsx')
-  assert.match(card, /import type \{ Chat, ChatTurn, Voice \} from '\.\/onboarding\/voice\.ts'/)
+  // Types only from Sloane's voice, and the phase line's wording (a pure function): nothing that reaches a model.
+  assert.match(card, /import \{ phaseLine, type Chat, type ChatTurn, type Voice \} from '\.\/onboarding\/voice\.ts'/)
   assert.doesNotMatch(card, /\bMind\b/)
   assert.equal((card.match(/\.answer\(/g) ?? []).length, 2, 'whys.answer(text) and resume\'s whys.answer(a): the person\'s own answers, no model')
   assert.match(card, /reword\.say\(root, ctl\.signal\)\.then\(\(text\) => \{ if \(!ctl\.signal\.aborted && text && text !== root\) setWorded\(\{ brief: b, text \}\) \}, \(\) => \{\}\)/)

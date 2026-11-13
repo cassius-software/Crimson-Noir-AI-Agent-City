@@ -431,8 +431,10 @@ record (the progression engine's, kept in this browser), so the console's `progr
   credits) are on sale (see Homes and Furnishing). A furniture line you own says **Place it at home (B)**, and so does
   the line the card says when you buy one. A deed whose price would leave you less than the cheapest furniture on sale
   says so on its row ("Leaves 900 cr, less than any furniture"); the free loft never does.
-- **Limits.** The wardrobe card is not gated by
-  what you bought; it still offers everything the crowd wears. Putting on a headset closes the card. A pad has no B,
+- **Bought is unlocked.** What a shop sells is locked on your own look in the wardrobe card and at the console until
+  you buy it there (see "Shop locks" under The character customizer); buying it opens it at once, on the card too.
+  The atelier's limbs, glasses and hearing aids are never locked.
+- **Limits.** Putting on a headset closes the card. A pad has no B,
   so near a car the pad's south button opens the car's door and the card opens from the chip (a click or a tap).
 
 ### Homes
@@ -1110,7 +1112,13 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   scouts") sends them, and what maps to nothing else is the conversation's next turn. While a reply is on its way the
   next message waits in the field (a heard one too) and **Stop** ends the ask; a reply that lands while the card is put
   away is shown and said when it opens. Sloane's own wait is bounded only by the router's (the first piece, a stall, a
-  load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. With no model
+  load in this page), so a model loading in this page is never stopped by a deadline of Sloane's. Until the first word
+  the card says what the model in this page is doing for that reply, and only for it ("Waiting for the model to finish
+  another answer", "Loading the model in this page…", then "Reading the conversation · 40%"),
+  and a reply that runs out of time says which wait ran out ("the model in this page wrote nothing for 5 minutes …") beside **Ask again**.
+  A conversation is sent a short system prompt of its own (`localCompute.ts` TALK_PROMPT: the 14A conduct core and the
+  guide's line, without the expertise rule or the city actions, since a conversation is bound to no one and never
+  acts), because a model running in the page reads every token of the prompt before it writes one. With no model
   answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
   ways to get one. On the web copy the first is the model that site serves beside the page, in one tap: **Get the
   model · 379 MB** (the size is on the button before anything is downloaded), or **Use the model kept here** once this
@@ -1550,6 +1558,23 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the hairline the hair sits behind the face from the front and covers the side of the head back from the temple
   in profile. Every change is worn at once, and the silhouette moves before the shadow shows it. Esc, the close
   button or Done puts it away.
+- **Shop locks** (`07_Execute_Actions/lookLock.ts`). An option a shop sells is locked on your own look until you buy
+  it at that shop: a padlock and the price on the option (a padlock over a swatch), and under its row which shop sells
+  it ("Sold at Verrin & Vale Tailors, from 250 cr: buy it there to wear it here"). Pressing a locked option wears
+  nothing and says the line in full: its name, the shop, where it stands, the price and the level ("Silk tie: sold at
+  Verrin & Vale Tailors, Midtown Avenue, for 120 cr (level 1)"). What is locked is what the shops' worn lines sell
+  (see Storefronts): the tailor's coats, its seven contrast trims, its seven scarves and the tie; the ink studio's
+  twelve designs, on every zone, and its two inks; the watch shop's bag, its two watches, the rank pin, the folding
+  umbrella and the over-ear headphones. A garment that wears a locked piece is locked with it (the coats, and the
+  dinner jacket with its satin trim). Everything else stays free, and so do the atelier's limbs, glasses and hearing
+  aids, because nobody buys their own body. Each overcoat opens its own colour of coat, and any overcoat opens the
+  coat's seventh colour, which no line sells. A design's rolled sleeves stay free. A design family opens on its first
+  design that is free or bought.
+  What your look wore when the card opened stays on, and its option stays chosen, until you take it off and close the
+  card; the card names those pieces under the presets ("Kept on from before: Silk tie"). A preset, Randomise, Reset
+  or a pasted code is worn with what the shops still hold put back (a coat goes back to the jacket in the coat's
+  cloth, a tie or a bag comes off), and the card says what it held back ("Worn without what the shops still hold:
+  Overcoat in navy (Verrin & Vale Tailors, 400 cr), …"). Your agents' tabs are not locked: the shops sell to you.
 - **Kept here.** The look is kept in this browser only (`localStorage`, key `civic-simulation:look:v1`,
   `05_Observe_Environment/lookStore.ts`), separate from the profile, so a renamed visitor keeps their outfit;
   every stored value goes through `validateLook` on the way in. The record's `v` names its layout: 5 is written
@@ -1938,7 +1963,10 @@ while you type.
   `look code XXXXX-XXXXX-XXXXX` a shared look (an old eight-symbol code still reads), `look random [<seed>]` the
   look the hash gives some other number, and
   `look reset` the look your own seed gives (see The character customizer). Every value is checked against the
-  wardrobe.
+  wardrobe, and against the shop locks: a slot or a garment a shop sells and you have not bought is refused in the
+  card's words ("Silk tie: sold at Verrin & Vale Tailors, Midtown Avenue, for 120 cr (level 1); buy it there to wear
+  it"), and a preset, a code, `random` or `reset` is worn with what the shops still hold put back, the first line
+  saying what ("worn without what the shops still hold: …").
 - `recruit <skill>` asks someone nearby with that skill over; `recruit rally <agent> [<x> <z>]` asks an Active
   recruit to walk to the newest ping's sidewalk point, or to a typed one (the page checks its own copy, the
   physics worker decides); `recruit listen`, `recruit stop`, `recruit install` and `recruit dismiss` run the voice
@@ -2960,7 +2988,8 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
 
   The processor's limit is WebAssembly's: a page has 4 GB of memory in all, and the weights are read into it, so the
   model, its context and its working memory must fit together. On the GPU the weights go to the GPU's own memory.
-  Phones and the lite profile also read the prompt in smaller batches and skip the warm-up. A warning shows on the
+  Phones and the lite profile also read the prompt 64 tokens at a time (`PHONE_BATCH`, so progress comes often enough
+  for the 120 s stall wait on a slow processor) and skip the warm-up. A warning shows on the
   runtime row and in the line that says the model loaded. The context is a ceiling: a model trained on less (its
   header says how much) loads with what it was trained on, which the runtime row and the load line then show.
 - **Which file.** An instruct (chat) model: llama.cpp writes the prompt with the chat template the file carries.

@@ -65,17 +65,26 @@ const GIB = 2 ** 30
 const MEMORY_UNKNOWN_GB = 4
 
 /**
+ * Prompt tokens a phone reads a step (the phone and lite rows' batch and micro-batch). The runtime sends the prompt's
+ * progress after each step, and the answer is given up when nothing arrives for STALL_MS (localCompute.ts, 120 s): at
+ * 64 a step a phone must read at least half a token a second, where 256 asked for more than two.
+ */
+export const PHONE_BATCH = 64
+
+/**
  * The plan's table (plan 3.4), one row per profile, apart from the GPU, the threads and the size limits (below).
  * Desktops take the local server's context and answer length (localCompute.ts), so a model answers alike in the page
- * and on a server; phones take half the context and a quarter of the answer, and smaller batches so one step of the
- * prompt holds the processor for less time. Warmup on a desktop is what wllama does when the option is unset
- * (llama.cpp's own default, true; inferred from wllama-context.h passing it through only when set).
+ * and on a server; phones take half the context and a quarter of the answer, and read the prompt PHONE_BATCH tokens a
+ * step: one step holds the processor for less time, and each step ends with the prompt's progress, which keeps the
+ * answer's watch (STALL_MS between two chunks, wllamaRuntime.ts) from giving up on a phone that reads a token or two a
+ * second (a Mali-G52 phone on Lite gave up at 256 a step). Warmup on a desktop is what wllama does when the option is
+ * unset (llama.cpp's own default, true; inferred from wllama-context.h passing it through only when set).
  */
 const ROWS: Readonly<Record<Profile, Pick<Placement, 'ctx' | 'batch' | 'ubatch' | 'maxTokens' | 'warmup'>>> = Object.freeze({
   discrete: Object.freeze({ ctx: CONTEXT_TOKENS, batch: undefined, ubatch: undefined, maxTokens: ANSWER_TOKENS, warmup: true }),
   integrated: Object.freeze({ ctx: CONTEXT_TOKENS, batch: 512, ubatch: 256, maxTokens: ANSWER_TOKENS, warmup: true }),
-  phone: Object.freeze({ ctx: 4096, batch: 256, ubatch: 128, maxTokens: 512, warmup: false }),
-  lite: Object.freeze({ ctx: 4096, batch: 256, ubatch: 128, maxTokens: 512, warmup: false }),
+  phone: Object.freeze({ ctx: 4096, batch: PHONE_BATCH, ubatch: PHONE_BATCH, maxTokens: 512, warmup: false }),
+  lite: Object.freeze({ ctx: 4096, batch: PHONE_BATCH, ubatch: PHONE_BATCH, maxTokens: 512, warmup: false }),
 })
 
 /**

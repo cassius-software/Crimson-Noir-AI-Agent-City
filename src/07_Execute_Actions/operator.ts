@@ -223,6 +223,18 @@ export interface AnswerRequest {
    * prompt after the expertise; absent when nothing is steered, so the prompt is then as it was.
    */
   steering?: readonly string[]
+  /**
+   * A conversation (Sloane's chat, onboarding/voice.ts sloaneChat): every provider sends the talk prompt
+   * (09_Cognition/localCompute.ts TALK_PROMPT, through systemFor) instead of the base reality, since a conversation is
+   * bound to no one, carries no steering and never acts. Absent or false: the prompt is as it was.
+   */
+  talk?: boolean
+  /**
+   * This request's own phase until its first word, as the model in this page reports it (09_Cognition/inPage.ts: its
+   * turn behind another answer, its load, the share of the prompt read), and null once the first word comes or the
+   * request ends. Only that provider reports one; a listener that throws costs the answer nothing. Absent: none.
+   */
+  onPhase?: (phase: string | null) => void
 }
 
 /** What one of the people an answer speaks for remembers of the operator (Diary.recall), oldest first. */
