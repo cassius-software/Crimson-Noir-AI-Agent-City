@@ -4753,7 +4753,7 @@ bar and no reload of their own, so the page carries its own way out.
   The rule rests on that one phone and is untried on other Bifrost GPUs. A record of the GPU itself still sets where
   a start begins, but on such a GPU a kernel heavier than the light one that took it down is not asked about again,
   a refusal older than a week starts again from the light kernel (or from the rung the record saw stand, where that
-  is higher), and the light kernel standing after its own hold forgets the record. `?kernel=full` asks for everything
+  is higher), and a kernel standing after the light kernel's own hold forgets the record. `?kernel=full` asks for everything
   on that visit only: the full kernel standing is not remembered, so the next start without the address is on the
   light kernel again. `hardware` names why a
   lighter kernel runs ("a heavier one took this GPU down", "the address asked for it", "this GPU family starts on

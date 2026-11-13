@@ -206,6 +206,15 @@ test('a GPU family that starts lower: Mali Bifrost begins on the light kernel be
   after.stood('lite')
   assert.equal(t.map.size, 0)
   assert.deepEqual(new KernelWatch(t, BIFROST, null, () => 90 + NONE_RETRY_MS).plan, { from: 'lite', by: 'family' })
+  // A heavier kernel the address asked for, standing after such a hold, forgets the record too: the address counts
+  // for its visit only, and no loss of a heavier kernel is made up.
+  const n = store()
+  saveKernelMemory(n, BIFROST, { from: 'none', why: 'lost', rung: 'lite', words: GONE }, 100)
+  const narrowAsked = new KernelWatch(n, BIFROST, 'narrow', () => 100 + NONE_RETRY_MS)
+  assert.deepEqual(narrowAsked.plan, { from: 'narrow', by: 'address' })
+  narrowAsked.stood('narrow')
+  assert.equal(n.map.size, 0)
+  assert.deepEqual(new KernelWatch(n, BIFROST, null, () => 200 + NONE_RETRY_MS).plan, { from: 'lite', by: 'family' })
   // Any other GPU keeps the record of one loss above the light kernel, as before.
   const v = store()
   saveKernelMemory(v, HERE, { from: 'none', why: 'lost', rung: 'lite', words: GONE }, 100)
@@ -437,6 +446,10 @@ test('what a loss comes to: kernel-lost with the lighter kernel to restart on (b
   // A heavier kernel lost while 'none' still held: the same card, saying why nothing lighter is tried, and what is left of the rest.
   assert.match(kernelLostFailure(verdict({ next: 'none', holdMs: 25 * 60_000 }), { from: 'full', by: 'address' }).message,
     /the full kernel of the crowd was being built \(.*\)\. The light kernel took this GPU down on an earlier start as well: none is left to ask this GPU for\. The city leaves this GPU alone for about 25 minutes, then/)
+  // Its card is true of that path too: the lightest kernel took the GPU out on an earlier start, the full one on this.
+  const heldCard = classify(kernelLostFailure(verdict({ next: 'none', holdMs: 25 * 60_000 }), { from: 'full', by: 'address' }), env)
+  assert.equal(heldCard.kind, 'kernel-none')
+  assert.equal(heldCard.steps[0], 'The crowd’s lightest kernel took the GPU out of the browser, on this start or an earlier one, so no lighter kernel is left to ask it for; the details say which kernels were lost and when.')
   const noneCard = classify(last, env)
   assert.equal(noneCard.kind, 'kernel-none')
   assert.equal(noneCard.headline, 'The crowd’s lightest kernel stopped this device’s graphics')

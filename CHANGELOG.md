@@ -2126,7 +2126,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **An Android phone with WebGPU but no adapter gets steps that fit it, and a Mali Bifrost GPU starts on the light
   crowd kernel.** On the Armor X32 (Mali-G52, Android 16) Chrome 156 handed the page no WebGPU adapter while Brave on
   the same phone ran the city, and the card said Chrome "has WebGPU, but not for this phone's GPU or its driver",
-  which Chrome had been before. Chrome's own code gives a page no adapter on Android when its GPU process went twice
+  though Chrome had given the page WebGPU on that phone before (the full crowd kernel took its GPU process down two
+  days earlier). Chrome's own code gives a page no adapter on Android when its GPU process went twice
   in two minutes (the existing "paused" card), when it hands the page no GPU at all after its graphics crashed, or when
   it holds WebGPU back alone: its list of GPUs it keeps WebGPU from, which Google can change without an update, or
   Android's Advanced Protection, under which Chrome turns WebGPU off. The page now asks its own WebGL at that moment
@@ -2143,10 +2144,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   again, so a Mali Bifrost GPU (`familyKernel`: architecture `bifrost`, or a Mali-G31, G51, G52, G71, G72 or G76) now
   starts on the light kernel before anything is learnt of it (`planKernel`, `by: 'family'`). On such a GPU a lost
   heavier kernel is not asked about again, an expired refusal starts from the light kernel (or the rung the record saw
-  stand, where higher), the light kernel standing after its own hold forgets the record, `?kernel=full` asks for
+  stand, where higher), a kernel standing after the light kernel's own hold forgets the record, `?kernel=full` asks for
   everything on that visit only, and `hardware` says "this GPU family starts on it". The card after the lightest
   kernel's loss, which on such a GPU can follow a single loss, now reads "The crowd’s lightest kernel stopped this
-  device’s graphics" instead of saying the crowd "keeps" stopping them. `bootFailure.test.ts`, `gpuDevice.test.ts`,
+  device’s graphics" instead of saying the crowd "keeps" stopping them, and the driver card no longer says heavier
+  kernels were tried where the start began on the light one. `bootFailure.test.ts`, `gpuDevice.test.ts`,
   `crowdKernelMemory.test.ts` and `commands.test.ts` hold the card's words for each WebGL answer, browser name,
   Firefox, the installed app and the built-in browser, the WebGL check and its message, the family's start and its
   interplay with records, holds and the address, and the `hardware` row; the browser smoke's `fail` scenario checks

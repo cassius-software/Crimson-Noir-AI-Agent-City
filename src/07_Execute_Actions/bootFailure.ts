@@ -155,7 +155,9 @@ export function appName(brands: unknown, brave: boolean): string | null {
     const raw = b && typeof b === 'object' ? (b as { brand?: unknown }).brand : undefined
     const name = typeof raw === 'string' ? raw.replace(/[^\x20-\x7e]/g, '').trim() : ''
     if (!name || /^chromium$/i.test(name) || /not.{0,3}a.{0,3}brand/i.test(name)) continue
-    return name.replace(/^(?:Google|Microsoft) /, '').slice(0, 24)
+    // Opera for Android names itself OperaMobile in its hints; Android lists the app as Opera.
+    const plain = name.replace(/^(?:Google|Microsoft) /, '')
+    return (plain === 'OperaMobile' ? 'Opera' : plain).slice(0, 24)
   }
   return ''
 }
@@ -601,7 +603,8 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
           : phone
             ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
             : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
-        'For the crowd’s simulate pass the city also tried narrower workgroups and its lighter kernel; the details name each refusal.',
+        // A start may begin on the light kernel (the address, a record, a GPU family that starts there): nothing heavier was tried then.
+        'Where the city started higher, it also tried narrower workgroups and its lighter kernel; the details name each refusal.',
       ])
     case 'kernel-lost':
       // Said as what the page saw, not as the driver's fault for certain: the browser's own watchdog, or the system
@@ -614,7 +617,7 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
       ])
     case 'kernel-none':
       return w('The crowd’s lightest kernel stopped this device’s graphics', [
-        'The GPU dropped out of the browser while the crowd’s lightest kernel was being built, so no lighter kernel is left to ask it for; the details say what was lost and when.',
+        'The crowd’s lightest kernel took the GPU out of the browser, on this start or an earlier one, so no lighter kernel is left to ask it for; the details say which kernels were lost and when.',
         p.os === 'ios'
           ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
           : phone

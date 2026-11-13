@@ -215,7 +215,8 @@ export function planKernel(asked: CrowdKernel | null, memory: KernelMemory | nul
   if (memory?.from === 'none' && asked !== 'full') {
     if (holds(memory.at, nowMs, noneHoldMs(memory.strikes))) return { from: null, by: 'memory' }
     // After the hold the light kernel is asked once more: the record's doing, or the family's where the family starts
-    // there (nothing heavier was asked of such a GPU, so no heavier kernel is to blame: engine.ts kernelWhy).
+    // there (such a GPU is never asked for a heavier kernel again without the address, so the console names its family,
+    // not a heavier kernel's loss: engine.ts kernelWhy).
     return asked ? { from: asked, by: 'address' } : { from: 'lite', by: family === 'lite' ? 'family' : 'memory' }
   }
   if (asked) return { from: asked, by: 'address' }
@@ -364,8 +365,9 @@ export class KernelWatch {
    * rung reached because the one above was refused in this very boot becomes where later starts begin (unless the
    * refusal's words name memory: the system was short of it then, which says nothing of the kernel). The light
    * kernel standing where the record said 'none' leaves the record of one loss above it, to be asked about a day
-   * later, save on a GPU whose family starts at the kernel that stood (familyKernel): nothing above it was asked of
-   * that GPU, so the record is forgotten and later starts begin where the family does. A kernel asked for again
+   * later, save on a GPU whose family starts lower (familyKernel): whatever kernel stood (the address's counts for its
+   * visit only), such a GPU is never asked for anything above the family's rung again without the address, so the
+   * record has nothing left to say and is forgotten; later starts begin where the family does. A kernel asked for again
    * ('retry') that stands below the full one forgets the record, so the next start learns the ladder afresh. Anything else (the remembered rung ran, or the address's) changes nothing.
    */
   stood(kernel: CrowdKernel | 'none'): void {
@@ -379,7 +381,7 @@ export class KernelWatch {
     }
     else if (before?.from === 'none') {
       const family = familyKernel(this.#where.adapter)
-      if (family && !heavier(kernel, family)) clearKernelMemory(this.#store)
+      if (family) clearKernelMemory(this.#store)
       else saveKernelMemory(this.#store, this.#where, { from: kernel, why: 'lost', rung: 'full', words: before.words }, this.#now())
     }
     else if (this.plan.by === 'retry') clearKernelMemory(this.#store)
