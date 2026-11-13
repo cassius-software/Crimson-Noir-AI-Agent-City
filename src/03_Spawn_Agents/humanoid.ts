@@ -1433,7 +1433,13 @@ function headphoneTubes(): Tube[] {
   ]
 }
 
-/** One arm: the sleeve from inside the shoulder to the cuff (the top's cloth), then the hand. */
+/**
+ * One arm: the sleeve from inside the shoulder to the cuff (the top's cloth), then the hand. The hand's first ring is
+ * inside the sleeve, above its open end, and moved by the forearm alone as the sleeve's last ring is (weight 0 on the
+ * hand, whose bone it still names, so the watch and a prosthetic hand are painted on it as before), so the two never
+ * part and nothing shows between the cuff, or a rolled sleeve's bare forearm, and the wrist (the hand began 1.5 cm
+ * below the sleeve once, and the background showed through as a grey line); the wrist bends between it and the palm.
+ */
 function armTubes(side: number, woman: boolean): Tube[] {
   const [arm, fore, hand] = side < 0 ? [BONE.ARM_L, BONE.FOREARM_L, BONE.HAND_L] : [BONE.ARM_R, BONE.FOREARM_R, BONE.HAND_R]
   const x = side * LANDMARK.shoulderX
@@ -1448,7 +1454,7 @@ function armTubes(side: number, woman: boolean): Tube[] {
     { y: 0.935, x: x * 1.06, rx: 0.034 * r, slot: T, bone: fore, far: true },
   ]
   const palm: Ring[] = [
-    { y: 0.92, x: x * 1.06, rx: 0.031 * r, rz: 0.02, slot: K, bone: hand, bone1: fore, w: 0.5, far: true },
+    { y: 0.94, x: x * 1.06, rx: 0.031 * r, rz: 0.02, slot: K, bone: hand, bone1: fore, w: 0, far: true },
     { y: 0.86, x: x * 1.06, rx: 0.04 * r, rz: 0.018, slot: K, bone: hand },
     { y: 0.78, x: x * 1.06, rx: 0.036 * r, rz: 0.016, slot: K, bone: hand, far: true },
     { y: 0.75, x: x * 1.06, rx: 0.02 * r, rz: 0.012, slot: K, bone: hand },
@@ -1459,7 +1465,12 @@ function armTubes(side: number, woman: boolean): Tube[] {
   ]
 }
 
-/** One leg: the trouser leg (or the hose under a skirt) from inside the seat to the ankle, then the shoe. */
+/**
+ * One leg: the trouser leg (or the hose under a skirt) from inside the seat to the ankle, then the shoe. The leg's last
+ * ring is inside the shoe, below its open top, and both are half the shin's and half the foot's, so they move together
+ * and nothing shows between a hem, a boot's shaft or a bare leg and the shoe (it ended 1 cm above the shoe once, and
+ * the floor showed through as a pale ring).
+ */
 function legTubes(side: number, legSlot: number, woman: boolean): Tube[] {
   const [thigh, shin, foot] = side < 0 ? [BONE.THIGH_L, BONE.SHIN_L, BONE.FOOT_L] : [BONE.THIGH_R, BONE.SHIN_R, BONE.FOOT_R]
   const x = side * LANDMARK.hipX
@@ -1474,7 +1485,7 @@ function legTubes(side: number, legSlot: number, woman: boolean): Tube[] {
     { y: 0.34, x, rx: 0.06 * r, rz: 0.064 * r, slot: legSlot, bone: shin, far: true },
     { y: 0.24, x, rx: 0.052 * r, rz: 0.056 * r, slot: legSlot, bone: shin },
     { y: 0.14, x, rx: 0.045 * r, rz: 0.048 * r, slot: legSlot, bone: shin, far: true },
-    { y: 0.095, x, rx: 0.041 * r, rz: 0.044 * r, slot: legSlot, bone: shin, bone1: foot, w: 0.5 },
+    { y: 0.08, x, rx: 0.04 * r, rz: 0.043 * r, slot: legSlot, bone: shin, bone1: foot, w: 0.5 },
   ]
   const shoe: Ring[] = [
     { y: 0.085, x, rx: 0.042 * r, rz: 0.05, slot: SLOT.SHOES, bone: foot, bone1: shin, w: 0.5, far: true },
