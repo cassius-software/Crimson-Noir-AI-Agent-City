@@ -1979,7 +1979,7 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.equal(lite[3], 'lanes     512 simulated  (2500 default for a phone, 60000 ceiling)')
   // The crowd kernel the worker runs, a seventh row: none for the full one, the rung for a GPU that refused it, within
   // the readout's 80 columns (a suffix on the lanes row ran to 135).
-  const kernel = (k: 'full' | 'narrow' | 'lite' | 'none', why?: 'refused' | 'lost' | 'asked') => formatHardware({
+  const kernel = (k: 'full' | 'narrow' | 'lite' | 'none', why?: 'refused' | 'lost' | 'asked' | 'family') => formatHardware({
     class: 'phone', profile: { mobile: true, gpuClass: 'mobile', startTier: 1, lite: false }, adapter: 'arm / Mali-G52 MC2',
     limits: { maxStorageBufferBindingSize: 128 * 2 ** 20, maxBufferSize: 256 * 2 ** 20, maxComputeWorkgroupSizeX: 256, maxComputeInvocationsPerWorkgroup: 256 },
     tiers: { min: 0, max: 2, start: 1, startLabel: 'Low' }, lanes: { simulated: 8000, default: 8000, ceiling: 60000, kernel: k, ...(why && { kernelWhy: why }) },
@@ -1998,7 +1998,9 @@ test('formatHardware: a phone before its first frame, a lite profile, a native s
   assert.equal(kernel('lite', 'lost')[6], 'crowd     light kernel: straight-line routing (a heavier one took this GPU down)')
   assert.equal(kernel('lite', 'asked')[6], 'crowd     light kernel: straight-line routing (the address asked for it)')
   assert.equal(kernel('narrow', 'asked')[6], 'crowd     narrow kernel: 64-wide workgroups (the address asked for it)')
-  for (const why of ['lost', 'asked'] as const) for (const k of ['narrow', 'lite'] as const) for (const l of kernel(k, why)) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), `${k} ${why}: ${l}`)
+  // A GPU family that starts on the light kernel before anything is learnt (crowdKernelMemory.ts familyKernel).
+  assert.equal(kernel('lite', 'family')[6], 'crowd     light kernel: straight-line routing (this GPU family starts on it)')
+  for (const why of ['lost', 'asked', 'family'] as const) for (const k of ['narrow', 'lite'] as const) for (const l of kernel(k, why)) assert.ok(l.length <= 80 && /^[\x20-\x7e]*$/.test(l), `${k} ${why}: ${l}`)
   assert.equal(kernel('full', 'asked').length, 6, 'the full kernel has no row, whoever asked')
   assert.equal(lite[4], 'frames    p50 41.20 ms  p95 55.25 ms  p99 120.50 ms  (3 frames in 0.2 s)')
   assert.equal(lite[5], 'machine   threads unknown  4 GB reported  native shell')

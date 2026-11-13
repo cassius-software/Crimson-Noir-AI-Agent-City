@@ -2123,6 +2123,36 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Fixed
 
+- **An Android phone with WebGPU but no adapter gets steps that fit it, and a Mali Bifrost GPU starts on the light
+  crowd kernel.** On the Armor X32 (Mali-G52, Android 16) Chrome 156 handed the page no WebGPU adapter while Brave on
+  the same phone ran the city, and the card said Chrome "has WebGPU, but not for this phone's GPU or its driver",
+  which Chrome had been before. Chrome's own code gives a page no adapter on Android when its GPU process went twice
+  in two minutes (the existing "paused" card), when it hands the page no GPU at all after its graphics crashed, or when
+  it holds WebGPU back alone: its list of GPUs it keeps WebGPU from, which Google can change without an update, or
+  Android's Advanced Protection, under which Chrome turns WebGPU off. The page now asks its own WebGL at that moment
+  (`gpuDevice.ts` `webgl2Answers`: WebGL2, then WebGL on a fresh canvas; `NoAdapterError`), says the answer in the
+  details, and words the card from it: the browser by its own name (Brave sends Chrome's user agent on Android, and
+  Edge only adds its own EdgA token; `bootFailure.ts` `appName` reads `navigator.brave` and the client hints' brands,
+  and client hints that name no app make it "this browser"), Force stop first, then a restart of the phone or
+  Advanced Protection, and another browser built on Chromium (Firefox is offered Chrome or Brave and told nothing of
+  Advanced Protection). Where a crowd kernel took the GPU down in that browser on an earlier visit (the kernel record,
+  `crowdKernelMemory.ts` `lostBefore`), the card says so first. The installed app is never sent to another browser,
+  and an Android app's built-in browser with no adapter is sent to Chrome with the Open in Chrome button. Separately,
+  the full crowd kernel took Chrome's GPU process down on that Mali-G52 and Brave's compiler refused it and the
+  narrow one; since an updated browser asks the kernels afresh, each update would cost such a phone a GPU process
+  again, so a Mali Bifrost GPU (`familyKernel`: architecture `bifrost`, or a Mali-G31, G51, G52, G71, G72 or G76) now
+  starts on the light kernel before anything is learnt of it (`planKernel`, `by: 'family'`). On such a GPU a lost
+  heavier kernel is not asked about again, an expired refusal starts from the light kernel (or the rung the record saw
+  stand, where higher), the light kernel standing after its own hold forgets the record, `?kernel=full` asks for
+  everything on that visit only, and `hardware` says "this GPU family starts on it". The card after the lightest
+  kernel's loss, which on such a GPU can follow a single loss, now reads "The crowd’s lightest kernel stopped this
+  device’s graphics" instead of saying the crowd "keeps" stopping them. `bootFailure.test.ts`, `gpuDevice.test.ts`,
+  `crowdKernelMemory.test.ts` and `commands.test.ts` hold the card's words for each WebGL answer, browser name,
+  Firefox, the installed app and the built-in browser, the WebGL check and its message, the family's start and its
+  interplay with records, holds and the address, and the `hardware` row; the browser smoke's `fail` scenario checks
+  the new headline. Unverified on the phone: why its Chrome holds the adapter back, and whether Force stop brings it
+  back; the card's WebGL answer there; whether the light kernel stands in that phone's Chrome (only Brave has run it
+  there). The family start rests on that one Mali-G52 and has not been tried on another Bifrost GPU.
 - **No gap at the ankle or the wrist.** The leg's last ring ended at 9.5 cm and the shoe's open top at 8.5 cm, so a
   centimetre all round the ankle showed what was behind the person: a pale band between every trouser hem, boot shaft
   or bare leg and the shoe. The sleeve's last ring ended at 93.5 cm and the hand's first at 92 cm, the same at the
@@ -2246,7 +2276,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   minutes, never when the address named the kernel, never when it would be the GPU's third loss in five minutes, and
   never where the browser keeps nothing for the page.
   New cards: "The browser’s graphics stopped while building the crowd" (Restart goes to the lighter kernel), "The
-  crowd keeps stopping this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
+  crowd’s lightest kernel stopped this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
   inside that time asks for no adapter), and "The browser has paused graphics for this page" for Chrome's own pause
   after two losses within two minutes (measured in Chromium 153; it used to read as a device with no adapter). A boot
   that fails gives its worker up at once (`simClient.ts` `SimBootHooks.signal`), a device handed over already lost is

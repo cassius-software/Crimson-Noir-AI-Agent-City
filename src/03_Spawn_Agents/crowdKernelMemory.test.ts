@@ -5,7 +5,8 @@
  * Why does this file exist? It pins what the page remembers of a GPU and the crowd's kernels (crowdKernelMemory.ts): the
  * record and where it holds, the policy (after a refusal the next rung, after a loss the light kernel, after the light
  * kernel's loss nothing for an hour; one loss asked about again a day later, two standing; a refusal asked again
- * after a week), which start asks for what (the address's word, the record, the full kernel), one boot's bookkeeping
+ * after a week), which start asks for what (the address's word, the record, the GPU family's rung, the full kernel),
+ * what counts as a loss seen in this browser before (lostBefore), one boot's bookkeeping
  * (KernelWatch: the record is written at a verdict and when the realm stands, never in between; a loss while the page
  * was hidden, or of the page's device alone, blames no kernel), and the failures a loss comes to, with their words.
  * The restart can never repeat: a start whose kernel is the address's own word never restarts itself, and the page
@@ -17,13 +18,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   afterLoss, afterRefusal, clearKernelMemory, describeKernelMemory, KERNEL_MEMORY_KEY, kernelLostFailure, kernelNoneFailure, KernelResetError, KernelWatch, loadKernelMemory,
-  heldNone, LOST_RETRY_MS, LOST_STRIKES, NONE_RETRY_MS, noneHoldMs, parseKernelMemory, planKernel, REFUSED_RETRY_MS, saveKernelMemory, type KernelMemory, type KernelStore, type KernelVerdict,
+  familyKernel, heldNone, LOST_RETRY_MS, LOST_STRIKES, lostBefore, NONE_RETRY_MS, noneHoldMs, parseKernelMemory, planKernel, REFUSED_RETRY_MS, saveKernelMemory, type KernelMemory, type KernelStore, type KernelVerdict,
   type KernelWhere,
 } from './crowdKernelMemory.ts'
 import { WebGPUUnavailableError } from '../01_Initialize_World/gpuDevice.ts'
 import { classify, kindOf } from '../07_Execute_Actions/bootFailure.ts'
 
-const HERE: KernelWhere = { sources: '1a2b3c4d', ua: 'Mozilla/5.0 (Linux; Android 10; K) Chrome/156.0.0.0 Mobile Safari/537.36', adapter: 'arm / bifrost' }
+const HERE: KernelWhere = { sources: '1a2b3c4d', ua: 'Mozilla/5.0 (Linux; Android 10; K) Chrome/156.0.0.0 Mobile Safari/537.36', adapter: 'arm / valhall' }
 const GONE = 'GPU device lost (unknown): A valid external Instance reference no longer exists.'
 
 /** A store over a map; `fail` makes writes throw (a private window), `forget` makes them vanish (a browser that keeps nothing). */
@@ -142,6 +143,89 @@ test('planKernel: the address\'s word, else the record, else the full kernel; a 
   const refused = record({ from: 'lite', why: 'refused', rung: 'narrow' })
   assert.deepEqual(planKernel(null, refused, 1000 + REFUSED_RETRY_MS - 1), { from: 'lite', by: 'memory' })
   assert.deepEqual(planKernel(null, refused, 1000 + REFUSED_RETRY_MS), { from: 'full', by: 'default' })
+})
+
+test('a GPU family that starts lower: Mali Bifrost begins on the light kernel before anything is learnt, a record and the address still win, and ?kernel=full asks for everything', () => {
+  // The family from the adapter's line: Dawn's architecture, or the Mali's own name where a browser gives only that.
+  for (const line of ['arm / bifrost', 'arm / bifrost / Mali-G52 MC2', 'ARM / Bifrost', 'arm / Mali-G31', 'Mali-G51', 'arm / mali-g71 mp8', 'arm / Mali-G72 MP3', 'arm / Mali-G76 MC4']) assert.equal(familyKernel(line), 'lite', line)
+  for (const line of ['arm / valhall', 'arm / Mali-G57 MC2', 'arm / Mali-G710', 'arm / Mali-G520', 'arm / Mali-G310', 'qualcomm / adreno-6xx', 'apple / metal-3', 'unknown adapter', '', 'arm / bifrosting']) assert.equal(familyKernel(line), null, line)
+  // Nothing known: the family's rung, said as the family's.
+  assert.deepEqual(planKernel(null, null, 0, 'lite'), { from: 'lite', by: 'family' })
+  assert.deepEqual(planKernel(null, null, 0, null), { from: 'full', by: 'default' })
+  // The address beats the family, ?kernel=full included: the one way to ask such a GPU for everything.
+  for (const asked of ['full', 'narrow', 'lite'] as const) assert.deepEqual(planKernel(asked, null, 0, 'lite'), { from: asked, by: 'address' })
+  // A record of this very GPU beats the family: a refusal that left the narrow kernel standing is kept for its week.
+  const narrow = record({ from: 'narrow', why: 'refused', rung: 'full' })
+  assert.deepEqual(planKernel(null, narrow, 1000, 'lite'), { from: 'narrow', by: 'memory' })
+  // A refusal old enough to ask again asks from the family's top, not the full kernel's; but where the rung the record
+  // saw stand is above the family's (the address asked for everything once, and the narrow kernel ran), that rung.
+  assert.deepEqual(planKernel(null, record({ from: 'lite', why: 'refused', rung: 'narrow' }), 1000 + REFUSED_RETRY_MS, 'lite'), { from: 'lite', by: 'family' })
+  assert.deepEqual(planKernel(null, narrow, 1000 + REFUSED_RETRY_MS, 'lite'), { from: 'narrow', by: 'memory' })
+  assert.deepEqual(planKernel(null, narrow, 1000 + 400 * REFUSED_RETRY_MS, 'lite'), { from: 'narrow', by: 'memory' })
+  assert.deepEqual(planKernel(null, narrow, 1000 + REFUSED_RETRY_MS, null), { from: 'full', by: 'default' }, 'any other GPU asks from the top again')
+  // One loss under the full kernel is not asked about again for such a GPU: the record stands, a day later or a year.
+  assert.deepEqual(planKernel(null, record(), 1000 + LOST_RETRY_MS, 'lite'), { from: 'lite', by: 'memory' })
+  assert.deepEqual(planKernel(null, record({ rung: 'narrow' }), 1000 + LOST_RETRY_MS, 'lite'), { from: 'lite', by: 'memory' })
+  // 'none' holds as it does for any GPU, and after its hour the light kernel is asked once more, as the family's start
+  // (nothing heavier was asked of such a GPU, so `hardware` blames no heavier kernel).
+  const none = record({ from: 'none', rung: 'lite' })
+  assert.deepEqual(planKernel(null, none, 1000, 'lite'), { from: null, by: 'memory' })
+  assert.deepEqual(planKernel(null, none, 1000 + NONE_RETRY_MS, 'lite'), { from: 'lite', by: 'family' })
+  assert.deepEqual(planKernel(null, none, 1000 + NONE_RETRY_MS, null), { from: 'lite', by: 'memory' })
+  assert.deepEqual(planKernel('full', none, 2000, 'lite'), { from: 'full', by: 'address' })
+
+  // One boot on such a GPU: the light kernel is asked first, and standing on it writes nothing (nothing was learnt).
+  const BIFROST: KernelWhere = { ...HERE, adapter: 'arm / bifrost' }
+  const s = store()
+  const w = new KernelWatch(s, BIFROST, null, () => 50)
+  assert.deepEqual(w.plan, { from: 'lite', by: 'family' })
+  w.note({ rung: 'lite', step: 'trying' }, true)
+  w.note({ rung: 'lite', step: 'running' }, true)
+  w.stood('lite')
+  assert.equal(s.map.size, 0)
+  // A Valhall Mali is asked for the full kernel as before.
+  assert.deepEqual(new KernelWatch(store(), HERE, null, () => 50).plan, { from: 'full', by: 'default' })
+  // The light kernel's own loss on such a GPU is the loss of the last rung, as anywhere: nothing is left to ask, and
+  // the card says so in words true of one loss (the lightest kernel stopped the graphics, not "each time").
+  const t = store()
+  const lost = new KernelWatch(t, BIFROST, null, () => 80)
+  lost.note({ rung: 'lite', step: 'trying' }, true)
+  const gone = lost.pageLost(GONE, true, true)
+  assert.equal(gone?.next, 'none')
+  assert.equal(loadKernelMemory(t, BIFROST)?.from, 'none')
+  const card = classify(kernelLostFailure(gone!, lost.plan), { ua: HERE.ua, secure: true, standalone: false, native: false, origin: '', touchPoints: 5 })
+  assert.equal(card.kind, 'kernel-none')
+  assert.equal(card.headline, 'The crowd’s lightest kernel stopped this device’s graphics')
+  assert.doesNotMatch([card.headline, ...card.steps].join(' '), /keeps|each time/)
+  // After the hold the light kernel is asked once more as the family's start, and standing forgets the record: no
+  // heavier kernel was ever asked of this GPU, so none is remembered as lost.
+  const after = new KernelWatch(t, BIFROST, null, () => 80 + NONE_RETRY_MS)
+  assert.deepEqual(after.plan, { from: 'lite', by: 'family' })
+  after.note({ rung: 'lite', step: 'trying' }, true)
+  after.note({ rung: 'lite', step: 'running' }, true)
+  after.stood('lite')
+  assert.equal(t.map.size, 0)
+  assert.deepEqual(new KernelWatch(t, BIFROST, null, () => 90 + NONE_RETRY_MS).plan, { from: 'lite', by: 'family' })
+  // Any other GPU keeps the record of one loss above the light kernel, as before.
+  const v = store()
+  saveKernelMemory(v, HERE, { from: 'none', why: 'lost', rung: 'lite', words: GONE }, 100)
+  const valhall = new KernelWatch(v, HERE, null, () => 100 + NONE_RETRY_MS)
+  assert.deepEqual(valhall.plan, { from: 'lite', by: 'memory' })
+  valhall.stood('lite')
+  assert.deepEqual(loadKernelMemory(v, HERE), record({ from: 'lite', why: 'lost', rung: 'full', at: 100 + NONE_RETRY_MS }))
+  // A record of a loss under the full kernel, from before this rule, is not asked about again a day later.
+  const u = store()
+  saveKernelMemory(u, BIFROST, { from: 'lite', why: 'lost', rung: 'full', words: GONE }, 1000)
+  assert.deepEqual(new KernelWatch(u, BIFROST, null, () => 1000 + LOST_RETRY_MS).plan, { from: 'lite', by: 'memory' })
+})
+
+test('lostBefore: a record of a loss learnt anywhere (another build, browser version or adapter) counts; a refusal, nothing or a corrupt value does not', () => {
+  const raw = JSON.stringify(record())
+  assert.equal(lostBefore(raw), true)
+  assert.equal(lostBefore(JSON.stringify(record({ ua: 'Chrome/155.0.0.0', sources: 'ffffffff', adapter: 'qualcomm / adreno-6xx' }))), true, 'a browser update asks afresh, but the crash happened')
+  assert.equal(lostBefore(JSON.stringify(record({ from: 'none', rung: 'lite' }))), true)
+  assert.equal(lostBefore(JSON.stringify(record({ from: 'narrow', why: 'refused' }))), false)
+  for (const bad of [null, '', 'x', '[]', '{}', 'null', '"lost"', raw.replace('"v":1', '"v":2'), raw.replace('"at":1000', '"at":"then"'), `${raw.slice(0, -1)},"pad":"${'x'.repeat(5000)}"}`]) assert.equal(lostBefore(bad), false, String(bad).slice(0, 40))
 })
 
 test('one boot: the record is written at a verdict and when the realm stands, never in between; a refusal makes the rung that stands the start of later visits; the full kernel standing forgets', () => {
@@ -355,7 +439,7 @@ test('what a loss comes to: kernel-lost with the lighter kernel to restart on (b
     /the full kernel of the crowd was being built \(.*\)\. The light kernel took this GPU down on an earlier start as well: none is left to ask this GPU for\. The city leaves this GPU alone for about 25 minutes, then/)
   const noneCard = classify(last, env)
   assert.equal(noneCard.kind, 'kernel-none')
-  assert.equal(noneCard.headline, 'The crowd keeps stopping this device’s graphics')
+  assert.equal(noneCard.headline, 'The crowd’s lightest kernel stopped this device’s graphics')
   assert.equal(noneCard.restartHref, null)
   // The later start that asks nothing: the record in words.
   const held = kernelNoneFailure(record({ from: 'none', rung: 'lite' }), 1000 + 20 * 60_000)

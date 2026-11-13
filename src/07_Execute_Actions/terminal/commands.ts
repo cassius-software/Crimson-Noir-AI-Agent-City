@@ -585,7 +585,8 @@ export function formatQuality(q: QualityState): string {
  * that is cut). The class and the profile that gave it, the adapter and its limits, the lanes, the governor's frame-time
  * percentiles with how many frames they stand on, and what the browser said of the machine; a seventh row, the crowd
  * kernel, where the crowd runs below the full one (simProtocol.ts SimMeta.crowdKernel), with why: this GPU refused the
- * full one, a heavier one took the GPU down on an earlier start, or the address asked (?kernel=).
+ * full one, a heavier one took the GPU down on an earlier start, the address asked (?kernel=), or the GPU's family
+ * starts on it (crowdKernelMemory.ts familyKernel).
  */
 export function formatHardware(h: HardwareReport): string[] {
   const p = h.profile, t = h.tiers, f = h.frames, l = h.limits
@@ -607,7 +608,8 @@ export function formatHardware(h: HardwareReport): string[] {
 
 /** Why the crowd runs below the full kernel, in the `hardware` row's words (the row stays within 80 columns). */
 function kernelWhy(why: HardwareReport['lanes']['kernelWhy']): string {
-  return why === 'lost' ? 'a heavier one took this GPU down' : why === 'asked' ? 'the address asked for it' : 'this GPU refused the full one'
+  return why === 'lost' ? 'a heavier one took this GPU down' : why === 'asked' ? 'the address asked for it'
+    : why === 'family' ? 'this GPU family starts on it' : 'this GPU refused the full one'
 }
 
 /** The cinema camera's row (none with ?cinema=0): presented frames, the shutter, the ND, the cuts. ASCII only. */

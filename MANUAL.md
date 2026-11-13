@@ -182,7 +182,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
 | `?lite=1`, `?lite=0` | Forces the lite profile on any device, or keeps it off one the profile would make lite (default: the device profile decides; see Autoscaling) |
-| `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
+| `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one (the light one on a Mali Bifrost GPU) or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
 | `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
@@ -4730,7 +4730,8 @@ bar and no reload of their own, so the page carries its own way out.
   keeps what it learnt in this browser (`src/03_Spawn_Agents/crowdKernelMemory.ts`, one record in localStorage, held
   to the kernels' own fingerprint, the user agent and the adapter): after a refusal the next rung; after a loss the
   light kernel, skipping the narrow one; after the light kernel's own loss nothing, for an hour (a day once it went
-  down twice running). One loss is asked about once more a day later, a refusal after a week, and a refusal whose
+  down twice running). One loss is asked about once more a day later, a refusal after a week (on a Mali Bifrost GPU
+  see below), and a refusal whose
   words name memory is not kept. The page then **starts again by itself, once**, with `?kernel=lite` in its address,
   after waiting for the browser to hand out a GPU again (the veil stays up meanwhile, and its "Still starting" line,
   where it shows, names the step as "starting again with a lighter crowd"); the mentor's choice, the hour and the
@@ -4738,15 +4739,25 @@ bar and no reload of their own, so the page carries its own way out.
   when the kernel came from the address, when it already restarted within the last two minutes, when the GPU was
   already lost once in the last five, or where the browser keeps nothing for the page (it could not count its
   restarts): the card comes instead, "The browser’s graphics stopped while building the crowd", whose Restart goes
-  to the lighter kernel. After the lightest kernel's loss the card reads "The crowd keeps stopping this device’s
-  graphics" and says how long the GPU is left alone; its Restart goes to the address without `?kernel=`, a start
+  to the lighter kernel. After the lightest kernel's loss the card reads "The crowd’s lightest kernel stopped this
+  device’s graphics" and says how long the GPU is left alone; its Restart goes to the address without `?kernel=`, a start
   inside that time asks the browser for no adapter at all (each try would cost every tab its graphics), and
   `?kernel=full` asks for everything again. Where the browser kept no record, the card says instead that a restart
   asks the GPU again. A loss while the page was hidden is the phone taking the GPU back, blamed on no kernel. Chrome itself hands a page no GPU for a while after two losses within two minutes
   (measured in Chromium 153: no adapter for the page or its worker until about two minutes after the first loss, and
   a page's own reload does not lift it): the card then reads "The browser has paused graphics for this page" and
-  says to wait, where it used to say the device had no adapter. `hardware` names why a lighter kernel runs ("a
-  heavier one took this GPU down", "the address asked for it" or "this GPU refused the full one"). The browser CI job
+  says to wait, where it used to say the device had no adapter. A Mali Bifrost GPU (a Mali-G31, G51, G52, G71, G72
+  or G76, by the adapter's architecture or name) starts on the light kernel before anything is learnt of it: on a
+  Mali-G52 the full kernel took Chrome's GPU process down, and Brave's compiler refused it and the narrow one; and
+  since a browser update asks the kernels afresh, every update would otherwise cost such a phone a GPU process again.
+  The rule rests on that one phone and is untried on other Bifrost GPUs. A record of the GPU itself still sets where
+  a start begins, but on such a GPU a kernel heavier than the light one that took it down is not asked about again,
+  a refusal older than a week starts again from the light kernel (or from the rung the record saw stand, where that
+  is higher), and the light kernel standing after its own hold forgets the record. `?kernel=full` asks for everything
+  on that visit only: the full kernel standing is not remembered, so the next start without the address is on the
+  light kernel again. `hardware` names why a
+  lighter kernel runs ("a heavier one took this GPU down", "the address asked for it", "this GPU family starts on
+  it" or "this GPU refused the full one"). The browser CI job
   kills Chrome's GPU process as the worker asks for the full kernel and again under the light one
   (`tools/browser/smoke.mjs`, the `fail` scenario), under software WebGPU; whether a given phone's driver survives
   the light kernel is learned on that phone.
@@ -4760,8 +4771,19 @@ bar and no reload of their own, so the page carries its own way out.
   runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
   and the feature flag; another browser on iOS, or an app's built-in browser, is sent to Safari; Android Chrome to
   an update, an Android app's built-in browser to Chrome; Firefox to `dom.webgpu.enabled`; Chrome on Linux with no
-  adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). The home-screen app and
-  the Windows app are never told to edit an address or switch browsers.
+  adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). An Android browser with
+  WebGPU but no adapter (other than an app's built-in browser, which is sent to Chrome with the Open in Chrome button,
+  as when it has no WebGPU) is named as itself (Brave sends Chrome's user agent on Android, so its name comes from
+  `navigator.brave` or the client hints' brands; Edge's user agent carries its own EdgA token; client hints that name
+  no app make it "this browser") and told to close it with Settings > Apps > Force stop first. The page asks its own
+  WebGL at that moment (`gpuDevice.ts` `webgl2Answers`: WebGL2, then WebGL), so the card tells a browser that refuses
+  both (it hands the page no GPU at all, as a browser can after its graphics crashed: restart the phone next) from one
+  that holds WebGPU back alone (under Android's Advanced Protection Chrome and the browsers built on it turn WebGPU
+  off, and a browser can keep it from GPUs on its own list), says so in the details, and offers another browser built
+  on Chromium (Firefox is offered Chrome or Brave, and told nothing of Advanced Protection). Where a crowd kernel took
+  the GPU down in that browser on an earlier visit (the kernel record, `crowdKernelMemory.ts` `lostBefore`), the card
+  says that first. Not yet seen on a phone: whether Force stop brings the adapter back, and the Advanced Protection
+  path on Android 16. The home-screen app and the Windows app are never told to edit an address or switch browsers.
 - **Before the onboarding.** A first visit checks the page is secure, has WebGPU and gets a full adapter before the
   onboarding starts; a browser that cannot run the city gets the card instead.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still

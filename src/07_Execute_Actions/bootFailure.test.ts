@@ -8,20 +8,22 @@
  * Edge on Windows, an iPad asking for the desktop site, Safari on a Mac, and the Windows app. Every code each failure
  * carries, and every message the page has always shown, maps to its class; the installed apps are never told to edit
  * an address or switch browsers; the 'needs WebGPU' line appears only where WebGPU is what is missing; the halt reasons
- * the realm and the engine really produce keep the Ring-0 copy only for audits; and the one automatic restart after a
+ * the realm and the engine really produce keep the Ring-0 copy only for audits; Android's no-adapter card names the
+ * browser the player has open (or says "this browser"), tells a page given no GPU at all from WebGPU held back, and
+ * says nothing of Chromium or Advanced Protection to Firefox; and the one automatic restart after a
  * graphics reset in the background is guarded as the plan says.
  * What breaks if it is removed? A wording change could send an iPhone XR to an update it cannot take, tell the
  * installed app to open a browser it does not have, or file a GPU reset under a broken invariant, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/gpuDevice.ts'
+import { NoAdapterError, noAdapterMessage, WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/gpuDevice.ts'
 import { BRAND } from '../brand.ts'
 import { panicReason } from '../02_Define_The_Rules/ring0.ts'
 import { coded } from './simProtocol.ts'
 import { kernelLostFailure, kernelNoneFailure, KernelNoneError, KernelResetError, type KernelMemory } from '../03_Spawn_Agents/crowdKernelMemory.ts'
 import {
-  AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
+  appName, AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
   haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
   recentGpuLosses, WEBGPU_LINE, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure,
 } from './bootFailure.ts'
@@ -99,10 +101,109 @@ test('no adapter: Linux names the flags, Vulkan and chrome://gpu (and NixOS\'s d
   assert.match(linux, /hardware\.graphics\.enable = true/)
   assert.match(text(classify(err('no-adapter'), env(UA.edgeWindows))), /hardware acceleration/)
   assert.match(text(classify(err('no-adapter'), env(UA.edgeWindows, TAURI))), /graphics driver and WebView2/)
-  assert.match(text(classify(err('no-adapter'), env(UA.androidChrome))), /not for this phone’s GPU/)
+  assert.match(text(classify(err('no-adapter'), env(UA.androidChrome))), /Chrome has WebGPU but gave this page no GPU for it/)
   assert.match(text(classify(err('no-adapter'), env(UA.firefoxLinux))), /Firefox has WebGPU but offered no GPU/)
   assert.match(text(classify(err('no-adapter'), env(UA.ios26, IPHONE))), /App Switcher/)
   assert.equal(classify(err('no-adapter'), env(UA.chromeLinux)).webgpuLine, WEBGPU_LINE)
+})
+
+test('no adapter on Android: the browser by its own name, force stop first, and the WebGL answer tells a page given no GPU at all from WebGPU held back', () => {
+  const noAdapter = (webgl: boolean | null) => new NoAdapterError(noAdapterMessage(webgl), webgl)
+  // WebGL refused as well: the browser hands the page no GPU at all, as after its graphics crashed.
+  const none = classify(noAdapter(false), env(UA.androidChrome))
+  assert.equal(none.kind, 'no-adapter')
+  assert.equal(none.headline, 'Chrome is giving this page no GPU')
+  assert.deepEqual(none.steps, [
+    'Chrome hands this page no GPU at all, not even for WebGL, as a browser can after its graphics crashed, until it is closed.',
+    'Close Chrome completely (Settings > Apps > Chrome > Force stop), then open the page again.',
+    'Still nothing: restart the phone, or open the page in another browser built on Chromium, such as Brave or Edge.',
+  ])
+  assert.equal(none.detail, noAdapterMessage(false))
+  assert.equal(none.webgpuLine, WEBGPU_LINE)
+  assert.equal(none.openIn, null, 'Chrome itself gets no Open in Chrome button')
+  // WebGL still given: WebGPU alone is held back (Advanced Protection, or the browser's own list of GPUs).
+  const held = classify(noAdapter(true), env(UA.androidChrome))
+  assert.equal(held.headline, 'No graphics adapter for WebGPU')
+  assert.deepEqual(held.steps, [
+    'Chrome still gives this page WebGL but holds WebGPU back.',
+    'Close Chrome completely (Settings > Apps > Chrome > Force stop), then open the page again.',
+    'Still none: under Android’s Advanced Protection (Settings > Security & privacy > Advanced Protection) Chrome and the browsers built on it turn WebGPU off, and Chrome can keep it from a GPU on its own list; open the page in another browser built on Chromium, such as Brave or Edge.',
+  ])
+  // Unknown (an error without the answer, as older code threw it): the plain words, the same steps.
+  const plain = classify(err('no-adapter'), env(UA.androidChrome))
+  assert.equal(plain.steps[0], 'Chrome has WebGPU but gave this page no GPU for it.')
+  assert.deepEqual(plain.steps.slice(1), held.steps.slice(1))
+  assert.deepEqual(classify(noAdapter(null), env(UA.androidChrome)).steps, plain.steps)
+  // Brave sends Chrome's user agent on Android: its own name comes from the page (appName), and the browser offered
+  // elsewhere is never the one already open. Edge's user agent names it (EdgA).
+  const brave = classify(noAdapter(false), env(UA.androidChrome, { app: 'Brave' }))
+  assert.equal(brave.headline, 'Brave is giving this page no GPU')
+  assert.match(text(brave), /Settings > Apps > Brave > Force stop/)
+  assert.match(text(brave), /such as Chrome or Edge\./)
+  assert.match(text(classify(noAdapter(true), env(UA.androidChrome, { app: 'Edge' }))), /Edge can keep it from a GPU on its own list; open the page in another browser built on Chromium, such as Chrome or Brave\./)
+  assert.match(text(classify(noAdapter(true), env(UA.androidChrome.replace('Mobile Safari', 'EdgA/141.0.0.0 Mobile Safari')))), /Settings > Apps > Edge > Force stop/)
+  // A loss under the city's crowd in this browser before is said first, whatever WebGL said.
+  for (const gl of [true, false, null] as const) {
+    const lost = classify(noAdapter(gl), env(UA.androidChrome, { gpuLostHere: true })).steps
+    assert.equal(lost[0], 'The city’s crowd took this phone’s GPU down in Chrome on an earlier visit.', String(gl))
+    assert.deepEqual(lost.slice(1), classify(noAdapter(gl), env(UA.androidChrome)).steps, String(gl))
+  }
+  // The installed app is never sent to another browser, and is opened again as an app.
+  for (const gl of [true, false, null] as const) {
+    const app = text(classify(noAdapter(gl), env(UA.androidChrome, { standalone: true })))
+    assert.doesNotMatch(app, /another browser|open the page|Brave or|Chrome or/, String(gl))
+    assert.match(app, /Force stop\), then open the app again\./, String(gl))
+  }
+  // An app's built-in browser is sent to Chrome, with the one-tap button, as for no WebGPU at all.
+  const inApp = classify(noAdapter(false), env(UA.androidWebView, { href: 'https://city.example/play' }))
+  assert.match(text(inApp), /Open in Chrome/)
+  assert.deepEqual(inApp.openIn, { label: 'Open in Chrome', href: 'intent://city.example/play#Intent;scheme=https;package=com.android.chrome;end' })
+  // Nothing of this reaches another system's card.
+  for (const ua of [UA.chromeLinux, UA.edgeWindows, UA.ios26]) assert.doesNotMatch(text(classify(noAdapter(false), env(ua, { gpuLostHere: true, app: 'Brave' }))), /Force stop|Advanced Protection|earlier visit/, ua)
+})
+
+test('no adapter on Android in a browser with no name, Samsung Internet, or Firefox: full sentences, no Chromium or Advanced Protection claims for Firefox', () => {
+  const noAdapter = (webgl: boolean | null) => new NoAdapterError(noAdapterMessage(webgl), webgl)
+  // Client hints that name no app (a build of Chromium): not Chrome, whatever the user agent says.
+  const nameless = classify(noAdapter(false), env(UA.androidChrome, { app: '', gpuLostHere: true }))
+  assert.equal(nameless.headline, 'This browser is giving this page no GPU')
+  assert.deepEqual(nameless.steps, [
+    'The city’s crowd took this phone’s GPU down in this browser on an earlier visit.',
+    'This browser hands this page no GPU at all, not even for WebGL, as a browser can after its graphics crashed, until it is closed.',
+    'Close this browser completely (in Settings > Apps, choose it, then Force stop), then open the page again.',
+    'Still nothing: restart the phone, or open the page in another browser built on Chromium, such as Chrome or Brave.',
+  ])
+  assert.match(text(classify(noAdapter(true), env(UA.androidChrome, { app: '' }))), /^No graphics adapter for WebGPU\nThis browser still gives this page WebGL but holds WebGPU back\.\n.*\nStill none: .*and this browser can keep it from a GPU on its own list; /)
+  // No client hints at all: the user agent names it.
+  assert.equal(classify(noAdapter(false), env(UA.androidChrome, { app: null })).headline, 'Chrome is giving this page no GPU')
+  const samsung = 'Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/27.0 Chrome/125.0.0.0 Mobile Safari/537.36'
+  assert.match(text(classify(noAdapter(false), env(samsung))), /^Samsung Internet is giving this page no GPU\n.*Settings > Apps > Samsung Internet > Force stop/s)
+  // Firefox: neither "another browser built on Chromium" nor Chrome's Advanced Protection behaviour.
+  const firefox = 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0'
+  for (const gl of [true, false, null] as const) {
+    const f = text(classify(noAdapter(gl), env(firefox)))
+    assert.match(f, /Settings > Apps > Firefox > Force stop/, String(gl))
+    assert.match(f, /open the page in Chrome or Brave\.$/, String(gl))
+    assert.doesNotMatch(f, /Chromium|Advanced Protection/, String(gl))
+    assert.doesNotMatch(text(classify(noAdapter(gl), env(firefox, { standalone: true }))), /Chrome or Brave|open the page|Chromium|Advanced Protection/, String(gl))
+  }
+  for (const f of [nameless, classify(noAdapter(true), env(firefox)), classify(noAdapter(null), env(samsung))]) for (const line of [f.headline, ...f.steps]) assert.match(line, /^[A-Z]/, line)
+})
+
+test('appName: Brave by its own word, else the first real brand of the client hints, short and printable; none named is not no hints', () => {
+  const brands = (...names: string[]) => names.map((brand) => ({ brand, version: '141' }))
+  assert.equal(appName(brands('Chromium', 'Not=A?Brand'), true), 'Brave')
+  assert.equal(appName(undefined, true), 'Brave')
+  assert.equal(appName(brands('Not)A;Brand', 'Chromium', 'Google Chrome'), false), 'Chrome')
+  assert.equal(appName(brands('Microsoft Edge', 'Chromium', 'Not_A Brand'), false), 'Edge')
+  assert.equal(appName(brands('Chromium', 'Brave'), false), 'Brave')
+  assert.equal(appName(brands('Opera', 'Chromium'), false), 'Opera')
+  assert.equal(appName(brands('Chromium', 'Not A(Brand'), false), '', 'hints that name only the engine name no app')
+  assert.equal(appName([], false), '')
+  assert.equal(appName([null, 1, { brand: 7 }], false), '')
+  assert.equal(appName(brands('Very Long Browser Name That Runs On And On'), false)?.length, 24)
+  assert.equal(appName(brands('Ch\u0000rome '), false), 'Chrome')
+  for (const odd of [undefined, null, 'Chrome', {}]) assert.equal(appName(odd, false), null, `no hints: ${String(odd)}`)
 })
 
 test('an insecure page: the address is the problem, not the browser (no WebGPU line)', () => {
@@ -470,7 +571,7 @@ test('a GPU lost under a kernel: the card says the driver stopped, Restart carri
   assert.ok(!(none instanceof KernelResetError), 'nothing lighter is left to restart on')
   assert.equal(none.code, 'kernel-none')
   const card = classify(none, env(UA.androidChrome, { touchPoints: 5, href }))
-  assert.equal(card.headline, 'The crowd keeps stopping this device’s graphics')
+  assert.equal(card.headline, 'The crowd’s lightest kernel stopped this device’s graphics')
   assert.equal(card.restartHref, null, 'no kernel word in the address: Restart loads the page as it is, and the hold stops it')
   assert.ok(none instanceof KernelNoneError && none.kept)
   // The hold is kept and the address names a kernel (the page's own restart, or ?kernel=full by hand, which the hold

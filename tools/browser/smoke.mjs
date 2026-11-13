@@ -3626,7 +3626,7 @@ async function gpuProcessLost(chrome, origin) {
     // The next start begins at the light kernel (the record), and the GPU process goes again under it.
     await again()
     await crashAt('lite')
-    await expectCard(p, `${what}, lite`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    await expectCard(p, `${what}, lite`, 'kernel-none', 'The crowd’s lightest kernel stopped this device’s graphics')
     const none = await p.eval(KERNEL_RECORD)
     check(none?.from === 'none' && none.rung === 'lite', `${what}: after the light kernel's own loss the record says none is left`, JSON.stringify(none).slice(0, 300))
     check(loads.length === 3, `${what}: no restart by itself after the lightest kernel's loss`, `${loads.length} loads`)
@@ -3634,7 +3634,7 @@ async function gpuProcessLost(chrome, origin) {
     // A start inside the hold asks nothing of the GPU: the card at once, and no adapter asked for.
     await again()
     await p.waitFor('document.readyState !== "loading" && !window.__smokeOld', 60_000)
-    await expectCard(p, `${what}, held`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    await expectCard(p, `${what}, held`, 'kernel-none', 'The crowd’s lightest kernel stopped this device’s graphics')
     const asks = await p.eval('window.__smokeAdapterAsks')
     check(asks === 0, `${what}: a start inside the hold asks the browser for no adapter`, `${asks} asked`)
     check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))
