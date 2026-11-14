@@ -61,7 +61,7 @@ test('the host keeps the record through the engine; the console refuses unlock a
   assert.match(engine, /operatorBridge\(this\.simControls\(\), gate, mind, undefined, \{ [^}]*voiceOf, vault \}\)/)
   const commands = read('./terminal/commands.ts')
   const handler = between(commands, '  ring0(args, b) {', '  // Raw: args[0] is the rest of the line')
-  assert.equal(handler.match(/if \(!op\.unlocked\(\)\) return locked\('ring0'\)/g)?.length, 2, 'unlock and set refused before the tier')
+  assert.equal(handler.match(/if \(!op\.unlocked\(\)\) return locked\('ring0', b\)/g)?.length, 2, 'unlock and set refused before the tier')
   // The passphrase (unlock[2], set[1]) reaches only the tier's own calls: never a printed line, never a string.
   assert.deepEqual([...new Set(handler.match(/out\(op\.elite\.(status|lock|set)\(/g) ?? [])].sort(), ['out(op.elite.lock(', 'out(op.elite.set(', 'out(op.elite.status('])
   assert.doesNotMatch(handler, /out\(\s*(rest|unlock\[2\]|set\[1\])|\$\{(rest|unlock\[2\]|set\[1\])/, 'the passphrase is never printed')

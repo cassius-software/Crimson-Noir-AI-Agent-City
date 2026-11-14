@@ -43,7 +43,7 @@ test('App: the settings are read once under the URL, written onto <html> above e
   assert.match(APP, /const prefersMore = useSyncExternalStore\(PREFERS_MORE\.subscribe, PREFERS_MORE\.matches, PREFERS_MORE\.server\)/)
   assert.match(APP, /const onAccess = useCallback\(\(next: AccessSettings, whole\?: boolean\) => \{\n\s+keptRef\.current = whole === true \? next : keepAccess\(keptRef\.current, liveRef\.current, next\)\n\s+liveRef\.current = next\n\s+setAccessState\(next\)\n\s+saveAccess\(keptRef\.current\)\n\s+\}, \[\]\)/, 'a change keeps only its own fields over what was kept; a reset is whole')
   assert.match(APP, /useEffect\(\(\) => \{ applyAccess\(access, prefersMore, document\.documentElement\) \}, \[access, prefersMore\]\)/)
-  const app = APP.indexOf('function App() {'), apply = APP.indexOf('applyAccess(access, prefersMore, document.documentElement)'), tty = APP.indexOf("if (options.boot === 'tty') return <TtyShell />")
+  const app = APP.indexOf('function App() {'), apply = APP.indexOf('applyAccess(access, prefersMore, document.documentElement)'), tty = APP.indexOf("if (options.boot === 'tty') return <TtyShell vram={options.vram} />")
   assert.ok(app < apply && apply < tty, 'applied in App before any shell is chosen: the console alone and the onboarding hold it too')
   assert.equal(APP.match(/saveAccess\(/g)?.length, 1, 'one place keeps them')
   assert.equal(APP.match(/loadAccess\(/g)?.length, 1, 'read once')
@@ -163,7 +163,7 @@ test('the post chain ends in the filter on both paths, the identity until the ho
 })
 
 test('the hands and the ears: the dwell and the scan run above every shell, the switch is taken before the city sees it, the pad layout reaches the input, the reader\'s line is in the HUD from the first render', () => {
-  const app = APP.indexOf('function App() {'), tty = APP.indexOf("if (options.boot === 'tty') return <TtyShell />")
+  const app = APP.indexOf('function App() {'), tty = APP.indexOf("if (options.boot === 'tty') return <TtyShell vram={options.vram} />")
   for (const line of ['const dwell = new DwellClicker(browserDwellEnv())', 'const scan = new Scanner(browserScanEnv())']) {
     const at = APP.indexOf(line)
     assert.ok(app < at && at < tty, `${line}: in App, before any shell is chosen`)

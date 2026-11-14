@@ -12,7 +12,9 @@
  * (display-mode standalone, or fullscreen on Android, which has no address bar to edit and no other browser to switch to) and the
  * apps (Tauri), whose web view is named for its system (appWebView: WebView2 on Windows, WebKitGTK on Linux, WebKit on
  * macOS and iOS, the Android System WebView on Android). The 'needs WebGPU' line appears only where WebGPU itself is
- * what is missing. It also holds the guard for the one automatic restart after a graphics reset in the background
+ * what is missing, and the line saying the console still talks to Sloane only where the app's own runner carries a
+ * model ready to answer and the kept settings leave it to answer (consoleTalks). It also holds the guard for the one
+ * automatic restart after a graphics reset in the background
  * (autoReload), the gate before a first visit's onboarding (firstScreen), and the times the page saw the browser's GPU
  * process go (the browser counts them too, and after two in two minutes hands the page no GPU for a while: gpuPaused).
  * Pure, but for four guarded readers of the browser the tests replace or leave out: pageEnv, pageBuild, and the loss
@@ -89,6 +91,51 @@ export interface Platform {
 
 /** The line under the WebGPU classes: what runs the city (the card's line before this file, word for word). */
 export const WEBGPU_LINE = `${BRAND.name} needs WebGPU: a current Chrome, Edge or Brave on desktop or Android, or Safari 26 on iPhone, iPad and Mac. The crowd simulation runs as WGSL compute and has no WebGL path.`
+
+/**
+ * The recovery card's line where the console still talks to Sloane (RecoveryCard.tsx, beside Open the console): the
+ * model the app carries answers there without the city (terminal/consoleBridge.ts, the router's native provider, under
+ * auto or chosen), so a web view that cannot start the city still has her. It names the model as the app's and the
+ * console as what talks, so it stays true when a server on this machine answers first under auto.
+ */
+export const CONSOLE_TALKS_LINE = "This app carries Sloane's model, and the console talks to her without the city: open it, type operator unlock, then ask and your question."
+
+/**
+ * The providers the person can choose that leave the model the app carries unasked (09_Cognition/router.ts PROVIDERS
+ * but auto and native; the card's test holds the two lists together). Named here, not imported: the router's modules
+ * load only at the console's first ask, and the card is up before that.
+ */
+const OTHER_PROVIDERS: readonly string[] = Object.freeze(['claude', 'ollama', 'llamacpp', 'openai', 'inpage', 'scripted'])
+
+/**
+ * Whether the router's kept settings (App.tsx COGNITION_KEY, as router.ts createMindRouter reads them) leave the model
+ * the app carries to answer: auto, the router's own default when nothing, nothing readable or no known provider is
+ * kept, or native. Pure.
+ */
+export function keptLeavesApp(kept: string | null): boolean {
+  try {
+    const saved: unknown = JSON.parse(kept ?? 'null')
+    const provider = typeof saved === 'object' && saved !== null ? (saved as { provider?: unknown }).provider : undefined
+    return typeof provider !== 'string' || !OTHER_PROVIDERS.includes(provider)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Whether the console can talk to Sloane, by what the app's own runner says it carries (desktopShell.ts shellCarried,
+ * the runner's `native_model`) and the router's kept settings (`kept`, keptLeavesApp): true for a model ready or
+ * loaded that auto or native leaves to answer, null while the app is still preparing it (ask again later), false for
+ * none, one that failed, no answer (a browser, a shell without the runner), another provider kept (scripted, a server,
+ * the gateway, the model file kept in this page: whether that answers is not known here) and anything else. Pure.
+ */
+export function consoleTalks(carried: unknown, kept: string | null = null): boolean | null {
+  const o = (typeof carried === 'object' && carried !== null ? carried : {}) as { file?: unknown; status?: unknown }
+  if (typeof o.file !== 'string' || !o.file || typeof o.status !== 'object' || o.status === null) return false
+  if (!keptLeavesApp(kept)) return false
+  const state = (o.status as { state?: unknown }).state
+  return state === 'ready' || state === 'loaded' ? true : state === 'preparing' ? null : false
+}
 
 /** Which iPhones iOS 26 runs on: the ones that can have Safari 26. */
 const IOS26 = 'iOS 26 runs on iPhone 11, iPhone SE (2nd generation) and newer'

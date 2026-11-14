@@ -106,18 +106,26 @@ test('terminal: full screen is open from the start, black, full height, and neit
   assert.match(src, /if \(r\.boot\) onBoot\?\.\(r\.boot\)/)
 })
 
-test('app: ?boot=tty mounts the full-screen terminal alone over the offline bridge; reboot(track) reloads the page on that track', () => {
+test('app: ?boot=tty mounts the full-screen terminal alone over the console bridge; reboot(track) reloads the page on that track', () => {
   const app = read('../App.tsx')
   assert.match(app, /boot: q\.get\('boot'\) === 'tty' \? 'tty' : 'gui'/)
   assert.match(app, /const \[options\] = useState\(readOptions\)/, 'read once')
   // The console shell mounts before the onboarding or the city is even considered: nothing of either reaches it.
-  assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell \/>/)
+  assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell vram=\{options\.vram\} \/>/)
   assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} mentored=\{watched\} restarted=\{resumed !== null\} walk=\{walk\} voice=\{voice\} speaker=\{speaker\} link=\{link\} access=\{access\} prefersMore=\{prefersMore\} onAccess=\{onAccess\} adapterHint=\{probe\?\.ok \? probe\.info : ''\} \/>/)
-  const tty = between(app, 'function TtyShell() {', 'function App() {')
-  assert.match(tty, /<Terminal bridge=\{TTY_BRIDGE\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
+  const tty = between(app, 'function TtyShell({ vram }: { vram: string | null }) {', 'function App() {')
+  // One bridge for the shell's life (terminal/consoleBridge.ts), made as it mounts: nothing is loaded until an ask.
+  assert.match(tty, /const \[bridge\] = useState\(\(\) => ttyBridge\(vram\)\)/)
+  assert.match(tty, /<Terminal bridge=\{bridge\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
   assert.match(tty, /bg-black/)
   assert.doesNotMatch(tty, /canvas|Engine|navigator\.gpu|Worker|audio|Hud|TouchControls|Concierge|BootVeil|useEffect|requestAnimationFrame/, 'no city at all')
-  assert.match(app, /const TTY_BRIDGE: TerminalBridge = offlineBridge\(\{ \.\.\.BRAND, track: 'tty' \}\)/)
+  const ttyBridge = between(app, 'function ttyBridge(vram: string | null): TerminalBridge {', 'function reboot(track: BootTrack): void {')
+  assert.match(ttyBridge, /return consoleBridge\(\{ \.\.\.BRAND, track: 'tty' \}, \{/)
+  assert.match(ttyBridge, /contained: \(\) => airgapInstalled\(globalThis\),/)
+  // The router comes from the module the city builds it with, loaded by the console's first ask, never at its start.
+  assert.match(ttyBridge, /mind: \(\) => PAGE_MIND\(\)\.then\(\(m\) => m\.createPageMind\(\{/)
+  assert.match(ttyBridge, /device: m\.browserDevice,/)
+  assert.doesNotMatch(ttyBridge, /Engine|canvas|navigator\.gpu|hold:|onPhase:/, 'no city to hold or show a phase on')
   const reboot = between(app, 'function reboot(track: BootTrack): void {', 'function readOptions(')
   assert.match(reboot, /url\.searchParams\.set\('boot', 'tty'\)/)
   assert.match(reboot, /url\.searchParams\.delete\('boot'\)/)

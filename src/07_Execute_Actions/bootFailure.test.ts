@@ -17,6 +17,7 @@
  * installed app to open a browser it does not have, or file a GPU reset under a broken invariant, unnoticed.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { NoAdapterError, noAdapterMessage, WebGPUUnavailableError, type GpuFailure } from '../01_Initialize_World/gpuDevice.ts'
 import { BRAND } from '../brand.ts'
@@ -26,8 +27,9 @@ import { kernelLostFailure, kernelNoneFailure, KernelNoneError, KernelResetError
 import {
   appName, AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
   appWebView, haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
-  recentGpuLosses, WEBGPU_LINE, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure,
+  recentGpuLosses, WEBGPU_LINE, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure, CONSOLE_TALKS_LINE, consoleTalks, keptLeavesApp,
 } from './bootFailure.ts'
+import { createMindRouter, PROVIDERS } from '../09_Cognition/router.ts'
 
 const UA = {
   ios18: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
@@ -677,3 +679,41 @@ test('a GPU lost under a kernel: the card says the driver stopped, Restart carri
   assert.match(held.detail, /^[A-Z].*\?kernel=full in the address asks for everything again at once\.$/)
   assert.match(held.steps[2], /^The city leaves this GPU alone/)
 })
+
+test('consoleTalks: the card says the console still talks to Sloane only where the app\'s runner carries a model ready to answer', () => {
+  // What the runner says it carries, in wire.json's words (native/llm/tests/wire.json models): a file and a status.
+  const wire = JSON.parse(readFileSync(new URL('../../native/llm/tests/wire.json', import.meta.url), 'utf8')) as { models: { file: string; status: { state: string } }[] }
+  for (const m of wire.models) {
+    const want = m.status.state === 'ready' || m.status.state === 'loaded' ? true : m.status.state === 'preparing' ? null : false
+    assert.equal(consoleTalks(m), want, m.status.state)
+  }
+  assert.ok(wire.models.some((m) => consoleTalks(m) === true) && wire.models.some((m) => consoleTalks(m) === false), 'wire.json holds both')
+  // None carried, no answer (a browser, a shell without the runner, a timeout: shellCarried answers null), or nonsense.
+  for (const none of [null, undefined, 0, '', 'ready', {}, { file: '' , status: { state: 'ready' } }, { file: 'm.gguf' }, { file: 'm.gguf', status: null }, { file: 'm.gguf', status: { state: 'warming' } }, { status: { state: 'ready' } }]) {
+    assert.equal(consoleTalks(none), false, JSON.stringify(none))
+  }
+  assert.equal(consoleTalks({ file: 'm.gguf', status: { state: 'preparing', done: 1, total: 4 } }), null, 'ask again while the app prepares it')
+  assert.equal(consoleTalks({ file: 'm.gguf', status: { state: 'failed', reason: 'it would not load', refused: false } }), false, 'never claimed where it failed')
+  // The router's kept settings (as router.ts reads them): auto, its default, or native leave the carried model to
+  // answer; any other provider chosen does not (scripted never asks a model; a server or the gateway may not answer).
+  const ready = { file: 'm.gguf', bytes: 1, status: { state: 'ready' } }
+  for (const kept of [null, '', 'not json', 'null', '{}', '{"provider":"auto"}', '{"provider":"native"}', '{"provider":"nonsense"}', '{"provider":7}']) {
+    assert.equal(consoleTalks(ready, kept), true, String(kept))
+    assert.equal(keptLeavesApp(kept), true, String(kept))
+  }
+  for (const p of PROVIDERS.filter((x) => x !== 'auto' && x !== 'native')) {
+    const kept = JSON.stringify({ v: 3, provider: p })
+    assert.equal(consoleTalks(ready, kept), false, p)
+    assert.equal(consoleTalks({ ...ready, status: { state: 'preparing', done: 1, total: 4 } }, kept), false, `${p}: not asked again either`)
+  }
+  // What the router keeps is what the card reads: a provider the router would not take is its default, auto.
+  for (const p of [...PROVIDERS, 'nonsense']) {
+    const kept = JSON.stringify({ provider: p })
+    const router = createMindRouter({ fetch: async () => { throw new TypeError('fetch failed') }, store: { load: () => kept, save: () => {} } })
+    const s = router.settings().provider
+    assert.equal(keptLeavesApp(kept), s === 'auto' || s === 'native', `${p}: the router reads ${String(s)}`)
+  }
+  // One plain sentence that says how, true whichever provider auto finds first (it names the console, not the model).
+  assert.match(CONSOLE_TALKS_LINE, /^This app carries Sloane's model, and the console talks to her without the city: open it, type operator unlock, then ask and your question\.$/)
+})
+
