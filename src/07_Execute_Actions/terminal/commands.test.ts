@@ -1289,8 +1289,11 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
   // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
+  // os/index.ts is the console's operating layer (files, programs, a shell): likewise a directory that imports nothing
+  // from outside itself (os/airgap.test.ts), reached through its one door. cityfs.ts is the city as files for that
+  // layer: it knows the bridge as a type and reaches the city only through what commands.ts hands it.
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts', './os/index.ts', './cityfs.ts']
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', 'cityfs.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
     const imports = [...src.matchAll(/^\s*(import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?'([^']+)'/gm)]

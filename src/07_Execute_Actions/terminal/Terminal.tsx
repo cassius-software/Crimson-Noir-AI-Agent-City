@@ -18,6 +18,12 @@
  * token never enters the history as typed (redactForHistory).
  * A touch screen has no tilde key: the host opens the console through its handle (TerminalHandle.open, the touch
  * menu's Console item), and a Close button shows on coarse pointers only.
+ * It also hosts the console's operating layer (os/, through commands.ts): it hands the layer its clocks, random bytes
+ * and the host's disk store, gives it turns on a timer while it has work (a job in the background, a line that answers
+ * later), shows what it prints in order with everything else, shows the shell's own prompt (the directory changes; a
+ * line already printed keeps the prompt it was typed at), sends Ctrl+C and Ctrl+D to it (a touch screen gets a Stop
+ * and an End input button while a job has the terminal), and saves its disk a moment after it changes and when the
+ * page is hidden.
  * What breaks if it is removed? Operators lose the live Rapier3D / crowd / kernel readout, the quality,
  * clock, audio and hardware-pairing controls, and the operator tier's scripts, answers and harnesses.
  */
@@ -25,7 +31,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, use
 import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { actEventLines, commonPrefix, complete, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type Line, type LiveFrame, type ReplSession } from './commands.ts'
+import { actEventLines, commonPrefix, completeLine, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type DiskStore, type Line, type LiveFrame, type OsSession, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -35,8 +41,20 @@ const STICK_PX = 32
 /** Longest entry: scripts can be long. */
 const MAX_CHARS = 8192
 const OFFLINE = offlineBridge(BRAND)
+/** The operating layer's turns: how often while it has work, how often to look when it has none, and how long a turn may take. */
+const OS_BUSY_MS = 16
+const OS_IDLE_MS = 250
+const OS_TURN_MS = 4
+/** Full screen there is no city to draw, so a turn may be longer. */
+const OS_TURN_FULL_MS = 12
+/** The disk is saved this long after it last changed (and at once when the page is hidden). */
+const SAVE_MS = 1500
+/** The most random bytes the browser hands out in one call. */
+const ENTROPY_CHUNK = 65536
 
-interface Row extends Line { id: number }
+/** A line to show; an entered line may carry the prompt it was typed at (else the prompt of the moment is shown). */
+interface Shown extends Line { ps?: string }
+interface Row extends Shown { id: number }
 
 /** An answer streaming in: its text so far, and the tokens of thinking before it. */
 interface Streaming { id: number; thinking: number; text: string }
@@ -70,6 +88,12 @@ font:inherit;color:transparent;caret-color:transparent;opacity:0;resize:none;ove
 @media (max-width:640px){.r0-root{font-size:12px}}
 @media (pointer:coarse){.r0-input{font-size:16px}}
 .r0-close{display:none}
+.r0-job{display:none}
+@media (pointer:coarse){.r0-root[data-open] .r0-job,.r0-root[data-full] .r0-job{display:flex;gap:8px;position:absolute;z-index:1;
+top:calc(env(safe-area-inset-top,0px) + 6px);right:max(12px,env(safe-area-inset-right,0px))}
+.r0-root[data-open]:not([data-full]) .r0-job{right:calc(max(12px,env(safe-area-inset-right,0px)) + 84px)}
+.r0-job button{min-width:72px;height:40px;padding:0 14px;border:1px solid #5a5a5a;border-radius:6px;background:#111;color:#ececec;
+font:600 13px/1 ${FONT};touch-action:manipulation}}
 @media (pointer:coarse){.r0-root[data-open]:not([data-full]) .r0-close{display:block;position:absolute;z-index:1;
 top:calc(env(safe-area-inset-top,0px) + 6px);right:max(12px,env(safe-area-inset-right,0px));min-width:72px;height:40px;padding:0 14px;
 border:1px solid #5a5a5a;border-radius:6px;background:#111;color:#ececec;font:600 13px/1 ${FONT};touch-action:manipulation}}
@@ -100,7 +124,7 @@ const Scrollback = memo(function Scrollback({ rows, prompt }: { rows: readonly R
   return (
     <>
       {rows.map((r) => (
-        <div key={r.id} className={`r0-line r0-${r.kind}`}>{r.kind === 'cmd' ? prompt + r.text.replace(/\n/g, `\n${cont}`) : r.text}</div>
+        <div key={r.id} className={`r0-line r0-${r.kind}`}>{r.kind === 'cmd' ? (r.ps ?? prompt) + r.text.replace(/\n/g, `\n${r.ps === undefined ? cont : continuationPrompt(r.ps)}`) : r.text}</div>
       ))}
     </>
   )
@@ -123,8 +147,10 @@ export interface TerminalHandle {
   run(line?: string): void
 }
 
-export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, onLine, ref }: {
+export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, onLine, disk = null, ref }: {
   bridge: TerminalBridge | null
+  /** Where the console's disk is kept between visits (the host's storage); without one, its files last as long as the page. */
+  disk?: DiskStore | null
   onOpenChange(open: boolean): void
   /** Every line submitted, as typed (trimmed), after it ran: the first walk's Ring-0 stage listens for a law line. */
   onLine?(line: string): void
@@ -145,6 +171,10 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const [live, setLive] = useState<readonly string[] | null>(null)
   /** Answers streaming in (`ask`), shown live under the scrollback until their final lines replace them. */
   const [streams, setStreams] = useState<readonly Streaming[]>([])
+  /** The operating layer's prompt once it runs (the shell's own; empty while a job has the terminal); null before. */
+  const [ps1, setPs1] = useState<string | null>(null)
+  /** Whether something reads what is typed (a program's input, the rest of a command): the End input button's cue. */
+  const [reading, setReading] = useState(false)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -169,6 +199,14 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const session = useRef<ReplSession | null>(null)
   /** `submit` as of the latest render, for the handle's `run` (the handle is built once). */
   const submitRef = useRef<(raw: string) => void>(() => {})
+  /** `apply` as of the latest render, for the operating layer's timer (set up once). */
+  const applyRef = useRef<(r: CommandResult) => void>(() => {})
+  const diskRef = useRef(disk)
+  /** The prompt as shown now, for the row an entered line leaves behind. */
+  const promptRef = useRef('')
+  /** The operating layer's next turn, and its next save. */
+  const osTimer = useRef<number | null>(null)
+  const saveTimer = useRef<number | null>(null)
 
   useImperativeHandle(ref, () => ({
     open() {
@@ -194,6 +232,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     onOpenChangeRef.current = onOpenChange
     fullRef.current = fullscreen
     onLineRef.current = onLine
+    diskRef.current = disk
   })
 
   useEffect(() => {
@@ -208,10 +247,10 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     }
   }, [])
 
-  const append = useCallback((lines: readonly Line[]) => {
+  const append = useCallback((lines: readonly Shown[]) => {
     if (!lines.length) return
     setRows((prev) => {
-      const next = prev.concat(lines.map((l) => ({ kind: l.kind, text: l.text, id: nextId.current++ })))
+      const next = prev.concat(lines.map((l) => (l.ps === undefined ? { kind: l.kind, text: l.text, id: nextId.current++ } : { kind: l.kind, text: l.text, ps: l.ps, id: nextId.current++ })))
       return next.length > MAX_ROWS ? next.slice(next.length - MAX_ROWS) : next
     })
   }, [])
@@ -340,25 +379,83 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     setSel((s) => (s[0] === a && s[1] === b ? s : [a, b]))
   }
 
-  const submit = (raw: string) => {
-    const line = raw.trim()
-    if (!line && liveFrame.current) return // a blank Enter does not end a live view
-    stopLive()
-    // Runs synchronously inside the keydown: `hal pair` needs the user activation to open a device picker.
-    const r = run(line, bridge ?? OFFLINE, history.current, (session.current ??= replSession()))
-    const h = history.current
-    // A key or a token typed on the line is kept as dots, never as typed.
-    const kept = redactForHistory(line)
-    if (kept && h[h.length - 1] !== kept) {
-      h.push(kept)
-      if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)
+  /** The console's session, made on the first line (or the first Tab): its two languages and the operating layer. */
+  const sessionOf = (): ReplSession => (session.current ??= replSession({
+    brand: (bridge ?? OFFLINE).brand,
+    clock: () => performance.now(),
+    wall: () => Date.now(),
+    entropy: (bytes) => {
+      for (let at = 0; at < bytes.length; at += ENTROPY_CHUNK) crypto.getRandomValues(bytes.subarray(at, Math.min(bytes.length, at + ENTROPY_CHUNK)) as Uint8Array<ArrayBuffer>)
+    },
+    disk: diskRef.current,
+  }))
+
+  /** Saves the layer's disk if it changed; `soon` waits a moment for more changes first. */
+  const saveDisk = (os: OsSession, soon: boolean) => {
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+    saveTimer.current = null
+    if (!os.unsavedChanges) return
+    if (!soon) { void os.save(); return }
+    saveTimer.current = window.setTimeout(() => {
+      saveTimer.current = null
+      void os.save()
+    }, SAVE_MS)
+  }
+
+  /** Shows what the operating layer printed since last asked, takes its prompt, and books its next turn. */
+  const follow = () => {
+    const os = session.current?.os
+    if (!os) return
+    // What the layer waits for from outside (the saved disk, a city command's later lines) gets a turn as it arrives.
+    os.wake ??= () => { if (mounted.current) turn() }
+    for (let r = os.next(); r !== null; r = os.next()) applyRef.current(r)
+    setPs1(os.prompt)
+    setReading(os.system.capturing)
+    if (os.unsavedChanges && saveTimer.current === null) saveDisk(os, true)
+    if (osTimer.current !== null) window.clearTimeout(osTimer.current)
+    osTimer.current = window.setTimeout(() => {
+      osTimer.current = null
+      if (mounted.current) turn()
+    }, os.busy ? OS_BUSY_MS : OS_IDLE_MS)
+  }
+
+  /** One turn of the operating layer, if it has work, and then what it printed. */
+  const turn = () => {
+    const os = session.current?.os
+    if (!os) return
+    if (os.busy) {
+      os.bridge = bridgeRef.current ?? OFFLINE
+      os.pump(fullRef.current ? OS_TURN_FULL_MS : OS_TURN_MS)
     }
-    histPos.current = h.length
-    draft.current = ''
-    setLine('')
-    stick.current = true
-    if (r.clear) setRows([])
-    else append([{ kind: 'cmd', text: line }, ...(r.live ? [] : r.lines)])
+    follow()
+  }
+
+  /** Ctrl+C for the operating layer: the job that has the terminal ends, a command half read is dropped. */
+  const interrupt = () => {
+    const os = session.current?.os
+    if (!os) return
+    os.system.interrupt()
+    os.pump(OS_TURN_MS)
+    follow()
+  }
+
+  /** Ctrl+D on an empty line: whoever reads what is typed is told the input has ended. */
+  const endInput = () => {
+    const os = session.current?.os
+    if (!os || !os.system.capturing) return
+    os.system.end()
+    os.pump(OS_TURN_MS)
+    follow()
+  }
+
+  /** Shows one result: its lines (after `first`, the entered line's own row), then whatever else it asks of the console. */
+  const apply = (r: CommandResult, first: readonly Shown[] = []) => {
+    // Lines under a live view would be redrawn over: the view ends first, as it does when a line is entered.
+    if (first.length === 0 && (r.lines.length > 0 || r.live || r.clear)) stopLive()
+    if (r.clear) {
+      setRows([])
+      append(r.lines)
+    } else append([...first, ...(r.live ? [] : r.lines)])
     if (r.live) {
       liveFrame.current = r.lines.map((l) => l.text)
       liveDraw.current = r.live
@@ -385,9 +482,55 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     if (r.close && !fullscreen) setOpen(false)
     if (r.boot) onBoot?.(r.boot)
     if (r.map) onMap?.(r.map)
+  }
+
+  const submit = (raw: string) => {
+    const line = raw.trim()
+    if (!line && liveFrame.current) return // a blank Enter does not end a live view
+    stopLive()
+    // The row this line leaves keeps the prompt it was typed at: the shell's changes with the directory.
+    const ps = promptRef.current
+    // Runs synchronously inside the keydown: `hal pair` needs the user activation to open a device picker.
+    const r = run(line, bridge ?? OFFLINE, history.current, sessionOf())
+    const h = history.current
+    // A key or a token typed on the line is kept as dots, never as typed.
+    const kept = redactForHistory(line)
+    if (kept && h[h.length - 1] !== kept) {
+      h.push(kept)
+      if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)
+    }
+    histPos.current = h.length
+    draft.current = ''
+    setLine('')
+    stick.current = true
+    apply(r, [{ kind: 'cmd', text: line, ps }])
+    // Whatever else the operating layer printed for this line, in order; then its prompt and its next turn.
+    follow()
     if (line) onLineRef.current?.(line)
   }
-  useEffect(() => { submitRef.current = submit })
+  useEffect(() => {
+    submitRef.current = submit
+    applyRef.current = apply
+  })
+
+  // The operating layer's disk is saved when the page is hidden or left (a moment after each change otherwise), and
+  // its timers end with the console.
+  useEffect(() => {
+    const flush = () => {
+      const os = session.current?.os
+      if (os) saveDisk(os, false)
+    }
+    const hidden = () => { if (document.visibilityState === 'hidden') flush() }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', hidden)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', hidden)
+      flush()
+      if (osTimer.current !== null) window.clearTimeout(osTimer.current)
+      osTimer.current = null
+    }
+  }, [])
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     e.stopPropagation()
@@ -404,9 +547,16 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       // Live views are stopped in the window listener; with a selection in the prompt the browser copies.
       if (el.selectionStart === el.selectionEnd) {
         e.preventDefault()
-        append([{ kind: 'cmd', text: `${el.value}^C` }])
+        append([{ kind: 'cmd', text: `${el.value}^C`, ps: promptRef.current }])
         histPos.current = history.current.length
         setLine('')
+        interrupt()
+      }
+    } else if (chord && (key === 'd' || key === 'D')) {
+      // On an empty line, the end of input for whatever reads it; the browser's own use of the chord stays off the console.
+      if (session.current?.os) {
+        e.preventDefault()
+        if (el.value === '') endInput()
       }
     } else if (chord && (key === 'l' || key === 'L')) {
       e.preventDefault()
@@ -428,14 +578,15 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         insert(el, '  ') // a script: indent
         return
       }
-      const options = complete(el.value)
-      if (options.length === 1) setLine(`${options[0]} `)
+      const options = completeLine(el.value, sessionOf())
+      // A directory completed is not the end of the word: no blank after its slash.
+      if (options.length === 1) setLine(options[0].endsWith('/') ? options[0] : `${options[0]} `)
       else if (options.length > 1) {
         const common = commonPrefix(options)
         if (common.length > el.value.length) setLine(common)
         else {
           stick.current = true
-          append([{ kind: 'cmd', text: el.value }, { kind: 'out', text: options.map((o) => o.slice(o.lastIndexOf(' ') + 1)).join('  ') }])
+          append([{ kind: 'cmd', text: el.value, ps: promptRef.current }, { kind: 'out', text: options.map((o) => o.slice(o.lastIndexOf(' ') + 1)).join('  ') }])
         }
       }
     } else if (key === 'PageUp' || key === 'PageDown') {
@@ -458,7 +609,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   }
 
   const b = bridge ?? OFFLINE
-  const prompt = `${b.brand.host}:~# `
+  // The shell's own prompt once the operating layer runs (the directory in it; nothing while a job has the terminal).
+  const prompt = ps1 ?? `${b.brand.host}:~# `
+  promptRef.current = prompt
   const cont = continuationPrompt(prompt)
   /** The buffer as the mirror shows it: every line after the first under the continuation prompt. */
   const show = (s: string) => s.replace(/\n/g, `\n${cont}`)
@@ -483,6 +636,13 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     >
       <style href="ring0-terminal" precedence="default">{CSS}</style>
       <button type="button" className="r0-close" onClick={() => setOpen(false)}>Close</button>
+      {/* A touch screen has no Ctrl key: while a job has the terminal, Stop is Ctrl+C and End input is Ctrl+D. */}
+      {ps1 !== null && (ps1 === '' || reading) && (
+        <div className="r0-job">
+          {reading && <button type="button" onClick={endInput}>End input</button>}
+          <button type="button" onClick={() => { append([{ kind: 'cmd', text: '^C', ps: promptRef.current }]); interrupt() }}>Stop</button>
+        </div>
+      )}
       <div ref={scrollRef} className="r0-scroll" onScroll={onScroll}>
         {/* Only the scrollback is a live region: the redrawn stats frame and the echoed prompt are not announced. */}
         <div role="log" aria-label="Ring-0 output">

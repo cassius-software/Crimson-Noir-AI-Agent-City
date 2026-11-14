@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
+import { consoleDisk } from './07_Execute_Actions/consoleDisk.ts'
 import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
@@ -317,6 +318,21 @@ const autoLocks = (): AutoLocks | null => {
 }
 /** How long after the page has its focus back a file picker that said nothing (no change, no cancel) counts as closed. */
 const PICK_SETTLE_MS = 1000
+
+/**
+ * Where the console keeps its disk between visits (07_Execute_Actions/consoleDisk.ts): the page's own IndexedDB, one
+ * store for both shells (the city's console and the console alone), opened only when the console first runs a line.
+ * A browser that refuses storage gets none, and the console's files then last as long as the page.
+ */
+const CONSOLE_DISK = once(() => {
+  let factory: IDBFactory | null = null
+  try {
+    factory = window.indexedDB ?? null
+  } catch {
+    // storage refused
+  }
+  return consoleDisk(factory, (fn, ms) => window.setTimeout(fn, ms))
+})
 
 /** The page's local storage for one key; a browser that refuses storage keeps the settings for this visit only. */
 const pageStore = (key: string) => ({
@@ -697,7 +713,7 @@ function TtyShell() {
           Back to the city
         </button>
       </div>
-      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
+      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} disk={CONSOLE_DISK()} />
     </main>
   )
 }
@@ -2264,7 +2280,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           dark={hud.customer.daylight < 0.35}
         />
       )}
-      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
+      <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} disk={CONSOLE_DISK()} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}
       {act && veilDone && locked === null && bridge && <ActCard act={act} termOpen={termOpen} onAllow={allowAct} onRefuse={refuseAct} />}

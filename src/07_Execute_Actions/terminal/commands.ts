@@ -38,10 +38,13 @@ import type {
   AccessBridge, ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
+import { offlineBridge } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
 import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
+import { BUILTIN_NAMES, Later, MANUAL, PROGRAMS, System, hasOperator, type CityHost, type CityLine, type CityResult, type TtyEvent } from './os/index.ts'
+import { CITY_MANUAL, cityFiles } from './cityfs.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
 export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
@@ -177,8 +180,247 @@ const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'n
  * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
  * and the NoirScript session (noirscript/index.ts).
  */
-export interface ReplSession { machine: Machine; noir: NoirSession }
-export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
+export interface ReplSession { machine: Machine; noir: NoirSession; os: OsSession | null }
+
+/**
+ * A session. With a host (clocks, random bytes, somewhere to keep the disk) it also starts the console's operating
+ * layer (os/): files, programs and a shell behind the same prompt. Without one, the console is its command table
+ * alone, as it was before the layer existed.
+ */
+export function replSession(host: OsHost | null = null): ReplSession {
+  const session: ReplSession = { machine: new Machine(), noir: new NoirSession(), os: null }
+  if (host !== null) session.os = new OsSession(session, host)
+  return session
+}
+
+/**
+ * Where the console's disk is kept between visits (the host's own storage). `load` gives the saved image, or null
+ * when there is none or it cannot be read. `save` puts an image over the one this page last loaded or saved:
+ * 'kept'; 'stale' when another page saved since (nothing is written, so the newer disk is not lost); 'failed'.
+ * `setAside` keeps an image that failed its checks under another name, so it is never written over unseen; false
+ * when the copy could not be kept (the console then leaves the stored image alone for the visit).
+ */
+export interface DiskStore {
+  load(): Promise<Uint8Array | null>
+  save(image: Uint8Array): Promise<'kept' | 'stale' | 'failed'>
+  setAside(image: Uint8Array): Promise<boolean>
+}
+
+/** What the host hands the console's operating layer: the brand it boots under, two clocks, random bytes, a store. */
+export interface OsHost {
+  readonly brand: TerminalBridge['brand']
+  /** Milliseconds that only go up. */
+  clock(): number
+  /** Milliseconds since 1970. */
+  wall(): number
+  /** Fills an array with bytes nobody can foretell (/dev/random); without it that device says it has none. */
+  entropy?(bytes: Uint8Array): void
+  /** Where the disk is kept; without one, files last as long as the page. */
+  readonly disk?: DiskStore | null
+}
+
+/** The most kernel calls one turn of the layer may take, so a clock that stands still (a test's) still bounds it. */
+const PUMP_STEPS = 200_000
+/** How long a typed line may run before the console answers with what it has so far; the rest follows as it comes. */
+export const LINE_MS = 30
+
+/** A result that is lines and nothing else: more lines may join it. */
+const plainResult = (r: CommandResult): boolean =>
+  !r.clear && !r.live && !r.close && !r.boot && !r.map && !r.pending && !r.stream
+
+/**
+ * The operating layer as the console holds it: the system (os/), the bridge and history the city's commands run
+ * with when the shell calls them, what the layer printed and the console has not shown yet, and the saving of the
+ * disk. The console asks two things of it: run a typed line (`run` does, below) and hand over what was printed
+ * (`next`). A host with a timer calls `pump` so that jobs in the background and lines that answer later go on.
+ */
+export class OsSession {
+  readonly system: System
+  /** The bridge and the history of the line being run: the shell runs the city's commands with these. */
+  bridge: TerminalBridge
+  history: readonly string[] = []
+  private readonly clock: () => number
+  private readonly store: DiskStore | null
+  /** What the layer printed, in order, each entry one result for the console to show. */
+  private readonly queue: CommandResult[] = []
+  /** The entries of the queue that are this class's own (lines only), which later lines may join. */
+  private readonly own = new Set<CommandResult>()
+  /** Why the disk is no longer saved (another page saved a newer one, the store keeps failing), once that is so. */
+  private volatile: string | null = null
+  private saving = false
+  private failures = 0
+  /** An image whose save failed, to try again before a newer one is made. */
+  private unsaved: Uint8Array | null = null
+  /** A saved disk that failed its checks: seen, and, until its copy is kept, a reason not to save over it. */
+  private aside = false
+  private holding = false
+  /**
+   * Called when something the layer waits for from outside has arrived (the saved disk, a city command's later
+   * lines), so a host with a timer can give it a turn at once instead of at its next look.
+   */
+  wake: (() => void) | null = null
+
+  constructor(session: ReplSession, host: OsHost) {
+    this.clock = () => host.clock()
+    this.store = host.disk ?? null
+    // Until the first line names the real bridge: the offline one, whose every reading says the engine is not running.
+    this.bridge = offlineBridge(host.brand)
+    const failed = (lines: readonly Line[]): boolean => lines.some((l) => l.kind === 'err')
+    const cityLine = (l: Line): CityLine => ({ err: l.kind === 'err', text: l.text })
+    const city: CityHost = {
+      has: (name) => Object.hasOwn(HANDLERS, name),
+      whole: (name) => RAW.has(name),
+      run: (name, args, line, direct): CityResult => {
+        const a = RAW.has(name) ? (args.length ? [args.join(' ')] : []) : [...args]
+        const r = dispatch(name as Name, a, this.bridge, this.history, line, session)
+        let later: Later<readonly CityLine[]> | null = null
+        if (r.pending) {
+          const settle = new Later<readonly CityLine[]>()
+          r.pending.then((lines) => settle.resolve(lines.map(cityLine)), () => settle.resolve([])).then(() => this.wake?.())
+          later = settle
+        }
+        // Straight to the console: the console shows the result itself, exactly as if the line had been typed alone.
+        if (direct) return { lines: [], later, post: r, status: failed(r.lines) ? 1 : 0 }
+        // Into a pipe or a file: the lines only. What a result would do to the console (clear it, close it, draw live) is left out.
+        return { lines: r.lines.map(cityLine), later }
+      },
+    }
+    const files = cityFiles({
+      bridge: () => this.bridge,
+      command: (name, args) => {
+        if (!Object.hasOwn(HANDLERS, name)) return [err(`${name}: not found`)]
+        try {
+          return HANDLERS[name as Name]([...args], this.bridge, this.history, [name, ...args].join(' '), session).lines
+        } catch (e) {
+          return [err(`${name}: ${message(e)}`)]
+        }
+      },
+      tuning: () => {
+        try {
+          const op = this.bridge.operator
+          return op && op.unlocked() ? tableRows(op.tuning()) : null
+        } catch {
+          return null
+        }
+      },
+    })
+    const store = this.store
+    let image: Later<Uint8Array | null> | null = null
+    if (store !== null) {
+      const arriving = new Later<Uint8Array | null>()
+      store.load().then((bytes) => arriving.resolve(bytes), () => arriving.resolve(null)).then(() => this.wake?.())
+      image = arriving
+    }
+    this.system = new System({
+      hostname: host.brand.host,
+      version: `${host.brand.name} ${host.brand.version}`,
+      clock: this.clock,
+      wall: () => host.wall(),
+      image,
+      entropy: host.entropy ? (bytes) => host.entropy?.(bytes) : undefined,
+      city,
+      proc: files.proc,
+      sys: files.sys,
+      programs: PROGRAMS,
+      manual: { ...MANUAL, ...CITY_MANUAL },
+    })
+    // The first turn: the tree is laid out and the shell reaches its prompt (or waits for the saved disk).
+    this.pump(LINE_MS)
+  }
+
+  /** Gives the layer a turn of at most `ms` milliseconds and queues what it printed. */
+  pump(ms: number): void {
+    this.take(this.system.run(PUMP_STEPS, this.clock() + ms))
+    // A saved disk that failed its checks is copied under another name before anything is saved over it; if the copy
+    // cannot be kept, the stored one is left alone and this visit's files are not kept.
+    if (!this.aside && this.system.state === 'refused' && this.system.refused !== null && this.store !== null) {
+      this.aside = true
+      this.holding = true
+      this.store.setAside(this.system.refused).catch(() => false).then((kept) => {
+        this.holding = false
+        if (kept) this.note('disk: the saved disk failed its check and was set aside; this is a new, empty one')
+        else this.lose('the saved disk failed its check and could not be copied aside, so it is left where it is')
+        this.wake?.()
+      })
+    }
+  }
+
+  private take(events: readonly TtyEvent[]): void {
+    for (const e of events) {
+      if (e.kind === 'post') {
+        // Only the shell posts, and only a city command's own result.
+        const r = e.payload as CommandResult | null
+        if (typeof r === 'object' && r !== null && Array.isArray(r.lines)) this.queue.push(r)
+        continue
+      }
+      this.say({ kind: e.kind, text: e.text })
+    }
+  }
+
+  private say(line: Line): void {
+    const last = this.queue[this.queue.length - 1]
+    if (last !== undefined && this.own.has(last)) { last.lines.push(line); return }
+    const r: CommandResult = { lines: [line] }
+    this.own.add(r)
+    this.queue.push(r)
+  }
+
+  /** A line of the console's own about the layer (the disk's fate), in order with what the programs print. */
+  private note(text: string): void {
+    this.system.kernel.log(text)
+    this.say(sys(text))
+  }
+
+  /** The next result to show, oldest first; null when everything printed has been shown. */
+  next(): CommandResult | null {
+    const r = this.queue.shift() ?? null
+    if (r !== null) this.own.delete(r)
+    return r
+  }
+
+  /** Whether a call to `pump` would move anything: a task can run, or something printed waits to be shown. */
+  get busy(): boolean { return this.queue.length > 0 || !this.system.idle }
+
+  /** What the console shows before the next typed line: the shell's prompt, its continuation mark, or nothing while a job has the terminal. */
+  get prompt(): string { return this.system.prompt }
+
+  /**
+   * Saves the disk if it changed since it was last saved. Resolves when the store has answered; never rejects. Once
+   * another page has saved a newer disk, or the store has failed three times running, nothing more is saved from
+   * this page and the console says so once (the files then last as long as the page).
+   */
+  save(): Promise<void> {
+    const store = this.store
+    if (this.saving || this.holding || this.volatile !== null) return Promise.resolve()
+    const image = this.unsaved ?? this.system.snapshot()
+    if (image === null) return Promise.resolve()
+    if (store === null) {
+      this.lose('this page has nowhere to keep them')
+      return Promise.resolve()
+    }
+    this.saving = true
+    this.unsaved = null
+    return store.save(image).catch((): 'failed' => 'failed').then((how) => {
+      this.saving = false
+      if (how === 'kept') { this.failures = 0; return }
+      if (how === 'stale') { this.lose('another page of this site saved a newer disk (reload this one to open it)'); return }
+      // A newer image will hold everything this one does: keep this one only while nothing newer was made.
+      this.unsaved = image
+      if (++this.failures >= 3) this.lose('the browser refused to store them')
+    })
+  }
+
+  private lose(why: string): void {
+    if (this.volatile !== null) return
+    this.volatile = why
+    this.unsaved = null
+    this.note(`disk: files are not kept between visits from here on: ${why}`)
+  }
+
+  /** Whether the disk has changes that were not saved (and saving is still worth trying). */
+  get unsavedChanges(): boolean { return this.volatile === null && (this.unsaved !== null || this.system.dirty) }
+}
+
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
 export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'native', 'ollama', 'openai', 'scripted'] as const
@@ -1059,7 +1301,7 @@ const knob = (name: Name, fn: (b: TerminalBridge, arg: 'on' | 'off' | undefined)
 }
 
 const HANDLERS: Record<Name, Handler> = {
-  help(args) {
+  help(args, _b, _history, _line, session) {
     if (args.length > 1) return fail(usage('help'))
     if (args.length === 1) {
       const c = COMMANDS.find((x) => x.name === args[0])
@@ -1074,6 +1316,8 @@ const HANDLERS: Record<Name, Handler> = {
         sys("Ring-0 operator (after 'operator unlock'): scripts, tuning and harnesses over the simulation; the laws stay in force."),
         ...OPERATOR.map(entry),
         sys('keys: Tab complete  Up/Down history  Shift+Enter new line  Ctrl+C stop live view  Ctrl+L clear  PgUp/PgDn scroll'),
+        // Only where the operating layer runs (os/): the console's own table above is the same with or without it.
+        ...(session?.os ? [sys("files and programs: this prompt is also a shell (pipes, redirection, scripts): 'man intro' opens the manual, 'ls /bin' lists the programs")] : []),
       ],
     }
   },
@@ -2182,6 +2426,14 @@ function actWaiting(b: TerminalBridge): boolean {
  * definitions persist); without one, each `r0` line runs on a fresh machine.
  */
 export function run(input: string, bridge: TerminalBridge, history: readonly string[], session: ReplSession | null = null): CommandResult {
+  const os = session?.os ?? null
+  if (os) {
+    os.bridge = bridge
+    os.history = history
+    // Something already running reads the terminal (a program's input, the rest of a command the shell is reading):
+    // the line is its, whatever it says.
+    if (os.system.capturing) return shellLine(os, input, null)
+  }
   // `y` and `n` alone are `act ok` and `act no` while a proposal waits; otherwise the console knows no such word (they
   // are in no table, so help, completion and the locked sweep never see them).
   const alias = /^\s*([yn])\s*$/i.exec(input)
@@ -2191,12 +2443,33 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
     const rest = input.slice(head.index + head[0].length).trim()
     return dispatch(head[1] as Name, rest ? [rest] : [], bridge, history, input.trim(), session)
   }
+  // With the operating layer, a line goes to its shell unless it is one of the console's own commands typed alone,
+  // which runs here exactly as it always has (`echo` is the shell's: it expands what it is given). A line that starts
+  // with a console command and holds an operator (a pipe, a redirection, a list) is the shell's too, and the shell
+  // runs the console command inside it.
+  if (os && head && !(head[1] !== 'echo' && Object.hasOwn(HANDLERS, head[1]) && !hasOperator(input))) return shellLine(os, input, bridge)
   const words = tokenize(input)
   if (!words) return fail('ash: syntax error: unterminated quoted string')
   if (!words.length) return { lines: [] }
   const [name, ...args] = words
   if (!Object.hasOwn(HANDLERS, name)) return fail(`ash: ${name}: not found`)
   return dispatch(name as Name, args, bridge, history, input.trim(), session)
+}
+
+/**
+ * Hands a typed line to the operating layer's shell, gives it a moment, and answers with the first of what it
+ * printed (the rest, and what arrives later, waits in `os.next()` for a host that follows the layer). With `earn`,
+ * a line that finished without an error and combined programs earns the check a shell line earns (progress.ts).
+ */
+function shellLine(os: OsSession, input: string, earn: TerminalBridge | null): CommandResult {
+  if (!os.system.type(input)) return fail('ash: too many lines are waiting to be read: wait for the running command, or press Ctrl+C')
+  os.pump(LINE_MS)
+  const r = os.next() ?? { lines: [] }
+  const p = earn?.progress
+  if (!p || !os.system.atPrompt || os.busy || !plainResult(r) || r.lines.some((l) => l.kind === 'err')) return r
+  let check: Line[] = []
+  try { check = p.command('sh', [input]).map(out) } catch { /* a progression that throws costs the line nothing */ }
+  return check.length ? { ...r, lines: [...r.lines, ...check] } : r
 }
 
 /**
@@ -2227,6 +2500,29 @@ export function complete(prefix: string): string[] {
   const key = words.slice(0, -1).join(' ')
   const options = words.length === 1 ? NAMES : Object.hasOwn(ARGS, key) ? ARGS[key] : []
   return options.filter((o) => o.startsWith(last)).map((o) => head + o)
+}
+
+/** The words after which a command name is expected, so Tab offers programs there, not files. */
+const COMMAND_AFTER: ReadonlySet<string> = new Set(['|', '||', '&&', ';', '&', '!', '{', 'if', 'then', 'elif', 'else', 'while', 'until', 'do'])
+
+/**
+ * Tab completion with the operating layer: where a command is expected, the console's commands, the shell's own and
+ * every program along its path; elsewhere the console's own candidates for that command, and when it has none, the
+ * files the word could name (a directory ends in `/`). Without the layer it is `complete`.
+ */
+export function completeLine(prefix: string, session: ReplSession | null = null): string[] {
+  const os = session?.os ?? null
+  if (!os) return complete(prefix)
+  const words = prefix.trimStart().split(/[ \t]+/)
+  const last = words[words.length - 1]
+  const head = prefix.slice(0, prefix.length - last.length)
+  if ((words.length === 1 || COMMAND_AFTER.has(words[words.length - 2])) && !last.includes('/')) {
+    const names = new Set<string>()
+    for (const n of [...NAMES, ...BUILTIN_NAMES, ...os.system.commands()]) if (n.startsWith(last) && /^[a-z]/.test(n)) names.add(n)
+    return [...names].sort().map((o) => head + o)
+  }
+  const own = complete(prefix)
+  return own.length ? own : os.system.complete(last).map((o) => head + o)
 }
 
 /** Longest string every word starts with. */
