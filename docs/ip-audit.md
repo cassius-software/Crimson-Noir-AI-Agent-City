@@ -131,9 +131,9 @@ code, and none of it is in the repository:
 
 ### The model the desktop apps carry (`third_party/qwen2.5-1.5b-instruct/`, added 13 November 2026)
 
-The second set of model weights the product offers, so that a person who installs the Windows app, the Linux app or
-the NixOS package can talk to Sloane from the first launch with no model of their own. It is held exactly as the web
-copy's model is (the entry above), and none of it is in the repository:
+The second set of model weights the product offers, so that a person who installs the Windows app, the Linux app, the
+macOS app or the NixOS package can talk to Sloane from the first launch with no model of their own. It is held
+exactly as the web copy's model is (the entry above), and none of it is in the repository:
 
 - **What it is.** `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, sha256
   `1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370`), as bartowski publishes it in the Hugging Face
@@ -185,11 +185,20 @@ copy's model is (the entry above), and none of it is in the repository:
   `tools/build/linuxAudit.mjs packages` fails the job unless each package holds the three there, the model at exactly
   the pinned size. The Linux app does not hand the file to its page: its own process runs it with llama.cpp compiled
   in (the next entry). Each package is about 1 GB, six on each release. The same open points apply.
+- **The macOS app (added 14 November 2026).** The same file, at the same pin, in the macOS app: the universal .app
+  that `build-matrix.yml`'s macOS job builds, published as a .dmg and as a zipped .app on a numbered release and on the
+  `current` pre-release. The job fetches and checks the file exactly as the Linux jobs do, and the same overlay bundles
+  it, its `LICENSE` and its `NOTICE` under `Contents/Resources/models/` in the .app. `tools/build/macAudit.mjs package`
+  fails the job unless the .app, the .app inside the .dmg (attached read-only) and the .app inside the zip each hold
+  the three there, the model at exactly the pinned size, with llama.cpp's texts, and unless the .dmg and the zip are
+  each under GitHub's 2 GiB limit for one file. The macOS app runs the file in its own process, like the Linux app
+  (the next entry). The .dmg and the zip are about 1 GB each, two on each release. The same open points apply.
 
-### The native model runner in the Linux app (`third_party/llama.cpp/`, added 13 November 2026)
+### The native model runner in the Linux and macOS apps (`third_party/llama.cpp/`, added 13 and 14 November 2026)
 
 The Linux app runs the model it carries in its own process (`src-tauri/src/runner.rs` over `native/llm`), so compiled
-C and C++ of a third party is in a shipped build for the first time:
+C and C++ of a third party is in a shipped build for the first time; since 14 November 2026 the macOS app does the
+same, with the same sources:
 
 - **What it is.** llama.cpp's model library (`libllama`) and ggml (`ggml`, `ggml-base`, `ggml-cpu`), compiled from the
   sources the Rust crate `llama-cpp-sys-2` 0.1.161 vendors (crates.io; the llama-cpp-rs repository at commit
@@ -199,7 +208,12 @@ C and C++ of a third party is in a shipped build for the first time:
   2024 Mozilla Foundation) and its YaRN rotary scaling (`ops.cpp`, Copyright (c) 2023 Jeffrey Quesnelle and Bowen
   Peng). The two crates are MIT OR Apache-2.0. Read from the crates and the vendored sources in this session's registry
   cache, 13 November 2026; the link map of a local build names the archive members linked (llama's and ggml's own
-  objects, none of llama.cpp's common library, cpp-httplib or its vendored libraries).
+  objects, none of llama.cpp's common library, cpp-httplib or its vendored libraries). In the macOS app's Apple
+  silicon slice ggml's Metal backend (`ggml-metal`, the same MIT and the same authors) is compiled in as well, with
+  its shader sources embedded in the executable (ggml's default on Apple systems, `GGML_METAL_EMBED_LIBRARY`); the
+  Intel slice is built without Metal (`tools/build/macos-slices.cmake`). The macOS app links Apple's own frameworks
+  (Metal, MetalKit, Foundation, Accelerate) and `libc++` from the system, which are not redistributed; ggml's BLAS
+  backend is off on Apple systems (llama-cpp-sys-2 sets `GGML_BLAS=OFF` there).
 - **The crates the runner adds to the Linux app** (`cargo tree --target x86_64-unknown-linux-gnu`, with the feature
   against without it; each licence from the crate's manifest in the registry cache). Linked: `crimson-noir-llm` (the
   product's own), `llama-cpp-2` and `llama-cpp-sys-2` (MIT OR Apache-2.0), `enumflags2` (MIT OR Apache-2.0), and
@@ -207,24 +221,29 @@ C and C++ of a third party is in a shipped build for the first time:
   and `tracing-attributes` (MIT), which run in the compiler and are not in the binary, `bindgen` (BSD-3-Clause),
   `clang-sys` (Apache-2.0), `libloading` (ISC), `cexpr` and `minimal-lexical` (Apache-2.0 or MIT), `nom` (MIT),
   `cmake`, `either`, `find_cuda_helper`, `itertools`, `jobserver`, `prettyplease` and `shlex` (MIT OR Apache-2.0).
-  Every other crate of `native/llm/Cargo.lock` was already in the app.
-- **How it is held.** Nothing of llama.cpp is in the repository. Only the Linux release builds compile it (cargo
-  feature `native-runner`, which `tools/build/matrix.mjs` passes for linux-x64 and linux-arm64 alone); the Windows,
-  macOS, Android and iOS builds, the page and the OS media do not. `tools/build/linuxAudit.mjs symbols` fails a Linux
-  build whose binary keeps any download, Hugging Face cache, Docker, HTTP or subprocess code of llama.cpp's common
-  library, cpp-httplib, OpenSSL or curl (from the linker's map and the libraries), or holds their strings, imports a
-  network call or needs OpenSSL, curl or OpenMP.
+  Every other crate of `native/llm/Cargo.lock` was already in the app. `cargo tree --target aarch64-apple-darwin` and
+  `--target x86_64-apple-darwin`, with the feature against without it, list the same additions for the macOS app
+  (read on 14 November 2026, from the lockfile; no Apple build ran in that session).
+- **How it is held.** Nothing of llama.cpp is in the repository. Only the Linux and macOS release builds compile it
+  (cargo feature `native-runner`, which `tools/build/matrix.mjs` passes for linux-x64, linux-arm64 and macos-universal
+  alone); the Windows, Android and iOS builds, the page and the OS media do not. `tools/build/linuxAudit.mjs symbols`
+  fails a Linux build whose binary keeps any download, Hugging Face cache, Docker, HTTP or subprocess code of
+  llama.cpp's common library, cpp-httplib, OpenSSL or curl (from the linker's map and the libraries), or holds their
+  strings, imports a network call or needs OpenSSL, curl or OpenMP. `tools/build/macAudit.mjs symbols` holds each
+  slice of the macOS app to the same list (from each slice's Apple linker map, the binary's strings and each slice's
+  imports), and `libraries` fails it if either slice loads anything but macOS's own libraries.
 - **The texts.** `third_party/llama.cpp/LICENSE` is the vendored `LICENSE`, byte for byte (sha256
   `94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d`); `third_party/llama.cpp/NOTICE` says what is
   compiled in, from where, and under which lines. The model overlay installs both in every Linux package as
-  `/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE` and `NOTICE`, and the package check fails without them.
+  `/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE` and `NOTICE`, and puts both in the macOS app as
+  `Contents/Resources/licenses/llama.cpp/LICENSE` and `NOTICE`; each package check fails without them.
   `NOTICE.md` has a paragraph under "Third-party software" and names llama.cpp in its trademark paragraph.
 - **Open points, for the owner before a release.** llama.cpp's `unicode-data.cpp` (linked) is generated from the
   Unicode Character Database, whose licence (Unicode-3.0) asks for its notice in copies of the data: have counsel say
   whether the NOTICE should carry it (the Tauri tree already brings Unicode-3.0 crates, the same question). The
   crates linked into the app (the list above, and the Tauri stack's in §3) carry their MIT and Apache-2.0 notices in
-  their sources only; the Linux packages install no collected notice of them yet, as the Windows installer installs
-  none.
+  their sources only; the Linux packages and the macOS app carry no collected notice of them yet, as the Windows
+  installer installs none.
 
 ### The speech pack the web copy serves (`third_party/moonshine-tiny-en/`, `third_party/onnxruntime-web/1.31.1/`, added 14 November 2026)
 
@@ -335,8 +354,9 @@ cargo license --manifest-path native/llm/Cargo.toml
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
 - **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
   the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
-  the macOS, Linux, Android and iOS apps). Since 13 November 2026 the Linux app's release builds compile it
-  (`build-matrix.yml`, feature `native-runner`; §1, "The native model runner in the Linux app"); its tests run in
+  the macOS, Linux, Android and iOS apps). Since 13 November 2026 the Linux app's release builds compile it, and
+  since 14 November 2026 the macOS app's (`build-matrix.yml`, feature `native-runner`; §1, "The native model runner in
+  the Linux and macOS apps"); its tests run in
   `native-llm.yml`, and `native-e2e.yml` builds the Linux app with the tiny test model. Linked into it (19 crates):
   `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the sys crate is llama-cpp-rs at commit e7af607e),
   which compile the llama.cpp and ggml sources they vendor (MIT,
@@ -348,11 +368,12 @@ cargo license --manifest-path native/llm/Cargo.toml
   Unicode-3.0), `nom` (MIT), `memchr`, `walkdir` and `same-file` (Unlicense OR MIT; `winapi-util`, also Unlicense OR
   MIT, on Windows only), and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available).
   The notice for what llama.cpp compiles in (ggml, the llamafile matrix multiplication, the YaRN code) is
-  `third_party/llama.cpp/NOTICE`, installed with the Linux app; none of its common library is linked.
+  `third_party/llama.cpp/NOTICE`, installed with the Linux app and held in the macOS app; none of its common library
+  is linked.
 - **`src-tauri/Cargo.lock` (427 crates; 407 before 13 November 2026)**: the 20 added are the native runner's crate and
-  what it brings (the list above), an optional, Linux-only dependency behind the `native-runner` feature, which is
-  off by default: the Linux release builds turn it on (§1), and the Windows and macOS builds link exactly what they
-  did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
+  what it brings (the list above), an optional dependency for Linux and macOS alone behind the `native-runner`
+  feature, which is off by default: the Linux and macOS release builds turn it on (§1), and the Windows builds link
+  exactly what they did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
   `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.

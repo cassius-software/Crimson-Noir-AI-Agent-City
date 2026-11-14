@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? llama.cpp's CPU code is compiled for the processors of the last decade: on x86-64 its
-//! build turns on SSE4.2, AVX, AVX2, FMA, F16C and BMI2 (ggml's defaults for a build that is not cross-compiled), so
-//! on an older processor the first matrix product would stop the whole app on an illegal instruction. The runner
+//! build turns on SSE4.2, AVX, AVX2, FMA, F16C and BMI2 (ggml's defaults for a build that is not cross-compiled; the
+//! macOS app's Intel slice, cross-compiled on an Apple silicon machine, gets the same six from
+//! tools/build/macos-slices.cmake), so on an older processor the first matrix product would stop the whole app on an
+//! illegal instruction. The runner
 //! asks the processor first, before llama.cpp's backend starts, and answers a plain sentence instead. Other
 //! architectures need nothing here: Arm builds are compiled for the base armv8-a.
 //! What breaks if it is removed? The app dies without a word on an x86-64 processor older than about 2013.
