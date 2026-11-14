@@ -62,7 +62,7 @@ test('the marker: the nearest parked car on the car stage, the nearest doorway o
   ]
   const rooms = [{ name: 'medical triage clinic', door: { x: 100, z: 0 } }, { name: 'executive boardroom', door: { x: 0, z: -30 } }]
   assert.deepEqual(beaconOf('fleet', { cars, rooms }, 0, 0), { x: -30, z: 0, label: 'Parked car' }, 'a parked car before a nearer moving one, never the visitor\'s own')
-  assert.deepEqual(beaconOf('fleet', { cars: cars.slice(0, 2), rooms }, 0, 0), { x: 8, z: 0, label: 'Parked car' }, 'a moving car only when none is parked')
+  assert.deepEqual(beaconOf('fleet', { cars: cars.slice(0, 2), rooms }, 0, 0), { x: 8, z: 0, label: 'Car' }, 'a moving car only when none is parked, and not called a parked one')
   assert.equal(beaconOf('fleet', { cars: cars.slice(0, 1), rooms }, 0, 0), null, 'the visitor\'s own car is never the marker')
   assert.deepEqual(beaconOf('work', { cars, rooms }, 0, 0), { x: 0, z: -30, label: 'Workplace door' })
   assert.deepEqual(beaconOf('work', { cars, rooms }, 90, 0), { x: 100, z: 0, label: 'Workplace door' })

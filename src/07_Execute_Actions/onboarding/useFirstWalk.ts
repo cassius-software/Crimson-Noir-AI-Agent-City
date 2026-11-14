@@ -104,18 +104,18 @@ export interface BeaconCity {
 
 /**
  * The marker for a stage, from where the visitor stands: on the car stage the nearest parked car (the nearest one not at
- * the visitor's own wheel when none is parked), on the indoor stage the nearest workplace's doorway; null on every other
- * stage, or when the map has none.
+ * the visitor's own wheel when none is parked, labelled for what it is: a car in traffic is no parked car), on the
+ * indoor stage the nearest workplace's doorway; null on every other stage, or when the map has none.
  */
 export function beaconOf(stage: Stage | null, city: BeaconCity, x: number, z: number): WalkBeacon | null {
   if (stage === 'fleet') {
-    let best: { x: number; z: number } | null = null, near = Number.POSITIVE_INFINITY
+    let best: BeaconCity['cars'][number] | null = null, near = Number.POSITIVE_INFINITY
     for (const c of city.cars) {
       if (c.mode === 'player') continue
       const d = Math.hypot(c.x - x, c.z - z) + (c.mode === 'parked' ? 0 : 1e6)
       if (d < near) { near = d; best = c }
     }
-    return best ? { x: best.x, z: best.z, label: 'Parked car' } : null
+    return best ? { x: best.x, z: best.z, label: best.mode === 'parked' ? 'Parked car' : 'Car' } : null
   }
   if (stage === 'work') {
     let best: BeaconCity['rooms'][number] | null = null, near = Number.POSITIVE_INFINITY

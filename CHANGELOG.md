@@ -2175,7 +2175,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   screen (Sloane's chip and Look on it on every device; on touch the stick, the Enter car button, the Menu and its
   Console item; `index.css`, breathing unless reduced motion is asked for, yellow, dashed and still in high contrast,
   stepping aside while the dwell click marks a control). From the start of the car and indoor stages a marker stands
-  over the nearest parked car or workplace doorway with its distance, and a double ring marks it on the minimap
+  over the nearest parked car (a car in traffic, labelled so, where none is parked) or workplace doorway with its
+  distance, and a double ring marks it on the minimap
   (`Engine.setBeacon`, view-only: no ping, no rally, nothing sent to the realm). The first card reads the machine in
   three rows (the device and its graphics as the engine sized the city for at boot, the picture tier it runs at now
   with a bar from Lite to Peak, Sloane ready to plan), with no network or model call. Sloane's hint comes after twenty
@@ -2183,8 +2184,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `firstWalkWiring.test.ts`, `exam.test.ts`, `commands.test.ts`) and the browser smoke in CI's Chrome: `walk` (the
   machine rows, the console opened early passing nothing, every button, the hand and its ring on Sloane's chip, both
   markers, the console ending the walk with the line printed, the pass kept, the exit program after it), `walkshop`
-  and `walkhome` (the console as the stage after the look; the ~ key ends the walk), `walkphone` (the touch Menu's
-  Console on an early stage passing nothing, then the exit program ending the walk). The rings and the marker on a
+  and `walkhome` (the console as the stage after the look; `walkhome` then ends the walk with the ~ key), `walkphone`
+  (the hand lent on the touch stick, the touch Menu's Console on an early stage passing nothing, then the exit program
+  ending the walk with the ring and any marker gone). The rings and the marker on a
   real phone, a pad or a screen reader are unverified.
 
 - **The KV page table evicts the cached page least likely to be reused, not the one left longest ago.** Each cached

@@ -1241,7 +1241,8 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   yellow, dashed and still, so they are never mistaken for the focus ring, and they step aside while the dwell click
   marks a control. The hand is taken back the moment the stage is done.
 - **The marker.** From the start of the car and indoor stages a **marker** stands over the nearest parked car or the
-  nearest workplace's doorway, labelled *Parked car* or *Workplace door* with its distance, and a crimson double ring
+  nearest workplace's doorway, labelled *Parked car* or *Workplace door* with its distance (where no car is parked,
+  the nearest one in traffic, labelled *Car*), and a crimson double ring
   marks it on the minimap (at the map's edge, on its side, when it is farther than the map shows). Its chip is drawn
   only while the place is in front of you (in split screen, in player 1's view). The marker is drawn by the HUD alone:
   it is no ping, nothing rallies to it and it never reaches the realm.
@@ -1284,8 +1285,9 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   `__SIM__.walkNote(event)` reports an event into it, for the browser smoke. Its `walk` scenario does the whole walk
   on the accessible path in CI's Chrome (the machine rows, the console opened early passing nothing, every button,
   the lent hand and its rings, both markers, the console ending the walk with Sloane's line printed, the pass kept, and
-  the exit program after it); `walkhome` ends it with the ~ key; `walkphone` opens the console from the touch Menu on
-  an early stage (nothing passes) and ends the walk there with the exit program. How the card and the rings stand on a
+  the exit program after it); `walkhome` ends it with the ~ key; `walkphone` waits for the hand lent on the touch
+  stick, opens the console from the touch Menu on an early stage (nothing passes) and ends the walk there with the exit
+  program, the ring and any marker gone after it. How the card and the rings stand on a
   real phone, a pad or a screen reader is unverified.
 - **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
   and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is

@@ -126,8 +126,9 @@
  *   clear of her chip and every control, the HUD's chips at the foot stand above the stick and left of the buttons, and
  *   the shop's Browse chip takes a tap; beside a car there (the band under her chip short) the open card stands above
  *   her chip, never over it; at the wheel upright the card is folded and, opened from its strip, below her chip and
- *   above the car's buttons; away at the wheel sideways until the visitor is on foot again; the console from the
- *   Menu on an early stage passes nothing, and the exit program typed there ends the walk;
+ *   above the car's buttons; away at the wheel sideways until the visitor is on foot again; left idle, the walk lends
+ *   a hand on the touch control the stage asks for; the console from the Menu on an early stage passes nothing, and
+ *   the exit program typed there ends the walk, the ring and any marker gone with it;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -2642,7 +2643,6 @@ const SCENARIOS = {
       const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
       p.transcript.push(`[the console reached]\n${banner ?? await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`)
       check(gone && banner !== null && kept?.v === 1 && kept?.passed === true, `walk: "${b6}" opens the console, the walk ends there with Sloane's line printed, the card goes and the pass is kept`, `gone ${gone}, banner ${banner !== null}, kept ${JSON.stringify(kept)}`)
-      check(await p.eval('document.documentElement.dataset.walkAssist === undefined && window.__SIM__.snapshot().output.beacon === undefined'), 'walk: nothing lit and no marker once the walk is over')
       await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
       // The exit program after the pass, from where the workplace stage left the visitor: inside a room, where the
       // recruiter can ask nobody over (the spot a swarm of people within earshot left a visitor shut in). The exam still
@@ -3034,6 +3034,11 @@ const SCENARIOS = {
       // console there); the exit program typed in it ends the walk from the stage it is on, a knowing visitor's way out.
       await view(IPHONE.width, IPHONE.height)
       const before = await p.eval('window.__SIM__.walk()')
+      // Left alone on that stage, the walk lends a hand on the touch control it asks for (firstWalk.ts assistTargetOf:
+      // the stick on the first stage): lit here, so the walk ending below has a ring (and on a car or indoor stage, a
+      // marker) to take back.
+      const lit = await p.waitFor(`document.documentElement.dataset.walkAssist`, 15_000).catch(() => null)
+      const marked = await p.eval('window.__SIM__.snapshot().output.beacon?.label ?? null')
       let early = 'the Menu did not open'
       if (await tapOn(MENU, 50) && await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)) {
         const item = await tapOn({ pick: `(b) => b.getAttribute('data-menu-item') === 'console'` }, 51)
@@ -3049,6 +3054,9 @@ const SCENARIOS = {
       const over = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk]') && !document.querySelector('[data-walk-strip]')`, 10_000).then(() => true, () => false)
       const told = await p.waitFor(`/The city is open: nothing is held back any more/.test(${CONSOLE_LOG}?.innerText ?? '')`, 10_000).then(() => true, () => false)
       check(seal !== null && swarm !== null && /unlock_city: the city is yours/.test(unlock ?? '') && over && told, `walkphone: the exit program typed in the console ends the walk from stage ${before}, card and strip gone, Sloane's line printed`, `${lastLine(seal)} | ${lastLine(swarm)} | ${lastLine(unlock)} | over ${over}, printed ${told}`)
+      const unlit = await p.waitFor('document.documentElement.dataset.walkAssist === undefined && window.__SIM__.snapshot().output.beacon === undefined', 5_000).then(() => true, () => false)
+      check(typeof lit === 'string' && unlit, `walkphone: left idle on stage ${before} the walk lends a hand on the touch ${lit ?? 'control'}, and once the walk is over that ring${marked ? ' and the marker are' : ' is'} gone`,
+        `lit ${lit}, marker ${marked}, after: ring ${await p.eval('document.documentElement.dataset.walkAssist ?? null')}, marker ${await p.eval('window.__SIM__.snapshot().output.beacon?.label ?? null')}`)
       p.saveTranscript('walkphone')
       p.health('walkphone')
     } finally { await p.b.close() }

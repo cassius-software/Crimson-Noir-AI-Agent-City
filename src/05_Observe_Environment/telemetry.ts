@@ -93,7 +93,7 @@ export interface HudPing {
  * a place: the nearest parked car, the nearest workplace's doorway): plain data, in metres, plus its place on the screen.
  */
 export interface HudBeacon {
-  /** What it marks, in a word or two ('Parked car', 'Robotics lab door'). */
+  /** What it marks, in a word or two ('Parked car', 'Car', 'Workplace door'). */
   label: string
   x: number
   z: number
