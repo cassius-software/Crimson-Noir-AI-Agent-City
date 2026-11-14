@@ -83,6 +83,45 @@ test('the app\'s pin is its own record beside its licence, and the shell and the
   assert.match(notice, /The NixOS package \(the flake's `nix run` and its NixOS module\) carries the same file: tools\/nix\/model\.nix/)
 })
 
+test('every carrier of the app\'s model is named where its licence is: the notice beside it, the tool that places it, NOTICE.md and the audit', () => {
+  // The three that carry it: the Windows installer, the Linux packages and the NixOS package. A fourth must be named in
+  // each of these before it ships the file.
+  const CARRIERS: Record<string, RegExp> = {
+    'the Windows installer': /Windows installer/,
+    'the Linux packages (.deb, .rpm, AppImage)': /Linux (?:packages|app's|app’s)[^]{0,80}\.deb[^]{0,40}\.rpm[^]{0,40}AppImage/,
+    'the NixOS package': /NixOS package/,
+  }
+  const flat = (t: string): string => t.replace(/\s*\n\s*(?:\* ?)?/g, ' ')
+  const tool = read('../../tools/web/siteModel.mjs')
+  const places = {
+    'third_party/qwen2.5-1.5b-instruct/NOTICE': flat(read('../../third_party/qwen2.5-1.5b-instruct/NOTICE')),
+    'NOTICE.md (shipped part)': flat(read('../../NOTICE.md').split('\n## Operator notes')[0]),
+    'docs/ip-audit.md': flat(read('../../docs/ip-audit.md')),
+    'tools/web/siteModel.mjs header': flat(tool.slice(0, tool.indexOf('*/'))),
+  }
+  for (const [where, text] of Object.entries(places)) {
+    for (const [carrier, re] of Object.entries(CARRIERS)) {
+      // The tool places the file for the two app packages; the NixOS package fetches it itself (tools/nix/model.nix).
+      if (where.startsWith('tools/') && carrier === 'the NixOS package') continue
+      assert.match(text, re, `${where} names ${carrier}`)
+    }
+  }
+  // The Linux packages put it where the runner looks, and the notice says so.
+  assert.ok(places['third_party/qwen2.5-1.5b-instruct/NOTICE'].includes(`/usr/lib/Crimson Noir Agent City/models/${APP_MODEL.file}`))
+  // llama.cpp, compiled into the Linux app, travels with its licence text and a notice in every Linux package.
+  const conf = JSON.parse(read('../../src-tauri/tauri.model.conf.json')) as { bundle: { linux: Record<string, { files: Record<string, string>; compression?: { type: string } }> } }
+  const files = conf.bundle.linux.deb.files
+  assert.deepEqual(Object.keys(files).sort(), ['/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE', '/usr/share/doc/crimson-noir-agent-city/llama.cpp/NOTICE'])
+  for (const kind of ['rpm', 'appimage']) assert.deepEqual(conf.bundle.linux[kind].files, files, `the ${kind} carries the same two`)
+  assert.equal(conf.bundle.linux.rpm.compression?.type, 'none', 'the .rpm stores the model as it is')
+  assert.match(read('../../third_party/llama.cpp/LICENSE'), /^MIT License\n\nCopyright \(c\) 2023-2026 The ggml authors\n/)
+  const notice = flat(read('../../third_party/llama.cpp/NOTICE'))
+  assert.match(notice, /llama-cpp-sys-2 0\.1\.161/)
+  assert.match(notice, /e7af607ebd5ec2932709ef918c17cca2f9b0fce4/)
+  assert.match(notice, /\/usr\/share\/doc\/crimson-noir-agent-city\/llama\.cpp\/NOTICE and LICENSE/)
+  assert.match(places['NOTICE.md (shipped part)'], /The native model runner in the Linux app\./)
+})
+
 test('launcherServes: only a page on http://127.0.0.1 with models=1 in its address, the NixOS launcher\'s, is served the launcher\'s model', () => {
   assert.equal(LAUNCHER_WORD, 'models')
   for (const href of ['http://127.0.0.1:4180/?models=1', 'http://127.0.0.1:4180/?vram=8.0&models=1', 'http://127.0.0.1:5000/index.html?quality=4&models=1#x']) assert.equal(launcherServes(href), true, href)

@@ -15,6 +15,95 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
+  **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
+  words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
+  (the Linux app's WebKitGTK among them) still talks to the model its build carries or reaches. The words go to her as
+  her card puts them in the city (`terminal/consoleBridge.ts` over `sloaneChat`: the 14A screen, her framing for the
+  console alone, which says no city runs there and offers no change to it, the last turns, cut at an action line and
+  at her length), through the page's own model router with the same providers, the same `auto` order and the same
+  rules as the city: one function now builds that router for both, `src/09_Cognition/pageMind.ts` `createPageMind`,
+  factored out of `App.tsx`. `ask` alone, `ask provider`, `ask
+  connect`, `ask model`, `ask server`, `ask key`, `ask effort`, `ask think`, `ask api`, `ask vram` and `ask stop`
+  behave as in the city's console (the operator tier's status, settings and connect lines are shared from
+  `operator.ts`), behind the same gate, `operator unlock`, and the same Zeroth Law check before each answer. There a
+  line is a setting only in its exact form, a setting's name and one value it takes (`commands.ts` `ttySetting`):
+  `ask key facts about this city` goes to Sloane and keeps nothing, and `ask -- <words>` always goes to her. `ask file
+  load`, `unload`, `forget <name>` and `log` act on the model file already kept in the page, so the router's "ask file
+  load tries again" can be followed there; choosing a file, `ask gpu` and everything else that needs the city still
+  say `engine not running`, with the operator tier locked or open. The router's module is loaded by a dynamic
+  import at the first `ask`, so none of it runs at the console's start (the page's static module graph went from 244
+  modules to 238; in headless Chrome here the console was on screen at a median of 616 and 638 ms over nine loads
+  each, against 643 and 628 ms before). An ask never fetches a model file (it uses a server running on this machine,
+  the model the app carries, or a file already kept and chosen in the page), and where nothing answers it prints the
+  router's one sentence naming every address it looked at. The recovery card adds "This app carries Sloane's model,
+  and the console talks to her without the city: open it, type operator unlock, then ask and your question." under its
+  buttons only where the app's runner says its model is ready and the kept provider is `auto` or `native`; it asks
+  again every 2 s for up to a minute while the app still checks the model. Tests: `consoleBridge.test.ts` (14, over
+  the real router with a fake app runner and a fake Ollama: the gate, streaming in whole words, the next turn carrying
+  the last, `ask stop` reaching the runner, one answer at a time, the 14A screen and the Zeroth Law, the nothing-answers
+  sentence with no model file fetched, kept or loaded, settings typed before the router loaded, words that start with
+  a setting's name reaching Sloane with the kept settings unchanged, the console's framing, `ask file load` after a
+  load the page died in, the bridge's own gate, a failed load tried again, a kept scripted provider asking no model,
+  and the commands that need the city saying `engine not running` with the tier locked), `pageMind.test.ts`
+  (6: the auto order, the cap and the tier hold, both App paths calling `createPageMind` and no router built in App,
+  the static graph holding none of the router's modules), the card's line conditions (`bootFailure.test.ts`, against
+  `wire.json`'s statuses and the router's own reading of the kept provider), and the browser smoke's console-alone
+  scenario (its ask reaches the router and prints the sentence, and so does `ask key facts about this city please`,
+  which keeps no key; its only requests were looks at this machine). The
+  WebKitGTK end-to-end (`native-e2e.yml`, the tiny-model debug app) now presses the card's Open the console through
+  WebDriver and types `operator unlock` and `ask hello` into the real console: 99 of 99 checks in each of four runs
+  here, the tiny model's text arriving whole (it writes no spaces) and the answer ending with its time in about 0.4 s.
+  The packaged run in `build-matrix.yml`'s `linux-x64` job adds one short console ask, stopped once its first words
+  stream, and judges how it ended without the stop's own reply (which comes last when the answer ended first);
+  rehearsed here against a tiny-model `.deb` installed with apt, 24 of 24 checks, and with the stop forced after the
+  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). Not verified: a real Linux
+  desktop, the real 1.5B model through the console until CI runs the packaged check (and with it the stop after the
+  first words, which the tiny model never reaches), and phones.
+
+- **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
+  `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`
+  over `native/llm`) and put Qwen2.5 1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0)
+  into the `.deb`, the `.rpm` and the `.AppImage` with its `LICENSE` and `NOTICE`, through the same overlay as the
+  Windows installer (`src-tauri/tauri.model.conf.json`, which now also stores the `.rpm` uncompressed and installs
+  llama.cpp's MIT text and a notice, `third_party/llama.cpp/`, in every Linux package). The jobs fetch the file as
+  `windows-app.yml` does (the pin's own cache, Hugging Face only on a miss, `siteModel.mjs app` on every build), run on
+  `ubuntu-22.04` and `ubuntu-22.04-arm` (a cache key per runner image), free disk first and print it between the heavy
+  steps, and fail before any upload unless `tools/build/linuxAudit.mjs` passes: `packages` (each package holds the model
+  at the pinned size under `/usr/lib/Crimson Noir Agent City/models/` with its licence and notice, llama.cpp's texts, is
+  larger than nine tenths of the model, and nothing holds the tiny test model), `glibc` (no file the `.deb` installs
+  needs more than glibc 2.35, GLIBCXX 3.4.30 or CXXABI 1.3.13 by its version-needs table, which is what the loader
+  checks, so a weak reference counts too; the highest is printed) and `symbols` (from the linker's map, which
+  `src-tauri/build.rs` now writes where the runner is compiled, and the binary: no download, Hugging Face cache, HTTP or
+  subprocess code of llama.cpp's common library, no cpp-httplib, OpenSSL or curl, no network import; ggml's crash
+  handler, which can start a debugger, is linked and switched off at run time, below). `linuxAudit.test.ts` runs the
+  three commands end to end over a small `.deb` and ELF files it makes with dpkg-deb, as, ld and ar, each passing a good
+  one and failing a bad one by name. The x86-64 job then installs its `.deb` with apt and asks the installed app, under
+  Xvfb through tauri-driver, for one answer of at most 16 tokens
+  (`tools/browser/nativeE2e.mjs --packaged --file --bytes`, the pin passed in; it waits at most 150 s for the carried
+  file's check, 30 s inside WebDriver's script timeout, so a model that never settles is reported with what
+  `native_model` answered). The packages are moved, not copied, into `out/` and uploaded uncompressed; the release job
+  and `current.yml`'s publish and dry run free disk before downloading every target, and `current.mjs` gains `--move`.
+  `native-llm.yml`'s x86-64 job fetches the same model by its pin and reads a few greedy tokens with the Linux plan
+  (`native/llm/tests/desktop.rs`). `main` sets `GGML_NO_BACKTRACE` first where the runner is compiled, so llama.cpp
+  never starts a debugger on the app (a Rust test pins it). The recovery card names each app's own web view and how it
+  is updated: WebKitGTK on Linux (the system's packages, or a newer AppImage, since the AppImage carries its own),
+  WebKit on macOS and on iPhone and iPad, the Android System WebView on Android, and WebView2 on Windows as before.
+  Rehearsed in the container with the tiny model in place of the real one: a release build with `tiny-model` as `.deb`,
+  `.rpm` and `.AppImage`, every check passing, each check shown failing on a wrong package, a download-code link and a
+  planted string, the glibc gate failing on this Ubuntu 24.04 build (GLIBC_2.39, from Rust's weak `pidfd_spawnp` and
+  `pidfd_getpid`, which its version-needs table records as hard needs; GLIBC_2.38 from `__isoc23_*`), the installed
+  `.deb` answering 15 of 15 packaged checks, and, with its model moved away, the packaged run naming `native_model`'s
+  null answer in 15 checks instead of a script timeout. The same table puts the `current` pre-release's x86-64 `.deb`,
+  built on Ubuntu 24.04 before this change, at GLIBC_2.39 for the same two weak references (read here, not run on an
+  older glibc). Windows, macOS and the other targets build as before. On the pull request's CI, with the real model:
+  the `.deb` (975,529,154 B), `.rpm` and `.AppImage` held it at its pinned size, the three checks passed on both
+  architectures with the highest needs GLIBC_2.34, GLIBCXX_3.4.29 and CXXABI_1.3.13, the installed x86-64 `.deb`
+  passed 15 of 15 packaged checks and its own runner answered 16 tokens of text in 2.98 s on the runner's two
+  threads, and `native-llm.yml` read 8 greedy tokens from it with the Linux plan. Not verified: the app on a real
+  Linux desktop or on Ubuntu 22.04 or Debian 12 themselves, the Arm packages run (built and checked, never installed),
+  and how fast it answers on people's machines (Arm built for the base armv8-a).
+
 - **Reading a model larger than memory from the SSD, planned for the whole swarm at once** (the native `kv-pager`
   crate, feature `weights`, on by default and off in the WebAssembly build). `src/04_weights/gguf.rs` reads a GGUF
   file's header (versions 2 and 3; every ggml type's block size checked against llama.cpp master's on 2026-11-13) and

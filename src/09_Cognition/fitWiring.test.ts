@@ -4,12 +4,12 @@
 /**
  * Why does this file exist? It pins the wiring of auto's sizing of the Ollama model by the GPUs' memory (modelFit.ts),
  * which App, the engine's wrappers and the console carry and Node cannot run as a page: App reads vram= from the
- * page's address and hands it to the city's router alone (the onboarding's router never answers under auto, so it is
- * given none); the scripted and cloud fallback wrappers bind the router's setVram, so `ask vram` reaches it; modelFit.ts
+ * page's address and hands it to the page's router alone (built in one place, pageMind.ts createPageMind, for the city
+ * and for the console alone; the onboarding's router never answers under auto, so it is given none); the scripted and cloud fallback wrappers bind the router's setVram, so `ask vram` reaches it; modelFit.ts
  * stays a pure rule that imports only localCompute.ts (this machine's check included) and asks no server itself; the
  * router is the module that uses it; and the operator's and the bridge's askSet both take 'vram'. In the Windows app,
- * App asks the shell for the GPUs' memory once (desktopShell.ts shellGpuMemory over src-tauri/src/gpu.rs), judges it
- * by modelFit.ts figureFromAdapters, and hands it to the same router alone, below the address's figure. The larger
+ * the page's router asks the shell for the GPUs' memory once as it is built (desktopShell.ts shellGpuMemory over
+ * src-tauri/src/gpu.rs, handed in by App), judges it by modelFit.ts figureFromAdapters, and keeps it for itself alone, below the address's figure. The larger
  * context the router may ask of Ollama (modelFit.ts widen) is handed to the Ollama client alone, with each answer.
  * What breaks if it is removed? The launcher's vram= could stop reaching the router, the onboarding's router could
  * start sizing a model of its own, a wrapper could hide setVram so `ask vram` says no provider grows with the GPU, or
@@ -36,6 +36,14 @@ const count = (text: string, re: RegExp): number => text.match(re)?.length ?? 0
 
 const APP = read('../App.tsx')
 const APP_CODE = code(APP)
+const PAGE_MIND = read('./pageMind.ts')
+const PAGE_MIND_CODE = code(PAGE_MIND)
+/** The page router's one call (pageMind.ts createPageMind), from its line to the return after it. */
+const PAGE_ROUTER = between(PAGE_MIND, '  const router = createMindRouter({', '  return Object.freeze({ router, inPage, native })')
+/** The city's call of it (App.tsx GuiShell). */
+const CITY = between(APP, '        const { router: local, inPage, native: appMind } = minds.createPageMind({', '        inPageMind = inPage\n')
+/** The console alone's call of it (App.tsx ttyBridge). */
+const TTY = between(APP, 'function ttyBridge(vram: string | null): TerminalBridge {', '\n}\n')
 const MODEL_FIT = read('./modelFit.ts')
 const ROUTER = read('./router.ts')
 const LOCAL_CODE = code(read('./localCompute.ts'))
@@ -44,17 +52,22 @@ const BRIDGE = read('../07_Execute_Actions/terminal/bridge.ts')
 /** The optional setters both wrappers bind to the mind they wrap (the engine puts them in front of the router). */
 const BOUND = "['setThink', 'setApi', 'setProvider', 'setKey', 'setEffort', 'setVram', 'connect']"
 
-test('App: vram= in the address is read once, as written, and handed to the city\'s router alone; the onboarding\'s router gets none', () => {
+test('App: vram= in the address is read once, as written, and handed to the page\'s router alone; the onboarding\'s router gets none', () => {
   assert.match(APP, /^type Options = EngineOptions & \{ debug: boolean; boot: BootTrack; vram: string \| null \}$/m, 'Options carries the raw query value')
   const opts = between(APP, 'function readOptions(): Options {', '\n}\n')
   assert.match(opts, /^ {4}vram: q\.get\('vram'\),$/m, 'readOptions passes ?vram= on as written; modelFit.ts readGb judges it')
   assert.equal(count(APP_CODE, /\bq\.get\('vram'\)/g), 1, 'read in one place')
-  const city = between(APP, '        const local = createMindRouter({', '        inPageMind = inPage\n')
-  assert.match(city, /^ {10}vram: options\.vram,$/m, 'a property of the city router\'s own call, beside fetch and store, not of the in-page mind\'s')
-  assert.equal(count(APP_CODE, /\bvram: options\.vram\b/g), 1, 'one router is handed it')
-  assert.equal(count(APP_CODE, /\bcreateMindRouter\(/g), 2, 'the onboarding\'s and the city\'s, and no third')
-  const onboarding = between(APP, 'function onboardingVoice(): Voice {', '\n}\n')
-  assert.match(onboarding, /const router = createMindRouter\(\{ fetch: pageFetch, store: pageStore\(COGNITION_KEY\) \}\)/, 'the onboarding\'s router: its fetch and store, nothing more')
+  assert.match(CITY, /^ {10}vram: options\.vram,$/m, 'a property of the city\'s call, beside fetch and store, not of the in-page mind\'s')
+  assert.equal(count(APP_CODE, /\bvram: options\.vram\b/g), 1, 'the city hands it once')
+  // The console alone is handed the same address's value by App, and hands it to the same maker.
+  assert.match(APP, /if \(options\.boot === 'tty'\) return <TtyShell vram=\{options\.vram\} \/>/)
+  assert.match(TTY, /^ {6}vram,$/m)
+  assert.equal(count(APP_CODE, /\bcreatePageMind\(/g), 2, 'the city\'s and the console alone\'s, and no third')
+  assert.equal(count(APP_CODE, /\bcreateMindRouter\(/g), 0, 'App builds no router itself')
+  assert.match(PAGE_ROUTER, /^ {4}vram: d\.vram,$/m, 'a property of the router\'s own call')
+  assert.equal(count(PAGE_MIND_CODE, /\bcreateMindRouter\(/g), 2, 'the onboarding\'s and the page\'s, and no third')
+  const onboarding = between(PAGE_MIND, 'export function onboardingVoice(fetch: FetchLike, store: SettingsStore): Voice {', '\n}\n')
+  assert.match(onboarding, /const router = createMindRouter\(\{ fetch, store \}\)/, 'the onboarding\'s router: its fetch and store, nothing more')
   assert.doesNotMatch(onboarding, /vram/, 'the onboarding\'s router sizes nothing')
 })
 
@@ -82,17 +95,21 @@ test('the router is the module that sizes by modelFit.ts: it imports it, and its
   assert.equal(count(code(ROUTER), /\bfigureOf\(/g), 1, 'one figure, read in one place')
 })
 
-test('App: the Windows app\'s GPU reading is asked once, judged by figureFromAdapters, and handed to the city\'s router alone', () => {
+test('the Windows app\'s GPU reading is asked once a router, judged by figureFromAdapters, and kept by the page\'s router alone', () => {
   assert.ok(specifiers(APP).includes('./07_Execute_Actions/desktopShell.ts'), 'App imports the shell view')
-  assert.match(APP, /^import \{ figureFromAdapters \} from '\.\/09_Cognition\/modelFit\.ts'$/m)
+  assert.match(PAGE_MIND, /^import \{ figureFromAdapters \} from '\.\/modelFit\.ts'$/m)
   assert.match(APP, /^import \{ shellGpuMemory, shellModel, shellModelFetch, shellRunner \} from '\.\/07_Execute_Actions\/desktopShell\.ts'$/m, 'the GPU reading, the app\'s model (siteModel.ts APP_MODEL) and the app\'s own runner')
-  assert.equal(count(APP_CODE, /\bshellGpuMemory\(/g), 1, 'asked in one place')
-  const before = between(APP, '        let inPage!: InPageMind\n', '        const local = createMindRouter({')
-  assert.match(before, /^ {8}let appVram: number \| null = null\n {8}void shellGpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}\)\n$/m, 'asked as the city\'s router is built, judged by figureFromAdapters')
-  const city = between(APP, '        const local = createMindRouter({', '        inPageMind = inPage\n')
-  assert.match(city, /^ {10}appVram: \(\) => appVram,$/m, 'a property of the city router\'s own call')
-  assert.equal(count(APP_CODE, /\bappVram: \(\) =>/g), 1, 'one router is handed it')
-  assert.doesNotMatch(between(APP, 'function onboardingVoice(): Voice {', '\n}\n'), /appVram|shellGpuMemory/, 'the onboarding\'s router sizes nothing')
+  // App hands the reading over and never asks it itself; the city and the console alone hand the same one.
+  assert.equal(count(APP_CODE, /\bshellGpuMemory\(/g), 0, 'App never asks it')
+  assert.equal(count(APP_CODE, /\bgpuMemory: shellGpuMemory,/g), 2, 'the city\'s and the console alone\'s calls')
+  assert.match(CITY, /^ {10}gpuMemory: shellGpuMemory,$/m)
+  assert.match(TTY, /^ {6}gpuMemory: shellGpuMemory,$/m)
+  const create = between(PAGE_MIND, 'export function createPageMind(d: PageMindDeps): PageMind {', '  const router = createMindRouter({')
+  assert.match(create, /^ {2}let appVram: number \| null = null\n {2}void d\.gpuMemory\(\)\.then\(\(bytes\) => \{ appVram = figureFromAdapters\(bytes\) \}, \(\) => \{\}\)\n$/m, 'asked as the router is built, judged by figureFromAdapters')
+  assert.equal(count(PAGE_MIND_CODE, /\bgpuMemory\(\)/g), 1, 'asked in one place')
+  assert.match(PAGE_ROUTER, /^ {4}appVram: \(\) => appVram,$/m, 'a property of the router\'s own call')
+  assert.equal(count(PAGE_MIND_CODE, /\bappVram: \(\) =>/g), 1, 'one router is handed it')
+  assert.doesNotMatch(between(PAGE_MIND, 'export function onboardingVoice(', '\n}\n'), /appVram|gpuMemory/, 'the onboarding\'s router sizes nothing')
 })
 
 test('the operator\'s askSet and the bridge\'s both take \'vram\', and the mind\'s setter is optional', () => {

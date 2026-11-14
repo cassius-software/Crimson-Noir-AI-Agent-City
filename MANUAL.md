@@ -62,7 +62,7 @@ The city needs WebGPU:
 - **iPhone, iPad and Mac:** Safari 26.
 
 The crowd runs as WGSL compute and has no WebGL path. `?boot=tty` opens the Ring-0 console alone, with no WebGPU
-at all (see Track B under Ring-0 console).
+at all, where Sloane still answers through a model on this machine or in the app (see Track B under Ring-0 console).
 
 ## Controls
 
@@ -209,7 +209,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?pad=left`, `?pad=right` | A one-handed pad layout for this visit (`both` restores the two-handed one; see Accessibility) |
 | `?announce=0` | No screen-reader lines of the district, vehicles, seats and toasts for this visit (see Accessibility) |
 | `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
-| `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `boot gui` reloads the city (see Ring-0 console) |
+| `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `operator unlock`, then `ask <words>`, talks to Sloane through the page's own model router; `boot gui` reloads the city (see Ring-0 console) |
 | `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
@@ -2018,12 +2018,45 @@ cinema camera, the HUD. Track B is this console on its own.
 
 - **`?boot=tty`** mounts the console alone, full screen, black from the first paint: no canvas, no engine, no
   WebGPU request, no physics worker, no audio (`App.tsx` is `App` → `GuiShell` or `TtyShell`). The identity
-  commands (`version`, `uname`, `help`, `boot`, `r0`, `history`, `echo`, `clear`) work; everything that needs the
-  city says `engine not running`. The message of the day says so: `Track B: this console alone; no 3D engine was
+  commands (`version`, `uname`, `help`, `boot`, `r0`, `history`, `echo`, `clear`) work, and so do `operator unlock`
+  and `ask` (below); everything else that needs the city says `engine not running`, with the operator tier locked or
+  open. The message of the day says so: `Track B: this console alone; no 3D engine was
   built`. `boot gui` (or the **Back to the city** button at the top right, which a pad's A also presses) reloads the
   page as the city, `boot tty` from the city reloads it as the console, and `boot`
   alone (or `boot status`) says which track is up. Neither the toggle key, Esc nor `exit` closes a full-screen
   console. `docs/track-b-console.png` is a screenshot of it.
+- **Sloane in the console alone.** `operator unlock`, then `ask <your words>`, puts the words to Sloane as her card
+  does in the city (`terminal/consoleBridge.ts` over `onboarding/voice.ts` `sloaneChat`: her framing for the console
+  alone (no city runs there, so she offers no change to it) and the last turns of this conversation, your words
+  screened under 14A first and her reply at each step, cut at an action line and at its length), through the page's
+  own model router: the same providers in the same `auto` order, with the same
+  rules, as the city's (a model server on this machine, then the model an app carries and runs itself, then a model
+  file kept and chosen in this page, then the Claude gateway; The model providers, below). One function builds that
+  router for both, `09_Cognition/pageMind.ts` `createPageMind`, so the two cannot drift. The console prints
+  `ask: asking Sloane`, her reply streams in whole words, and the answer ends with its time; `ask stop` stops it and
+  keeps the words shown; one answer comes at a time. `ask` alone shows the provider and what `auto` found, and `ask
+  provider`, `ask connect`, `ask model`, `ask server`, `ask key`, `ask effort`, `ask think`, `ask api` and `ask vram`
+  change the same kept settings the city's console does. The gate is the city's: `ask` needs `operator unlock` in
+  the city's console too (The operator tier, below), and the same Zeroth Law check (the page contained, the model on
+  this machine or none) stands before each answer. A line that starts with a setting's name and one value it takes
+  (`ask key sk-…`, `ask think on`, `ask connect ollama`) is that setting; every other line goes to Sloane, and `ask --
+  <words>` always does (for words such as `model trains?`, which read as a setting). `ask file load`, `unload`,
+  `forget <name>` and `log` act on the model file already kept in this page, as in the city, so the router's `ask file
+  load tries again` can be followed here; choosing a file (`ask file`), `ask gpu` and everything else that needs the
+  city (`run`, `say`, the crowd) say `engine not running`, before `operator unlock` and after it.
+- **Still light, and no download.** The console starts as before, with no engine, canvas, WebGPU request, worker or
+  audio, and the router and its providers are a module of their own, loaded the first time an `ask` needs them (a
+  dynamic import): none of them runs at the console's start. The page's static module graph went from 244 modules
+  to 238 with it, and in headless Chrome here (nine fresh loads of `?boot=tty`, twice) the console was on screen at a
+  median of 616 and 638 ms, against 643 and 628 ms before. An ask never starts fetching a model file: it uses what is
+  there (a server running on this machine, the model the app carries through its own runner, a model file already
+  kept and chosen in this page). Where nothing answers, it says so in the router's one sentence, which
+  names every address it looked at and ends `start one, or choose one with ask provider <name>`.
+- **Where Sloane answers here.** On every build that carries or reaches a model: the Linux app, through the model it
+  carries (its web view, WebKitGTK, has no WebGPU in the versions tried, so the app shows the recovery card, whose
+  **Open the console** leads here; When the city cannot start, below), and any browser or web view with a model
+  server running on this machine or a model file kept in the page. Where the web view cannot run the city, the
+  recovery card's **Open the console** opens this console; on a computer `?boot=tty` in the address does the same.
 - **`render off`** is Track B's override from inside Track A: the console takes the screen while the realm keeps
   stepping (above).
 - **`r0`** is R0, the console's own language (`terminal/repl.ts`): a small Forth-like stack machine, the product's
@@ -2120,7 +2153,8 @@ Ring-0 elite tier above it, below). While unlocked:
   model file in this page (A model in this page);
   they send no prompt, so they need no unlock. An inadmissible prompt gets `-- no reply --` and reaches no model. The
   answer may end with one `ACTION:` line; what it proposes is shown as `act N: … proposes: …` and waits for your OK;
-  `ask stop` withdraws it.
+  `ask stop` withdraws it. The console alone (`?boot=tty`) keeps the same gate: there too `ask` answers `ask: locked;
+  type 'operator unlock' first` until the tier is open, and then `ask <words>` talks to Sloane (Track B, above).
 - **City actions, asked each time.** An agent's answer may end with one action from a fixed catalogue, and nothing
   happens until you allow it. Every provider is told the same four lines, at the end of the system prompt
   (`06_Make_Decisions/actions.ts ACTION_RULES`, so every prompt hash moved with them):
@@ -2584,8 +2618,9 @@ them that answers (`auto`):
   stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
   page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
   model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
-  app has none of the runner's commands (the Windows app), it lists nothing and an answer is told there is none, so
-  the script stands in. No app has the runner yet: this is the page's half, proven against a fake runner.
+  app runs no model (the Windows and macOS apps answer the runner's commands with none), it lists nothing and an
+  answer is told there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) has the
+  runner and carries Qwen2.5 1.5B Instruct for it (The Linux app's model, below).
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -2936,8 +2971,9 @@ you choose is yours, under its own licence. The web copy on GitHub Pages also se
 Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
 kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
 The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
-beside its page; the page gets it the same way (The app's model, The launcher's model, below). `dist/index.html`, the
-bare .exe and the OS media carry none. The parts:
+beside its page; the page gets it the same way (The app's model, The launcher's model, below). The Linux app's packages
+carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, below).
+`dist/index.html`, the bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -3081,8 +3117,62 @@ bare .exe and the OS media carry none. The parts:
   counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
   each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
   installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
-  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Linux,
-  Android and iPhone apps carry no model yet.
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Android
+  and iPhone apps carry no model yet; the Linux app carries the same file and runs it itself (the next entry).
+- **The Linux app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
+  `tools/build/linuxAudit.mjs`). The Linux app's `.deb`, `.rpm` and `.AppImage` (the build matrix's `linux-x64` and
+  `linux-arm64`) carry the same file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, about 0.9 GB; each
+  package is about 1 GB), and the app runs it in its own process: its shell is built with the `native-runner` feature,
+  so llama.cpp is compiled into it, and the page asks it through `native` (above) instead of copying the file in.
+  - Installed, the file is `/usr/lib/Crimson Noir Agent City/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, with its
+    `LICENSE` and `NOTICE` beside it, and llama.cpp's licence and notice are in
+    `/usr/share/doc/crimson-noir-agent-city/llama.cpp/`; the AppImage keeps the same files inside its own image. The
+    disk holds the model once: the app checks its size and SHA-256 once and stamps the check in its data folder, and
+    nothing is copied into the page's storage. Removing the package removes it.
+  - The build matrix's Linux jobs fetch and check the file as the Windows workflow does (the pin's own cache, Hugging
+    Face only on a miss, `siteModel.mjs app` on every build). They build on Ubuntu 22.04, so the app needs glibc 2.35
+    or newer (Ubuntu 22.04, Debian 12 and later), and fail before any upload unless each package holds the model at
+    exactly its size with its licence and notice where the runner looks (`linuxAudit.mjs packages`), no file the
+    `.deb` installs needs a newer glibc or libstdc++ than Ubuntu 22.04's (`glibc`, which reads each file's
+    version-needs table, as the loader does, so a weak reference counts too), and the binary keeps none of the
+    download, HTTP or subprocess code of llama.cpp's common library (no cpp-httplib, OpenSSL or curl) and imports no
+    network call (`symbols`); ggml's crash handler, which can start a debugger, is linked, and `main` switches it off
+    with `GGML_NO_BACKTRACE`.
+  - On x86-64, llama.cpp is built for processors from about 2013 on (AVX2, FMA, F16C and BMI2). On an older x86-64
+    processor the app still opens, but its model does not start: Sloane's card says "The model inside this app
+    couldn’t start:" and that the processor is older than the app's model needs, naming what it lacks, and the
+    other providers still answer. On Arm it is built for the base armv8-a (without the dot-product instructions), so
+    it runs on any 64-bit Arm Linux machine, more slowly than it could; how fast has not been measured.
+  - The city itself needs WebGPU from WebKitGTK (Which browser engine each app gets, below). Where WebKitGTK offers
+    none, the app shows the recovery card, which names WebKitGTK ("This app’s WebKitGTK has no WebGPU") and says to
+    update it with the system's packages, or, since the AppImage carries its own WebKitGTK, to get a newer AppImage.
+
+    In this container's WebKitGTK (2.52.6) the page has no `navigator.gpu`, so the app shows that card, and WebKit's
+    own WebGPU feature switched on in a test program does not change it; the card's **Open the console** (the shell
+    that needs no GPU) is still offered. Whether a desktop's WebKitGTK gives the city WebGPU is not known.
+
+    The console still talks to Sloane there: in it, `operator unlock`, then `ask <your words>`, puts the words to her
+    through the page's router, which under the default `auto` asks a model server running on this machine first and
+    the model the app carries after it (Track B: the console alone). The card says so under its buttons only where
+    the app's runner says that model is ready and the kept provider is `auto` or `native`, and only if it says so
+    within the minute the card keeps asking (When the city cannot start).
+
+  What is verified: the overlay naming the model, its licence and notice, and llama.cpp's texts for every Linux package
+  (`siteModel.test.ts`), the build steps, the Linux-only feature and the checks' order (`buildMatrix.test.ts`), each
+  check of `linuxAudit.mjs` and that each can fail (`linuxAudit.test.ts`), the packaged run's script
+  (`nativeRunner.test.ts`) and the runner's own Rust tests. Rehearsed in the container that wrote it, with the tiny
+  test model in place of the real one: a release build as `.deb`, `.rpm` and `.AppImage`, each package passing the
+  package check, the binary passing the symbol audit, the glibc gate refusing that Ubuntu 24.04 build (it needs glibc
+  2.39, for Rust's weak `pidfd_spawnp` and `pidfd_getpid`, whose version the loader still requires) and passing it at
+  2.39, and the `.deb` installed with apt and asked for one answer through `nativeE2e.mjs --packaged` (15 of 15
+  checks; with the model moved away, 15 checks naming `native_model`'s null answer); with the console's ask added, a
+  tiny-model `.deb` passed 24 of 24 (the tiny model ends before any word streams, so `ask stop` was forced once, typed
+  after the answer had ended: 24 of 24; a stop during an answer is not verified). The console alone's ask through the
+  app's own runner is also run in the tiny-model debug app under
+  WebKitGTK (`native-e2e.yml`). Run by CI, and not counted as verified above: the real model in the packages, the
+  Ubuntu 22.04 builds and their glibc floor, and the installed x86-64 app answering with the real model, in its
+  console too. Not verified: the app on a real Linux desktop, how fast it answers there, and how fast it answers on
+  Arm.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
@@ -4123,16 +4213,16 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 
 | Stage | Files | Role |
 |---|---|---|
-| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it builds the cognition router (with the model kept in this page, its file picker and its drop) and the network client and keeps the look and the token |
+| — | `brand.ts`, `MonolithLogo.tsx`, `App.tsx` | Product name and mark; the React shell (`App` → `GuiShell`, the city, or `TtyShell`, the console alone under `?boot=tty`): boot veil, HUD, concierge, the wardrobe card, touch and console overlays; it hands the cognition router's one maker (`09_Cognition/pageMind.ts`, loaded on first use) what only the page has, for the city and the console alone (with the model kept in this page, its file picker and its drop), builds the network client and keeps the look and the token |
 | 01_Initialize_World | `world.ts`, `gpuPipelines.ts`, `leanWgsl.node.ts`, `city.ts`, `materials.ts`, `fbmTexture.ts`, `solar.ts`, `codeDissolve.ts`, `region/` (`projection.ts`, `grid.ts`, `names.ts`, `clip.ts`, `pack.ts`, `compile.ts`, `regionWorld.ts`) | WebGPU device and the compute pipelines compiled with the browser's words for a refusal, the shaders' text without its comments for the build (Node only), city grid, districts, shoreline and furniture, procedural materials (filtered against moiré), sky, sun, haze, the lake; the code dissolve's material helper (any node material into falling green binary code, by a per-instance amount, shadow included); the surveyed region: its projection, fictional names, the compiler's core, the pack format, and its meshes, walls and places |
 | 02_Define_The_Rules | `laws.ts`, `ring0.ts`, `ring0Gate.ts`, `ring0Panic.ts`, `guardrails.ts`, `civic.ts`, `collision.ts`, `conduct.ts`, `degrees.ts`, `airgap.ts`, `integrity.ts`, `property.ts` | The seeded, replayable property harness every fuzz suite shares; SHA-256, HMAC and canonical encoding for every hash and seal; the air gap (the one definition of "this machine", and the guard installed on the page's and the worker's globals); Ring-0 bouncer and audit (both run in the physics worker; the audit's craft check), the page's panic lock; kernel limits, signal cycle, speed limit, checks; the contact policy (cars pass through cars, the ragdoll balance machine wired with no vehicle a cause, no combat) and the collision groups (the chassis, the wheel rays, the avatar through a rig); the 14A conduct core and screen; degrees of success |
 | 03_Spawn_Agents | `crowd.wgsl` (with `crowdWay.wgsl`, the room and lot routing, or `crowdWayLite.wgsl`, the light kernel's straight lines), `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
 | 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
-| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
+| 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `consoleBridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
-| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `siteModel.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), the one model the web copy serves beside the page (its pin, its manifest and its download, checked as it streams), and the one adapter over wllama |
+| 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `pageMind.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `siteModel.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine) and its one maker for the city and the console alone (`pageMind.ts`), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), the one model the web copy serves beside the page (its pin, its manifest and its download, checked as it streams), and the one adapter over wllama |
 | 10_Network | `replication.ts`, `replication.node.ts`, `mirror.node.ts`, `garage.node.ts`, `plane.node.ts`, `netClient.ts`, `telemetry.ts`, `robotRelay.node.ts`, `sparkplugHost.node.ts`, `sparkplug.ts`, `mqttCodec.ts` | The network room: the plain-data protocol core and authoritative room both sides share (validated both ways, rate-limited, screened under 14A, every input judged by an authority and refused ones corrected), the Node-only WebSocket host (HMAC session tokens checked at the upgrade, one connection per player, never bundled), the headless Ring-0 mirror it judges with (the city of the seed in Rapier, the realm's own character controller, the Ring-0 audit) and its garage (every player's car replayed with the page's own car physics, every door checked), an open-plane authority for the protocol's tests, and the opt-in page client that speaks ws or wss only to `localhost` or `127.0.0.1` (the host on this machine, or the local end of a tunnel or proxy), reports the realm's steps and doors, snaps to corrections, and reconciles the room's snapshots into the poses `netView.ts` draws; the robots' loopback relay (`npm run serve:robots`: the page's one socket and the robots' peers, a second gate on every setpoint, a Sparkplug B host application over MQTT when a broker is named) and the Sparkplug B and MQTT codecs both ends share |
 | native/kv-pager | `01_geometry.rs`, `02_page_table.rs`, `03_gpu/`, `bin/stress.rs`, `bin/chaos/` | A paged KV cache (its page table also runs on the page, through `native/kv-pager-wasm`) (prefix caching, copy-on-write, the WGSL decode kernel, the stress and chaos runs); `CAUSAL.md` traces the copy-on-write chain |
 | native/kv-pager-wasm | `lib.rs` | kv-pager's page table (no GPU) behind a C ABI, built to WebAssembly as `09_Cognition/kvPager.wasm.ts` (`npm run native:wasm`) |
@@ -4362,12 +4452,14 @@ The current build (below) carries the same three files from every commit on main
   Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
   answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
   in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
-  for; and `app_model` answers nothing there, so the page never copies a model in. Every other build (Windows, macOS,
-  and every Linux build shipped today: the feature is off by default) registers the same three commands, which answer
-  that there is none. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
+  for; and `app_model` answers nothing there, so the page never copies a model in. The Linux release builds turn the
+  feature on (the build matrix passes `--features native-runner` for `linux-x64` and `linux-arm64` alone; The Linux
+  app's model). Every other build (Windows, macOS, and a Linux build without the feature, such as `npm run app:build`:
+  the feature is off by default) registers the same three commands, which answer that there is none. Where the runner
+  is compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting
+  a debugger on it. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
   builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
-  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`); no shipped build carries the runner
-  yet.
+  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
@@ -4396,8 +4488,8 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | :--- | :--- | :--- | :--- |
 | `windows-x64` | the NSIS installer (`*-setup.exe`), the `.msi` and the bare `.exe` | Windows x64 | the installer and `.exe` run on Julian's laptop; all three built in `windows-app.yml` on every change (the `.msi` by `tauri bundle` from the same binary); the `.msi` not installed yet |
 | `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
-| `linux-x64` | `.deb`, `.rpm` and `.AppImage` | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages | built by the workflow; not installed on a device; WebGPU in WebKitGTK unverified |
-| `linux-arm64` | `.deb`, `.rpm` and `.AppImage` | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own) | built by the workflow on `ubuntu-24.04-arm`; not run on a device |
+| `linux-x64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages, cmake and libclang, and the model in `src-tauri/models/` | built by the workflow on `ubuntu-22.04`, the packages checked, and the `.deb` installed on the runner and asked for one short answer under a virtual display; not installed on a desktop; WebGPU in WebKitGTK unverified |
+| `linux-arm64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own), with the same | built by the workflow on `ubuntu-22.04-arm` and the packages checked; not run on a device |
 | `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
 | `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
@@ -4424,19 +4516,24 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
   are the system's own libraries, so the `.AppImage` is the one file that carries them.
 - **The workflow.** `.github/workflows/build-matrix.yml` runs the same command on GitHub's runners, one job per target
-  (`windows-latest`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
+  (`windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
   `ubuntu-24.04` for each UEFI target), on a pull request that touches the shells, Crimson Noir OS or this tooling, on
   a `v*` tag, and by hand. Each UEFI job then bakes its media a second time from a clean build, compares the bytes, and
   boots the disk image in QEMU through the tutorial and the terminal to power-off, and the ISO to the self-test. Each
-  job publishes its files as the artifact `matrix-<id>` and its report; a summary job lays the nine targets out in the
-  run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
-  `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
-  `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
-  itself. `current.yml` calls it with each commit on main that ci passes, for the current build (below). Only
-  GitHub's own actions run in it.
+  Linux job first fetches and checks Sloane's model, then checks its packages, their glibc floor and the binary
+  (`tools/build/linuxAudit.mjs`; The Linux app's model), and the x86-64 job installs its `.deb` on the runner and asks
+  the installed app for one answer of at most 16 tokens through the page's own code in WebKitGTK under Xvfb
+  (`tools/browser/nativeE2e.mjs --packaged`). Each job publishes its files as the artifact `matrix-<id>` and its report;
+  a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
+  tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
+  all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
+  this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
+  current build (below). Only GitHub's own actions run in it.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
-  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
-  an engine lacks it the app shows the same recovery card as a browser without WebGPU.
+  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
+  and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,
+  WebKitGTK, WebKit or the Android System WebView) and how that is updated. WebKitGTK 2.52.6, in the container that
+  built the Linux app, gives the page none (The Linux app's model).
 
 ## The current build
 
@@ -4882,6 +4979,14 @@ bar and no reload of their own, so the page carries its own way out.
   and Enter on Details opens it. Under **Details** are the raw message and
   one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
   ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
+- **The console still talks to Sloane.** Where the app's own runner says the model it carries is ready (`native_model`
+  answers with the file and a ready or loaded status) and the provider kept is `auto` or `native`, the card adds one
+  line under its buttons: "This app carries Sloane's model, and the console talks to her without the city: open it,
+  type operator unlock, then ask and your question." The card asks the runner as it appears, and again every 2 s for
+  up to a minute while the app is still checking that model; a browser, a shell without the runner, a model that
+  failed, or another provider kept (`scripted`, a server, the gateway, a model file in the page) shows no line, since
+  whether Sloane answers there is not known to the card (`bootFailure.ts` `consoleTalks`). **Open the console** opens
+  the console alone, and `operator unlock`, then `ask <your words>`, talks to her (Track B: the console alone).
 - **A GPU whose own compiler refuses the crowd.** The crowd's compute passes are compiled asynchronously
   (`src/01_Initialize_World/gpuPipelines.ts`), so a refusal comes with the browser's own words and the module's
   compilation messages, and says whether WebGPU refused the shader (the page's or the browser's fault) or the GPU's

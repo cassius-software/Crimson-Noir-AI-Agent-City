@@ -10,6 +10,29 @@
       "nsis": {
         "compression": "none"
       }
+    },
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE": "../third_party/llama.cpp/LICENSE",
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/NOTICE": "../third_party/llama.cpp/NOTICE"
+        }
+      },
+      "rpm": {
+        "compression": {
+          "type": "none"
+        },
+        "files": {
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE": "../third_party/llama.cpp/LICENSE",
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/NOTICE": "../third_party/llama.cpp/NOTICE"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE": "../third_party/llama.cpp/LICENSE",
+          "/usr/share/doc/crimson-noir-agent-city/llama.cpp/NOTICE": "../third_party/llama.cpp/NOTICE"
+        }
+      }
     }
   }
 }

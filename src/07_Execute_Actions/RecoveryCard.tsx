@@ -8,8 +8,9 @@
  * that kept failing), the Ring-0 lock screen for a real audit failure, and the boot veil's 'Still starting' line. Each
  * offers Restart, a full page reload (never a remount: a fallback may already own the canvas, and a second engine
  * would stack GPU devices on a phone), focused from the start so Enter takes it, and the cards also offer 'Open the
- * console', the ?boot=tty shell that needs no GPU at all. A pad's A presses the focused button and its d-pad moves
- * between them (padNav.ts). The card's words come from bootFailure.ts; the raw message sits under Details with one
+ * console', the ?boot=tty shell that needs no GPU at all; where the app's own runner carries a model ready to answer
+ * and the kept settings leave it to answer, the recovery card says the console still talks to Sloane (bootFailure.ts
+ * consoleTalks), and nowhere else. A pad's A presses the focused button and its d-pad moves between them (padNav.ts). The card's words come from bootFailure.ts; the raw message sits under Details with one
  * copyable line (the build, the adapter, the user agent) for a bug report.
  * What breaks if it is removed? A failed boot is a bare message with nothing to press, and a halted city a black
  * screen with no control.
@@ -17,8 +18,42 @@
 import { useEffect, useId, useRef, useState, type JSX, type RefObject } from 'react'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { isEditableTarget } from '../04_Connect_Hardware/input.ts'
-import { detailsLine, deviceHints, pageBuild, type Failure, type UaData } from './bootFailure.ts'
+import { CONSOLE_TALKS_LINE, consoleTalks, detailsLine, deviceHints, pageBuild, type Failure, type UaData } from './bootFailure.ts'
+import { shellCarried } from './desktopShell.ts'
 import { usePadNav } from './padNav.ts'
+
+/** How often, and how many times, the card asks again while the app is still preparing its model (a minute in all). */
+const CARRIED_AGAIN_MS = 2000
+const CARRIED_TRIES = 30
+
+/**
+ * Whether the console beneath still talks to Sloane through the model the app carries (bootFailure.ts consoleTalks):
+ * asked of the app's runner once the card is up (a browser answers at once that there is none), and again while the
+ * app is still preparing that model, with the router's kept settings (`kept`, read at each answer; one function for the
+ * card's life, App.tsx keptCognition) leaving that model to answer. False until the runner says it is ready, and
+ * wherever it never does.
+ */
+function useConsoleTalks(kept: () => string | null): boolean {
+  const [talks, setTalks] = useState(false)
+  useEffect(() => {
+    let live = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = (tries: number): void => {
+      void shellCarried().then((carried) => {
+        if (!live) return
+        const t = consoleTalks(carried, kept())
+        if (t === null && tries > 1) timer = setTimeout(() => ask(tries - 1), CARRIED_AGAIN_MS)
+        else setTalks(t === true)
+      })
+    }
+    ask(CARRIED_TRIES)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [kept])
+  return talks
+}
 
 /**
  * Restart: the page again from the top, the way the console's `boot` does it (a reload, never a remount). `href`: the
@@ -62,11 +97,16 @@ const SAFE_PADDING = {
   padding: 'max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left))',
 } as const
 
+/** Nothing kept: the router's own default, auto. */
+const NOTHING_KEPT = (): string | null => null
+
 /**
- * The recovery card: the failure's headline and steps for this device, Restart (focused) and Open the console, the
- * WebGPU line where WebGPU is what is missing, and the details. Over everything but the Windows app's title bar.
+ * The recovery card: the failure's headline and steps for this device, Restart (focused) and Open the console (with
+ * the line that the console still talks to Sloane, where it does), the WebGPU line where WebGPU is what is missing,
+ * and the details. Over everything but the Windows app's title bar. `kept` reads the router's kept settings (App.tsx
+ * COGNITION_KEY), so the line is never shown where another provider was chosen.
  */
-export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Failure; adapter?: string; onConsole(): void }): JSX.Element {
+export function RecoveryCard({ failure, adapter = '', onConsole, kept = NOTHING_KEPT }: { failure: Failure; adapter?: string; onConsole(): void; kept?: () => string | null }): JSX.Element {
   const root = useRef<HTMLDivElement>(null)
   const restartRef = useRef<HTMLButtonElement>(null)
   const openRef = useRef<HTMLButtonElement>(null)
@@ -76,6 +116,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
   useTakeFocus(openIn ? openRef : restartRef)
   usePadNav(root)
   useEnterRestarts(true, restartHref)
+  const talks = useConsoleTalks(kept)
   // The device as the browser names it beyond the user agent (the real Android version, the model), once it answers.
   const [hints, setHints] = useState('')
   useEffect(() => {
@@ -119,6 +160,7 @@ export function RecoveryCard({ failure, adapter = '', onConsole }: { failure: Fa
             Open the console
           </button>
         </div>
+        {talks && <p data-console-sloane="" className="mt-3 text-xs leading-relaxed text-slate-700">{CONSOLE_TALKS_LINE}</p>}
         {failure.webgpuLine && <p className="mt-4 text-xs leading-relaxed text-slate-500">{failure.webgpuLine}</p>}
         <details className="mt-4 text-xs text-slate-600">
           <summary className="cursor-pointer select-none">Details</summary>

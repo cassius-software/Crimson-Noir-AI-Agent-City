@@ -11,7 +11,9 @@
 # its CSP and air gap: what the app carries, answers through the mind (the load, the prompt read and the text in
 # order, exactly the tokens asked; one with its channel's messages and end held back 300 ms, which comes whole only
 # because shellRunner waits for the channel's end), a Stop, a first-piece wait that runs out, stops sent right behind
-# their request, a refused duplicate number, a reload that stops the old page's answers, and no JSPI in the web view.
+# their request, a refused duplicate number, a reload that stops the old page's answers, and no JSPI in the web view;
+# then the console alone: the recovery card's line that it still talks to Sloane, its Open the console button, and
+# `operator unlock` and `ask hello` typed into the real console, answered with the tiny model's text and its time.
 # It also records whether the page reaches Sloane's card there at all (risk K1), without failing on it. Before the run,
 # the same job runs the shell's own Rust tests and clippy (-D warnings) twice: with the runner and the tiny model, and
 # with the feature off, as every shipped build compiles the shell (the commands that answer there is none).
@@ -19,7 +21,9 @@
 # when Rust's debug info is off, as here), the Rust side keeps its debug assertions, and the release profile's LTO,
 # which the tiny model does not need, would cost minutes; the runner under the release profile is native-llm.yml's.
 # It runs on a pull request or a push to main that touches the shell, the runner, the page modules the script bundles
-# (desktopShell.ts and nativeMind.ts with every module they import; src/nativeRunner.test.ts holds the list to their
+# (desktopShell.ts and nativeMind.ts with every module they import), the page's router the console alone asks Sloane
+# through (pageMind.ts with every module it imports) and the console's own files (App.tsx, the recovery card and its
+# words, the operator tier, the terminal, its bridges and commands; src/nativeRunner.test.ts holds the list to their
 # imports), the page's boot and policy (main.tsx, index.html), the tiny model's writer, the driver script or this file,
 # and by hand. It is not part of ci.yml, which runs on every change and whose failures wake the self-healing workflow:
 # its sandbox has no WebKitGTK, cmake or libclang. No shipped build carries the tiny model or the runner:
@@ -37,23 +41,42 @@ on:
       - src/01_Initialize_World/solar.ts
       - src/02_Define_The_Rules/airgap.ts
       - src/02_Define_The_Rules/capabilities.ts
+      - src/02_Define_The_Rules/civic.ts
       - src/02_Define_The_Rules/conduct.ts
       - src/02_Define_The_Rules/integrity.ts
+      - src/02_Define_The_Rules/laws.ts
+      - src/02_Define_The_Rules/ring0Gate.ts
       - src/05_Observe_Environment/governor.ts
       - src/06_Make_Decisions/actions.ts
       - src/06_Make_Decisions/dispatch.ts
       - src/06_Make_Decisions/intent.ts
       - src/07_Execute_Actions/desktopShell.ts
+      - src/07_Execute_Actions/onboarding/voice.ts
       - src/07_Execute_Actions/sharedBridge.ts
       - src/08_Swarm/shortTerm.ts
+      - src/09_Cognition/claudeApi.ts
       - src/09_Cognition/gguf.ts
       - src/09_Cognition/inPage.ts
       - src/09_Cognition/inPageCaps.ts
       - src/09_Cognition/inPagePlan.ts
+      - src/09_Cognition/kvPager.wasm.ts
       - src/09_Cognition/localCompute.ts
+      - src/09_Cognition/modelFit.ts
       - src/09_Cognition/modelStore.ts
       - src/09_Cognition/nativeMind.ts
+      - src/09_Cognition/pageMind.ts
+      - src/09_Cognition/prefixCache.ts
+      - src/09_Cognition/router.ts
+      - src/09_Cognition/scripted.ts
       - src/09_Cognition/siteModel.ts
+      - src/App.tsx
+      - src/07_Execute_Actions/RecoveryCard.tsx
+      - src/07_Execute_Actions/bootFailure.ts
+      - src/07_Execute_Actions/operator.ts
+      - src/07_Execute_Actions/terminal/Terminal.tsx
+      - src/07_Execute_Actions/terminal/bridge.ts
+      - src/07_Execute_Actions/terminal/commands.ts
+      - src/07_Execute_Actions/terminal/consoleBridge.ts
       - src/main.tsx
       - index.html
       - tools/browser/tinyGguf.mjs
@@ -67,23 +90,42 @@ on:
       - src/01_Initialize_World/solar.ts
       - src/02_Define_The_Rules/airgap.ts
       - src/02_Define_The_Rules/capabilities.ts
+      - src/02_Define_The_Rules/civic.ts
       - src/02_Define_The_Rules/conduct.ts
       - src/02_Define_The_Rules/integrity.ts
+      - src/02_Define_The_Rules/laws.ts
+      - src/02_Define_The_Rules/ring0Gate.ts
       - src/05_Observe_Environment/governor.ts
       - src/06_Make_Decisions/actions.ts
       - src/06_Make_Decisions/dispatch.ts
       - src/06_Make_Decisions/intent.ts
       - src/07_Execute_Actions/desktopShell.ts
+      - src/07_Execute_Actions/onboarding/voice.ts
       - src/07_Execute_Actions/sharedBridge.ts
       - src/08_Swarm/shortTerm.ts
+      - src/09_Cognition/claudeApi.ts
       - src/09_Cognition/gguf.ts
       - src/09_Cognition/inPage.ts
       - src/09_Cognition/inPageCaps.ts
       - src/09_Cognition/inPagePlan.ts
+      - src/09_Cognition/kvPager.wasm.ts
       - src/09_Cognition/localCompute.ts
+      - src/09_Cognition/modelFit.ts
       - src/09_Cognition/modelStore.ts
       - src/09_Cognition/nativeMind.ts
+      - src/09_Cognition/pageMind.ts
+      - src/09_Cognition/prefixCache.ts
+      - src/09_Cognition/router.ts
+      - src/09_Cognition/scripted.ts
       - src/09_Cognition/siteModel.ts
+      - src/App.tsx
+      - src/07_Execute_Actions/RecoveryCard.tsx
+      - src/07_Execute_Actions/bootFailure.ts
+      - src/07_Execute_Actions/operator.ts
+      - src/07_Execute_Actions/terminal/Terminal.tsx
+      - src/07_Execute_Actions/terminal/bridge.ts
+      - src/07_Execute_Actions/terminal/commands.ts
+      - src/07_Execute_Actions/terminal/consoleBridge.ts
       - src/main.tsx
       - index.html
       - tools/browser/tinyGguf.mjs

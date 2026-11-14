@@ -46,11 +46,27 @@
  *   is told it waits) stops them (src-tauri/src/lib.rs on_page_load), proved by the new page's first request through
  *   its own mind: the model is no longer cold, the answer ("aaaaaaaa", 8 tokens) is told to wait for nothing and
  *   completes long before the old answers could have ended by themselves at the rate measured above; and the old
- *   number is free again.
+ *   number is free again;
+ * - the console alone talks to Sloane (src/07_Execute_Actions/terminal/consoleBridge.ts, over the page's own router):
+ *   where the page shows the recovery card, it says so once the app's runner has its model ready (RecoveryCard.tsx
+ *   data-console-sloane, bootFailure.ts CONSOLE_TALKS_LINE) and its Open the console button, clicked through
+ *   WebDriver, opens ?boot=tty (without a card the address is changed instead), which draws no city; there
+ *   `operator unlock` and `ask hello`, typed into the real console with WebDriver's keys, are answered: the ask is put
+ *   to Sloane, the tiny model's "a"s arrive (whole at the end: they hold no space to stream by) and the answer ends
+ *   with its time; and `ask` alone says auto found the model this app carries.
  * It also records, without asserting, whether the page reaches Sloane's card in this web view at all, or shows the
  * recovery card (risk K1: no WebGPU in WebKitGTK).
+ * With --packaged it drives an installed app instead (build-matrix.yml installs its .deb and passes /usr/bin/<binary>),
+ * with the model the package carries, named by --file and --bytes (the pin, so CI passes the real model's), and asserts
+ * only what holds for any model: the same web view checks; native_model answers exactly { file, bytes, status } with
+ * that file and size, its status reaching ready; and one answer of at most PACKAGED_TOKENS (16) tokens, asked through
+ * the mind, arrives as text events (after the load and the prompt read) and ends with a reason, the model's own end or
+ * the cap, the mind naming the carried file; then the same console steps with one short `ask hello`, stopped with
+ * `ask stop` once its first words have streamed (or ended by the model first), whose answer is text, whatever words.
  *   node tools/browser/nativeE2e.mjs --app src-tauri/target/debug/crimson-noir-app [--driver tauri-driver]
  *                                    [--port 4444] [--out report.json]
+ *   node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file <model file> --bytes <size>
+ *                                    [--driver tauri-driver] [--port 4444] [--out report.json]
  * It needs the repository's node_modules (vite), a display (xvfb-run in .github/workflows/native-e2e.yml), tauri-driver
  * and WebKitWebDriver. The exit code is 1 when any check fails; the report (--out) holds every check, the bundled
  * modules and the K1 observation.
@@ -68,8 +84,12 @@ import { HPARAMS } from './tinyGguf.mjs'
 
 const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined }
 const APP = arg('app')
-if (!APP) {
-  console.error('usage: node tools/browser/nativeE2e.mjs --app <the app built with --features tiny-model> [--driver tauri-driver] [--port 4444] [--out report.json]')
+/** An installed app and the model its package carries (--packaged --file --bytes), or the tiny-model build. */
+const PACKAGED = process.argv.includes('--packaged')
+const CARRIED = PACKAGED ? Object.freeze({ file: arg('file'), bytes: Number(arg('bytes')) }) : null
+if (!APP || (PACKAGED && (!CARRIED.file || !Number.isSafeInteger(CARRIED.bytes) || CARRIED.bytes <= 0))) {
+  console.error('usage: node tools/browser/nativeE2e.mjs --app <the app built with --features tiny-model> [--driver tauri-driver] [--port 4444] [--out report.json]\n' +
+    '       node tools/browser/nativeE2e.mjs --packaged --app <the installed app> --file <the carried model> --bytes <its size> [--driver tauri-driver] [--port 4444] [--out report.json]')
   process.exit(2)
 }
 const DRIVER = arg('driver') ?? 'tauri-driver'
@@ -84,14 +104,29 @@ const MIND = 'src/09_Cognition/nativeMind.ts'
 const TINY = Object.freeze({ file: 'tiny-a.gguf', bytes: 156_992 })
 /** The runner's plan on a computer (src-tauri/src/runner.rs): the context is lowered to what the model was trained on. */
 const PLAN = Object.freeze({ nCtx: Math.min(8192, HPARAMS.nCtxTrain), nBatch: 512, maxTokens: 2048, threadsCap: 8 })
+/** The one answer asked of an installed app (--packaged), at most this many tokens. */
+const PACKAGED_TOKENS = 16
 /** Long answers being made when the page reloads: the first is made, the others wait their turn behind it. */
 const LONG_ANSWERS = 32
 /** Stops sent right behind their request: in the same task through shellRunner, and through the mind's own abort. */
 const RACES = Object.freeze({ shell: 24, mind: 12 })
 /** How late the held answer's channel hands over each message and its end, ms: well under DRAIN_MS (1,000). */
 const HOLD_MS = 300
+/**
+ * WebDriver's script timeout, ms: below Node fetch's 300 s headers timeout (wd() would fail with "fetch failed"), and
+ * above every in-page wait, so a script that waited in vain still returns what it saw.
+ */
+const SCRIPT_MS = 180_000
+/** How long the installed app's carried file may take to check (a gigabyte), ms: 30 s below SCRIPT_MS. */
+const PACKAGED_MODEL_MS = 150_000
+/** How long the console's answer may take in the page (the tiny model's, or the carried model's first words), ms. */
+const CONSOLE_MS = 150_000
+/** WebDriver's Enter key, sent after a console line (W3C WebDriver's key code). */
+const ENTER = '\uE007'
+/** The recovery card's line where the console still talks to Sloane (src/07_Execute_Actions/bootFailure.ts CONSOLE_TALKS_LINE). */
+const CONSOLE_TALKS_LINE = "This app carries Sloane's model, and the console talks to her without the city: open it, type operator unlock, then ask and your question."
 
-const report = { app: resolve(APP), checks: [], bundle: null, k1: null, env: null, rate: null, races: null }
+const report = { app: resolve(APP), packaged: CARRIED, checks: [], bundle: null, k1: null, env: null, rate: null, races: null }
 let failed = 0
 function check(ok, what, detail) {
   report.checks.push({ ok: !!ok, what, ...(detail === undefined ? {} : { detail }) })
@@ -220,6 +255,32 @@ ${body}
   return r.v
 }
 
+/** The first element `value` finds (W3C WebDriver's element reference), or null. */
+async function element(using, value) {
+  try {
+    const e = await wd('POST', `/session/${sid}/element`, { using, value })
+    return e ? Object.values(e)[0] : null
+  } catch { return null }
+}
+
+/** Types `text` into the console's prompt as a person would, through WebDriver's own keys (ENTER submits it). */
+async function typeLine(text) {
+  const id = await element('css selector', 'textarea[aria-label="Ring-0 command line"]')
+  if (!id) throw new Error('the console has no prompt to type into')
+  await wd('POST', `/session/${sid}/element/${id}/value`, { text })
+}
+
+/** Asks the page `body` until it returns something truthy (a page being replaced answers with an error), or `ms` ran out. */
+async function pageUntil(body, ms) {
+  const end = Date.now() + ms
+  let last = null
+  for (;;) {
+    try { last = await page(body); if (last && last.ok) return last } catch (e) { last = { error: e instanceof Error ? e.message : String(e) } }
+    if (Date.now() > end) return last
+    await sleep(500)
+  }
+}
+
 // ---- What the page is asked -------------------------------------------------------------------------------------
 
 /**
@@ -323,10 +384,82 @@ for (;;) {
   await sleep(250)
 }`
 
-/** What the app carries, through the page's own shellRunner, until the file's check is over. */
+/**
+ * The recovery card, if the page shows one, and its line that the console still talks to Sloane (RecoveryCard.tsx
+ * data-console-sloane), waited for up to `args[0]` ms while the card asks the app's runner; Sloane's card instead
+ * (a web view with WebGPU) ends the wait at once.
+ */
+const CARD_LINE = String.raw`
+const deadline = Date.now() + args[0]
+for (;;) {
+  const card = document.querySelector('[role="alertdialog"][data-failure]')
+  const line = card && card.querySelector('[data-console-sloane]')
+  if ((card && line) || (!card && document.querySelector('[data-concierge]')) || Date.now() > deadline) {
+    return {
+      card: card ? card.getAttribute('data-failure') : null,
+      line: line ? line.textContent.trim() : null,
+      open: !!card && Array.from(card.querySelectorAll('button')).some((b) => b.textContent.trim() === 'Open the console'),
+      waitedMs: args[0] - Math.max(0, deadline - Date.now()),
+    }
+  }
+  await sleep(250)
+}`
+
+/** The console alone (?boot=tty) is up: its module ran, its full-screen terminal is there, and no city was drawn. */
+const CONSOLE_UP = String.raw`
+const up = location.search.includes('boot=tty') && window.__bootDone === true && !!document.querySelector('[aria-label$="Ring-0 terminal"][data-full]')
+return { ok: up, search: location.search, canvases: document.querySelectorAll('canvas').length, focused: (document.activeElement || {}).getAttribute ? document.activeElement.getAttribute('aria-label') : null }`
+
+/** From now on, what streams into the console's live answer block ([data-streaming]: its text, Terminal.tsx) is recorded. */
+const CONSOLE_WATCH = String.raw`
+const seen = window.__consoleSeen = { blocks: 0, text: 0, first: null }
+const look = () => {
+  const s = document.querySelector('[data-streaming]')
+  if (!s) return
+  seen.blocks++
+  const t = ((s.querySelector('.r0-out') || {}).textContent || '')
+  if (t.length > seen.text) { seen.text = t.length; if (seen.first === null) seen.first = t.slice(0, 120) }
+}
+new MutationObserver(look).observe(document.body, { subtree: true, childList: true, characterData: true })
+return true`
+
+/**
+ * The console's lines after the last command that ends with `args[0]`, once one of them ends that command's answer
+ * (its time, the operator's stop, no reply, or an ask line that is neither the first nor one of the stop's own replies,
+ * which may follow an answer that ended first), or after `args[1]` ms; with what streamed meanwhile (CONSOLE_WATCH).
+ * `args[2]`: return as soon as some text has streamed.
+ */
+const CONSOLE_LINES = String.raw`
+const [command, ms, early] = args
+const deadline = Date.now() + ms
+const done = /^-- answered in \d+\.\d s|^ask: stopped by the operator$|^-- no reply --|^ask: (?!asking Sloane|stopping the answer|no answer is being generated)|^operator: |^Ring-0 operator tier unlocked\.$/
+for (;;) {
+  const rows = Array.from(document.querySelectorAll('[role="log"][aria-label="Ring-0 output"] .r0-line')).map((e) => ({ kind: (e.className.match(/r0-(\w+)/g) || []).pop(), text: e.textContent }))
+  let at = -1
+  rows.forEach((r, i) => { if (r.kind === 'r0-cmd' && r.text.trimEnd().endsWith(command)) at = i })
+  const after = at < 0 ? [] : rows.slice(at + 1).filter((r) => r.kind !== 'r0-cmd').map((r) => r.text)
+  const seen = window.__consoleSeen || null
+  const finished = after.some((t) => done.test(t))
+  if (finished || (early && seen && seen.text > 0) || Date.now() > deadline) return { found: at >= 0, finished, lines: after, seen, waitedMs: ms - Math.max(0, deadline - Date.now()) }
+  await sleep(100)
+}`
+
+/** The console's lines after its last bare `ask`, once they reach the server row (the status the city's console prints), or after `args[0]` ms. */
+const CONSOLE_STATUS = String.raw`
+const deadline = Date.now() + args[0]
+for (;;) {
+  const rows = Array.from(document.querySelectorAll('[role="log"][aria-label="Ring-0 output"] .r0-line')).map((e) => ({ cmd: e.classList.contains('r0-cmd'), text: e.textContent }))
+  let at = -1
+  rows.forEach((r, i) => { if (r.cmd && /(?:^|[#$>] ?)ask$/.test(r.text.trimEnd())) at = i })
+  const after = at < 0 ? [] : rows.slice(at + 1).map((r) => r.text)
+  if (after.some((t) => /^server\s/.test(t)) || Date.now() > deadline) return after
+  await sleep(100)
+}`
+
+/** What the app carries, through the page's own shellRunner, until the file's check is over (60 s, or `args[0]` ms). */
 const MODEL = String.raw`
 const host = own.shellRunner()
-const deadline = Date.now() + 60000
+const deadline = Date.now() + (args[0] || 60000)
 const seen = []
 for (;;) {
   const m = await host.model()
@@ -542,7 +675,102 @@ function answered(name, r, asked, { first = false, holdMs = 0 } = {}) {
   return d
 }
 
+/**
+ * The console alone talks to Sloane: the recovery card (where the page shows one) says so once the app's runner has
+ * its model ready, and its Open the console button opens ?boot=tty (without a card, the address is changed instead);
+ * there `operator unlock`, then `ask hello`, typed into the real console with WebDriver's keys. `answer(r)` checks the
+ * answer's lines; `stopEarly` sends `ask stop` once some text has streamed (an installed app's model writes for a
+ * while). Returns what the console printed.
+ */
+async function consoleAlone(what, { stopEarly = false } = {}) {
+  const card = await page(CARD_LINE, 60_000)
+  report.console = { card }
+  if (card.card !== null) {
+    check(card.line === CONSOLE_TALKS_LINE, `${what}: the recovery card says the console still talks to Sloane, once the app's runner has its model ready`, card)
+    check(card.open, `${what}: the card offers Open the console`, card)
+    const button = await element('xpath', "//button[normalize-space(.)='Open the console']")
+    check(button !== null, `${what}: WebDriver finds the card's Open the console button`)
+    if (button) await wd('POST', `/session/${sid}/element/${button}/click`, {})
+  } else {
+    console.log(`${what}: no recovery card here (${JSON.stringify(card)}): the console is opened by its address`)
+    await page("const u = new URL(location.href); u.searchParams.set('boot', 'tty'); location.assign(u.toString()); return true")
+  }
+  const up = await pageUntil(CONSOLE_UP, 60_000)
+  check(up && up.ok && up.canvases === 0, `${what}: the console alone opens (?boot=tty, its full-screen terminal, its module ran) and draws no city`, up)
+  if (!up || !up.ok) return null
+  await typeLine(`operator unlock${ENTER}`)
+  const unlocked = await page(CONSOLE_LINES, 'operator unlock', 20_000, false)
+  check(unlocked.lines[0] === 'Ring-0 operator tier unlocked.' && unlocked.lines.some((l) => /ask <words> of Sloane/.test(l)), `${what}: operator unlock, typed into the console, grants the ask of Sloane`, unlocked.lines)
+  await page(CONSOLE_WATCH)
+  const t0 = Date.now()
+  await typeLine(`ask hello${ENTER}`)
+  let r = await page(CONSOLE_LINES, 'ask hello', CONSOLE_MS, stopEarly)
+  if (stopEarly && !r.finished && r.seen && r.seen.text > 0) {
+    await typeLine(`ask stop${ENTER}`)
+    r = await page(CONSOLE_LINES, 'ask hello', 60_000, false)
+  }
+  const ms = Date.now() - t0
+  report.console = { card, unlocked: unlocked.lines, ask: r, ms }
+  console.log(`${what}: the console's ask took ${ms} ms; streamed ${r.seen ? r.seen.text : 0} characters; ${JSON.stringify(r.lines).slice(0, 400)}`)
+  check(r.found && r.lines[0] === 'ask: asking Sloane', `${what}: ask hello, typed into the console, is put to Sloane`, r.lines.slice(0, 2))
+  check(r.finished, `${what}: the answer ends in the console`, r.lines.slice(-2))
+  return r
+}
+
 // ---- The run ----------------------------------------------------------------------------------------------------
+
+/**
+ * An installed app (--packaged): the web view checks, the model its package carries, and one short answer through the
+ * mind. Nothing here depends on the model's words: any model ends its answer by itself or at the cap.
+ */
+async function packaged() {
+  report.env = await page(ENV)
+  const env = report.env
+  console.log(`web view: ${env.agent}; origin ${env.origin}; webgpu ${env.webgpu}; memory64 ${env.memory64}`)
+  check(env.bootDone, 'the installed app\'s page ran its module (window.__bootDone, main.tsx)', env)
+  check(env.shell, 'the page has Tauri\'s core.invoke and core.Channel (withGlobalTauri)')
+  check(env.jspi === false, 'WebKitGTK reports no JSPI: the app takes the native runner, not the model in the page', env)
+  check(env.fetchFixed && /is not on this machine/.test(env.refusal ?? ''), 'the air gap holds: fetch is fixed and refuses Tauri\'s ipc:// address, so commands take the message path', env.refusal)
+
+  report.k1 = await page(K1)
+  console.log(`K1 (recorded, not asserted): ${JSON.stringify(report.k1)}`)
+
+  await inject('the installed app\'s page')
+
+  const model = await page(MODEL, PACKAGED_MODEL_MS)
+  const m = model.m
+  check(m && m.file === CARRIED.file && m.bytes === CARRIED.bytes && Object.keys(m).sort().join(' ') === 'bytes file status',
+    `native_model answers exactly { file: "${CARRIED.file}", bytes: ${CARRIED.bytes}, status }: the file the package carries`, m)
+  check(m && m.status && m.status.state === 'ready', `native_model's status reaches ready once the carried file is checked (seen: ${model.seen.join(' -> ')})`, m && m.status)
+
+  const r = await page(ANSWER, PACKAGED_TOKENS)
+  check(Array.isArray(r.installed) && r.installed.join(',') === CARRIED.file, `the mind lists the carried model, ${CARRIED.file}`, r.installed)
+  check(r.error === null && r.answer && typeof r.answer.text === 'string' && r.answer.text.trim() !== '', 'the mind answers with text', r.error ?? r.answer)
+  check(r.asked.length === 1 && r.asked[0].req.maxTokens === PACKAGED_TOKENS, `the mind asked shellRunner's generate once, for at most ${PACKAGED_TOKENS} tokens`, r.asked.map((a) => a.req))
+  const g = r.asked[0]
+  const d = g && g.done
+  const texts = g ? g.events.filter((e) => e && e.kind === 'text') : []
+  check(texts.length > 0 && textOf(g.events).trim() !== '', `the answer arrives as text events (${texts.length})`, g && kinds(g.events))
+  const seq = g ? kinds(g.events).join(',') + ',' : ''
+  check(/^(loading,)+(read,)+(text,)+$/.test(seq), 'the events come in order: the load, the prompt read, then the text', seq.slice(0, 300))
+  check(d && !g.error && d.id === g.req.id && (d.reason === 'eog' || d.reason === 'maxTokens') && d.tokens >= 1 && d.tokens <= PACKAGED_TOKENS,
+    `the answer ends with a reason, the model's own end or the cap, after 1 to ${PACKAGED_TOKENS} tokens`, d ?? (g && g.error))
+  check(d && d.gpu === false && d.threads >= 1 && d.threads <= PLAN.threadsCap && d.nBatch === PLAN.nBatch, 'the plan is the computer\'s (the processor, 1-8 threads)', d && { threads: d.threads, nCtx: d.nCtx, nBatch: d.nBatch, gpu: d.gpu })
+  check(r.settings.server === 'this app' && r.settings.model === CARRIED.file, 'the mind names this app and the carried file', r.settings)
+  report.answer = d ? { text: textOf(g.events), reason: d.reason, tokens: d.tokens, promptTokens: d.promptTokens, prefillMs: d.prefillMs, genMs: d.genMs, threads: d.threads, nCtx: d.nCtx, wallMs: g.ms } : null
+  console.log(`answer: ${JSON.stringify(report.answer)}`)
+
+  // The console alone, with the model the package carries: one short ask, stopped once its first words have come
+  // (or ended by the model first). Any text will do: nothing here depends on the model's words.
+  const c = await consoleAlone('the installed app\'s console', { stopEarly: true })
+  if (c) {
+    const said = c.lines.slice(1).filter((l) => l.trim() !== '' && !/^(?:ask: |-- )/.test(l))
+    // The stop's own reply (typed after the first words) is not how the answer ended: it may follow an answer that ended first.
+    const end = c.lines.filter((l) => !/^ask: (?:stopping the answer|no answer is being generated)$/.test(l)).at(-1) ?? ''
+    check(said.length > 0 && said.join(' ').trim().length > 0, 'the installed app\'s console: Sloane\'s answer is text from the carried model', c.lines)
+    check(/^-- answered in \d+\.\d s --$/.test(end) || end === 'ask: stopped by the operator', 'the installed app\'s console: it ends with its time, or with the operator\'s stop', end)
+  }
+}
 
 async function run() {
   report.env = await page(ENV)
@@ -642,6 +870,20 @@ async function run() {
   report.reload = { reloadMs, spanMs: span, naturalMs: natural, longAnswers: LONG_ANSWERS, takenMs: before.takenMs }
   console.log(`reload: the old answers' first text to the new page's first answer ended ${span} ms; by themselves they would run about ${natural?.toFixed(0)} ms more; every request had reached the runner ${before.takenMs} ms after the first text`)
   check(natural !== null && span < natural / 2, 'the old answers ended because the page reloaded, not by running out: the new page\'s first answer ended well before they could have', report.reload)
+
+  // The console alone, over the page's own router (src/07_Execute_Actions/terminal/consoleBridge.ts): the tiny model
+  // writes "a"s with no space, so nothing streams in whole words; its text arrives whole at the end, cut at Sloane's
+  // length (onboarding/voice.ts CHAT_MAX, 600), and the answer ends with its time.
+  const c = await consoleAlone('the console')
+  if (c) {
+    check(c.lines.length === 3 && /^a{1,600}…?$/.test(c.lines[1]) && /^-- answered in \d+\.\d s --$/.test(c.lines[2]),
+      'the console: Sloane\'s answer is the tiny model\'s "a"s, through the router\'s auto order to the model this app carries, and ends with its time', c.lines.map((l) => l.slice(0, 80)))
+    // `ask` alone: which provider answered, as the city's console says it.
+    await typeLine(`ask${ENTER}`)
+    const status = await page(CONSOLE_STATUS, 30_000)
+    check(status.some((l) => /^found\s+native: the model this app carries, found ready to run on this device/.test(l)) && status.some((l) => /^server\s+none: the app runs the model$/.test(l)),
+      'the console: ask alone says auto found the model this app carries, and that the app runs it', status)
+  }
 }
 
 const driver = spawn(DRIVER, ['--port', String(PORT)], { stdio: ['ignore', 'inherit', 'inherit'] })
@@ -657,8 +899,8 @@ try {
   }
   const session = await wd('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: report.app } } } })
   sid = session.sessionId
-  await wd('POST', `/session/${sid}/timeouts`, { script: 180_000, pageLoad: 180_000 })
-  await run()
+  await wd('POST', `/session/${sid}/timeouts`, { script: SCRIPT_MS, pageLoad: SCRIPT_MS })
+  await (PACKAGED ? packaged() : run())
 } catch (e) {
   check(false, 'the run finished', e instanceof Error ? e.message : String(e))
 } finally {

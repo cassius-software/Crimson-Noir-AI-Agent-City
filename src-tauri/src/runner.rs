@@ -306,6 +306,21 @@ mod tests {
         assert!(!message.contains("Err(") && !message.contains("Some(") && !message.contains('{'), "{message}");
     }
 
+    /// llama.cpp's abort handler would start gdb on the app (ggml.c ggml_print_backtrace): main.rs sets
+    /// GGML_NO_BACKTRACE as its very first statement, before any thread, and only where the runner is compiled.
+    #[test]
+    fn main_turns_off_llama_cpp_debugger_backtrace_first_where_the_runner_is_compiled() {
+        let main = include_str!("main.rs");
+        let body = main.split("fn main() {").nth(1).expect("main.rs has fn main");
+        let code: Vec<&str> = body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
+        assert_eq!(code[0], r#"#[cfg(all(target_os = "linux", feature = "native-runner"))]"#, "only where the runner is compiled");
+        assert_eq!(code[1], r#"std::env::set_var("GGML_NO_BACKTRACE", "1");"#, "the first statement");
+        assert_eq!(code[2], "crimson_noir_app_lib::run()", "before run() starts any thread");
+        let comments: Vec<&str> =
+            body.lines().map(str::trim).skip_while(|l| l.is_empty()).take_while(|l| l.starts_with("//")).collect();
+        assert!(comments.iter().any(|l| l.starts_with("// SAFETY:")), "the reason it is sound is written beside it");
+    }
+
     #[cfg(not(all(target_os = "linux", feature = "native-runner")))]
     #[test]
     fn without_the_runner_the_commands_answer_none_offline_and_false() {

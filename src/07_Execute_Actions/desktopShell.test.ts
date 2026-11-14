@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { createNativeMind, type GenRequest } from '../09_Cognition/nativeMind.ts'
-import { APP_MODEL_ASK_MS, APP_READ_BYTES, desktopShell, DRAIN_MS, fromBase64, GPU_READ_MS, SHELL_GLOBAL, shellGpuMemory, shellModel, shellModelFetch, shellRunner } from './desktopShell.ts'
+import { APP_MODEL_ASK_MS, APP_READ_BYTES, desktopShell, DRAIN_MS, fromBase64, GPU_READ_MS, SHELL_GLOBAL, shellCarried, shellGpuMemory, shellModel, shellModelFetch, shellRunner } from './desktopShell.ts'
 import { APP_MODEL, fetchSiteModel, type SiteModelPin } from '../09_Cognition/siteModel.ts'
 
 test('a browser global, or one with a half-shaped API, is no desktop shell', () => {
@@ -400,3 +400,20 @@ test('shellRunner: an answer settles only once its channel has ended, every mess
   assert.deepEqual(await host.generate(wire.request, () => {}), wire.done[0])
   assert.ok(Date.now() - t0 >= DRAIN_MS - 20, `${Date.now() - t0} ms`)
 })
+
+test('shellCarried: what the runner says it carries, for the recovery card; null in a browser, from a shell that refuses or is silent, and it never throws', async () => {
+  class Channel { onmessage: (m: unknown) => void = () => {} }
+  const ready = { file: 'm.gguf', bytes: 1, status: { state: 'ready' } }
+  const asked: string[] = []
+  const shellAnswering = (answer: () => Promise<unknown>) => ({ [SHELL_GLOBAL]: { core: { Channel, invoke: (command: string) => { asked.push(command); return answer() } } } })
+  assert.equal(await shellCarried({}), null, 'a browser: no runner')
+  assert.equal(await shellCarried({ [SHELL_GLOBAL]: { core: { invoke: async () => ready } } }), null, 'no Channel: no runner')
+  assert.deepEqual(await shellCarried(shellAnswering(async () => ready)), ready)
+  assert.deepEqual(asked, ['native_model'], 'the runner\'s own question, nothing else')
+  assert.equal(await shellCarried(shellAnswering(async () => null)), null, 'it carries none')
+  assert.equal(await shellCarried(shellAnswering(() => Promise.reject(new Error('unknown command native_model')))), null, 'a shell without the command')
+  const t0 = Date.now()
+  assert.equal(await shellCarried(shellAnswering(() => new Promise(() => {})), 30), null, 'silent past the wait')
+  assert.ok(Date.now() - t0 < APP_MODEL_ASK_MS, 'the wait it was given, not more')
+})
+

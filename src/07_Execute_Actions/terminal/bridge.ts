@@ -131,6 +131,11 @@ export interface OperatorBridge {
   /** Stops the answer being generated, if any (the operator's own stop); returns what it did. */
   askStop(): string
   /**
+   * Where the model is loaded on first use (the console alone, consoleBridge.ts): a promise that settles once askSet
+   * and askConnect can be answered, or null when they can be now. Absent: always now (the city).
+   */
+  ready?(): Promise<void> | null
+  /**
    * The swarm orchestrator (08_Swarm/orchestrator.ts) over this tier's gated ask: a goal split over up to five roles,
    * each one prompt through the gateway and the guardrails, with the hash-chained audit trail of every run. The host
    * (a voice line, the onboarding) reaches it through this same surface. `run` throws while locked.
