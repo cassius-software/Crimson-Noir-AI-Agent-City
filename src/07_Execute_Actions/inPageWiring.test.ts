@@ -3,9 +3,10 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the page-side wiring of the model kept in this page (09_Cognition/inPage.ts, the
- * `inpage` provider), which App, the touch Menu and the engine carry and Node cannot run: the city's router is the one
- * handed an in-page mind (the onboarding's keeps the stand-in and never asks it), over one runtime and one store per
- * page, made on first use, the store copying through its own counted worker; the mind plans by the engine's profile of
+ * `inpage` provider), which App, the touch Menu and the engine carry and Node cannot run: the page's router (built in
+ * one place, 09_Cognition/pageMind.ts createPageMind, for the city and the console alone) is the one handed an in-page
+ * mind (the onboarding's keeps the stand-in and never asks it), over one runtime and one store per page, made on first
+ * use, the store copying through its own counted worker; the mind plans by the engine's profile of
  * this device and its GPU's shader-f16, holds the city's tier down while it works and shows its phase on the HUD's
  * activity line; the picker is one hidden file input with no accept, hidden by size and opacity, clicked at once inside
  * the tap or key that asked; a file picked or dropped (on a desktop) is kept, chosen, and on a desktop loaded at once;
@@ -45,16 +46,26 @@ const EFFECT = between(APP, '    const canvas = canvasRef.current\n', '  // The 
 /** The part of it that runs once the engine is up. */
 const CITY = between(EFFECT, '    loadMap(plan).then((region) => Engine.create(', '    return () => {\n      cancelled = true')
 /** The city router's call, from its line to the line after it. */
-const CITY_ROUTER = between(CITY, '        const local = createMindRouter({', '        inPageMind = inPage\n')
+const CITY_ROUTER = between(CITY, '        const { router: local, inPage, native: appMind } = minds.createPageMind({', '        inPageMind = inPage\n')
+/** The one place the page's router and its providers are built (the city's and the console alone's). */
+const PAGE_MIND = read('../09_Cognition/pageMind.ts')
+const PAGE_MIND_CODE = code(PAGE_MIND)
+const CREATE = between(PAGE_MIND, 'export function createPageMind(d: PageMindDeps): PageMind {', '\n}\n')
 
-test('App: the city\'s router alone is handed an in-page mind, one per router; the onboarding\'s keeps the stand-in and never asks it', () => {
-  assert.equal(APP_CODE.match(/\bcreateMindRouter\(/g)?.length, 2, 'the onboarding\'s and the city\'s')
-  assert.equal(APP_CODE.match(/\binPage: \(store\) =>/g)?.length, 1, 'one router is handed the factory')
-  assert.equal(APP_CODE.match(/\bcreateInPageMind\(/g)?.length, 1, 'one mind is made')
-  assert.match(CITY_ROUTER, /^ {8}const local = createMindRouter\(\{\n {10}fetch: pageFetch,\n {10}store: pageStore\(COGNITION_KEY\),\n {10}inPage: \(store\) => \(inPage = createInPageMind\(\{\n/, 'inside the city router\'s own call, over its own slice of the store')
-  const onboarding = between(APP, 'function onboardingVoice(): Voice {', '\n}\n')
-  assert.match(onboarding, /const router = createMindRouter\(\{ fetch: pageFetch, store: pageStore\(COGNITION_KEY\) \}\)/, 'no runtime for the onboarding')
+test('pageMind: the page\'s router alone is handed an in-page mind, one per router; the onboarding\'s keeps the stand-in and never asks it', () => {
+  // App builds no router itself: the city and the console alone both call createPageMind.
+  assert.equal(APP_CODE.match(/\bcreateMindRouter\(/g), null, 'no router built in App')
+  assert.equal(APP_CODE.match(/\bcreatePageMind\(/g)?.length, 2, 'the city\'s and the console alone\'s')
+  assert.equal(PAGE_MIND_CODE.match(/\bcreateMindRouter\(/g)?.length, 2, 'the onboarding\'s and the page\'s')
+  assert.equal(PAGE_MIND_CODE.match(/\binPage: \(store\) =>/g)?.length, 1, 'one router is handed the factory')
+  assert.equal(PAGE_MIND_CODE.match(/\bcreateInPageMind\(/g)?.length, 1, 'one mind is made')
+  assert.match(CREATE, /\n {2}const router = createMindRouter\(\{\n {4}fetch: d\.fetch,\n {4}store: d\.store,\n {4}inPage: \(store\) => \(inPage = createInPageMind\(\{\n/, 'inside the router\'s own call, over its own slice of the store')
+  assert.match(CITY_ROUTER, /^ {8}const \{ router: local, inPage, native: appMind \} = minds\.createPageMind\(\{\n {10}fetch: pageFetch,\n {10}store: pageStore\(COGNITION_KEY\),\n {10}runtime: PAGE_RUNTIME,\n {10}models: PAGE_MODELS,\n {10}device,\n/, 'the city hands its own fetch, store, runtime, models and device')
+  const onboarding = between(PAGE_MIND, 'export function onboardingVoice(fetch: FetchLike, store: SettingsStore): Voice {', '\n}\n')
+  assert.match(onboarding, /const router = createMindRouter\(\{ fetch, store \}\)/, 'no runtime for the onboarding')
   assert.match(onboarding, /if \(s\.provider === 'auto' \|\| s\.provider === 'scripted' \|\| s\.provider === 'inpage' \|\| \(s\.provider === 'claude' && !s\.key\)\) return scriptedVoice\(\)/, 'a model kept in this page is never asked while the city is built')
+  const voice = between(APP, 'function onboardingVoice(): Voice {', '\n}\n')
+  assert.match(voice, /PAGE_MIND\(\)\.then\(\(m\) => m\.onboardingVoice\(pageFetch, pageStore\(COGNITION_KEY\)\), \(\) => scriptedVoice\(\)\)/, 'App hands its fetch and store; the script stands where the module could not load')
 })
 
 test('App: one runtime and one store per page, made on first use; the store copies through its own worker, counted among the page\'s workers', () => {
@@ -70,17 +81,20 @@ test('App: one runtime and one store per page, made on first use; the store copi
   assert.match(made, /return \(\) => \(made \?\?= \{ value: make\(\) \}\)\.value/, 'made once, on the first call')
   const worker = between(APP, 'function copyWorker(): Worker {', '\n}\n')
   assert.match(worker, /const worker = new CopyWorker\(\{ name: 'model-copy' \}\)\n\s+const untrack = trackWorker\(\)\n\s+const terminate = worker\.terminate\.bind\(worker\)\n\s+worker\.terminate = \(\) => \{ terminate\(\); untrack\(\) \}/)
-  assert.match(CITY_ROUTER, /runtime: \(\) => PAGE_RUNTIME\(\),\n\s+store: PAGE_MODELS\(\),\n\s+kept: store,\n\s+env: device,/, 'the runtime asked for only when the mind needs it')
+  assert.match(CREATE, /runtime: \(\) => d\.runtime\(\),\n\s+store: d\.models\(\),\n\s+kept: store,\n\s+env: d\.device,/, 'the runtime asked for only when the mind needs it')
 })
 
 test('App: the mind plans by the engine\'s profile, holds the city\'s tier down while it works, and shows its phase on the HUD\'s activity line', () => {
-  const device = between(CITY, '        const device = (): Omit<PlanEnv, \'gpuMode\' | \'gpuFailed\'> => ({', '        })\n')
+  const device = between(CITY, '        const device = (): PageDevice => ({', '        })\n')
   assert.match(device, /mobile: e\.profile\.mobile, lite: e\.profile\.lite, gpuClass: e\.profile\.gpuClass,/)
   assert.match(device, /cores: navigator\.hardwareConcurrency \|\| 4, memoryGb: deviceMemory\(\), isolated: canShareMemory\(\), f16: e\.gpuF16,/)
-  assert.match(CITY_ROUTER, /busy: \(on, place\) => e\.holdQuality\(on && place \? holdTier\(device\(\), place\.gpu\) : null\),/, 'held while it works, let go after')
+  assert.match(CREATE, /busy: \(on, place\) => d\.hold\?\.\(on && place \? holdTier\(d\.device\(\), place\.gpu\) : null\),/, 'held while it works, let go after')
+  assert.match(CREATE, /onPhase: \(text\) => d\.onPhase\?\.\(text\),/)
+  assert.match(CITY_ROUTER, /hold: \(tier\) => e\.holdQuality\(tier\),/, 'the city holds its own tier')
   assert.match(CITY_ROUTER, /onPhase: \(text\) => \{ modelPhase = text \},/)
   // The model the app runs itself (09_Cognition/nativeMind.ts) shows its phase on the same line.
-  assert.match(CITY_ROUTER, /native: \(\) => \(appMind = createNativeMind\(\{\n\s*host: shellRunner\(\),\n\s*maxTokens: [^\n]+\n\s*busy: [^\n]+\n\s*onPhase: \(text\) => \{ modelPhase = text \},\n\s*onFailed: /)
+  assert.match(CREATE, /native: \(\) => \(native = createNativeMind\(\{\n\s*host: d\.runner,\n\s*maxTokens: [^\n]+\n\s*busy: [^\n]+\n\s*onPhase: \(text\) => d\.onPhase\?\.\(text\),\n\s*onFailed: /)
+  assert.match(CITY_ROUTER, /runner: shellRunner\(\),/)
   assert.match(EFFECT, /s\.supplier\.recruiting = hudLine\(recruiter, router\?\.running \?\? 0, activityText\(answering, engine\.speaking, modelPhase \?\? keepLine\)\)/, 'the line the HUD already shows while a model works')
   const activity = between(APP, 'function activityText(', '\n}\n')
   assert.match(activity, /if \(!a\) return model \?/, 'with no answer waiting, what the model is doing')

@@ -31,8 +31,9 @@
 # notice where the runner looks, nothing of the end-to-end test's build), the glibc floor of every file the .deb
 # installs, and the binary (no download, HTTP or subprocess code of llama.cpp's common library, no network import);
 # the x86-64 job then installs its .deb on the runner and asks the installed app for one short answer through
-# tools/browser/nativeE2e.mjs (--packaged) in WebKitGTK under a virtual display. Windows, macOS, the phones and the
-# UEFI media build as before: no runner and no model.
+# tools/browser/nativeE2e.mjs (--packaged) in WebKitGTK under a virtual display, then one short ask typed into its
+# console alone (?boot=tty), answered by the carried model. Windows, macOS, the phones and the UEFI media build as
+# before: no runner and no model.
 # What breaks if it is removed? Every platform but Windows is a page of instructions again, and a release carries
 # only the Windows app and the OS media.
 
@@ -224,7 +225,7 @@ jobs:
       - name: tauri-driver ${{ env.TAURI_DRIVER_VERSION }}, for the installed app
         if: matrix.target == 'linux-x64'
         run: cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked
-      - name: The .deb installed on this runner, and the installed app asked for one short answer in WebKitGTK, under a virtual display
+      - name: The .deb installed on this runner, and the installed app asked for one short answer in WebKitGTK, and once more in its console alone, under a virtual display
         if: matrix.target == 'linux-x64'
         env:
           MODEL_FILE: ${{ steps.model.outputs.file }}

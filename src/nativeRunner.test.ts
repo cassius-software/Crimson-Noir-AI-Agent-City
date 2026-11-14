@@ -12,8 +12,10 @@
  * it must run skipped or allowed to fail. It pins native-e2e.yml too: the shell's own Rust tests and clippy, with the
  * runner and with the feature off, then the shell's commands driven in WebKitGTK on ubuntu-24.04 with the tiny model
  * (tools/browser/nativeE2e.mjs, which asks through the page's own shellRunner and createNativeMind, bundled from their
- * sources, one answer with its channel held back), on the paths that can change them (every module those two import
- * among them), its steps in order, GitHub's own actions alone, outside ci.yml and the self-healing checks. The crate's
+ * sources, one answer with its channel held back, then the console alone opened from the recovery card and an ask
+ * typed into it), on the paths that can change them (every module those two and the page's router import among them,
+ * and the console's own files), its steps in order, GitHub's own actions alone, outside ci.yml and the self-healing
+ * checks. The crate's
  * behaviour is tested by its own Rust tests (native/llm/tests); this file keeps their frame.
  * What breaks if it is removed? A floating binding version, an OpenMP dependency, a network call in the runner, or a
  * workflow that silently skips the real model could all land unseen.
@@ -25,6 +27,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DRAIN_MS } from './07_Execute_Actions/desktopShell.ts'
+import { CONSOLE_TALKS_LINE } from './07_Execute_Actions/bootFailure.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CRATE = join(ROOT, 'native', 'llm')
@@ -187,9 +190,14 @@ test('native-e2e.yml drives the shell\'s commands in WebKitGTK with the tiny mod
   assert.match(flow, /TAURI_DRIVER_VERSION: '\d+\.\d+\.\d+'/, 'tauri-driver at an exact version')
   // The triggers: a pull request and a push to main on exactly these paths, and by hand: the shell and the runner, the
   // page modules the script bundles with every module they import, the page's boot and policy, and the tools.
-  const BUNDLED = closure(['src/07_Execute_Actions/desktopShell.ts', 'src/09_Cognition/nativeMind.ts'])
-  assert.ok(BUNDLED.includes('src/02_Define_The_Rules/airgap.ts') && BUNDLED.length >= 10, BUNDLED.join(', '))
-  const PATHS = ['src-tauri/**', 'native/llm/**', ...BUNDLED, 'src/main.tsx', 'index.html', 'tools/browser/tinyGguf.mjs', 'tools/browser/nativeE2e.mjs', '.github/workflows/native-e2e.yml']
+  // The console alone's talk with Sloane is driven there too: the page's router (pageMind.ts, with every module it
+  // imports), and the console's own files from the card's button to the answer's lines.
+  const BUNDLED = closure(['src/07_Execute_Actions/desktopShell.ts', 'src/09_Cognition/nativeMind.ts', 'src/09_Cognition/pageMind.ts'])
+  assert.ok(BUNDLED.includes('src/02_Define_The_Rules/airgap.ts') && BUNDLED.includes('src/09_Cognition/router.ts') && BUNDLED.length >= 10, BUNDLED.join(', '))
+  const CONSOLE = ['src/App.tsx', 'src/07_Execute_Actions/RecoveryCard.tsx', 'src/07_Execute_Actions/bootFailure.ts', 'src/07_Execute_Actions/operator.ts',
+    'src/07_Execute_Actions/terminal/Terminal.tsx', 'src/07_Execute_Actions/terminal/bridge.ts', 'src/07_Execute_Actions/terminal/commands.ts', 'src/07_Execute_Actions/terminal/consoleBridge.ts']
+  assert.ok(CONSOLE.every((f) => !BUNDLED.includes(f)), 'listed once')
+  const PATHS = ['src-tauri/**', 'native/llm/**', ...BUNDLED, ...CONSOLE, 'src/main.tsx', 'index.html', 'tools/browser/tinyGguf.mjs', 'tools/browser/nativeE2e.mjs', '.github/workflows/native-e2e.yml']
   const on = flow.slice(flow.indexOf('\non:\n'), flow.indexOf('\npermissions:'))
   const listed = (block: string): string[] => [...block.matchAll(/^ {6}- (.+)$/gm)].map((m) => m[1])
   assert.deepEqual(listed(on.slice(on.indexOf('pull_request:'), on.indexOf('push:'))), PATHS)
@@ -293,6 +301,60 @@ test('the installed Linux app is asked through nativeE2e.mjs --packaged: the car
   const matrix = read(ROOT, '.github', 'workflows', 'build-matrix.yml')
   assert.ok(matrix.includes('xvfb-run -a node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file "$MODEL_FILE" --bytes "$MODEL_BYTES"'))
   assert.ok(read(ROOT, 'src-tauri', 'Cargo.toml').includes('name = "crimson-noir-app"'), 'the binary the .deb installs as /usr/bin/crimson-noir-app')
+})
+
+test('nativeE2e.mjs opens the console alone from the card and types an ask into it, in the tiny-model app and in the installed one', () => {
+  const script = read(ROOT, 'tools', 'browser', 'nativeE2e.mjs')
+  // The card's line, word for word as the page shows it (bootFailure.ts), waited for while the card asks the runner.
+  const line = /^const CONSOLE_TALKS_LINE = ("[^"]+"|'[^']+')$/m.exec(script)?.[1]
+  assert.ok(line, 'the script holds the card\'s line')
+  assert.equal(JSON.parse(line.startsWith('"') ? line : `"${line.slice(1, -1)}"`), CONSOLE_TALKS_LINE)
+  assert.match(script, /card\.querySelector\('\[data-console-sloane\]'\)/)
+  // The card's own button, clicked through WebDriver; without a card (a web view with WebGPU) the address instead.
+  assert.match(script, /element\('xpath', "\/\/button\[normalize-space\(\.\)='Open the console'\]"\)/)
+  assert.match(script, /\/element\/\$\{button\}\/click`/)
+  assert.match(script, /u\.searchParams\.set\('boot', 'tty'\)/)
+  // The console alone is up and drew no city, then the lines are typed with WebDriver's keys into its real prompt.
+  assert.match(script, /location\.search\.includes\('boot=tty'\) && window\.__bootDone === true && !!document\.querySelector\('\[aria-label\$="Ring-0 terminal"\]\[data-full\]'\)/)
+  assert.match(script, /check\(up && up\.ok && up\.canvases === 0,/)
+  assert.match(script, /element\('css selector', 'textarea\[aria-label="Ring-0 command line"\]'\)/)
+  assert.match(script, /\/element\/\$\{id\}\/value`, \{ text \}/)
+  assert.match(script, /await typeLine\(`operator unlock\$\{ENTER\}`\)/)
+  assert.match(script, /await typeLine\(`ask hello\$\{ENTER\}`\)/)
+  assert.match(script, /r\.lines\[0\] === 'ask: asking Sloane'/)
+  assert.match(script, /check\(r\.finished,/)
+  // The terminal's own hooks the script reads (Terminal.tsx).
+  const terminal = read(ROOT, 'src', '07_Execute_Actions', 'terminal', 'Terminal.tsx')
+  for (const hook of ['aria-label="Ring-0 command line"', 'aria-label="Ring-0 output"', 'aria-label={`${b.brand.name} Ring-0 terminal`}', 'data-streaming=""', 'r0-line r0-out', 'data-full={fullscreen || undefined}']) {
+    assert.ok(terminal.includes(hook), hook)
+  }
+  // The tiny-model app: after the runner's own checks, the tiny model's "a"s through the router's auto order, and
+  // `ask` alone naming the model this app carries.
+  const run = script.slice(script.indexOf('\nasync function run()'), script.indexOf('\nconst driver = spawn('))
+  assert.match(run, /const c = await consoleAlone\('the console'\)/)
+  assert.match(run, /\/\^a\{1,600\}…\?\$\/\.test\(c\.lines\[1\]\)/)
+  assert.match(run, /found\\s\+native: the model this app carries/)
+  // The installed app: one short ask, stopped once its first words have streamed; any text will do, no words expected.
+  const packaged = script.slice(script.indexOf('async function packaged()'), script.indexOf('\nasync function run()'))
+  assert.match(packaged, /const c = await consoleAlone\('the installed app\\'s console', \{ stopEarly: true \}\)/)
+  assert.match(packaged, /said\.length > 0 && said\.join\(' '\)\.trim\(\)\.length > 0/)
+  assert.doesNotMatch(packaged.slice(packaged.indexOf("consoleAlone('the installed")), /a\{1,|hello there|Sloane:/, 'no words of the model\'s are expected')
+  assert.match(script, /await typeLine\(`ask stop\$\{ENTER\}`\)/)
+  // The stop, typed once the first words came, may follow an answer that ended first: its reply then comes last, so
+  // the end is judged without the stop's own replies, and neither of them ends an answer by itself.
+  const stopReply = /const end = c\.lines\.filter\(\(l\) => !\/(.+?)\/\.test\(l\)\)\.at\(-1\) \?\? ''/.exec(packaged)?.[1]
+  assert.ok(stopReply, 'the packaged run judges the end without the stop\'s own replies')
+  const endOf = (lines: string[]): string | undefined => lines.filter((l) => !new RegExp(stopReply).test(l)).at(-1)
+  assert.equal(endOf(['ask: asking Sloane', 'Hello there.', '-- answered in 0.4 s --', 'ask: no answer is being generated']), '-- answered in 0.4 s --', 'ended first')
+  assert.equal(endOf(['ask: asking Sloane', 'ask: stopping the answer', 'Hello', 'ask: stopped by the operator']), 'ask: stopped by the operator', 'stopped')
+  const done = /^const done = \/(.+)\/$/m.exec(script)?.[1]
+  assert.ok(done)
+  for (const reply of ['ask: stopping the answer', 'ask: no answer is being generated']) assert.equal(new RegExp(done).test(reply), false, reply)
+  for (const end of ['-- answered in 0.4 s --', 'ask: stopped by the operator', '-- no reply --', 'ask: no model is answering']) assert.equal(new RegExp(done).test(end), true, end)
+  // Every console wait ends below WebDriver's script timeout.
+  const consoleMs = Number(/^const CONSOLE_MS = ([\d_]+)$/m.exec(script)?.[1].replaceAll('_', ''))
+  const scriptMs = Number(/^const SCRIPT_MS = ([\d_]+)$/m.exec(script)?.[1].replaceAll('_', ''))
+  assert.ok(consoleMs > 0 && consoleMs <= scriptMs - 20_000, `${consoleMs} ms against ${scriptMs} ms`)
 })
 
 test('main sets GGML_NO_BACKTRACE first, where the runner is compiled, so llama.cpp never starts a debugger on the app', () => {

@@ -15,6 +15,52 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
+  **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
+  words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
+  (the Linux app's WebKitGTK among them) still talks to the model its build carries or reaches. The words go to her as
+  her card puts them in the city (`terminal/consoleBridge.ts` over `sloaneChat`: the 14A screen, her framing for the
+  console alone, which says no city runs there and offers no change to it, the last turns, cut at an action line and
+  at her length), through the page's own model router with the same providers, the same `auto` order and the same
+  rules as the city: one function now builds that router for both, `src/09_Cognition/pageMind.ts` `createPageMind`,
+  factored out of `App.tsx`. `ask` alone, `ask provider`, `ask
+  connect`, `ask model`, `ask server`, `ask key`, `ask effort`, `ask think`, `ask api`, `ask vram` and `ask stop`
+  behave as in the city's console (the operator tier's status, settings and connect lines are shared from
+  `operator.ts`), behind the same gate, `operator unlock`, and the same Zeroth Law check before each answer. There a
+  line is a setting only in its exact form, a setting's name and one value it takes (`commands.ts` `ttySetting`):
+  `ask key facts about this city` goes to Sloane and keeps nothing, and `ask -- <words>` always goes to her. `ask file
+  load`, `unload`, `forget <name>` and `log` act on the model file already kept in the page, so the router's "ask file
+  load tries again" can be followed there; choosing a file, `ask gpu` and everything else that needs the city still
+  say `engine not running`, with the operator tier locked or open. The router's module is loaded by a dynamic
+  import at the first `ask`, so none of it runs at the console's start (the page's static module graph went from 244
+  modules to 238; in headless Chrome here the console was on screen at a median of 616 and 638 ms over nine loads
+  each, against 643 and 628 ms before). An ask never fetches a model file (it uses a server running on this machine,
+  the model the app carries, or a file already kept and chosen in the page), and where nothing answers it prints the
+  router's one sentence naming every address it looked at. The recovery card adds "This app carries Sloane's model,
+  and the console talks to her without the city: open it, type operator unlock, then ask and your question." under its
+  buttons only where the app's runner says its model is ready and the kept provider is `auto` or `native`; it asks
+  again every 2 s for up to a minute while the app still checks the model. Tests: `consoleBridge.test.ts` (14, over
+  the real router with a fake app runner and a fake Ollama: the gate, streaming in whole words, the next turn carrying
+  the last, `ask stop` reaching the runner, one answer at a time, the 14A screen and the Zeroth Law, the nothing-answers
+  sentence with no model file fetched, kept or loaded, settings typed before the router loaded, words that start with
+  a setting's name reaching Sloane with the kept settings unchanged, the console's framing, `ask file load` after a
+  load the page died in, the bridge's own gate, a failed load tried again, a kept scripted provider asking no model,
+  and the commands that need the city saying `engine not running` with the tier locked), `pageMind.test.ts`
+  (6: the auto order, the cap and the tier hold, both App paths calling `createPageMind` and no router built in App,
+  the static graph holding none of the router's modules), the card's line conditions (`bootFailure.test.ts`, against
+  `wire.json`'s statuses and the router's own reading of the kept provider), and the browser smoke's console-alone
+  scenario (its ask reaches the router and prints the sentence, and so does `ask key facts about this city please`,
+  which keeps no key; its only requests were looks at this machine). The
+  WebKitGTK end-to-end (`native-e2e.yml`, the tiny-model debug app) now presses the card's Open the console through
+  WebDriver and types `operator unlock` and `ask hello` into the real console: 99 of 99 checks in each of four runs
+  here, the tiny model's text arriving whole (it writes no spaces) and the answer ending with its time in about 0.4 s.
+  The packaged run in `build-matrix.yml`'s `linux-x64` job adds one short console ask, stopped once its first words
+  stream, and judges how it ended without the stop's own reply (which comes last when the answer ended first);
+  rehearsed here against a tiny-model `.deb` installed with apt, 24 of 24 checks, and with the stop forced after the
+  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). Not verified: a real Linux
+  desktop, the real 1.5B model through the console until CI runs the packaged check (and with it the stop after the
+  first words, which the tiny model never reaches), and phones.
+
 - **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
   `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`
   over `native/llm`) and put Qwen2.5 1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0)

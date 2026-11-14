@@ -222,7 +222,7 @@ test('the cards: Restart reloads the page and has focus; Open the console is the
 })
 
 test('the console shell: a way back to the city a pad or a finger can press, and the console leaves its keys alone', () => {
-  const tty = APP.slice(APP.indexOf('function TtyShell() {'), APP.indexOf('function onboardingVoice('))
+  const tty = APP.slice(APP.indexOf('function TtyShell({ vram }: { vram: string | null }) {'), APP.indexOf('function onboardingVoice('))
   assert.match(tty, /usePadNav\(back\)/, 'its own pad scope (never the terminal\'s hidden Close)')
   assert.match(tty, /<div ref=\{back\} data-way-out=""[^>]*z-\[10000\][^>]*>\s*<button type="button" onClick=\{\(\) => reboot\('gui'\)\}[^>]*>\s*Back to the city/)
   // The console's window-capture keydown would pull Enter on a card's (or this) button into its hidden prompt.
@@ -268,7 +268,7 @@ test('App: the card on a failed boot and on every halt but a Ring-0 audit, which
   assert.match(ENGINE, /const remembered = kernels\.memory !== null && kernels\.memory\.from === ran && ran === kernels\.plan\.from/)
   assert.match(APP, /const failure = error !== null \? classify\(error\.cause, env\) : locked !== null && haltClass\(locked\) !== 'audit' \? explainHalt\(locked, env\) : null/)
   assert.match(APP, /\{failure === null && locked !== null && <LockScreen reason=\{locked\} \/>\}/)
-  assert.match(APP, /\{failure && <RecoveryCard failure=\{failure\} adapter=\{adapter\} onConsole=\{toConsole\} \/>\}/)
+  assert.match(APP, /\{failure && <RecoveryCard failure=\{failure\} adapter=\{adapter\} onConsole=\{toConsole\} kept=\{keptCognition\} \/>\}/)
   assert.doesNotMatch(APP, /\{error && \(/, 'the old card is gone')
 })
 
@@ -299,9 +299,9 @@ test('App: a first visit is probed before the onboarding; ?boot=tty never is', (
   const app = APP.slice(APP.indexOf('function App() {'), APP.indexOf('const chosen = outcome?.saved ?? saved'))
   assert.match(app, /const probing = options\.boot !== 'tty' && onboard/)
   assert.match(app, /probeGpu\(navigator\.gpu, window\.isSecureContext !== false, window\.location\.origin\)/)
-  assert.ok(app.indexOf("if (options.boot === 'tty') return <TtyShell />") < app.indexOf('firstScreen('), 'the console first')
+  assert.ok(app.indexOf("if (options.boot === 'tty') return <TtyShell vram={options.vram} />") < app.indexOf('firstScreen('), 'the console first')
   assert.match(app, /if \(first === 'probing'\) return <BootVeil ready=\{false\}/)
-  assert.match(app, /if \(first === 'card' && probe && !probe\.ok\) return <RecoveryCard failure=\{classify\(probe\.error, pageEnv\(\)\)\} onConsole=\{toConsole\} \/>/)
+  assert.match(app, /if \(first === 'card' && probe && !probe\.ok\) return <RecoveryCard failure=\{classify\(probe\.error, pageEnv\(\)\)\} onConsole=\{toConsole\} kept=\{keptCognition\} \/>/)
   assert.ok(app.indexOf('firstScreen(') < app.indexOf('<Onboarding '), 'before the onboarding')
 })
 
@@ -370,3 +370,24 @@ test('App: Sloane never greets over a halted city, so the card keeps focus on Re
   // ActCard are gated on the same lock (lookWiring.test.ts, actWiring.test.ts).
   assert.match(APP, /<Concierge\n\s*visible=\{veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null\}/)
 })
+
+test('the card: the line that the console still talks to Sloane, only once the app\'s runner says its model is ready, beside Open the console', () => {
+  assert.match(CARD, /^import \{ shellCarried \} from '\.\/desktopShell\.ts'$/m, 'asked of the app\'s runner')
+  const hook = CARD.slice(CARD.indexOf('function useConsoleTalks(kept: () => string | null): boolean {'), CARD.indexOf('const BUTTON ='))
+  assert.match(hook, /const \[talks, setTalks\] = useState\(false\)/, 'nothing claimed until the runner answers')
+  assert.match(hook, /const t = consoleTalks\(carried, kept\(\)\)\n\s+if \(t === null && tries > 1\) timer = setTimeout\(\(\) => ask\(tries - 1\), CARRIED_AGAIN_MS\)\n\s+else setTalks\(t === true\)/, 'asked again only while the app prepares it, a minute at most')
+  assert.match(hook, /live = false\n\s+clearTimeout\(timer\)/, 'and no more once the card goes')
+  assert.match(CARD, /^const CARRIED_AGAIN_MS = 2000\nconst CARRIED_TRIES = 30$/m)
+  const card = CARD.slice(CARD.indexOf('export function RecoveryCard('), CARD.indexOf('export function LockScreen('))
+  assert.match(card, /const talks = useConsoleTalks\(kept\)/)
+  // The router's kept settings, read as the runner answers: never claimed where another provider was chosen.
+  assert.match(card, /export function RecoveryCard\(\{ failure, adapter = '', onConsole, kept = NOTHING_KEPT \}: \{ failure: Failure; adapter\?: string; onConsole\(\): void; kept\?: \(\) => string \| null \}\)/)
+  assert.equal(APP.match(/<RecoveryCard [^>]*kept=\{keptCognition\}/g)?.length, 2, 'both of App\'s cards read the settings the router keeps')
+  assert.match(APP, /^const keptCognition = \(\): string \| null => pageStore\(COGNITION_KEY\)\.load\(\)$/m, 'one function for the page, so the card asks once')
+  assert.match(hook, /\}, \[kept\]\)\n\s+return talks/)
+  assert.match(card, /Open the console\n\s+<\/button>\n\s+<\/div>\n\s+\{talks && <p data-console-sloane="" className="[^"]+">\{CONSOLE_TALKS_LINE\}<\/p>\}/, 'right under the buttons, and only where it is true')
+  assert.equal(CARD.match(/CONSOLE_TALKS_LINE/g)?.length, 2, 'its import and the card: never on the lock screen or the boot veil\'s line')
+  // The words per platform (bootFailure.ts appWebView) are the card's as before: the line only adds to them.
+  assert.match(card, /\{failure\.steps\.map\(\(s\) => <li key=\{s\} className="break-words">\{s\}<\/li>\)\}/)
+})
+
