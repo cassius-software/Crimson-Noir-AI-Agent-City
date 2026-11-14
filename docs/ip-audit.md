@@ -222,7 +222,8 @@ cargo license --manifest-path native/llm/Cargo.toml
 - **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
   the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
   the macOS, Linux, Android and iOS apps). It is compiled into no shipped build yet; only its tests run
-  (`native-llm.yml`). Linked into it (19 crates): `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the
+  (`native-llm.yml`), and the Linux app built for the end-to-end test alone (`native-e2e.yml`, feature
+  `tiny-model`). Linked into it (19 crates): `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the
   sys crate is llama-cpp-rs at commit e7af607e), which compile the llama.cpp and ggml sources they vendor (MIT,
   Copyright 2023-2026 The ggml authors); `serde`, `serde_core`, `sha2`, `digest`, `block-buffer`, `crypto-common`,
   `cpufeatures`, `typenum`, `libc`, `thiserror`, `enumflags2`, `cfg-if`, `once_cell` and `pin-project-lite` (MIT OR
@@ -233,7 +234,10 @@ cargo license --manifest-path native/llm/Cargo.toml
   MIT, on Windows only), and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available).
   The notice for what llama.cpp compiles in (ggml, the llamafile matrix code, the YaRN code, and what its common
   library brings) lands with the first app build that carries the runner.
-- **`src-tauri/Cargo.lock` (407 crates)**: the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
+- **`src-tauri/Cargo.lock` (427 crates; 407 before 13 November 2026)**: the 20 added are the native runner's crate and
+  what it brings (the list above), recorded because the app names it as an optional, Linux-only dependency behind the
+  `native-runner` feature, which is off by default: no shipped build compiles them, and the Windows and macOS builds
+  link exactly what they did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
   `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.

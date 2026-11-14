@@ -4,7 +4,9 @@
 /**
  * Why does this file exist? It holds the site's model to what the page was built for: the pin equals the SHA256SUMS
  * line and the notice beside the model's licence (third_party/qwen2.5-0.5b-instruct/; the Windows app's, APP_MODEL,
- * equally its own, and the shell's file and size and the installer's config name the same file), the file's name is one the
+ * equally its own, and the shell's file and size and the installer's config name the same file; the runner's pins in
+ * the shell, the computer's SHA-256, the phones' file, size and hash, and the tiny test model's, are the page's and
+ * the tiny model's own), the file's name is one the
  * in-page model accepts as a text model, siteUrl admits only a models/ file beside the page on its own origin, the
  * manifest offers only exactly the pin, and fetchSiteModel turns into a File only what arrived whole, with the pinned
  * size and SHA-256 (a short body, a long one, a wrong hash, an HTTP error and a stop each end with no File and a plain
@@ -96,6 +98,26 @@ test('launcherServes: only a page on http://127.0.0.1 with models=1 in its addre
     'file:///home/me/dist/index.html?models=1',
     'not an address',
   ]) assert.equal(launcherServes(href), false, href)
+})
+
+test('the runner\'s pins in the shell are the page\'s: the computer\'s hash, the phones\' model, and the tiny test model as tinyGguf writes it', () => {
+  const rs = read('../../src-tauri/src/model_file.rs')
+  const num = (n: number): string => n.toLocaleString('en-US').replace(/,/g, '_')
+  const esc = (f: string): string => f.replace(/\./g, '\\.')
+  assert.match(rs, new RegExp(`pub const APP_SHA256: &str = "${APP_MODEL.sha256}";`))
+  assert.match(rs, new RegExp(`pub const PHONE_FILE: &str = "${esc(SITE_MODEL.file)}";`))
+  assert.match(rs, new RegExp(`pub const PHONE_BYTES: u64 = ${num(SITE_MODEL.bytes)};`))
+  assert.match(rs, new RegExp(`pub const PHONE_SHA256: &str = "${SITE_MODEL.sha256}";`))
+  const tiny = tinyGguf()
+  assert.match(rs, /pub const TINY_FILE: &str = "tiny-a\.gguf";/)
+  assert.match(rs, new RegExp(`pub const TINY_BYTES: u64 = ${num(tiny.length)};`))
+  assert.match(rs, new RegExp(`pub const TINY_SHA256: &str = "${sha(tiny)}";`))
+  // Which the runner is handed: the tiny model only with the tiny-model feature, the phones' on a phone, else the computer's.
+  assert.match(rs, /pub const fn carried\(\) -> Carried \{\n {4}if cfg!\(feature = "tiny-model"\) \{\n {8}Carried \{ file: TINY_FILE, bytes: TINY_BYTES, sha256: TINY_SHA256 \}\n {4}\} else if cfg!\(mobile\) \{\n {8}Carried \{ file: PHONE_FILE, bytes: PHONE_BYTES, sha256: PHONE_SHA256 \}\n {4}\} else \{\n {8}Carried \{ file: FILE, bytes: BYTES, sha256: APP_SHA256 \}\n {4}\}\n\}/)
+  // The end-to-end build's config bundles exactly the tiny model under models/, and no shipped config names it.
+  const conf = JSON.parse(read('../../src-tauri/tauri.tiny.conf.json')) as { bundle: Record<string, unknown> }
+  assert.deepEqual(conf.bundle, { resources: { 'models/tiny-a.gguf': 'models/tiny-a.gguf' } })
+  for (const shipped of ['tauri.conf.json', 'tauri.model.conf.json']) assert.ok(!read(`../../src-tauri/${shipped}`).includes('tiny-a'), shipped)
 })
 
 test('siteModel.ts names no address and fetches nothing itself: the fetch is handed in', () => {

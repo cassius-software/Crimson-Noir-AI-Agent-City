@@ -10,14 +10,19 @@
 //! On Windows the shell also opens a DualSense for the page (hid.rs), since its web view has no WebHID chooser, and
 //! reads the GPUs' memory for auto's Ollama model (gpu.rs), which a page cannot. And it lends the page a read of the
 //! model the Windows installer carries beside the app (model.rs over model_file.rs), so Sloane talks from the first
-//! launch.
+//! launch. Built with the native-runner feature on Linux, it runs a model itself (runner.rs over native/llm:
+//! llama.cpp in the app's own process) and lends the page three commands, what it carries, one answer streamed on a
+//! channel, and a stop; a page that starts loading stops every answer it asked for. Everywhere else those three
+//! commands answer that there is none.
 //! What breaks if it is removed? There is no desktop app; the page is only a file for a browser.
 
 mod gpu;
 mod hid;
 mod model;
 mod model_file;
+mod runner;
 
+use tauri::webview::PageLoadEvent;
 use tauri::Manager;
 
 /// Builds and runs the app. Called from main.rs (and from a mobile entry point, should one ever exist).
@@ -25,13 +30,21 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .manage(hid::HidState::default())
-        .invoke_handler(tauri::generate_handler![hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, model::app_model, model::app_model_read])
+        .manage(runner::Runner::default())
+        .invoke_handler(tauri::generate_handler![hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")
                 .ok_or("the main window is missing from tauri.conf.json")?;
             frost(&window);
+            runner::start(app.handle());
             Ok(())
+        })
+        // A reload does not fail the channel an answer streams on, so this is what stops the old page's answers.
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Started) {
+                runner::page_loading(webview.app_handle());
+            }
         })
         .run(tauri::generate_context!())
         .expect("the Crimson Noir desktop app could not start");

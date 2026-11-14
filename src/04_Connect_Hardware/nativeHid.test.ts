@@ -397,7 +397,7 @@ test('wiring: the HAL defaults through nativeNavigator, the shell registers the 
   const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   assert.match(lib, /^mod hid;$/m)
   assert.match(lib, /\.manage\(hid::HidState::default\(\)\)/)
-  assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, model::app_model, model::app_model_read\]/)
+  assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read\]/)
   const rs = readFileSync(new URL('../../src-tauri/src/hid.rs', import.meta.url), 'utf8')
   for (const c of ['hid_list', 'hid_open', 'hid_write', 'hid_feature', 'hid_close']) assert.match(rs, new RegExp(`#\\[tauri::command\\(async\\)\\]\\npub fn ${c}\\(`))
   assert.match(rs, /app\.emit\("hid-input"/)

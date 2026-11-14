@@ -12,7 +12,12 @@
  * shell's two commands over one fixed file with no path from the page. And it pins the page's way to the app's own
  * model (shellRunner): its three commands over `core.invoke`, the request sent as `{ req, onEvent }` with a channel
  * of its own, every event of native/llm/tests/wire.json handed through as it came, and an answer settled only once
- * its channel has ended (or after DRAIN_MS), so a reply that overtakes the last message never cuts it off.
+ * its channel has ended (or after DRAIN_MS), so a reply that overtakes the last message never cuts it off. On the
+ * shell's side it pins the three commands (src-tauri/src/runner.rs): registered in the design's order, taking exactly
+ * the names shellRunner sends, compiled only with the native-runner feature on Linux (off by default, so no shipped
+ * build compiles llama.cpp), answering none, 'offline' and false everywhere else, waiting for an answer off Tauri's
+ * async workers, a page load stopping every answer, no socket and no process, the plan the page asks for, and the
+ * installer's model lent to the page nowhere the runner is compiled.
  * What breaks if it is removed? A half-injected global could mount the title bar in a tab, a dependency could
  * quietly put Tauri's client into every browser build, or a shell that hangs or answers oddly could hold the page's
  * figure or throw at boot; the request could reach the runner in a shape it refuses, or an answer lose its tail.
@@ -239,6 +244,61 @@ test('the shell lends the page the carried model over one fixed file: two comman
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
   const app = /\[\[package\]\]\nname = "crimson-noir-app"[\s\S]*?dependencies = \[([^\]]*)\]/.exec(lock)
   assert.ok(app?.[1].includes('"base64 0.22.1"'), 'the committed lockfile carries the edge to the base64 Tauri already builds')
+})
+
+test('the shell lends the runner\'s three commands in the design\'s order, under the names shellRunner sends, compiled only with the native-runner feature on Linux', async () => {
+  const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+  assert.match(lib, /^mod runner;$/m)
+  assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read\]/)
+  assert.match(lib, /\.manage\(runner::Runner::default\(\)\)/, 'managed on the Builder, filled in setup')
+  assert.match(lib, /\.setup\(\|app\| \{[\s\S]*?runner::start\(app\.handle\(\)\);[\s\S]*?\}\)/)
+  assert.match(lib, /\.on_page_load\(\|webview, payload\| \{\n {12}if matches!\(payload\.event\(\), PageLoadEvent::Started\) \{\n {16}runner::page_loading\(webview\.app_handle\(\)\);/, 'a page that starts loading stops every answer')
+  const rs = readFileSync(new URL('../../src-tauri/src/runner.rs', import.meta.url), 'utf8')
+  // The names the page sends: native_model (), native_generate ({ req, onEvent }: Tauri reads on_event as onEvent), native_stop ({ id }).
+  assert.match(rs, /#\[tauri::command\]\npub fn native_model\(runner: State<'_, Runner>\) -> Option<NativeModel> \{/)
+  assert.match(rs, /#\[tauri::command\]\npub async fn native_generate\(runner: State<'_, Runner>, req: GenRequest, on_event: Channel<RunEvent>\) -> Result<GenDone, RunError> \{/)
+  assert.match(rs, /#\[tauri::command\]\npub fn native_stop\(runner: State<'_, Runner>, id: u32\) -> bool \{/)
+  assert.match(rs, /pub const COMPILED: bool = cfg!\(all\(target_os = "linux", feature = "native-runner"\)\);/)
+  assert.equal(rs.split('#[cfg(all(target_os = "linux", feature = "native-runner"))]\nmod imp {').length, 2, 'the runner, where it is compiled')
+  assert.equal(rs.split('#[cfg(not(all(target_os = "linux", feature = "native-runner")))]\nmod imp {').length, 2, 'the answers everywhere else')
+  const code = rs.slice(0, rs.indexOf('#[cfg(test)]')).replace(/^\s*\/\/.*$/gm, '')
+  assert.ok(code.length > 3000, 'the commands and both halves, without their tests')
+  assert.doesNotMatch(code, /std::(net|process)\b|Command::new|TcpStream|UdpSocket|reqwest/, 'no socket, no process')
+  assert.doesNotMatch(code, /\.unwrap\(\)|\.expect\(|panic!|unreachable!|todo!/, 'nothing the page sends can panic the shell')
+  assert.match(code, /tauri::async_runtime::spawn_blocking\(move \|\| answer\.recv\(\)\)/, 'the wait for an answer holds no async worker')
+  assert.match(code, /let sink: Sink = Box::new\(move \|event\| on_event\.send\(event\)\.is_ok\(\)\);/, 'a channel that can no longer send stops the answer')
+  assert.match(code, /Err\(RunError \{ code: "offline", message: NO_RUNNER \}\)/, 'without the runner an answer is offline, with a sentence')
+  assert.match(code, /pub fn stop\(&self, _id: u32\) -> bool \{\n {12}false\n {8}\}/)
+  assert.match(code, /pub fn model\(&self\) -> Option<NativeModel> \{\n {12}None\n {8}\}/)
+  assert.match(code, /pub const NO_RUNNER: &str = "this app does not run a model itself";/)
+  assert.match(code, /pub const NO_MODEL: &str = "this app carries no model to run itself";/)
+  // The carried model as a resource, stamped in the app's data folder; a computer's processor alone.
+  assert.match(code, /app\.path\(\)\.resolve\(format!\("models\/\{\}", c\.file\), BaseDirectory::Resource\)/)
+  assert.match(code, /runner\.start_carried\(c, model, app\.path\(\)\.app_data_dir\(\)\);/)
+  assert.match(code, /let path = model\.filter\(\|p\| p\.is_file\(\)\)\?;/, 'no carried file, no runner')
+  assert.match(code, /Ok\(dir\) => dir\.join\("models"\),/, 'the stamp in the app\'s data folder')
+  assert.match(code, /gpu: Gpu::Off,/)
+  assert.match(code, /threads: half_the_threads\(THREADS_CAP\),/)
+  assert.match(code, /sampling: Sampling::Chat \{ seed: None \},/)
+  // The plan is what the page asks for on a computer: its context, its answer's length, the integrated row's batch.
+  const { CONTEXT_TOKENS, ANSWER_TOKENS } = await import('../09_Cognition/localCompute.ts')
+  assert.match(code, new RegExp(`pub const N_CTX: u32 = ${CONTEXT_TOKENS};`))
+  assert.match(code, new RegExp(`pub const MAX_TOKENS: u32 = ${ANSWER_TOKENS};`))
+  assert.match(code, /pub const N_BATCH: u32 = 512;/)
+  assert.match(code, /pub const THREADS_CAP: i32 = 8;/)
+  // The installer's model is never lent where the app runs its own.
+  const model = readFileSync(new URL('../../src-tauri/src/model.rs', import.meta.url), 'utf8')
+  assert.match(model, /pub fn app_model\(app: AppHandle\) -> Option<AppModel> \{\n {4}if crate::runner::COMPILED \{\n {8}return None;\n {4}\}/)
+  // The feature table: off by default, Linux only, the runner an optional dependency the lockfile still records.
+  const cargo = readFileSync(new URL('../../src-tauri/Cargo.toml', import.meta.url), 'utf8')
+  const features = /\n\[features\]\n([\s\S]*?)\n\[/.exec(cargo)?.[1] ?? ''
+  assert.deepEqual(features.split('\n').filter((l) => l && !l.startsWith('#')), ['native-runner = ["dep:crimson-noir-llm"]', 'tiny-model = ["native-runner"]'], 'no default feature')
+  assert.match(cargo, /\n\[target\.'cfg\(target_os = "linux"\)'\.dependencies\]\n(?:#.*\n)*crimson-noir-llm = \{ path = "\.\.\/native\/llm", optional = true \}\n/)
+  assert.equal(cargo.split('crimson-noir-llm').length - 1, 2, 'named once as a dependency and once by its feature')
+  const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
+  const app = /\[\[package\]\]\nname = "crimson-noir-app"[\s\S]*?dependencies = \[([^\]]*)\]/.exec(lock)
+  assert.ok(app?.[1].includes('"crimson-noir-llm"'), 'the lockfile records the optional edge, so a --locked build with the feature needs no change')
+  assert.match(lock, /\nname = "llama-cpp-2"\nversion = "0\.1\.161"\n/)
 })
 
 test('shellRunner: the runner\'s three commands over core.invoke, the request as { req, onEvent } with a channel of its own, every wire.json event handed through; null without invoke or Channel', async () => {

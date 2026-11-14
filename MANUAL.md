@@ -4356,6 +4356,18 @@ The current build (below) carries the same three files from every commit on main
   `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
   tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
   Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
+- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux, the shell runs the model
+  it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends the page
+  three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its events on a
+  Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
+  answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
+  in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
+  for; and `app_model` answers nothing there, so the page never copies a model in. Every other build (Windows, macOS,
+  and every Linux build shipped today: the feature is off by default) registers the same three commands, which answer
+  that there is none. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
+  builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
+  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`); no shipped build carries the runner
+  yet.
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
