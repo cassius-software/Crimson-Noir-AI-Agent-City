@@ -15,6 +15,9 @@
  * direction) belongs to at most one ring, the zero-jam invariant of tracks.ts), and the street furniture (lamps along
  * every sidewalk, signals where car streets meet). A surveyed pack whose roads do not lie on the grid gives no window
  * (null): that region keeps the crowd hidden and the fleet empty, as before.
+ * The pack's roads are read once into the whole map's grid (mapStreetGrid: every street of the map, uncropped, for
+ * whoever asks about a lot anywhere on it), and the window is a crop of that (windowOrigin says where, windowOf cuts
+ * it): streetGridOf is the three together, and gives the window it always gave.
  * What breaks if it is removed? The lakefront metropolis is a region without people or traffic: the HUD reads
  * Population 0 and Vehicles 0 for every first-time visitor.
  */
@@ -55,11 +58,12 @@ export const STREET_WORDS = Math.ceil((STREET_SEGMENTS * 2) / 32)
 export const STREET_VEC4S = Math.ceil(STREET_WORDS / 4)
 
 /**
- * The window, as plain data (it crosses to the physics worker by structured clone). Streets run along
- * x = originX + k·pitch and z = originZ + m·pitch, k, m ∈ [0, blocks], in the engine's frame.
+ * A street grid, as plain data: the window (WINDOW_BLOCKS across; it crosses to the physics worker by structured
+ * clone) or the whole map's (mapStreetGrid, as many blocks as the map has). Streets run along x = originX + k·pitch
+ * and z = originZ + m·pitch, k, m ∈ [0, blocks], in the engine's frame.
  */
 export interface StreetGrid {
-  /** The window's north-west corner, engine metres: a multiple of the pitch on each axis. */
+  /** The grid's north-west corner, engine metres: a multiple of the pitch on each axis. */
   originX: number
   originZ: number
   blocks: number
@@ -91,15 +95,18 @@ export const hSeg = (g: StreetGrid, k: number, m: number): number => (k < 0 || k
 export const vSeg = (g: StreetGrid, k: number, m: number): number => (m < 0 || m >= g.blocks || k < 0 || k > g.blocks ? 0 : g.v[k * g.blocks + m])
 
 /**
- * The window of a region pack's grid streets around `around` (engine metres), or null when none of its roads lies on
+ * The whole map's street grid: every grid street of a region pack, uncropped, or null when none of its roads lies on
  * the grid (a surveyed region). `offset` is the layout's (regionWorld.ts layoutOf: added to the pack's metres). A road
  * counts when every one of its points is a grid vertex and every run between two is along one axis; a one-lane road is
- * a pedestrian street (fromMacro.ts roadOf), walked but not driven. Ferries are not streets.
+ * a pedestrian street (fromMacro.ts roadOf), walked but not driven. Ferries are not streets. The grid's origin is the
+ * lowest street line on each axis and it is as many blocks across as the streets' larger span, so every street of the
+ * pack has its segment (a map longer one way than the other leaves the rest of the square empty). Its geometry is the
+ * window's (WINDOW_GEOMETRY). It is a grid for reading (where a lot's fronts are, what can be walked to): the shader's
+ * field and the car rings take a window of it (windowOf).
  */
-export function streetGridOf(pack: RegionPack, offset: { x: number; z: number }, around: { x: number; z: number }): StreetGrid | null {
-  const B = WINDOW_BLOCKS
-  // Every grid segment of the pack, in engine block indices, with its bits.
-  const h = new Map<string, number>(), v = new Map<string, number>()
+export function mapStreetGrid(pack: RegionPack, offset: { x: number; z: number }): StreetGrid | null {
+  // Every run of the pack along a grid line, in engine block indices, with its bits: (k0, m0, k1, m1, bits) each.
+  const runs: number[] = []
   let minK = Infinity, maxK = -Infinity, minM = Infinity, maxM = -Infinity
   for (let i = 0; i < pack.roads.cls.length; i++) {
     if (pack.roads.cls[i] === ROAD_CLASS.ferry) continue
@@ -109,28 +116,79 @@ export function streetGridOf(pack: RegionPack, offset: { x: number; z: number },
     for (let p = 0; p + 1 < pts.length; p++) {
       const k0 = Math.round(pts[p][0] / P), m0 = Math.round(pts[p][1] / P), k1 = Math.round(pts[p + 1][0] / P), m1 = Math.round(pts[p + 1][1] / P)
       if ((k0 !== k1) === (m0 !== m1)) continue
-      if (m0 === m1) for (let k = Math.min(k0, k1); k < Math.max(k0, k1); k++) h.set(`${k},${m0}`, (h.get(`${k},${m0}`) ?? 0) | bits)
-      else for (let m = Math.min(m0, m1); m < Math.max(m0, m1); m++) v.set(`${k0},${m}`, (v.get(`${k0},${m}`) ?? 0) | bits)
+      runs.push(k0, m0, k1, m1, bits)
       minK = Math.min(minK, k0, k1); maxK = Math.max(maxK, k0, k1); minM = Math.min(minM, m0, m1); maxM = Math.max(maxM, m0, m1)
     }
   }
-  if (h.size + v.size === 0) return null
-  // The window: CITY.blocks across, centred on the block under `around`, kept inside the map's streets.
-  const clampTo = (want: number, lo: number, hi: number) => Math.max(lo, Math.min(Math.max(lo, hi - B), want))
-  const k0 = clampTo(Math.round(around.x / P) - B / 2, minK, maxK), m0 = clampTo(Math.round(around.z / P) - B / 2, minM, maxM)
+  if (runs.length === 0) return null
+  const S = Math.max(maxK - minK, maxM - minM)
   const g: StreetGrid = {
-    originX: k0 * P, originZ: m0 * P, blocks: B, ...WINDOW_GEOMETRY,
-    h: new Uint8Array((B + 1) * B), v: new Uint8Array((B + 1) * B),
+    originX: minK * P, originZ: minM * P, blocks: S, ...WINDOW_GEOMETRY,
+    h: new Uint8Array((S + 1) * S), v: new Uint8Array((S + 1) * S),
   }
-  for (const [key, bits] of h) {
-    const [k, m] = key.split(',').map(Number)
-    if (k - k0 >= 0 && k - k0 < B && m - m0 >= 0 && m - m0 <= B) g.h[(m - m0) * B + (k - k0)] = bits
-  }
-  for (const [key, bits] of v) {
-    const [k, m] = key.split(',').map(Number)
-    if (m - m0 >= 0 && m - m0 < B && k - k0 >= 0 && k - k0 <= B) g.v[(k - k0) * B + (m - m0)] = bits
+  for (let r = 0; r < runs.length; r += 5) {
+    const k0 = runs[r] - minK, m0 = runs[r + 1] - minM, k1 = runs[r + 2] - minK, m1 = runs[r + 3] - minM, bits = runs[r + 4]
+    if (m0 === m1) for (let k = Math.min(k0, k1); k < Math.max(k0, k1); k++) g.h[m0 * S + k] |= bits
+    else for (let m = Math.min(m0, m1); m < Math.max(m0, m1); m++) g.v[k0 * S + m] |= bits
   }
   return g
+}
+
+/**
+ * Where the window stands on a map's grid (mapStreetGrid) for someone at `around` (engine metres): the street lines
+ * (k0, m0) of its north-west corner, in the engine's block indices (the line at x = k0 · pitch, z = m0 · pitch). The
+ * window is WINDOW_BLOCKS across, centred on the block under `around`, and kept inside the map's streets: between the
+ * lowest and the highest street line on each axis (read from the grid's own segments, so a map shorter one way than
+ * the other is clamped to what it has); a map with fewer blocks than the window starts the window at its lowest line.
+ */
+export function windowOrigin(map: StreetGrid, around: { x: number; z: number }): { k0: number; m0: number } {
+  const B = WINDOW_BLOCKS, S = map.blocks
+  // The street lines the grid holds, in its own indices (a grid with no street at all: its own square).
+  let minK = Infinity, maxK = -Infinity, minM = Infinity, maxM = -Infinity
+  for (let m = 0; m <= S; m++) for (let k = 0; k < S; k++) {
+    if (!map.h[m * S + k]) continue
+    minK = Math.min(minK, k); maxK = Math.max(maxK, k + 1); minM = Math.min(minM, m); maxM = Math.max(maxM, m)
+  }
+  for (let k = 0; k <= S; k++) for (let m = 0; m < S; m++) {
+    if (!map.v[k * S + m]) continue
+    minK = Math.min(minK, k); maxK = Math.max(maxK, k); minM = Math.min(minM, m); maxM = Math.max(maxM, m + 1)
+  }
+  if (maxK < minK) { minK = 0; maxK = S; minM = 0; maxM = S }
+  const K0 = Math.round(map.originX / P), M0 = Math.round(map.originZ / P)
+  const clampTo = (want: number, lo: number, hi: number) => Math.max(lo, Math.min(Math.max(lo, hi - B), want))
+  return {
+    k0: clampTo(Math.round(around.x / P) - B / 2, K0 + minK, K0 + maxK),
+    m0: clampTo(Math.round(around.z / P) - B / 2, M0 + minM, M0 + maxM),
+  }
+}
+
+/**
+ * The window of a map's grid whose north-west corner is the street lines (k0, m0), in the engine's block indices
+ * (windowOrigin gives them): WINDOW_BLOCKS across, every segment the map's, nothing where the map has no street or the
+ * window reaches past it. The map's own geometry; a new grid, the map only read.
+ */
+export function windowOf(map: StreetGrid, k0: number, m0: number): StreetGrid {
+  const B = WINDOW_BLOCKS
+  const dk = k0 - Math.round(map.originX / P), dm = m0 - Math.round(map.originZ / P)
+  const g: StreetGrid = {
+    originX: k0 * P, originZ: m0 * P, blocks: B, roadHalf: map.roadHalf, lane: map.lane, furniture: map.furniture,
+    h: new Uint8Array((B + 1) * B), v: new Uint8Array((B + 1) * B),
+  }
+  for (let m = 0; m <= B; m++) for (let k = 0; k < B; k++) g.h[m * B + k] = hSeg(map, k + dk, m + dm)
+  for (let k = 0; k <= B; k++) for (let m = 0; m < B; m++) g.v[k * B + m] = vSeg(map, k + dk, m + dm)
+  return g
+}
+
+/**
+ * The window of a region pack's grid streets around `around` (engine metres), or null when none of its roads lies on
+ * the grid (a surveyed region): the whole map's grid (mapStreetGrid), cropped (windowOf) to WINDOW_BLOCKS across where
+ * windowOrigin puts it, centred on the block under `around` and kept inside the map's streets.
+ */
+export function streetGridOf(pack: RegionPack, offset: { x: number; z: number }, around: { x: number; z: number }): StreetGrid | null {
+  const map = mapStreetGrid(pack, offset)
+  if (!map) return null
+  const { k0, m0 } = windowOrigin(map, around)
+  return windowOf(map, k0, m0)
 }
 
 /** How many segments of each kind the window holds. */

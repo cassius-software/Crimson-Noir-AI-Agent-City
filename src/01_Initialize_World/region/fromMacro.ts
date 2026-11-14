@@ -85,11 +85,18 @@ export interface FromMacroOptions {
    * origin, so this is where the first walk starts (a zone's centre). Absent: the map's north-west corner.
    */
   origin?: { x: number; z: number }
+  /**
+   * The map's quarters, for the pack's quarters layer (pack.ts Quarters): their names in id order, every block's
+   * quarter and ground (row-major, map.blocks per row; an id past the names is open water), and the quarter the visitor
+   * starts in. Absent: the pack carries no quarters layer.
+   */
+  quarters?: { names: readonly string[]; id: ArrayLike<number>; terrain: ArrayLike<number>; home: number }
 }
 
 /**
  * The region pack of a macro map: roads from the streets (one road per run of one kind along a line), water from the
- * water blocks (one polygon per run along a row), buildings from the footprints. Coordinates are the map's metres.
+ * water blocks (one polygon per run along a row), buildings from the footprints, and the quarters layer when the caller
+ * names the map's quarters (FromMacroOptions.quarters). Coordinates are the map's metres.
  */
 export function macroToRegionPack(map: MacroCity, o: FromMacroOptions): RegionPack {
   const B = map.blocks, P = MACRO.pitch
@@ -170,6 +177,9 @@ export function macroToRegionPack(map: MacroCity, o: FromMacroOptions): RegionPa
     buildings.height.push(Math.round(fp[i + 5] * FLOOR_HEIGHT * DM)) // whole decimetres, as the compiler writes them
     buildings.kind.push(map.lots[li] === LOT.civic ? BUILDING_KIND.civic : BUILDING_KIND.building)
   }
+  // The quarters layer: the map's own blocks at its pitch, as plain numbers (the pack crosses threads by structured clone).
+  const q = o.quarters
+  if (q && (q.id.length !== B * B || q.terrain.length !== B * B)) throw new RangeError(`the quarters layer needs ${B * B} blocks, got ${q.id.length} ids and ${q.terrain.length} grounds`)
   return {
     format: REGION_FORMAT,
     name: o.name,
@@ -181,5 +191,6 @@ export function macroToRegionPack(map: MacroCity, o: FromMacroOptions): RegionPa
     water,
     buildings,
     plazas,
+    ...(q && { quarters: { blocks: B, pitch: P, names: [...q.names], id: Array.from(q.id), terrain: Array.from(q.terrain), home: q.home } }),
   }
 }

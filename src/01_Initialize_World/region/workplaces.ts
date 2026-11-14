@@ -22,6 +22,8 @@
  *   to take to come one intersection nearer the workplace's (a breadth-first search over the streets with a sidewalk),
  *   5 at the workplace's own, 0 where it cannot be reached. The procedural city's table is all zero: its commute is
  *   the greedy one, bit for bit.
+ * The lot and corner helpers (windowLotBuildings, lotCandidates, cornerComponent, frontOf) read any street grid, the
+ * window's or the whole map's (streets.ts mapStreetGrid); the route table alone is the window's, as the shader's is.
  * Pure, and no three.js: the physics worker builds the route table from it.
  * What breaks if it is removed? Lakefront Metro has no indoor workplaces: no rooms, no workday, nobody at work indoors.
  */
@@ -85,7 +87,10 @@ export function buildingLot(pack: Pick<RegionPack, 'buildings'>, offset: { x: nu
   return { K, M, b: { i, x0, z0, x1, z1, area: Math.abs(area2(ring)) / 2, height } }
 }
 
-/** The buildings standing on each lot of the window, by window lot index j · blocks + i. */
+/**
+ * The buildings standing on each lot of grid `g`, by the grid's lot index j · blocks + i: the window's lots, or every
+ * lot of the map when `g` is the whole map's grid (streets.ts mapStreetGrid). A building off the grid is on no list.
+ */
 export function windowLotBuildings(pack: Pick<RegionPack, 'buildings'>, offset: { x: number; z: number }, g: StreetGrid): LotBuilding[][] {
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
   const out: LotBuilding[][] = Array.from({ length: B * B }, () => [])
@@ -135,7 +140,10 @@ export function lotTier(on: readonly LotBuilding[]): number {
 
 // ---------------------------------------------------------------- the corner graph (crowd.wgsl's, mirrored)
 
-/** A sidewalk corner: quadrant (sx, sz) of window intersection (k, m), as crowd.wgsl cornerPos has it. */
+/**
+ * A sidewalk corner: quadrant (sx, sz) of intersection (k, m) of a grid (the window, as crowd.wgsl cornerPos has it,
+ * or the whole map's grid: the corner graph below reads any StreetGrid, whatever its size).
+ */
 export interface Corner { k: number; m: number; sx: 1 | -1; sz: 1 | -1 }
 
 const walk = (bits: number): boolean => (bits & SEG.walk) !== 0
@@ -175,7 +183,10 @@ export function cornerNear(g: StreetGrid, p: { x: number; z: number }): Corner {
   return { k, m, sx: x - k * P >= 0 ? 1 : -1, sz: z - m * P >= 0 ? 1 : -1 }
 }
 
-/** Every corner reachable on the corner graph from `from` (none when `from` itself does not exist), by key. */
+/**
+ * Every corner reachable on grid `g`'s corner graph from `from` (none when `from` itself does not exist), by key. Any
+ * grid: the window's graph stops at the window's edge, the whole map's (streets.ts mapStreetGrid) at the map's.
+ */
 export function cornerComponent(g: StreetGrid, from: Corner): Map<string, Corner> {
   const seen = new Map<string, Corner>()
   if (!cornerExists(g, from.k, from.m, from.sx, from.sz)) return seen
@@ -192,9 +203,28 @@ export function cornerComponent(g: StreetGrid, from: Corner): Map<string, Corner
   return seen
 }
 
+/**
+ * The largest connected part of grid `g`'s corner graph, by key (empty when the grid has no sidewalk): what can be
+ * walked to when nobody's start decides it. Of two parts the same size, the one holding the first corner in the scan's
+ * order wins (intersections row by row, m then k; at each, sz then sx, -1 before 1), so the answer depends on the grid
+ * alone.
+ */
+export function largestCornerComponent(g: StreetGrid): Map<string, Corner> {
+  const seen = new Set<string>()
+  let best = new Map<string, Corner>()
+  for (let m = 0; m <= g.blocks; m++) for (let k = 0; k <= g.blocks; k++) for (const sz of [-1, 1] as const) for (const sx of [-1, 1] as const) {
+    const c: Corner = { k, m, sx, sz }
+    if (seen.has(cornerKey(c))) continue
+    const part = cornerComponent(g, c)
+    for (const key of part.keys()) seen.add(key)
+    if (part.size > best.size) best = part
+  }
+  return best
+}
+
 // ---------------------------------------------------------------- the lots
 
-/** The street segment of a lot's front `side` (interiors.ts Side), window lot (i, j). */
+/** The street segment of a lot's front `side` (interiors.ts Side), lot (i, j) of grid `g` (the window, or the whole map's). */
 export function frontOf(g: StreetGrid, i: number, j: number, side: Side): number {
   return side === 0 ? hSeg(g, i, j + 1) : side === 1 ? hSeg(g, i, j) : side === 2 ? vSeg(g, i + 1, j) : vSeg(g, i, j)
 }
@@ -207,49 +237,58 @@ const pointIn = (x: number, z: number, ring: readonly (readonly [number, number]
   }
   return c
 }
+/** A pack's water, read once: every polygon's rings, in the pack's own metres. */
+type WaterRings = readonly (readonly (readonly (readonly [number, number])[])[])[]
+const waterRings = (water: Polygons): WaterRings => Array.from({ length: polygonCount(water) }, (_, i) => polygonAt(water, i))
 /** Whether (x, z), in the pack's own metres, lies in a water polygon (even-odd over its rings). */
-const inWater = (water: Polygons, x: number, z: number): boolean => {
-  for (let i = 0; i < polygonCount(water); i++) {
+const inWater = (water: WaterRings, x: number, z: number): boolean => {
+  for (const rings of water) {
     let inside = false
-    for (const ring of polygonAt(water, i)) if (pointIn(x, z, ring)) inside = !inside
+    for (const ring of rings) if (pointIn(x, z, ring)) inside = !inside
     if (inside) return true
   }
   return false
 }
 
 /**
- * A lot of the window a room may take (lotCandidates): window lot (i, j), its tier (lotTier), its Chebyshev ring of
- * lots from the start's, and the street fronts its doorway may face.
+ * A lot a room may take (lotCandidates): lot (i, j) of the grid it was asked on (the window, or the whole map's), its
+ * tier (lotTier), its Chebyshev ring of lots from the start's (0 when no start was given), and the street fronts its
+ * doorway may face.
  */
 export interface LotCandidate { i: number; j: number; tier: number; ring: number; sides: Side[] }
 
 /**
- * The lots of window `g` a room may stand on, for a visitor starting at `start` (engine metres), in row order: never
- * the tallest building's lot (the landmark stays) nor a lot under water, and only a lot with a street front that is a
- * two-way street with a sidewalk whose room corner (interiors.ts targetCorner) the start's corner graph reaches; each
- * with every such front. The pack is only read.
+ * The lots of grid `g` a room may stand on, in row order: never the tallest building's lot (the landmark stays) nor a
+ * lot under water, and only a lot with a street front that is a two-way street with a sidewalk whose room corner
+ * (interiors.ts targetCorner) can be walked to; each with every such front. `g` is the street window or the whole
+ * map's grid (streets.ts mapStreetGrid): any size.
+ * - With a `start` (engine metres; the visitor's): the corners are those the start's corner graph reaches on `g`, and
+ *   each lot's ring is its Chebyshev distance in lots from the start's lot.
+ * - Without one: the corners are the largest connected part of `g`'s corner graph (largestCornerComponent), and every
+ *   ring is 0: nobody's start decides which lots count.
+ * The pack is only read.
  */
-export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }): LotCandidate[] {
-  if (g.blocks !== WINDOW_BLOCKS) throw new RangeError(`a street window is ${WINDOW_BLOCKS} blocks across, got ${g.blocks}`)
+export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start?: { x: number; z: number } | null): LotCandidate[] {
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P, off = layout.offset
   const on = windowLotBuildings(pack, off, g)
   const landmark = tallestBuilding(pack)
   const tallK = landmark ? Math.floor((landmark.x + off.x) / P) : NaN, tallM = landmark ? Math.floor((landmark.z + off.z) / P) : NaN
-  const reach = cornerComponent(g, cornerNear(g, start))
-  const si = Math.floor((start.x - g.originX) / P), sj = Math.floor((start.z - g.originZ) / P)
+  const reach = start ? cornerComponent(g, cornerNear(g, start)) : largestCornerComponent(g)
+  const si = start ? Math.floor((start.x - g.originX) / P) : NaN, sj = start ? Math.floor((start.z - g.originZ) / P) : NaN
+  const water = waterRings(pack.water)
   const two = SEG.walk | SEG.drive
   const candidates: LotCandidate[] = []
   for (let j = 0; j < B; j++) {
     for (let i = 0; i < B; i++) {
       if (K0 + i === tallK && M0 + j === tallM) continue
-      if (inWater(pack.water, (K0 + i + 0.5) * P - off.x, (M0 + j + 0.5) * P - off.z)) continue
+      if (inWater(water, (K0 + i + 0.5) * P - off.x, (M0 + j + 0.5) * P - off.z)) continue
       const sides = ([0, 1, 2, 3] as const).filter((side) => {
         if (frontOf(g, i, j, side) !== two) return false
         const t = targetCorner({ k: i, m: j, side })
         return reach.has(cornerKey(t))
       })
       if (sides.length === 0) continue
-      candidates.push({ i, j, tier: lotTier(on[j * B + i]), ring: Math.max(Math.abs(i - si), Math.abs(j - sj)), sides })
+      candidates.push({ i, j, tier: lotTier(on[j * B + i]), ring: start ? Math.max(Math.abs(i - si), Math.abs(j - sj)) : 0, sides })
     }
   }
   return candidates
