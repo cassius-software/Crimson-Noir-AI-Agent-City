@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins Sloane in conversation (voice.ts sloaneChat) and how the page wires it: talk on the
- * card goes to the page's mind with Sloane's framing and the turns so far, streams back screened by the 14A screen (a
+ * card goes to the page's mind with Sloane's framing (the console alone's says no city runs there and offers no change
+ * to it) and the turns so far, streams back screened by the 14A screen (a
  * refused word stops the model and shows nothing), never carries an action line (a conversation never acts), and ends
  * as `none` with the router's reason when no model answers, so the card says so plainly and offers the ways to get one
  * instead of sending scouts. The card reaches the model only through that Chat (never a Mind), App hands it the picker,
@@ -76,6 +77,25 @@ test('sloaneChat: the person\'s words go to the mind with Sloane\'s framing and 
   assert.doesNotMatch(shown, /turn 11 /)
   assert.match(shown, /Person: turn 12 x{392}\n/, 'each turn cut to 400 characters')
   assert.doesNotMatch(shown, /x{401}/)
+})
+
+test('chatPrompt by place: her card in the city keeps its framing; the console alone says no city runs there and offers no change to it', async () => {
+  const turns: ChatTurn[] = [you('what can you do?')]
+  const city = chatPrompt(turns)
+  assert.equal(city, chatPrompt(turns, 'city'), 'the city is the default')
+  assert.ok(city.startsWith('You are Sloane, the concierge of Crimson Noir: Agent City, a city of software agents that the person is walking through. Talk with them as yourself: warm, plain and brief, one to three short sentences, no lists and no headings.\n'))
+  assert.match(city, /\nIf they ask what you can do: you can change the time of day, the crowds, the traffic, the picture quality and the sound, show them the controls, and send sub-agents to work at the city's sixteen workplaces; they only need to say what they want\.\n/)
+  assert.match(city, /\nNothing you say in this conversation changes the city, so never write an ACTION line; tell them what to ask for instead\. /)
+  const alone = chatPrompt(turns, 'console')
+  assert.match(alone, /^You are Sloane, the concierge of Crimson Noir: Agent City, a city of software agents\. The city is not running here: the person is talking to you from its console alone\./)
+  assert.match(alone, /say plainly that nothing can change from this console/)
+  assert.match(alone, /Never write an ACTION line\./)
+  assert.doesNotMatch(alone, /walking through|you can change|they only need to say what they want|tell them what to ask for/)
+  assert.ok(alone.endsWith('The conversation so far:\nPerson: what can you do?\nSloane:'))
+  // sloaneChat sends the framing of the place it was made for.
+  const m = mindOf('Only talk, here.')
+  await sloaneChat(m.mind, () => true, 'console').reply(turns, live())
+  assert.equal(m.asked[0]!.prompt, alone)
 })
 
 test('sloaneChat: an action line is cut and the model stopped, a long reply is cut at a sentence, an echoed name is dropped', async () => {
@@ -294,11 +314,14 @@ test('App: the card gets Sloane\'s conversation, the picker, the browser\'s refu
   // Why the app's own model couldn't start, as its mind hears it (09_Cognition/nativeMind.ts onFailed): blamed only
   // while it is what answers, the server line kept where the device is no phone or tablet.
   assert.match(src, /siteModel=\{siteModel\}\s*appModel=\{appModel\}/)
-  assert.match(src, /onFailed: \(why\) => setAppModel\(\(was\) => why === null \? null : was\?\.why === why \? was : \{\n\s*why,\n\s*servers: !e\.profile\.mobile,\n\s*blamed: \(\) => local\.provider === 'auto' \|\| local\.provider === 'native',\n\s*\}\),/)
+  assert.match(src, /onAppFailed: \(why\) => setAppModel\(\(was\) => why === null \? null : was\?\.why === why \? was : \{\n\s*why,\n\s*servers: !e\.profile\.mobile,\n\s*blamed: \(\) => local\.provider === 'auto' \|\| local\.provider === 'native',\n\s*\}\),/)
+  // The router's one maker (09_Cognition/pageMind.ts) hands the native mind's onFailed to it.
+  assert.match(read('09_Cognition/pageMind.ts'), /onFailed: \(why\) => d\.onAppFailed\?\.\(why\),/)
   assert.match(src, /setSiteModel\(null\)\n\s*setAppModel\(null\)/, 'a city that goes takes the reason with it')
   // The rewording never asks while the model the app runs itself is still to be loaded (it would be the answer that
   // loads it): asked of that mind (nativeMind.ts cold), the one the router was handed.
-  assert.match(src, /native: \(\) => \(appMind = createNativeMind\(\{\n\s*host: shellRunner\(\),/)
+  assert.match(src, /const \{ router: local, inPage, native: appMind \} = minds\.createPageMind\(\{\n[\s\S]*?\n\s*runner: shellRunner\(\),\n/)
+  assert.match(read('09_Cognition/pageMind.ts'), /native: \(\) => \(native = createNativeMind\(\{\n\s*host: d\.runner,/)
   assert.match(src, /const s = local\.settings\(\)\n(\s*\/\/[^\n]*\n)*\s*if \(s\.provider === 'native' \|\| \(s\.provider === 'auto' && s\.found === 'native'\)\) return appMind\.cold\(\)\n\s*if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
   assert.match(src, /if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
   assert.match(src, /if \(s\.provider !== 'auto' \|\| \(!inPage\.cold\(false\) && !\(s\.found === undefined && appMind\.cold\(\)\)\)\) return false/)

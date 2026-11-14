@@ -23,7 +23,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Engine, type EngineOptions } from './07_Execute_Actions/engine.ts'
 import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
-import { offlineBridge, type LookBridge, type ModelBridge, type NetBridge, type PendingAct, type TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import type { LookBridge, ModelBridge, NetBridge, PendingAct, TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
+import { consoleBridge } from './07_Execute_Actions/terminal/consoleBridge.ts'
 import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
 import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
@@ -34,13 +35,11 @@ import { TEAM_TICK_MS, TeamRunner } from './08_Swarm/team.ts'
 import { TaskRouter } from './08_Swarm/taskRouter.ts'
 import { deferredLedger, followRecruiter, indexedDbLedger, memoryBridge, SwarmMemory } from './08_Swarm/memory.ts'
 import { airgapInstalled, loopbackFetch } from './02_Define_The_Rules/airgap.ts'
-import { createMindRouter } from './09_Cognition/router.ts'
-import { figureFromAdapters } from './09_Cognition/modelFit.ts'
 import { shellGpuMemory, shellModel, shellModelFetch, shellRunner } from './07_Execute_Actions/desktopShell.ts'
-import { createNativeMind, type NativeMind } from './09_Cognition/nativeMind.ts'
-import { createInPageMind, type InPageMind } from './09_Cognition/inPage.ts'
+import type { InPageMind } from './09_Cognition/inPage.ts'
+import type { PageDevice } from './09_Cognition/pageMind.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
-import { fits, holdTier, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
+import { fits, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
 import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
 import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
@@ -94,7 +93,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { familyOf, useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
@@ -300,6 +299,18 @@ const PAGE_MODEL_REFUSAL = once((): string | null => {
 })
 /** Where the page keeps model files (its own storage, 09_Cognition/modelStore.ts), one per page, each file copied by a worker of its own. */
 const PAGE_MODELS = once(() => createModelStore({ copy: workerCopy(copyWorker) }))
+/** The module that builds the page's cognition router and its providers, for the city and the console alike. */
+type PageMindModule = typeof import('./09_Cognition/pageMind.ts')
+let pageMindLoad: Promise<PageMindModule> | null = null
+/**
+ * The page's cognition router and its providers (09_Cognition/pageMind.ts), loaded the first time they are needed: by
+ * the city as its engine starts, by the onboarding's first line, and by the console alone at its first `ask`. A dynamic
+ * import, so the console starts without any of it; a load that failed is tried again the next time.
+ */
+const PAGE_MIND = (): Promise<PageMindModule> => (pageMindLoad ??= import('./09_Cognition/pageMind.ts').catch((e: unknown) => {
+  pageMindLoad = null
+  throw e
+}))
 /** The toasts' title for the model file kept in this page. */
 const MODEL_FILE = 'Model file'
 /** The page's local storage for the site model's record (09_Cognition/siteAuto.ts), or null where the browser refuses it. */
@@ -335,6 +346,8 @@ const pageStore = (key: string) => ({
     }
   },
 })
+/** The router's kept settings as they stand (COGNITION_KEY), for the recovery card's line about the console: one function. */
+const keptCognition = (): string | null => pageStore(COGNITION_KEY).load()
 
 /** The homes the shopkeeper says the player owns, one bit per property index (bit i: deed DEED_BASE + i). */
 function ownedHomes(keeper: Shopkeeper): number {
@@ -550,8 +563,28 @@ type BootTrack = 'gui' | 'tty'
 
 type Options = EngineOptions & { debug: boolean; boot: BootTrack; vram: string | null }
 
-/** The console's bridge in the TTY shell: no engine exists, so everything but the identity commands says so. */
-const TTY_BRIDGE: TerminalBridge = offlineBridge({ ...BRAND, track: 'tty' })
+/**
+ * The console's bridge in the TTY shell (terminal/consoleBridge.ts): no engine exists, so everything that needs the
+ * city says so, but the operator tier's `ask` puts the person's words to Sloane through the page's cognition router,
+ * the one the city builds (09_Cognition/pageMind.ts createPageMind, here over the browser's own hints and with no city
+ * to hold), loaded at the first `ask`: the servers on this machine, the model the app runs itself, the model file kept
+ * in this page, the gateway on this machine. Its in-page mind answers `ask file load|unload|forget|log` there.
+ */
+function ttyBridge(vram: string | null): TerminalBridge {
+  return consoleBridge({ ...BRAND, track: 'tty' }, {
+    contained: () => airgapInstalled(globalThis),
+    mind: () => PAGE_MIND().then((m) => m.createPageMind({
+      fetch: pageFetch,
+      store: pageStore(COGNITION_KEY),
+      runtime: PAGE_RUNTIME,
+      models: PAGE_MODELS,
+      device: m.browserDevice,
+      runner: shellRunner(),
+      gpuMemory: shellGpuMemory,
+      vram,
+    })).then(({ router, inPage }) => ({ router, inPage })),
+  })
+}
 
 /**
  * Reloads the page on `track` (Track B's `boot gui|tty`): the URL keeps every other option. A reload, not a
@@ -683,11 +716,13 @@ function readOptions(): Options {
 
 /**
  * Track B: the bare console. Nothing of the city is built: no canvas, no Engine.create, no WebGPU adapter request,
- * no physics worker, no audio, no HUD. The terminal runs over the offline bridge (the identity commands work; the
- * rest says 'engine not running'); a `boot gui` result reloads into the city, and so does 'Back to the city', the one
- * way back for a player who came here from a recovery card with only a pad or a touch screen (its A presses it).
+ * no physics worker, no audio, no HUD. The terminal runs over the console's bridge (the identity commands work, and
+ * the operator tier's `ask` talks to Sloane; the rest says 'engine not running'); a `boot gui` result reloads into the
+ * city, and so does 'Back to the city', the one way back for a player who came here from a recovery card with only a
+ * pad or a touch screen (its A presses it).
  */
-function TtyShell() {
+function TtyShell({ vram }: { vram: string | null }) {
+  const [bridge] = useState(() => ttyBridge(vram))
   const back = useRef<HTMLDivElement>(null)
   usePadNav(back)
   return (
@@ -697,24 +732,21 @@ function TtyShell() {
           Back to the city
         </button>
       </div>
-      <Terminal bridge={TTY_BRIDGE} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
+      <Terminal bridge={bridge} fullscreen onOpenChange={noop} onBoot={reboot} onMap={remap} />
     </main>
   )
 }
 
 /**
- * The voice the onboarding speaks with: the configured model backend's rewording when it answers in time, else the
- * script. With the auto provider (the default), the scripted provider, the in-page provider, or the Claude provider and
- * no key kept, nothing is asked (the script is the voice): a first visit on a fresh machine makes no request at all,
- * the scripted provider, which answers a request with nobody tethered with a line of its own, never rewords the
- * guide's lines, and a model file kept in this page is never loaded while the city is still being built (this router
- * is handed no runtime for one).
+ * The voice the onboarding speaks with (09_Cognition/pageMind.ts onboardingVoice: the configured model backend's
+ * rewording when it answers in time, else the script), decided at its first line, when the router's module is loaded:
+ * the console alone, which says no line, never loads it. Where the module could not load, the script is the voice.
  */
 function onboardingVoice(): Voice {
-  const router = createMindRouter({ fetch: pageFetch, store: pageStore(COGNITION_KEY) })
-  const s = router.settings()
-  if (s.provider === 'auto' || s.provider === 'scripted' || s.provider === 'inpage' || (s.provider === 'claude' && !s.key)) return scriptedVoice()
-  return modelVoice(router, (line) => (/morning, sunset or night/i.test(line) ? ['morning', 'sunset', 'night'] : /sound on/i.test(line) ? ['sound'] : []))
+  let voice: Promise<Voice> | null = null
+  return {
+    say: (line, signal) => (voice ??= PAGE_MIND().then((m) => m.onboardingVoice(pageFetch, pageStore(COGNITION_KEY)), () => scriptedVoice())).then((v) => v.say(line, signal)),
+  }
 }
 
 /** The operating system's own contrast switch (`prefers-contrast: more`), which the 'auto' contrast setting follows (access.ts). */
@@ -793,11 +825,11 @@ function App() {
     void probeGpu(navigator.gpu, window.isSecureContext !== false, window.location.origin).then((p) => { if (live) setProbe(p) })
     return () => { live = false }
   }, [probing])
-  if (options.boot === 'tty') return <TtyShell />
+  if (options.boot === 'tty') return <TtyShell vram={options.vram} />
   if (onboard && !outcome) {
     const first = firstScreen({ onboard, probe })
     if (first === 'probing') return <BootVeil ready={false} onDone={noop} onConsole={toConsole} stage={BOOT_STAGE.probe} />
-    if (first === 'card' && probe && !probe.ok) return <RecoveryCard failure={classify(probe.error, pageEnv())} onConsole={toConsole} />
+    if (first === 'card' && probe && !probe.ok) return <RecoveryCard failure={classify(probe.error, pageEnv())} onConsole={toConsole} kept={keptCognition} />
     return <Onboarding seed={options.seed} onDone={setOutcome} port={builderPort} voice={voice} speaker={speaker} />
   }
   const chosen = outcome?.saved ?? saved
@@ -1455,8 +1487,15 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       setStage(BOOT_STAGE[st])
       if (adapter) setAdapter(adapter)
     }
-    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then(
-      (e) => {
+    // The page's cognition router and its providers load beside the engine (PAGE_MIND): the city's mind is built from
+    // them once both are in, and an engine whose router could not load is let go before the card says why.
+    const minded = PAGE_MIND()
+    minded.catch(noop)
+    loadMap(plan).then((region) => Engine.create(canvas, { ...options, region }, onStage)).then((e) => minded.then((m) => ({ e, minds: m }), (err: unknown) => {
+      e.dispose()
+      throw err
+    })).then(
+      ({ e, minds }) => {
         if (cancelled) {
           e.dispose()
           return
@@ -1482,56 +1521,40 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           },
         }
         // The cognition router (only ever asked on the operator's command): the Claude API through a gateway on this
-        // machine, a model server on this machine, or the model file kept in this page, swapped at the console. Its
-        // fetch is the page's own (already held to this machine by the air gap main.tsx installed) under the gate's own
-        // wrapper once more. Its answer's pieces are shown on the HUD only after the lease let them through.
+        // machine, a model server on this machine, the model the app runs itself, or the model file kept in this page,
+        // swapped at the console, built where the console alone builds it too (09_Cognition/pageMind.ts createPageMind).
+        // Its fetch is the page's own (already held to this machine by the air gap main.tsx installed) under the gate's
+        // own wrapper once more. Its answer's pieces are shown on the HUD only after the lease let them through.
         // The model kept in this page (09_Cognition/inPage.ts) is this router's one in-page mind, over the page's one
         // runtime and store: it plans by the engine's profile of this device, holds the city's tier down while it loads
         // or answers (inPagePlan.ts holdTier), and says what it is doing on the HUD's activity line. The onboarding's
         // router has none: a model is never loaded while the city is still being built.
-        const device = (): Omit<PlanEnv, 'gpuMode' | 'gpuFailed'> => ({
+        const device = (): PageDevice => ({
           mobile: e.profile.mobile, lite: e.profile.lite, gpuClass: e.profile.gpuClass,
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
         })
-        let inPage!: InPageMind
-        let appMind!: NativeMind
-        // The Windows app's reading of the GPUs' memory (src-tauri/src/gpu.rs), asked once as this router is built and
-        // judged by modelFit.ts figureFromAdapters (the launcher's sum, DXGI's own floor); until it answers, and in a
-        // browser, none.
-        let appVram: number | null = null
-        void shellGpuMemory().then((bytes) => { appVram = figureFromAdapters(bytes) })
-        const local = createMindRouter({
+        const { router: local, inPage, native: appMind } = minds.createPageMind({
           fetch: pageFetch,
           store: pageStore(COGNITION_KEY),
-          inPage: (store) => (inPage = createInPageMind({
-            runtime: () => PAGE_RUNTIME(),
-            store: PAGE_MODELS(),
-            kept: store,
-            env: device,
-            busy: (on, place) => e.holdQuality(on && place ? holdTier(device(), place.gpu) : null),
-            onPhase: (text) => { modelPhase = text },
-          })),
+          runtime: PAGE_RUNTIME,
+          models: PAGE_MODELS,
+          device,
           // The model the app runs itself (09_Cognition/nativeMind.ts), where the shell has a runner (none in a browser):
-          // its answers capped as the model in this page's are on this device (shorter on a phone), the city's tier held
-          // down while it answers (it runs on the processor, or on Apple silicon's GPU, whose tier is the integrated one
-          // either way), and the same HUD line; why it cannot start goes to Sloane's card, said there only while it is
-          // what answers (auto or native), and on a computer, where a model server can run beside the app, still with
-          // the line about starting one (not on a phone or tablet).
-          native: () => (appMind = createNativeMind({
-            host: shellRunner(),
-            maxTokens: () => placement({ ...device(), gpuMode: 'auto', gpuFailed: false }).maxTokens,
-            busy: (on) => e.holdQuality(on ? holdTier(device(), false) : null),
-            onPhase: (text) => { modelPhase = text },
-            onFailed: (why) => setAppModel((was) => why === null ? null : was?.why === why ? was : {
-              why,
-              servers: !e.profile.mobile,
-              blamed: () => local.provider === 'auto' || local.provider === 'native',
-            }),
-          })),
+          // why it cannot start goes to Sloane's card, said there only while it is what answers (auto or native), and on
+          // a computer, where a model server can run beside the app, still with the line about starting one (not on a
+          // phone or tablet).
+          runner: shellRunner(),
+          // The Windows app's reading of the GPUs' memory (src-tauri/src/gpu.rs), below the address's figure and the console's.
+          gpuMemory: shellGpuMemory,
           // The address's GPU figure (?vram=): auto may give Ollama a bigger model it already has, by what Ollama measured.
           vram: options.vram,
-          // The Windows app's figure, below the address's and the console's.
-          appVram: () => appVram,
+          hold: (tier) => e.holdQuality(tier),
+          onPhase: (text) => { modelPhase = text },
+          onAppFailed: (why) => setAppModel((was) => why === null ? null : was?.why === why ? was : {
+            why,
+            servers: !e.profile.mobile,
+            blamed: () => local.provider === 'auto' || local.provider === 'native',
+          }),
         })
         inPageMind = inPage
         // Whether the app runs a model and how it stands, asked once as the router is built (it answers from memory; a
@@ -2301,7 +2324,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       {/* A real Ring-0 audit failure keeps its lock screen; a graphics reset, a realm fault or a frame loop that kept
           failing, like a failed boot, gets the recovery card (bootFailure.ts). Both have Restart, focused. */}
       {failure === null && locked !== null && <LockScreen reason={locked} />}
-      {failure && <RecoveryCard failure={failure} adapter={adapter} onConsole={toConsole} />}
+      {failure && <RecoveryCard failure={failure} adapter={adapter} onConsole={toConsole} kept={keptCognition} />}
     </main>
   )
 }

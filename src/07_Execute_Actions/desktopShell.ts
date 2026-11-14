@@ -101,6 +101,17 @@ async function soon(ask: () => Promise<unknown>, waitMs: number): Promise<unknow
 export const APP_MODEL_ASK_MS = 5000
 
 /**
+ * What the app's own runner says it carries (`native_model` through shellRunner: a NativeModel, or null for none), for
+ * the recovery card's line about the console (bootFailure.ts consoleTalks). Null in a browser, in a shell without the
+ * command, and when it does not answer within `waitMs`; it never throws.
+ */
+export async function shellCarried(g: object = globalThis, waitMs = APP_MODEL_ASK_MS): Promise<unknown> {
+  const runner = shellRunner(g)
+  if (runner === null) return null
+  return soon(() => runner.model(), waitMs)
+}
+
+/**
  * The most the page asks the shell for in one read, bytes (src-tauri/src/model_file.rs MAX_READ is the same): 4 MiB,
  * sent as base64 text, because the shell's answers reach this page as text (its binary path is a request the page's
  * air gap refuses, so Tauri falls back to one that carries text only). About 240 reads for the 1.5B model.
