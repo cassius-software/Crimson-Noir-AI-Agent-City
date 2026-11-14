@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
-//! Stage 04: the property fuzzer's engine (shared by `cargo run --bin chaos` and `tests/chaos.rs`).
+//! Stage 05: the property fuzzer's engine (shared by `cargo run --bin chaos` and `tests/chaos.rs`).
 //!
 //! Why does this file exist? The page table's promises (02_page_table.rs) are about sequences of operations, not single
 //! calls: no page is ever lost or mapped twice, an agent always reads back exactly the tokens it wrote whatever its
@@ -12,7 +12,7 @@
 //! What breaks if it is removed? The fuzz binary and the chaos tests; a regression in the page table would surface only
 //! as corrupt attention on the GPU.
 
-use kv_pager::{AgentId, PageError, PageTable, PoolStats, Token, BLOCK_TOKENS};
+use kv_pager::{AgentId, Eviction, PageError, PageTable, PoolStats, Token, BLOCK_TOKENS};
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -143,12 +143,13 @@ pub struct World {
 }
 
 impl World {
-    pub fn new(capacity: usize, keying: Keying, first_id: AgentId) -> Self {
+    pub fn new(capacity: usize, keying: Keying, first_id: AgentId, eviction: Eviction) -> Self {
         let pt = match keying {
             Keying::Chain => PageTable::new(capacity),
             Keying::Colliding => PageTable::with_key(capacity, |_, t| u64::from(t[0] % 3)),
             Keying::Private => PageTable::without_sharing(capacity),
-        };
+        }
+        .with_eviction(eviction);
         Self { pt, shadow: HashMap::new(), live: Vec::new(), next_id: first_id, stats: Stats::default() }
     }
 
@@ -295,10 +296,15 @@ impl World {
     }
 }
 
-/// Runs a stream; Err carries the panic message.
+/// Runs a stream under the default eviction policy; Err carries the panic message.
 pub fn run(ops: &[Op], capacity: usize, keying: Keying) -> Result<Stats, String> {
+    run_with(ops, capacity, keying, PageTable::new(1).eviction())
+}
+
+/// Runs a stream under `eviction`.
+pub fn run_with(ops: &[Op], capacity: usize, keying: Keying, eviction: Eviction) -> Result<Stats, String> {
     catch_unwind(AssertUnwindSafe(|| {
-        let mut w = World::new(capacity, keying, 0);
+        let mut w = World::new(capacity, keying, 0, eviction);
         for &op in ops {
             w.apply(op);
         }
