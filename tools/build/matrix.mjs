@@ -32,7 +32,7 @@
  * the Windows app and the OS media.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -89,10 +89,45 @@ function desktopConfig(version) {
 
 /**
  * The .rpm from the binary the build just made: `tauri bundle` packages it without compiling (and restores the binary
- * after its patch), so the installer's version can be the numbers alone while the app inside says its own.
+ * after its patch), so the installer's version can be the numbers alone while the app inside says its own. It carries
+ * the model as the build's .deb and .AppImage do (MODEL_CONFIG; stored, not compressed: see that file).
  */
 function rpmStep(version) {
-  return tauri('bundle', '--bundles', 'rpm', '--config', JSON.stringify({ version: installerVersion(version), bundle: { linux: { rpm: { release: rpmRelease(version) } } } }))
+  return tauri('bundle', '--bundles', 'rpm', '--config', JSON.stringify({ version: installerVersion(version), bundle: { linux: { rpm: { release: rpmRelease(version) } } } }), '--config', MODEL_CONFIG)
+}
+
+/**
+ * The overlay that bundles the app's model (Qwen2.5 1.5B Instruct, src/09_Cognition/siteModel.ts APP_MODEL) with its
+ * LICENSE and NOTICE as resources under models/, from src-tauri/models/ (tools/web/siteModel.mjs app puts them there,
+ * checked byte for byte); windows-app.yml passes the same file to the Windows installer. Never tauri.linux.conf.json:
+ * Tauri merges that name into every Linux build by itself, the end-to-end test's tiny build among them.
+ */
+export const MODEL_CONFIG = 'src-tauri/tauri.model.conf.json'
+
+/** The files the model overlay bundles (its resource sources, relative to src-tauri/), which must be there to build. */
+export function modelResources() {
+  return Object.keys(JSON.parse(readFileSync(join(ROOT, MODEL_CONFIG), 'utf8')).bundle.resources)
+}
+
+/**
+ * A Linux desktop build: the runner compiled in (cargo feature native-runner: llama.cpp in the app's own process,
+ * src-tauri/src/runner.rs), the model and its licence checked present, the .deb and the .AppImage with the model, the
+ * staging copies of the model removed before the .rpm is packaged (the .deb's folder, the AppDir, the copy beside the
+ * binary), then the .rpm.
+ */
+function linuxPlan(version) {
+  const release = join(ROOT, 'src-tauri', 'target', 'release')
+  return [
+    ...modelResources().map((r) => ({ kind: 'need', path: join(ROOT, 'src-tauri', r), hint: 'node tools/web/siteModel.mjs app --from <the folder holding the app\'s model> puts it there, checked' })),
+    tauri('build', '--config', NO_PAGE_BUILD, '--config', MODEL_CONFIG, '--features', 'native-runner', '--bundles', 'deb,appimage'),
+    { kind: 'tidy', paths: () => [...dirsIn(join(release, 'bundle', 'deb')), ...dirsIn(join(release, 'bundle', 'appimage')), join(release, 'models')], what: 'the staging copies of the model (the .deb\'s folder, the AppDir, the copy beside the binary)' },
+    rpmStep(version),
+  ]
+}
+
+/** The folders directly inside `dir` (none when it is missing). */
+function dirsIn(dir) {
+  return existsSync(dir) ? readdirSync(dir).map((n) => join(dir, n)).filter((p) => statSync(p).isDirectory()) : []
 }
 
 /** The Tauri CLI, run under this Node (no npm, no npx, no shell: the same on cmd.exe and sh). */
@@ -119,8 +154,10 @@ const NO_PAGE_BUILD = JSON.stringify({ build: { beforeBuildCommand: '' } })
  * `arch`: the host architecture it needs (process.arch), absent where the host's architecture does not matter (a
  * cross-compiled or interpreted target); `tools`: the programs that must be on PATH; `env`: the variables that must be
  * set; `plan(ctx)`: the steps, each a program and its argument vector; `collect(ctx)`: the files it leaves, as
- * [source path, published name]; `page`: false for a target that does not carry the page; `unsupported`: the reason no
- * machine builds it yet (none today).
+ * [source path, published name]; `move`: those files are moved into the output folder, not copied (the Linux packages,
+ * each carrying the model); `page`: false for a target that does not carry the page; `unsupported`: the reason no
+ * machine builds it yet (none today). Besides programs, a plan's steps are `need` (a file that must be there, with how
+ * to put it there) and `tidy` (folders removed once used).
  */
 export const TARGETS = Object.freeze([
   {
@@ -146,18 +183,20 @@ export const TARGETS = Object.freeze([
     note: 'the .msi\'s own version is the numbers alone (WiX takes no pre-release tag); not run on a Windows on Arm machine yet',
   },
   {
-    id: 'linux-x64', artifact: 'Linux x64: .deb, .rpm and .AppImage', hosts: ['linux'], arch: 'x64',
-    tools: ['cargo', 'rustup', 'pkg-config'],
-    plan: ({ version }) => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage'), rpmStep(version)],
+    id: 'linux-x64', artifact: 'Linux x64: .deb, .rpm and .AppImage, each carrying the app\'s model and running it in the app', hosts: ['linux'], arch: 'x64',
+    tools: ['cargo', 'rustup', 'pkg-config', 'cmake'],
+    plan: ({ version }) => linuxPlan(version),
     collect: () => linuxFiles(),
-    note: 'needs WebKitGTK 4.1 and GTK 3 development packages (build-matrix.yml installs them); the .rpm is Version 1.0.0, Release 0.stable.beta (rpm takes no hyphen in a version); WebGPU in WebKitGTK is not verified',
+    move: true,
+    note: 'needs WebKitGTK 4.1 and GTK 3 development packages, cmake and libclang (build-matrix.yml installs them, on Ubuntu 22.04 for glibc 2.35), and the model in src-tauri/models/ (tools/web/siteModel.mjs app); the .rpm is Version 1.0.0, Release 0.stable.beta (rpm takes no hyphen in a version); WebGPU in WebKitGTK is not verified',
   },
   {
-    id: 'linux-arm64', artifact: 'Linux arm64: .deb, .rpm and .AppImage, built on an arm64 machine', hosts: ['linux'], arch: 'arm64',
-    tools: ['cargo', 'rustup', 'pkg-config'],
-    plan: ({ version }) => [tauri('build', '--config', NO_PAGE_BUILD, '--bundles', 'deb,appimage'), rpmStep(version)],
+    id: 'linux-arm64', artifact: 'Linux arm64: .deb, .rpm and .AppImage, built on an arm64 machine, each carrying the app\'s model', hosts: ['linux'], arch: 'arm64',
+    tools: ['cargo', 'rustup', 'pkg-config', 'cmake'],
+    plan: ({ version }) => linuxPlan(version),
     collect: () => linuxFiles(),
-    note: 'no cross-compilation (WebKitGTK must be the target\'s own): build-matrix.yml runs it on ubuntu-24.04-arm',
+    move: true,
+    note: 'no cross-compilation (WebKitGTK must be the target\'s own): build-matrix.yml runs it on ubuntu-22.04-arm; llama.cpp is built for the base armv8-a there, so it runs on every 64-bit Arm board but more slowly (not measured)',
   },
   {
     id: 'macos-universal', artifact: 'macOS universal (Apple silicon and Intel in one): .app (zipped) and .dmg, unsigned', hosts: ['darwin'],
@@ -234,6 +273,18 @@ function tauri(...argv) { return step(process.execPath, [TAURI, ...argv]) }
 /** `tauri <android|ios> init` through npm (npmCli above says why), non-interactive, the Rust targets added by rustupTarget. */
 function tauriInit(platform) { return step(process.execPath, [npmCli(), 'run', '--', 'tauri', platform, 'init', '--ci', '--skip-targets-install']) }
 function rustupTarget(...triples) { return step('rustup', ['target', 'add', ...triples]) }
+
+/** Moves a file, by renaming it where both paths are on one file system and by copying and deleting it elsewhere. */
+function moveFile(from, to) {
+  rmSync(to, { recursive: true, force: true })
+  try {
+    renameSync(from, to)
+  } catch (e) {
+    if (e?.code !== 'EXDEV') throw e
+    cpSync(from, to, { recursive: true })
+    rmSync(from, { recursive: true, force: true })
+  }
+}
 
 /** Files in `dir` whose names pass `keep`, as [path, name]; none when the directory is missing. */
 function globs(dir, keep) {
@@ -443,6 +494,12 @@ export function main(argv) {
           if (dryRun) continue
           const r = run(s.cmd, s.argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } })
           if (!r.ok) throw new Error(`${show(s.cmd, s.argv, s.cwd)} failed`)
+        } else if (s.kind === 'need') {
+          console.log(`  need ${relative(ROOT, s.path)}`)
+          if (!dryRun && !existsSync(s.path)) throw new Error(`${relative(ROOT, s.path)} is missing: ${s.hint}`)
+        } else if (s.kind === 'tidy') {
+          console.log(`  remove ${s.what}`)
+          if (!dryRun) for (const p of s.paths()) { rmSync(p, { recursive: true, force: true }); console.log(`    removed ${relative(ROOT, p)}`) }
         } else if (s.kind === 'sign-apk') {
           console.log('  sign the .apk (zipalign, apksigner)')
           if (!dryRun) signApk(ctx)
@@ -454,7 +511,8 @@ export function main(argv) {
         for (const [from, name] of t.collect(ctx)) {
           if (!existsSync(from)) throw new Error(`expected ${relative(ROOT, from)} after the build`)
           const to = join(dir, name)
-          if (resolve(from) !== resolve(to)) cpSync(from, to, { recursive: true })
+          // A model-carrying package is moved, not copied (a second gigabyte on the runner's disk for nothing).
+          if (resolve(from) !== resolve(to)) (t.move ? moveFile : (a, b) => cpSync(a, b, { recursive: true }))(from, to)
           files.push(name)
           console.log(`  -> ${relative(ROOT, to)} (${(statSync(to).size / 2 ** 20).toFixed(1)} MiB)`)
         }

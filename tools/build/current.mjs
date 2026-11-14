@@ -17,7 +17,7 @@
  *   target (the iOS build is best effort) and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
  *   exits 1 rather than pass the commit over. `--strict` exits 1 when refused (not on main, nothing green), for a
  *   run by hand.
- * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>]
+ * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move]
  *   [--summary <file>] [--dry-run] [--reused-pick]`:
  *   <dir> holds the run's artifacts, one folder each (`matrix-<id>`, and `windows-installer-*`, `windows-msi-*`,
  *   `windows-portable-*` for windows-x64, which counts as built only with all three); a target whose artifact is
@@ -31,7 +31,9 @@
  *   exit is then 1, except for the iOS build (best effort, as in build-matrix.yml). `--reused-pick` (a re-run of the
  *   failed jobs, which keeps an earlier attempt's pick) exits 1 unless the release then holds the newest green commit
  *   on main, or GitHub says it holds a newer one. `--stage` is the folder the files are copied into, named as GitHub
- *   keeps them, before they go up (a fresh temporary folder, removed when the command ends, when not given).
+ *   keeps them, before they go up (a fresh temporary folder, removed when the command ends, when not given); with
+ *   `--move` they are moved there instead, out of <dir>, so the runner's disk holds each file once (the Linux packages
+ *   and the Windows installer carry a model of about a gigabyte each).
  *   `--source` is a checkout of the built commit: its package.json gives the version the notes name, and
  *   crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with the x86-64 media, as
  *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan, writes the notes to --summary
@@ -53,7 +55,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -135,10 +137,11 @@ const sha256Text = (text) => createHash('sha256').update(text).digest('hex')
 
 /**
  * The targets the run built, from its artifacts in `media` (one folder each, as actions/download-artifact leaves
- * them): each file copied into `stage` under the name GitHub will keep, with its SHA-256 and size. Two files with one
- * name, or a file named like SHA256SUMS or current.json, is an error: one would overwrite the other on the release.
+ * them): each file copied into `stage` under the name GitHub will keep, with its SHA-256 and size (moved there, out of
+ * `media`, with `move`; the notices from `source` are always copied). Two files with one name, or a file named like
+ * SHA256SUMS or current.json, is an error: one would overwrite the other on the release.
  */
-export function collect({ media, stage, source }) {
+export function collect({ media, stage, source, move = false }) {
   const found = new Map()
   if (existsSync(media)) {
     for (const artifact of readdirSync(media).sort()) {
@@ -162,7 +165,7 @@ export function collect({ media, stage, source }) {
       for (const n of NOTICES) {
         const from = join(source, 'crimson_noir_os', n)
         if (!existsSync(from)) throw new Error(`the x86-64 media's ${n} is missing from the built commit (${from})`)
-        e.files.push({ from, name: n })
+        e.files.push({ from, name: n, keep: true })
       }
     }
     const files = []
@@ -170,12 +173,22 @@ export function collect({ media, stage, source }) {
       if (owner.has(f.name)) throw new Error(`two files would be ${f.name} on the release: one from ${owner.get(f.name)}, one from ${id}`)
       owner.set(f.name, id)
       const to = join(stage, f.name)
-      copyFileSync(f.from, to)
+      if (move && !f.keep) moveFile(f.from, to)
+      else copyFileSync(f.from, to)
       files.push({ name: f.name, path: to, sha256: sha256File(to), size: statSync(to).size })
     }
     built[id] = files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   }
   return built
+}
+
+/** Moves a file, by a copy and a removal when the two folders are on different file systems. */
+function moveFile(from, to) {
+  try { renameSync(from, to) } catch (e) {
+    if (e?.code !== 'EXDEV') throw e
+    copyFileSync(from, to)
+    rmSync(from)
+  }
 }
 
 /** A release's current.json as this script wrote it, or an empty one for anything else (a first run, a file edited by hand). */
@@ -580,9 +593,9 @@ export function pick({ sha, force = false, repo, wait = 5000 }, gh) {
  * Publishes (or, with dryRun, plans) the current build; see the header. Returns { status, plan, tag } where status is
  * `published`, `planned` (a dry run) or `stale` (the release already holds a newer commit: nothing written).
  */
-export function publish({ media, stage, source, sha, ci = '', run = '', repo, dryRun = false, time = new Date().toISOString(), log = console.log, wait = 15000, verifyWait = 10000 }, gh) {
+export function publish({ media, stage, source, move = false, sha, ci = '', run = '', repo, dryRun = false, time = new Date().toISOString(), log = console.log, wait = 15000, verifyWait = 10000 }, gh) {
   if (!SHA.test(sha ?? '')) throw new Error(`not a commit: ${sha}`)
-  const built = collect({ media, stage, source })
+  const built = collect({ media, stage, source, move })
   const version = source && existsSync(join(source, 'package.json')) ? JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version : 'unknown'
   if (dryRun) log(`dry run: nothing is written, and ${sha} is not checked against main`)
   else if (!onMain(gh, repo, sha, undefined, { wait })) throw new Error(`${sha} is not on main any more: nothing was published`)
@@ -689,7 +702,7 @@ export function main(argv, gh = realGh) {
   const [cmd] = argv
   const repo = arg('repo') ?? process.env.GH_REPO
   if (!['pick', 'publish'].includes(cmd) || flag('help')) {
-    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
+    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
     return cmd && !flag('help') ? 1 : 0
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo ?? '')) { console.error('::error::GH_REPO (or --repo owner/name) must name the repository'); return 1 }
@@ -708,7 +721,7 @@ export function main(argv, gh = realGh) {
     let r
     try {
       r = publish({
-        media: resolve(arg('media') ?? 'media'), stage: resolve(stage), source: arg('source') && resolve(arg('source')),
+        media: resolve(arg('media') ?? 'media'), stage: resolve(stage), source: arg('source') && resolve(arg('source')), move: flag('move'),
         sha: arg('sha'), ci: arg('ci') ?? '', run: arg('run') ?? '', repo, dryRun: flag('dry-run'),
       }, gh)
       if (arg('summary') && r.plan) appendFileSync(arg('summary'), `## The current build${r.status === 'planned' ? ' (dry run: nothing was published)' : ''}\n\n${r.plan.notes}\n`)

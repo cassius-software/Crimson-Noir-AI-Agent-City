@@ -15,6 +15,49 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
+  `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`
+  over `native/llm`) and put Qwen2.5 1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0)
+  into the `.deb`, the `.rpm` and the `.AppImage` with its `LICENSE` and `NOTICE`, through the same overlay as the
+  Windows installer (`src-tauri/tauri.model.conf.json`, which now also stores the `.rpm` uncompressed and installs
+  llama.cpp's MIT text and a notice, `third_party/llama.cpp/`, in every Linux package). The jobs fetch the file as
+  `windows-app.yml` does (the pin's own cache, Hugging Face only on a miss, `siteModel.mjs app` on every build), run on
+  `ubuntu-22.04` and `ubuntu-22.04-arm` (a cache key per runner image), free disk first and print it between the heavy
+  steps, and fail before any upload unless `tools/build/linuxAudit.mjs` passes: `packages` (each package holds the model
+  at the pinned size under `/usr/lib/Crimson Noir Agent City/models/` with its licence and notice, llama.cpp's texts, is
+  larger than nine tenths of the model, and nothing holds the tiny test model), `glibc` (no file the `.deb` installs
+  needs more than glibc 2.35, GLIBCXX 3.4.30 or CXXABI 1.3.13 by its version-needs table, which is what the loader
+  checks, so a weak reference counts too; the highest is printed) and `symbols` (from the linker's map, which
+  `src-tauri/build.rs` now writes where the runner is compiled, and the binary: no download, Hugging Face cache, HTTP or
+  subprocess code of llama.cpp's common library, no cpp-httplib, OpenSSL or curl, no network import; ggml's crash
+  handler, which can start a debugger, is linked and switched off at run time, below). `linuxAudit.test.ts` runs the
+  three commands end to end over a small `.deb` and ELF files it makes with dpkg-deb, as, ld and ar, each passing a good
+  one and failing a bad one by name. The x86-64 job then installs its `.deb` with apt and asks the installed app, under
+  Xvfb through tauri-driver, for one answer of at most 16 tokens
+  (`tools/browser/nativeE2e.mjs --packaged --file --bytes`, the pin passed in; it waits at most 150 s for the carried
+  file's check, 30 s inside WebDriver's script timeout, so a model that never settles is reported with what
+  `native_model` answered). The packages are moved, not copied, into `out/` and uploaded uncompressed; the release job
+  and `current.yml`'s publish and dry run free disk before downloading every target, and `current.mjs` gains `--move`.
+  `native-llm.yml`'s x86-64 job fetches the same model by its pin and reads a few greedy tokens with the Linux plan
+  (`native/llm/tests/desktop.rs`). `main` sets `GGML_NO_BACKTRACE` first where the runner is compiled, so llama.cpp
+  never starts a debugger on the app (a Rust test pins it). The recovery card names each app's own web view and how it
+  is updated: WebKitGTK on Linux (the system's packages, or a newer AppImage, since the AppImage carries its own),
+  WebKit on macOS and on iPhone and iPad, the Android System WebView on Android, and WebView2 on Windows as before.
+  Rehearsed in the container with the tiny model in place of the real one: a release build with `tiny-model` as `.deb`,
+  `.rpm` and `.AppImage`, every check passing, each check shown failing on a wrong package, a download-code link and a
+  planted string, the glibc gate failing on this Ubuntu 24.04 build (GLIBC_2.39, from Rust's weak `pidfd_spawnp` and
+  `pidfd_getpid`, which its version-needs table records as hard needs; GLIBC_2.38 from `__isoc23_*`), the installed
+  `.deb` answering 15 of 15 packaged checks, and, with its model moved away, the packaged run naming `native_model`'s
+  null answer in 15 checks instead of a script timeout. The same table puts the `current` pre-release's x86-64 `.deb`,
+  built on Ubuntu 24.04 before this change, at GLIBC_2.39 for the same two weak references (read here, not run on an
+  older glibc). Windows, macOS and the other targets build as before. On the pull request's CI, with the real model:
+  the `.deb` (975,529,154 B), `.rpm` and `.AppImage` held it at its pinned size, the three checks passed on both
+  architectures with the highest needs GLIBC_2.34, GLIBCXX_3.4.29 and CXXABI_1.3.13, the installed x86-64 `.deb`
+  passed 15 of 15 packaged checks and its own runner answered 16 tokens of text in 2.98 s on the runner's two
+  threads, and `native-llm.yml` read 8 greedy tokens from it with the Linux plan. Not verified: the app on a real
+  Linux desktop or on Ubuntu 22.04 or Debian 12 themselves, the Arm packages run (built and checked, never installed),
+  and how fast it answers on people's machines (Arm built for the base armv8-a).
+
 - **Reading a model larger than memory from the SSD, planned for the whole swarm at once** (the native `kv-pager`
   crate, feature `weights`, on by default and off in the WebAssembly build). `src/04_weights/gguf.rs` reads a GGUF
   file's header (versions 2 and 3; every ggml type's block size checked against llama.cpp master's on 2026-11-13) and

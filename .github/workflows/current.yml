@@ -178,6 +178,13 @@ jobs:
           path: built
           persist-credentials: false
           sparse-checkout: crimson_noir_os
+      # Every target's files land on this one runner, the Linux packages and the Windows installer about a gigabyte each:
+      # room is made first, and the files are moved into the stage, not copied.
+      - name: Room on the disk for every target's files
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/download-artifact@v4
         with:
           path: media
@@ -194,7 +201,8 @@ jobs:
           args=()
           if [ "$PICKED_IN" != "$GITHUB_RUN_ATTEMPT" ]; then args+=(--reused-pick); fi
           node tools/build/current.mjs publish --media media --source built --sha "$SHA" --ci "$CI_RUN" --run "$RUN" \
-            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+            --stage "$RUNNER_TEMP/current" --move --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+          df -h /
 
   # A pull request's run: the same step as a dry run, with read-only access.
   dry-run:
@@ -219,6 +227,11 @@ jobs:
           path: built
           persist-credentials: false
           sparse-checkout: crimson_noir_os
+      - name: Room on the disk for every target's files
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/download-artifact@v4
         with:
           path: media
@@ -229,4 +242,5 @@ jobs:
           SHA: ${{ needs.pick.outputs.sha }}
         run: |
           node tools/build/current.mjs publish --dry-run --media media --source built --sha "$SHA" \
-            --stage "$RUNNER_TEMP/current" --summary "$GITHUB_STEP_SUMMARY"
+            --stage "$RUNNER_TEMP/current" --move --summary "$GITHUB_STEP_SUMMARY"
+          df -h /

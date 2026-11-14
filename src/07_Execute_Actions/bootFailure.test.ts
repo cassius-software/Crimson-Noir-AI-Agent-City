@@ -5,10 +5,11 @@
  * Why does this file exist? It pins bootFailure.ts, the words a failure gets on the player's own device, over real user
  * agents: iOS 18 and iOS 26 Safari (which still reports the OS as 18_6 and carries Version/26), the iOS home-screen app,
  * Chrome on iOS, an iOS app's built-in browser, Android Chrome and an Android WebView, Firefox and Chrome on Linux,
- * Edge on Windows, an iPad asking for the desktop site, Safari on a Mac, and the Windows app. Every code each failure
- * carries, and every message the page has always shown, maps to its class; the installed apps are never told to edit
- * an address or switch browsers; the 'needs WebGPU' line appears only where WebGPU is what is missing; the halt reasons
- * the realm and the engine really produce keep the Ring-0 copy only for audits; Android's no-adapter card names the
+ * Edge on Windows, an iPad asking for the desktop site, Safari on a Mac, and the apps (Windows, Linux, macOS, Android
+ * and iPhone), each naming its own web view. Every code each failure carries, and every message the page has always
+ * shown, maps to its class; the installed apps are never told to edit an address or switch browsers; the 'needs
+ * WebGPU' line appears only where WebGPU is what is missing; the halt reasons the realm and the engine really produce
+ * keep the Ring-0 copy only for audits; Android's no-adapter card names the
  * browser the player has open (or says "this browser"), tells a page given no GPU at all from WebGPU held back, and
  * says nothing of Chromium or Advanced Protection to Firefox; and the one automatic restart after a
  * graphics reset in the background is guarded as the plan says.
@@ -24,7 +25,7 @@ import { coded } from './simProtocol.ts'
 import { kernelLostFailure, kernelNoneFailure, KernelNoneError, KernelResetError, type KernelMemory } from '../03_Spawn_Agents/crowdKernelMemory.ts'
 import {
   appName, AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
-  haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
+  appWebView, haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
   recentGpuLosses, WEBGPU_LINE, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure,
 } from './bootFailure.ts'
 
@@ -42,6 +43,12 @@ const UA = {
   firefoxWindows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0',
   ipadDesktop: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
   macSafari18: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  // The apps' web views: WebKitGTK on Linux, WKWebView on macOS and iPhone (no Version/ or Safari/ token), and the
+  // Android System WebView ('; wv)').
+  iosWebView: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+  androidAppWebView: 'Mozilla/5.0 (Linux; Android 11; Pixel 4a; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.6099.230 Mobile Safari/537.36',
+  webkitGtk: 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15',
+  macWebView: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)',
 } as const
 
 const env = (ua: string, o: Partial<Env> = {}): Env => ({ ua, secure: true, standalone: false, native: false, origin: 'https://city.example', touchPoints: 0, ...o })
@@ -317,6 +324,71 @@ test('the installed iPhone app and the Windows app are never told to edit an add
     assert.doesNotMatch(text(classify(coded(code, 'x'), env(UA.homeScreen, HOME_SCREEN))), NO, `home screen ${code}`)
     assert.doesNotMatch(text(classify(coded(code, 'x'), env(UA.edgeWindows, TAURI))), NO, `Tauri ${code}`)
   }
+})
+
+test('each app names its own web view: WebKitGTK on Linux, WebKit on macOS and iOS, the Android System WebView, WebView2 on Windows', () => {
+  assert.deepEqual([platformOf(UA.webkitGtk).os, platformOf(UA.macWebView).os], ['linux', 'mac'])
+  assert.equal(appWebView(platformOf(UA.webkitGtk)).name, 'WebKitGTK')
+  assert.equal(appWebView(platformOf(UA.macWebView)).name, 'WebKit')
+  assert.equal(appWebView(platformOf(UA.edgeWindows)).name, 'WebView2')
+  assert.equal(appWebView(platformOf(UA.edgeWindows)).update, null, 'Windows keeps each card\'s own words')
+  const card = (code: string, ua: string) => text(classify(code === 'worker-gpu' || code === 'wasm' ? coded(code, 'x') : Object.assign(new Error('x'), { code }), env(ua, TAURI)))
+  // The cards whose steps name the web view: each names this system's, and never another's.
+  for (const code of ['no-api', 'no-adapter', 'compat-only', 'worker-gpu', 'shader', 'compiler', 'kernel-none']) {
+    const linux = card(code, UA.webkitGtk)
+    // The .deb and .rpm use the system's WebKitGTK; the AppImage carries its own, which only a newer AppImage updates.
+    assert.match(linux, /Update WebKitGTK \(the system’s package updates; the AppImage carries its own, so get a newer AppImage of the app\) and the graphics driver, then restart the app\./, `Linux ${code}`)
+    assert.doesNotMatch(linux, /WebView2|Windows|Microsoft|macOS/, `Linux ${code}`)
+    const mac = card(code, UA.macWebView)
+    assert.match(mac, /Update macOS \(WebKit and the graphics driver come with it\), then restart the app\./, `macOS ${code}`)
+    assert.doesNotMatch(mac, /WebView2|Windows|Microsoft|WebKitGTK/, `macOS ${code}`)
+    assert.match(card(code, UA.edgeWindows), /WebView2/, `Windows ${code}`)
+    assert.doesNotMatch(card(code, UA.edgeWindows), /WebKit/, `Windows ${code}`)
+  }
+  const linux = classify(err('no-api'), env(UA.webkitGtk, TAURI))
+  assert.equal(linux.headline, 'This app’s WebKitGTK has no WebGPU')
+  assert.match(linux.steps[0], /draws with WebGPU through WebKitGTK\.$/)
+  assert.equal(linux.webgpuLine, WEBGPU_LINE)
+  assert.equal(classify(err('no-api'), env(UA.macWebView, TAURI)).headline, 'This app’s WebKit has no WebGPU')
+  assert.match(classify(err('no-api'), env(UA.macWebView, TAURI)).steps[0], /through macOS’s WebKit\.$/)
+  assert.equal(classify(err('no-api'), env(UA.edgeWindows, TAURI)).headline, 'This app’s WebView2 has no WebGPU')
+  assert.match(classify(err('no-adapter'), env(UA.webkitGtk, TAURI)).steps[0], /^Linux gave the app’s WebKitGTK no GPU for WebGPU\.$/)
+  assert.match(classify(err('no-adapter'), env(UA.macWebView, TAURI)).steps[0], /^macOS gave the app’s WebKit no GPU for WebGPU\.$/)
+  assert.match(classify(err('no-adapter'), env(UA.edgeWindows, TAURI)).steps[0], /^Windows gave the app’s WebView2 no GPU for WebGPU\.$/)
+  // A Linux or macOS browser (not the app) is told about its browser, never a web view.
+  assert.doesNotMatch(text(classify(err('no-api'), env(UA.chromeLinux))), /WebKitGTK|WebView2/)
+  // The phone apps (the build's android-apk and ios-ipa): their own web view, never Windows' words, never a browser.
+  assert.deepEqual([platformOf(UA.androidAppWebView, 5).os, platformOf(UA.iosWebView, 5).os], ['android', 'ios'])
+  assert.equal(appWebView(platformOf(UA.androidAppWebView, 5)).name, 'Android System WebView')
+  assert.equal(appWebView(platformOf(UA.iosWebView, 5)).name, 'WebKit')
+  assert.equal(appWebView(platformOf(UA.iosWebView.replace('iPhone; CPU iPhone OS', 'iPad; CPU OS'), 5)).system, 'iPadOS')
+  const phone = (code: string, ua: string) => text(classify(code === 'worker-gpu' || code === 'wasm' ? coded(code, 'x') : Object.assign(new Error('x'), { code }), env(ua, { ...TAURI, touchPoints: 5 })))
+  const NO = /address bar|copy the link|Open (?:this|the) page in|open the page again|in Chrome|in Safari/
+  for (const code of ['no-api', 'no-adapter', 'compat-only', 'worker-gpu', 'shader', 'compiler', 'kernel-none', 'device', 'gpu-reset', 'wasm']) {
+    for (const [name, ua] of [['Android', UA.androidAppWebView], ['iOS', UA.iosWebView]] as const) {
+      const card = phone(code, ua)
+      assert.doesNotMatch(card, /WebView2|Windows|Microsoft|WebKitGTK|macOS/, `${name} app ${code}`)
+      assert.doesNotMatch(card, NO, `${name} app ${code}: no browser to switch to, no page to reopen`)
+    }
+  }
+  // Every card whose steps update the web view gives the app's own step, ahead of the phone browser's words.
+  for (const code of ['no-api', 'no-adapter', 'compat-only', 'worker-gpu', 'shader', 'compiler', 'kernel-none']) {
+    assert.match(phone(code, UA.androidAppWebView), /Update Android System WebView and Chrome from Google Play, then restart the app\./, `Android app ${code}`)
+    assert.match(phone(code, UA.iosWebView), /Update iOS \(Settings > General > Software Update\), then restart the app\./, `iOS app ${code}`)
+  }
+  assert.match(phone('wasm', UA.iosWebView), /Settings > Privacy & Security > Lockdown Mode, then open the app again\./)
+  const android = classify(err('no-api'), env(UA.androidAppWebView, { ...TAURI, touchPoints: 5 }))
+  assert.equal(android.headline, 'This app’s Android System WebView has no WebGPU')
+  assert.match(android.steps[0], /draws with WebGPU through the Android System WebView\.$/)
+  assert.equal(android.steps[1], 'Update Android System WebView and Chrome from Google Play, then restart the app.')
+  assert.equal(android.openIn, null, 'the app hands no address to Chrome')
+  assert.match(classify(err('no-adapter'), env(UA.androidAppWebView, { ...TAURI, touchPoints: 5 })).steps[0], /^Android gave the app’s Android System WebView no GPU for WebGPU\.$/)
+  const ios = classify(err('no-api'), env(UA.iosWebView, { ...TAURI, touchPoints: 5 }))
+  assert.equal(ios.headline, 'This app’s WebKit has no WebGPU')
+  assert.match(ios.steps[0], /draws with WebGPU through iOS’s WebKit\.$/)
+  assert.match(classify(err('no-adapter'), env(UA.iosWebView, { ...TAURI, touchPoints: 5 })).steps[0], /^iOS gave the app’s WebKit no GPU for WebGPU\.$/)
+  // A phone's browser (not the app) keeps its own words.
+  assert.doesNotMatch(text(classify(err('no-api'), env(UA.androidWebView, { touchPoints: 5 }))), /Android System WebView|restart the app/)
 })
 
 test('installedApp: standalone anywhere, iOS\'s own flag, fullscreen only on Android (a desktop F11 tab is a tab)', () => {

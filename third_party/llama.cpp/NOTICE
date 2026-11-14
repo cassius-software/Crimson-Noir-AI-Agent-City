@@ -1,0 +1,32 @@
+llama.cpp and ggml: compiled into the Linux app, which runs Sloane's model in its own process
+==========================================================================================
+
+The Linux app of Crimson Noir: Agent City (its .deb, .rpm and AppImage, built by .github/workflows/build-matrix.yml
+with the cargo feature native-runner) runs the model it carries in its own process: llama.cpp's model library
+(libllama) and ggml (ggml, ggml-base and ggml-cpu) are compiled from source and linked statically into the app's
+executable, through the Rust crates llama-cpp-2 and llama-cpp-sys-2 0.1.161 (from crates.io; the llama-cpp-rs
+repository at commit e7af607ebd5ec2932709ef918c17cca2f9b0fce4), which vendor llama.cpp's sources. Nothing of
+llama.cpp is in this repository: the sources come from the crate in the build's cargo registry. The Windows, macOS,
+Android and iOS builds, the page file and the OS media do not compile it.
+
+LICENSE beside this file is llama.cpp's own licence text, exactly as the vendored copy carries it (MIT License,
+"Copyright (c) 2023-2026 The ggml authors"). The Linux packages install this NOTICE and that LICENSE as
+/usr/share/doc/crimson-noir-agent-city/llama.cpp/NOTICE and LICENSE (src-tauri/tauri.model.conf.json).
+
+What is compiled in, and under which terms
+------------------------------------------
+
+- llama.cpp and ggml: MIT, Copyright (c) 2023-2026 The ggml authors (LICENSE beside this file).
+- ggml's CPU matrix multiplication from llamafile (ggml/src/ggml-cpu/llamafile/sgemm.cpp): MIT, Copyright 2024
+  Mozilla Foundation, under the same permission notice as LICENSE, which the file's own header carries.
+- ggml's YaRN rotary scaling (ggml/src/ggml-cpu/ops.cpp, rope_yarn): MIT, Copyright (c) 2023 Jeffrey Quesnelle and
+  Bowen Peng, as the code's own comment says.
+- The Rust crates llama-cpp-2 and llama-cpp-sys-2: MIT OR Apache-2.0 (the crates' manifests); the product takes them
+  under MIT.
+
+The app links none of the download, Hugging Face cache, HTTP or subprocess code of llama.cpp's common library, no
+cpp-httplib, no OpenSSL and no curl: tools/build/linuxAudit.mjs (symbols) checks it on every Linux build from the
+linker's map and the binary, and fails the build otherwise.
+
+The software remains under its own licence, not under the product's licence. "llama.cpp" is a name of its authors,
+used here only to say which software this is.

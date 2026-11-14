@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -289,6 +289,31 @@ test('collect: every target from its artifacts, the reports left out, the files 
     const reserved = artifacts(join(t.dir, 'reserved'), { 'matrix-linux-x64': { SHA256SUMS: 'x' } })
     assert.throws(() => c.collect({ media: reserved, stage: join(t.dir, 'stage5') }), /two files would be SHA256SUMS/)
   } finally { t.done() }
+})
+
+test('collect with move: each file leaves the artifacts for the stage (held once on the disk), the notices are still copied; both publish jobs move, after making room', () => {
+  const t = scratch()
+  try {
+    const media = artifacts(join(t.dir, 'media'), allBuilt('a'))
+    const src = source(join(t.dir, 'src'))
+    const built = c.collect({ media, stage: join(t.dir, 'stage'), source: src, move: true })
+    assert.deepEqual(Object.keys(built), [...IDS])
+    const deb = (built['linux-x64'] as (FileRecord & { path: string })[]).find((f) => f.name.endsWith('.deb'))
+    assert.ok(deb)
+    assert.equal(deb.sha256, sha256('deb a'))
+    assert.equal(readFileSync(deb.path, 'utf8'), 'deb a')
+    const left = readdirSync(join(t.dir, 'media'), { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name)
+    assert.deepEqual(left, ['matrix.json'], 'only the report, which is no download, stays behind')
+    for (const n of c.NOTICES as string[]) assert.ok(existsSync(join(src, 'crimson_noir_os', n)), `${n} stays in the checkout`)
+    const copied = artifacts(join(t.dir, 'media2'), allBuilt('b'))
+    c.collect({ media: copied, stage: join(t.dir, 'stage2') })
+    assert.ok(readdirSync(copied, { recursive: true }).some((n) => String(n).endsWith('.deb')), 'without move the artifacts stay')
+  } finally { t.done() }
+  assert.equal((WORKFLOW.match(/--stage "\$RUNNER_TEMP\/current" --move /g) ?? []).length, 2, 'publish and dry-run move the files')
+  for (const job of ['publish', 'dry-run']) {
+    const body = WORKFLOW.split(new RegExp(`\n  ${job}:\n`))[1].split(/\n  [a-z-]+:\n/)[0]
+    assert.ok(body.indexOf('sudo rm -rf /usr/local/lib/android') > 0 && body.indexOf('sudo rm -rf /usr/local/lib/android') < body.indexOf('actions/download-artifact'), `${job} makes room before the download`)
+  }
 })
 
 test('a first publish makes the tag at the commit, then the release as a pre-release that is never Latest, with every file, SHA256SUMS over all of them and current.json', () => {

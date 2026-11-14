@@ -2584,8 +2584,9 @@ them that answers (`auto`):
   stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
   page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
   model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
-  app has none of the runner's commands (the Windows app), it lists nothing and an answer is told there is none, so
-  the script stands in. No app has the runner yet: this is the page's half, proven against a fake runner.
+  app runs no model (the Windows and macOS apps answer the runner's commands with none), it lists nothing and an
+  answer is told there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) has the
+  runner and carries Qwen2.5 1.5B Instruct for it (The Linux app's model, below).
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -2936,8 +2937,9 @@ you choose is yours, under its own licence. The web copy on GitHub Pages also se
 Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
 kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
 The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
-beside its page; the page gets it the same way (The app's model, The launcher's model, below). `dist/index.html`, the
-bare .exe and the OS media carry none. The parts:
+beside its page; the page gets it the same way (The app's model, The launcher's model, below). The Linux app's packages
+carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, below).
+`dist/index.html`, the bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -3081,8 +3083,52 @@ bare .exe and the OS media carry none. The parts:
   counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
   each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
   installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
-  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Linux,
-  Android and iPhone apps carry no model yet.
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Android
+  and iPhone apps carry no model yet; the Linux app carries the same file and runs it itself (the next entry).
+- **The Linux app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
+  `tools/build/linuxAudit.mjs`). The Linux app's `.deb`, `.rpm` and `.AppImage` (the build matrix's `linux-x64` and
+  `linux-arm64`) carry the same file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, about 0.9 GB; each
+  package is about 1 GB), and the app runs it in its own process: its shell is built with the `native-runner` feature,
+  so llama.cpp is compiled into it, and the page asks it through `native` (above) instead of copying the file in.
+  - Installed, the file is `/usr/lib/Crimson Noir Agent City/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, with its
+    `LICENSE` and `NOTICE` beside it, and llama.cpp's licence and notice are in
+    `/usr/share/doc/crimson-noir-agent-city/llama.cpp/`; the AppImage keeps the same files inside its own image. The
+    disk holds the model once: the app checks its size and SHA-256 once and stamps the check in its data folder, and
+    nothing is copied into the page's storage. Removing the package removes it.
+  - The build matrix's Linux jobs fetch and check the file as the Windows workflow does (the pin's own cache, Hugging
+    Face only on a miss, `siteModel.mjs app` on every build). They build on Ubuntu 22.04, so the app needs glibc 2.35
+    or newer (Ubuntu 22.04, Debian 12 and later), and fail before any upload unless each package holds the model at
+    exactly its size with its licence and notice where the runner looks (`linuxAudit.mjs packages`), no file the
+    `.deb` installs needs a newer glibc or libstdc++ than Ubuntu 22.04's (`glibc`, which reads each file's
+    version-needs table, as the loader does, so a weak reference counts too), and the binary keeps none of the
+    download, HTTP or subprocess code of llama.cpp's common library (no cpp-httplib, OpenSSL or curl) and imports no
+    network call (`symbols`); ggml's crash handler, which can start a debugger, is linked, and `main` switches it off
+    with `GGML_NO_BACKTRACE`.
+  - On x86-64, llama.cpp is built for processors from about 2013 on (AVX2, FMA, F16C and BMI2). On an older x86-64
+    processor the app still opens, but its model does not start: Sloane's card says "The model inside this app
+    couldn’t start:" and that the processor is older than the app's model needs, naming what it lacks, and the
+    other providers still answer. On Arm it is built for the base armv8-a (without the dot-product instructions), so
+    it runs on any 64-bit Arm Linux machine, more slowly than it could; how fast has not been measured.
+  - The city itself needs WebGPU from WebKitGTK (Which browser engine each app gets, below). Where WebKitGTK offers
+    none, the app shows the recovery card, which names WebKitGTK ("This app’s WebKitGTK has no WebGPU") and says to
+    update it with the system's packages, or, since the AppImage carries its own WebKitGTK, to get a newer AppImage.
+
+    In this container's WebKitGTK (2.52.6) the page has no `navigator.gpu`, so the app shows that card, and WebKit's
+    own WebGPU feature switched on in a test program does not change it; the card's **Open the console** (the shell
+    that needs no GPU) is still offered. Whether a desktop's WebKitGTK gives the city WebGPU is not known.
+
+  What is verified: the overlay naming the model, its licence and notice, and llama.cpp's texts for every Linux package
+  (`siteModel.test.ts`), the build steps, the Linux-only feature and the checks' order (`buildMatrix.test.ts`), each
+  check of `linuxAudit.mjs` and that each can fail (`linuxAudit.test.ts`), the packaged run's script
+  (`nativeRunner.test.ts`) and the runner's own Rust tests. Rehearsed in the container that wrote it, with the tiny
+  test model in place of the real one: a release build as `.deb`, `.rpm` and `.AppImage`, each package passing the
+  package check, the binary passing the symbol audit, the glibc gate refusing that Ubuntu 24.04 build (it needs glibc
+  2.39, for Rust's weak `pidfd_spawnp` and `pidfd_getpid`, whose version the loader still requires) and passing it at
+  2.39, and the `.deb` installed with apt and asked for one answer through `nativeE2e.mjs --packaged` (15 of 15
+  checks; with the model moved away, 15 checks naming `native_model`'s null answer). Run by CI, and not counted as
+  verified above: the real model in the packages, the Ubuntu 22.04 builds and their glibc floor, and the installed
+  x86-64 app answering with the real model. Not verified: the app on a real Linux desktop, how fast it answers there,
+  and how fast it answers on Arm.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
@@ -4362,12 +4408,14 @@ The current build (below) carries the same three files from every commit on main
   Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
   answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
   in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
-  for; and `app_model` answers nothing there, so the page never copies a model in. Every other build (Windows, macOS,
-  and every Linux build shipped today: the feature is off by default) registers the same three commands, which answer
-  that there is none. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
+  for; and `app_model` answers nothing there, so the page never copies a model in. The Linux release builds turn the
+  feature on (the build matrix passes `--features native-runner` for `linux-x64` and `linux-arm64` alone; The Linux
+  app's model). Every other build (Windows, macOS, and a Linux build without the feature, such as `npm run app:build`:
+  the feature is off by default) registers the same three commands, which answer that there is none. Where the runner
+  is compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting
+  a debugger on it. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
   builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
-  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`); no shipped build carries the runner
-  yet.
+  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
@@ -4396,8 +4444,8 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | :--- | :--- | :--- | :--- |
 | `windows-x64` | the NSIS installer (`*-setup.exe`), the `.msi` and the bare `.exe` | Windows x64 | the installer and `.exe` run on Julian's laptop; all three built in `windows-app.yml` on every change (the `.msi` by `tauri bundle` from the same binary); the `.msi` not installed yet |
 | `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
-| `linux-x64` | `.deb`, `.rpm` and `.AppImage` | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages | built by the workflow; not installed on a device; WebGPU in WebKitGTK unverified |
-| `linux-arm64` | `.deb`, `.rpm` and `.AppImage` | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own) | built by the workflow on `ubuntu-24.04-arm`; not run on a device |
+| `linux-x64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages, cmake and libclang, and the model in `src-tauri/models/` | built by the workflow on `ubuntu-22.04`, the packages checked, and the `.deb` installed on the runner and asked for one short answer under a virtual display; not installed on a desktop; WebGPU in WebKitGTK unverified |
+| `linux-arm64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own), with the same | built by the workflow on `ubuntu-22.04-arm` and the packages checked; not run on a device |
 | `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
 | `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
@@ -4424,19 +4472,24 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
   are the system's own libraries, so the `.AppImage` is the one file that carries them.
 - **The workflow.** `.github/workflows/build-matrix.yml` runs the same command on GitHub's runners, one job per target
-  (`windows-latest`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
+  (`windows-latest`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `macos-15` twice, `ubuntu-24.04` with the Android SDK, and
   `ubuntu-24.04` for each UEFI target), on a pull request that touches the shells, Crimson Noir OS or this tooling, on
   a `v*` tag, and by hand. Each UEFI job then bakes its media a second time from a clean build, compares the bytes, and
   boots the disk image in QEMU through the tutorial and the terminal to power-off, and the ISO to the self-test. Each
-  job publishes its files as the artifact `matrix-<id>` and its report; a summary job lays the nine targets out in the
-  run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
-  `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
-  `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
-  itself. `current.yml` calls it with each commit on main that ci passes, for the current build (below). Only
-  GitHub's own actions run in it.
+  Linux job first fetches and checks Sloane's model, then checks its packages, their glibc floor and the binary
+  (`tools/build/linuxAudit.mjs`; The Linux app's model), and the x86-64 job installs its `.deb` on the runner and asks
+  the installed app for one answer of at most 16 tokens through the page's own code in WebKitGTK under Xvfb
+  (`tools/browser/nativeE2e.mjs --packaged`). Each job publishes its files as the artifact `matrix-<id>` and its report;
+  a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
+  tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
+  all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
+  this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
+  current build (below). Only GitHub's own actions run in it.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
-  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
-  an engine lacks it the app shows the same recovery card as a browser without WebGPU.
+  iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
+  and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,
+  WebKitGTK, WebKit or the Android System WebView) and how that is updated. WebKitGTK 2.52.6, in the container that
+  built the Linux app, gives the page none (The Linux app's model).
 
 ## The current build
 

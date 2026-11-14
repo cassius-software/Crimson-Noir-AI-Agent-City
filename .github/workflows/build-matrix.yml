@@ -20,6 +20,19 @@
 # a commit on main ci passed on, as `ref`: every job builds that commit and leaves the same artifacts, which current.yml
 # puts on the `current` pre-release; the release job never runs for a call, and the concurrency group carries the
 # commit. Only GitHub's own actions run here.
+# The Linux jobs build the app with the native model runner (cargo feature native-runner: llama.cpp in the app's own
+# process) and put Sloane's model in each package, as windows-app.yml puts it in the Windows installer: the file is
+# fetched from Hugging Face at the page's own pin (src/09_Cognition/siteModel.ts APP_MODEL) only when the cache keyed
+# by that pin does not hold it, checked byte for byte on every build and placed in src-tauri/models/ with its LICENSE
+# and NOTICE (tools/web/siteModel.mjs app), which src-tauri/tauri.model.conf.json bundles. They run on Ubuntu 22.04, so
+# the app needs no newer glibc than 2.35 (Ubuntu 22.04, Debian 12 and later): built on 24.04 it needs 2.39 (Rust's
+# std, through weak references the loader still requires; llama.cpp's C needs 2.38).
+# After the build, before any upload, tools/build/linuxAudit.mjs checks each package (the model, its licence and its
+# notice where the runner looks, nothing of the end-to-end test's build), the glibc floor of every file the .deb
+# installs, and the binary (no download, HTTP or subprocess code of llama.cpp's common library, no network import);
+# the x86-64 job then installs its .deb on the runner and asks the installed app for one short answer through
+# tools/browser/nativeE2e.mjs (--packaged) in WebKitGTK under a virtual display. Windows, macOS, the phones and the
+# UEFI media build as before: no runner and no model.
 # What breaks if it is removed? Every platform but Windows is a page of instructions again, and a release carries
 # only the Windows app and the OS media.
 
@@ -31,6 +44,13 @@ on:
       - .github/workflows/build-matrix.yml
       - tools/build/**
       - src-tauri/**
+      - native/llm/**
+      - src/09_Cognition/siteModel.ts
+      - tools/web/siteModel.mjs
+      - third_party/qwen2.5-1.5b-instruct/**
+      - third_party/llama.cpp/**
+      - tools/browser/nativeE2e.mjs
+      - tools/browser/tinyGguf.mjs
       - package.json
       - package-lock.json
       - crimson_noir_os/boot/**
@@ -70,6 +90,7 @@ defaults:
 
 env:
   RUST_TOOLCHAIN: '1.97.0'
+  TAURI_DRIVER_VERSION: '2.1.0'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -82,9 +103,9 @@ jobs:
           - target: windows-arm64
             runner: windows-latest
           - target: linux-x64
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
           - target: linux-arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
           - target: macos-universal
             runner: macos-15
           - target: android-apk
@@ -120,13 +141,23 @@ jobs:
             ~/.cargo/git
             src-tauri/target
             crimson_noir_os/target
-          key: build-matrix-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock', 'crimson_noir_os/Cargo.lock') }}
-          restore-keys: build-matrix-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-
-      - name: The Linux shell's libraries (WebKitGTK 4.1, GTK 3, the AppImage tools' needs)
+          # A Linux key names its runner's image: objects built against another glibc's headers must never be restored.
+          key: build-matrix-${{ matrix.target }}-${{ startsWith(matrix.target, 'linux-') && format('{0}-', matrix.runner) || '' }}${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock', 'crimson_noir_os/Cargo.lock') }}
+          restore-keys: build-matrix-${{ matrix.target }}-${{ startsWith(matrix.target, 'linux-') && format('{0}-', matrix.runner) || '' }}${{ env.RUST_TOOLCHAIN }}-
+      - name: Room on the disk for the model's copies (the runner's Android SDK, .NET and Haskell go; the Linux jobs use none)
+        if: startsWith(matrix.target, 'linux-')
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: The Linux shell's libraries (WebKitGTK 4.1, GTK 3, the AppImage tools' needs), cmake and libclang for llama.cpp, and the package checks' tools
         if: startsWith(matrix.target, 'linux-')
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev patchelf file
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev patchelf file cmake libclang-dev rpm squashfs-tools webkit2gtk-driver xvfb
+          command -v cmake rpm unsquashfs WebKitWebDriver xvfb-run
+          # llama.cpp's HTTP library looks for OpenSSL; the app links none of it, and the symbol audit holds that.
+          echo "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON" >> "$GITHUB_ENV"
       - name: The media tools (mtools, gdisk, xorriso), so the UEFI jobs make the .img and .iso too, and QEMU with the firmware that boots them
         if: startsWith(matrix.target, 'uefi-')
         run: |
@@ -146,12 +177,62 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list_installed | grep -E 'build-tools|ndk' || true
       - run: npm ci --no-audit --no-fund
+      - id: model
+        name: The app's model, by the page's own pin (src/09_Cognition/siteModel.ts APP_MODEL)
+        if: startsWith(matrix.target, 'linux-')
+        run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
+      - id: model-cache
+        if: startsWith(matrix.target, 'linux-')
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/app-model
+          key: ${{ steps.model.outputs.key }}
+      - name: The app's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: startsWith(matrix.target, 'linux-') && steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
+      - name: Checked byte for byte, then into src-tauri/models/ with its LICENSE and NOTICE (on every build, a cached file too)
+        if: startsWith(matrix.target, 'linux-')
+        run: |
+          node tools/web/siteModel.mjs app --from "$RUNNER_TEMP/app-model"
+          df -h /
       - name: Build the target (the page once, then the shell)
         # The cache restores src-tauri/target with the bundles of earlier versions; they go first, so the script
         # collects only this version's files.
         run: |
           rm -rf src-tauri/target/release/bundle src-tauri/target/*/release/bundle
           node tools/build/matrix.mjs --targets "${{ matrix.target }}" --out out
+      - name: The Linux packages carry the model, its LICENSE and NOTICE where the runner looks, and nothing of the end-to-end test's build
+        if: startsWith(matrix.target, 'linux-')
+        env:
+          MODEL_FILE: ${{ steps.model.outputs.file }}
+          MODEL_BYTES: ${{ steps.model.outputs.bytes }}
+        run: |
+          df -h /
+          ls -l "out/${{ matrix.target }}"
+          node tools/build/linuxAudit.mjs packages --dir "out/${{ matrix.target }}" --file "$MODEL_FILE" --bytes "$MODEL_BYTES" --binary src-tauri/target/release/crimson-noir-app
+      - name: The glibc floor of every file the .deb installs (Ubuntu 22.04's, glibc 2.35, is the highest allowed)
+        if: startsWith(matrix.target, 'linux-')
+        run: node tools/build/linuxAudit.mjs glibc --deb out/${{ matrix.target }}/*.deb
+      - name: No download, HTTP or subprocess code of llama.cpp's common library in the shipped binary, and no network import (the linker's map, the libraries, the binary)
+        if: startsWith(matrix.target, 'linux-')
+        run: node tools/build/linuxAudit.mjs symbols --deb out/${{ matrix.target }}/*.deb --map src-tauri/target/release/crimson-noir-app.map --deps src-tauri/target/release/deps
+      - name: tauri-driver ${{ env.TAURI_DRIVER_VERSION }}, for the installed app
+        if: matrix.target == 'linux-x64'
+        run: cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked
+      - name: The .deb installed on this runner, and the installed app asked for one short answer in WebKitGTK, under a virtual display
+        if: matrix.target == 'linux-x64'
+        env:
+          MODEL_FILE: ${{ steps.model.outputs.file }}
+          MODEL_BYTES: ${{ steps.model.outputs.bytes }}
+        run: |
+          sudo apt-get install -y -q --no-install-recommends ./out/linux-x64/*.deb
+          df -h /
+          xvfb-run -a node tools/browser/nativeE2e.mjs --packaged --app /usr/bin/crimson-noir-app --file "$MODEL_FILE" --bytes "$MODEL_BYTES" --out "$RUNNER_TEMP/packaged-e2e.json"
       - name: Bake the UEFI media again from a clean build; the bytes must be the same
         if: startsWith(matrix.target, 'uefi-')
         working-directory: crimson_noir_os
@@ -181,12 +262,25 @@ jobs:
           name: matrix-${{ matrix.target }}
           path: out/${{ matrix.target }}/
           if-no-files-found: error
+          # The Linux packages are mostly the model, which does not compress: stored as they are.
+          compression-level: ${{ startsWith(matrix.target, 'linux-') && '0' || '6' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: matrix-report-${{ matrix.target }}
           path: out/matrix.json
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.target == 'linux-x64'
+        with:
+          name: packaged-e2e-report
+          path: ${{ runner.temp }}/packaged-e2e.json
+          if-no-files-found: ignore
+      - name: The packages, the model's copies and llama.cpp's CMake folder stay out of the build cache (saved after this job)
+        if: always() && startsWith(matrix.target, 'linux-')
+        run: |
+          rm -rf src-tauri/target/release/bundle src-tauri/target/release/models src-tauri/target/release/build/llama-cpp-sys-2-*/out/build
+          df -h /
 
   # The nine targets in one table, whatever each job did: built (with its files), failed, skipped, or no job here.
   summary:
@@ -219,6 +313,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Every target's files land on this one runner: six of them, the Linux packages, about a gigabyte each.
+      - name: Room on the disk for every target's files
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/download-artifact@v4
         with:
           pattern: matrix-*
@@ -230,6 +330,7 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           rm -rf media/matrix-report-* media/matrix-uefi-x64
+          df -h /
           # Every Tauri bundle's name starts with the product's, which has spaces: an array keeps each name whole.
           mapfile -t files < <(find media -type f | sort)
           [ ${#files[@]} -gt 0 ] || { echo "::error::no file to upload"; exit 1; }

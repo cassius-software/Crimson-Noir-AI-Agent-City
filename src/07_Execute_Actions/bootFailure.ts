@@ -10,12 +10,13 @@
  * device: Safari's own 'Version/NN' token (Safari 26 on iOS still reports the OS as 18_6), an app's built-in browser on
  * iPhone (no 'Safari/' token) or on Android ('; wv)'), Chrome, Firefox or Edge, Linux, the installed home-screen app
  * (display-mode standalone, or fullscreen on Android, which has no address bar to edit and no other browser to switch to) and the
- * Windows app (Tauri). The 'needs WebGPU' line appears only where WebGPU itself is what is missing. It also holds the
- * guard for the one automatic restart after a graphics reset in the background (autoReload), the gate before a
- * first visit's onboarding (firstScreen), and the times the page saw the browser's GPU process go (the browser
- * counts them too, and after two in two minutes hands the page no GPU for a while: gpuPaused). Pure, but for four
- * guarded readers of the browser the tests replace or leave out: pageEnv, pageBuild, and the loss times' own store
- * (recentGpuLosses, noteGpuLoss).
+ * apps (Tauri), whose web view is named for its system (appWebView: WebView2 on Windows, WebKitGTK on Linux, WebKit on
+ * macOS and iOS, the Android System WebView on Android). The 'needs WebGPU' line appears only where WebGPU itself is
+ * what is missing. It also holds the guard for the one automatic restart after a graphics reset in the background
+ * (autoReload), the gate before a first visit's onboarding (firstScreen), and the times the page saw the browser's GPU
+ * process go (the browser counts them too, and after two in two minutes hands the page no GPU for a while: gpuPaused).
+ * Pure, but for four guarded readers of the browser the tests replace or leave out: pageEnv, pageBuild, and the loss
+ * times' own store (recentGpuLosses, noteGpuLoss).
  * What breaks if it is removed? Every failure falls back to one raw message under a line that blames WebGPU, and the
  * lock screen blames a broken invariant for a routine GPU reset.
  */
@@ -55,7 +56,7 @@ export interface Env {
   secure: boolean
   /** The installed web app (installedApp: display-mode standalone, fullscreen on Android, iOS's navigator.standalone): no address bar. */
   standalone: boolean
-  /** The Windows app (Tauri): no browser chrome at all. */
+  /** An app (Tauri, in the system's web view: appWebView), on a computer or a phone: no browser chrome at all. */
   native: boolean
   origin: string
   /** navigator.maxTouchPoints: an iPad asking for the desktop site reports a Mac with touch. */
@@ -192,6 +193,42 @@ export function platformOf(ua: string, touchPoints = 0, standalone = false): Pla
   return { os, browser, ipad, iosOther, inApp, safari }
 }
 
+/** The web view an app (Tauri) draws in, by its system, and the step that updates it with the driver. */
+export interface AppWebView {
+  /** The system, as a sentence names it. */
+  system: string
+  /** The web view's own name. */
+  name: string
+  /** The web view as the first mention names it. */
+  full: string
+  /** One step: update the web view and the graphics driver, then restart the app; null keeps the caller's own words. */
+  update: string | null
+}
+
+/**
+ * Pure. An app's web view for a platform (platformOf): WebKitGTK on Linux (updated with the system's packages, or
+ * inside the AppImage, which carries its own, with a newer AppImage), WebKit on macOS (it comes with macOS, as the
+ * graphics driver does), the Android System WebView on Android (updated from Google Play), WebKit on iOS and iPadOS
+ * (it comes with the system), and Microsoft Edge WebView2 on Windows and on any other platform not listed, whose steps
+ * keep their own words (update null).
+ */
+export function appWebView(p: Platform): AppWebView {
+  if (p.os === 'linux') {
+    return { system: 'Linux', name: 'WebKitGTK', full: 'WebKitGTK', update: 'Update WebKitGTK (the system’s package updates; the AppImage carries its own, so get a newer AppImage of the app) and the graphics driver, then restart the app.' }
+  }
+  if (p.os === 'mac') {
+    return { system: 'macOS', name: 'WebKit', full: 'macOS’s WebKit', update: 'Update macOS (WebKit and the graphics driver come with it), then restart the app.' }
+  }
+  if (p.os === 'android') {
+    return { system: 'Android', name: 'Android System WebView', full: 'the Android System WebView', update: 'Update Android System WebView and Chrome from Google Play, then restart the app.' }
+  }
+  if (p.os === 'ios') {
+    const os = p.ipad ? 'iPadOS' : 'iOS'
+    return { system: os, name: 'WebKit', full: `${os}’s WebKit`, update: `Update ${os} (Settings > General > Software Update), then restart the app.` }
+  }
+  return { system: 'Windows', name: 'WebView2', full: 'Microsoft Edge WebView2', update: null }
+}
+
 /** The message of whatever was thrown ('' for none). */
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -271,7 +308,7 @@ export function kernelFreeAddress(href: string): string | null {
  * link, which Android browsers pass to the app it names (Chrome comes with almost every Android phone; where it is
  * missing the tap does nothing and the card's words still say to install it: no store address is named here, the
  * page names no address off this machine, airgap.test.ts). Never in Chrome itself (Brave and Edge report as Chrome
- * or Edge), the installed app or the Windows app, and never without an http(s) address to hand over.
+ * or Edge), the installed app or the desktop app, and never without an http(s) address to hand over.
  */
 export function openInChrome(env: Pick<Env, 'href' | 'standalone' | 'native'>, p: Platform): { label: string; href: string } | null {
   if (p.os !== 'android' || ((p.browser === 'chrome' || p.browser === 'edge') && !p.inApp) || env.standalone || env.native) return null
@@ -313,7 +350,7 @@ export const BUILD_META = 'agent-city-build'
 /**
  * The published build this page is, where it says (the web copy: its build word, twelve hex digits over everything
  * published, tools/web/pwa.mjs buildWord; the same that name its offline cache), '' anywhere else (a file, the
- * Windows app, a local preview). Guarded: no document, no word.
+ * desktop app, a local preview). Guarded: no document, no word.
  */
 export function pageBuild(): string {
   try {
@@ -432,8 +469,12 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
   const iosUpdate = p.ipad
     ? 'Update in Settings > General > Software Update.'
     : `Update in Settings > General > Software Update (${IOS26}).`
-  const again = env.standalone ? 'then open the app again' : 'then open the page again'
+  const again = env.native ? 'then restart the app' : env.standalone ? 'then open the app again' : 'then open the page again'
   const w = (headline: string, steps: string[], webgpu = false) => ({ headline, steps, webgpuLine: webgpu ? WEBGPU_LINE : null })
+  // An app's step for its web view (the phone apps' too, ahead of the phone's browser words): Windows keeps each
+  // case's own words for WebView2.
+  const view = appWebView(p)
+  const appStep = (windows: string) => view.update ?? windows
   switch (kind) {
     case 'insecure':
       return w('This page needs a secure address', [
@@ -446,9 +487,9 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
       ])
     case 'no-api':
       if (env.native) {
-        return w('This app’s WebView2 has no WebGPU', [
-          `${BRAND.name} draws with WebGPU through Microsoft Edge WebView2.`,
-          'Update WebView2 (Windows Update) and the graphics driver, then restart the app.',
+        return w(`This app’s ${view.name} has no WebGPU`, [
+          `${BRAND.name} draws with WebGPU through ${view.full}.`,
+          appStep('Update WebView2 (Windows Update) and the graphics driver, then restart the app.'),
         ], true)
       }
       if (p.os === 'ios') {
@@ -520,8 +561,8 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     case 'no-adapter':
       if (env.native) {
         return w('No graphics adapter for WebGPU', [
-          'Windows gave the app’s WebView2 no GPU for WebGPU.',
-          'Update the graphics driver and WebView2 (Windows Update), then restart the app.',
+          `${view.system} gave the app’s ${view.name} no GPU for WebGPU.`,
+          appStep('Update the graphics driver and WebView2 (Windows Update), then restart the app.'),
         ], true)
       }
       if (p.os === 'ios') {
@@ -564,8 +605,8 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     case 'compat-only':
       return w('This GPU offers only a reduced WebGPU', [
         'The browser offers WebGPU here only in its compatibility mode, and the city’s crowd needs full WebGPU.',
-        p.os === 'android' ? 'Update Android and Chrome; on some phones the GPU driver can’t do more.'
-          : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, or play on another device.',
+        env.native ? appStep('Update the graphics driver and WebView2, then restart the app.')
+          : p.os === 'android' ? 'Update Android and Chrome; on some phones the GPU driver can’t do more.' : 'Update the graphics driver and the browser, or play on another device.',
       ], true)
     case 'device':
       return w('The GPU refused to start WebGPU', [
@@ -575,22 +616,22 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     case 'worker-gpu':
       return w('WebGPU works here, but not in the background worker', [
         'The city’s crowd runs on WebGPU in a background worker, and this browser offers WebGPU only on the page itself.',
-        p.os === 'ios' ? `Update to the newest ${p.ipad ? 'iPadOS' : 'iOS'} (Settings > General > Software Update), ${again}.`
-          : env.native ? 'Update WebView2 and the graphics driver, then restart the app.'
+        env.native ? appStep('Update WebView2 and the graphics driver, then restart the app.')
+          : p.os === 'ios' ? `Update to the newest ${p.ipad ? 'iPadOS' : 'iOS'} (Settings > General > Software Update), ${again}.`
             : p.browser === 'firefox' ? 'Open the page in Chrome or Edge.'
               : env.standalone ? 'Update the browser this app was installed from, then open the app again.' : 'Update the browser, or open the page in a current Chrome or Edge.',
       ], true)
     case 'wasm':
       return w('WebAssembly is turned off', [
         'The city’s physics runs as WebAssembly, which this browser has switched off.',
-        p.os === 'ios' ? iosLockdown(env.standalone)
+        p.os === 'ios' ? iosLockdown(env.standalone || env.native)
           : p.os === 'mac' && p.browser === 'safari' ? MAC_LOCKDOWN
             : 'Allow WebAssembly for this site, or turn off the security setting or extension that blocks it.',
       ])
     case 'shader':
       return w('The browser couldn’t build the city’s graphics', [
         'Its WebGPU rejected part of the city’s drawing or the crowd’s shader (the details are below).',
-        env.native ? 'Update WebView2 and the graphics driver, then restart the app.'
+        env.native ? appStep('Update WebView2 and the graphics driver, then restart the app.')
           : env.standalone ? 'Update the browser this app was installed from, then open the app again.'
             : 'Update the browser; a current Chrome or Edge, or Safari 26, runs the city.',
       ])
@@ -598,11 +639,12 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
       return w('This device’s graphics driver couldn’t build the crowd', [
         'The browser’s WebGPU accepted the crowd’s shader, but the GPU’s own compiler refused to build it; its words are in the details, with the kernel it refused.',
         // Every browser on iOS is WebKit, and its graphics come with the system: there is no Chrome there to update.
-        p.os === 'ios'
-          ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
-          : phone
-            ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
-            : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
+        env.native ? appStep('Update the graphics driver and WebView2, then restart the app.')
+          : p.os === 'ios'
+            ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
+            : phone
+              ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
+              : 'Update the graphics driver and the browser, then open the page again.',
         // A start may begin on the light kernel (the address, a record, a GPU family that starts there): nothing heavier was tried then.
         'Where the city started higher, it also tried narrower workgroups and its lighter kernel; the details name each refusal.',
       ])
@@ -618,11 +660,12 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     case 'kernel-none':
       return w('The crowd’s lightest kernel stopped this device’s graphics', [
         'The crowd’s lightest kernel took the GPU out of the browser, on this start or an earlier one, so no lighter kernel is left to ask it for; the details say which kernels were lost and when.',
-        p.os === 'ios'
-          ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
-          : phone
-            ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
-            : env.native ? 'Update the graphics driver and WebView2, then restart the app.' : 'Update the graphics driver and the browser, then open the page again.',
+        env.native ? appStep('Update the graphics driver and WebView2, then restart the app.')
+          : p.os === 'ios'
+            ? `Update the ${device}’s system software (Safari’s graphics come with it), ${again}.`
+            : phone
+              ? `Update ${p.browser === 'chrome' || env.standalone ? 'Chrome' : 'the browser'} and the phone’s system software (the graphics driver comes with it), ${again}.`
+              : 'Update the graphics driver and the browser, then open the page again.',
         kept
           ? 'The city leaves this GPU alone for a while before it asks again (the details say how long): each try stops the browser’s graphics in every tab. The console needs no GPU and still opens.'
           : 'This browser keeps no note for this page, so Restart asks this GPU again, and each try stops the browser’s graphics in every tab. The console needs no GPU and still opens.',
