@@ -1,19 +1,22 @@
 // Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
-//! Stage 04: the chaos run (CPU only, no GPU, no network).
+//! Stage 05: the chaos run (CPU only, no GPU, no network).
 //!
 //! Why does this file exist? It drives the fuzzer's engine (core.rs) at volume: many seeds across worker threads,
 //! pools from 4 to 128 pages under all three keyings, and a shared-table mode where threads spawn and despawn on one
 //! table behind a mutex. It prints the fragmentation statistics and, for any failure, the seed and the shrunk stream.
+//! Then it replays the eviction workloads (evict.rs) under both policies and prints what each kept.
 //! What breaks if it is removed? Nothing ships with it; the day-run report has no fuzz numbers.
 //!
 //! cargo run --release --bin chaos -- [--seeds 20000] [--ops 2000] [--workers 8] [--shared-threads 8] [--shared-ops 200000]
+//!   [--evictions 1]   (0 skips the eviction replay)
 
 mod core;
+mod evict;
 
-use crate::core::{generate, run, shrink, Keying, Op, Rng, Stats};
-use kv_pager::{AgentId, PageTable, Token, BLOCK_TOKENS};
+use crate::core::{generate, run, run_with, shrink, Keying, Op, Rng, Stats};
+use kv_pager::{AgentId, Eviction, LogOdds, PageTable, Token, BLOCK_TOKENS};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -112,6 +115,31 @@ fn shared_table(threads: usize, ops: usize, capacity: usize) -> Result<(u64, u64
     Ok((refusals, (threads * ops) as u64))
 }
 
+/// The eviction workloads under `Lru` and the default `LogOdds`: share of prompt tokens served from the cache (city,
+/// scan) and prefix-hit tokens (the fuzzer's streams).
+fn evictions() {
+    let lru = Eviction::Lru;
+    let odds = Eviction::LogOdds(LogOdds::default());
+    println!("evictions: prompt tokens served from the cache, least-recently-released (LRU) vs log-odds of reuse (default)");
+    for pages in [120, 240, 480] {
+        let (a, b) = (evict::city(lru, 256, 20_000, pages, 7), evict::city(odds, 256, 20_000, pages, 7));
+        println!("  city, 256 agents, 20000 asks, {pages} pages: {:.2} % vs {:.2} %", 100.0 * a.hit_rate(), 100.0 * b.hit_rate());
+    }
+    for (drift, what) in [(0, "the same four families"), (100, "families change every 100 asks"), (300, "families change every 300 asks")] {
+        let (a, b) = (evict::scan(lru, 3_000, 64, 10, drift, 7), evict::scan(odds, 3_000, 64, 10, drift, 7));
+        println!("  scan, 3000 asks, one-off burst every 10, 64 pages, {what}: {:.2} % vs {:.2} %", 100.0 * a.hit_rate(), 100.0 * b.hit_rate());
+    }
+    for pages in [8, 32, 128] {
+        let (mut a, mut b) = (0u64, 0u64);
+        for seed in 0..200 {
+            let stream = generate(&mut Rng(seed), 1_000);
+            a += run_with(&stream, pages, Keying::Chain, lru).expect("a clean run").prefix_hit_tokens;
+            b += run_with(&stream, pages, Keying::Chain, odds).expect("a clean run").prefix_hit_tokens;
+        }
+        println!("  fuzzer streams, 200 x 1000 ops, {pages} pages: {a} vs {b} prefix-hit tokens");
+    }
+}
+
 fn main() {
     let mut seeds = 20_000u64;
     let mut ops = 2_000usize;
@@ -119,6 +147,7 @@ fn main() {
     let mut shared_threads = 8usize;
     let mut shared_ops = 200_000usize;
     let mut first_seed = 0u64;
+    let mut eviction_replay = true;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let v: u64 = it.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{k} needs a number"));
@@ -129,6 +158,7 @@ fn main() {
             "--shared-threads" => shared_threads = v as usize,
             "--shared-ops" => shared_ops = v as usize,
             "--first-seed" => first_seed = v,
+            "--evictions" => eviction_replay = v != 0,
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -186,6 +216,11 @@ fn main() {
             println!("shared table: FAIL: {e}");
             std::process::exit(1);
         }
+    }
+    if eviction_replay {
+        let t = Instant::now();
+        evictions();
+        println!("  ({:.1} s)", t.elapsed().as_secs_f64());
     }
     if !fails.is_empty() {
         std::process::exit(1);

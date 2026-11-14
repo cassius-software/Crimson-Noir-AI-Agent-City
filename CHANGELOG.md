@@ -50,9 +50,46 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `.deb` answering 15 of 15 packaged checks, and, with its model moved away, the packaged run naming `native_model`'s
   null answer in 15 checks instead of a script timeout. The same table puts the `current` pre-release's x86-64 `.deb`,
   built on Ubuntu 24.04 before this change, at GLIBC_2.39 for the same two weak references (read here, not run on an
-  older glibc). Windows, macOS and the other targets build as before. Not verified: the real model in a package (the
-  container cannot reach Hugging Face; the first CI run does that), the app on a real Linux desktop, how fast it
-  answers, and how fast it answers on Arm (built for the base armv8-a).
+  older glibc). Windows, macOS and the other targets build as before. On the pull request's CI, with the real model:
+  the `.deb` (975,529,154 B), `.rpm` and `.AppImage` held it at its pinned size, the three checks passed on both
+  architectures with the highest needs GLIBC_2.34, GLIBCXX_3.4.29 and CXXABI_1.3.13, the installed x86-64 `.deb`
+  passed 15 of 15 packaged checks and its own runner answered 16 tokens of text in 2.98 s on the runner's two
+  threads, and `native-llm.yml` read 8 greedy tokens from it with the Linux plan. Not verified: the app on a real
+  Linux desktop or on Ubuntu 22.04 or Debian 12 themselves, the Arm packages run (built and checked, never installed),
+  and how fast it answers on people's machines (Arm built for the base armv8-a).
+
+- **Reading a model larger than memory from the SSD, planned for the whole swarm at once** (the native `kv-pager`
+  crate, feature `weights`, on by default and off in the WebAssembly build). `src/04_weights/gguf.rs` reads a GGUF
+  file's header (versions 2 and 3; every ggml type's block size checked against llama.cpp master's on 2026-11-13) and
+  indexes each layer's shared tensors, and each mixture-of-experts expert's slice of the stacked `_exps` tensors, as
+  byte ranges; a damaged header is refused with its reason (the test mutates headers 4,000 times and none panics),
+  and counts no model has (more than 65,536 layers or experts or 262,144 expert slices, a header over 256 MiB) are
+  refused before anything is allocated for them.
+  `stream.rs` reads those ranges sector-aligned (4,096 bytes) and unbuffered where the system allows it (`O_DIRECT`
+  on Linux and Android, `FILE_FLAG_NO_BUFFERING` on Windows; buffered elsewhere, or where the file system refuses)
+  into a ring of reusable buffers that reads one unit ahead of the caller and never more than the ring holds; a caller
+  that holds every buffer and asks for more is refused (`WouldBlock`) rather than left waiting (a test drops 600
+  units on another thread while their owner keeps asking, and it never hangs).
+  `swarm.rs` plans one decode step of every agent: each layer read once (layer-major), the experts the agents'
+  routers picked grouped so each is read once however many agents chose it (`group_swarm_by_expert`), and per layer
+  either the whole layer or only the routed experts, whichever a cost model of the drive (its bandwidth and its cost
+  per request) says is faster, rather than switching at a fixed agent count. A new run, `cargo run --release --bin
+  stream`, measures the drive and reads a synthetic model (every byte checked) in swarm steps. In a Linux cloud
+  container during development, not in CI, it read 2.5 to 3.0 GB/s unbuffered, and a step of 1,024 agents read the
+  same 300 MB as one of 64 (100 to 108 ms of reads) where one agent's read 44 MB (14 to 22 ms). From tensor shapes
+  alone it plans, for Qwen3-30B-A3B at a Q4_K_M-like mix (19.9 GB), 1.74 GB a step for one agent, 19.0 GB for 64 and
+  19.4 GB from 256 on with nothing cached: about 1 s, 9.6 s and 9.7 s on a 2 GB/s NVMe drive (planned, not read).
+  Nothing in the page or the app runs a model's layers from it yet; it is the disk side for a native host. It makes
+  no repacked copy of the GGUF (that would double the disk used and stop llama.cpp and wllama loading it), and its
+  buffers are not page-locked (wgpu offers none). Unverified: no Windows machine or NVMe drive has run it; the
+  Windows build is type-checked only (`cargo check --target x86_64-pc-windows-gnu`).
+- **Pinned prefixes in the KV page table** (`PageTable::pin`, `unpin`, `fork_pin`). A prompt every agent opens with
+  (the organisation's, the site's, the area's) is mapped once by the pin and never evicted while pinned; agents
+  admitted with it share its full pages through the prefix cache, and agents made with `fork_pin` share every page,
+  the partly filled last one copied on their first write. A new chaos test runs 1,024 agents on 16 threads on one
+  table and one pinned prefix, their routers picking experts at every layer of every step and the whole swarm's routes
+  grouped and planned per layer: the table's invariants hold after every layer, every agent reads back exactly its
+  own tokens, the agents refused (the pool is too small on purpose) change nothing, and every page is back at the end.
 
 - **The shell lends the native model runner to the page.** `src-tauri/src/runner.rs` registers three commands in
   every build, in the order the design gives: `native_model`, `native_generate` (the answer's events on the page's own
@@ -2077,6 +2114,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The KV page table evicts the cached page least likely to be reused, not the one left longest ago.** Each cached
+  page carries the log-odds that it will be read again: a prior from where it came from (a pinned prefix 0.95, a
+  prompt 0.50, a generated token 0.10), raised by a Bayes factor of 3 at every cache hit or fork, and relaxing toward
+  0.10 while idle (log q ← α · (log q + ln b) + c, α = 0.99 per admission, fork or release). With no reuse seen,
+  pages of one provenance go in the old order, generated pages before prompt pages before pinned ones. Replayed by
+  the chaos run on the same workloads (`cargo run --release --bin chaos`), against least-recently-used: the city's asks (256 agents, 20,000 asks) kept 72.4 → 72.8 %, 73.0 → 73.3 % and 73.5 → 73.8 %
+  of prompt tokens in the cache at 120, 240 and 480 pages; four prompt families cut by bursts of one-off prompts 59.7
+  → 95.8 % (90.5 % and 94.2 % when the families change every 100 and every 300 asks); the fuzzer's streams 5 to 6 %
+  more prefix-hit tokens at 8 and 32 pages and the same at 128. A reuse counts for a Bayes factor between e^0.001
+  and e^700 (with none, a chain's revived head could be filed below its idle tail; with more, a stored figure could
+  overflow to infinity). The order uses no `ln` or `exp` at
+  run time and is the same on every run (a test replays 80 streams twice and compares it after every operation).
+  `Eviction::Lru` remains.
+  The WebAssembly page table the page uses (`src/09_Cognition/kvPager.wasm.ts`) is rebuilt with it, 56,379 → 64,335
+  bytes, and its tests pass unchanged; `dist/index.html` grows by about 10 KB (the module's base64), to 12,143,899
+  bytes, and the limit in `tools/verify/page_dist.mjs` is unchanged.
+
 - **A phone held upright shows the city, not a stack of cards.** On a 360 x 552 page (a 360 px wide Android phone
   under its browser's bars) the HUD's header, its readout, the recruiter's last line, Sloane's chip, the first walk's
   card and the captions stacked down the screen until the walk's card was a 67 px strip and the captions ran under
@@ -2322,6 +2376,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **A cached KV page could outlive the page before it.** The page table released an agent's pages head first, so a
+  chain's head could be evicted while its tail stayed cached under a key no prompt can reach any more, holding a page
+  and that key: the same prompt computed again could not be cached. Chains now go tail first, a page is cached only
+  while the page before it is, and `check()` asserts both, and that a cached page's key still matches the page
+  before it (found while adding pinned prefixes; two new tests).
 
 - **An Android phone with WebGPU but no adapter gets steps that fit it, and a Mali Bifrost GPU starts on the light
   crowd kernel.** On the Armor X32 (Mali-G52, Android 16) Chrome 156 handed the page no WebGPU adapter while Brave on
