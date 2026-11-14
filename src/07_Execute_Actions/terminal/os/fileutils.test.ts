@@ -895,7 +895,8 @@ test('chmod -R: a directory and everything below it; refusals reported, the rest
     '!chmod: nosuch: no such file or directory', '!chmod: /bin/ls: read-only file system', '!chmod: /proc/version: a generated file keeps its attributes', '1',
     '-rw------- root 0 2026-11-14 18:00 other',
   ])
-  assert.deepEqual(k.sh('chmod -R a-w /usr; echo $?').length, 5)
+  // A tree that takes no changes: every path in it is named once.
+  assert.deepEqual(k.sh('chmod -R a-w /usr; echo $?'), ['/usr', '/usr/apps', '/usr/share', '/usr/share/man'].map((path) => `!chmod: ${path}: read-only file system`).concat(['1']))
   assert.deepEqual(k.sh('chmod; chmod -R; chmod -R 644; chmod u+x; echo $?'), [
     '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '2',
   ])
@@ -1149,7 +1150,8 @@ test('df: a line for each mount, lined up; -h for people; paths choose their mou
   // A path names the mount it is on, each mount once, in the order asked.
   assert.deepEqual(k.sh('df /tmp/fill . /tmp'), ['Source  Type   Size  Used  Free  Use%  Path', 'tmpfs   tmpfs  2000  1024   976   52%  /tmp'])
   assert.deepEqual(k.sh('df /proc/mounts /bin/ls').slice(1), ['proc    proc      -     -     -     -  /proc', 'rom     romfs  1024     2  1022    1%  /bin'])
-  assert.deepEqual(k.sh('df /home/operator /etc').length, 2)
+  // Two paths on one mount: one line.
+  assert.deepEqual(k.sh('df /home/operator /etc'), [lines[0], lines[1]])
   assert.deepEqual(k.sh('df nosuch /dev; echo $?'), ['!df: nosuch: no such file or directory', 'Source  Type   Size  Used  Free  Use%  Path', 'devfs   devfs     -     -     -     -  /dev', '1'])
   assert.deepEqual(k.sh('df nosuch; echo $?'), ['!df: nosuch: no such file or directory', '1'])
   assert.deepEqual(k.sh('df -x; echo $?'), ["!df: unknown option '-x'", '!usage: df [-h] [path ...]', '2'])

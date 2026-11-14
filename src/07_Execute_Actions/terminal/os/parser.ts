@@ -178,7 +178,7 @@ function chunkAt(src: string, at: number): Chunk | null {
 }
 
 /**
- * Whether a typed line needs the shell: true when any blank-delimited piece after the first is an operator standing
+ * Whether a typed line needs the shell. It does when any blank-delimited piece after the first is an operator standing
  * alone (`|`, `||`, `&&`, `;`, `&`, a redirection), or ends in a `;`. A line with an open quote does not (the console
  * reports it as it always has). The console asks this only of a line whose first word is one of the city's commands.
  */

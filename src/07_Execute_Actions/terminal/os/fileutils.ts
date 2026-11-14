@@ -1810,8 +1810,8 @@ WHAT IT DOES
     directory that is already there. A file already at the destination is
     replaced without a question; a directory there is replaced only when
     it is empty. Between two file systems (from the disk to /tmp, say)
-    the source is copied, with its permissions and its time, and then
-    removed.
+    the source is copied, with its permissions, its time and (when root
+    moves it, as at the prompt) its owner, and then removed.
 
 NOTES
     A directory cannot be moved into itself, and a mount point (a place
