@@ -27,9 +27,10 @@
  * - The named classes, `\w \d \s` and the word edges know the ASCII letters and digits only.
  * - A backslash works inside a set as it does outside (`[\]\t\d]`), so a backslash in a set is written `\\`.
  * - A `{` that does not begin a well-formed count, and a lone `]` or `}`, stand for themselves.
+ * - An alternative, a group or the whole pattern may be empty: it matches no characters, wherever it is tried.
  * - A repetition mark needs an item before it: at the start, after `(` or `|`, or after an anchor or a word edge
  *   it is refused. Marks may be stacked, each one repeating all that is before it, so `a*?` is `(a*)?`: there is
- *   no lazy repetition.
+ *   no lazy repetition. An item repeated `{0}` times is left out, and a group in it never takes part.
  * - Past its least count a repetition never takes a round that matched no characters (which is why `(a*)*` ends),
  *   and a group inside a repetition reports its last round only: nothing, if that round went another way.
  * - Refused by name: a back-reference (`\1`: it cannot be matched in linear time), an unknown letter escape,
@@ -37,9 +38,9 @@
  * - ignoreCase: two characters are the same when they fold to the same one (the lower case of the upper case, each
  *   taken only when it is a single character). A range in a set matches when it holds the text's character, its
  *   lower case or its upper case.
- * Bounds: a pattern of at most 4096 characters, groups nested at most 100 deep (stacked repetition marks count),
- * and at most 20000 instructions, counted on the tree before anything is laid out, so `a{1000}{1000}` is refused
- * without being expanded.
+ * Bounds: a pattern of at most 4096 characters; groups nested at most 100 deep, where each repetition mark after
+ * an item's first counts as one level more; and at most 20000 instructions, counted on the tree before anything is
+ * laid out, so `a{1000}{1000}` is refused without being expanded.
  */
 
 /** How a pattern is read. */
@@ -68,7 +69,8 @@ export interface Regex {
   readonly groupCount: number
   /**
    * The leftmost match that starts at or after `from` (0 when not given), or null. Anchors and word edges still
-   * look at the whole text, and a match of no characters is a match.
+   * look at the whole text, and a match of no characters is a match. A `from` between the two halves of a surrogate
+   * pair means the place after the pair, and one past the end of the text finds nothing.
    */
   exec(text: string, from?: number): Match | null
   /** Whether the pattern matches anywhere in the text. */
@@ -145,10 +147,12 @@ const isDigit = (c: number): boolean => c >= 48 && c <= 57
 const isLetter = (c: number): boolean => (c >= 97 && c <= 122) || (c >= 65 && c <= 90)
 const isWord = (c: number): boolean => isLetter(c) || isDigit(c) || c === 95
 const isSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdfff
+const isHighHalf = (c: number): boolean => c >= 0xd800 && c <= 0xdbff
+const isLowHalf = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff
 
-/** A character as a message shows it. */
+/** A character as a message shows it: itself when it can be seen and is ASCII, its number (`u+00e9`) otherwise. */
 function show(c: number): string {
-  return c > 32 && c < 127 ? String.fromCharCode(c) : `U+${c.toString(16).toUpperCase().padStart(4, '0')}`
+  return c > 32 && c < 127 ? String.fromCharCode(c) : `u+${c.toString(16).padStart(4, '0')}`
 }
 
 /** The code points of a text; a surrogate pair is one, a surrogate on its own is itself. */
@@ -526,12 +530,12 @@ class Reader {
   /** A set, from its `[` to its `]`. */
   private set(): Node {
     this.at++
-    this.lone()
     let negate = false
     if (this.code(this.at) === CARET) {
       negate = true
       this.at++
     }
+    this.lone(negate)
     const pairs: number[] = []
     for (let first = true; ; first = false) {
       const c = this.code(this.at)
@@ -602,11 +606,15 @@ class Reader {
     return String.fromCharCode(...this.cps.slice(i, j))
   }
 
-  /** Refuses `[:alpha:]` written on its own: it would be a set of the letters of the name, which nobody means. */
-  private lone(): void {
+  /**
+   * Refuses `[:alpha:]` (or `[^:alpha:]`) written on its own: it would be a set of the letters of the name, which
+   * nobody means.
+   */
+  private lone(negate: boolean): void {
     if (this.code(this.at) !== COLON) return
     const name = this.name(this.at + 1)
-    if (CLASSES.has(name)) fail(`a class goes inside a set: write [[:${name}:]], not [:${name}:]`)
+    const not = negate ? '^' : ''
+    if (CLASSES.has(name)) fail(`a class goes inside a set: write [${not}[:${name}:]], not [${not}:${name}:]`)
   }
 }
 
@@ -909,8 +917,11 @@ class Machine implements Regex {
   }
 
   exec(text: string, from = 0): Match | null {
-    const begin = from > 0 ? Math.floor(from) : 0
+    let begin = from > 0 ? Math.floor(from) : 0
     if (!(begin <= text.length)) return null
+    // Between the two halves of a surrogate pair no character starts: the search begins after the pair, so a caller
+    // that steps on by one unit after a match of no characters never has a pair cut in two.
+    if (begin > 0 && begin < text.length && isLowHalf(text.charCodeAt(begin)) && isHighHalf(text.charCodeAt(begin - 1))) begin++
     this.steps = 0
     if (this.literal !== null) {
       const at = text.indexOf(this.literal, begin)

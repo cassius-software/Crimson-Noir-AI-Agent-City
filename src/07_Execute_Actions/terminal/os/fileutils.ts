@@ -167,8 +167,10 @@ interface Item {
 }
 
 /**
- * The names laid out in columns no wider than `width`, filled down and then across, as lines. The most columns that
- * fit are used; a name wider than the line gets a line to itself.
+ * The names laid out in columns no wider than `width`, filled down and then across, as lines. The names are split
+ * evenly over as many columns as fit. Each try is one pass over the names, and the tries are bounded: no more columns
+ * are tried than the shortest name would fit across the line. A name wider than the line leaves one column, a name
+ * to a line.
  */
 function* layout(sys: Sys, names: readonly string[], width: number): Task<string[]> {
   const n = names.length

@@ -42,7 +42,10 @@ function noise(length: number): Uint8Array {
 /** Enough files that a listing of them is more than a pipe holds at once. */
 const MANY = 2000
 
-const NAMES = ['basename', 'cat', 'chmod', 'cp', 'df', 'dirname', 'du', 'find', 'ls', 'mkdir', 'mount', 'mv', 'realpath', 'rm', 'rmdir', 'stat', 'touch', 'tree', 'umount']
+const NAMES = [
+  'basename', 'cat', 'chmod', 'cp', 'df', 'dirname', 'du', 'find', 'ls', 'mkdir', 'mount', 'mv', 'realpath', 'rm', 'rmdir', 'stat', 'touch', 'tree',
+  'umount',
+]
 
 test('manual: every program has a page, each in the one shape, plain and narrow', () => {
   assert.deepEqual(Object.keys(FILE_PROGRAMS).sort(), NAMES)
@@ -147,13 +150,13 @@ test('ls: columns fill down and then across, and fit 80 columns', () => {
   // Every column starts at the same place on every line that has it.
   const starts = lines.map((l) => [...l.matchAll(/\S+/g)].map((m) => m.index))
   for (const row of starts) assert.deepEqual(row, starts[0].slice(0, row.length))
-  // One line fewer would not fit: laid out on five lines, the same names need more than 80 columns.
+  // One column more would not fit: split evenly over six columns (five lines), the same names need more than 80.
   const needs = (rows: number): number => {
     let total = 0
     for (let from = 0; from < sorted.length; from += rows) total += Math.max(...sorted.slice(from, from + rows).map((n) => n.length)) + (from === 0 ? 0 : 2)
     return total
   }
-  assert.ok(needs(lines.length) <= 80 && needs(lines.length - 1) > 80, `${needs(lines.length)} ${needs(lines.length - 1)}`)
+  assert.deepEqual([needs(6), needs(5)], [72, 87])
   // A name wider than the line: one name to a line.
   k.write(`/tmp/e/${'w'.repeat(90)}`, '')
   assert.equal(k.sh('ls e').length, 31)
@@ -194,7 +197,9 @@ test('ls -l: mode, owner, size, time and name, in columns that line up', () => {
   assert.deepEqual(k.sh('ls -la d/sub'), ['drwxr-x--- root 0 2026-11-14 18:00 .', 'drwxr-xr-x root 0 2026-11-14 18:00 ..'])
   assert.deepEqual(k.sh('ls -l d/large'), ['-rwxr-xr-x root 1500 2026-11-14 18:00 d/large'])
   assert.deepEqual(k.sh('ls -ld d/sub /tmp'), ['drwxrwxrwt root 0 2026-11-14 18:00 /tmp', 'drwxr-x--- root 0 2026-11-14 18:00 d/sub'])
-  assert.deepEqual(k.sh('ls -l /dev/null /etc/hostname'), ['crw-rw-rw- root  0 2026-11-14 18:00 /dev/null', '-rw-r--r-- root 13 2026-11-14 18:00 /etc/hostname'])
+  assert.deepEqual(k.sh('ls -l /dev/null /etc/hostname'), [
+    'crw-rw-rw- root  0 2026-11-14 18:00 /dev/null', '-rw-r--r-- root 13 2026-11-14 18:00 /etc/hostname',
+  ])
   // The long form is the same into a pipe; -1 does not undo it.
   assert.deepEqual(k.sh('ls -l1 d | cat'), k.sh('ls -l d'))
   // A sticky directory the others may not search shows a capital.
@@ -332,9 +337,10 @@ test('cat -n: lines numbered, on from one file to the next', () => {
   k.sh('cat -n bin > out')
   assert.deepEqual([...k.bytes('/tmp/out')], [32, 32, 32, 32, 32, 49, 9, 255, 0, 10, 32, 32, 32, 32, 32, 50, 9, 200, 10])
   // A line that runs across several reads is numbered once, and the count goes on after it.
-  k.write('/tmp/wide', `${'w'.repeat(200_000)}\nx\n${'y'.repeat(70_000)}`)
+  const [w, y] = ['w'.repeat(200_000), 'y'.repeat(70_000)]
+  k.write('/tmp/wide', `${w}\nx\n${y}`)
   k.sh('cat -n wide wide > out')
-  assert.equal(k.read('/tmp/out'), `     1\t${'w'.repeat(200_000)}\n     2\tx\n     3\t${'y'.repeat(70_000)}${'w'.repeat(200_000)}\n     4\tx\n     5\t${'y'.repeat(70_000)}`)
+  assert.equal(k.read('/tmp/out'), `     1\t${w}\n     2\tx\n     3\t${y}${w}\n     4\tx\n     5\t${y}`)
 })
 
 test('cat -n: more than 999999 lines widen the number instead of cutting it', () => {
@@ -355,7 +361,9 @@ test('cat: a missing file or a directory is reported and the rest still printed,
   assert.deepEqual(k.sh('cat b/x; echo $?'), ['!cat: b/x: not a directory', '1'])
   assert.deepEqual(k.sh('cat b; echo $?'), ['three', '0'])
   assert.deepEqual(k.sh('cat -x b; echo $?'), ["!cat: unknown option '-x'", '!usage: cat [-n] [file ...]', '2'])
-  assert.deepEqual(k.sh('cat -n nosuch b /tmp b; echo $?'), ['!cat: nosuch: no such file or directory', '     1  three', '!cat: /tmp: is a directory', '     2  three', '1'])
+  assert.deepEqual(k.sh('cat -n nosuch b /tmp b; echo $?'), [
+    '!cat: nosuch: no such file or directory', '     1  three', '!cat: /tmp: is a directory', '     2  three', '1',
+  ])
 })
 
 test('cat: reads what is typed until the input ends, and stops when its reader goes', () => {
@@ -392,7 +400,9 @@ test('mkdir: makes directories; -p makes the ones above and does not mind one th
   assert.deepEqual(k.sh('mkdir file/sub; echo $?'), ['!mkdir: file/sub: not a directory', '1'])
   assert.deepEqual(k.sh('mkdir -p /; echo $?'), ['0'])
   assert.deepEqual(k.sh('mkdir /; echo $?'), ['!mkdir: /: file exists', '1'])
-  assert.deepEqual(k.sh('mkdir /bin/new /proc/new; echo $?'), ['!mkdir: /bin/new: read-only file system', '!mkdir: /proc/new: nothing can be made in a generated tree', '1'])
+  assert.deepEqual(k.sh('mkdir /bin/new /proc/new; echo $?'), [
+    '!mkdir: /bin/new: read-only file system', '!mkdir: /proc/new: nothing can be made in a generated tree', '1',
+  ])
 })
 
 test('mkdir: the mask holds permissions back, and -m sets them exactly', () => {
@@ -421,8 +431,12 @@ test('mkdir: the mask holds permissions back, and -m sets them exactly', () => {
   // One that is already there keeps the mode it has.
   assert.deepEqual(k.sh('mkdir -p -m 777 dot/end; echo $?; ls -ld dot/end'), ['0', 'drwx------ root 0 2026-11-14 18:00 dot/end'])
   // A directory made on the way lets its owner go on into it even when the mask would not.
-  assert.deepEqual(k.sh('umask 0333; mkdir -p u/v; umask 022; ls -ld u u/v'), ['drwxr--r-- root 0 2026-11-14 18:00 u', 'dr--r--r-- root 0 2026-11-14 18:00 u/v'])
-  assert.deepEqual(k.sh('mkdir -m rwx bad; echo $?; ls -d bad'), ["!mkdir: invalid mode 'rwx'", '!usage: mkdir [-p] [-m mode] dir ...', '2', '!ls: bad: no such file or directory'])
+  assert.deepEqual(k.sh('umask 0333; mkdir -p u/v; umask 022; ls -ld u u/v'), [
+    'drwxr--r-- root 0 2026-11-14 18:00 u', 'dr--r--r-- root 0 2026-11-14 18:00 u/v',
+  ])
+  assert.deepEqual(k.sh('mkdir -m rwx bad; echo $?; ls -d bad'), [
+    "!mkdir: invalid mode 'rwx'", '!usage: mkdir [-p] [-m mode] dir ...', '2', '!ls: bad: no such file or directory',
+  ])
   assert.deepEqual(k.sh('mkdir -m 2755 bad; echo $?'), ["!mkdir: invalid mode '2755'", '!usage: mkdir [-p] [-m mode] dir ...', '2'])
 })
 
@@ -434,7 +448,9 @@ test('rmdir: removes empty directories only; -p goes on up', () => {
   assert.deepEqual(k.sh('rmdir d e; echo $?; ls'), ['0', 'a  file  r'])
   assert.deepEqual(k.sh('rmdir a/b/c; echo $?'), ['!rmdir: a/b/c: directory not empty', '1'])
   assert.deepEqual(k.sh('rmdir file nosuch; echo $?'), ['!rmdir: file: not a directory', '!rmdir: nosuch: no such file or directory', '1'])
-  assert.deepEqual(k.sh('rmdir /tmp / /bin/x; echo $?'), ['!rmdir: /tmp: a mount point', '!rmdir: /: the root directory', '!rmdir: /bin/x: no such file or directory', '1'])
+  assert.deepEqual(k.sh('rmdir /tmp / /bin/x; echo $?'), [
+    '!rmdir: /tmp: a mount point', '!rmdir: /: the root directory', '!rmdir: /bin/x: no such file or directory', '1',
+  ])
   assert.deepEqual(k.sh('rmdir -p r/s/t; echo $?; ls'), ['0', 'a  file'])
   // -p stops at the first directory that still holds something, and names it.
   k.sh('mkdir -p a/x/y')
@@ -484,13 +500,16 @@ test('rm: never the root, never . or .., and what the file system refuses is sai
   assert.deepEqual(k.sh('rm /; rm -rf /; rm -r //; echo $?'), [
     '!rm: /: refusing to remove the root directory', '!rm: /: refusing to remove the root directory', '!rm: //: refusing to remove the root directory', '1',
   ])
-  assert.deepEqual(k.sh('rm -rf .. /tmp/..; echo $?'), ['!rm: ..: refusing to remove the root directory', '!rm: /tmp/..: refusing to remove the root directory', '1'])
+  assert.deepEqual(k.sh('rm -rf .. /tmp/..; echo $?'), [
+    '!rm: ..: refusing to remove the root directory', '!rm: /tmp/..: refusing to remove the root directory', '1',
+  ])
   assert.deepEqual(k.sh("rm -rf . d/.. d/sub/.; echo $?"), [
     "!rm: .: refusing to remove '.' or '..'", "!rm: d/..: refusing to remove '.' or '..'", "!rm: d/sub/.: refusing to remove '.' or '..'", '1',
   ])
   assert.ok(k.exists('/tmp/d/sub/f') && k.exists('/home/operator/README') && k.exists('/etc/hostname'))
   assert.deepEqual(k.sh('rm /bin/ls /proc/version /dev/null; echo $?'), [
-    '!rm: /bin/ls: read-only file system', '!rm: /proc/version: nothing can be removed from a generated tree', '!rm: /dev/null: nothing can be removed from a generated tree', '1',
+    '!rm: /bin/ls: read-only file system', '!rm: /proc/version: nothing can be removed from a generated tree',
+    '!rm: /dev/null: nothing can be removed from a generated tree', '1',
   ])
   // A read-only tree: each file is refused once, and the directories above are not blamed again.
   const out = k.sh('rm -r /bin; echo $?')
@@ -629,7 +648,9 @@ test('cp -r: a directory with all below it, into a new name or into a directory 
   assert.deepEqual(k.sh('mkdir flat; cp -r src/. flat; ls -A flat'), ['.hid  f  none  sub'])
   assert.deepEqual(k.sh('mkdir flat2; cd src; cp -r . ../flat2; cd ..; ls -A flat2'), ['.hid  f  none  sub'])
   // Files and directories together.
-  assert.deepEqual(k.sh('mkdir mix; cp -r src/f src/sub mix; echo $?; find mix'), ['0', 'mix', 'mix/f', 'mix/sub', 'mix/sub/deep', 'mix/sub/deep/h', 'mix/sub/g'])
+  assert.deepEqual(k.sh('mkdir mix; cp -r src/f src/sub mix; echo $?; find mix'), [
+    '0', 'mix', 'mix/f', 'mix/sub', 'mix/sub/deep', 'mix/sub/deep/h', 'mix/sub/g',
+  ])
   // New directories are held back by the mask as new files are, and the sticky mark is not copied.
   k.sh('chmod 1777 src/sub/deep; umask 027; cp -r src masked; umask 022')
   assert.deepEqual(k.sh('ls -ld masked masked/f masked/none masked/sub masked/sub/deep masked/sub/deep/h'), [
@@ -649,7 +670,9 @@ test('cp -r: never into itself, never a device, and the rest of a tree still cop
   assert.deepEqual(k.sh('cp -r a a/in; echo $?'), ['!cp: a: cannot copy a directory into itself (a/in)', '1'])
   assert.deepEqual(k.sh('cp -r a a; echo $?'), ['!cp: a: cannot copy a directory into itself (a/a)', '1'])
   assert.deepEqual(k.sh('cp -r a a/b; echo $?'), ['!cp: a: cannot copy a directory into itself (a/b/a)', '1'])
-  assert.deepEqual(k.sh('cp -r a/. a; cp -r . a/b/c; echo $?'), ['!cp: a/.: cannot copy a directory into itself (a)', '!cp: .: cannot copy a directory into itself (a/b/c)', '1'])
+  assert.deepEqual(k.sh('cp -r a/. a; cp -r . a/b/c; echo $?'), [
+    '!cp: a/.: cannot copy a directory into itself (a)', '!cp: .: cannot copy a directory into itself (a/b/c)', '1',
+  ])
   assert.deepEqual(k.sh('cp -r / /tmp/all; echo $?'), ['!cp: /: cannot copy a directory into itself (/tmp/all)', '1'])
   assert.deepEqual(k.sh('find a'), ['a', 'a/b', 'a/f'])
   assert.deepEqual(k.sh('cp -r a ab; echo $?; find ab'), ['0', 'ab', 'ab/b', 'ab/f'])
@@ -665,7 +688,9 @@ test('cp -r: never into itself, never a device, and the rest of a tree still cop
   assert.deepEqual(k.sh('cp -r a /bin/a; echo $?'), ['!cp: /bin/a: read-only file system', '1'])
   assert.deepEqual(k.sh('cp -r nosuch a2; echo $?'), ['!cp: nosuch: no such file or directory', '1'])
   // A tree of generated files copies as plain files.
-  assert.deepEqual(k.sh('cp -r /sys/kernel k; echo $?; cat k/hostname; ls -l k/hostname'), ['0', 'crimson-noir', '-r--r--r-- root 13 2026-11-14 18:00 k/hostname'])
+  assert.deepEqual(k.sh('cp -r /sys/kernel k; echo $?; cat k/hostname; ls -l k/hostname'), [
+    '0', 'crimson-noir', '-r--r--r-- root 13 2026-11-14 18:00 k/hostname',
+  ])
 })
 
 // mv
@@ -710,18 +735,25 @@ test('mv: refusals are reported against the path they are about, with status 1',
   k.write('/tmp/plain', '')
   assert.deepEqual(k.sh('mv d plain; echo $?'), ['!mv: plain: not a directory', '1'])
   assert.deepEqual(k.sh('mkdir -p e/plain; mv plain e; echo $?'), ['!mv: e/plain: is a directory', '1'])
-  assert.deepEqual(k.sh("mv . x; mv .. x; mv d/. x; echo $?"), ["!mv: .: cannot move '.' or '..'", "!mv: ..: cannot move '.' or '..'", "!mv: d/.: cannot move '.' or '..'", '1'])
-  assert.deepEqual(k.sh('mv / x; mv /tmp /home/t; mv /proc p; mv /bin/ls /bin/ls2; mv /bin/ls here; echo $?'), [
-    '!mv: /: the root directory', '!mv: /tmp: a mount point', '!mv: /proc: a mount point', '!mv: /bin/ls: read-only file system', '!mv: /bin/ls: read-only file system', '1',
+  assert.deepEqual(k.sh("mv . x; mv .. x; mv d/. x; echo $?"), [
+    "!mv: .: cannot move '.' or '..'", "!mv: ..: cannot move '.' or '..'", "!mv: d/.: cannot move '.' or '..'", '1',
   ])
-  assert.deepEqual(k.sh('mv /dev/null n; mv /proc/version v; echo $?'), ['!mv: /dev/null: a device cannot be moved', '!mv: /proc/version: nothing can be removed from a generated tree', '1'])
+  assert.deepEqual(k.sh('mv / x; mv /tmp /home/t; mv /proc p; mv /bin/ls /bin/ls2; mv /bin/ls here; echo $?'), [
+    '!mv: /: the root directory', '!mv: /tmp: a mount point', '!mv: /proc: a mount point', '!mv: /bin/ls: read-only file system',
+    '!mv: /bin/ls: read-only file system', '1',
+  ])
+  assert.deepEqual(k.sh('mv /dev/null n; mv /proc/version v; echo $?'), [
+    '!mv: /dev/null: a device cannot be moved', '!mv: /proc/version: nothing can be removed from a generated tree', '1',
+  ])
   assert.deepEqual(k.sh('mv /usr/share s; mv /usr/share /usr/apps /home/operator; echo $?'), [
     '!mv: /usr/share: read-only file system', '!mv: /usr/share: read-only file system', '!mv: /usr/apps: read-only file system', '1',
   ])
   // A source that cannot be removed is not copied first: a refused move leaves nothing new behind.
   assert.deepEqual(k.sh('ls; ls /home/operator'), ['d  e  plain', 'README'])
   // A name that ends in a slash is a directory's: a file is not given it, a directory is.
-  assert.deepEqual(k.sh('mv d/a new/; mv d/a plain/; mv nosuch new/; echo $?'), ['!mv: new/: not a directory', '!mv: plain/: not a directory', '!mv: nosuch: no such file or directory', '1'])
+  assert.deepEqual(k.sh('mv d/a new/; mv d/a plain/; mv nosuch new/; echo $?'), [
+    '!mv: new/: not a directory', '!mv: plain/: not a directory', '!mv: nosuch: no such file or directory', '1',
+  ])
   assert.deepEqual(k.sh('mv d/sub new/; echo $?; ls -d new d/sub'), ['0', '!ls: d/sub: no such file or directory', 'new'])
   assert.deepEqual(k.sh('mv; mv a; echo $?'), ['!usage: mv source ... destination', '!usage: mv source ... destination', '2'])
   assert.deepEqual(k.sh('mv -f d/a b; echo $?'), ["!mv: unknown option '-f'", '!usage: mv source ... destination', '2'])
@@ -739,13 +771,16 @@ test('mv: between two file systems it copies, with mode and time, and then remov
   now(k.system.kernel.vfs.chown('/tmp/tree/f', '/', ROOT_CRED, 1000, 50))
   now(k.system.kernel.vfs.chown('/tmp/tree/sub', '/', ROOT_CRED, 1000, 50))
   k.tick(7 * 60_000)
-  assert.deepEqual(k.sh('mv big /home/operator/moved; echo $?; ls -l /home/operator/moved; ls'), ['0', '-rw-r----- root 200000 2026-11-14 18:00 /home/operator/moved', 'tree'])
+  assert.deepEqual(k.sh('mv big /home/operator/moved; echo $?; ls -l /home/operator/moved; ls'), [
+    '0', '-rw-r----- root 200000 2026-11-14 18:00 /home/operator/moved', 'tree',
+  ])
   assert.deepEqual(k.bytes('/home/operator/moved'), big)
   assert.deepEqual(k.sh('mv tree /home/operator; echo $?; ls -a; find /home/operator/tree'), [
     '0', '.  ..', '/home/operator/tree', '/home/operator/tree/f', '/home/operator/tree/sub', '/home/operator/tree/sub/deep', '/home/operator/tree/sub/deep/g',
   ])
   assert.deepEqual(k.sh('ls -ld /home/operator/tree/sub /home/operator/tree/f /home/operator/tree/sub/deep/g'), [
-    '-rw-r--r-- 1000 4 2026-11-14 18:00 /home/operator/tree/f', 'drwxr-x--T 1000 0 2026-11-14 18:00 /home/operator/tree/sub', '-rw-r--r-- root 4 2026-11-14 18:00 /home/operator/tree/sub/deep/g',
+    '-rw-r--r-- 1000 4 2026-11-14 18:00 /home/operator/tree/f', 'drwxr-x--T 1000 0 2026-11-14 18:00 /home/operator/tree/sub',
+    '-rw-r--r-- root 4 2026-11-14 18:00 /home/operator/tree/sub/deep/g',
   ])
   assert.deepEqual(k.sh('stat /home/operator/tree/f').slice(4, 6), ['owner:  1000', 'group:  50'])
   // And back, over a file that is there and into an empty directory that is there.
@@ -757,7 +792,9 @@ test('mv: between two file systems it copies, with mode and time, and then remov
   assert.deepEqual(k.bytes('/tmp/moved'), big)
   // Refused where a rename would be: a directory over one that holds something, a file over a directory.
   k.sh('mkdir -p /home/operator/tree/keep /home/operator/moved')
-  assert.deepEqual(k.sh('mv tree moved /home/operator; echo $?'), ['!mv: /home/operator/tree: directory not empty', '!mv: /home/operator/moved: is a directory', '1'])
+  assert.deepEqual(k.sh('mv tree moved /home/operator; echo $?'), [
+    '!mv: /home/operator/tree: directory not empty', '!mv: /home/operator/moved: is a directory', '1',
+  ])
   assert.deepEqual(k.sh('echo f > /home/operator/plain; mv tree /home/operator/plain; echo $?'), ['!mv: /home/operator/plain: not a directory', '1'])
   assert.ok(k.exists('/tmp/tree/sub/deep/g') && k.exists('/tmp/moved'))
 })
@@ -789,7 +826,9 @@ test('touch: makes an empty file, or sets the time of one that is there to now; 
   k.sh('mkdir dir')
   k.tick(10 * 60_000 + 42_000)
   assert.deepEqual(k.sh('touch new old dir; echo $?'), ['0'])
-  assert.deepEqual(k.sh('ls -l'), ['drwxr-xr-x root 0 2026-11-14 18:10 dir', '-rw-r--r-- root 0 2026-11-14 18:10 new', '-rw-r--r-- root 4 2026-11-14 18:10 old'])
+  assert.deepEqual(k.sh('ls -l'), [
+    'drwxr-xr-x root 0 2026-11-14 18:10 dir', '-rw-r--r-- root 0 2026-11-14 18:10 new', '-rw-r--r-- root 4 2026-11-14 18:10 old',
+  ])
   assert.equal(k.read('/tmp/old'), 'kept')
   assert.equal(k.sh('stat new old dir | cat').filter((l) => l === 'time:   2026-11-14 18:10:42').length, 3)
   k.tick(60_000)
@@ -812,7 +851,11 @@ test('chmod: a mode as a number', () => {
   k.write('/tmp/f', '')
   k.sh('mkdir d')
   const mode = (path: string): string => k.sh(`ls -ld ${path}`)[0].split(' ')[0]
-  for (const [text, shown] of [['600', '-rw-------'], ['0644', '-rw-r--r--'], ['7', '-------rwx'], ['70', '----rwx---'], ['000', '----------'], ['777', '-rwxrwxrwx'], ['1755', '-rwxr-xr-t'], ['1000', '---------T']]) {
+  const numbers = [
+    ['600', '-rw-------'], ['0644', '-rw-r--r--'], ['7', '-------rwx'], ['70', '----rwx---'], ['000', '----------'], ['777', '-rwxrwxrwx'],
+    ['1755', '-rwxr-xr-t'], ['1000', '---------T'],
+  ]
+  for (const [text, shown] of numbers) {
     assert.deepEqual(k.sh(`chmod ${text} f; echo $?`), ['0'], text)
     assert.equal(mode('f'), shown, text)
   }
@@ -896,7 +939,9 @@ test('chmod -R: a directory and everything below it; refusals reported, the rest
     '-rw------- root 0 2026-11-14 18:00 other',
   ])
   // A tree that takes no changes: every path in it is named once.
-  assert.deepEqual(k.sh('chmod -R a-w /usr; echo $?'), ['/usr', '/usr/apps', '/usr/share', '/usr/share/man'].map((path) => `!chmod: ${path}: read-only file system`).concat(['1']))
+  const rom = k.sh('find /usr')
+  assert.ok(rom[0] === '/usr' && rom.length > 2 && rom.every((path) => path === '/usr' || path.startsWith('/usr/')))
+  assert.deepEqual(k.sh('chmod -R a-w /usr; echo $?'), rom.map((path) => `!chmod: ${path}: read-only file system`).concat(['1']))
   assert.deepEqual(k.sh('chmod; chmod -R; chmod -R 644; chmod u+x; echo $?'), [
     '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '!usage: chmod [-R] mode path ...', '2',
   ])
@@ -949,17 +994,24 @@ function planted(): Kit {
   return k
 }
 
-const ALL = ['t', 't/README', 't/docs', 't/docs/.hidden', 't/docs/guide.txt', 't/docs/old', 't/docs/old/notes.TXT', 't/empty', 't/src', 't/src/blank', 't/src/main.c', 't/src/util.c']
+const ALL = [
+  't', 't/README', 't/docs', 't/docs/.hidden', 't/docs/guide.txt', 't/docs/old', 't/docs/old/notes.TXT', 't/empty', 't/src', 't/src/blank',
+  't/src/main.c', 't/src/util.c',
+]
 
 test('find: walks in sorted order and prints every path when no expression is given', () => {
   const k = planted()
   assert.deepEqual(k.sh('find t; echo $?'), [...ALL, '0'])
   assert.deepEqual(k.sh('cd t; find; cd ..'), ALL.map((p) => (p === 't' ? '.' : `./${p.slice(2)}`)))
   assert.deepEqual(k.sh('find t/src t/README t/empty/'), ['t/src', 't/src/blank', 't/src/main.c', 't/src/util.c', 't/README', 't/empty/'])
-  assert.deepEqual(k.sh('find /tmp/t/docs -print'), ['/tmp/t/docs', '/tmp/t/docs/.hidden', '/tmp/t/docs/guide.txt', '/tmp/t/docs/old', '/tmp/t/docs/old/notes.TXT'])
+  assert.deepEqual(k.sh('find /tmp/t/docs -print'), [
+    '/tmp/t/docs', '/tmp/t/docs/.hidden', '/tmp/t/docs/guide.txt', '/tmp/t/docs/old', '/tmp/t/docs/old/notes.TXT',
+  ])
   assert.deepEqual(k.sh('find t/docs/ -type f'), ['t/docs/.hidden', 't/docs/guide.txt', 't/docs/old/notes.TXT'])
   assert.deepEqual(k.sh('find / -maxdepth 1'), ['/', '/bin', '/dev', '/etc', '/home', '/mnt', '/proc', '/sys', '/tmp', '/usr'])
-  assert.deepEqual(k.sh('find nosuch t/empty also; echo $?'), ['!find: nosuch: no such file or directory', 't/empty', '!find: also: no such file or directory', '1'])
+  assert.deepEqual(k.sh('find nosuch t/empty also; echo $?'), [
+    '!find: nosuch: no such file or directory', 't/empty', '!find: also: no such file or directory', '1',
+  ])
 })
 
 test('find: -name, -iname and -path match with patterns', () => {
@@ -1044,12 +1096,17 @@ test('find: an expression that cannot be read is a wrong call (2) and nothing is
   const k = planted()
   const usage = '!usage: find [path ...] [expression]'
   const bad: [string, string][] = [
-    ['-bogus', "unknown test '-bogus'"], ['-name', '-name needs a value'], ['-type', '-type needs a value'], ['-type x', "-type takes f (a file) or d (a directory), not 'x'"],
-    ['-size', '-size needs a value'], ['-size 1x', "-size takes [+-]N[ckM], not '1x'"], ['-size k', "-size takes [+-]N[ckM], not 'k'"], ['-size ++1', "-size takes [+-]N[ckM], not '++1'"],
+    ['-bogus', "unknown test '-bogus'"], ['-name', '-name needs a value'], ['-type', '-type needs a value'],
+    ['-type x', "-type takes f (a file) or d (a directory), not 'x'"],
+    ['-size', '-size needs a value'], ['-size 1x', "-size takes [+-]N[ckM], not '1x'"],
+    ['-size k', "-size takes [+-]N[ckM], not 'k'"], ['-size ++1', "-size takes [+-]N[ckM], not '++1'"],
     ['-maxdepth', '-maxdepth needs a value'], ['-maxdepth -1', '-maxdepth needs a whole number'], ['-mindepth x', '-mindepth needs a whole number'],
-    ['-newer', '-newer needs a value'], ['\\( -name x', "'(' without ')'"], ['-name x \\)', "')' without '('"], ['\\( \\)', "')' has nothing before it"], ['! \\)', "')' has nothing before it"],
-    ['-o -name x', "'-o' has nothing before it"], ['-name x -o', 'the expression ends too soon'], ['-a', "'-a' has nothing before it"], ['!', 'the expression ends too soon'],
-    ['-name x -a', 'the expression ends too soon'], ['-exec cat {}', "-exec needs a ';' to end its command"], ['-exec \\;', '-exec needs a command'], ['-exec cat {} +', "-exec needs a ';' to end its command"],
+    ['-newer', '-newer needs a value'], ['\\( -name x', "'(' without ')'"], ['-name x \\)', "')' without '('"],
+    ['\\( \\)', "')' has nothing before it"], ['! \\)', "')' has nothing before it"],
+    ['-o -name x', "'-o' has nothing before it"], ['-name x -o', 'the expression ends too soon'],
+    ['-a', "'-a' has nothing before it"], ['!', 'the expression ends too soon'],
+    ['-name x -a', 'the expression ends too soon'], ['-exec cat {}', "-exec needs a ';' to end its command"],
+    ['-exec \\;', '-exec needs a command'], ['-exec cat {} +', "-exec needs a ';' to end its command"],
     ['-print x', "unknown test 'x'"],
   ]
   // Nothing but the complaint: no path is printed, so nothing was walked.
@@ -1073,13 +1130,19 @@ test('find -delete: removes what passes, what a directory holds before the direc
   assert.deepEqual(k.sh('find t -name old -delete; echo $?'), ['!find: t/docs/old: directory not empty', '1'])
   assert.deepEqual(k.sh('find t -name docs -o -name old -delete -print; echo $?'), ['!find: t/docs/old: directory not empty', '1'])
   // Deepest first: a whole tree goes, the starting path with it.
-  assert.deepEqual(k.sh('find t/docs -print -delete; echo $?; find t'), ['t/docs/guide.txt', 't/docs/old/notes.TXT', 't/docs/old', 't/docs', '0', 't', 't/README'])
+  assert.deepEqual(k.sh('find t/docs -print -delete; echo $?; find t'), [
+    't/docs/guide.txt', 't/docs/old/notes.TXT', 't/docs/old', 't/docs', '0', 't', 't/README',
+  ])
   // But never the starting path when it is spelled . or ..
   assert.deepEqual(k.sh('cd t; mkdir -p x/y; find . -delete; echo $?; ls -a; cd ..; ls'), ['0', '.  ..', 't'])
   assert.deepEqual(k.sh('mkdir -p t/x; find t/x/.. -delete; echo $?; ls -a t'), ['0', '.  ..'])
   assert.deepEqual(k.sh('find t -mindepth 1 -delete; find t -delete; echo $?; ls'), ['0'])
   // Refused outright from the root, whatever the rest says.
-  for (const line of ['find / -name nosuch -delete', 'find /tmp/.. -maxdepth 0 -delete', 'find /tmp // -delete', 'cd /; find . -delete; cd /tmp', 'cd /; find -delete; cd /tmp']) {
+  const fromRoot = [
+    'find / -name nosuch -delete', 'find /tmp/.. -maxdepth 0 -delete', 'find /tmp // -delete', 'cd /; find . -delete; cd /tmp',
+    'cd /; find -delete; cd /tmp',
+  ]
+  for (const line of fromRoot) {
     const out = k.sh(`${line}; echo $?`)
     assert.match(out[0], /^!find: .*: -delete is refused for a search that starts at the root directory$/, line)
     assert.equal(out.length, 2, line)
@@ -1091,18 +1154,26 @@ test('find -delete: removes what passes, what a directory holds before the direc
 test('find -exec: runs a program for each path, {} replaced wherever it stands', () => {
   const k = planted()
   assert.deepEqual(k.sh('find t -name README -exec cat {} \\;; echo $?'), ['read me', '0'])
-  assert.deepEqual(k.sh("find t -name '*.c' -exec ls -l {} \\;"), ['-rw-r--r-- root 1024 2026-11-14 18:01 t/src/main.c', '-rw-r--r-- root 1025 2026-11-14 18:01 t/src/util.c'])
-  assert.deepEqual(k.sh("find t -name '*.c' -exec sh -c 'echo \"<$0> <$1>\"' x{}y {}.bak \\;"), ['<xt/src/main.cy> <t/src/main.c.bak>', '<xt/src/util.cy> <t/src/util.c.bak>'])
+  assert.deepEqual(k.sh("find t -name '*.c' -exec ls -l {} \\;"), [
+    '-rw-r--r-- root 1024 2026-11-14 18:01 t/src/main.c', '-rw-r--r-- root 1025 2026-11-14 18:01 t/src/util.c',
+  ])
+  assert.deepEqual(k.sh("find t -name '*.c' -exec sh -c 'echo \"<$0> <$1>\"' x{}y {}.bak \\;"), [
+    '<xt/src/main.cy> <t/src/main.c.bak>', '<xt/src/util.cy> <t/src/util.c.bak>',
+  ])
   assert.deepEqual(k.sh("find t -name '*.c' -exec sh -c 'echo {}{}' \\;"), ['t/src/main.ct/src/main.c', 't/src/util.ct/src/util.c'])
   // What was printed before the command ran comes before what the command prints.
   assert.deepEqual(k.sh('find t -name README -print -exec cat {} \\; -print'), ['t/README', 'read me', 't/README'])
   // It passes when the command ends with 0.
-  assert.deepEqual(k.sh("find t -type f -exec sh -c 'test -s $0' {} \\; -print"), ['t/README', 't/docs/guide.txt', 't/docs/old/notes.TXT', 't/src/main.c', 't/src/util.c'])
+  assert.deepEqual(k.sh("find t -type f -exec sh -c 'test -s $0' {} \\; -print"), [
+    't/README', 't/docs/guide.txt', 't/docs/old/notes.TXT', 't/src/main.c', 't/src/util.c',
+  ])
   assert.deepEqual(k.sh("find t -type f ! -exec sh -c 'test -s $0' {} \\; -print; echo $?"), ['t/docs/.hidden', 't/src/blank', '0'])
   assert.deepEqual(k.sh("find t -name '*.c' -exec cp {} {}.bak \\; ; ls t/src"), ['blank  main.c  main.c.bak  util.c  util.c.bak'])
   assert.deepEqual(k.sh("find t -name '*.bak' -exec rm {} \\; ; ls t/src"), ['blank  main.c  util.c'])
   // A command that is not there is said for each path, and counted.
-  assert.deepEqual(k.sh("find t -name '*.c' -exec nosuchprogram {} \\; -print; echo $?"), ['!find: nosuchprogram: no such file or directory', '!find: nosuchprogram: no such file or directory', '1'])
+  assert.deepEqual(k.sh("find t -name '*.c' -exec nosuchprogram {} \\; -print; echo $?"), [
+    '!find: nosuchprogram: no such file or directory', '!find: nosuchprogram: no such file or directory', '1',
+  ])
   assert.deepEqual(k.sh('find t -name README -exec cat nosuch {} \\; -print; echo $?'), ['!cat: nosuch: no such file or directory', 'read me', '0'])
 })
 
@@ -1125,9 +1196,13 @@ test('du: the bytes of files added up the tree, in units of 1024 or for people',
   assert.deepEqual(k.sh('du -s t'), ['6       t'])
   assert.deepEqual(k.sh('du -h t'), ['600     t/docs/old', '3.5K    t/docs', '0       t/empty', '2K      t/src', '5.5K    t'])
   assert.deepEqual(k.sh('du -sh t t/src t/README'), ['5.5K    t', '2K      t/src', '8       t/README'])
-  assert.deepEqual(k.sh('du -s t/src/main.c t/src/util.c t/src/blank t/empty'), ['1       t/src/main.c', '2       t/src/util.c', '0       t/src/blank', '0       t/empty'])
+  assert.deepEqual(k.sh('du -s t/src/main.c t/src/util.c t/src/blank t/empty'), [
+    '1       t/src/main.c', '2       t/src/util.c', '0       t/src/blank', '0       t/empty',
+  ])
   assert.deepEqual(k.sh('cd t/src; du; du -s; cd ../..'), ['3       .', '3       .'])
-  assert.deepEqual(k.sh('du -s nosuch t/empty also; echo $?'), ['!du: nosuch: no such file or directory', '0       t/empty', '!du: also: no such file or directory', '1'])
+  assert.deepEqual(k.sh('du -s nosuch t/empty also; echo $?'), [
+    '!du: nosuch: no such file or directory', '0       t/empty', '!du: also: no such file or directory', '1',
+  ])
   assert.deepEqual(k.sh('du -x; echo $?'), ["!du: unknown option '-x'", '!usage: du [-s] [-h] [path ...]', '2'])
   // Devices and generated files have no bytes of their own.
   assert.deepEqual(k.sh('du -s /dev /sys'), ['0       /dev', '0       /sys'])
@@ -1145,14 +1220,19 @@ test('df: a line for each mount, lined up; -h for people; paths choose their mou
   assert.match(lines[2], /^rom     romfs   1024 {5}[0-9] {2}10[0-9]{2} {4}1% {2}\/bin$/)
   assert.match(lines[3], /^rom     romfs   4096 {5}1 {2}4095 {4}1% {2}\/usr$/)
   assert.equal(lines[4], 'tmpfs   tmpfs   2000  1024   976   52%  /tmp')
-  assert.deepEqual(lines.slice(5), ['devfs   devfs      -     -     -     -  /dev', 'proc    proc       -     -     -     -  /proc', 'sysfs   sysfs      -     -     -     -  /sys', '0'])
+  assert.deepEqual(lines.slice(5), [
+    'devfs   devfs      -     -     -     -  /dev', 'proc    proc       -     -     -     -  /proc', 'sysfs   sysfs      -     -     -     -  /sys',
+    '0',
+  ])
   assert.deepEqual(k.sh('df -h /tmp'), ['Source  Type   Size  Used  Free  Use%  Path', 'tmpfs   tmpfs    2M    1M  976K   52%  /tmp'])
   // A path names the mount it is on, each mount once, in the order asked.
   assert.deepEqual(k.sh('df /tmp/fill . /tmp'), ['Source  Type   Size  Used  Free  Use%  Path', 'tmpfs   tmpfs  2000  1024   976   52%  /tmp'])
   assert.deepEqual(k.sh('df /proc/mounts /bin/ls').slice(1), ['proc    proc      -     -     -     -  /proc', 'rom     romfs  1024     2  1022    1%  /bin'])
   // Two paths on one mount: one line.
   assert.deepEqual(k.sh('df /home/operator /etc'), [lines[0], lines[1]])
-  assert.deepEqual(k.sh('df nosuch /dev; echo $?'), ['!df: nosuch: no such file or directory', 'Source  Type   Size  Used  Free  Use%  Path', 'devfs   devfs     -     -     -     -  /dev', '1'])
+  assert.deepEqual(k.sh('df nosuch /dev; echo $?'), [
+    '!df: nosuch: no such file or directory', 'Source  Type   Size  Used  Free  Use%  Path', 'devfs   devfs     -     -     -     -  /dev', '1',
+  ])
   assert.deepEqual(k.sh('df nosuch; echo $?'), ['!df: nosuch: no such file or directory', '1'])
   assert.deepEqual(k.sh('df -x; echo $?'), ["!df: unknown option '-x'", '!usage: df [-h] [path ...]', '2'])
   // Full to the last byte: all used, none free.
@@ -1164,7 +1244,10 @@ test('df: a line for each mount, lined up; -h for people; paths choose their mou
 test('mount: lists the mounts as /proc/mounts does, and says honestly that it cannot attach', () => {
   const k = fresh()
   const lines = k.sh('mount; echo $?')
-  assert.deepEqual(lines, ['disk / diskfs rw', 'rom /bin romfs ro', 'rom /usr romfs ro', 'tmpfs /tmp tmpfs rw', 'devfs /dev devfs rw', 'proc /proc proc rw', 'sysfs /sys sysfs rw', '0'])
+  assert.deepEqual(lines, [
+    'disk / diskfs rw', 'rom /bin romfs ro', 'rom /usr romfs ro', 'tmpfs /tmp tmpfs rw', 'devfs /dev devfs rw', 'proc /proc proc rw',
+    'sysfs /sys sysfs rw', '0',
+  ])
   assert.deepEqual(k.sh('cat /proc/mounts'), lines.slice(0, -1))
   assert.deepEqual(k.sh('mount > out; echo $?; cat out'), ['0', ...lines.slice(0, -1)])
   for (const line of ['mount /mnt', 'mount disk /mnt', 'mount -t tmpfs none /mnt', 'mount -a']) {
@@ -1178,9 +1261,13 @@ test('umount: detaches a mount, and reports what is refused', () => {
   k.write('/tmp/f', 'x')
   const pid = k.sh('echo $$')[0]
   assert.deepEqual(k.sh('umount /tmp; echo $?'), [`!umount: /tmp: task ${pid} is working in it`, '1'])
-  assert.deepEqual(k.sh('cd /; umount /nosuch /etc /; echo $?'), ['!umount: /nosuch: not a mount point', '!umount: /etc: not a mount point', '!umount: /: task 1 is working in it', '1'])
+  assert.deepEqual(k.sh('cd /; umount /nosuch /etc /; echo $?'), [
+    '!umount: /nosuch: not a mount point', '!umount: /etc: not a mount point', '!umount: /: task 1 is working in it', '1',
+  ])
   assert.deepEqual(k.sh('umount; echo $?'), ['!usage: umount path ...', '2'])
-  assert.deepEqual(k.sh('umount /tmp/ /sys; echo $?; ls -a /tmp; mount'), ['0', '.  ..', 'disk / diskfs rw', 'rom /bin romfs ro', 'rom /usr romfs ro', 'devfs /dev devfs rw', 'proc /proc proc rw'])
+  assert.deepEqual(k.sh('umount /tmp/ /sys; echo $?; ls -a /tmp; mount'), [
+    '0', '.  ..', 'disk / diskfs rw', 'rom /bin romfs ro', 'rom /usr romfs ro', 'devfs /dev devfs rw', 'proc /proc proc rw',
+  ])
   assert.deepEqual(k.sh('umount /tmp; echo $?'), ['!umount: /tmp: not a mount point', '1'])
   // What was under the mount is an ordinary directory again.
   assert.deepEqual(k.sh('touch /tmp/under; df /tmp/under | cat'), ['Source  Type    Size  Used  Free  Use%  Path', k.sh('df /')[1]])
@@ -1197,7 +1284,9 @@ test('realpath: the path in full, when it or the directory that would hold it is
   assert.deepEqual(k.sh('realpath / /dev/null /proc/mounts ~'), ['/', '/dev/null', '/proc/mounts', '/home/operator'])
   // Not there yet, in a directory that is: still a path. Deeper than that: nowhere.
   assert.deepEqual(k.sh('realpath d/new; echo $?'), ['/tmp/d/new', '0'])
-  assert.deepEqual(k.sh('realpath nodir/new d/f/x d d/f/..; echo $?'), ['!realpath: nodir/new: no such file or directory', '!realpath: d/f/x: not a directory', '/tmp/d', '/tmp/d', '1'])
+  assert.deepEqual(k.sh('realpath nodir/new d/f/x d d/f/..; echo $?'), [
+    '!realpath: nodir/new: no such file or directory', '!realpath: d/f/x: not a directory', '/tmp/d', '/tmp/d', '1',
+  ])
   assert.deepEqual(k.sh("realpath ''; echo $?"), ['!realpath: : no such file or directory', '1'])
   assert.deepEqual(k.sh('realpath; echo $?'), ['!usage: realpath path ...', '2'])
   assert.deepEqual(k.sh('realpath d | cat'), ['/tmp/d'])
@@ -1206,8 +1295,10 @@ test('realpath: the path in full, when it or the directory that would hold it is
 test('basename: the last name of a path, with a suffix cut off when asked', () => {
   const k = fresh()
   const cases: [string, string][] = [
-    ['/home/operator/notes.txt', 'notes.txt'], ['notes.txt', 'notes.txt'], ['a/b/', 'b'], ['a/b///', 'b'], ['/', '/'], ['///', '/'], ['.', '.'], ['..', '..'], ['/a', 'a'], ['a//b', 'b'],
-    ['/home/operator/notes.txt .txt', 'notes'], ['notes.txt txt', 'notes.'], ['notes.txt notes.txt', 'notes.txt'], ['notes.txt .md', 'notes.txt'], ['a/b.c/ .c', 'b'], ['/ /', '/'],
+    ['/home/operator/notes.txt', 'notes.txt'], ['notes.txt', 'notes.txt'], ['a/b/', 'b'], ['a/b///', 'b'], ['/', '/'],
+    ['///', '/'], ['.', '.'], ['..', '..'], ['/a', 'a'], ['a//b', 'b'],
+    ['/home/operator/notes.txt .txt', 'notes'], ['notes.txt txt', 'notes.'], ['notes.txt notes.txt', 'notes.txt'],
+    ['notes.txt .md', 'notes.txt'], ['a/b.c/ .c', 'b'], ['/ /', '/'],
     ["'two words/last name'", 'last name'], ["notes.txt ''", 'notes.txt'], ['-- -dash', '-dash'],
   ]
   for (const [args, want] of cases) assert.deepEqual(k.sh(`basename ${args}; echo $?`), [want, '0'], args)
@@ -1221,7 +1312,8 @@ test('basename: the last name of a path, with a suffix cut off when asked', () =
 test('dirname: a path without its last name', () => {
   const k = fresh()
   const cases: [string, string][] = [
-    ['/home/operator/notes.txt', '/home/operator'], ['notes.txt', '.'], ['a/b', 'a'], ['a/b/', 'a'], ['a/b///', 'a'], ['/', '/'], ['///', '/'], ['/a', '/'], ['//a', '/'], ['.', '.'], ['..', '.'],
+    ['/home/operator/notes.txt', '/home/operator'], ['notes.txt', '.'], ['a/b', 'a'], ['a/b/', 'a'], ['a/b///', 'a'], ['/', '/'],
+    ['///', '/'], ['/a', '/'], ['//a', '/'], ['.', '.'], ['..', '.'],
     ['a//b', 'a'], ['../x', '..'], ['a/b/c/d', 'a/b/c'], ["'two words/last name'", 'two words'], ['-- -dash/x', '-dash'],
   ]
   for (const [args, want] of cases) assert.deepEqual(k.sh(`dirname ${args}; echo $?`), [want, '0'], args)
@@ -1259,7 +1351,9 @@ test('tree: a drawing of a directory and all below it, then the counts', () => {
   assert.deepEqual(k.sh('tree -d t/docs/old'), ['t/docs/old', '', '0 directories'])
   assert.deepEqual(k.sh('cd t/src; tree; cd ../..'), ['.', '|-- blank', '|-- main.c', '`-- util.c', '', '0 directories, 3 files'])
   // Several directories: each drawn, counted together.
-  assert.deepEqual(k.sh('tree t/src t/docs/old'), ['t/src', '|-- blank', '|-- main.c', '`-- util.c', 't/docs/old', '`-- notes.TXT', '', '0 directories, 4 files'])
+  assert.deepEqual(k.sh('tree t/src t/docs/old'), [
+    't/src', '|-- blank', '|-- main.c', '`-- util.c', 't/docs/old', '`-- notes.TXT', '', '0 directories, 4 files',
+  ])
   k.sh('tree t > out')
   assert.equal(k.read('/tmp/out'), `${k.sh('tree t').join('\n')}\n`)
 })
@@ -1271,11 +1365,14 @@ test('tree: what cannot be drawn is reported, the rest still is, with status 1',
   ])
   assert.deepEqual(k.sh('tree -L 0 t; echo $?'), ['!tree: -L needs a whole number, 1 or more', '!usage: tree [-a] [-d] [-L depth] [dir ...]', '2'])
   assert.deepEqual(k.sh('tree -L x t; tree -L; echo $?'), [
-    '!tree: -L needs a whole number, 1 or more', '!usage: tree [-a] [-d] [-L depth] [dir ...]', "!tree: option '-L' needs a value", '!usage: tree [-a] [-d] [-L depth] [dir ...]', '2',
+    '!tree: -L needs a whole number, 1 or more', '!usage: tree [-a] [-d] [-L depth] [dir ...]',
+    "!tree: option '-L' needs a value", '!usage: tree [-a] [-d] [-L depth] [dir ...]', '2',
   ])
   assert.deepEqual(own(k.sh('tree / | read first; echo done')), ['done'])
   const whole = k.sh('tree -L 1 /')
-  assert.deepEqual(whole, ['/', '|-- bin', '|-- dev', '|-- etc', '|-- home', '|-- mnt', '|-- proc', '|-- sys', '|-- tmp', '`-- usr', '', '9 directories, 0 files'])
+  assert.deepEqual(whole, [
+    '/', '|-- bin', '|-- dev', '|-- etc', '|-- home', '|-- mnt', '|-- proc', '|-- sys', '|-- tmp', '`-- usr', '', '9 directories, 0 files',
+  ])
 })
 
 // The output itself
@@ -1283,7 +1380,8 @@ test('tree: what cannot be drawn is reported, the rest still is, with status 1',
 test('a refused write to the output is said once, and ends the program with status 1', () => {
   const k = planted()
   const lines = [
-    'ls t', 'ls -lR t', 'cat t/README', 'cat -n t/README t/docs/guide.txt', 'stat t', 'find t', 'find t -name README -print', 'du t', 'du -sh t', 'df', 'df -h /tmp', 'mount',
+    'ls t', 'ls -lR t', 'cat t/README', 'cat -n t/README t/docs/guide.txt', 'stat t', 'find t', 'find t -name README -print',
+    'du t', 'du -sh t', 'df', 'df -h /tmp', 'mount',
     'realpath t', 'basename t/README', 'dirname t/README', 'tree t',
   ]
   for (const line of lines) {
@@ -1292,11 +1390,14 @@ test('a refused write to the output is said once, and ends the program with stat
   }
   // What a program had to say about a path still comes first, and the status is 1 either way.
   assert.deepEqual(k.sh('ls nosuch t > /dev/full; echo $?'), ['!ls: nosuch: no such file or directory', '!ls: write error: no space left on device', '1'])
-  assert.deepEqual(k.sh('cat nosuch t/README also > /dev/full; echo $?'), ['!cat: nosuch: no such file or directory', '!cat: write error: no space left on device', '1'])
+  assert.deepEqual(k.sh('cat nosuch t/README also > /dev/full; echo $?'), [
+    '!cat: nosuch: no such file or directory', '!cat: write error: no space left on device', '1',
+  ])
   // Nothing to write, nothing refused.
   assert.deepEqual(k.sh('ls t/empty > /dev/full; cat t/src/blank > /dev/full; find t -name nothing > /dev/full; echo $?'), ['0'])
   // The programs that print nothing do their work whatever the output is.
-  assert.deepEqual(k.sh('mkdir made > /dev/full; touch made/f > /dev/full; cp made/f made/g > /dev/full; mv made/g made/h > /dev/full; chmod 600 made/h > /dev/full; echo $?; ls made'), ['0', 'f  h'])
+  const quiet = ['mkdir made', 'touch made/f', 'cp made/f made/g', 'mv made/g made/h', 'chmod 600 made/h'].map((line) => `${line} > /dev/full`)
+  assert.deepEqual(k.sh(`${quiet.join(' && ')}; echo $?; ls made`), ['0', 'f  h'])
   assert.deepEqual(k.sh('rm made/f > /dev/full; rmdir nosuch > /dev/full; echo $?; ls made'), ['!rmdir: nosuch: no such file or directory', '1', 'h'])
   // A disk with no room left is the same refusal, from a real file.
   const small = boot(FILE_PROGRAMS, { tmpBytes: 1000 })
@@ -1315,12 +1416,15 @@ test('every walk goes as deep as the file system does', () => {
   k.write(`/tmp/${deep}/f`, 'deep')
   // One name more is refused by the file system, and said.
   assert.deepEqual(k.sh(`mkdir ${deep}/f/x ${deep}/g/h; touch ${deep}/g/h; echo $?`), [
-    `!mkdir: ${deep}/f/x: a path is at most 64 names deep`, `!mkdir: ${deep}/g/h: a path is at most 64 names deep`, `!touch: ${deep}/g/h: a path is at most 64 names deep`, '1',
+    `!mkdir: ${deep}/f/x: a path is at most 64 names deep`, `!mkdir: ${deep}/g/h: a path is at most 64 names deep`,
+    `!touch: ${deep}/g/h: a path is at most 64 names deep`, '1',
   ])
   const all = k.sh('find 1 | cat')
   assert.equal(all.length, 63)
   assert.deepEqual(all.slice(-2), [deep, `${deep}/f`])
-  assert.deepEqual(k.sh('find 1 -type f | cat; find 1 -mindepth 62 | cat; find 1 -maxdepth 60 -name 62; find 1 -maxdepth 61 -name 62 | cat'), [`${deep}/f`, `${deep}/f`, deep])
+  assert.deepEqual(k.sh('find 1 -type f | cat; find 1 -mindepth 62 | cat; find 1 -maxdepth 60 -name 62; find 1 -maxdepth 61 -name 62 | cat'), [
+    `${deep}/f`, `${deep}/f`, deep,
+  ])
   const listed = k.sh('ls -R 1 | cat')
   assert.equal(listed.filter((l) => l.endsWith(':')).length, 62)
   assert.deepEqual(listed.slice(-2), [`${deep}:`, 'f'])
@@ -1336,6 +1440,8 @@ test('every walk goes as deep as the file system does', () => {
   assert.deepEqual(k.sh('mv 1 /home/operator/one; echo $?'), [`!mv: /home/operator/one/${below}/f: a path is at most 64 names deep`, '1'])
   assert.equal(k.read(`/tmp/${deep}/f`), 'deep')
   // To another file system at the same depth, it moves whole.
-  assert.deepEqual(k.sh('mv 1/2 /home/operator/two; echo $?; find /home/operator/two -type f | cat; find 1'), ['0', `/home/operator/two/${dirs.slice(2).join('/')}/f`, '1'])
+  assert.deepEqual(k.sh('mv 1/2 /home/operator/two; echo $?; find /home/operator/two -type f | cat; find 1'), [
+    '0', `/home/operator/two/${dirs.slice(2).join('/')}/f`, '1',
+  ])
   assert.deepEqual(k.sh('rm -r 1 copy under /home/operator/one /home/operator/two; echo $?; ls -a; ls /home/operator'), ['0', '.  ..', 'README'])
 })
