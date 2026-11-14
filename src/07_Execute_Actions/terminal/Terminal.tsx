@@ -611,7 +611,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const b = bridge ?? OFFLINE
   // The shell's own prompt once the operating layer runs (the directory in it; nothing while a job has the terminal).
   const prompt = ps1 ?? `${b.brand.host}:~# `
-  promptRef.current = prompt
+  useEffect(() => {
+    promptRef.current = prompt
+  })
   const cont = continuationPrompt(prompt)
   /** The buffer as the mirror shows it: every line after the first under the continuation prompt. */
   const show = (s: string) => s.replace(/\n/g, `\n${cont}`)

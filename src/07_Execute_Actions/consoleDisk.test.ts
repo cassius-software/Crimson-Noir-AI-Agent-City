@@ -215,13 +215,14 @@ test('an image set aside lands under its own key and does not count as a save; a
   assert.equal(await d.save(bytes(9)), 'kept')
   assert.equal(await d.setAside(bytes(6, 6, 6)), true)
   const rows = idb.rows.get(CONSOLE_DISK_DB)
-  assert.deepEqual(Object.keys(Object.fromEntries(rows ?? [])).sort(), ['image', 'refused'])
-  assert.deepEqual([...(rows?.get('refused') as { bytes: Uint8Array }).bytes], [6, 6, 6])
+  assert.ok(rows !== undefined)
+  assert.deepEqual([...rows.keys()].sort(), ['image', 'refused'])
+  assert.deepEqual([...(rows.get('refused') as { bytes: Uint8Array }).bytes], [6, 6, 6])
   assert.equal(await d.save(bytes(10)), 'kept', 'setting aside moved no generation')
   idb.full = true
   assert.equal(await d.setAside(bytes(1)), false)
   idb.full = false
-  rows?.set('image', { gen: 'two', bytes: 'text' })
+  rows.set('image', { gen: 'two', bytes: 'text' })
   const e = consoleDisk(idb.factory, t.wait)
   assert.equal(await e.load(), null)
   assert.equal(await e.save(bytes(11)), 'kept')
