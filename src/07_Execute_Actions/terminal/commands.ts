@@ -931,6 +931,8 @@ function mindLines(m: MindStatus): Line[] {
               : `${m.provider}: a model server on this machine (ask provider claude for the Claude API)`)))
   }
   if (m.auto !== undefined) lines.push(out(row('found', m.auto)))
+  // Which brain Sloane is using and how her default model stands, in the first walk's words (09_Cognition/brainReadout.ts).
+  if (m.brain !== undefined) lines.push(out(row('brain', m.brain)))
   // 'default' in the chat format is the placeholder the client resolves to the model the server has loaded (LM Studio
   // says which), else the first it lists that writes text, in its own order (localCompute.ts ANY_MODEL); `resolved`
   // names it once an answer has asked.

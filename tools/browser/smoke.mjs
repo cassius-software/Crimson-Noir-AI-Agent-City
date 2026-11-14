@@ -1031,6 +1031,19 @@ const AUTO_RECORD = `(() => { try { return JSON.parse(localStorage.getItem(${JSO
 /** A page expression: the toasts titled Model file (App.tsx MODEL_FILE), their bodies in order. */
 const MODEL_TOASTS = `window.__SIM__.engine.toasts.filter((t) => t.title === ${JSON.stringify(MODEL_FILE)}).map((t) => t.body)`
 
+/**
+ * Put in place before the page's first script (sitemodel): the moment App.tsx sets the debug handle (window.__SIM__,
+ * before the page's own start can begin), every change of the brain readout (09_Cognition/brainReadout.ts, read
+ * through __SIM__.brain and heard through __SIM__.onBrain) is noted in window.__smokeBrain: the brain, and the default
+ * model's state, step, count and file.
+ */
+const BRAIN_WATCH = `(() => { let sim; const seen = window.__smokeBrain = []
+  Object.defineProperty(window, '__SIM__', { configurable: true, get: () => sim, set(v) { sim = v
+    if (!v || typeof v.brain !== 'function') return
+    const note = () => { const b = v.brain(), d = b.default
+      seen.push({ brain: b.brain, state: d ? d.state : null, step: d ? d.step : null, done: d ? d.done : null, total: d ? d.total : null, file: d ? d.file : null }) }
+    note(); v.onBrain(note) } }) })()`
+
 /** A page expression: what the page's model store holds (modelStore.ts MODELS_DIR), each kept model as its files. */
 const KEPT_IN_STORE = `(async () => { try { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(${JSON.stringify(MODELS_DIR)}); const out = []
   for await (const [, h] of d.entries()) { if (h.kind !== 'directory') continue; const names = []; for await (const [n] of h.entries()) names.push(n); out.push(names.sort().join(' + ')) }
@@ -1135,6 +1148,16 @@ const SCENARIOS = {
       // candidate), and the snapshot's quality carries the class the console names.
       const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
       check(hw.hardware === 'desktop' && Number.isFinite(hw.p99) && hw.lanes === 512, 'desktop: the hardware class is desktop, the snapshot carries p99 and the lanes are the page\'s ?crowd', JSON.stringify(hw))
+      // The brain readout (09_Cognition/brainReadout.ts), read as the first walk reads it, twenty times over, before
+      // anyone spoke to Sloane: auto has found nothing yet, and reading it asked nothing of anyone: no request at all,
+      // to this page's own origin (its manifest, its model) or to a server on this machine.
+      const brainWatch = await watchTargets(p.b)
+      const reads = await p.eval(`(() => { const all = []; for (let i = 0; i < 20; i++) all.push(window.__SIM__.brain()); return { same: all.every((b) => b === all[0]), b: all[0] } })()`)
+      await new Promise((r) => setTimeout(r, 500))
+      const asked = brainWatch.requests.filter((r) => !/^(blob|data):/.test(r.url))
+      check(reads.same && reads.b.provider === 'auto' && reads.b.settled === false && reads.b.brain === null && /^Sloane has found no model yet: her next answer looks on this machine/.test(reads.b.where) && asked.length === 0,
+        'desktop: the brain readout, read twenty times, says auto has found no model yet and makes no request at all',
+        `${asked.length ? `asked ${asked.slice(0, 3).map((r) => r.url.slice(0, 60)).join(', ')}; ` : ''}${brainWatch.requests.length} requests in all; ${JSON.stringify(reads.b).slice(0, 300)}`)
 
       // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
       // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
@@ -2272,6 +2295,8 @@ const SCENARIOS = {
         const status = await p.command('ask', /installed|ask: /, 60_000)
         check(/inpage: a model file kept in this page/.test(status ?? '') && new RegExp(`${literal(TINY)}\\s+\\(chosen\\)`).test(status ?? '') && /storage\s+kept in this page/.test(status ?? ''),
           'sitemodel: ask says the inpage provider answers with the file kept in this page, and it is chosen', (status ?? '').split('\n').filter((l) => /provider|storage|installed|runtime/.test(l)).join(' | ').slice(0, 400))
+        check(new RegExp(`brain\\s+Sloane answers with the model kept in this page \\(${literal(TINY)}\\), run on this device`).test(status ?? ''), 'sitemodel: ask\'s brain row says what the brain readout says: the model kept in this page, the pinned file',
+          (status ?? '').split('\n').filter((l) => /^brain/.test(l.trim())).join(' | ').slice(0, 300) || 'no brain row')
         const kept = await p.eval(KEPT_IN_STORE)
         check(kept.length === 1 && kept[0] === `meta.json + ${TINY}`, 'sitemodel: the page\'s model store holds it, committed', kept.join('; '))
         // The service worker leaves models/ to the network: its offline copy holds the page, and nothing of the model.
@@ -2303,11 +2328,19 @@ const SCENARIOS = {
       // the provider left at auto.
       const r = await open(chrome)
       try {
+        await r.b.send('Page.addScriptToEvaluateOnNewDocument', { source: BRAIN_WATCH })
         const autoAt = served.length
         await r.goto(url)
         await r.booted()
         const got = await r.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => ${loadedToast}.test(b)) && t })()`, 180_000).catch(() => r.eval(MODEL_TOASTS))
         check(got.some((b) => keptToast.test(b)) && got.some((b) => loadedToast.test(b)), 'sitemodel: a fresh browser gets the model by itself: a toast says it is kept (the provider left as it was), another that it is loaded', got.join(' | ').slice(0, 300))
+        // The brain readout through that download: the default model getting, its count rising from 0 to the whole
+        // file, then kept (window.__smokeBrain, noted from the page's first moment).
+        const brainSeen = (await r.eval('window.__smokeBrain ?? []')) ?? []
+        const dl = brainSeen.filter((n) => n.state === 'getting' && n.step === 'download')
+        const rising = dl.length >= 2 && dl[0].done === 0 && dl.every((n, i) => i === 0 || n.done >= dl[i - 1].done) && dl[0].done < dl.at(-1).done
+        check(rising && dl.at(-1).done === pin.bytes && dl.every((n) => n.file === TINY) && brainSeen.some((n) => n.state === 'kept'), 'sitemodel: during the no-click download the brain readout shows the default model getting, its count rising from 0 to the whole file, then kept',
+          `${brainSeen.length} changes; download counts ${dl.map((n) => n.done).join(', ') || 'none'} of ${pin.bytes}; states ${[...new Set(brainSeen.map((n) => n.state))].join(' > ')}`)
         check(JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: it asked this site for the manifest and the model, once each, with no click', models(autoAt).join(', ') || 'nothing under models/')
         const record = await r.eval(AUTO_RECORD)
         const keptAuto = await r.eval(KEPT_IN_STORE)
@@ -2316,6 +2349,9 @@ const SCENARIOS = {
         const answered = talk.card
         check(answered?.state === 'said' && answered.line === `${'a'.repeat(CHAT_MAX)}…` && JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]),
           'sitemodel: on the next visit Sloane answers with the model the page got, asking this site for nothing more', `${answered?.state}: ${(answered?.line ?? '').slice(0, 40)}; ${models(autoAt).join(', ')}${talk.notes.length ? `; ${talk.notes.join('; ')}` : ''}`)
+        const brainNow = await r.eval('window.__SIM__.brain()')
+        check(brainNow?.brain === 'page' && brainNow.model === TINY && brainNow.local === true && brainNow.default?.state === 'kept' && brainNow.default.file === TINY && brainNow.downloading === null,
+          'sitemodel: once Sloane has answered, the brain readout says the model kept in this page answers, the pinned file', JSON.stringify(brainNow).slice(0, 400))
         await r.shot('sitemodel-auto')
         r.health('sitemodel (got by the page)')
       } finally {

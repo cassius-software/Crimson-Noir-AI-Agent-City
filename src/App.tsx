@@ -44,6 +44,7 @@ import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_
 import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
+import { bindBrain, createBrainReadout, readBrain, subscribeBrain, type SiteFacts } from './09_Cognition/brainReadout.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
 import { createWllamaRuntime } from './09_Cognition/wllamaRuntime.ts'
 import { canShareMemory } from './07_Execute_Actions/sharedBridge.ts'
@@ -582,7 +583,19 @@ function ttyBridge(vram: string | null): TerminalBridge {
       runner: shellRunner(),
       gpuMemory: shellGpuMemory,
       vram,
-    })).then(({ router, inPage }) => ({ router, inPage })),
+    })).then(({ router, inPage, native }) => {
+      // The brain readout (09_Cognition/brainReadout.ts) over the console's router: `ask` prints its brain row. A
+      // forget (ask file forget) is told to it, as the city's console tells its own.
+      const brain = createBrainReadout({ router, native, page: inPage })
+      bindBrain(brain)
+      const file = {
+        load: () => inPage.load(),
+        unload: () => inPage.unload(),
+        forget: (name?: string) => inPage.forget(name).finally(() => brain.refresh()),
+        log: () => inPage.log(),
+      }
+      return { router, inPage: file }
+    }),
   })
 }
 
@@ -989,6 +1002,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [siteModel, setSiteModel] = useState<SiteModelHost | null>(null)
   /** Gets the site's model by itself (09_Cognition/siteAuto.ts), once the city is on screen: set with siteModel, run once a city. */
   const siteAutoRef = useRef<(() => Promise<string>) | null>(null)
+  /** Hands the line that start ended with to the city's brain readout (09_Cognition/brainReadout.ts): set with siteAutoRef. */
+  const siteLineRef = useRef<(why: string) => void>(noop)
   /** Why the model the app runs itself couldn't start (09_Cognition/nativeMind.ts), said on Sloane's card; null elsewhere. */
   const [appModel, setAppModel] = useState<AppModelLine | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
@@ -1043,7 +1058,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   // standing (never under the boot veil or over a halted city). Why it did or did not is one line in the browser's console.
   useEffect(() => {
     if (!veilDone || locked !== null || siteModel === null) return
-    void siteAutoRef.current?.().then((why) => console.info(`Sloane's model: ${why}`), (err: unknown) => console.info(`Sloane's model: ${plain(err)}`))
+    void siteAutoRef.current?.().then((why) => {
+      siteLineRef.current(why)
+      console.info(`Sloane's model: ${why}`)
+    }, (err: unknown) => {
+      siteLineRef.current(plain(err))
+      console.info(`Sloane's model: ${plain(err)}`)
+    })
   }, [veilDone, locked, siteModel])
   // A city action an agent proposed, waiting for the operator's OK (07_Execute_Actions/acts.ts; the bridge's acts.follow
   // feeds it): the card, the input shield and the HUD line all derive from this one state, and actRef is the frame
@@ -1529,6 +1550,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // runtime and store: it plans by the engine's profile of this device, holds the city's tier down while it loads
         // or answers (inPagePlan.ts holdTier), and says what it is doing on the HUD's activity line. The onboarding's
         // router has none: a model is never loaded while the city is still being built.
+        // Tells the brain readout (made below, once the site's model's job exists) that something it shows changed.
+        let brainHeard = noop
         const device = (): PageDevice => ({
           mobile: e.profile.mobile, lite: e.profile.lite, gpuClass: e.profile.gpuClass,
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
@@ -1556,10 +1579,21 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             blamed: () => local.provider === 'auto' || local.provider === 'native',
           }),
         })
+        // While the app checks its file (it hashes it on first launch), it is asked again, from memory, about once a
+        // second until the check is done, and again after each change the router announces (an answer stopped after the
+        // check), so the brain readout (below) follows the check to its end.
+        let checkTimer: ReturnType<typeof setTimeout> | undefined
+        const followCheck = (): void => {
+          clearTimeout(checkTimer)
+          if (cancelled || appMind.status()?.status.state !== 'preparing') return
+          checkTimer = setTimeout(() => { void appMind.installed().catch(() => []).then(followCheck) }, 1000)
+        }
         inPageMind = inPage
         // Whether the app runs a model and how it stands, asked once as the router is built (it answers from memory; a
-        // shell without the runner's commands says so at once): the rewording below waits while that model is cold.
-        void appMind.installed().catch(() => [])
+        // shell without the runner's commands says so at once): the rewording below waits while that model is cold, and
+        // the brain readout (below) shows what it said; while the app checks its file, followCheck (above) asks again.
+        void appMind.installed().catch(() => []).then(() => { brainHeard(); followCheck() })
+        const offCheck = local.onChange(followCheck)
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -1762,9 +1796,19 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         const siteEnd = new AbortController()
         const pin = source.pin
         let offered: Promise<SiteModelOffer | null> | null = null
+        // What the page knows of the site's model for the brain readout (below), as it last read or heard it: whether
+        // the source offers it (null: not asked yet), whether it is kept in this page, and the line the page's own start
+        // ended with. Each is noted where the page reads it anyway; the readout itself reads nothing but these.
+        let siteOffered: boolean | null = null
+        let siteKept = false
+        let siteDecided: string | null = null
         // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
-        const keptSite = async (): Promise<KeptModel | null> =>
-          (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+        const keptSite = async (): Promise<KeptModel | null> => {
+          const had = (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+          siteKept = had !== null
+          brainHeard()
+          return had
+        }
         /** Why this device or its storage cannot take the model now, or null (the same checks a tap meets). */
         const siteRefusal = async (): Promise<string | null> => {
           const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
@@ -1779,6 +1823,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const kept = await PAGE_MODELS().list().catch(() => [])
           const chosen = inPage.settings().model
           const caps = PAGE_RUNTIME().caps()
+          // As read now, for the brain readout too.
+          siteKept = kept.some((m) => m.name === pin.file && m.bytes === pin.bytes)
+          brainHeard()
           return {
             cannot: PAGE_MODEL_REFUSAL(),
             provider: local.settings().provider ?? 'auto',
@@ -1812,6 +1859,25 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             release()
           }
         })
+        // The brain readout (09_Cognition/brainReadout.ts): which brain Sloane is using and how the site's model stands,
+        // read from memory (the router, the app's model as last heard, this job, the facts noted above), never asking
+        // anything; bound for the page's readers (the first walk, the console's ask, ?debug's __SIM__.brain) until this
+        // city ends.
+        const brain = createBrainReadout({
+          router: local,
+          native: appMind,
+          page: inPage,
+          site: {
+            facts: (): SiteFacts => ({
+              from: source.from, file: pin.file, title: pin.title, bytes: pin.bytes,
+              served: source.served(), refusal: PAGE_MODEL_REFUSAL(), offered: siteOffered,
+              kept: siteKept || inPage.settings().model === pin.file, decided: siteDecided,
+            }),
+            job: siteJob,
+          },
+        })
+        const unbindBrain = bindBrain(brain)
+        brainHeard = () => brain.refresh()
         /** The job's work (siteJob above): the checks, the download, the hand-off to keepPicked. */
         const siteWork = async (how: SiteJobHow, onProgress: (p: SiteModelProgress) => void, signal: AbortSignal): Promise<string> => {
           if (keeping || fetching) throw new Error('a model file is being kept in this page already: wait for it to finish')
@@ -1858,7 +1924,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // Handed to the copy from here, in the same turn as the checks above, so no Stop lands between them: the
           // card drops its Stop now (step 'keep'), not at the copy's first progress after the header check.
           onProgress({ step: 'keep', done: 0, total: file.size })
-          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap')
+          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap').then((line) => {
+            // Kept, as the brain readout knows before the job says done (a forget reads it again: modelBridge below).
+            siteKept = true
+            return line
+          })
         }
         const siteHost = Object.freeze<SiteModelHost>({
           offer: async (): Promise<SiteModelLine | null> => {
@@ -1866,6 +1936,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             // Asked once a visit, unless the source could not say just now (webSource.offer).
             offered ??= source.offer(siteEnd.signal).catch(() => { offered = null; return null })
             const offer = await offered
+            // Heard for the brain readout, unless the source could not say just now (asked again then).
+            if (offered !== null && siteOffered !== (offer !== null)) {
+              siteOffered = offer !== null
+              brainHeard()
+            }
             if (!offer) return null
             return { title: pin.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
           },
@@ -1911,6 +1986,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           now: Date.now,
         }, pin, 'Sloane', source.from)
         siteAutoRef.current = siteAuto
+        // The line it ends with (GuiShell's effect below hears it) is the brain readout's too: the first one, since a
+        // second call only says it has looked.
+        siteLineRef.current = (why) => {
+          siteDecided ??= why
+          brain.refresh()
+        }
         stopSite = () => {
           siteJob.stop('page')
           siteEnd.abort()
@@ -1950,6 +2031,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           siteAutoRef.current = null
           siteJob.stop('page')
           siteEnd.abort()
+          siteLineRef.current = noop
+          clearTimeout(checkTimer)
+          offCheck()
+          unbindBrain()
+          brain.dispose()
           picker?.dispose()
           main?.removeEventListener('dragover', onDragOver)
           main?.removeEventListener('drop', onDrop)
@@ -1959,7 +2045,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // The console's `ask file` and `ask gpu` (terminal/bridge.ts ModelBridge).
         const modelBridge: ModelBridge = Object.freeze({
           pick: () => pickFiles().then((files) => (files ? keepPicked(files) : 'no model file was chosen')),
-          forget: (name?: string) => inPage.forget(name),
+          // The brain readout hears a forget at once, and again once whether the site's model is still kept is read.
+          forget: (name?: string) => inPage.forget(name).finally(() => {
+            brainHeard()
+            void keptSite().catch(() => null)
+          }),
           load: () => inPage.load(),
           unload: () => inPage.unload(),
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
@@ -2080,6 +2170,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           Object.assign(window, {
             __SIM__: {
               snapshot: () => e.snapshot(),
+              // The brain readout (09_Cognition/brainReadout.ts), as the walk reads it: read from memory, never a request.
+              brain: () => readBrain(),
+              onBrain: (listener: () => void) => subscribeBrain(listener),
               errors: () => e.errors,
               setHour: (h: number) => e.debugSetHour(h),
               teleport: (x: number, z: number, yaw = 0) => e.debugTeleport(x, z, yaw),
