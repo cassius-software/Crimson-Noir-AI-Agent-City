@@ -3195,12 +3195,11 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   2.39, and the `.deb` installed with apt and asked for one answer through `nativeE2e.mjs --packaged` (15 of 15
   checks; with the model moved away, 15 checks naming `native_model`'s null answer); with the console's ask added, a
   tiny-model `.deb` passed 24 of 24 (the tiny model ends before any word streams, so `ask stop` was forced once, typed
-  after the answer had ended: 24 of 24; a stop during an answer is not verified). The console alone's ask through the
-  app's own runner is also run in the tiny-model debug app under
-  WebKitGTK (`native-e2e.yml`). Run by CI, and not counted as verified above: the real model in the packages, the
-  Ubuntu 22.04 builds and their glibc floor, and the installed x86-64 app answering with the real model, in its
-  console too. Not verified: the app on a real Linux desktop, how fast it answers there, and how fast it answers on
-  Arm.
+  after the answer had ended). The console alone's ask through the app's own runner is also run in the tiny-model
+  debug app under WebKitGTK (`native-e2e.yml`). CI has run the rest on its Ubuntu 22.04 runners: the packages carry the
+  real model and need GLIBC_2.34 at most, and the installed x86-64 app answered with the real model, in its console
+  too, where `ask stop` typed after the first words stopped the answer (24 of 24 checks). Not verified: the app on a
+  real Linux desktop, how fast it answers there, and how fast it answers on Arm.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same

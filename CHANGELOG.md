@@ -57,9 +57,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   The packaged run in `build-matrix.yml`'s `linux-x64` job adds one short console ask, stopped once its first words
   stream, and judges how it ended without the stop's own reply (which comes last when the answer ended first);
   rehearsed here against a tiny-model `.deb` installed with apt, 24 of 24 checks, and with the stop forced after the
-  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). Not verified: a real Linux
-  desktop, the real 1.5B model through the console until CI runs the packaged check (and with it the stop after the
-  first words, which the tiny model never reaches), and phones.
+  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). CI's packaged run on this
+  change (the Ubuntu 22.04 runner, the installed `.deb` with the real 1.5B model): 24 of 24; the console's `ask hello`
+  began streaming the model's answer, `ask stop` typed after its first words ended it with `ask: stopped by the
+  operator`, and the ask took 3,067 ms. Not verified: a real Linux desktop, and phones.
 
 - **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
   `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`
