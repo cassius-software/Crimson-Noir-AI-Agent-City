@@ -34,7 +34,7 @@ function rig(over: Partial<ExamHost> = {}): Rig & { exam: ReturnType<typeof crea
   const notes: string[] = []
   const swarms: { n: number; role: string }[] = []
   const runner: Runner = { isolate: 0, replaced: 0, missing: 0 }
-  const stage: { s: Stage | null } = { s: 'exam' }
+  const stage: { s: Stage | null } = { s: 'console' }
   const flags = { contained: true, standing: true, on: true }
   const host: ExamHost = {
     contained: () => flags.contained,
@@ -154,7 +154,7 @@ test('spawn_subagents: the swarm set to work through the team runner from wherev
   assert.deepEqual(zero.notes, [])
 })
 
-test('unlock_city: this session\'s live seal and a swarm of one or more open the city and tell the walk; anything else is refused with its reason; after the pass it is already yours', () => {
+test('unlock_city: this session\'s live seal and a swarm of one or more open the city and tell the walk, on any stage; anything else is refused with its reason; after the pass it is already yours', () => {
   const r = rig()
   const seal = r.exam.verifyRing0()
   r.exam.report()
@@ -182,6 +182,11 @@ test('unlock_city: this session\'s live seal and a swarm of one or more open the
   assert.equal(r.exam.unlockCity(0, 0), true)
   assert.deepEqual(r.exam.report(), ['unlock_city: the city is already yours'])
   assert.deepEqual(r.notes, ['seal', 'unlock'])
+  // On the first stage as on the last: the program is the way out from anywhere in the walk.
+  const early = rig()
+  early.stage.s = 'move'
+  assert.equal(early.exam.unlockCity(early.exam.verifyRing0(), 1), true)
+  assert.deepEqual(early.notes, ['seal', 'unlock'])
   // A seal from another page load (another nonce) is a guess here.
   const other = rig({ nonce: 0x1234abce })
   assert.equal(other.exam.unlockCity(seal, 3), false)
@@ -201,16 +206,15 @@ test('the walk off this visit: every door is shut with one message; status says 
   assert.equal(r.exam.status(), 'tutorial: the first walk is off this visit (?tutorial=1 starts it)')
 })
 
-test('status names the stage of seven; program is the one exit program; every line is plain and admissible', () => {
+test('status names the stage of six and both ways out; program is the one exit program; every line is plain and admissible', () => {
   const r = rig()
+  const ends = 'it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)'
   r.stage.s = 'move'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 1 of 7 (move); the exit program ends it (tutorial program)')
+  assert.equal(r.exam.status(), `tutorial: the first walk, stage 1 of 6 (move); ${ends}`)
   r.stage.s = 'style'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 5 of 7 (style); the exit program ends it (tutorial program)')
-  r.stage.s = 'ring0'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 6 of 7 (ring0); the exit program ends it (tutorial program)')
-  r.stage.s = 'exam'
-  assert.equal(r.exam.status(), 'tutorial: the first walk, stage 7 of 7 (exam); the exit program ends it (tutorial program)')
+  assert.equal(r.exam.status(), `tutorial: the first walk, stage 5 of 6 (style); ${ends}`)
+  r.stage.s = 'console'
+  assert.equal(r.exam.status(), `tutorial: the first walk, stage 6 of 6 (console); ${ends}`)
   r.stage.s = null
   assert.equal(r.exam.status(), 'tutorial: the first walk is passed: the city is yours')
   assert.equal(r.exam.program(), PROGRAM, 'the same frozen array as the walk shows')
@@ -225,7 +229,7 @@ test('status names the stage of seven; program is the one exit program; every li
   const c3 = rig(); c3.flags.contained = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); c3.flags.contained = true; c3.flags.standing = false; c3.exam.spawnSubagents(24, 'sim2real_workplaces'); say(c3)
   const d = rig(); const s = d.exam.verifyRing0(); d.exam.unlockCity(0, 1); d.exam.unlockCity(s, 0); d.exam.unlockCity(s, 1); d.stage.s = null; d.exam.unlockCity(s, 1); say(d)
   const e = rig(); e.exam.verifyRing0(); e.flags.standing = false; e.exam.unlockCity(1, 1); say(e)
-  for (const st of ['move', 'exam', null] as const) { r.stage.s = st; lines.push(r.exam.status()) }
+  for (const st of ['move', 'console', null] as const) { r.stage.s = st; lines.push(r.exam.status()) }
   const off = rig()
   off.flags.on = false
   lines.push(off.exam.status())

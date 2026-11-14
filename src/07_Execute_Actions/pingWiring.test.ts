@@ -70,8 +70,11 @@ test('wiring: the engine pings from the head just posed over its own copies, cue
   // The snapshot carries the marks, with their place on the screen, only while some stand.
   assert.match(between(src, '  snapshot(): SipocSnapshot {', '  terminalBridge('), /\.\.\.\(pings && \{ pings \}\)/)
   const marks = between(src, '  private pingMarks(', '  /** A new state from the physics realm')
-  assert.match(marks, /v\.set\(p\.x, p\.y, p\.z\)\.project\(cam\)/)
-  assert.match(marks, /sx: ahead \? \(v\.x \+ 1\) \/ 2 : Number\.NaN, sy: ahead \? \(1 - v\.y\) \/ 2 : Number\.NaN/)
+  // Each mark placed through screenPoint.ts, which decides the side in view space (the renderer's depth is reversed, so a
+  // mark behind the visitor projected with a depth below 0 and was drawn mirrored ahead), in player 1's viewport.
+  assert.match(marks, /const \{ sx, sy \} = this\.screenOf\(p\.x, p\.y, p\.z\)/)
+  assert.match(marks, /if \(this\.views\.length <= 1\) return screenPoint\(this\.world\.camera, x, y, z\)\n\s+return screenPoint\(this\.world\.camera, x, y, z, \{ rect: this\.views\[0\]\.rect, width: this\.canvas\.clientWidth, height: this\.canvas\.clientHeight \}\)/)
+  assert.doesNotMatch(src, /\.project\(cam\)/, 'no chip placed by the clip test alone')
   assert.doesNotMatch(ping + rally + marks, /target/i, 'not the word the console forbids')
   assert.match(read('../05_Observe_Environment/telemetry.ts'), /pings\?: HudPing\[\]/)
   assert.match(read('./audio.ts'), /cuePing\(x: number, z: number, label\?: string\): boolean/)
