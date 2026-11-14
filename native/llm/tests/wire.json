@@ -1,0 +1,164 @@
+{
+  "done": [
+    {
+      "genMs": 820,
+      "gpu": false,
+      "id": 42,
+      "nBatch": 256,
+      "nCtx": 4096,
+      "prefillMs": 310,
+      "promptTokens": 187,
+      "reason": "eog",
+      "reused": 120,
+      "threads": 4,
+      "tokens": 9
+    },
+    {
+      "genMs": 820,
+      "gpu": false,
+      "id": 42,
+      "nBatch": 256,
+      "nCtx": 4096,
+      "prefillMs": 310,
+      "promptTokens": 187,
+      "reason": "maxTokens",
+      "reused": 120,
+      "threads": 4,
+      "tokens": 9
+    },
+    {
+      "genMs": 820,
+      "gpu": false,
+      "id": 42,
+      "nBatch": 256,
+      "nCtx": 4096,
+      "prefillMs": 310,
+      "promptTokens": 187,
+      "reason": "stopped",
+      "reused": 120,
+      "threads": 4,
+      "tokens": 9
+    },
+    {
+      "genMs": 820,
+      "gpu": false,
+      "id": 42,
+      "nBatch": 256,
+      "nCtx": 4096,
+      "prefillMs": 310,
+      "promptTokens": 187,
+      "reason": "context",
+      "reused": 120,
+      "threads": 4,
+      "tokens": 9
+    }
+  ],
+  "errors": [
+    {
+      "code": "offline",
+      "message": "a plain sentence"
+    },
+    {
+      "code": "refused",
+      "message": "a plain sentence"
+    },
+    {
+      "code": "model",
+      "message": "a plain sentence"
+    }
+  ],
+  "events": [
+    {
+      "kind": "waiting"
+    },
+    {
+      "done": 4194304,
+      "kind": "preparing",
+      "total": 397808192
+    },
+    {
+      "fraction": 0.5,
+      "kind": "loading"
+    },
+    {
+      "done": 120,
+      "kind": "read",
+      "total": 187
+    },
+    {
+      "kind": "text",
+      "text": "Hello"
+    }
+  ],
+  "models": [
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "done": 0,
+        "state": "preparing",
+        "total": 397808192
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "state": "ready"
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "state": "loaded"
+      }
+    },
+    {
+      "bytes": 156992,
+      "file": "tiny-a.gguf",
+      "status": {
+        "reason": "a plain sentence",
+        "refused": true,
+        "state": "failed"
+      }
+    }
+  ],
+  "request": {
+    "id": 42,
+    "maxTokens": 512,
+    "messages": [
+      {
+        "content": "You are Sloane.",
+        "role": "system"
+      },
+      {
+        "content": "Say hi.",
+        "role": "user"
+      },
+      {
+        "content": "Hi.",
+        "role": "assistant"
+      }
+    ],
+    "think": false
+  },
+  "statuses": [
+    {
+      "done": 0,
+      "state": "preparing",
+      "total": 397808192
+    },
+    {
+      "state": "ready"
+    },
+    {
+      "state": "loaded"
+    },
+    {
+      "reason": "a plain sentence",
+      "refused": true,
+      "state": "failed"
+    }
+  ]
+}

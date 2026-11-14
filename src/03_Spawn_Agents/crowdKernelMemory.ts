@@ -19,7 +19,10 @@
  * work, the browser's own watchdog or the system short of memory end it the same way): so a single loss is asked
  * about once more a day later (LOST_RETRY_MS), and only a second loss under the same kernel holds for as long as
  * the record matches; a refusal, cheap to ask again, is asked again after a week (REFUSED_RETRY_MS), and one whose
- * words name memory is not kept at all. The record changes at two moments of a boot
+ * words name memory is not kept at all. One GPU family starts lower before anything is learnt (familyKernel): Mali
+ * Bifrost, whose driver took Chrome's GPU process down compiling the full kernel and refused it in Brave, so a first
+ * visit, and every browser update (which asks afresh), does not cost such a phone a GPU process to learn it again.
+ * The record changes at two moments of a boot
  * only: a loss blamed on a kernel (the verdict, once), and the realm standing (stood, once); nothing the worker says
  * in between or afterwards touches it. One record serves every tab of the page, so two tabs learn from each other
  * and the last writer wins. Pure: storage is handed in (pageKernelStore reads the browser's, guarded like every
@@ -27,7 +30,7 @@
  * What breaks if it is removed? A phone whose driver dies on the full kernel shows the same failure at every
  * restart, and one whose driver refuses it compiles it again on every visit before the kernel that runs.
  */
-import { crowdKernelOf, KERNEL_WORDS, kernelBelow, type CrowdKernel } from './crowdSensor.ts'
+import { CROWD_KERNELS, crowdKernelOf, KERNEL_WORDS, kernelBelow, type CrowdKernel } from './crowdSensor.ts'
 import { WebGPUUnavailableError } from '../01_Initialize_World/gpuDevice.ts'
 
 /** Keyed by the package id like every store of the page. */
@@ -94,6 +97,36 @@ export function pageKernelStore(): KernelStore | null {
   try { return (globalThis as { localStorage?: KernelStore }).localStorage ?? null } catch { return null }
 }
 
+/**
+ * Pure. The rung a GPU family starts at before anything is learnt of this GPU, from the adapter's line (gpuDevice.ts
+ * adapterLine: vendor / architecture / description), or null: the full kernel, as for every other GPU. Mali Bifrost
+ * (architecture 'bifrost', or a Mali-G31, G51, G52, G71, G72 or G76 by name) starts on the light kernel: on a Mali-G52
+ * (Android 16) Chrome's GPU process died compiling the full kernel, and Brave's compiler refused it and the narrow
+ * one, so asking costs a crash, or two refused compiles, and never gives more. Valhall and later Malis are not known
+ * to fail and keep the full kernel; ?kernel=full still asks for everything.
+ */
+export function familyKernel(adapter: string): Exclude<CrowdKernel, 'full'> | null {
+  const a = adapter.toLowerCase()
+  return /\bbifrost\b|\bmali-g(?:31|51|52|71|72|76)\b/.test(a) ? 'lite' : null
+}
+
+/** Pure. Whether `a` is a heavier kernel than `b` (higher on the ladder). */
+const heavier = (a: CrowdKernel, b: CrowdKernel): boolean => CROWD_KERNELS.indexOf(a) < CROWD_KERNELS.indexOf(b)
+
+/**
+ * Pure. Whether `raw` holds a record of a kernel that took the GPU down, learnt anywhere (any build, browser version or
+ * adapter: a browser update asks the kernels afresh but does not undo what its GPU process went through). The
+ * recovery card's evidence that this browser's GPU went down under the city before (bootFailure.ts pageEnv).
+ */
+export function lostBefore(raw: string | null): boolean {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > RAW_MAX) return false
+  let data: unknown
+  try { data = JSON.parse(raw) } catch { return false }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+  const r = data as { sources?: unknown; ua?: unknown }
+  return parseKernelMemory(raw, { sources: str(r.sources) ? r.sources : '', ua: str(r.ua) ? r.ua : '', adapter: null })?.why === 'lost'
+}
+
 /** Pure. Where the next start begins after `rung` took the GPU down: the light kernel, or nothing after its own loss. */
 export function afterLoss(rung: CrowdKernel): KernelFloor {
   return rung === 'lite' ? 'none' : 'lite'
@@ -158,34 +191,41 @@ export interface KernelPlan {
   from: CrowdKernel | null
   /**
    * 'address': ?kernel= said. 'memory': a record did. 'retry': a record of one loss, old enough that the kernel it
-   * names is asked once more. 'default': the full kernel, nothing known against it (or a refusal old enough to ask again).
+   * names is asked once more. 'family': the GPU's family starts lower (familyKernel), nothing learnt of this GPU (or
+   * a refusal old enough to ask again). 'default': the full kernel, the same with nothing against it.
    */
-  by: 'address' | 'memory' | 'retry' | 'default'
+  by: 'address' | 'memory' | 'retry' | 'family' | 'default'
 }
 
 /** Pure. Whether a record written at `at` still holds at `nowMs` for `ms` (a clock that went back holds nothing). */
 const holds = (at: number, nowMs: number, ms: number): boolean => nowMs - at >= 0 && nowMs - at < ms
 
 /**
- * Pure. The first rung of this start: the address's word (?kernel=) when it has one, else the record's, else the full
- * kernel. A record of 'none' stops the start for noneHoldMs after it was written, whatever the address says, save
- * `?kernel=full`, which asks for everything again (the page's own restart writes ?kernel=lite into the address, so
- * only the word it never writes is taken as the player's own); after that the light kernel is asked once more. A
- * record of one loss asks for the lost kernel again after LOST_RETRY_MS, once ('retry'); a refusal asks from the top
- * again after REFUSED_RETRY_MS.
+ * Pure. The first rung of this start: the address's word (?kernel=) when it has one, else the record's, else where
+ * the GPU's family starts (`family`, familyKernel), else the full kernel. A record of 'none' stops the start for
+ * noneHoldMs after it was written, whatever the address says, save `?kernel=full`, which asks for everything again
+ * (the page's own restart writes ?kernel=lite into the address, so only the word it never writes is taken as the
+ * player's own); after that the light kernel is asked once more. A record of one loss asks for the lost kernel again
+ * after LOST_RETRY_MS, once ('retry'), unless that kernel is above where the family starts (the record then stands);
+ * a refusal asks from the top again after REFUSED_RETRY_MS, the family's top for a family that starts lower, save
+ * where the rung the record saw stand is above the family's (asked for by address once, and it ran): that rung.
  */
-export function planKernel(asked: CrowdKernel | null, memory: KernelMemory | null, nowMs: number): KernelPlan {
+export function planKernel(asked: CrowdKernel | null, memory: KernelMemory | null, nowMs: number, family: Exclude<CrowdKernel, 'full'> | null = null): KernelPlan {
+  const top: KernelPlan = family ? { from: family, by: 'family' } : { from: 'full', by: 'default' }
   if (memory?.from === 'none' && asked !== 'full') {
     if (holds(memory.at, nowMs, noneHoldMs(memory.strikes))) return { from: null, by: 'memory' }
-    return asked ? { from: asked, by: 'address' } : { from: 'lite', by: 'memory' }
+    // After the hold the light kernel is asked once more: the record's doing, or the family's where the family starts
+    // there (such a GPU is never asked for a heavier kernel again without the address, so the console names its family,
+    // not a heavier kernel's loss: engine.ts kernelWhy).
+    return asked ? { from: asked, by: 'address' } : { from: 'lite', by: family === 'lite' ? 'family' : 'memory' }
   }
   if (asked) return { from: asked, by: 'address' }
   if (memory && memory.from !== 'none') {
-    if (memory.why === 'refused') return holds(memory.at, nowMs, REFUSED_RETRY_MS) ? { from: memory.from, by: 'memory' } : { from: 'full', by: 'default' }
-    if (memory.strikes < LOST_STRIKES && !holds(memory.at, nowMs, LOST_RETRY_MS)) return { from: memory.rung, by: 'retry' }
+    if (memory.why === 'refused') return holds(memory.at, nowMs, REFUSED_RETRY_MS) || (family && heavier(memory.from, family)) ? { from: memory.from, by: 'memory' } : top
+    if (memory.strikes < LOST_STRIKES && !holds(memory.at, nowMs, LOST_RETRY_MS) && !(family && heavier(memory.rung, family))) return { from: memory.rung, by: 'retry' }
     return { from: memory.from, by: 'memory' }
   }
-  return { from: 'full', by: 'default' }
+  return top
 }
 
 /**
@@ -248,7 +288,7 @@ export class KernelWatch {
     this.#where = where
     this.#now = now
     this.memory = loadKernelMemory(store, where)
-    this.plan = planKernel(asked, this.memory, now())
+    this.plan = planKernel(asked, this.memory, now(), familyKernel(where.adapter))
   }
 
   /** The newest step the worker told, or null. */
@@ -325,8 +365,10 @@ export class KernelWatch {
    * rung reached because the one above was refused in this very boot becomes where later starts begin (unless the
    * refusal's words name memory: the system was short of it then, which says nothing of the kernel). The light
    * kernel standing where the record said 'none' leaves the record of one loss above it, to be asked about a day
-   * later; and a kernel asked for again ('retry') that stands below the full one forgets the record, so the next
-   * start learns the ladder afresh. Anything else (the remembered rung ran, or the address's) changes nothing.
+   * later, save on a GPU whose family starts lower (familyKernel): whatever kernel stood (the address's counts for its
+   * visit only), such a GPU is never asked for anything above the family's rung again without the address, so the
+   * record has nothing left to say and is forgotten; later starts begin where the family does. A kernel asked for again
+   * ('retry') that stands below the full one forgets the record, so the next start learns the ladder afresh. Anything else (the remembered rung ran, or the address's) changes nothing.
    */
   stood(kernel: CrowdKernel | 'none'): void {
     if (this.#verdict || this.#stood) return
@@ -337,7 +379,11 @@ export class KernelWatch {
     else if (this.#refused) {
       if (!MEMORY_WORDS.test(this.#refused.words)) saveKernelMemory(this.#store, this.#where, { from: kernel, why: 'refused', rung: this.#refused.rung, words: this.#refused.words }, this.#now())
     }
-    else if (before?.from === 'none') saveKernelMemory(this.#store, this.#where, { from: kernel, why: 'lost', rung: 'full', words: before.words }, this.#now())
+    else if (before?.from === 'none') {
+      const family = familyKernel(this.#where.adapter)
+      if (family) clearKernelMemory(this.#store)
+      else saveKernelMemory(this.#store, this.#where, { from: kernel, why: 'lost', rung: 'full', words: before.words }, this.#now())
+    }
     else if (this.plan.by === 'retry') clearKernelMemory(this.#store)
   }
 }

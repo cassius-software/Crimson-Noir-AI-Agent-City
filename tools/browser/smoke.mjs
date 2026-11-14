@@ -87,19 +87,26 @@
  *   its first bytes (the copy takes that very answer over), then over a whole link, run by the very next load
  *   (isolated, then kept by its own worker, the older copy dropped), and the city started from the phone's copy of
  *   that build with the host gone, the kept model still answering;
- * - sitemodel: the one tap that gives a fresh visitor to the web copy a model to talk to Sloane with (09_Cognition/
- *   siteModel.ts, App.tsx's siteHost, Concierge.tsx): the web copy built from dist/index.html with the page's pin
- *   (SITE_MODEL's file name, size and SHA-256) swapped for the tiny model's and the tiny model placed beside it by
- *   tools/web/siteModel.mjs, as the web workflow places the real one, served as a static host serves it, to a desktop.
- *   "how's it going" typed into Sloane's goal field finds no model, and the card offers Get the model with its size,
- *   the page having asked this site for the manifest alone; one click downloads it with its progress on the card,
- *   keeps it in the page's storage and asks the turn again by itself, and the model answers it (CHAT_MAX a's); the
- *   toast says it is loaded, `ask` says the inpage provider answers with it, kept and chosen, and the service worker's
- *   cache holds nothing under models/. The visit is audited as inpage's is: from the click on, every request stays in
- *   blob:, data: or the page's own origin (before it, only Sloane's look for a model server on this machine leaves
- *   it), no socket is opened and no security message logged. Then, in a fresh browser, the model with one byte
- *   flipped: the card says its SHA-256 differs, the button is back and nothing is kept, and with the right file back
- *   the same button keeps it;
+ * - sitemodel: the model the web copy serves beside the page, got by the page itself and by the one tap (09_Cognition/
+ *   siteModel.ts, siteAuto.ts, siteJob.ts, App.tsx's siteHost and siteAuto, Concierge.tsx): the web copy built from
+ *   dist/index.html with the page's pin (SITE_MODEL's file name, size and SHA-256) swapped for the tiny model's and the
+ *   tiny model placed beside it by tools/web/siteModel.mjs, as the web workflow places the real one, served as a static
+ *   host serves it, to a desktop. A fresh visit with the model's answer held halfway: once the city is on screen the
+ *   page asks for the manifest and the model with no click, Sloane's card shows its progress and its Stop, and the Stop
+ *   keeps nothing and is remembered. On the next visit "how's it going" typed into Sloane's goal field finds no model,
+ *   and the card offers Get the model with its size, the page having asked this site for the manifest alone (the Stop
+ *   held it back); one click downloads it with its progress on the card, keeps it in the page's storage and asks the
+ *   turn again by itself, and the model answers it (CHAT_MAX a's); the toast says it is loaded, `ask` says the inpage
+ *   provider answers with it, kept and chosen, and the service worker's cache holds nothing under models/. The visit is
+ *   audited as inpage's is: every request stays in blob:, data: or the page's own origin (but for Sloane's look for a
+ *   model server on this machine), no socket is opened and no security message logged. Then a fresh browser gets it by
+ *   itself whole: kept, said in a toast, loaded, and answering Sloane with the provider left at auto. Then, in a fresh
+ *   browser, the model with one byte flipped: the page's own try says in a toast that its SHA-256 differs and keeps
+ *   nothing, the card says why and offers the button, and with the right file back the same button keeps it;
+ * - launcher: the model the NixOS package's launcher serves beside its page (tools/web/launch.mjs, tools/nix/model.nix,
+ *   App.tsx launcherSource): the launcher's own server, a model folder laid out as the package lays it, the page with
+ *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
+ *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
  *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
  *   sizes and the walk's card stepping aside for it under 960 px;
@@ -160,7 +167,7 @@
  * screenshot per scenario to --out (default: a temporary directory), and the console's transcript where a scenario
  * types in it, prints one row per check (and an `info` row for what is recorded, not asserted) and exits 1 if any
  * fails.
- * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,sitemodel,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
+ * Usage: node tools/browser/smoke.mjs [--chrome <path>] [--out <dir>] [--only desktop,phone,split,file,ultra,peak,lite,tty,pwa,inpage,sitemodel,launcher,actions,walk,walkshop,walkhome,walkphone,lakefront,homes,furnish,rest,fail].
  * `--shard i/n` runs only part i of n of those scenarios (shard.mjs: split by how long each took in CI), as CI's
  * browser jobs do.
  * Needs `npm run build`.
@@ -169,7 +176,7 @@
  */
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -178,11 +185,13 @@ import { HPARAMS, tinyGguf } from './tinyGguf.mjs'
 import { parseShard, shardOf } from './shard.mjs'
 import { APP_NAME, build as buildWeb, CACHED, ICONS } from '../web/pwa.mjs'
 import { placeModel } from '../web/siteModel.mjs'
+import { MODEL_MANIFEST, readModels, respond } from '../web/launch.mjs'
 import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { CHAT_MAX } from '../../src/07_Execute_Actions/onboarding/voice.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
 import { MODELS_DIR } from '../../src/09_Cognition/modelStore.ts'
-import { SITE_DIR, SITE_MANIFEST, SITE_MODEL } from '../../src/09_Cognition/siteModel.ts'
+import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, manifestText } from '../../src/09_Cognition/siteModel.ts'
+import { AUTO_KEY, STOPPED } from '../../src/09_Cognition/siteAuto.ts'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DIST = join(ROOT, 'dist', 'index.html')
@@ -908,14 +917,30 @@ const KEPT_ON_A_PHONE = new RegExp(`^${TINY.replace('.', '\\.')} is kept in this
 /** What the sitemodel scenario says to Sloane: talk (intent.ts Brief.chat), which only a model answers. */
 const SMALL_TALK = "how's it going"
 
-/** The tiny model's pin in SITE_MODEL's shape (siteModel.ts): its file name, its size and its SHA-256. */
-function tinyPin() {
+/** The tiny model's pin in the shape of `base` (siteModel.ts SITE_MODEL or APP_MODEL): its file name, its size and its SHA-256. */
+function tinyPin(base = SITE_MODEL) {
   const bytes = readFileSync(tinyModel())
-  return Object.freeze({ ...SITE_MODEL, file: TINY, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
+  return Object.freeze({ ...base, file: TINY, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
 }
 
 /** `text` as a regular expression that matches it literally. */
 const literal = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * dist/index.html with the compiled pin `was` (SITE_MODEL or APP_MODEL: its file name, size and SHA-256, side by side
+ * as `file:…,bytes:…,sha256:…`) replaced by `pin`'s. The pin must be found exactly once, and its SHA-256 nowhere else,
+ * or the run stops here: the page's pin is not where this looks for it.
+ */
+function pinnedPage(was, pin) {
+  const q = '([`\'"])'
+  const at = new RegExp(`(\\bfile\\s*:\\s*)${q}${literal(was.file)}\\2(\\s*,\\s*bytes\\s*:\\s*)${literal(was.bytes)}(\\s*,\\s*sha256\\s*:\\s*)${q}${literal(was.sha256)}\\5`, 'g')
+  const page = readFileSync(DIST, 'utf8')
+  const n = page.match(at)?.length ?? 0
+  if (n !== 1) throw new Error(`dist/index.html holds the pin of ${was.file} (${was.bytes} bytes, sha256 ${was.sha256.slice(0, 8)}…) ${n} times, not once: rebuild it (npm run build), or find where the page's pin went`)
+  const html = page.replace(at, (_m, file, fq, bytes, sha, sq) => `${file}${fq}${pin.file}${fq}${bytes}${pin.bytes}${sha}${sq}${pin.sha256}${sq}`)
+  if (html.includes(was.sha256)) throw new Error(`dist/index.html holds the SHA-256 of ${was.file} somewhere besides its pin: the page would not be built for ${pin.file} alone`)
+  return html
+}
 
 /**
  * The web copy built for `pin` instead of the site's model (sitemodel), in `<dir>/web`: dist/index.html with
@@ -926,13 +951,7 @@ const literal = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
  * looks for it. (The page's notice names the file in its prose too; that line is left as it is.) Returns the folder.
  */
 async function siteCopy(pin, dir) {
-  const q = '([`\'"])'
-  const at = new RegExp(`(\\bfile\\s*:\\s*)${q}${literal(SITE_MODEL.file)}\\2(\\s*,\\s*bytes\\s*:\\s*)${literal(SITE_MODEL.bytes)}(\\s*,\\s*sha256\\s*:\\s*)${q}${literal(SITE_MODEL.sha256)}\\5`, 'g')
-  const page = readFileSync(DIST, 'utf8')
-  const n = page.match(at)?.length ?? 0
-  if (n !== 1) throw new Error(`dist/index.html holds SITE_MODEL (${SITE_MODEL.file}, ${SITE_MODEL.bytes} bytes, sha256 ${SITE_MODEL.sha256.slice(0, 8)}…) ${n} times, not once: rebuild it (npm run build), or find where the page's pin went`)
-  const html = page.replace(at, (_m, file, fq, bytes, sha, sq) => `${file}${fq}${pin.file}${fq}${bytes}${pin.bytes}${sha}${sq}${pin.sha256}${sq}`)
-  if (html.includes(SITE_MODEL.sha256)) throw new Error(`dist/index.html holds the site's SHA-256 somewhere besides its pin: the page would not be built for ${pin.file} alone`)
+  const html = pinnedPage(SITE_MODEL, pin)
   const from = join(dir, 'page')
   mkdirSync(from, { recursive: true })
   writeFileSync(join(from, 'index.html'), html)
@@ -945,11 +964,32 @@ async function siteCopy(pin, dir) {
 /** A page expression: the centre of the element `q` matches, once a click there lands on it (null until then). */
 const hitOf = (q) => `(() => { const e = document.querySelector(${JSON.stringify(q)}); if (!e) return null; const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2
   return r.width > 0 && e.contains(document.elementFromPoint(x, y)) ? [x, y] : null })()`
-/** Clicks (x, y) with the mouse's left button, as a person does. */
-async function clickAt(p, [x, y]) {
-  await p.mouse('mouseMoved', x, y)
-  await p.mouse('mousePressed', x, y, 1)
-  await p.mouse('mouseReleased', x, y)
+/**
+ * Clicks the element `q` matches with the mouse's left button, as a person does, trying for up to `ms`: returns where
+ * it pressed, or null when a click could not land on it in that time. A click that misses lands on the city's canvas,
+ * which takes the pointer (input.ts capturePointer), and headless Chrome grants the lock: every later click then goes
+ * to the canvas wherever it is pressed (sitemodel's second visit on CI, three chip clicks all on the canvas). So the
+ * lock is let go first, and the centre is found again with the mouse over it and pressed only where it still is (a
+ * chip or card still settling, or a layout that moved between the look and the press).
+ */
+async function clickOn(p, q, ms) {
+  await p.eval('(document.pointerLockElement && document.exitPointerLock(), true)').catch(() => {})
+  await p.waitFor('document.pointerLockElement === null', 5_000).catch(() => {})
+  const end = Date.now() + ms
+  for (;;) {
+    const at = await p.eval(hitOf(q)).catch(() => null)
+    if (at) {
+      await p.mouse('mouseMoved', at[0], at[1])
+      const still = await p.eval(hitOf(q)).catch(() => null)
+      if (still && Math.abs(still[0] - at[0]) < 1 && Math.abs(still[1] - at[1]) < 1) {
+        await p.mouse('mousePressed', still[0], still[1], 1)
+        await p.mouse('mouseReleased', still[0], still[1])
+        return still
+      }
+    }
+    if (Date.now() > end) return null
+    await new Promise((r) => setTimeout(r, 250))
+  }
 }
 
 /**
@@ -973,6 +1013,19 @@ const SITE_WATCH = `(() => { const s = window.__smokeSite = { steps: [], lines: 
     if (c.textContent.includes('Starting the model')) s.starting = true }
   new MutationObserver(look).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true }); look() })()`
 
+/**
+ * A page expression: the strip that shows the site's model being got where the conversation does not (Concierge.tsx
+ * data-site-strip: Sloane's chip or the foot of her card), its step, its bar's value and whether it has a Stop; null
+ * while none shows.
+ */
+const SITE_STRIP = `(() => { const s = document.querySelector('[data-site-strip]'); return s ? { step: s.getAttribute('data-site-strip'), value: s.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow') ?? null, stop: !!s.querySelector('[data-action="stop-model"]') } : null })()`
+
+/** A page expression: the record the page keeps of its own tries to get the site's model (siteAuto.ts), parsed, or null. */
+const AUTO_RECORD = `(() => { try { return JSON.parse(localStorage.getItem(${JSON.stringify(AUTO_KEY)}) ?? 'null') } catch { return 'unreadable' } })()`
+
+/** A page expression: the toasts titled Model file (App.tsx MODEL_FILE), their bodies in order. */
+const MODEL_TOASTS = `window.__SIM__.engine.toasts.filter((t) => t.title === ${JSON.stringify(MODEL_FILE)}).map((t) => t.body)`
+
 /** A page expression: what the page's model store holds (modelStore.ts MODELS_DIR), each kept model as its files. */
 const KEPT_IN_STORE = `(async () => { try { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(${JSON.stringify(MODELS_DIR)}); const out = []
   for await (const [, h] of d.entries()) { if (h.kind !== 'directory') continue; const names = []; for await (const [n] of h.entries()) names.push(n); out.push(names.sort().join(' + ')) }
@@ -988,8 +1041,8 @@ const WHERE_KEYS = `(() => { const a = document.activeElement, c = document.quer
 
 /**
  * A page expression: starts a trail (once a page) of the views Sloane's card goes through ('nothing' while it is
- * hidden), where the keyboard was and whether the visitor was on foot each time, and every key, pointer press, click
- * and focus the page saw, each with its time in ms; the last 40 are kept. talkToSloane reports it when the goal field
+ * hidden), where the keyboard was and whether the visitor was on foot each time, and every key, pointer press, click,
+ * focus and pointer lock the page saw, each with its time in ms; the last 40 are kept. talkToSloane reports it when the goal field
  * never took the keyboard.
  */
 const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = window.__cardTrail = [], t0 = performance.now()
@@ -1001,35 +1054,36 @@ const CARD_TRAIL = `(() => { if (window.__cardTrail) return true; const t = wind
   new MutationObserver(() => { const v = view(); if (v !== last) { note('view ' + last + ' > ' + v + ', keys on ' + on(document.activeElement) + ', ' + mode()); last = v } })
     .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-concierge'] })
   for (const type of ['keydown', 'pointerdown', 'click', 'focusin']) window.addEventListener(type, (e) => note(type + ' ' + (e.key ?? e.pointerType ?? '') + ' on ' + on(e.target)), true)
+  document.addEventListener('pointerlockchange', () => note('pointer lock on ' + on(document.pointerLockElement)))
   return true })()`
 
 /**
- * A first visit to `url` as far as Sloane's answer to SMALL_TALK (sitemodel): the city booted, the name question
- * skipped with Esc and the greeting put away with Esc, the chip clicked (again, should a line of Sloane's own have
- * taken its place), the words typed into the goal field and sent with Enter. Returns the card (SLOANE_TALK) once it
- * offers the site's model in a conversation no model answered, or as it is after two minutes, and what went wrong on
- * the way there.
+ * A visit to `url` (null: the page as it is, booted already) as far as Sloane's answer to SMALL_TALK (sitemodel): the
+ * city booted, the name question skipped with Esc and the greeting put away with Esc, the chip clicked (again, should
+ * a line of Sloane's own have taken its place), the words typed into the goal field and sent with Enter. Returns the card (SLOANE_TALK) once
+ * `until` (a page expression) holds, by default once it offers the site's model in a conversation no model answered,
+ * or as it is after two minutes, and what went wrong on the way there.
  */
-async function talkToSloane(p, url) {
+async function talkToSloane(p, url, until = `(() => { const t = ${SLOANE_TALK}; return t.state === 'none' && t.offer !== null && t })()`) {
   const notes = []
-  await p.goto(url)
-  await p.booted()
+  if (url !== null) {
+    await p.goto(url)
+    await p.booted()
+  }
   await p.eval(CARD_TRAIL).catch(() => {})
   if (await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your name'`, 30_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
   else notes.push('the name question never took the keyboard')
   if (await p.waitFor(`!!document.querySelector('aside[data-concierge="greet"]')`, 10_000).then(() => true, () => false)) await p.tap('Escape', 'Escape', 27)
   let field = false
   for (let i = 0; i < 3 && !field; i++) {
-    const chip = await p.waitFor(hitOf('[data-concierge="chip"]'), 30_000).catch(() => null)
+    const chip = await clickOn(p, '[data-concierge="chip"]', 30_000)
     if (!chip) { notes.push(`no chip to click (${await p.eval(WHERE_KEYS)})`); break }
-    await clickAt(p, chip)
     field = await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your goal'`, 10_000).then(() => true, () => false)
     if (!field) notes.push(`the chip's click left ${await p.eval(WHERE_KEYS)}`)
   }
   // A goal field on screen that did not take the keyboard by itself is clicked into, as a person would.
-  const box = field ? null : await p.waitFor(hitOf('aside[data-concierge] [aria-label="Your goal"]'), 5_000).catch(() => null)
+  const box = field ? null : await clickOn(p, 'aside[data-concierge] [aria-label="Your goal"]', 5_000)
   if (box) {
-    await clickAt(p, box)
     field = await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Your goal'`, 5_000).then(() => true, () => false)
   }
   if (!field) {
@@ -1039,7 +1093,7 @@ async function talkToSloane(p, url) {
   await p.type(SMALL_TALK)
   await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' })
   await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
-  const card = await p.waitFor(`(() => { const t = ${SLOANE_TALK}; return t.state === 'none' && t.offer !== null && t })()`, 120_000).catch(() => p.eval(SLOANE_TALK))
+  const card = await p.waitFor(until, 120_000).catch(() => p.eval(SLOANE_TALK))
   return { card, notes }
 }
 
@@ -2108,15 +2162,18 @@ const SCENARIOS = {
   },
 
   /**
-   * The one tap to a model on the web copy (see the file's comment). The copy is built here for the tiny model
-   * (siteCopy) and served by serveStatic, which notes every path asked for: the manifest alone before the click, the
-   * model once after it. The first visit is audited from its start (watchTargets); the second, in a fresh browser, gets
-   * the model with one byte flipped, then the right one again.
+   * The site's model on the web copy, got by the page itself and by the one tap (see the file's comment). The copy is
+   * built here for the tiny model (siteCopy) and served by serveStatic, which notes every path asked for. The first
+   * browser is audited from its start (watchTargets): the page's own download, stopped; the next visit's tap. A second
+   * browser gets it by itself, whole, and answers with it on its next visit; a third gets it with one byte flipped,
+   * says why in the same visit, then keeps the right one from the button.
    */
   async sitemodel(chrome) {
     const pin = tinyPin()
     const offer = `Get the model · ${Math.round(pin.bytes / 1024)} KB`
     const path = `${SITE_DIR}${pin.file}`
+    const keptToast = new RegExp(`^${literal(TINY)} is kept in this page \\(${Math.round(pin.bytes / 1024)} KB\\): it answers whenever no model server on this machine does, and it is loading$`)
+    const loadedToast = new RegExp(`^${literal(TINY)} is loaded in this page \\(`)
     const dir = mkdtempSync(join(tmpdir(), 'agent-city-site-'))
     let site = null
     try {
@@ -2127,21 +2184,43 @@ const SCENARIOS = {
       /** What was asked for under models/ since `from` (an index into served). */
       const models = (from = 0) => served.slice(from).filter((f) => f.startsWith(SITE_DIR))
 
-      // A first visit from a desktop: no model answers Sloane, and the card offers the site's.
+      // A first visit from a desktop, the model's answer held halfway: the page gets it by itself, its progress and its
+      // Stop on Sloane's card; the Stop keeps nothing and is remembered.
       const p = await open(chrome)
       const watch = await watchTargets(p.b)
       try {
+        site.stall(path, pin.bytes >> 1)
+        await p.goto(url)
+        await p.booted()
+        const strip = await p.waitFor(`(() => { const s = ${SITE_STRIP}; return s && s.step === 'download' && Number(s.value) > 0 && s })()`, 90_000).catch(() => p.eval(SITE_STRIP))
+        check(strip?.step === 'download' && Number(strip.value) > 0 && strip.stop === true, 'sitemodel: once the city is on screen the page gets the site\'s model by itself, its progress and its Stop on Sloane\'s card', JSON.stringify(strip))
+        check(JSON.stringify(models()) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: with no click the page asked this site for the manifest, then the model, once each', models().join(', ') || 'nothing under models/')
+        const stop = await clickOn(p, '[data-site-strip] [data-action="stop-model"]', 10_000)
+        const stopped = await p.waitFor(`(() => { const r = ${AUTO_RECORD}; return !(${SITE_STRIP}) && r && r.off && r })()`, 30_000).catch(() => p.eval(AUTO_RECORD))
+        const none = await p.eval(KEPT_IN_STORE)
+        check(!!stop && stopped?.off === STOPPED && !stopped.mark && none.length === 0, 'sitemodel: its Stop takes the strip away, keeps nothing, and is remembered',
+          `${stop ? 'clicked' : 'no Stop to click'}; record ${JSON.stringify(stopped)}; ${none.join('; ') || 'the store is empty'}`)
+        site.flow()
+
+        // The next visit, after the Stop: the page gets nothing by itself (it would have asked for the model long before
+        // the card's offer shows), "how's it going" finds no model, the card offers the site's, and one click gets it.
+        const talkAt = served.length
+        // Until anyone speaks to Sloane nothing but this site is asked: the page's own start, its download and its Stop
+        // look for no model server on this machine (a look at the loopback can bring a browser's prompt).
+        const unspoken = watch.requests.filter((r) => !(r.url === origin || r.url.startsWith(`${origin}/`) || r.url.startsWith('blob:') || r.url.startsWith('data:')))
+        check(unspoken.length === 0, 'sitemodel: until anyone spoke to Sloane, the page (its own download and its Stop among it) asked nothing off its own site, not even a model server on this machine',
+          unspoken.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ') || 'nothing off this site')
         const first = await talkToSloane(p, url)
         check(first.card?.state === 'none' && first.card.offer === offer, `sitemodel: "${SMALL_TALK}" to Sloane with no model brings the card's offer of the site's model, with its size`,
           `${JSON.stringify({ state: first.card?.state, offer: first.card?.offer })}${first.notes.length ? `; ${first.notes.join('; ')}` : ''}`)
-        check(JSON.stringify(models()) === JSON.stringify([SITE_MANIFEST]), 'sitemodel: before the click the page has asked this site for the manifest alone, once, and for no byte of the model', models().join(', ') || 'nothing under models/')
+        const stripAfter = await p.eval(SITE_STRIP)
+        check(JSON.stringify(models(talkAt)) === JSON.stringify([SITE_MANIFEST]) && stripAfter === null, 'sitemodel: after the Stop the next visit gets nothing by itself: before the click the page has asked this site for the manifest alone, once, and for no byte of the model',
+          `${models(talkAt).join(', ') || 'nothing under models/'}${stripAfter ? `; a strip shows: ${JSON.stringify(stripAfter)}` : ''}`)
 
         // The click: the model downloaded with its progress on the card, kept, and the last turn asked again.
-        const tapAt = watch.requests.length
         const servedAt = served.length
         await p.eval(SITE_WATCH)
-        const button = await p.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (button) await clickAt(p, button)
+        const button = await clickOn(p, 'aside[data-concierge] [data-action="site-model"]', 10_000)
         const t0 = Date.now()
         const end = await p.waitFor(`(() => { const t = ${SLOANE_TALK}, s = window.__smokeSite; return (t.state === 'said' || t.why || (s.states.includes('waiting') && t.state !== 'waiting')) && t })()`, 300_000).catch(() => p.eval(SLOANE_TALK))
         const ms = Date.now() - t0
@@ -2154,15 +2233,14 @@ const SCENARIOS = {
           `sitemodel: the card asks the turn again by itself ("Starting the model…") and the model answers it: ${CHAT_MAX} a's, cut at Sloane's limit`,
           `states ${seen.states.join(' > ')}; ${seen.starting ? 'said it was starting' : 'never said it was starting'}; ${end?.state}: ${(end?.line ?? '').length} chars, ${(end?.line.match(/a/g) ?? []).length} a's, in ${ms} ms`)
         // The desktop's warm load says so in a toast (App.tsx keepPicked); the console says the file is kept and chosen.
-        const toasts = await p.waitFor(`(() => { const t = window.__SIM__.engine.toasts.filter((t) => t.title === ${JSON.stringify(MODEL_FILE)}).map((t) => t.body); return t.some((b) => !/^keeping|^reload once/.test(b)) && t })()`, 60_000)
+        const toasts = await p.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => !/^keeping|^reload once/.test(b)) && t })()`, 60_000)
           .catch(() => p.eval(`window.__SIM__.engine.toasts.map((t) => t.title + ': ' + t.body)`))
-        check(toasts.some((b) => new RegExp(`^${TINY.replace('.', '\\.')} is loaded in this page \\(`).test(b)), 'sitemodel: the toast says the model is loaded in this page', toasts.join(' | ').slice(0, 300))
-        const close = await p.waitFor(hitOf('aside[data-concierge] button[aria-label="Close"]'), 10_000).catch(() => null)
-        if (close) await clickAt(p, close)
+        check(toasts.some((b) => loadedToast.test(b)), 'sitemodel: the toast says the model is loaded in this page', toasts.join(' | ').slice(0, 300))
+        await clickOn(p, 'aside[data-concierge] button[aria-label="Close"]', 10_000)
         check(await p.openConsole(), 'sitemodel: with the card put away, the tilde key opens the console')
         await p.command('operator unlock', /unlocked/)
         const status = await p.command('ask', /installed|ask: /, 60_000)
-        check(/inpage: a model file kept in this page/.test(status ?? '') && new RegExp(`${TINY.replace('.', '\\.')}\\s+\\(chosen\\)`).test(status ?? '') && /storage\s+kept in this page/.test(status ?? ''),
+        check(/inpage: a model file kept in this page/.test(status ?? '') && new RegExp(`${literal(TINY)}\\s+\\(chosen\\)`).test(status ?? '') && /storage\s+kept in this page/.test(status ?? ''),
           'sitemodel: ask says the inpage provider answers with the file kept in this page, and it is chosen', (status ?? '').split('\n').filter((l) => /provider|storage|installed|runtime/.test(l)).join(' | ').slice(0, 400))
         const kept = await p.eval(KEPT_IN_STORE)
         check(kept.length === 1 && kept[0] === `meta.json + ${TINY}`, 'sitemodel: the page\'s model store holds it, committed', kept.join('; '))
@@ -2171,28 +2249,51 @@ const SCENARIOS = {
         const cached = await p.eval(CACHED_URLS)
         check(cached.some((u) => u.endsWith('/index.html')) && !cached.some((u) => u.includes(`/${SITE_DIR}`)), 'sitemodel: the service worker\'s cache holds the page and nothing under models/', `${cached.length} cached: ${cached.map((u) => u.slice(origin.length)).join(', ')}`)
 
-        // The audit, over the whole visit: from the click on, nothing but this site.
+        // The audit, over the whole visit: nothing but this site, but for Sloane's look for a model server on this machine.
         const own = (u) => u === origin || u.startsWith(`${origin}/`) || u.startsWith('blob:') || u.startsWith('data:')
         const loopback = (u) => /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\//.test(u)
         await settle(() => watch.audit(own).missing.length === 0, 3_000)
         const a = watch.audit(own)
-        const looks = watch.requests.slice(0, tapAt).filter((r) => !own(r.url))
-        const after = watch.requests.slice(tapAt)
-        const strays = [...looks.filter((r) => !loopback(r.url)), ...after.filter((r) => !own(r.url))]
-        console.log(`      sitemodel audit: ${a.requests} requests (${after.length} from the click on, ${a.fromWorkers} from workers), ${looks.length} to a model server on this machine before the click, ${a.discovered} workers discovered, ${a.attached} attached, ${a.browserOwned} the browser's own, ${a.sockets.length} sockets, ${a.security.length} security messages`)
-        check(strays.length === 0 && after.length > 0 && a.missing.length === 0, `sitemodel: from the click on every request from the page and every worker it started stayed in blob:, data: or ${origin} (before it, only Sloane's look for a model server on this machine left it)`,
-          `${after.length} from the click on${strays.length ? `; ${strays.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ')}` : ''}${a.missing.length ? `; not watched: ${a.missing.map((m) => `${m.type} ${m.url.slice(0, 60)}`).join(', ')}` : ''}`)
+        const looks = watch.requests.filter((r) => !own(r.url))
+        const strays = looks.filter((r) => !loopback(r.url))
+        console.log(`      sitemodel audit: ${a.requests} requests (${a.fromWorkers} from workers), ${looks.length} to a model server on this machine, ${a.discovered} workers discovered, ${a.attached} attached, ${a.browserOwned} the browser's own, ${a.sockets.length} sockets, ${a.security.length} security messages`)
+        check(strays.length === 0 && a.missing.length === 0, `sitemodel: every request from the page and every worker it started stayed in blob:, data: or ${origin} (but for Sloane's look for a model server on this machine)`,
+          `${strays.length ? strays.slice(0, 3).map((x) => `${x.type} ${x.url.slice(0, 80)}`).join(', ') : 'none strayed'}${a.missing.length ? `; not watched: ${a.missing.map((m) => `${m.type} ${m.url.slice(0, 60)}`).join(', ')}` : ''}`)
         check(a.sockets.length === 0, 'sitemodel: no WebSocket or WebTransport was opened', a.sockets.slice(0, 3).map((x) => `${x.type} ${x.url}`).join(', '))
         check(a.security.length === 0, 'sitemodel: no security message (a CSP violation among them) from the page or any worker', a.security.slice(0, 3).map((x) => `${x.type}: ${x.text}`).join(' | ').slice(0, 400))
         await p.shot('sitemodel')
         p.health('sitemodel')
       } finally {
+        site.flow()
         p.saveTranscript('sitemodel')
         await p.b.close()
       }
 
-      // The same copy with one byte of the model flipped, to a fresh browser: refused by its hash, nothing kept; then,
-      // with the right file back, the same button keeps it.
+      // A fresh browser: the page gets it by itself, whole: kept (said in a toast), loaded, and Sloane answers with it,
+      // the provider left at auto.
+      const r = await open(chrome)
+      try {
+        const autoAt = served.length
+        await r.goto(url)
+        await r.booted()
+        const got = await r.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => ${loadedToast}.test(b)) && t })()`, 180_000).catch(() => r.eval(MODEL_TOASTS))
+        check(got.some((b) => keptToast.test(b)) && got.some((b) => loadedToast.test(b)), 'sitemodel: a fresh browser gets the model by itself: a toast says it is kept (the provider left as it was), another that it is loaded', got.join(' | ').slice(0, 300))
+        check(JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: it asked this site for the manifest and the model, once each, with no click', models(autoAt).join(', ') || 'nothing under models/')
+        const record = await r.eval(AUTO_RECORD)
+        const keptAuto = await r.eval(KEPT_IN_STORE)
+        check(record === null && keptAuto.length === 1 && keptAuto[0] === `meta.json + ${TINY}`, 'sitemodel: kept in the page\'s store, and nothing left in its record', `record ${JSON.stringify(record)}; ${keptAuto.join('; ') || 'the store is empty'}`)
+        const talk = await talkToSloane(r, url, `(() => { const t = ${SLOANE_TALK}; return t.state !== null && t.state !== 'waiting' && t })()`)
+        const answered = talk.card
+        check(answered?.state === 'said' && answered.line === `${'a'.repeat(CHAT_MAX)}…` && JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]),
+          'sitemodel: on the next visit Sloane answers with the model the page got, asking this site for nothing more', `${answered?.state}: ${(answered?.line ?? '').slice(0, 40)}; ${models(autoAt).join(', ')}${talk.notes.length ? `; ${talk.notes.join('; ')}` : ''}`)
+        await r.shot('sitemodel-auto')
+        r.health('sitemodel (got by the page)')
+      } finally {
+        await r.b.close()
+      }
+
+      // The same copy with one byte of the model flipped, to a fresh browser: the page's own try is refused by its hash
+      // and keeps nothing; the card says why; then, with the right file back, the button keeps it.
       const file = join(out, path)
       const good = readFileSync(file)
       const bad = Buffer.from(good)
@@ -2200,22 +2301,23 @@ const SCENARIOS = {
       writeFileSync(file, bad)
       const q = await open(chrome)
       try {
-        const again = await talkToSloane(q, url)
-        check(again.card?.state === 'none' && again.card.offer === offer, 'sitemodel: a fresh browser is offered the site\'s model the same way',
-          `${JSON.stringify({ state: again.card?.state, offer: again.card?.offer })}${again.notes.length ? `; ${again.notes.join('; ')}` : ''}`)
-        const servedAt = served.length
-        const button = await q.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (button) await clickAt(q, button)
-        const refused = await q.waitFor(`(() => { const t = ${SLOANE_TALK}; return t.why && t.getting === null && t })()`, 120_000).catch(() => q.eval(SLOANE_TALK))
-        check(/its SHA-256 differs/.test(refused?.why ?? '') && refused.offer === offer && refused.state === 'none', 'sitemodel: with one byte flipped the card says its SHA-256 differs, and the button is back',
-          `${button ? 'clicked' : 'no button to click'}; ${refused?.state}, ${refused?.offer}: ${refused?.why}`)
-        const none = await q.eval(KEPT_IN_STORE)
-        check(none.length === 0 && JSON.stringify(models(servedAt)) === JSON.stringify([path]), 'sitemodel: nothing of it was kept (the page\'s model store is empty), and it was fetched once',
-          `${none.length ? none.join('; ') : 'the store is empty'}; ${models(servedAt).join(', ') || 'nothing under models/'}`)
+        const badAt = served.length
+        await q.goto(url)
+        await q.booted()
+        const told = await q.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => /^Sloane's model was not kept: /.test(b)) && t })()`, 120_000).catch(() => q.eval(MODEL_TOASTS))
+        const failRecord = await q.eval(AUTO_RECORD)
+        check(told.some((b) => /^Sloane's model was not kept: .*its SHA-256 differs/.test(b)) && failRecord?.fails === 1 && !failRecord.mark, 'sitemodel: with one byte flipped the page\'s own try says in a toast that its SHA-256 differs, and its record waits before the next',
+          `${told.join(' | ').slice(0, 300)}; record ${JSON.stringify(failRecord)}`)
+        // The same visit (a reload would be a new visit, with no job to say why): the card's offer, and why.
+        const again = await talkToSloane(q, null)
+        check(again.card?.state === 'none' && again.card.offer === offer && /its SHA-256 differs/.test(again.card.why ?? ''), 'sitemodel: the card then offers the site\'s model, and says why the last try ended short',
+          `${JSON.stringify({ state: again.card?.state, offer: again.card?.offer, why: again.card?.why })}${again.notes.length ? `; ${again.notes.join('; ')}` : ''}`)
+        const nothing = await q.eval(KEPT_IN_STORE)
+        check(nothing.length === 0 && JSON.stringify(models(badAt)) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: nothing of it was kept (the page\'s model store is empty), it was fetched once, and the page did not try again in that visit',
+          `${nothing.length ? nothing.join('; ') : 'the store is empty'}; ${models(badAt).join(', ') || 'nothing under models/'}`)
         writeFileSync(file, good)
-        const retry = await q.waitFor(hitOf('aside[data-concierge] [data-action="site-model"]'), 10_000).catch(() => null)
-        if (retry) await clickAt(q, retry)
-        const asked = await q.waitFor(`(() => { const t = ${SLOANE_TALK}; return (t.state === 'waiting' || t.state === 'said' || (t.why && t.getting === null)) && t })()`, 120_000).catch(() => q.eval(SLOANE_TALK))
+        const retry = await clickOn(q, 'aside[data-concierge] [data-action="site-model"]', 10_000)
+        const asked = await q.waitFor(`(() => { const t = ${SLOANE_TALK}; return (t.state === 'waiting' || t.state === 'said' || (t.why && t.getting === null && !/SHA-256/.test(t.why))) && t })()`, 120_000).catch(() => q.eval(SLOANE_TALK))
         const keptNow = await q.eval(KEPT_IN_STORE)
         check((asked?.state === 'waiting' || asked?.state === 'said') && keptNow.length === 1 && keptNow[0] === `meta.json + ${TINY}`, 'sitemodel: with the right file back, the same button keeps it and the turn is asked again',
           `${retry ? 'clicked' : 'no button to click'}; ${asked?.state}${asked?.why ? `: ${asked.why}` : ''}; ${keptNow.join('; ') || 'the store is empty'}`)
@@ -2226,6 +2328,79 @@ const SCENARIOS = {
       }
     } finally {
       site?.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+
+  /**
+   * Sloane's model on the NixOS package: the launcher's own server (tools/web/launch.mjs respond) serves the page and a
+   * model folder laid out as tools/nix/model.nix lays it out (the model as a link to its file, the manifest, the
+   * licence and the notice), and the page is opened with models=1, as the launcher opens it when it serves one. The
+   * page is dist/index.html with APP_MODEL's pin, the desktop's model, swapped for the tiny model's (pinnedPage). Opened
+   * without models=1 it asks for nothing under models/; with it, the page gets the model by itself, with no click and
+   * the connection not looked at: the manifest, then the model, once each, from the launcher; kept (said in a toast),
+   * loaded, in the page's store, and the page says on its console that it kept the model. Run in the ci workflow's
+   * Chrome, and in nix.yml with the Chromium the NixOS package carries, which is the browser this path is for.
+   */
+  async launcher(chrome) {
+    const pin = tinyPin(APP_MODEL)
+    const path = `${SITE_DIR}${pin.file}`
+    const keptToast = new RegExp(`^${literal(TINY)} is kept in this page \\(${Math.round(pin.bytes / 1024)} KB\\): it answers whenever no model server on this machine does, and it is loading$`)
+    const loadedToast = new RegExp(`^${literal(TINY)} is loaded in this page \\(`)
+    const dir = mkdtempSync(join(tmpdir(), 'agent-city-launcher-'))
+    let server = null
+    try {
+      const models = join(dir, 'models')
+      mkdirSync(models)
+      symlinkSync(tinyModel(), join(models, pin.file))
+      writeFileSync(join(models, MODEL_MANIFEST), manifestText(pin))
+      for (const f of ['LICENSE', 'NOTICE']) copyFileSync(join(ROOT, 'third_party', 'qwen2.5-1.5b-instruct', f), join(models, f))
+      const answer = respond(Buffer.from(pinnedPage(APP_MODEL, pin)), '', readModels(models))
+      /** Every path asked of the launcher, in order. */
+      const served = []
+      server = createServer((req, res) => { served.push((req.url ?? '/').split('?')[0].replace(/^\//, '')); answer(req, res) })
+      await new Promise((r) => server.listen(0, '127.0.0.1', r))
+      const origin = `http://127.0.0.1:${server.address().port}`
+      /** What was asked for under models/ since `from` (an index into served). */
+      const under = (from = 0) => served.slice(from).filter((f) => f.startsWith(SITE_DIR))
+      /** The page's own word on its start (App.tsx: `Sloane's model: …`), once it has one since `from`. */
+      const said = async (r, from) => {
+        const end = Date.now() + 120_000
+        for (;;) {
+          const line = r.console.slice(from).find((l) => l.includes("Sloane's model: "))
+          if (line || Date.now() > end) return line ?? null
+          await new Promise((ok) => setTimeout(ok, 250))
+        }
+      }
+      const r = await open(chrome)
+      try {
+        // A launcher with no model folder adds nothing to the address: the page asks nothing under models/.
+        let logAt = r.console.length
+        await r.goto(`${origin}/?${LIGHT}`)
+        await r.booted()
+        const plain = await said(r, logAt)
+        check(!!plain && under().length === 0, 'launcher: opened without models=1 the page asks the launcher for nothing under models/', `${plain ?? 'no word from the page'}; ${under().join(', ') || 'nothing under models/'}`)
+
+        // As the launcher opens it with a model folder.
+        const autoAt = served.length
+        logAt = r.console.length
+        await r.goto(`${origin}/?${LIGHT}&${LAUNCHER_WORD}=1`)
+        await r.booted()
+        const got = await r.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => ${loadedToast}.test(b)) && t })()`, 180_000).catch(() => r.eval(MODEL_TOASTS))
+        check(got.some((b) => keptToast.test(b)) && got.some((b) => loadedToast.test(b)), 'launcher: with models=1 the page gets the launcher\'s model by itself: a toast says it is kept (the provider left as it was), another that it is loaded', got.join(' | ').slice(0, 300))
+        check(JSON.stringify(under(autoAt)) === JSON.stringify([SITE_MANIFEST, path]), 'launcher: it asked the launcher for the manifest and the model, once each, with no click', under(autoAt).join(', ') || 'nothing under models/')
+        const keptAuto = await r.eval(KEPT_IN_STORE)
+        check(keptAuto.length === 1 && keptAuto[0] === `meta.json + ${TINY}`, 'launcher: kept in the page\'s store', keptAuto.join('; ') || 'the store is empty')
+        const word = await said(r, logAt)
+        check(!!word && word.includes(TINY), 'launcher: the page says on its console that it kept the model', word ?? 'no word from the page')
+        await r.shot('launcher')
+        r.health('launcher')
+      } finally {
+        await r.b.close()
+      }
+    } finally {
+      server?.closeAllConnections()
+      server?.close()
       rmSync(dir, { recursive: true, force: true })
     }
   },
@@ -3610,7 +3785,7 @@ async function gpuProcessLost(chrome, origin) {
     // The next start begins at the light kernel (the record), and the GPU process goes again under it.
     await again()
     await crashAt('lite')
-    await expectCard(p, `${what}, lite`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    await expectCard(p, `${what}, lite`, 'kernel-none', 'The crowd’s lightest kernel stopped this device’s graphics')
     const none = await p.eval(KERNEL_RECORD)
     check(none?.from === 'none' && none.rung === 'lite', `${what}: after the light kernel's own loss the record says none is left`, JSON.stringify(none).slice(0, 300))
     check(loads.length === 3, `${what}: no restart by itself after the lightest kernel's loss`, `${loads.length} loads`)
@@ -3618,7 +3793,7 @@ async function gpuProcessLost(chrome, origin) {
     // A start inside the hold asks nothing of the GPU: the card at once, and no adapter asked for.
     await again()
     await p.waitFor('document.readyState !== "loading" && !window.__smokeOld', 60_000)
-    await expectCard(p, `${what}, held`, 'kernel-none', 'The crowd keeps stopping this device’s graphics')
+    await expectCard(p, `${what}, held`, 'kernel-none', 'The crowd’s lightest kernel stopped this device’s graphics')
     const asks = await p.eval('window.__smokeAdapterAsks')
     check(asks === 0, `${what}: a start inside the hold asks the browser for no adapter`, `${asks} asked`)
     check(p.errors.length === 0, `${what}: no exception in the page`, p.errors.slice(0, 3).join(' | ').slice(0, 400))

@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { acquireDevice, adapterLine, deviceFeatures, GPU_BACK_EVERY_MS, GPU_BACK_FOR_MS, gpuBack, probeGpu, THREE_FEATURES, WebGPUUnavailableError, type GpuEntry } from './gpuDevice.ts'
+import { acquireDevice, adapterLine, coreAdapter, deviceFeatures, GPU_BACK_EVERY_MS, GPU_BACK_FOR_MS, gpuBack, NoAdapterError, noAdapterMessage, probeGpu, THREE_FEATURES, webgl2Answers, WebGPUUnavailableError, type GpuEntry, type WebGL2Asked } from './gpuDevice.ts'
 
 // three's constants module is plain JavaScript; a computed specifier keeps the page's typecheck off it.
 const CONSTANTS: string = 'three/src/renderers/webgpu/utils/WebGPUConstants.js'
@@ -109,6 +109,45 @@ test('probeGpu: the adapter half alone, never a device; any failure comes back c
   const odd: GpuEntry = { requestAdapter: () => Promise.reject(new TypeError('odd browser')) }
   const r = await probeGpu(odd, true)
   assert.ok(!r.ok && r.error.code === 'no-adapter' && /odd browser/.test(r.error.message))
+})
+
+test('no adapter: the page\'s own WebGL2 is asked once, and its answer travels with the failure', async () => {
+  // A context made is let go at once; a refusal is false; no canvas, or a canvas that throws, is unknown.
+  let lost = 0
+  const made: WebGL2Asked = { getContext: () => ({ getExtension: (name: string) => (name === 'WEBGL_lose_context' ? { loseContext: () => { lost++ } } : null) }) }
+  assert.equal(webgl2Answers(() => made), true)
+  assert.equal(lost, 1, 'the context is let go at once')
+  assert.equal(webgl2Answers(() => ({ getContext: () => ({}) })), true, 'a context without the extension still answers')
+  // WebGL2 refused, WebGL given (a browser that keeps WebGL2 alone from a GPU): still true, asked on a fresh canvas.
+  let canvases = 0
+  const asked: string[] = []
+  assert.equal(webgl2Answers(() => { canvases++; return { getContext: (id: string) => { asked.push(id); return id === 'webgl' ? {} : null } } }), true)
+  assert.deepEqual(asked, ['webgl2', 'webgl'])
+  assert.equal(canvases, 2, 'each context id on a canvas of its own')
+  // Both refused: false.
+  assert.equal(webgl2Answers(() => ({ getContext: () => null })), false)
+  assert.equal(webgl2Answers(() => null), null)
+  assert.equal(webgl2Answers(() => { throw new Error('no canvas here') }), null)
+  assert.equal(webgl2Answers(() => ({ getContext: () => { throw new Error('blocked') } })), null)
+  assert.equal(webgl2Answers(), null, 'Node has no canvas: nothing to ask')
+  // Each answer in the message, and on the error, where the card reads it.
+  for (const gl of [true, false, null] as const) {
+    let asked = 0
+    const e = await coreAdapter(fakeGpu({ core: false }).gpu, true, '', false, () => { asked++; return gl }).then(() => null, (x: unknown) => x)
+    assert.ok(e instanceof NoAdapterError && e instanceof WebGPUUnavailableError, String(gl))
+    assert.equal(e.code, 'no-adapter')
+    assert.equal(e.webgl, gl)
+    assert.equal(e.message, noAdapterMessage(gl))
+    assert.equal(asked, 1)
+  }
+  assert.equal(noAdapterMessage(null), 'The browser offered no WebGPU adapter (requestAdapter returned null).')
+  assert.match(noAdapterMessage(true), /; WebGL still works on this page, so WebGPU alone is held back\.$/)
+  assert.match(noAdapterMessage(false), /, and refused WebGL2 and WebGL as well: it hands this page no GPU at all\.$/)
+  // An adapter, or only a compatibility one, never asks WebGL2.
+  let never = 0
+  await coreAdapter(fakeGpu({ core: true }).gpu, true, '', false, () => { never++; return true })
+  await coreAdapter(fakeGpu({ core: false, compat: true }).gpu, true, '', false, () => { never++; return true }).catch(() => {})
+  assert.equal(never, 0)
 })
 
 test('adapterLine: the profile\'s string, as createRenderer always built it', () => {

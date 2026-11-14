@@ -136,14 +136,31 @@ wllama's JavaScript also carries feature tests from wasm-feature-detect (Apache-
 the runtime also carries the full text of each of these licenses at the end of `dist/index.html`, from
 `third_party/wllama/3.8.1/NOTICE`.
 
-**The model the web copy serves.** The page file, the Windows app and the release builds carry no model. The
+**The model the web copy serves.** The page file, the bare Windows .exe and the OS media carry no model. The
 published web copy of the page serves one model beside it, Qwen2.5 0.5B Instruct (the file
-`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site only when a visitor taps for it, and
-keeps in that visitor's browser. The model is the Qwen team's, Copyright 2024 Alibaba Cloud, licensed under the Apache
+`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`), which the page downloads from its own site, by itself once the city is on
+screen in a browser that can run it (not on mobile data or data saver, and not once the visitor has stopped it) or when
+a visitor taps for it, and keeps in that visitor's browser. The model is the Qwen team's, Copyright 2024 Alibaba Cloud, licensed under the Apache
 License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by bartowski, served unchanged. It
 remains under its own licence, not under this product's licence: the full text of the Apache License 2.0 with that
 copyright line, and a notice of where the file comes from, are served beside it as `models/LICENSE` and
 `models/NOTICE`, from `third_party/qwen2.5-0.5b-instruct/`.
+
+**The model the Windows installer carries.** The Windows app's installer and its .msi carry one model beside the app,
+Qwen2.5 1.5B Instruct (the file `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`), which the app's page copies into its own storage
+once the city is on screen, or when the person taps for it. The model is the Qwen team's, Copyright 2024 Alibaba Cloud,
+licensed under the Apache License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M by bartowski,
+shipped unchanged. It remains under its own licence, not under this product's licence: the full text of the Apache
+License 2.0 with that copyright line, and a notice of where the file comes from, are installed beside it as
+`models/LICENSE` and `models/NOTICE` in the app's folder, from `third_party/qwen2.5-1.5b-instruct/`.
+
+**The model the NixOS package carries.** The NixOS package (the flake's `nix run` and its NixOS module) carries the
+same file: `tools/nix/model.nix` fetches it from Hugging Face at the pinned revision with Nix's fetchurl, which refuses
+any other bytes, and keeps it in the Nix store beside the same `LICENSE` and `NOTICE` from
+`third_party/qwen2.5-1.5b-instruct/`. The package's launcher serves that folder beside the page on this machine
+(`127.0.0.1`) as `models/`, and the page copies the model into the browser profile's storage once the city is on screen,
+or when the person taps for it. A configuration that sets `programs.crimson-noir-agent-city.model = false` builds the
+package without it.
 
 ## Map data (the surveyed region)
 
@@ -174,13 +191,16 @@ it can speak instead (`ask api chat`), llama.cpp only to identify the local serv
 that format (`ask provider llamacpp`) and the engine compiled into the in-page model runtime (`ask provider inpage`),
 Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
 (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
-unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the model the web copy serves
-beside its page for the in-page runtime (`09_Cognition/siteModel.ts`). No model server ships with the product, and the
-page file, the Windows app and the release builds carry no model: the operator's server, or a model file kept in their
-browser for the in-page runtime, holds the model under the model's own licence. The one model the product offers is
-Qwen2.5 0.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud; the file quantized by bartowski), which the web copy
-serves beside its page and fetches only when the visitor taps for it, under its own licence
-(`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`). The network provider
+unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the models the web copy
+serves beside its page and the Windows installer and the NixOS package carry, for the in-page runtime
+(`09_Cognition/siteModel.ts`). No model server ships with the product, and the page file, the bare Windows .exe and
+the OS media carry no model: the operator's server, or a model file kept in their browser for the in-page runtime,
+holds the model under the model's own licence. The two models the product offers are Qwen2.5 0.5B Instruct, which
+the web copy serves beside its page and fetches by itself once the city is on screen, or when the visitor taps for it
+(`third_party/qwen2.5-0.5b-instruct/`, served beside it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B
+Instruct, which the Windows installer carries beside the app and the NixOS package's launcher serves beside its page
+(`third_party/qwen2.5-1.5b-instruct/`, beside it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright 2024 Alibaba Cloud, the files quantized by
+bartowski, each under its own licence. The network provider
 answers only with the operator's own key, which stays in their browser. No speech engine, speech
 model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
 (`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
@@ -281,9 +301,23 @@ release; each one is something the release engineering could not confirm.
       precision changed), not Qwen's own file, and bartowski's repository names its licence as apache-2.0 without a
       licence file of its own. The NOTICE beside the model says so, as section 4(b) of the licence asks of a modified
       file. Confirm that this is enough, or serve Qwen's own GGUF file instead.
-    - **Privacy and bandwidth.** The web copy downloads about 0.4 GB from its own site when a visitor taps for it, and
-      nothing of the visitor's goes with the request. Say so in a privacy notice if the web copy gets one. GitHub Pages
-      has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the model.
+    - **Privacy and bandwidth.** The web copy downloads about 0.4 GB from its own site, by itself on a first visit from
+      a browser that can run the model (not on mobile data or data saver, and not once the visitor has stopped it), or
+      when a visitor taps for it, and nothing of the visitor's goes with the request. Say so in a privacy notice if the
+      web copy gets one. GitHub Pages has a soft bandwidth limit of 100 GB a month, about 250 full downloads of the
+      model, so about 250 new visitors a month from such browsers.
+    - **The Windows installer's model.** The installer and the .msi carry Qwen2.5 1.5B Instruct
+      (`third_party/qwen2.5-1.5b-instruct/`, pinned as `APP_MODEL` in the same file) the same way: bartowski's Q4_K_M
+      file, fetched at a pinned revision, checked and shipped unchanged with the Apache License 2.0 and a notice
+      installed beside it. The same two points apply to it: compare its LICENSE once with the one in
+      `Qwen/Qwen2.5-1.5B-Instruct`, and confirm the NOTICE is enough for a third party's quantization. Every installer
+      download is about 0.9 GB from GitHub's release storage.
+    - **The NixOS package's model.** The same file again (`tools/nix/model.nix`, the same pin), fetched by each
+      machine that builds the package straight from Hugging Face at the pinned revision (about 0.9 GB, once a machine),
+      so the product does not redistribute it there; the Nix store keeps it beside the same LICENSE and NOTICE. The
+      same two points apply. A binary cache that serves the built package would redistribute it: the file is its own
+      store path, and the LICENSE and NOTICE sit in the package's model folder that links to it, so a cache serving
+      the package's closure serves them together but could serve the file's path alone.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

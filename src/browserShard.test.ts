@@ -69,7 +69,8 @@ test('the two parts CI runs take about the same time, and the longest scenarios 
   // Longest first into the lighter part is never further apart than the longest scenario; here it is far closer.
   assert.ok(Math.abs(ta - tb) <= 60, `parts of ${ta} s and ${tb} s`)
   assert.ok(Math.max(ta, tb) < 0.52 * total(SCENARIOS), `the longer part is ${Math.max(ta, tb)} s of ${total(SCENARIOS)} s`)
-  assert.notEqual(a.includes('phone'), a.includes('ultra'), 'the phone and Ultra (the two longest) are split')
+  const [first, second] = [...SCENARIOS].sort((x, y) => cost(y) - cost(x))
+  assert.notEqual(a.includes(first), a.includes(second), `the two longest (${first} and ${second}) are split`)
   // A filter (`--only`) is split the same way: the parts of a filtered list cover it once.
   const some = ['tty', 'file', 'homes', 'rest']
   assert.deepEqual([...shard.shardOf(some, 1, 2), ...shard.shardOf(some, 2, 2)].sort(), [...some].sort())

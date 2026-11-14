@@ -4,14 +4,18 @@
 # Why does this file exist? It checks the Nix flake (flake.nix) the way a NixOS desktop uses it, on every pull request
 # and every push to main: Nix installed from its release installer (the installer's hash pinned below, the tarball's
 # hash pinned inside it), then
-# - `nix flake check`: the page built from source in Nix's sandbox, the launcher package around it, and the NixOS
-#   module evaluated on a minimal system;
+# - Sloane's model put in Nix's store first, at the path tools/nix/model.nix's fetch gives it: from the cache keyed by
+#   its pin (src/09_Cognition/siteModel.ts APP_MODEL, the Windows workflow's pin too), else from Hugging Face at the
+#   pinned revision, and checked by its SHA-256 either way, so a run does not fetch 0.9 GB each time;
+# - `nix flake check`: the page built from source in Nix's sandbox, the launcher package around it with that model,
+#   and the NixOS module evaluated on a minimal system;
 # - the page Nix built compared byte for byte with `npm run build`, so the city a Nix user gets is the one the ci
 #   workflow tests;
 # - the packaged command's own `--check`: tools/web/launch.mjs serves the Nix page and boots the city in the package's
-#   Chromium on the software WebGPU adapter;
-# - the browser smoke's desktop and Ultra scenarios in that same Chromium (tools/browser/smoke.mjs), the Chromium
-#   flake.lock pins rather than the runner's Chrome; the screenshots are kept as an artifact;
+#   Chromium on the software WebGPU adapter, and the page's own fetch reads the model's manifest and size beside it;
+# - the browser smoke's desktop, Ultra and launcher scenarios in that same Chromium (tools/browser/smoke.mjs), the
+#   Chromium flake.lock pins rather than the runner's Chrome: launcher is the page the launcher opens getting Sloane's
+#   model from it, in the browser the package carries; the screenshots are kept as an artifact;
 # - in a job of its own, `vm`: the NixOS module's Ollama option booted in a NixOS VM on the CPU build
 #   (vmTests.x86_64-linux.ollama, tools/nix/ollama-test.nix). It needs KVM, so it is not in `nix flake check`, which
 #   runs without it; the job fails, saying why, on a runner without KVM rather than skip the VM or emulate it.
@@ -59,23 +63,53 @@ jobs:
           printf 'experimental-features = nix-command flakes\nmax-jobs = auto\n' > "$RUNNER_TEMP/nix.conf"
           sh "$RUNNER_TEMP/install-nix" --daemon --yes --no-channel-add --nix-extra-conf-file "$RUNNER_TEMP/nix.conf"
           echo /nix/var/nix/profiles/default/bin >> "$GITHUB_PATH"
-      - name: nix flake check (the page, the launcher package, the NixOS module)
-        run: nix flake check --print-build-logs
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - id: model
+        name: Sloane's model, by the page's own pin (src/09_Cognition/siteModel.ts APP_MODEL)
+        run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
+      - id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/app-model
+          key: ${{ steps.model.outputs.key }}
+      - name: Sloane's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        env:
+          URL: ${{ steps.model.outputs.url }}
+          FILE: ${{ steps.model.outputs.file }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-model"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
+      # nix-store --add-fixed names the path by the file's name and SHA-256 alone, as fetchurl does, so the build finds
+      # the model there and fetches nothing. It takes any bytes (other bytes land at another path, which the last check
+      # catches), so the hash is checked first, for a plain error.
+      - name: The model in Nix's store, at the path tools/nix/model.nix's fetch gives it (checked by its SHA-256 first)
+        env:
+          FILE: ${{ steps.model.outputs.file }}
+          SHA256: ${{ steps.model.outputs.sha256 }}
+        run: |
+          : "${FILE:?the model's pinned name is missing}" "${SHA256:?the model's pinned SHA-256 is missing}"
+          echo "$SHA256  $RUNNER_TEMP/app-model/$FILE" | sha256sum -c -
+          added="$(nix-store --add-fixed sha256 "$RUNNER_TEMP/app-model/$FILE")"
+          wanted="$(nix eval --raw .#model.gguf.outPath)"
+          [ "$added" = "$wanted" ] || { echo "::error::the model went into the store at $added, but tools/nix/model.nix fetches it to $wanted: its pin and the page's differ"; exit 1; }
+          echo "$added"
+      - name: nix flake check (the page, the launcher package with Sloane's model, the NixOS module)
+        run: nix flake check --print-build-logs
       - name: The page Nix built is the page npm builds
         run: |
           npm run build
           cmp dist/index.html "$(nix build .#page --no-link --print-out-paths)/share/crimson-noir-agent-city/index.html"
       - name: The packaged command boots the city (crimson-noir-agent-city --check)
         run: '"$(nix build .#default --no-link --print-out-paths)/bin/crimson-noir-agent-city" --check'
-      - name: The browser smoke's desktop and Ultra scenarios in the package's Chromium
+      - name: The browser smoke's desktop, Ultra and launcher scenarios in the package's Chromium
         run: |
           CHROME="$(nix build .#default.chromium --no-link --print-out-paths)/bin/chromium" \
-            node tools/browser/smoke.mjs --only desktop,ultra --out "$RUNNER_TEMP/nix-smoke"
+            node tools/browser/smoke.mjs --only desktop,ultra,launcher --out "$RUNNER_TEMP/nix-smoke"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

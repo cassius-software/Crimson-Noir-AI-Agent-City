@@ -16,7 +16,10 @@
 # Tauri's generated Xcode project is built with code signing off and may break with an Xcode change; its failure
 # does not fail the run. Nothing is signed (see the script's header).
 # It runs on a pull request that touches the shells or this tooling, on a v* tag, and by hand ("Run workflow", with a
-# tag to build and upload to, or none to build this ref for artifacts alone). Only GitHub's own actions run here.
+# tag to build and upload to, or none to build this ref for artifacts alone). current.yml calls it (workflow_call) with
+# a commit on main ci passed on, as `ref`: every job builds that commit and leaves the same artifacts, which current.yml
+# puts on the `current` pre-release; the release job never runs for a call, and the concurrency group carries the
+# commit. Only GitHub's own actions run here.
 # What breaks if it is removed? Every platform but Windows is a page of instructions again, and a release carries
 # only the Windows app and the OS media.
 
@@ -47,12 +50,18 @@ on:
         description: A v* tag whose commit to build and whose GitHub Release to upload to (empty builds this ref, artifacts only)
         required: false
         type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build, for artifacts alone (current.yml)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-matrix-${{ inputs.tag || github.ref }}
+  group: build-matrix-${{ inputs.ref || inputs.tag || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -93,7 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -188,7 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.ref }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:

@@ -1,0 +1,171 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It proves the shell's three model commands (src-tauri/src/runner.rs: native_model,
+# native_generate with a Tauri channel, native_stop) and the page's own way of asking them end to end in the Linux
+# app's real web view, WebKitGTK: the app is built with the native runner and the tiny test model (cargo features
+# tiny-model; tools/browser/tinyGguf.mjs writes tiny-a.gguf, which src-tauri/tauri.tiny.conf.json bundles as the
+# resource models/tiny-a.gguf), started by tauri-driver under a virtual display, and driven by
+# tools/browser/nativeE2e.mjs. That script bundles the page's own shellRunner (desktopShell.ts) and createNativeMind
+# (nativeMind.ts) from their sources with vite, injects them into the app's page, and runs every check there, under
+# its CSP and air gap: what the app carries, answers through the mind (the load, the prompt read and the text in
+# order, exactly the tokens asked; one with its channel's messages and end held back 300 ms, which comes whole only
+# because shellRunner waits for the channel's end), a Stop, a first-piece wait that runs out, stops sent right behind
+# their request, a refused duplicate number, a reload that stops the old page's answers, and no JSPI in the web view.
+# It also records whether the page reaches Sloane's card there at all (risk K1), without failing on it. Before the run,
+# the same job runs the shell's own Rust tests and clippy (-D warnings) twice: with the runner and the tiny model, and
+# with the feature off, as every shipped build compiles the shell (the commands that answer there is none).
+# The app is a debug build: llama.cpp itself is still built optimized by its own CMake (llama-cpp-sys-2 picks Release
+# when Rust's debug info is off, as here), the Rust side keeps its debug assertions, and the release profile's LTO,
+# which the tiny model does not need, would cost minutes; the runner under the release profile is native-llm.yml's.
+# It runs on a pull request or a push to main that touches the shell, the runner, the page modules the script bundles
+# (desktopShell.ts and nativeMind.ts with every module they import; src/nativeRunner.test.ts holds the list to their
+# imports), the page's boot and policy (main.tsx, index.html), the tiny model's writer, the driver script or this file,
+# and by hand. It is not part of ci.yml, which runs on every change and whose failures wake the self-healing workflow:
+# its sandbox has no WebKitGTK, cmake or libclang. No shipped build carries the tiny model or the runner:
+# build-matrix.yml and windows-app.yml build with the feature off.
+# What breaks if it is removed? The page's runner path and the shell's commands are proved against fakes alone, never
+# in a real web view, and the shell's Rust tests run nowhere.
+
+name: native-e2e
+
+on:
+  pull_request:
+    paths:
+      - src-tauri/**
+      - native/llm/**
+      - src/01_Initialize_World/solar.ts
+      - src/02_Define_The_Rules/airgap.ts
+      - src/02_Define_The_Rules/capabilities.ts
+      - src/02_Define_The_Rules/conduct.ts
+      - src/02_Define_The_Rules/integrity.ts
+      - src/05_Observe_Environment/governor.ts
+      - src/06_Make_Decisions/actions.ts
+      - src/06_Make_Decisions/dispatch.ts
+      - src/06_Make_Decisions/intent.ts
+      - src/07_Execute_Actions/desktopShell.ts
+      - src/07_Execute_Actions/sharedBridge.ts
+      - src/08_Swarm/shortTerm.ts
+      - src/09_Cognition/gguf.ts
+      - src/09_Cognition/inPage.ts
+      - src/09_Cognition/inPageCaps.ts
+      - src/09_Cognition/inPagePlan.ts
+      - src/09_Cognition/localCompute.ts
+      - src/09_Cognition/modelStore.ts
+      - src/09_Cognition/nativeMind.ts
+      - src/09_Cognition/siteModel.ts
+      - src/main.tsx
+      - index.html
+      - tools/browser/tinyGguf.mjs
+      - tools/browser/nativeE2e.mjs
+      - .github/workflows/native-e2e.yml
+  push:
+    branches: [main]
+    paths:
+      - src-tauri/**
+      - native/llm/**
+      - src/01_Initialize_World/solar.ts
+      - src/02_Define_The_Rules/airgap.ts
+      - src/02_Define_The_Rules/capabilities.ts
+      - src/02_Define_The_Rules/conduct.ts
+      - src/02_Define_The_Rules/integrity.ts
+      - src/05_Observe_Environment/governor.ts
+      - src/06_Make_Decisions/actions.ts
+      - src/06_Make_Decisions/dispatch.ts
+      - src/06_Make_Decisions/intent.ts
+      - src/07_Execute_Actions/desktopShell.ts
+      - src/07_Execute_Actions/sharedBridge.ts
+      - src/08_Swarm/shortTerm.ts
+      - src/09_Cognition/gguf.ts
+      - src/09_Cognition/inPage.ts
+      - src/09_Cognition/inPageCaps.ts
+      - src/09_Cognition/inPagePlan.ts
+      - src/09_Cognition/localCompute.ts
+      - src/09_Cognition/modelStore.ts
+      - src/09_Cognition/nativeMind.ts
+      - src/09_Cognition/siteModel.ts
+      - src/main.tsx
+      - index.html
+      - tools/browser/tinyGguf.mjs
+      - tools/browser/nativeE2e.mjs
+      - .github/workflows/native-e2e.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUST_TOOLCHAIN: '1.97.0'
+  TAURI_DRIVER_VERSION: '2.1.0'
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  # No debug info: a smaller cache, a faster link, and llama.cpp built Release rather than RelWithDebInfo.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+
+jobs:
+  e2e:
+    name: native-e2e (WebKitGTK, tiny model)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+      - name: WebKitGTK and its WebDriver, a virtual display, and cmake and libclang for llama.cpp's build
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev webkit2gtk-driver xvfb cmake libclang-dev
+          command -v WebKitWebDriver xvfb-run cmake
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: native-e2e-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: native-e2e-${{ env.RUST_TOOLCHAIN }}-
+      - run: npm ci --no-audit --no-fund
+      - name: Build the page
+        run: npm run build
+      - name: The tiny model, where tauri.tiny.conf.json takes it from
+        run: node tools/browser/tinyGguf.mjs src-tauri/models
+      - name: Build the app with the runner and the tiny model as its resource (a debug build)
+        run: |
+          TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo build --manifest-path src-tauri/Cargo.toml --locked --features tiny-model,tauri/custom-protocol
+          test -f src-tauri/target/debug/models/tiny-a.gguf
+      - name: The shell's Rust tests and clippy, with the runner and the tiny model, then as every shipped build compiles it
+        run: |
+          TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo test --manifest-path src-tauri/Cargo.toml --locked --features tiny-model,tauri/custom-protocol
+          TAURI_CONFIG="$(cat src-tauri/tauri.tiny.conf.json)" cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --features tiny-model,tauri/custom-protocol -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+      - name: tauri-driver ${{ env.TAURI_DRIVER_VERSION }}
+        run: cargo install tauri-driver --version "$TAURI_DRIVER_VERSION" --locked
+      - name: The end-to-end run inside the app's page, under a virtual display
+        run: xvfb-run -a node tools/browser/nativeE2e.mjs --app src-tauri/target/debug/crimson-noir-app --out "$RUNNER_TEMP/native-e2e.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-e2e-report
+          path: ${{ runner.temp }}/native-e2e.json
+          if-no-files-found: ignore
+      - name: Leave llama.cpp's CMake build folder and the tiny model out of the cache
+        if: always()
+        run: rm -rf src-tauri/target/debug/build/llama-cpp-sys-2-*/out/build src-tauri/target/debug/models

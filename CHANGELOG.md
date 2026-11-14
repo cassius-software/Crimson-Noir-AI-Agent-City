@@ -47,6 +47,207 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   table and one pinned prefix, their routers picking experts at every layer of every step and the whole swarm's routes
   grouped and planned per layer: the table's invariants hold after every layer, every agent reads back exactly its
   own tokens, the agents refused (the pool is too small on purpose) change nothing, and every page is back at the end.
+
+- **The shell lends the native model runner to the page.** `src-tauri/src/runner.rs` registers three commands in
+  every build, in the order the design gives: `native_model`, `native_generate` (the answer's events on the page's own
+  Tauri channel; the wait for its end runs on Tauri's blocking pool, never on an async worker) and `native_stop`.
+  `native_generate` is async, so a stop the page sends right behind it can reach the runner before the request does:
+  the runner keeps such a stop (the last 64 numbers, forgotten at a page load) and stops that answer as it arrives, so
+  it ends `stopped`. The runner is compiled only with the new `native-runner` cargo feature on Linux, off by default,
+  and starts only when the app carries its model as the resource `models/<file>` (a Rust test holds that without the
+  file no runner starts and `native_model` answers none), checked against its pin once, then stamped in the app's data
+  folder, on the processor alone with the page's own figures (context 8,192, batch 512, half the threads up to 8,
+  answers up to 2,048 tokens). Everywhere else (Windows, macOS, a build without the feature) the same commands answer no
+  model, `offline` with a plain sentence, and false. A page that starts loading stops every answer it asked for
+  (`on_page_load`), and `app_model` answers nothing wherever the runner is compiled, so the page never copies a model in
+  there. `model_file.rs` adds the computer's SHA-256 and the phones' pin, and `tiny-model` (which turns on
+  `native-runner`) hands the runner the tiny test model instead; `siteModel.test.ts` holds every pin to the page's. No
+  shipped build changes: `build-matrix.yml` and `windows-app.yml` build with the feature off, so they compile no
+  llama.cpp and need no cmake or libclang; `src-tauri/Cargo.lock` records the runner's crates as optional, with cc,
+  cmake and bindgen at `native/llm`'s versions. `hid.rs`'s Windows-only items may go unused elsewhere, so the shell's
+  clippy with `-D warnings` is clean on Linux as well. The new `native-e2e.yml` (ubuntu-24.04, outside `ci.yml`) builds
+  the page, writes the tiny model, builds the app (a debug build) with `tiny-model` and
+  `src-tauri/tauri.tiny.conf.json`, runs the shell's own Rust tests and clippy (`-D warnings`) with the runner and the
+  tiny model and again with the feature off, installs tauri-driver 2.1.0 and runs `tools/browser/nativeE2e.mjs` under
+  Xvfb. That script bundles the page's own `shellRunner` and `createNativeMind` from their sources with vite (already
+  a devDependency; the entry goes to a temporary folder), injects them into the app's page in WebKitGTK over
+  WebDriver (spoken with fetch) after the page's module ran, and asks through them, under the page's CSP and air gap.
+  It asserts that the web view has no JSPI and its air gap refuses Tauri's `ipc://` fetch; `native_model` answers
+  `tiny-a.gguf`, 156,992 bytes, ready, and the mind lists that file and calls the model still to be loaded; the first
+  answer through the mind is 16 "a"s, `length`, 16 tokens, which the runner ended at its cap with exactly the tokens
+  asked, its events in order (the load, its fractions rising to 1, then the prompt read, then the text) and the
+  asker's phases in order; a longer one comes in several events, each under 8 KiB; one whose channel's every message,
+  and then its end, the script hands to `shellRunner` 300 ms late, as a reply that overtakes them would find them, still
+  comes whole through the mind, because `shellRunner` waits for the channel's end before it hands back the reply (tried
+  here with a `shellRunner` that does not wait: only this answer's checks failed, as Tauri sent every other channel's
+  end before the reply); a Stop at the first piece rejects at once with `AbortError` and the runner ends that answer
+  `stopped`; a 1 ms first-piece wait rejects with a `timeout` error and the runner's answer ends `stopped`; a stop sent
+  right behind its request stops it every time (24 times through `shellRunner`, 12 through the mind); a number still
+  being answered is refused with a sentence; and a reload while 32 long answers are queued (each one asked while another
+  is made is told it waits) stops them all: the new page's first request, through its own mind, waits for nothing and
+  completes well before they could have ended by themselves. The workflow runs on a change to the shell, the runner, any
+  module the script bundles (`nativeRunner.test.ts` holds that list to their imports), `main.tsx` or `index.html`.
+  Recorded, not asserted (risk K1): WebKitGTK 2.52 under Xvfb has no WebGPU, so the page shows its recovery card (whose
+  heading names WebView2, the Windows web view), not Sloane's card. Not verified: the macOS, Android and iOS shells, any
+  carried model but the tiny one, a Linux machine with a GPU, speed, and `native-e2e.yml` on GitHub's runners (its steps
+  were run here by hand, in order).
+- **The page side of the native model runner: provider `native`.** The router has a seventh provider, `native`, the
+  model an app carries and runs itself (`src/09_Cognition/nativeMind.ts`), asked through the shell's three commands
+  (`native_model`, `native_generate` with a Tauri channel for the answer's events, `native_stop`) by `desktopShell.ts`
+  `shellRunner`, which sends the request as `{ req, onEvent }` and settles an answer only once its channel has ended (or
+  after 1 s without an end), so a reply that overtakes the channel's last message does not cut it off. Auto looks for it
+  after the servers on this machine and before a model file kept in this page (`ollama, llamacpp, openai, native,
+  inpage, claude`): found when the app says it can start its model, named with the app's reason when it cannot, and
+  unsaid where there is no runner (a browser, the Windows app, an app built before the runner), where every sentence of
+  a look reads as it did. An answer is sent the same two messages and system prompt the other providers send (the talk
+  prompt for a conversation), with a random 32-bit id, and hashed for the audit; its events become the card's phase
+  ("Preparing the model inside the app · N%", "Loading the model inside the app…", the prompt's share read), the HUD's
+  activity line in its own words, and its text, and nothing the runner sends after the answer settled reaches it. A Stop
+  settles at once and stops the runner by that id; a runner quiet past the first-piece or stall wait is a timeout and is
+  stopped too (never while it waits its turn, even as the file's check is reported to it); an answer the full context
+  cuts ends as cut (`length`), as the token cap does; the runner's own errors keep their code and words. A model that
+  will not load (or whose file fails its check) at the answer after the look that found it has failed for good: that
+  answer says there is none, with the app's reason (`offline`, so the script stands in), Sloane's card is told why,
+  under auto the same ask goes on to what answers next in order (a gateway, a model file kept in this page), and every
+  look and answer after it pass the app's model over; one answer's own failure while the model stands loaded stays that
+  answer's. In a shell without the runner's commands (today's Windows app) an answer chosen with `ask provider native`
+  is told there is none before any channel is made, as in a browser. The console's asks and the swarm's steps run over
+  it (no address for the loopback rule), the cloud fallback never moves its prompts, `ask` shows the file and how the
+  last answer ran, Sloane's brief is not reworded while the app's model is still to be loaded (the rewording would be
+  the answer that loads it), and Sloane's card says "The model inside this app couldn’t start:" with the reason (without
+  the model's file name) in place of the site's and the browser's hints, only while the provider is `auto` or `native`,
+  and on a computer still followed by the line about starting Ollama, LM Studio or a llama.cpp server (not on a phone or
+  tablet). The tests read `native/llm/tests/wire.json` and replay its request, every event, ending, error and status,
+  and what `native_model` answers in each status, through a fake shell, so a field renamed on the runner's side fails a
+  test on one side or the other (the commands' argument names come with the shell's commands). No app has the runner yet
+  (the shell's commands come in a later change), so in a browser and in today's apps auto finds and answers as before;
+  `ask provider` and `auto`'s line name the new provider. Not verified: any app, any device, or the channel's order
+  against the reply in a real web view.
+- **The native model runner's core.** `native/llm` is a new crate that runs Sloane's model in the app's own process
+  through llama.cpp (`llama-cpp-2` 0.1.161, default features off), for the apps whose web view cannot run a model in the
+  page (macOS, Linux and iOS are WebKit; Android's web view is not counted on). One thread named "model" owns the model
+  and its context. It checks the processor first: x86-64 needs AVX2, FMA, F16C and BMI2, and an older processor gets a
+  sentence, not a crash. It checks the model file against its pin once (size and SHA-256) and stamps it, or copies it
+  out of a package and checks every byte on the way, refused before it starts when it would not fit (a part left by a
+  killed copy is removed first). A pin covers one file, so one part of a model split into several files is refused
+  before anything is read: llama.cpp would open the other parts unchecked. The model loads on the first answer. An
+  answer is rendered with the model's own chat template (ChatML when it has none), reads only what the context does not
+  already hold, streams whole characters in events of at most 1,024 bytes (under the 8 KiB Tauri's channel hands
+  straight to the page; a slow token goes out at once, and fast ones are gathered for 30 ms), and ends at the model's
+  end of turn, the cap, a full context or a stop read between decode calls. A turn marker spelled out as text never
+  reaches the page. Answers run in order, and only a queued one is told it waits, even when two are asked at the same
+  moment. An answer stopped during the copy or the load is sent nothing more, one stopped during the copy is answered
+  before the copy ends, and a stop during the load leaves the model loaded. Every error is a plain sentence. The shared
+  words (request, events, endings, errors, statuses, and what the app carries in each status, `NativeModel { file,
+  bytes, status }`) are in `native/llm/tests/wire.json`, which the page's side will read. A new workflow,
+  `native-llm.yml`, builds the crate with the app's release profile on x86-64 Linux, Arm Linux and Apple Silicon. On
+  each it runs clippy, the crate's tests on the tiny model (`tools/browser/tinyGguf.mjs`, which now also writes a model
+  without a chat template with `--plain`) and the real-model tests on the site's Qwen2.5 0.5B: its turn markers read as
+  single tokens, its ChatML exactly, an answer that ends by itself, and the same greedy answer with the kept context as
+  without (both read one token per decode, since llama.cpp's kernels for one token and for a batch round differently).
+  `src/nativeRunner.test.ts` pins the binding's version and features, `cc` at the app lockfile's version (and `cmake`
+  and `bindgen` once the app's lockfile holds them), the runner's Rust sources with no network or process code (not the
+  C++ it links: ggml forks a debugger when it aborts, and the symbol audit comes with packaging), every key of the wire
+  file, and the workflow, with no step it must run skipped or allowed to fail. No app uses the runner yet. Not verified:
+  any app, Metal or another GPU, Android or iOS, and speed on real hardware.
+- **The NixOS package carries Sloane's model.** `nix run` and the NixOS module's package now carry the Windows
+  installer's model, Qwen2.5 1.5B Instruct at Q4_K_M (Apache-2.0), with its `LICENSE` and `NOTICE`:
+  `tools/nix/model.nix` fetches it from Hugging Face at the same pin with Nix's `fetchurl` (any other bytes are refused)
+  and builds a store folder holding it, its licence files and a manifest; the launcher's package points
+  `AGENT_CITY_MODELS` at it. The launcher (`tools/web/launch.mjs`, also `--models <folder>`) serves the folder's plain
+  files at `models/` beside the page on `127.0.0.1` and adds `models=1` to the page's address; a folder it cannot read
+  or that holds no manifest is said once and left out. The page takes `models=1` on `http://127.0.0.1`
+  (`src/09_Cognition/siteModel.ts` `launcherServes`) as its launcher's model and copies it along the app's path
+  (`src/App.tsx` `launcherSource`): the same start once the city is on screen, with the connection given no say, the
+  same checks on every byte, and the card saying it is copied from the launcher. `programs.crimson-noir-agent-city.model
+  = false;` builds the module's package without it. `nix.yml` puts the model in the runner's store by its pin before
+  `nix flake check` (from a cache keyed by its pin, the same key the Windows workflow uses, one cached file per runner
+  system, else from Hugging Face; checked by its SHA-256), `--check` now reads the manifest and the model's size from
+  the page itself, and the browser smoke's new `launcher` scenario runs in ci and in the package's Chromium.
+  `siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`, `desktopLauncher.test.ts` and `browserShard.test.ts` cover
+  the pin, the words, the wiring, the server and the workflow. Not verified: a real NixOS
+  desktop, the copy of the real 0.9 GB file into a browser profile, and how the model converses there.
+- **The Windows installer carries Sloane's model.** The Windows app's NSIS installer and its .msi now carry Qwen2.5
+  1.5B Instruct at Q4_K_M (Apache-2.0, Copyright 2024 Alibaba Cloud; `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768
+  bytes, as bartowski quantized it) beside the app, with its `LICENSE` and `NOTICE`
+  (`third_party/qwen2.5-1.5b-instruct/`, `src-tauri/tauri.model.conf.json`). `windows-app.yml` fetches it from Hugging
+  Face at its pin (`src/09_Cognition/siteModel.ts` `APP_MODEL`) when its cache does not hold it, checks its size and
+  SHA-256 on every build (`tools/web/siteModel.mjs app`), builds both installers with it, and fails a build whose
+  installer is smaller than nine tenths of the model; `site-model.yml` checks the pin on Linux too. The shell lends the
+  page two read-only commands over that one file (`src-tauri/src/model.rs`: `app_model`, whether it is there at its
+  size; `app_model_read`, up to 4 MiB from an offset as base64 text), and the page reads it through them
+  (`src/07_Execute_Actions/desktopShell.ts` `shellModel`, `shellModelFetch`) along the web copy's path: the same start
+  once the city is on screen, holds, checks on every byte, keep, card and **Stop**, with the connection given no say
+  and the card saying the model is copied from the app. The page keeps its own copy, so the model takes about 0.9 GB
+  twice on disk. The bare .exe carries no model. `siteModel.test.ts`, `desktopShell.test.ts`, `siteAuto.test.ts`,
+  `chat.test.ts` and `webApp.test.ts` cover the pin, the reads, the start, the wiring and the workflow. Not verified:
+  the installed app on a physical Windows machine, the copy's speed over the shell's text answers, and how the 1.5B
+  model converses. The Windows arm64 app and the other platforms' apps carry no model yet.
+- **The web copy gets Sloane's model by itself.** Once the city is on screen (the veil gone, the city not halted, the
+  tab in view), a page on the web copy that can run and keep a model gets the model the site serves beside it (Qwen2.5
+  0.5B Instruct, Apache-2.0) with no click, checked against its pin exactly as the tap's download is, and keeps and
+  chooses it without changing the provider, so under `auto` a model server on this machine still answers first (the
+  Claude gateway, which `auto` asks after a kept model, must be chosen by name to stay first)
+  (`src/09_Cognition/siteAuto.ts` `createSiteAuto`, `App.tsx`). It holds back, with its reason in one console line,
+  when this browser cannot run a model in the page, when another provider is chosen or a model file of your own is
+  chosen or kept, when a file is being kept just then, when the model is kept already, when the page's storage does
+  not answer or its local storage refuses a write (a Stop could not be remembered), when the browser says it saves
+  data, is on mobile data or has a 2G connection (only Chrome on Android says mobile data), when another tab is getting
+  it (by itself or from a tap: both hold one Web Lock), when the visitor stopped it before (remembered in this
+  browser), and after tries that ended short (an hour, then a day, then for good after three, or after the system ended
+  the page twice mid-way). Once it holds the lock it reads all of that again, so what changed while it asked holds it
+  back. The tap and the page share one job (`src/09_Cognition/siteJob.ts`): its line, bar and **Stop** show on Sloane's
+  card and a hairline of its progress on her chip, which keeps its size. A connection that turns costly on the way
+  stops it, and a download the connection cut counts as a pause with a toast that it waits; a provider or model chosen
+  meanwhile ends it keeping nothing; a halt stops it; a page's own try that ends short says why in a toast and the card
+  still offers the tap; the card asks the last turn again only when that conversation found no model.
+  `siteAuto.test.ts` drives the start, the rules and the record with fakes (each hold before the site is asked, the
+  re-read once the lock is held, two tabs judging one dead page, how each try ends), `siteJob.test.ts` the job and
+  `chat.test.ts` the wiring; the browser smoke's `sitemodel` scenario drives it in Chrome against a web copy served from
+  this machine with a tiny model under a swapped pin: the download starting with no click and nothing asked off the
+  site until Sloane is spoken to, its Stop remembered on the next visit, a fresh browser keeping the model by itself and
+  Sloane answering with it, and a flipped byte ending the try with the tap still offered. Not verified: a real download
+  from GitHub Pages, any real phone, and how a phone's browser reports its connection.
+
+- **The downloads follow main: the current build** (`.github/workflows/current.yml`, `tools/build/current.mjs`,
+  `src/currentBuild.test.ts`). Each time ci passes on a commit on main, the new `current` workflow builds all nine
+  targets of the build matrix from that commit (the Windows x64 app through `windows-app.yml`, the other eight,
+  Crimson Noir OS's x86-64 and aarch64 media among them, through `build-matrix.yml`; both workflows now also take a
+  `workflow_call` with the commit as `ref`) and puts the files on one GitHub pre-release, "Crimson Noir: Agent City,
+  current build", tag `current`, replacing the last green commit's, as `web.yml` keeps the web copy. It makes no
+  numbered release, its only tags are `current` and a stand-in, `current-next`, for a few seconds when GitHub
+  refuses to move `current`, and the release is never "Latest". The UEFI jobs still bake twice, compare the bytes and
+  boot in QEMU before they upload; a target whose job fails keeps its last files while the release still holds those
+  very bytes (checked by SHA-256, since the UEFI images keep one size from commit to commit), and the notes and
+  `current.json` say which commit each file comes from (the run is then red; the iOS build stays best effort). It
+  builds the newest commit on main that ci passed on, whichever run starts, and publishes only one at least as new as
+  the release's; when GitHub cannot say whether a commit is on main or compare it with the release's, or the
+  release's record cannot be read, it writes nothing and the run is red. The record goes up as `current.next.json`
+  before `current.json` is replaced (gh's `--clobber` deletes the old file first), so the release always has one, a
+  staged copy left by a stopped run goes up as `current.json` first, and a release with neither gets an empty record
+  before any file; a commit counts as published only when the release holds exactly what its record says, with
+  `SHA256SUMS` listing those files and the notes naming the commit and that publish's time. A "Re-run failed jobs",
+  which keeps an earlier attempt's pick, turns red unless the release then holds the newest green commit (or a newer
+  one), and when GitHub cannot answer. Files whose bytes did not change are not uploaded again (usually the UEFI applications and the notices: the images carry their commit's time and GUIDs and
+  change with every commit); `SHA256SUMS` covers every built file. The tag is put at the commit before any file is
+  written. GitHub is reported to refuse a tag move with the workflow's own token across a change to a workflow file,
+  and to allow a new tag at a commit whose workflow files match main's tip, so after a refused move the release
+  stands on `current-next` while `current` is made again (never on a tag being deleted, which would turn it into a
+  draft); a run stopped halfway is set back on `current` by the next without deleting it, and when GitHub refuses
+  the stand-in too, the files are published and the notes say where the tag stayed. On a pull request that touches
+  it, it builds everything and runs the publish as a dry run with read-only access; on this change's own pull request
+  that run built all nine targets. The bare Windows executables are now published as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`: both were `crimson-noir-app.exe`, so on a `v*` release the
+  second upload would have replaced the first. Twenty-six tests hold the publish step against a stand-in for GitHub
+  that keeps its reported tag rules and gh's delete-then-upload (a first publish, a later one with a failed target and
+  a version change, the tag remade through the stand-in, refused, and set back after a run stopped halfway, a leftover
+  stand-in, half-answers from GitHub including a lost answer while `current` is remade, an unreadable or missing
+  record, two record uploads failing in a row, a staged record beside an older one, a release with no record, a
+  replaced file, a publish that stopped after its record, a second publish of one commit stopped the same way, a stale
+  commit, a commit off main, a re-run of failed jobs, a dry run, the pick, the command line) and the workflows'
+  triggers, queue, access and calls. How GitHub treats the tags is taken from reports of its behaviour, not yet seen
+  here: nothing has been published yet, and the first real run is the first green ci on main after the merge.
+
 - **Shop locks on the wardrobe.** An option a shop sells is locked on the player's own look until it is bought
   (`src/07_Execute_Actions/lookLock.ts`). A lock is what one worn catalogue line sells (the look slots it sets, less the
   rolled sleeves a design comes with), open once that line is owned: the tailor's six coats, seven contrast trims, seven
@@ -2139,6 +2340,38 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   while the page before it is, and `check()` asserts both, and that a cached page's key still matches the page
   before it (found while adding pinned prefixes; two new tests).
 
+- **An Android phone with WebGPU but no adapter gets steps that fit it, and a Mali Bifrost GPU starts on the light
+  crowd kernel.** On the Armor X32 (Mali-G52, Android 16) Chrome 156 handed the page no WebGPU adapter while Brave on
+  the same phone ran the city, and the card said Chrome "has WebGPU, but not for this phone's GPU or its driver",
+  though Chrome had given the page WebGPU on that phone before (the full crowd kernel took its GPU process down two
+  days earlier). Chrome's own code gives a page no adapter on Android when its GPU process went twice
+  in two minutes (the existing "paused" card), when it hands the page no GPU at all after its graphics crashed, or when
+  it holds WebGPU back alone: its list of GPUs it keeps WebGPU from, which Google can change without an update, or
+  Android's Advanced Protection, under which Chrome turns WebGPU off. The page now asks its own WebGL at that moment
+  (`gpuDevice.ts` `webgl2Answers`: WebGL2, then WebGL on a fresh canvas; `NoAdapterError`), says the answer in the
+  details, and words the card from it: the browser by its own name (Brave sends Chrome's user agent on Android, and
+  Edge only adds its own EdgA token; `bootFailure.ts` `appName` reads `navigator.brave` and the client hints' brands,
+  and client hints that name no app make it "this browser"), Force stop first, then a restart of the phone or
+  Advanced Protection, and another browser built on Chromium (Firefox is offered Chrome or Brave and told nothing of
+  Advanced Protection). Where a crowd kernel took the GPU down in that browser on an earlier visit (the kernel record,
+  `crowdKernelMemory.ts` `lostBefore`), the card says so first. The installed app is never sent to another browser,
+  and an Android app's built-in browser with no adapter is sent to Chrome with the Open in Chrome button. Separately,
+  the full crowd kernel took Chrome's GPU process down on that Mali-G52 and Brave's compiler refused it and the
+  narrow one; since an updated browser asks the kernels afresh, each update would cost such a phone a GPU process
+  again, so a Mali Bifrost GPU (`familyKernel`: architecture `bifrost`, or a Mali-G31, G51, G52, G71, G72 or G76) now
+  starts on the light kernel before anything is learnt of it (`planKernel`, `by: 'family'`). On such a GPU a lost
+  heavier kernel is not asked about again, an expired refusal starts from the light kernel (or the rung the record saw
+  stand, where higher), a kernel standing after the light kernel's own hold forgets the record, `?kernel=full` asks for
+  everything on that visit only, and `hardware` says "this GPU family starts on it". The card after the lightest
+  kernel's loss, which on such a GPU can follow a single loss, now reads "The crowd’s lightest kernel stopped this
+  device’s graphics" instead of saying the crowd "keeps" stopping them, and the driver card no longer says heavier
+  kernels were tried where the start began on the light one. `bootFailure.test.ts`, `gpuDevice.test.ts`,
+  `crowdKernelMemory.test.ts` and `commands.test.ts` hold the card's words for each WebGL answer, browser name,
+  Firefox, the installed app and the built-in browser, the WebGL check and its message, the family's start and its
+  interplay with records, holds and the address, and the `hardware` row; the browser smoke's `fail` scenario checks
+  the new headline. Unverified on the phone: why its Chrome holds the adapter back, and whether Force stop brings it
+  back; the card's WebGL answer there; whether the light kernel stands in that phone's Chrome (only Brave has run it
+  there). The family start rests on that one Mali-G52 and has not been tried on another Bifrost GPU.
 - **No gap at the ankle or the wrist.** The leg's last ring ended at 9.5 cm and the shoe's open top at 8.5 cm, so a
   centimetre all round the ankle showed what was behind the person: a pale band between every trouser hem, boot shaft
   or bare leg and the shoe. The sleeve's last ring ended at 93.5 cm and the hand's first at 92 cm, the same at the
@@ -2262,7 +2495,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   minutes, never when the address named the kernel, never when it would be the GPU's third loss in five minutes, and
   never where the browser keeps nothing for the page.
   New cards: "The browser’s graphics stopped while building the crowd" (Restart goes to the lighter kernel), "The
-  crowd keeps stopping this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
+  crowd’s lightest kernel stopped this device’s graphics" (no kernel left; says how long the GPU is left alone, and a start
   inside that time asks for no adapter), and "The browser has paused graphics for this page" for Chrome's own pause
   after two losses within two minutes (measured in Chromium 153; it used to read as a device with no adapter). A boot
   that fails gives its worker up at once (`simClient.ts` `SimBootHooks.signal`), a device handed over already lost is
@@ -2618,6 +2851,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (a conversation's) as paged apart, not as a fork. Verified by unit tests and the site-model browser run on headless
   Chromium; the cause is read from the code and the phone's report, and the phone's own speed is unverified until it
   is tried there.
+
+- **The browser smoke's clicks on Sloane's card no longer fail together after one miss.** `sitemodel`'s second visit
+  failed once in a while on CI (main 05d00af, browser (2)): the card's trail showed the first click on Sloane's chip
+  landing on the city's canvas, and the two retries landing there too. A click on the canvas takes the pointer
+  (`src/04_Connect_Hardware/input.ts` capturePointer), headless Chrome grants the lock, and under the lock every click
+  goes to the canvas wherever it is pressed. `tools/browser/smoke.mjs` clicks through `clickOn` now: it lets the lock
+  go first, finds the element's centre again with the mouse over it, and presses only where the element still is.
+  The card's trail notes pointer lock changes too. Checked locally by forcing a first click onto the canvas: the
+  scenario passed.
 
 ## [1.0.0-stable-beta] - 2026-10-12
 

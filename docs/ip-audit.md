@@ -86,7 +86,8 @@ The one compiled third-party binary in the repository. It is not built here and 
 ### The model the web copy serves (`third_party/qwen2.5-0.5b-instruct/`, added 12 November 2026)
 
 The one set of model weights the product offers, so that a visitor to the web copy with no model of their own can talk
-to Sloane in one tap. It is weights, not code, and none of it is in the repository:
+to Sloane with no setup (the page gets it by itself once the city is on screen, or in one tap). It is weights, not
+code, and none of it is in the repository:
 
 - **What it is.** `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf` (397,808,192 bytes, sha256
   `6eb923e7d26e9cea28811e1a8e852009b21242fb157b26149d3b188f3a8c8653`), as bartowski publishes it in the Hugging Face
@@ -102,8 +103,9 @@ to Sloane in one tap. It is weights, not code, and none of it is in the reposito
   leaves no model behind. `place` refuses a folder that is not the web copy, so `dist/` (the single page that the
   Windows app, the flake and the release builds carry) never gets it, and `tools/verify/page_dist.mjs` still fails a
   `dist/` that holds a `.gguf`. `.github/workflows/site-model.yml` fetches and checks the pin on a pull request that
-  touches it. The page itself downloads the file from its own site only when a visitor taps for it, and checks the
-  same size and hash as it streams before anything is kept.
+  touches it. The page itself downloads the file from its own site, by itself once the city is on screen (where
+  `src/09_Cognition/siteAuto.ts` lets it) or when a visitor taps for it, and checks the same size and hash as it
+  streams before anything is kept.
 - **The texts.** `LICENSE` is the Apache License 2.0 with Qwen's copyright line ("Copyright 2024 Alibaba Cloud") in
   its appendix, the form Qwen's repositories carry. `NOTICE` says what the file is, where it comes from and at which
   revision, that it is a quantization of Qwen's weights, and that the product serves it unchanged; `SHA256SUMS` is
@@ -126,6 +128,54 @@ to Sloane in one tap. It is weights, not code, and none of it is in the reposito
      GitHub's terms for Pages is for the owner to watch.
   4. The owner reviews the NOTICE, this entry and the pin before the change that adds them reaches main: the web
      workflow serves the model from the next publish of main on.
+
+### The model the Windows installer carries (`third_party/qwen2.5-1.5b-instruct/`, added 13 November 2026)
+
+The second set of model weights the product offers, so that a person who installs the Windows app can talk to Sloane
+from the first launch with no model of their own. It is held exactly as the web copy's model is (the entry above), and
+none of it is in the repository:
+
+- **What it is.** `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, sha256
+  `1adf0b11065d8ad2e8123ea110d1ec956dab4ab038eab665614adba04b6c3370`), as bartowski publishes it in the Hugging Face
+  repository `bartowski/Qwen2.5-1.5B-Instruct-GGUF` at revision `9eadc66189c7641e1ddd226b8267a9119b2ce2d4`: a GGUF
+  conversion of the Qwen team's Qwen2.5-1.5B-Instruct weights (Alibaba Cloud; Apache-2.0, Copyright 2024 Alibaba
+  Cloud) quantized to Q4_K_M with an importance matrix (llama.cpp release b3772). Of the Qwen2.5 instruct sizes, 0.5B,
+  1.5B, 7B, 14B and 32B are Apache-2.0; 3B and 72B are under Qwen's own licences, so they are not used. The size, the
+  hash, the revision and the licence named by both repositories were read from Hugging Face's API on 13 November 2026;
+  `site-model.yml` (on a pull request that touches the pin, or run by hand) and `windows-app.yml` fetch the file when
+  their cache (keyed by the whole pin) does not hold it, and check its size and hash on every run, a cached file too.
+- **How it is held.** Never committed, never in the page and never in the bare .exe. `src/09_Cognition/siteModel.ts`
+  pins it (`APP_MODEL`), `SHA256SUMS` beside its licence holds the same line, and `src-tauri/src/model_file.rs` names
+  the same file and size; `siteModel.test.ts` holds the three equal. `.github/workflows/windows-app.yml` fetches the
+  file at the pinned revision when its cache does not hold it and, on every build, `tools/web/siteModel.mjs app`
+  checks its size and SHA-256 while copying it into `src-tauri/models/` (git-ignored) with `LICENSE` and `NOTICE`; a
+  mismatch fails the build and leaves no model behind. `src-tauri/tauri.model.conf.json` bundles those three files
+  into the installer and the .msi, which install them under `models/` in the app's folder. The app's page reads the
+  file only through the shell's two read-only commands and checks the same size and hash on every byte.
+- **The texts.** `LICENSE` is the same Apache License 2.0 text with Qwen's copyright line as the 0.5B record's (Qwen's
+  repository `Qwen/Qwen2.5-1.5B-Instruct` carries the Apache License 2.0 with "Copyright 2024 Alibaba Cloud" in its
+  appendix, as read on 13 November 2026); `NOTICE` says what the file is, where it comes from, at which revision, that
+  it is a quantization of Qwen's weights and that the product ships it unchanged. Both are installed beside the model.
+  `NOTICE.md` (a paragraph under "Third-party software", the trademark paragraph and operator note 14) and `LICENSE`
+  section 4 name the model and this directory.
+- **Open points, for the owner before a release.** The first two of the entry above apply here as well: compare
+  `LICENSE` once byte for byte with the copy in `Qwen/Qwen2.5-1.5B-Instruct`, and have counsel confirm that the NOTICE
+  is enough for a third party's quantization (the alternative is Qwen's own `Qwen/Qwen2.5-1.5B-Instruct-GGUF` file).
+  Every installer download is about 0.9 GB from GitHub's release storage.
+- **The NixOS package (added 13 November 2026).** The same file, at the same pin, for the flake's `nix run` and its
+  NixOS module. `tools/nix/model.nix` names the pin (`siteModel.test.ts` holds it equal to `APP_MODEL`) and fetches the
+  file with Nix's `fetchurl` from the same Hugging Face address, which refuses any bytes but the pinned SHA-256; the
+  folder it builds in the Nix store holds a link to the fetched file, the same `LICENSE` and `NOTICE` from this
+  directory, and a manifest naming the file. Each machine that builds the package fetches the file itself, so the
+  product does not redistribute it to Nix users; a binary cache that serves the built package would. The file sits in
+  its own fixed-output store path (`…-Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`), and the `LICENSE`, `NOTICE` and manifest sit
+  in the package's model folder (`…-crimson-noir-agent-city-model`), which links to it: a cache serving the package's
+  closure serves both, but it could serve the file's path on its own. CI's `nix.yml` puts the file in its runner's store
+  from its own Linux cache keyed by the whole pin (the Windows workflow uses the same key, but an entry saved on Windows
+  is not restored on Linux), else from Hugging Face at the pinned revision, checked by its SHA-256 either way, so the
+  build there fetches nothing. The launcher serves the folder beside the page on `127.0.0.1` only, and the page checks
+  the same size and hash on every byte. `programs.crimson-noir-agent-city.model = false` builds the module's package
+  without it. The same open points apply.
 
 ## 2. The npm dependency tree (`package-lock.json`)
 
@@ -159,6 +209,7 @@ cargo install cargo-license
 cargo license --manifest-path crimson_noir_os/Cargo.toml
 cargo license --manifest-path native/kv-pager/Cargo.toml
 cargo license --manifest-path src-tauri/Cargo.toml
+cargo license --manifest-path native/llm/Cargo.toml
 ```
 
 - **`crimson_noir_os/Cargo.lock` (152 crates)** and **`native/kv-pager/Cargo.lock` (126 crates)**: the `wgpu` stack
@@ -168,7 +219,25 @@ cargo license --manifest-path src-tauri/Cargo.toml
   image contains no Linux kernel or other GPL code and links only `font8x8` (MIT) at runtime.
 - **`native/routing/Cargo.lock`** and **`native/kv-pager-wasm/Cargo.lock`**: no third-party crates at all (the
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
-- **`src-tauri/Cargo.lock` (407 crates)**: the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
+- **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
+  the registry cache of the session that wrote it: the native model runner (llama.cpp in the app's own process, for
+  the macOS, Linux, Android and iOS apps). It is compiled into no shipped build yet; only its tests run
+  (`native-llm.yml`), and the Linux app built for the end-to-end test alone (`native-e2e.yml`, feature
+  `tiny-model`). Linked into it (19 crates): `llama-cpp-2` and `llama-cpp-sys-2` 0.1.161 (MIT OR Apache-2.0; the
+  sys crate is llama-cpp-rs at commit e7af607e), which compile the llama.cpp and ggml sources they vendor (MIT,
+  Copyright 2023-2026 The ggml authors); `serde`, `serde_core`, `sha2`, `digest`, `block-buffer`, `crypto-common`,
+  `cpufeatures`, `typenum`, `libc`, `thiserror`, `enumflags2`, `cfg-if`, `once_cell` and `pin-project-lite` (MIT OR
+  Apache-2.0); and `tracing`, `tracing-core` and `generic-array` (MIT). Build time only, among them: `bindgen`
+  (BSD-3-Clause), `clang-sys` (Apache-2.0), `libloading` (ISC), `cmake`, `cc`, `regex`, `glob` (MIT OR Apache-2.0),
+  the proc-macro crates (MIT OR Apache-2.0, except `tracing-attributes`, which is MIT; `unicode-ident` adds
+  Unicode-3.0), `nom` (MIT), `memchr`, `walkdir` and `same-file` (Unlicense OR MIT; `winapi-util`, also Unlicense OR
+  MIT, on Windows only), and `r-efi` (MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available).
+  The notice for what llama.cpp compiles in (ggml, the llamafile matrix code, the YaRN code, and what its common
+  library brings) lands with the first app build that carries the runner.
+- **`src-tauri/Cargo.lock` (427 crates; 407 before 13 November 2026)**: the 20 added are the native runner's crate and
+  what it brings (the list above), recorded because the app names it as an optional, Linux-only dependency behind the
+  `native-runner` feature, which is off by default: no shipped build compiles them, and the Windows and macOS builds
+  link exactly what they did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
   `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.
@@ -235,7 +304,7 @@ in the licence files changed.
 
 ## 6. Left for a machine with registry access
 
-1. Run the three `cargo license` commands above and attach the output to this document.
+1. Run the four `cargo license` commands above and attach the output to this document.
 2. Consider adding `cargo deny check licenses` (with an allow-list of MIT, Apache-2.0, BSD, ISC, Zlib and
    Unicode-3.0, plus per-crate exceptions for MPL-2.0 naming `option-ext` and, if `cargo tree` shows them in the
    Windows build, the Servo CSS crates, once counsel has confirmed the MPL reading in §3) to `ci.yml` beside the

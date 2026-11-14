@@ -30,6 +30,8 @@ pub struct HidInfo {
 }
 
 /// An input report, as the `hid-input` event carries it: the report ID apart from its data, as WebHID gives them.
+/// Only Windows sends one; elsewhere it and the two constants below are unused.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HidInput {
@@ -39,10 +41,12 @@ pub struct HidInput {
 }
 
 /// The controllers the shell will list and open for the page: Sony's DualSense (0x0ce6) and DualSense Edge (0x0df2).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const ALLOWED: &[(u16, u16)] = &[(0x054c, 0x0ce6), (0x054c, 0x0df2)];
 
 /// The longest wait between two input events for one controller, ms: more than the controller's own rate, and
 /// still well inside the 250 ms the page's driver allows before it calls decoded input stale.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const INPUT_EVERY_MS: u64 = 8;
 
 #[cfg(windows)]
@@ -222,8 +226,9 @@ mod native {
 mod native {
     use super::HidInfo;
 
+    /// Braced, not a unit struct, so lib.rs's `HidState::default()` reads the same on every platform.
     #[derive(Default)]
-    pub struct HidState;
+    pub struct HidState {}
 
     const ELSEWHERE: &str = "the shell opens controllers itself on Windows only";
 

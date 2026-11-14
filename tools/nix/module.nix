@@ -3,7 +3,8 @@
 # Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 #
 # Why does this file exist? It is the NixOS side of the flake: `programs.crimson-noir-agent-city.enable = true;`
-# installs the launcher and its app-menu entry, turns on the Vulkan driver Chromium's WebGPU needs
+# installs the launcher and its app-menu entry with Sloane's model beside the page (tools/nix/model.nix, unless
+# `programs.crimson-noir-agent-city.model = false;`), turns on the Vulkan driver Chromium's WebGPU needs
 # (hardware.graphics.enable, Mesa's radv on an AMD GPU), and lets the signed-in user's browser open a DualSense over
 # WebHID (its trigger resistance, rumble and light bar need the raw HID node; the plain gamepad works without it).
 # `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service on this machine's loopback, where the
@@ -75,11 +76,29 @@ in
     enable = lib.mkEnableOption "Crimson Noir: Agent City, its launcher and its app-menu entry";
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ./app.nix { page = pkgs.callPackage ./page.nix { }; };
-      defaultText = lib.literalExpression "pkgs.callPackage ./app.nix { page = pkgs.callPackage ./page.nix { }; }";
+      default = pkgs.callPackage ./app.nix {
+        page = pkgs.callPackage ./page.nix { };
+        model = if cfg.model then pkgs.callPackage ./model.nix { } else null;
+      };
+      defaultText = lib.literalExpression ''
+        pkgs.callPackage ./app.nix {
+          page = pkgs.callPackage ./page.nix { };
+          model = if config.programs.crimson-noir-agent-city.model then pkgs.callPackage ./model.nix { } else null;
+        }'';
       description = ''
-        The launcher package (its page and its browser come with it). The page is unfree: allow
-        "crimson-noir-agent-city-page" in nixpkgs.config.allowUnfreePredicate.
+        The launcher package (its page, its browser and, with `model`, Sloane's model come with it). The page is
+        unfree: allow "crimson-noir-agent-city-page" in nixpkgs.config.allowUnfreePredicate.
+      '';
+    };
+    model = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Build the default package with Sloane's model (tools/nix/model.nix): Qwen2.5 1.5B Instruct at Q4_K_M
+        (Apache-2.0, about 940 MB), fetched once from Hugging Face at a pinned revision and checked by its SHA-256. The
+        launcher serves it beside the page, and the page keeps a copy in the browser profile's storage, so Sloane
+        talks from the first launch with nothing to download. false builds the package without it. A package of
+        your own (`package`) is used as it is.
       '';
     };
     dualsense = lib.mkOption {

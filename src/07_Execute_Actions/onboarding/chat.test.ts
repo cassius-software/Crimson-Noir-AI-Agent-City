@@ -6,9 +6,11 @@
  * card goes to the page's mind with Sloane's framing and the turns so far, streams back screened by the 14A screen (a
  * refused word stops the model and shows nothing), never carries an action line (a conversation never acts), and ends
  * as `none` with the router's reason when no model answers, so the card says so plainly and offers the ways to get one
- * instead of sending scouts. The card reaches the model only through that Chat (never a Mind), App hands it the picker
- * and the browser's refusal, and the brief's rewording never asks while the model this page would answer with is still to
- * be loaded (an answer's stop ends its load, so the 4 s rewording used to kill every load it started).
+ * instead of sending scouts. The card reaches the model only through that Chat (never a Mind), App hands it the picker,
+ * the browser's refusal and why the app's own model couldn't start (in place of the site's and the browser's hints,
+ * only while that model is what answers, and on a computer still with the line about starting a model server), and
+ * the brief's rewording never asks while the model this page, or the app, would answer with is still to be loaded (an
+ * answer's stop ends its load, so the 4 s rewording used to kill every load it started).
  * What breaks if it is removed? Small talk could fall back to the scouts and a flat "not yet", a model's reply could be
  * shown unscreened or act, or the rewording could go back to killing the in-page model while it loads.
  */
@@ -239,6 +241,10 @@ test('the phase line: the prompt read as the conversation with its share, the lo
   assert.equal(phaseLine('reading the prompt 42%'), 'Reading the conversation · 42%')
   assert.equal(phaseLine('reading the prompt 100%'), 'Reading the conversation · 100%')
   assert.equal(phaseLine('loading the model in this page'), 'Loading the model in this page…')
+  // The model the app runs itself (09_Cognition/nativeMind.ts): its first-run check with its share, its load.
+  assert.equal(phaseLine('loading the model in the app'), 'Loading the model inside the app…')
+  assert.equal(phaseLine('preparing the model in the app 1%'), 'Preparing the model inside the app · 1%')
+  assert.equal(phaseLine('preparing the model in the app 100%'), 'Preparing the model inside the app · 100%')
   assert.equal(phaseLine('waiting for the model to finish another answer'), 'Waiting for the model to finish another answer')
   assert.equal(phaseLine('thinking'), 'Thinking')
   assert.equal(phaseLine(''), '')
@@ -262,6 +268,13 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /Qwen2\.5 0\.5B Instruct at Q4_K_M, about 0\.4 GB/)
   assert.match(card, /Or start Ollama, LM Studio or a llama\.cpp server on this computer and ask again/)
   assert.match(card, /in OLLAMA_ORIGINS/, 'a page Ollama refuses by default says how to allow it')
+  // Where the app runs its own model and it could not start: its reason in place of the site's and the browser's hints
+  // only, said only while that model is what answers (the provider auto or native, never another one chosen), and the
+  // line about starting a model server kept wherever one can run beside the app (a computer, not a phone or tablet).
+  assert.match(card, /const app = talk\?\.state === 'none' && appModel !== null && appModel\.blamed\(\) \? appModel : null/)
+  assert.match(card, /\{app \? `\$\{appHint\(app\.why\)\} ` : site \? siteHint\(site, from\) : onPickModel && !noPageModel \? `\$\{SMALL_MODEL_HINT\} ` : noPageModel \? /, 'in place of the site\'s and the browser\'s hints')
+  assert.match(card, /\{\(!app \|\| app\.servers\) && \(<>\n\s*Or start Ollama, LM Studio or a llama\.cpp server on this computer and ask again/, 'still said on a computer')
+  assert.match(card, /return `The model inside this app couldn’t start: \$\{why\.replace\(\/\[\.\\s\]\+\$\/, ''\)\}\.`/)
   assert.match(card, /const open = view === 'goal' && \(!dialogue\.brief \|\| dialogue\.brief\.chat === true\)/, 'words heard while the conversation is open are its next turn')
   // A second message never cuts short a reply still on its way (a model loading in this page for it would load again):
   // the next turn waits for it, or for the person's own Stop, and the chip opens the conversation as it stands.
@@ -270,60 +283,150 @@ test('the card: talk goes to the Chat (never a Mind), streams onto the card, is 
   assert.match(card, /else if \(dialogue\.brief\?\.chat && replying\) \{[^}]*openGoal\(\)\n\s*setDraft\(said\)/, '"Sloane, …" from the chip too')
   assert.match(card, /disabled=\{replying\}/)
   assert.match(card, /data-action="stop"/)
-  assert.match(card, /if \(dialogue\.brief\?\.chat && \(replying \|\| unseen \|\| getting !== null \|\| \(!whySeen && talk\?\.state === 'none'\)\)\) \{\n\s*open\('goal'\)/, 'a reply that came while the card was away is shown when it opens (and a download under way, or one that ended short meanwhile, keeps the conversation)')
+  assert.match(card, /if \(dialogue\.brief\?\.chat && \(replying \|\| unseen \|\| \(getting !== null && \(job\?\.how === 'tap' \|\| talk\?\.state === 'none'\)\) \|\| \(!whySeen && talk\?\.state === 'none'\)\)\) \{\n\s*open\('goal'\)/, 'a reply that came while the card was away is shown when it opens (and a download tapped there or shown in it, or one that ended short meanwhile, keeps the conversation; the page\'s own download alone does not)')
   assert.match(card, /const refocus = \(\) => \{\n\s*focusNext\.current = true/, 'Stop and Ask again hand focus back to the field')
 })
 
-test('App: the card gets Sloane\'s conversation, the picker and the browser\'s refusal; the rewording waits for a model file to be loaded', () => {
+test('App: the card gets Sloane\'s conversation, the picker, the browser\'s refusal and why the app\'s model couldn\'t start; the rewording waits for a model file, or the app\'s model, to be loaded', () => {
   const src = read('App.tsx')
   assert.match(src, /setSloaneTalk\(sloaneChat\(mind, \(\) => local\.settings\(\)\.provider !== 'scripted'\)\)/)
   assert.match(src, /chat=\{sloaneTalk\}\s*onPickModel=\{onModelFile\}\s*noPageModel=\{PAGE_MODEL_REFUSAL\(\)\}/)
+  // Why the app's own model couldn't start, as its mind hears it (09_Cognition/nativeMind.ts onFailed): blamed only
+  // while it is what answers, the server line kept where the device is no phone or tablet.
+  assert.match(src, /siteModel=\{siteModel\}\s*appModel=\{appModel\}/)
+  assert.match(src, /onFailed: \(why\) => setAppModel\(\(was\) => why === null \? null : was\?\.why === why \? was : \{\n\s*why,\n\s*servers: !e\.profile\.mobile,\n\s*blamed: \(\) => local\.provider === 'auto' \|\| local\.provider === 'native',\n\s*\}\),/)
+  assert.match(src, /setSiteModel\(null\)\n\s*setAppModel\(null\)/, 'a city that goes takes the reason with it')
+  // The rewording never asks while the model the app runs itself is still to be loaded (it would be the answer that
+  // loads it): asked of that mind (nativeMind.ts cold), the one the router was handed.
+  assert.match(src, /native: \(\) => \(appMind = createNativeMind\(\{\n\s*host: shellRunner\(\),/)
+  assert.match(src, /const s = local\.settings\(\)\n(\s*\/\/[^\n]*\n)*\s*if \(s\.provider === 'native' \|\| \(s\.provider === 'auto' && s\.found === 'native'\)\) return appMind\.cold\(\)\n\s*if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
   assert.match(src, /if \(s\.provider === 'inpage'\) return inPage\.cold\(true\)/)
-  assert.match(src, /if \(s\.provider !== 'auto' \|\| !inPage\.cold\(false\)\) return false/)
+  assert.match(src, /if \(s\.provider !== 'auto' \|\| \(!inPage\.cold\(false\) && !\(s\.found === undefined && appMind\.cold\(\)\)\)\) return false/)
+  assert.match(src, /inPageMind = inPage\n(\s*\/\/[^\n]*\n)*\s*void appMind\.installed\(\)\.catch\(\(\) => \[\]\)/, 'asked once as the router is built')
   assert.match(src, /return s\.found === undefined \|\| s\.found === 'inpage'/, 'under auto, only while the file is what would answer')
   assert.match(src, /setSloane\(null\)\n\s*setSloaneTalk\(null\)/, 'a city that goes takes the conversation with it')
 })
 
 test('the card: the site\'s model is offered when no model answers, got in one tap with progress and Stop, and the last turn is asked again', () => {
   const card = read('07_Execute_Actions/Concierge.tsx')
-  assert.match(card, /import type \{ SiteModelHost, SiteModelLine, SiteModelProgress \} from '\.\.\/09_Cognition\/siteModel\.ts'/, 'only the types: the card fetches nothing')
+  assert.match(card, /import type \{ SiteModelFrom, SiteModelHost, SiteModelLine, SiteModelProgress \} from '\.\.\/09_Cognition\/siteModel\.ts'\nimport type \{ SiteJobState \} from '\.\.\/09_Cognition\/siteJob\.ts'/, 'only the types: the card fetches nothing')
   assert.doesNotMatch(card, /\bfetch\s*\(/)
   assert.match(card, /const offering = talk\?\.state === 'none' && siteModel !== null && !noPageModel/, 'offered only when no model answers, where this browser can run one')
-  assert.match(card, /siteModel\.offer\(\)\.then\(/, 'the manifest is asked when the card first offers it, never at boot')
+  assert.match(card, /siteModel\.offer\(\)\.then\(/, 'the card asks the manifest when it first offers it (the page\'s own start is App\'s)')
   assert.match(card, /data-action="site-model"/)
   assert.match(card, /\{site\.kept \? 'Use the model kept here' : `Get the model · \$\{site\.size\}`\}/, 'the button says the size before anything is downloaded')
-  assert.match(card, /siteModel\.get\(\(p\) => \{\n\s*if \(ctl\.signal\.aborted\) return\n\s*if \(p\.step === 'keep'\) handed\.current = true\n\s*setGetting\(p\)\n\s*\}, ctl\.signal\)/)
+  // One job a page (siteJob.ts), whoever started it: the card reads it, the tap starts it, the Stop stops it.
+  assert.match(card, /const job = useSyncExternalStore\(siteModel\?\.job\.subscribe \?\? NO_SUBSCRIBE, siteModel\?\.job\.state \?\? NO_JOB, NO_JOB\)/)
+  assert.match(card, /const getting: SiteModelProgress \| null = job\?\.phase === 'running' \? job : null/)
+  assert.match(card, /const gotWhy = job\?\.phase === 'failed' \? job\.why : ''/)
+  assert.match(card, /const getSite = \(\) => \{\n\s*if \(!siteModel \|\| getting\) return\n\s*refocusKeys\(\)\n\s*void siteModel\.job\.start\('tap'\)/)
+  assert.match(card, /const stopGetting = \(\) => \{\n\s*if \(siteModel\?\.job\.stop\('person'\)\) refocusKeys\(\)/, 'a Stop after the hand-off does nothing: siteJob.ts stop refuses it, and the copy runs to its end')
+  assert.doesNotMatch(card, /getCtl|handed\.current/, 'the card holds no download of its own: a card that goes leaves the page\'s job running (the city\'s end stops it)')
   assert.match(card, /role="progressbar"/)
-  assert.match(card, /\{getting\.step === 'download' && <button type="button" onClick=\{stopGetting\} className=\{link\} data-action="stop-model">Stop<\/button>\}/, 'Stop while it downloads; the copy into the page runs to its end')
-  assert.match(card, /if \(onChat\.current && turnsRef\.current\.at\(-1\)\?\.who === 'you'\) \{\n\s*setStarting\(true\)\n\s*askTurns\(turnsRef\.current\)/, 'the last turn is asked again once the model is kept, while the card is still on that conversation')
+  assert.match(card, /\{getting\.step === 'download' && <button type="button" onClick=\{stopGetting\} className=\{link\} aria-label=\{`Stop getting \$\{SLOANE\.name\}’s model`\} data-action="stop-model">Stop<\/button>\}/, 'Stop while it downloads, named apart from the reply\'s Stop; the copy into the page runs to its end')
+  // Each job's end is met once, whoever started it: a conversation still on the card is asked again.
+  assert.match(card, /if \(!job \|\| job\.phase === 'running' \|\| job\.id === endMet\.current\) return\n\s*endMet\.current = job\.id\n\s*meetEnd\(job\)\n\s*\}, \[job\]\)/)
+  assert.match(card, /if \(onChat\.current && talk\?\.state === 'none' && turnsRef\.current\.at\(-1\)\?\.who === 'you'\) \{\n\s*setStarting\(true\)\n\s*askTurns\(turnsRef\.current\)/, 'the last turn is asked again once the model is kept, only while the card is still on that conversation and it found no model (a reply on its way, stopped or held is left alone)')
+  assert.match(card, /if \(end\.how === 'tap'\) refocusAtEnd\(\)/, 'only the visitor\'s own tap brings focus back to the field')
   assert.match(card, /useEffect\(\(\) => \{ onChat\.current = dialogue\.brief\?\.chat === true \}\)/, 'read when the download ends, not from the render that started it')
-  assert.match(card, /useEffect\(\(\) => \(\) => getCtl\.current\?\.abort\(\), \[\]\)/, 'a card that goes stops its download')
   assert.match(card, /\}, \[offering, fetchingSite, noneOf, siteModel\]\)/, 'the offer is asked again at each conversation with no model and after each try, so "kept" is never stale and a site out of reach once is asked again')
   assert.match(card, /downloaded once from this site, checked against the copy this page was built for, and kept in this browser \(Apache-2\.0\)/)
+  // The Windows app's model is beside the app already: the card says it is copied from the app, not downloaded.
+  assert.match(card, /const from: SiteModelFrom = siteModel\?\.from \?\? 'site'/)
+  assert.match(card, /it came with this app, and is checked against the copy the app was built for and kept in this page \(Apache-2\.0\)/)
+  assert.match(card, /const verb = from === 'site' \? 'Downloading' : `Copying from \$\{copiedFrom\(from\)\}`/)
+  // The NixOS package's model is on this machine too: copied from the launcher that serves it, kept in the browser.
+  assert.match(card, /return from === 'launcher' \? 'the launcher' : 'the app'/)
+  assert.match(card, /it came with this package and is served by its launcher on this machine, checked against the copy this page was built for, and kept in this browser \(Apache-2\.0\)/)
+  assert.equal(card.match(/from === 'site' \? (?:'Downloading the model'|`Downloading \$\{SLOANE\.name\}’s model`) : `Copying (?:the|\$\{SLOANE\.name\}’s) model from \$\{copiedFrom\(from\)\}`/g)?.length, 2, 'both bars name where it is copied from')
+  assert.equal(card.match(/\{gettingLine\(getting, from\)\}/g)?.length, 2, 'the conversation and the card\'s foot both say where it comes from')
   assert.match(card, /<p role="status"[^>]*data-site-why>/, 'why it ended short is said on the card, and announced')
+  assert.match(card, /const whySeen = !\(job\?\.phase === 'failed' && job\.how === 'tap' && job\.id !== whySeenId\)/, 'only a tapped try that ended short keeps the conversation open for its reason')
   assert.match(card, /const refocusKeys = \(\) => \{\n\s*if \(family !== 'touch'\) refocus\(\)/, 'focus goes back to the field after the offer, Stop or the end of a download, never on touch')
   assert.match(card, /if \(!a \|\| a === document\.body \|\| cardRef\.current\?\.contains\(a\)\) refocusKeys\(\)/, 'a download that ends never takes focus from a control elsewhere')
-  assert.match(card, /if \(p\.step === 'keep'\) handed\.current = true/, 'the hand-off to the copy is noted at once')
-  assert.match(card, /const stopGetting = \(\) => \{\n(?:\s*\/\/.*\n)*\s*if \(handed\.current\) return/, 'a Stop after the hand-off does nothing: the copy runs to its end')
+  // Shown wherever Sloane is: her chip carries a hairline of it that keeps the chip's size (its line and Stop are on the
+  // card), and the card's other views carry it at their foot.
+  assert.match(card, /const bar = getting && \(\n\s*<span role="progressbar" aria-label=\{stripLine\(getting\)\}[^>]*\n\s*className=\{`pointer-events-none absolute inset-x-4 bottom-0 [^`]*`\} data-site-bar=\{getting\.step\}>/, 'the chip\'s hairline, drawn over the pill')
+  assert.match(card, /\{pending \? \(\n\s*<button ref=\{chipRef\}[^\n]*\n\s*\{ask\}\n\s*\{bar\}\n\s*<\/button>\n\s*\) : \(\n\s*<div ref=\{chipRef\}[^\n]*\n\s*\{buttons\}\n\s*\{bar\}/, 'the chip\'s buttons are the same elements with or without it (no focus lost, no entry played again)')
+  assert.doesNotMatch(card, /const pill = [^\n]*getting/, 'the chip keeps its size while it downloads (the touch buttons below keep their room)')
+  assert.match(card, /\{getting && !\(talking && talk\?\.state === 'none'\) && \(\n\s*<div className=\{`[^`]*`\} data-site-strip=\{getting\.step\}>/, 'the card\'s foot, where the conversation does not show it already')
 })
 
 test('App: the site\'s model is fetched from the page\'s own folder only, after the browser, the device and the storage have said yes, and kept as a picked file is', () => {
   const src = read('App.tsx')
   assert.match(src, /const siteFetch: SiteFetch = \(path, init\) => window\.fetch\(siteUrl\(path, window\.location\.href\), init\)/)
-  const get = src.slice(src.indexOf('get: async (onProgress, signal) => {'), src.indexOf('setSiteModel(siteHost)'))
-  assert.ok(get.length > 100, 'the host\'s get is found')
-  const order = ['PAGE_MODEL_REFUSAL()', 'if (keeping || fetching)', 'fetching = true', 'await keptSite()', 'await inPage.installed()', 'fits([{ name: SITE_MODEL.file, bytes: SITE_MODEL.bytes }]', 'roomRefusal(SITE_MODEL.bytes, room)', 'fetchSiteModel(siteFetch, SITE_MODEL,', 'return keepPicked([file],']
+  const get = src.slice(src.indexOf('const siteJob = createSiteJob(async (how, onProgress, signal) => {'), src.indexOf('const siteHost = Object.freeze<SiteModelHost>({'))
+  assert.ok(get.length > 100, 'the job\'s work is found')
+  const order = ['PAGE_MODEL_REFUSAL()', 'if (keeping || fetching)', 'fetching = true', 'await keptSite()', 'await inPage.installed()', 'await siteRefusal()', 'fetchSiteModel(source.fetch, pin,', 'return keepPicked([file],']
   const at = order.map((n) => get.indexOf(n))
-  at.forEach((i, k) => assert.ok(i >= 0, `${order[k]} is in get`))
+  at.forEach((i, k) => assert.ok(i >= 0, `${order[k]} is in the job's work`))
   for (let k = 1; k < at.length; k++) assert.ok(at[k - 1] < at[k], `${order[k - 1]} comes before ${order[k]}`)
-  assert.match(src, /offered \?\?= siteFetch\(SITE_MANIFEST, \{ cache: 'no-cache', signal: siteEnd\.signal \}\)/, 'the manifest is asked once a visit')
-  assert.match(src, /if \(PAGE_MODEL_REFUSAL\(\) !== null \|\| !\/\^https\?:\$\/\.test\(window\.location\.protocol\) \|\| !document\.querySelector\('link\[rel="manifest"\]'\)\) return null/, 'no offer (and no request) where the browser cannot run it, off a web server, or on any page but the web copy')
-  assert.match(src, /if \(r\.status === 404 \|\| r\.status === 410\) return null\n\s*throw new Error/, 'only a definite answer is kept for the visit: a 429 or a 5xx is asked again')
-  assert.match(get, /onProgress\(\{ step: 'keep', done: 0, total: file\.size \}\)\n\s*return keepPicked\(\[file\],/, 'the card is told of the hand-off to the copy in the same turn as the last stop check')
-  assert.match(src, /AbortSignal\.any\(\[signal, siteEnd\.signal\]\)/, 'the card\'s Stop and the city\'s end both stop the download')
+  const refusal = src.slice(src.indexOf('const siteRefusal = async (): Promise<string | null> => {'), src.indexOf('const siteJob = createSiteJob('))
+  assert.match(refusal, /fits\(\[\{ name: pin\.file, bytes: pin\.bytes \}\], env, placement\(env\)\)/, 'the device\'s limits')
+  assert.match(refusal, /roomRefusal\(pin\.bytes, room\)/, 'and the storage\'s room')
+  // One source a build: the Windows app's own model through the shell, else the NixOS launcher's beside its page, else
+  // the web copy's site.
+  assert.match(src, /const shellFetch = shellModelFetch\(APP_MODEL\)\n\s*const source = shellFetch \? appSource\(shellFetch\) : launcherServes\(window\.location\.href\) \? launcherSource : webSource\n/)
+  assert.match(src, /const siteEnd = new AbortController\(\)\n\s*const pin = source\.pin\n/)
+  const manifest = src.slice(src.indexOf('const manifestOffer = '), src.indexOf('const webSource = Object.freeze<ModelSource>({'))
+  const web = src.slice(src.indexOf('const webSource = Object.freeze<ModelSource>({'), src.indexOf('const appSource = '))
+  const app = src.slice(src.indexOf('const appSource = '), src.indexOf('const launcherSource = '))
+  const launcher = src.slice(src.indexOf('const launcherSource = '), src.indexOf('/** `make()` the first time it is asked for'))
+  assert.ok(manifest.length > 100 && web.length > 100 && app.length > 100 && launcher.length > 100, 'the three sources and the manifest\'s offer are found')
+  assert.match(manifest, /const r = await siteFetch\(SITE_MANIFEST, \{ cache: 'no-cache', signal \}\)\n\s*if \(r\.ok\) return parseManifest\(await r\.text\(\), pin\)/, 'the manifest must name the source\'s own pin')
+  assert.match(manifest, /if \(r\.status === 404 \|\| r\.status === 410\) return null\n\s*throw new Error/, 'only a definite answer is kept for the visit: a 429 or a 5xx is asked again')
+  assert.match(web, /pin: SITE_MODEL,\n\s*fetch: siteFetch,/)
+  assert.match(web, /served: \(\) => \/\^https\?:\$\/\.test\(window\.location\.protocol\) && document\.querySelector\('link\[rel="manifest"\]'\) !== null,\n\s*offer: manifestOffer\(SITE_MODEL, 'the site'\),\n\s*online: true,/, 'only the web copy is served the site\'s model, over the connection')
+  assert.match(app, /pin: APP_MODEL,\n\s*fetch,\n\s*served: \(\) => true,/)
+  assert.match(app, /offer: \(\) => shellModel\(APP_MODEL\),\n\s*online: false,/, 'the shell says whether the app carries it; the copy never leaves the machine')
+  assert.match(launcher, /from: 'launcher',\n\s*pin: APP_MODEL,\n\s*fetch: siteFetch,\n\s*served: \(\) => launcherServes\(window\.location\.href\),\n\s*offer: manifestOffer\(APP_MODEL, 'the launcher'\),\n\s*online: false,/, 'the desktop\'s model from the launcher\'s own origin on 127.0.0.1; the connection has no say')
+  assert.match(launcher, /coming: "the launcher's model is being copied into this page",/)
+  assert.match(src, /offered \?\?= source\.offer\(siteEnd\.signal\)\.catch\(\(\) => \{ offered = null; return null \}\)/, 'the offer is asked once a visit')
+  assert.match(src, /if \(PAGE_MODEL_REFUSAL\(\) !== null \|\| !source\.served\(\)\) return null/, 'no offer (and no request) where the browser cannot run it, or on a page the source does not serve')
+  assert.match(get, /\}, AbortSignal\.any\(\[signal, siteEnd\.signal\]\), source\.from\)/, 'the words say where it came from')
+  assert.match(get, /onProgress\(\{ step: 'keep', done: 0, total: file\.size \}\)\n\s*return keepPicked\(\[file\], \(done, total\) => onProgress\(\{ step: 'keep', done, total \}\), how === 'tap'\)/, 'the card is told of the hand-off to the copy in the same turn as the last stop check; only a tap sets the provider')
+  assert.match(src, /AbortSignal\.any\(\[signal, siteEnd\.signal\]\)/, 'the Stop and the city\'s end both stop the download')
   assert.match(get, /signal\.throwIfAborted\(\)\n\s*siteEnd\.signal\.throwIfAborted\(\)\n\s*\} finally \{/, 'a stop as the last bytes come keeps nothing')
-  assert.match(src, /if \(fetching\) throw new Error\('the model this site serves is on its way to this page/, 'a pick, a drop or the console waits for the site\'s model')
-  assert.match(src, /unModel = \(\) => \{\n\s*modelFileRef\.current = null\n\s*siteEnd\.abort\(\)/)
+  assert.match(src, /if \(fetching\) throw new Error\(`\$\{source\.coming\}: wait for it to finish, or stop it on Sloane's card`\)/, 'a pick, a drop or the console waits for the site\'s model (or the app\'s), in its own words')
+  assert.match(src, /coming: 'the model this site serves is on its way to this page',/)
+  assert.match(src, /coming: "the app's model is being copied into this page",/)
+  assert.ok(src.indexOf('const source = shellFetch ? appSource(shellFetch) : launcherServes(window.location.href) ? launcherSource : webSource') < src.indexOf('let keeping = false'), 'the source is known before a pick can ask it')
+  assert.match(src, /unModel = \(\) => \{\n\s*modelFileRef\.current = null\n\s*siteAutoRef\.current = null\n\s*siteJob\.stop\('page'\)\n\s*siteEnd\.abort\(\)/, 'the city\'s end stops the job (and the page\'s own start) first')
   assert.match(src, /noPageModel=\{PAGE_MODEL_REFUSAL\(\)\}\s*siteModel=\{siteModel\}/)
   assert.match(src, /setSloaneTalk\(null\)\n\s*setSiteModel\(null\)/)
+})
+
+test('App: the page gets the site\'s model by itself once the city is on screen, through siteAuto.ts createSiteAuto, with the page\'s own facts', () => {
+  const src = read('App.tsx')
+  // The steps and their order are siteAuto.ts's (siteAuto.test.ts drives them); App hands it the page.
+  const auto = src.slice(src.indexOf('const siteAuto = createSiteAuto({'), src.indexOf('siteAutoRef.current = siteAuto'))
+  assert.ok(auto.length > 100, 'the page\'s own start is found')
+  assert.match(auto, /seen: \(\) => \(document\.hidden \? new Promise<void>\(/, 'a page in the background waits until it is seen')
+  assert.match(auto, /siteEnd\.signal\.addEventListener\('abort', done, \{ once: true \}\)/, 'or until the city ends')
+  assert.match(auto, /ended: \(\) => \(siteEnd\.signal\.aborted \? 'the city ended' : lockedRef\.current !== null \? 'the city halted' : null\)/, 'a halted city starts nothing')
+  assert.match(auto, /served: source\.served,\n\s*facts: siteFacts,\n\s*offer: \(\) => siteHost\.offer\(\),\n\s*refusal: siteRefusal,/)
+  // The connection has a say only where the copy uses it (the site's); the app's own file never leaves the machine.
+  assert.match(auto, /link: \(\) => \(source\.online \? readLink\(navigator\) : null\),/)
+  assert.match(auto, /onLink: \(changed\) => \{\n\s*const l = source\.online \? connection\(\) : undefined\n\s*l\?\.addEventListener\?\.\('change', changed\)\n\s*return \(\) => l\?\.removeEventListener\?\.\('change', changed\)/)
+  assert.match(auto, /offline: \(\) => source\.online && navigator\.onLine === false,\n\s*record: autoRecord,\n\s*job: siteJob,\n\s*say: \(line\) => e\.toast\(MODEL_FILE, line\),/)
+  assert.match(src.slice(src.indexOf('const siteAuto = createSiteAuto({'), src.indexOf('siteAutoRef.current = siteAuto')), /\}, pin, 'Sloane', source\.from\)\n\s*$/, 'the source\'s pin and words')
+  // The facts: read with no request and no look at a model server.
+  const facts = src.slice(src.indexOf('const siteFacts = async (): Promise<AutoFacts> => {'), src.indexOf('const autoChoice = (): string | null => {'))
+  assert.ok(facts.length > 100, 'the facts are found')
+  assert.doesNotMatch(facts, /\bfetch\(|siteFetch|offer\(|installed\(|look\(/, 'no request: no manifest, no model server')
+  assert.match(facts, /own: chosen !== null && chosen !== pin\.file \? chosen : \(kept\.find\(\(m\) => m\.name !== pin\.file\)\?\.name \?\? null\)/, 'a model file of the visitor\'s own, chosen or only kept')
+  assert.match(facts, /busy: keeping \? '[^']+' : fetching \? `\$\{source\.coming\} already` : null/, 'a pick, a drop or a download under way')
+  assert.match(facts, /kept: kept\.some\(\(m\) => m\.name === pin\.file && m\.bytes === pin\.bytes\)/)
+  assert.match(facts, /lasting: caps\.opfs && \(await navigator\.storage\.getDirectory\(\)\.then\(\(\) => true, \(\) => false\)\)/, 'the storage must answer, not only exist')
+  assert.match(facts, /remembers: autoRecord\.remembers\(\),\n(?:\s*\/\/[^\n]*\n)*\s*link: source\.online \? readLink\(navigator\) : null,/)
+  assert.match(src, /const autoRecord = createAutoRecord\(autoStore\(\), autoLocks\(\)\)/)
+  // The job's work: a tap holds the page's lock, and the page's own download is not kept over a choice made meanwhile.
+  assert.match(src, /const release = how === 'tap' \? await autoRecord\.claim\(\) : noop\n\s*try \{\n\s*return await siteWork\(how, onProgress, signal\)\n\s*\} finally \{\n\s*release\(\)/)
+  assert.match(src, /const other = how === 'auto' \? autoChoice\(\) : null\n\s*if \(other !== null\) throw new SiteJobHeld\('choice', other\)\n[^\n]*\n[^\n]*\n\s*onProgress\(\{ step: 'keep'/, 'checked in the same turn as the hand-off to the copy')
+  // A halt stops the job and the start, as the city's end does.
+  assert.match(src, /e\.onHalt = \(reason\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(haltClass\(reason\) === 'gpu-reset'\) inPage\.noteGpuReset\(\)\n\s*stopSite\(\)/)
+  assert.match(src, /stopSite = \(\) => \{\n\s*siteJob\.stop\('page'\)\n\s*siteEnd\.abort\(\)/)
+  // Once the city is on screen and standing: never under the boot veil or over a halted city.
+  assert.match(src, /useEffect\(\(\) => \{\n\s*if \(!veilDone \|\| locked !== null \|\| siteModel === null\) return\n\s*void siteAutoRef\.current\?\.\(\)\.then\(/)
+  assert.match(src, /\}, \[veilDone, locked, siteModel\]\)/)
 })

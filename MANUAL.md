@@ -48,9 +48,14 @@ used only when the gateway stops answering or `ask` alone looks again. The local
 to a model server and a speech server on this same machine, and only when asked (see The model providers, Speech and
 Networking). A model file you keep in the page itself (`ask provider inpage`) runs inside the page and talks to
 nothing at all, on a page that is served rather than opened from a file (see A model in this page). The web copy on
-GitHub Pages also asks the site it came from for one thing, the small model it serves beside the page: its manifest
-when Sloane's card first says no model answers, and the model itself only when you tap **Get the model**, to keep in
-this browser (A model in this page, The site's model). `dist/index.html` itself carries no model and asks for none.
+GitHub Pages also asks the site it came from for one thing, the small model it serves beside the page, to keep in
+this browser: once the city is on screen it gets it by itself, its progress on Sloane's chip and card and a **Stop**
+on the card, unless this browser could not run or keep it, another model or provider is chosen, the browser says it
+saves data or is on mobile data, or you stopped it before; then only when Sloane's card says no model answers and you
+tap **Get the model** (A model in this page, The site's model). The Windows app's installer carries a model beside the
+app, which the page copies into its own storage the same way, with nothing downloaded (The app's model); so does the
+NixOS package (`nix run` and its module), whose launcher serves the same model beside the page it opens (The
+launcher's model). `dist/index.html` itself carries no model and asks for none.
 The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
@@ -182,7 +187,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?crowd=14000` | Pedestrians, from 256 to 60,000 (default: 14,000 on a desktop GPU, 8,000 on a phone, 5,000 on the weakest devices, 2,500 on a lite profile) |
 | `?cars=36` | Cars, at most 48 (default: 36, or 12 on a lite profile) |
 | `?lite=1`, `?lite=0` | Forces the lite profile on any device, or keeps it off one the profile would make lite (default: the device profile decides; see Autoscaling) |
-| `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
+| `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one (the light one on a Mali Bifrost GPU) or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
 | `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
@@ -1092,9 +1097,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   sentence Sloane says about a brief in Sloane's own words (the page's router: a local server first, then the
   model kept in this page; never with the provider set to scripted, and never while the model file this page would
   answer with is still to be loaded, since the rewording's 4 s deadline would stop that load: under auto that is only
-  until a look finds a server), screened like the
-  onboarding's rewording and with every number kept; the planner's sentence stands until it answers and whenever it
-  does not.
+  until a look finds a server; nor while the model the app runs itself is still to be loaded, which the rewording
+  would otherwise be the answer to load), screened like the onboarding's rewording and with every number kept; the
+  planner's sentence stands until it answers and whenever it does not.
 - **Talk to Sloane.** A message that is talk and nothing else ("hi", "how's it going", "good evening", "who are you",
   "are you a robot?", "thanks") and a question nothing in the city maps to ("what is the meaning of life?") are a
   conversation, not a goal (`intent.ts` Brief.chat): nobody is sent, nothing is applied and no why is asked. A talk word
@@ -1120,16 +1125,19 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   guide's line, without the expertise rule or the city actions, since a conversation is bound to no one and never
   acts), because a model running in the page reads every token of the prompt before it writes one. With no model
   answering, Sloane says so plainly ("No language model is answering this page yet, so I can't chat") and offers the
-  ways to get one. On the web copy the first is the model that site serves beside the page, in one tap: **Get the
-  model · 379 MB** (the size is on the button before anything is downloaded), or **Use the model kept here** once this
-  browser keeps it. The tap downloads Qwen2.5 0.5B Instruct once from the site the page came from, checks it against
+  ways to get one. On the web copy the page has usually started getting the model that site serves beside it by
+  itself once the city was on screen (The site's model), and the card shows that download's line, bar and **Stop**
+  (Sloane's chip shows its progress as a hairline along its foot);
+  otherwise the first way is that model in one tap: **Get the model · 379 MB** (the size is on the button before
+  anything is downloaded), or **Use the model kept here** once this browser keeps it. The tap downloads Qwen2.5 0.5B Instruct once from the site the page came from, checks it against
   the size and SHA-256 the page was built with, keeps it in this browser exactly as a picked file is kept, and chooses
-  it (A model in this page, The site's model). While it comes, a line and a bar show the megabytes and then the copy
-  into the page, and **Stop** ends the download and keeps nothing; a download that ends short says why on the card.
-  Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
-  the first answer takes longer". Where nothing serves that model beside the page (the Windows app, `dist/index.html`
+  it (A model in this page, The site's model). While it comes, a line and a bar on the card show the megabytes and then
+  the copy into the page (a hairline on Sloane's chip shows the same), and **Stop** ends the download and keeps
+  nothing; a download that ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
+  the first answer takes longer". Where nothing serves that model beside the page (the bare Windows .exe, `dist/index.html`
   opened from a file or from a local server, the NixOS launcher and the flake), or where this browser cannot run a
-  model in the page, no such button shows. Then **Choose a model file** (the same picker as Menu › Model file; a small
+  model in the page, no such button shows; the Windows app's installer offers its own instead, **Get the model · 940
+  MB**, copied from beside the app rather than downloaded (The app's model). Then **Choose a model file** (the same picker as Menu › Model file; a small
   `.gguf` such as Qwen2.5 0.5B Instruct at Q4_K_M, about 0.4 GB, runs on a processor alone), or a server on this
   computer (Ollama, LM Studio, llama.cpp), with the `OLLAMA_ORIGINS` note on a page Ollama refuses by default
   (anything but localhost, 127.0.0.1 or 0.0.0.0), and **Ask again** once one is there. Where this browser cannot run a
@@ -2103,8 +2111,8 @@ Ring-0 elite tier above it, below). While unlocked:
 - `ask <skill>[,<skill>...]: <prompt>` asks the chosen model provider, answering as the tethered people who have the
   skill; the answer streams in live (see The model providers below). `ask` alone reports the provider, the server, the
   model, the masked key and the effort, and what the server has; `ask provider
-  auto|claude|ollama|llamacpp|openai|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider, its
-  server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
+  auto|claude|ollama|llamacpp|openai|native|inpage|scripted`, `ask connect <provider> [<url>] [<key>]` (the provider,
+  its server and the Claude provider's key in one line, checked before anything changes), `ask key <key>|none`, `ask
   effort <level>`, `ask model <name>` (`ask model auto`, under `ask provider ollama` or while auto has found Ollama or
   nothing yet, hands Ollama's model back to auto), `ask vram <GB>|0|auto`
   (the GPUs' memory, so auto may give Ollama a bigger model it already has) and `ask server <url>` set it up;
@@ -2493,14 +2501,15 @@ operator tier knows only its shape (`SkillGate` in `operator.ts`) and never impo
 ### The model providers (`ask`)
 
 `ask rust: how does car.grip work?` asks a model, as the person tethered to you who knows Rust.
-`09_Cognition/router.ts` is the router: one `Mind` behind which six providers answer, swapped at the console
+`09_Cognition/router.ts` is the router: one `Mind` behind which seven providers answer, swapped at the console
 without a restart (`ask provider <name>`, or `ask connect <provider> [<url>] [<key>]` in one line), or the first of
 them that answers (`auto`):
 
 - **`auto`**, the provider unless you choose another: at an ask, the first model server answering on this machine,
   in this order: Ollama (`http://localhost:11434`), a llama.cpp server (`http://localhost:8080`), an
-  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then a model file kept in this page (`inpage`,
-  below), then the Claude gateway (`http://localhost:8089`), each at the address its own provider is set to. The
+  OpenAI-compatible server such as LM Studio (`http://localhost:1234`), then the model the app carries in an app that
+  runs one itself (`native`, below), then a model file kept in this page (`inpage`, below), then the Claude gateway
+  (`http://localhost:8089`), each at the address its own provider is set to. The
   three on this machine are asked for their models at once, each for at most 2 s, and the first in that order with a
   model that writes text answers (embedding, reranking and speech models are passed over, by name). With them go
   the newer default addresses, asked at the same moment and each given 2 s too: a llama.cpp server at
@@ -2514,7 +2523,10 @@ them that answers (`auto`):
   you chose for it with `ask model` (the reason says so), and never asks the gateway's address. Nothing listening
   there is the usual case, and port 8000 is many a web server's, so the reason names a server there only when it
   refuses this page, has no text model or lacks the model you chose (and, on an isolated page, vLLM's flag when
-  nothing answered on 8000). Only when neither finds one is the page's own model considered, and it is asked nothing: it is found when a file is kept and chosen
+  nothing answered on 8000). Only when neither finds one is the app asked whether it runs a model itself (`native`):
+  it is found when the app says it can start the model it carries, is named with the app's reason when it cannot,
+  and goes unmentioned where there is no such app (a browser, the Windows app). Only then is the page's own model
+  considered, and it is asked nothing: it is found when a file is kept and chosen
   (picking a file chooses it) and this browser can run it, and it is not loaded until the ask itself. Files kept with
   none chosen are passed over with a note that says how to choose one, and with nothing kept the page's model goes
   unmentioned. Only when that finds nothing is the gateway asked, since it asks the Claude API. A server that is
@@ -2552,6 +2564,28 @@ them that answers (`auto`):
   rather than a second one loaded beside it. A model is judged by its own name, not the
   folders of a file path a llama.cpp server lists. OpenAI's own service is not reachable: the air gap admits loopback addresses
   only, so a hosted model needs a gateway on this machine, like the Claude provider's.
+- **`native`**: the model an app carries, run by the app itself on this device (`09_Cognition/nativeMind.ts`,
+  asking the shell's runner in `native/llm` through `07_Execute_Actions/desktopShell.ts` `shellRunner`), for the apps
+  whose web view cannot run a model inside the page. No server, no address and no request leave the app: the shell
+  answers three commands (`native_model`, `native_generate` with a channel for the answer's words, `native_stop`), and
+  what the runner says (the model it carries and how that stands, the events, endings and errors) is in the words
+  `native/llm/tests/wire.json` holds. It has one model and no think switch, and takes no server and no key. `ask`
+  alone shows the file it carries and, after an answer, a `runtime` row with how the device ran it (threads, context,
+  the prompt's tokens and how many were kept from the answer before, the time to read it, the tokens written and how
+  fast). An answer that fills the context is cut, as one at the token cap is. Sloane's card shows its first-run check
+  and its load ("Preparing the model inside the app · 42%", "Loading the model inside the app…"); an answer waiting
+  behind another says it waits, and none of its waits runs out meanwhile. When no model answers and the app's model
+  could not start, the card says "The model inside this app couldn’t start:" and the app's reason (without the model's
+  file name) in place of the site's and the browser's hints, while the provider is `auto` or `native`; on a computer
+  it still says to start Ollama, LM Studio or a llama.cpp server, on a phone or tablet it does not. A model that will
+  not load (or whose file fails its check) at its first answer has failed for good: that answer says there is none,
+  with the app's reason (so the script stands in), the card says why, and under `auto` the same ask goes on to what
+  answers next in order and the app's model is passed over from then on; one answer's own failure while the model
+  stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
+  page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
+  model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
+  app has none of the runner's commands (the Windows app), it lists nothing and an answer is told there is none, so
+  the script stands in. No app has the runner yet: this is the page's half, proven against a fake runner.
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -2567,9 +2601,12 @@ them that answers (`auto`):
 
 No model server ships with the product, and the page file carries no model: you run your own server, bring your own
 key, or keep a model file in the page (the page carries the runtime for one, never a model). The one exception is the
-web copy on GitHub Pages, which serves one small model beside its page for a visitor to download in a tap on Sloane's
-card (A model in this page, The site's model); the Windows app, the launcher, the flake and the release builds carry
-none. The city works exactly the same without any of them.
+web copy on GitHub Pages, which serves one small model beside its page, gets it by itself once the city is on screen
+where it can, and otherwise offers it in a tap on Sloane's card (A model in this page, The site's model). The others
+are the Windows app's installer (and its .msi), which carries a larger model beside the app, and the NixOS package
+(`nix run` and its module), whose launcher serves that same model beside its page; the page copies either the same
+way (The app's model, The launcher's model). The bare .exe, the launcher run from a checkout without `--models`, and
+the OS media carry none. The city works exactly the same without any of them.
 
 - **The 14A conduct core** (`02_Define_The_Rules/conduct.ts`). Every prompt opens with the same first line,
   whichever provider answers: "You are an entity in a simulation. Maintain strict 14A business-casual behavior. If
@@ -2588,11 +2625,11 @@ none. The city works exactly the same without any of them.
   catalogue's own words, never the model's.
 - **Setting it up.** `ask` alone shows the provider, the server, the model, and what the server has; for the Claude
   provider also the key, masked (its first six and last four characters, never the whole) and the effort. `ask
-  provider auto|claude|ollama|llamacpp|openai|inpage|scripted` swaps, and `ask connect <provider> [<url>] [<key>]`
-  swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and `ask server
-  <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none` clears it;
-  `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default when
-  unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
+  provider auto|claude|ollama|llamacpp|openai|native|inpage|scripted` swaps, and `ask connect <provider> [<url>]
+  [<key>]` swaps and points it in one line (a bad address leaves everything as it was); `ask model <name>` and
+  `ask server <url>` set the chosen provider's own; `ask key <key>` sets the Claude provider's key and `ask key none`
+  clears it; `ask effort low|medium|high|xhigh|max|none` how hard the model works on an answer (the API's own default
+  when unset); `ask think on|off` and `ask api generate|chat` apply to the local providers as before;
   `ask vram <GB>|0|auto` gives the GPUs' memory for auto's Ollama model (below). Each provider keeps its own server
   and model between visits, in one store in this browser's local storage (`civic-simulation:cognition:v2`; the GPU
   figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
@@ -2896,8 +2933,11 @@ browser's own storage for this page on this device, and run inside the page by l
 It needs no model server and no address, and once the file is kept nothing it does leaves the page. It is how a
 phone, which runs no model server, gets a model of its own. The page file carries the runtime, never a model: a file
 you choose is yours, under its own licence. The web copy on GitHub Pages also serves one small model beside its page,
-Qwen2.5 0.5B Instruct, which a visitor with no model of their own gets in one tap on Sloane's card (The site's model,
-below); `dist/index.html`, the Windows app, the launcher, the flake and the release builds carry none. The parts:
+Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or a model file of your own is chosen or
+kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
+The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
+beside its page; the page gets it the same way (The app's model, The launcher's model, below). `dist/index.html`, the
+bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
 `wllamaRuntime.ts`, the only file that touches wllama.
@@ -2908,8 +2948,10 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
   - on a computer, drop the `.gguf` file, or every part of a split one, on the city;
   - from Sloane's card, **Choose a model file**, offered when you talk to Sloane and no model answers (Talk to Sloane,
     above);
-  - on the web copy, from Sloane's card, **Get the model · 379 MB**: the site's model (below), downloaded rather than
-    picked, then kept and chosen as a picked file is.
+  - on the web copy, by itself once the city is on screen, or from Sloane's card, **Get the model · 379 MB**: the
+    site's model (below), downloaded rather than picked, then kept and chosen as a picked file is (the tap also makes
+    `inpage` the provider); in the Windows app from its installer, the same way, **Get the model · 940 MB**: the app's
+    model (below), copied from beside the app rather than downloaded.
 
   The picker has no file-type filter, since a phone greys out a `.gguf` it has no type for: choose the model file
   itself. Before anything is copied every file's header is read, and anything that is not one whole model that writes
@@ -2932,10 +2974,38 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
   `manifest.json`, `LICENSE` and `NOTICE`. A file that fails the check fails the publish, so the copy already
   published stays up; `tools/web/siteModel.mjs place` refuses any folder but the web copy, so `dist/` never gets a
   model. On the page:
-  - nothing is asked at boot. When Sloane's card first says no model answers, the page asks for `models/manifest.json`
-    once a visit (again later only if the site could not be reached or answered with an error), and offers the model
-    only when the manifest names exactly the pin the page was built with. Only the web copy asks (the page that names
-    a web app manifest): there is no offer, and no request, where this browser cannot run a model in the page (an
+  - nothing is asked while the page loads. Once the city is on screen (the veil gone, the city not halted, the tab in
+    view) the page decides, once a city, whether to get the model by itself (`09_Cognition/siteAuto.ts`
+    `createSiteAuto`), and says why or why not in one line of the browser's console ("Sloane's model: …"). It does not
+    when this browser cannot run a model in the page; when a provider other than `auto` or `inpage` is chosen (the
+    scripted one, or a model server's); when a model file of your own is chosen, or kept in the page at all; when a
+    file is being kept just then (a pick, a drop); when this browser keeps the model already; when this browser's
+    storage for the page does not answer (the model would come again on every visit) or its local storage refuses a
+    write (a Stop could not be remembered); when the browser says it saves data, is on mobile data, or has a 2G
+    connection; when another tab of the page is getting it (by itself or from a tap); when you stopped it before; or
+    after a try that ended short, for an hour after the first and a day after the second, and for good after three in
+    a row or after the system ended the page twice while it was getting it (a reload or a tab you close does not
+    count). Only Chrome on an Android phone says whether it is on mobile data: a computer's browser, Firefox, Safari
+    and Brave say nothing of it, so there it goes ahead. Otherwise it asks for the manifest and, when the manifest names
+    the page's pin and the device's limits and the page's storage admit the model (below), takes the one lock a
+    browser has for it and reads all of the above again (what changed while it asked, a connection, a pick, a
+    provider, another tab's copy, a halt, holds it back), then downloads it exactly as the tap does, with the same line,
+    bar and **Stop** on the card and a hairline on Sloane's chip. A connection that turns to mobile data or data saver
+    on the way stops it, and a download the connection cut (the browser offline, or now on mobile data) counts as a
+    pause, not a try that ended short: a toast says it waits ("Sloane's model waits: this device is on mobile data; the
+    page gets it on a later visit, or now with the button on Sloane's card"). A provider or a model of your own chosen
+    while it comes ends it too, keeping nothing. It keeps and chooses the model without changing the provider, so under
+    `auto` a model server on this machine (Ollama, llama.cpp, an OpenAI-compatible server) still answers first, and a
+    toast says so ("… is kept in this page (379 MB): it answers whenever no model server on this machine does", and on
+    a computer "and it is loading"); the Claude gateway, which `auto` asks after a model kept in the page, no longer
+    answers under `auto` once it is kept, so choose it by name (`ask provider claude`) to keep it first, which also
+    holds the page back. A try that ends short says why in a toast too, and the card still offers the tap. A **Stop** is
+    remembered in this browser (`civic-simulation:sitemodel:auto:v1`), and from then on the page waits for the tap; a
+    halt of the city stops a download under way;
+  - otherwise, when Sloane's card first says no model answers, the page asks for `models/manifest.json` once a visit
+    (again later only if the site could not be reached or answered with an error), and offers the model only when the
+    manifest names exactly the pin the page was built with. Only the web copy asks (the page that names a web app
+    manifest): there is no download, no offer and no request where this browser cannot run a model in the page (an
     iPhone today), on `dist/index.html` however it is opened or served, or on a page not served over http or https;
   - the tap checks, in this order: that this browser can run a model in the page, that no file is being kept already,
     whether this browser keeps the model already (then it is only chosen, and nothing is downloaded), that the device's
@@ -2949,9 +3019,10 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
     sha256Stream`), refused the moment it runs past the pinned size, and becomes a file only once every byte has
     arrived and the hash is the pin's. A short or broken download, a different file or an HTTP error (a 429 says too
     many downloads for now) keeps nothing, and the card says why;
-  - it is then kept and chosen exactly as a picked file is (the header check, the copy into the page's storage, the
-    provider `inpage`, a computer's load at once), and the card asks the last turn again. **Stop** ends the download;
-    the copy into the page, once begun, runs to its end;
+  - it is then kept and chosen exactly as a picked file is (the header check, the copy into the page's storage, a
+    computer's load at once), with the provider `inpage` when you tapped for it, and the card asks the last turn again
+    if the conversation on it found no model (a reply on its way, stopped or held is left as it is). **Stop** ends the
+    download; the copy into the page, once begun, runs to its end;
   - the service worker leaves `models/` to the network (On an iPhone, below), so its cache holds no second copy: the
     page's storage keeps the one.
 
@@ -2962,10 +3033,94 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
   workflow only reads the served manifest and the size the site reports for the model, and never downloads the model
   itself. What is verified: the pin, the manifest, the address rule, the checked download (a flipped byte, a short
   body, a long one, a broken connection, an HTTP error, a stop) and the placing, in `siteModel.test.ts`,
-  `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the browser smoke's `sitemodel` scenario drives the tap in
-  Chrome against a web copy served from this machine, with a tiny model standing in under a swapped pin. Not
-  verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
+  `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the page's own start in `siteAuto.test.ts` (each reason it
+  holds back, in order, before the site is asked for anything; the wait until the page is seen; the facts read again
+  once the lock is held; the record of a Stop, of tries that ended short and of pages the system ended, counted once
+  however many tabs look; one try across tabs, a tapped download among them; how each try ends and what the toast
+  says), the one job the tap and the page share in `siteJob.test.ts`, and the page's own facts and wiring in
+  `chat.test.ts`; the browser smoke's `sitemodel` scenario drives, in Chrome against a web copy served from this
+  machine with a tiny model standing in under a swapped pin, the page getting it by itself with no click, asking
+  nothing off its site until Sloane is spoken to, its Stop and that the Stop is remembered on the next visit, a fresh
+  browser keeping it by itself and Sloane answering with it, a flipped byte ending the page's own try with a toast and
+  the card's tap still offered, and the tap. Not verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
   well and how fast this model converses, and any real phone or GPU.
+- **The app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/model.rs`, `07_Execute_Actions/desktopShell.ts`).
+  The Windows app's installer and its .msi carry one model beside the app, so Sloane talks from the first launch with
+  no model server and nothing to download: Qwen2.5 1.5B Instruct at Q4_K_M (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`,
+  986,048,768 bytes, about 0.9 GB), the same quantization by bartowski of the Qwen team's own weights (Apache-2.0,
+  Copyright 2024 Alibaba Cloud; `third_party/qwen2.5-1.5b-instruct/` holds its licence, its notice and its SHA-256).
+  It is larger than the site's model because a computer's in-page limits take it (How large a model, below) and it
+  answers better. The Windows workflow (`.github/workflows/windows-app.yml`) fetches it from Hugging Face at a pinned
+  revision whenever its cache, keyed by the whole pin, does not hold it, checks its size and SHA-256 against the pin on
+  every build (`node tools/web/siteModel.mjs app`, which puts it in `src-tauri/models/` with its `LICENSE` and
+  `NOTICE`), and builds both installers with `src-tauri/tauri.model.conf.json`, which bundles those three files into
+  the app's folder under `models/` (the NSIS installer stores them uncompressed: the model does not compress). A build
+  whose installer is smaller than nine tenths of the model fails. The bare .exe the workflow also publishes carries
+  none, and neither does an app built at home with `npm run app:build`. In the app:
+  - the shell lends the page two commands over that one file, and nothing else of the disk: `app_model` says whether
+    it is there with exactly the pinned size, and `app_model_read` reads up to 4 MiB of it from an offset, as base64
+    text, because the shell's answers reach the page as text (its binary path is a request the page's air gap refuses,
+    so Tauri uses the one that carries text). The page names no file and passes no path;
+  - from there it is the site's model's path, with the app's pin: the same start once the city is on screen, with the
+    same holds, except that the connection has no say (the copy never leaves the machine); the same checks before
+    anything is read (the device's limits, the page's storage with 64 MB spare); the size and SHA-256 checked on every
+    byte as it is read (`desktopShell.ts` `shellModelFetch` hands `fetchSiteModel` the reads in place of a download);
+    the same keep, choice and toasts, and the same **Stop**. The card and the HUD say it is copied from the app rather
+    than downloaded ("Copying from the app · 120 of 940 MB", "copying the app's model into the page 13%");
+  - the page keeps its own copy in its storage, as it keeps any model file, so the model takes about 0.9 GB twice on
+    the disk: once beside the app, once in the page's storage. `ask file forget Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`
+    frees the page's copy (the page copies it again on a later launch unless you chose otherwise); uninstalling the
+    app removes the one beside it.
+
+  What is verified: the pin against its record and the shell's file name and size, the installer config naming
+  exactly the model, its licence and its notice (`siteModel.test.ts`), the offer only for exactly the pin, the reads
+  in order, each asked once the last is taken, the first read before the fetch answers, a read that fails, odd
+  answers and a stop (`desktopShell.test.ts`), the page's own start in the app's words with no connection
+  (`siteAuto.test.ts`), the wiring (`chat.test.ts`), the placing and the workflow's order (`webApp.test.ts`), and the
+  shell's reads (`model_file.rs`'s own tests, run in the container that wrote them, not by CI). Run by CI, and not
+  counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
+  each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
+  installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Linux,
+  Android and iPhone apps carry no model yet.
+- **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
+  `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
+  installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
+  file, at the same pinned revision (On NixOS).
+  - `tools/nix/model.nix` fetches it once with Nix's `fetchurl`, which refuses any bytes but the pinned SHA-256, and
+    makes a folder in the Nix store holding it (linked from its fetch, so the store keeps it once), its `LICENSE` and
+    `NOTICE`, and a `manifest.json` naming it. The launcher's package sets `AGENT_CITY_MODELS` to that folder by
+    default.
+  - The launcher serves the folder's plain files at `models/` beside the page, on the same `127.0.0.1` address, and
+    adds `models=1` to the page's address (`-- models=0` keeps the page from asking). A folder that cannot be read or
+    holds no `manifest.json` is said once on the terminal and left out, and the city opens without it.
+  - The page takes `models=1` on `http://127.0.0.1` as the sign that its launcher serves a model, and from there it is
+    the app's path: the same start once the city is on screen, the connection with no say (the copy never leaves the
+    machine), the same checks, the size and SHA-256 on every byte, the same keep and toasts. Its manifest must name
+    exactly the app's pin. The card and the HUD say it is copied from the launcher ("Copying from the launcher · 120 of
+    940 MB", "copying the launcher's model into the page 13%"). Any other page, the web copy, the Windows app, a
+    preview or a file, never asks for it.
+  - The browser profile keeps its own copy, so the model takes about 0.9 GB twice on the disk: in the Nix store and in
+    the profile's storage. `ask file forget Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` frees the profile's copy;
+    `programs.crimson-noir-agent-city.model = false;` builds the module's package without it. The store's copy is
+    freed once no system generation still holds it: `sudo nix-collect-garbage -d` (or `--delete-older-than`) deletes
+    the older generations and then collects it (standard Nix behaviour, not tried here).
+
+  What is verified: `model.nix`'s pin against the page's and its manifest's shape (`siteModel.test.ts`); the
+  launcher serving the folder's plain files and nothing else of the disk, with their sizes, its `models=1`, and a folder
+  without a manifest left out (`desktopLauncher.test.ts`); which pages take `models=1` and the launcher's words
+  (`siteModel.test.ts`, `siteAuto.test.ts`, `chat.test.ts`); in the container that wrote it, the module's option
+  evaluated by Nix (the model in the package by default and out of it with `model = false`), `model.nix` built with a
+  stand-in file of the pinned size, and the launcher's `--check` with a folder holding the tiny model (the page itself
+  reading the manifest and the model's size beside it); and the browser smoke's `launcher` scenario, run in that container on the
+  software adapter, in which the launcher's own server and a model folder laid out as the package lays it serve the
+  page with the tiny model in the app's pin's place, the page opened without `models=1` asks nothing under `models/`,
+  and with it asks for the manifest and the model once each with no click, keeps the model and loads it. Run by CI, and
+  not counted as verified above: the `nix` workflow putting the real model in the Nix store by its pin, building the
+  package with it and running `crimson-noir-agent-city --check`, which reads the manifest and the model's size beside
+  the page from the page itself, and the `launcher` scenario in the package's own Chromium; their first runs are the
+  pull request that adds them. Not verified: a real NixOS desktop, the copy of the real 0.9 GB file into a profile, and
+  how well and how fast the model converses there.
 - **Which browsers.** The runtime needs four things of the browser's WebAssembly: JSPI (it pauses while it reads the
   file), a shared memory with 64-bit addresses, SIMD and exception handling. Today that means Chrome or Edge 137 or
   later, on a computer or on Android, the Windows app (WebView2 is Edge's engine) and the NixOS launcher's Chromium.
@@ -3088,8 +3243,8 @@ below); `dist/index.html`, the Windows app, the launcher, the flake and the rele
   its compatibility build, which would come from a CDN, are switched off and never called, which
   `10_Network/airgap.test.ts` pins. On the web copy the page makes two requests of its own for the site's model, both
   GETs to the site the page came from and neither carrying anything of yours (no prompt, no key, no file): the
-  manifest, once a visit, when Sloane's card first says no model answers, and the model itself, only when you tap for
-  it (The site's model, above). The runtime's workers are made from `blob:` URLs and live under the page's
+  manifest, once a visit, once the city is on screen or when Sloane's card first says no model answers, and the model
+  itself, by the page once the city is on screen or when you tap for it (The site's model, above). The runtime's workers are made from `blob:` URLs and live under the page's
   Content-Security-Policy, which admits no host but the page's own and this machine. The kept files and their settings
   stay in this browser's storage for the page's origin, readable by whatever can read that origin's storage: on the
   public web copy that origin, `cassius-software.github.io`, is shared by every Pages site of the organization (On an
@@ -4170,10 +4325,12 @@ around the very same `dist/index.html`, built by `npm run app:build` (the Vite b
 `beforeBuildCommand`, then `cargo build --release` and the NSIS installer). The `windows-app` workflow builds it on
 every pull request and push to main (artifacts `windows-installer-<version>`, `windows-msi-<version>` and
 `windows-portable-<version>`) and, when a `v*` tag is pushed, puts all three on the tag's release beside the OS media.
+The current build (below) carries the same three files from every commit on main that ci passes.
 
 - **Installing.** Download `Crimson Noir Agent City_<version>_x64-setup.exe` and double-click it. It installs for
   the current user (no administrator prompt) and puts a shortcut in the Start menu. The file is not code-signed, so
-  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact runs from any
+  SmartScreen may ask once ("More info", then "Run anyway"). The bare `.exe` in the portable artifact
+  (`crimson-noir-app_<version>_x64.exe`; the Windows on Arm one ends `_arm64.exe`) runs from any
   folder; both need the WebView2 runtime, which Windows 10 and 11 carry (the installer fetches it if a machine has
   none).
 - **The window.** It has no system decorations: the page draws the title bar (`src/07_Execute_Actions/TitleBar.tsx`),
@@ -4199,6 +4356,18 @@ every pull request and push to main (artifacts `windows-installer-<version>`, `w
   `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
   tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
   Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
+- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux, the shell runs the model
+  it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends the page
+  three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its events on a
+  Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
+  answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
+  in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
+  for; and `app_model` answers nothing there, so the page never copies a model in. Every other build (Windows, macOS,
+  and every Linux build shipped today: the feature is off by default) registers the same three commands, which answer
+  that there is none. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
+  builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
+  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`); no shipped build carries the runner
+  yet.
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
@@ -4263,10 +4432,84 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*` tag the files go onto the tag's release after
   `build-release.yml` has created it (the same wait as `windows-app.yml`), all but the x86-64 media, which
   `build-release.yml` publishes under the same names; `build-release.yml` dispatches this workflow for a tag it makes
-  itself. Only GitHub's own actions run in it.
+  itself. `current.yml` calls it with each commit on main that ci passes, for the current build (below). Only
+  GitHub's own actions run in it.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested, and where
   an engine lacks it the app shows the same recovery card as a browser without WebGPU.
+
+## The current build
+
+Every download follows `main`, as the web copy does. Each time ci passes on a commit on main, the `current` workflow
+(`.github/workflows/current.yml`) builds all nine targets of the build matrix from that commit, the Windows x64 app
+through `windows-app.yml` and the other eight through `build-matrix.yml` (both called with the commit), and
+`tools/build/current.mjs` puts the files on one GitHub pre-release, **Crimson Noir: Agent City, current build**, under
+the tag `current`: <https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current>. The next green
+commit replaces them the same way. It is not a numbered release: the latest numbered release keeps its "Latest" label,
+numbered releases are still cut by hand from a pushed tag (`build-release.yml`), and this workflow's only tags are
+`current` and a stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (see below).
+
+- **What is on it.** Windows x64 and arm64 (the NSIS installer, the `.msi`, the bare `.exe` as
+  `crimson-noir-app_<version>_x64.exe` and `_arm64.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), the
+  macOS `.dmg` and zipped `.app`, the Android `.apk` (with the `.apk.idsig` apksigner writes beside it, its v4
+  signature for streaming installs; a phone does not need it), the iOS `.ipa`, Crimson Noir OS's x86-64 media
+  (`BOOTX64.EFI`, `crimson_noir_os.img`, `crimson_noir_os.iso`, with `containment.nix`, `containment.lock`,
+  `NOTICE.txt` and `LICENSE`, as a numbered release carries them) and its aarch64 media (`BOOTAA64.EFI`,
+  `crimson_noir_os-aarch64.img` and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
+  the commit, run and time that made each target's files. The notes list every file with its commit. The apps' file
+  names carry the version in `package.json` at the commit they were built from (`1.0.0-stable-beta` today; the `.rpm`
+  as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each
+  file's row in the notes, tell one current build from the next. A file's address stays the same from one build to the next while its name does
+  (except for the few seconds the tag is made again, below):
+  `https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/download/current/<file>`.
+- **What is checked first.** ci on that very commit (the page's type check, lint, tests and build, the city in Chrome,
+  the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani
+  harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
+  baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
+  the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
+  build matrix above.
+- **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
+  commit it built, as long as the release still holds those very bytes, and the notes and `current.json` say which
+  commit that was; the run is red so it is seen. The iOS build is best effort, as in the build matrix, and never turns
+  the run red.
+- **It never steps back.** Only a commit on main that ci passed on is built, and it is published only while it is
+  still on main and at least as new as what the release holds (asked again after the build). When the release's
+  record cannot be read, or GitHub cannot say whether a commit is on main or compare it with the release's, nothing is
+  written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
+  place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
+  release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
+  attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
+  holds a newer one), and red too when GitHub cannot answer, so someone runs the workflow by hand.
+- **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
+  `current.json` holds it, so the release always has one of the two (`gh release upload --clobber` deletes the old
+  file before it uploads the new one). A staged copy left by a stopped run is the newest record, so it goes up as
+  `current.json` before anything replaces it, and a release that holds neither (its first run stopped before the
+  record, or its files were deleted by hand) gets an empty `current.json` before any file. A commit counts as
+  published only when the release holds exactly what its record says, `SHA256SUMS` lists those files, and the notes
+  name the commit and that publish's time; otherwise the next run builds it again.
+- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
+  four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
+  commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
+- **The tag.** `current` is put at the commit before any file is written. GitHub is reported (not yet seen here) to
+  let the workflow's own token move a tag only when no workflow file changed between the two commits, and to let it
+  make one at a commit whose workflow files match main's tip; so when a move is refused, the release is set on a
+  stand-in tag, `current-next`, while `current` is made again, then set back (its download addresses answer 404 for
+  those few seconds; the release is never on a tag being deleted, which would turn it into a draft). A run that stops
+  halfway leaves the release on `current-next`; the next run sets it back on `current` (an existing `current` is not
+  deleted for this, and if the stopped run had already deleted it, it is made again as soon as GitHub allows, once
+  the commit has main's tip's workflow files), then moves the tag as usual. When GitHub refuses the stand-in as well
+  (a later commit on main changed a workflow), the tag stays where it was, the files are published all the same, and
+  the notes say where the tag and GitHub's source code archives are; the next publish tries again.
+- **Checking a download.** `sha256sum --check --ignore-missing SHA256SUMS` in the folder you downloaded into
+  (`SHA256SUMS` lists every file but itself and `current.json`).
+- **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds the newest
+  commit on main that ci passed on, and with "force" even when the release already holds that commit. Retry a failed
+  run this way (or with "Re-run all jobs"), not with "Re-run failed jobs".
+- **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
+  everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
+  notes it would write, and the log what it would upload, keep and delete.
+- **NixOS** needs none of this: `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds main's tip from
+  source (below).
 
 ## On an iPhone (the web app)
 
@@ -4345,14 +4588,15 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
 
 What the phone copy keeps, and what it cannot have yet:
 - **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
-  host (which only serves these files, the site's model in `models/` among them, fetched only when you tap for it on
-  Sloane's card) and to the phone's own `localhost`, nowhere else.
+  host (which only serves these files, the site's model in `models/` among them, fetched by the page once the city is
+  on screen or when you tap for it on Sloane's card) and to the phone's own `localhost`, nowhere else.
 - **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
   model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
   `ask`'s runtime row names what is missing, Sloane speaks from their script with the phone's own voices, and `ask`
   answers from the script. The Menu offers no Model file there, and Sloane's card offers no download of the site's
   model, since neither could run until Safari can. Chrome 137 or later on an Android phone runs a small model in the
-  page, and on the web copy gets the site's model in one tap on Sloane's card (neither yet tried on a real phone).
+  page, and on the web copy gets the site's model by itself on Wi-Fi, or in one tap on Sloane's card on mobile data
+  (neither yet tried on a real phone).
 - **The shared address.** `cassius-software.github.io` is one origin for every Pages site of the organization, and any
   of them could read what this one saves in the browser, a model key typed into the console and the model files kept
   in the page included, the site's model once it is downloaded among them (it is checked against its pin as it
@@ -4415,7 +4659,10 @@ turns on
 `hardware.graphics.enable` (the Vulkan driver WebGPU needs; a configuration that sets it keeps its own value); and,
 unless `programs.crimson-noir-agent-city.dualsense = false;`, gives the signed-in user a DualSense's or DualSense
 Edge's raw HID node, over USB and Bluetooth, so the browser's WebHID can drive its trigger resistance, rumble and light
-bar (Hardware); the plain gamepad needs none of that. The page is the proprietary core (LICENSE, section 1) and its
+bar (Hardware); the plain gamepad needs none of that. Its package carries Sloane's model, Qwen2.5 1.5B Instruct
+(Apache-2.0, about 940 MB, fetched once from Hugging Face at a pinned revision and checked by its SHA-256), which the
+launcher serves beside the page (The launcher's model); `programs.crimson-noir-agent-city.model = false;` builds it
+without one. The page is the proprietary core (LICENSE, section 1) and its
 package says so (`meta.license` is unfree), so a configuration allows it by name, as above; one that already has an
 `allowUnfreePredicate` adds the name to its own. (A configuration that lists the flake's
 `packages.<system>.default` itself skips that check: the flake's own package set allows the page already.) A
@@ -4433,8 +4680,9 @@ Flakes are still an experimental Nix feature: a stock NixOS needs
 `nix.settings.experimental-features = [ "nix-command" "flakes" ];` (or `--extra-experimental-features "nix-command
 flakes"` on the command). In a checkout, `nix run .` does the same. The first run builds the page from source in Nix's
 sandbox (`tools/nix/page.nix`: npm installs the lockfile's packages for this platform, each fetched by its integrity
-hash, about 89 MB on x86-64, then `npm run build`; the result is byte for byte the page `npm run build` writes) and
-fetches Chromium from the NixOS binary cache. Its nixpkgs is the NixOS 26.05 release pinned in `flake.lock`, and
+hash, about 89 MB on x86-64, then `npm run build`; the result is byte for byte the page `npm run build` writes),
+fetches Chromium from the NixOS binary cache, and fetches Sloane's model, about 940 MB, from Hugging Face
+(`tools/nix/model.nix`; later runs find it in the store). Its nixpkgs is the NixOS 26.05 release pinned in `flake.lock`, and
 Chromium from it can fail to load the GPU driver of a newer NixOS (today's nixos-unstable driver needs a newer glibc
 than 26.05's): the city then starts without a GPU adapter. On such a system the module avoids it for good, or build
 from the system's nixpkgs: on a flake-built NixOS,
@@ -4446,7 +4694,8 @@ system's nixpkgs); on a channel-based one,
 **What the command does** (`crimson-noir-agent-city`, which is `tools/web/launch.mjs` with Node 24):
 - **Serves the page on `http://127.0.0.1:4180`, to this machine only,** with the two cross-origin isolation headers,
   so the physics realm and the page share one memory bridge as under `npm run preview`. It answers `/` (and
-  `/index.html`) and nothing else, uncached, so a rebuilt page shows on the next start. The address stays the same
+  `/index.html`), and the model folder's files at `models/` (below), and nothing else, uncached, so a rebuilt page
+  shows on the next start. The address stays the same
   from one run to the next because the page keeps its settings (the onboarding's answers, the map, a model key typed to
   the console) per address; `--port` moves it, and the page then starts as on a first visit. Ollama accepts the
   address by default (it allows `127.0.0.1` origins); another model server may need the origin allowed in its own
@@ -4465,17 +4714,21 @@ system's nixpkgs); on a channel-based one,
   on another launcher's server closes when that server stops.
 - **Words after `--`** become the page's query (URL options): `nix run github:cassius-software/Crimson-Noir-AI-Agent-City
   -- quality=4 map=lakefront players=2`. The switches: `--port N`, `--dir <folder>` (another build, such as a
-  checkout's `dist/`), `--no-browser` (serve only and print the address, for a browser of your own), `--check` (the
-  CI check below) and `--help`. `CHROME` names another browser, by path or as a command on `PATH`
+  checkout's `dist/`), `--models <folder>` (another model folder), `--no-browser` (serve only and print the address,
+  for a browser of your own), `--check` (the CI check below) and `--help`. `CHROME` names another browser, by path or as a command on `PATH`
   (`CHROME=google-chrome-stable`); `AGENT_CITY_CHROME_FLAGS` adds switches, each starting with `--` and with no space
   inside its value (an `--enable-features` list joins the launcher's own: Chromium keeps only the last list it is
-  given); `AGENT_CITY_PORT` and `AGENT_CITY_DIST` set the port and the page.
+  given); `AGENT_CITY_PORT`, `AGENT_CITY_DIST` and `AGENT_CITY_MODELS` set the port, the page and the model folder.
 - **The GPUs' memory.** Before it opens the window the launcher reads the GPUs' memory:
   `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` (MiB per GPU), else
   `/sys/class/drm/card*/device/mem_info_vram_total` (bytes per card). GPUs under 4 GB are skipped (an integrated
   Radeon given 4 GB or more by its firmware is counted; not tried on one). It adds
   `vram=<GB>` to the address and prints the figure and where it came from; `-- vram=<GB>` gives your own and
   `-- vram=0` none; `--check` reads nothing.
+- **Sloane's model.** With a model folder (the package's own, `AGENT_CITY_MODELS`, or `--models <folder>`) the
+  launcher serves its plain files at `models/` beside the page and adds `models=1` to the address, and the page copies
+  the model into the browser profile's storage once the city is on screen, with nothing downloaded (The launcher's
+  model). A folder that cannot be read or holds no `manifest.json` is said once and left out.
 
 **Ollama with it.** `programs.crimson-noir-agent-city.ollama.enable = true;` runs Ollama as a service
 (`services.ollama`) on this machine's loopback, `127.0.0.1:11434`, where the city's auto provider looks for it. Given a
@@ -4580,7 +4833,8 @@ which then has no unit; the option's variables kept when `services.ollama.enviro
 compared byte for byte with `npm run build`, `crimson-noir-agent-city --check` (the packaged command's server serves
 the page and the city boots headless in the package's Chromium on the software adapter, cross-origin isolated, with no
 exception on the page), and the browser smoke's desktop and Ultra scenarios in that Chromium (the Ultra one also pins
-Peak for a few frames).
+Peak for a few frames). Sloane's model in the package, its `--check` and the `launcher` scenario in that Chromium are
+new and counted under The launcher's model.
 `src/desktopLauncher.test.ts` holds the address, the headers, the token, the one features list, the flake's shape and
 the `vm` job's wiring.
 It also holds the GPU probe: `nvidia-smi`'s lines on a stub (two GPUs, `[N/A]`, a GPU under 4 GB) and the amdgpu
@@ -4654,7 +4908,8 @@ bar and no reload of their own, so the page carries its own way out.
   keeps what it learnt in this browser (`src/03_Spawn_Agents/crowdKernelMemory.ts`, one record in localStorage, held
   to the kernels' own fingerprint, the user agent and the adapter): after a refusal the next rung; after a loss the
   light kernel, skipping the narrow one; after the light kernel's own loss nothing, for an hour (a day once it went
-  down twice running). One loss is asked about once more a day later, a refusal after a week, and a refusal whose
+  down twice running). One loss is asked about once more a day later, a refusal after a week (on a Mali Bifrost GPU
+  see below), and a refusal whose
   words name memory is not kept. The page then **starts again by itself, once**, with `?kernel=lite` in its address,
   after waiting for the browser to hand out a GPU again (the veil stays up meanwhile, and its "Still starting" line,
   where it shows, names the step as "starting again with a lighter crowd"); the mentor's choice, the hour and the
@@ -4662,15 +4917,25 @@ bar and no reload of their own, so the page carries its own way out.
   when the kernel came from the address, when it already restarted within the last two minutes, when the GPU was
   already lost once in the last five, or where the browser keeps nothing for the page (it could not count its
   restarts): the card comes instead, "The browser’s graphics stopped while building the crowd", whose Restart goes
-  to the lighter kernel. After the lightest kernel's loss the card reads "The crowd keeps stopping this device’s
-  graphics" and says how long the GPU is left alone; its Restart goes to the address without `?kernel=`, a start
+  to the lighter kernel. After the lightest kernel's loss the card reads "The crowd’s lightest kernel stopped this
+  device’s graphics" and says how long the GPU is left alone; its Restart goes to the address without `?kernel=`, a start
   inside that time asks the browser for no adapter at all (each try would cost every tab its graphics), and
   `?kernel=full` asks for everything again. Where the browser kept no record, the card says instead that a restart
   asks the GPU again. A loss while the page was hidden is the phone taking the GPU back, blamed on no kernel. Chrome itself hands a page no GPU for a while after two losses within two minutes
   (measured in Chromium 153: no adapter for the page or its worker until about two minutes after the first loss, and
   a page's own reload does not lift it): the card then reads "The browser has paused graphics for this page" and
-  says to wait, where it used to say the device had no adapter. `hardware` names why a lighter kernel runs ("a
-  heavier one took this GPU down", "the address asked for it" or "this GPU refused the full one"). The browser CI job
+  says to wait, where it used to say the device had no adapter. A Mali Bifrost GPU (a Mali-G31, G51, G52, G71, G72
+  or G76, by the adapter's architecture or name) starts on the light kernel before anything is learnt of it: on a
+  Mali-G52 the full kernel took Chrome's GPU process down, and Brave's compiler refused it and the narrow one; and
+  since a browser update asks the kernels afresh, every update would otherwise cost such a phone a GPU process again.
+  The rule rests on that one phone and is untried on other Bifrost GPUs. A record of the GPU itself still sets where
+  a start begins, but on such a GPU a kernel heavier than the light one that took it down is not asked about again,
+  a refusal older than a week starts again from the light kernel (or from the rung the record saw stand, where that
+  is higher), and a kernel standing after the light kernel's own hold forgets the record. `?kernel=full` asks for everything
+  on that visit only: the full kernel standing is not remembered, so the next start without the address is on the
+  light kernel again. `hardware` names why a
+  lighter kernel runs ("a heavier one took this GPU down", "the address asked for it", "this GPU family starts on
+  it" or "this GPU refused the full one"). The browser CI job
   kills Chrome's GPU process as the worker asks for the full kernel and again under the light one
   (`tools/browser/smoke.mjs`, the `fail` scenario), under software WebGPU; whether a given phone's driver survives
   the light kernel is learned on that phone.
@@ -4684,8 +4949,19 @@ bar and no reload of their own, so the page carries its own way out.
   runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
   and the feature flag; another browser on iOS, or an app's built-in browser, is sent to Safari; Android Chrome to
   an update, an Android app's built-in browser to Chrome; Firefox to `dom.webgpu.enabled`; Chrome on Linux with no
-  adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). The home-screen app and
-  the Windows app are never told to edit an address or switch browsers.
+  adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). An Android browser with
+  WebGPU but no adapter (other than an app's built-in browser, which is sent to Chrome with the Open in Chrome button,
+  as when it has no WebGPU) is named as itself (Brave sends Chrome's user agent on Android, so its name comes from
+  `navigator.brave` or the client hints' brands; Edge's user agent carries its own EdgA token; client hints that name
+  no app make it "this browser") and told to close it with Settings > Apps > Force stop first. The page asks its own
+  WebGL at that moment (`gpuDevice.ts` `webgl2Answers`: WebGL2, then WebGL), so the card tells a browser that refuses
+  both (it hands the page no GPU at all, as a browser can after its graphics crashed: restart the phone next) from one
+  that holds WebGPU back alone (under Android's Advanced Protection Chrome and the browsers built on it turn WebGPU
+  off, and a browser can keep it from GPUs on its own list), says so in the details, and offers another browser built
+  on Chromium (Firefox is offered Chrome or Brave, and told nothing of Advanced Protection). Where a crowd kernel took
+  the GPU down in that browser on an earlier visit (the kernel record, `crowdKernelMemory.ts` `lostBefore`), the card
+  says that first. Not yet seen on a phone: whether Force stop brings the adapter back, and the Advanced Protection
+  path on Android 16. The home-screen app and the Windows app are never told to edit an address or switch browsers.
 - **Before the onboarding.** A first visit checks the page is secure, has WebGPU and gets a full adapter before the
   onboarding starts; a browser that cannot run the city gets the card instead.
 - **A slow start** is not a failure: after 20 s of visible time without a first frame the boot veil adds "Still
@@ -4754,9 +5030,10 @@ reset and a real pad.
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
   allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry
   point does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
-  only requests off this machine go to its own site, for the model served beside the page, and only when Sloane's
-  card needs it (`App.tsx siteFetch`, held by `09_Cognition/siteModel.ts siteUrl` to a `models/` file beside the page:
-  the manifest once a visit, the model only on a tap; the airgap test allowlists that one call site); the Claude provider
+  only requests off this machine go to its own site, for the model served beside the page, once the city is on screen
+  or when Sloane's card needs it (`App.tsx siteFetch`, held by `09_Cognition/siteModel.ts siteUrl` to a `models/` file
+  beside the page: the manifest once a visit, the model once by the page itself unless it holds back (The site's model)
+  or on a tap; the airgap test allowlists that one call site); the Claude provider
   needs a gateway on this machine (`http://localhost:8089`); `net join` reaches a host on this machine. What the guard
   cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm from an
   iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`. Most of it

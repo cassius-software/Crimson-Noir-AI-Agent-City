@@ -3,3 +3,6 @@ gen/schemas
 # The Android and Xcode projects `npm run build:matrix` generates with `tauri android|ios init --ci` (tools/build/matrix.mjs).
 gen/android
 gen/apple
+# The model the Windows installer carries (tauri.model.conf.json): fetched, checked and put here by CI
+# (`node tools/web/siteModel.mjs app`), never committed.
+models

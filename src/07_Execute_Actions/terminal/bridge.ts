@@ -74,9 +74,10 @@ export interface HardwareReport {
   /**
    * `kernel`: the crowd kernel the worker runs (simProtocol.ts SimMeta.crowdKernel); absent reads as the full one.
    * `kernelWhy`, below the full one: this GPU refused the ones above (absent reads so), a heavier one took the GPU down
-   * on an earlier start, or the address asked for it (?kernel=).
+   * on an earlier start, the address asked for it (?kernel=), or this GPU's family starts on it (crowdKernelMemory.ts
+   * familyKernel).
    */
-  lanes: { simulated: number; default: number; ceiling: number; kernel?: 'full' | 'narrow' | 'lite' | 'none'; kernelWhy?: 'refused' | 'lost' | 'asked' }
+  lanes: { simulated: number; default: number; ceiling: number; kernel?: 'full' | 'narrow' | 'lite' | 'none'; kernelWhy?: 'refused' | 'lost' | 'asked' | 'family' }
   /** Frame times of the governor's window, ms; n = 0 before the first frame. */
   frames: { p50: number; p95: number; p99: number; n: number; windowMs: number }
   host: 'browser' | 'native'

@@ -33,7 +33,8 @@ import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from 
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
 import { GlyphKey } from './Hud.tsx'
-import type { SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
+import type { SiteModelFrom, SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
+import type { SiteJobState } from '../09_Cognition/siteJob.ts'
 import type { Nudge } from '../09_Cognition/tutorial.ts'
 import type { LaneLine } from '../08_Swarm/team.ts'
 import { phaseLine, type Chat, type ChatTurn, type Voice } from './onboarding/voice.ts'
@@ -223,6 +224,16 @@ function isEditable(t: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
 
+/** Why the model the app runs itself couldn't start (App.tsx, from 09_Cognition/nativeMind.ts), as the card says it. */
+export interface AppModelLine {
+  /** The app's reason, the model's file name already taken out (the card never names the model). */
+  readonly why: string
+  /** A model server can run beside the app (a computer, not a phone or tablet): the line about starting one stays. */
+  readonly servers: boolean
+  /** Whether the app's model is what answers now (the provider is auto or native): only then is the hint its. */
+  blamed(): boolean
+}
+
 export interface ConciergeProps {
   /** Show the Concierge (pass false while the boot veil covers the page, the HUD is hidden or the terminal is open). */
   visible: boolean
@@ -288,8 +299,16 @@ export interface ConciergeProps {
   /** Optional: why this page cannot run a model file (the browser lacks a piece), said in place of the picker. */
   noPageModel?: string | null
   /**
+   * Optional: why the model inside this app couldn't start, where the app runs one itself (09_Cognition/nativeMind.ts),
+   * said in place of the site's and the browser's hints when no model answers, while that model is what answers; on a
+   * computer still followed by the line about starting a model server. Null: the app runs none, or it can start.
+   */
+  appModel?: AppModelLine | null
+  /**
    * Optional: the model this site serves beside the page (09_Cognition/siteModel.ts, built by App.tsx), offered when no
-   * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. Null: nothing to offer.
+   * model answers: one tap downloads it, checks it, keeps it and asks the last turn again. The page may get it by itself
+   * too (09_Cognition/siteAuto.ts): either way its one job (siteJob.ts) shows its progress and its Stop here, on the
+   * conversation, on the card's other views and on the chip. Null: nothing to offer.
    */
   siteModel?: SiteModelHost | null
   /** Optional: the lanes of the team the host opened for the brief (08_Swarm/team.ts lines), shown under it as they run. */
@@ -302,7 +321,7 @@ export interface ConciergeProps {
   onOpen?(open: boolean): void
 }
 
-export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, siteModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
+export function Concierge({ visible, profile, onProfile, family, overlay = family === 'touch', driving, dark = false, settleMs = SLOANE.settleMs, travelled, onIntent, goal, onLook, nudge = null, onGoal, onGoalSent, onSay, heard = null, reword = null, chat = null, onPickModel, noPageModel = null, appModel = null, siteModel = null, lanes = null, beside = false, zoom = 1, onOpen }: ConciergeProps) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const room = besideRoom(zoom)
   const roomy = useSyncExternalStore(room.subscribe, room.matches, room.server)
@@ -398,18 +417,20 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
   /** The site's model on offer (siteModel.offer): undefined until the card first needs it, null where there is none. */
   const [site, setSite] = useState<SiteModelLine | null | undefined>(undefined)
-  /** Getting it: how far it has come, or null. */
-  const [getting, setGetting] = useState<SiteModelProgress | null>(null)
+  /** Getting it (siteJob.ts): the page's one job, started by the tap here or by the page itself, whoever reads it. */
+  const job = useSyncExternalStore(siteModel?.job.subscribe ?? NO_SUBSCRIBE, siteModel?.job.state ?? NO_JOB, NO_JOB)
+  /** How far it has come while it runs, or null. */
+  const getting: SiteModelProgress | null = job?.phase === 'running' ? job : null
+  /** Where it comes from, for the words: this site, or the app that carries it (copied, not downloaded). */
+  const from: SiteModelFrom = siteModel?.from ?? 'site'
   /** Why the last try to get it ended short (a plain sentence), or ''. */
-  const [gotWhy, setGotWhy] = useState('')
-  /** Whether the card has shown that reason: one that came while the card was away keeps the conversation for it. */
-  const [whySeen, setWhySeen] = useState(true)
+  const gotWhy = job?.phase === 'failed' ? job.why : ''
+  /** The last tapped try that ended short whose reason the card has shown: one that came while the card was away keeps
+   *  the conversation for it (a try the page started by itself says why in a toast, and never opens the card). */
+  const [whySeenId, setWhySeenId] = useState(0)
+  const whySeen = !(job?.phase === 'failed' && job.how === 'tap' && job.id !== whySeenId)
   /** The model has just arrived and the last turn is asked again: the wait says it is starting, not thinking. */
   const [starting, setStarting] = useState(false)
-  const getCtl = useRef<AbortController | null>(null)
-  /** The file has been handed to the copy into the page, which runs to its end: a Stop from then on does nothing. */
-  const handed = useRef(false)
-  useEffect(() => () => getCtl.current?.abort(), [])
   /** Whether the card is on a conversation, read when a download ends minutes after the render that started it. */
   const onChat = useRef(false)
   useEffect(() => { onChat.current = dialogue.brief?.chat === true })
@@ -438,52 +459,37 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const a = document.activeElement
     if (!a || a === document.body || cardRef.current?.contains(a)) refocusKeys()
   }
-  /** The tap: the site's model downloaded, checked and kept (or, kept already, chosen), then the last turn asked again. */
+  /** The tap: the site's model downloaded, checked and kept (or, kept already, chosen); its end is met below. */
   const getSite = () => {
     if (!siteModel || getting) return
-    const ctl = new AbortController()
-    getCtl.current?.abort()
-    getCtl.current = ctl
-    setGotWhy('')
-    setWhySeen(true)
-    setGetting({ step: 'download', done: 0, total: 0 })
-    handed.current = false
     refocusKeys()
-    siteModel.get((p) => {
-      if (ctl.signal.aborted) return
-      if (p.step === 'keep') handed.current = true
-      setGetting(p)
-    }, ctl.signal).then(() => {
-      if (ctl.signal.aborted) return
-      getCtl.current = null
-      setGetting(null)
+    void siteModel.job.start('tap')
+  }
+  // How each job ended, met once, whoever started it: kept, so the offer says so and a conversation still on the card
+  // is asked again (a goal typed since is the visitor's next thing, and an answer to an old turn would come where
+  // nothing shows it); and back to the field after the visitor's own tap.
+  const endMet = useRef(0)
+  const meetEnd = useEffectEvent((end: SiteJobState) => {
+    if (end.phase === 'done') {
       setSite((v) => (v ? { ...v, kept: true } : v))
-      // Only a conversation still on the card is asked again: a goal typed since is the visitor's next thing, and an
-      // answer to an old turn would come where nothing shows it.
-      if (onChat.current && turnsRef.current.at(-1)?.who === 'you') {
+      // Only a conversation that found no model is asked again: a reply on its way, one the visitor stopped or held,
+      // or one already said stays as it is, whenever a download the page started by itself ends.
+      if (onChat.current && talk?.state === 'none' && turnsRef.current.at(-1)?.who === 'you') {
         setStarting(true)
         askTurns(turnsRef.current)
       }
-      refocusAtEnd()
-    }, (e: unknown) => {
-      if (getCtl.current === ctl) getCtl.current = null
-      setGetting(null)
-      if (!ctl.signal.aborted) {
-        setGotWhy(e instanceof Error ? e.message : String(e))
-        setWhySeen(false)
-      }
-      refocusAtEnd()
-    })
-  }
-  /** Stop while it downloads: nothing is kept, and the offer is back. */
+    }
+    if (end.how === 'tap') refocusAtEnd()
+  })
+  useEffect(() => {
+    if (!job || job.phase === 'running' || job.id === endMet.current) return
+    endMet.current = job.id
+    meetEnd(job)
+  }, [job])
+  /** Stop while it downloads: nothing is kept, and the offer is back. Once the file is handed to the copy it runs to
+   *  its end (it is kept and chosen): a Stop still on screen for that frame does nothing (siteJob.ts stop). */
   const stopGetting = () => {
-    // Once the file is handed to the copy it runs to its end (it is kept and chosen): a Stop still on screen for that
-    // frame does nothing, rather than bring the offer back over a model that is being kept.
-    if (handed.current) return
-    getCtl.current?.abort()
-    getCtl.current = null
-    setGetting(null)
-    refocusKeys()
+    if (siteModel?.job.stop('person')) refocusKeys()
   }
   // Previous props, for adjusting state while rendering (React's pattern for reacting to a prop change).
   const [seenProfile, setSeenProfile] = useState(profile)
@@ -502,7 +508,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   // Adjusted while rendering: a reply is seen once the card shows it.
   if (visible && talking && talk && talk.state !== 'waiting' && talk.id !== seenTalk) setSeenTalk(talk.id)
   // Adjusted while rendering: so is the reason a download ended short, once the card shows it.
-  if (!whySeen && visible && talking && talk?.state === 'none' && gotWhy !== '' && getting === null) setWhySeen(true)
+  if (!whySeen && job && visible && talking && talk?.state === 'none' && gotWhy !== '' && getting === null) setWhySeenId(job.id)
   const sayRef = useRef(onSay)
   const saidRef = useRef('')
   useEffect(() => { sayRef.current = onSay }, [onSay])
@@ -630,8 +636,9 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const openGoal = () => {
     focusNext.current = true
     // A conversation whose reply is still on its way, or came while the card was away, is opened again as it stands;
-    // so is one whose model is still downloading, or whose download ended short while the card was away.
-    if (dialogue.brief?.chat && (replying || unseen || getting !== null || (!whySeen && talk?.state === 'none'))) {
+    // so is one whose model is still downloading (tapped there, or found no model while the page gets it), or whose
+    // download ended short while the card was away.
+    if (dialogue.brief?.chat && (replying || unseen || (getting !== null && (job?.how === 'tap' || talk?.state === 'none')) || (!whySeen && talk?.state === 'none'))) {
       open('goal')
       onGoal?.()
       return
@@ -814,28 +821,49 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
     // shortTouch's other measures read --chip-top, so the walk's top replaces that, not `top`.
     const style: CSSProperties | undefined = chipTop ? { top: chipTop } : walkTop ? ({ '--chip-top': walkTop } as CSSProperties) : undefined
+    // While the site's model is got the chip carries a hairline of its progress along its foot, drawn over the pill so
+    // the chip keeps its size (the touch buttons below it keep their room) and its buttons are never rebuilt; its line
+    // and its Stop are on the card, a tap away.
+    const bar = getting && (
+      <span role="progressbar" aria-label={stripLine(getting)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+        className={`pointer-events-none absolute inset-x-4 bottom-0 block h-0.5 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`} data-site-bar={getting.step}>
+        <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+      </span>
+    )
+    const ask = (
+      <>
+        <SloaneMark size={24} />
+        <span className="font-semibold">{SLOANE.name}</span>{' '}
+        <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
+      </>
+    )
+    const buttons = (
+      <>
+        <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
+          <SloaneMark size={24} />
+          <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
+        </button>
+        <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
+          Controls
+        </button>
+        {onLook && (
+          <button type="button" onClick={onLook} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-look">
+            Look
+          </button>
+        )}
+      </>
+    )
     return (
       <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
           <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
-            <SloaneMark size={24} />
-            <span className="font-semibold">{SLOANE.name}</span>{' '}
-            <span className={`truncate ${muted}`}>{compact ? 'Your name?' : 'What should I call you?'}</span>
+            {ask}
+            {bar}
           </button>
         ) : (
           <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
-            <button type="button" onClick={openGoal} className="flex min-w-0 items-center gap-2 py-1 pr-2.5 pl-1" data-concierge="chip">
-              <SloaneMark size={24} />
-              <span className="truncate font-semibold">Tell {SLOANE.name} a goal</span>
-            </button>
-            <button type="button" onClick={() => open('help')} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-controls">
-              Controls
-            </button>
-            {onLook && (
-              <button type="button" onClick={onLook} className={`shrink-0 border-l py-1.5 pr-3.5 pl-2.5 ${rule} ${muted}`} data-concierge="chip-look">
-                Look
-              </button>
-            )}
+            {buttons}
+            {bar}
           </div>
         )}
       </div>
@@ -875,6 +903,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   const link = `text-[12px] font-medium underline-offset-2 hover:underline ${muted}`
   const done = brief ? brief.plan.filter((s) => dialogue.applied.includes(s.control)) : []
   const later = brief ? brief.plan.filter((s) => !dialogue.applied.includes(s.control)) : []
+  // Why the app's own model couldn't start, said only with no model answering and while that model is what answers.
+  const app = talk?.state === 'none' && appModel !== null && appModel.blamed() ? appModel : null
 
   // A speaker layout: Sloane's mark beside their name and line, everything they offer under the line.
   const card = (
@@ -987,12 +1017,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   {getting ? (
                     <div data-site-model={getting.step}>
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                        <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting)}</span>
-                        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} data-action="stop-model">Stop</button>}
+                        <span className={`text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting, from)}</span>
+                        {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} aria-label={`Stop getting ${SLOANE.name}’s model`} data-action="stop-model">Stop</button>}
                       </div>
                       <div
                         role="progressbar"
-                        aria-label={getting.step === 'download' ? 'Downloading the model' : 'Keeping the model in this page'}
+                        aria-label={getting.step === 'download' ? (from === 'site' ? 'Downloading the model' : `Copying the model from ${copiedFrom(from)}`) : 'Keeping the model in this page'}
                         aria-valuemin={0}
                         aria-valuemax={100}
                         aria-valuenow={percent(getting)}
@@ -1018,9 +1048,11 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
                   )}
                   {gotWhy && !getting && <p role="status" className={`mt-1.5 text-[11px] leading-snug break-words ${muted}`} data-site-why>{gotWhy}</p>}
                   <p className={`mt-2 text-[12px] leading-snug ${muted}`}>
-                    {site ? siteHint(site) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
-                    Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
-                    {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
+                    {app ? `${appHint(app.why)} ` : site ? siteHint(site, from) : onPickModel && !noPageModel ? `${SMALL_MODEL_HINT} ` : noPageModel ? `This browser can’t run a model inside the page (${noPageModel}). ` : ''}
+                    {(!app || app.servers) && (<>
+                      Or start Ollama, LM Studio or a llama.cpp server on this computer and ask again
+                      {serverNote(typeof window === 'undefined' ? '' : window.location.origin)}.
+                    </>)}
                   </p>
                   {talk.why && (
                     <details className={`mt-1 text-[11px] leading-snug ${muted}`}>
@@ -1152,6 +1184,17 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
         </div>
       </div>
 
+      {getting && !(talking && talk?.state === 'none') && (
+        <div className={`${tight ? 'mt-2 pt-2' : 'mt-3 pt-2.5'} flex items-center gap-3 border-t ${rule}`} data-site-strip={getting.step}>
+          <span className={`min-w-0 shrink-0 text-[12px] leading-tight tabular-nums ${muted}`}>{gettingLine(getting, from)}</span>
+          <span role="progressbar" aria-label={getting.step === 'download' ? (from === 'site' ? `Downloading ${SLOANE.name}’s model` : `Copying ${SLOANE.name}’s model from ${copiedFrom(from)}`) : `Keeping ${SLOANE.name}’s model in this page`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(getting)}
+            className={`block h-1 min-w-8 flex-1 overflow-hidden rounded-full ${dark ? 'bg-white/15' : 'bg-slate-900/10'}`}>
+            <span className={`block h-full rounded-full ${dark ? 'bg-white' : 'bg-slate-900'}`} style={{ width: `${percent(getting)}%` }} />
+          </span>
+          {getting.step === 'download' && <button type="button" onClick={stopGetting} className={link} aria-label={`Stop getting ${SLOANE.name}’s model`} data-action="stop-model">Stop</button>}
+        </div>
+      )}
+
       {notice && (
         <p className={`${tight ? 'mt-2 pt-2' : 'mt-3.5 pt-2.5'} border-t text-[10px] leading-snug ${rule} ${muted}`} data-notice="orc">
           {ORC_AFTER === undefined ? ORC_NOTICE : <>{ORC_BEFORE}<span className="whitespace-nowrap">{ORC_REGISTRATION}</span>{ORC_AFTER}</>}
@@ -1192,27 +1235,49 @@ function PlanList({ title, steps, ticked, dark }: { title: string; steps: readon
 }
 
 /** Beside the local-server hint: a page not served from this computer is answered by Ollama only once its origin is allowed. */
+/** No site's model: nothing to subscribe to, and no job (useSyncExternalStore's stand-ins, the same functions every render). */
+const NO_SUBSCRIBE = (): (() => void) => () => undefined
+const NO_JOB = (): SiteJobState | null => null
+
+/** The strip's short line, where the conversation does not show the full one: the chip and the card's other views. */
+function stripLine(p: SiteModelProgress): string {
+  return p.step === 'download' ? `${CONCIERGE_NAME}’s model · ${percent(p)}%` : `Keeping ${CONCIERGE_NAME}’s model · ${percent(p)}%`
+}
+
 /** How far getting the site's model has come, as a whole percent. */
 function percent(p: SiteModelProgress): number {
   return p.total > 0 ? Math.min(100, Math.max(0, Math.floor((p.done / p.total) * 100))) : 0
 }
 
-/**
- * The line over the bar while the site's model is got: megabytes while it downloads (kilobytes for a file under one
- * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept.
- */
-function gettingLine(p: SiteModelProgress): string {
-  if (p.step === 'keep') return `Keeping it in this page · ${percent(p)}%`
-  if (p.total <= 0) return 'Downloading…'
-  const [unit, name] = p.total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
-  return `Downloading · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
+/** Where a model that is copied rather than downloaded comes from, in words: the app beside it, or the launcher. */
+function copiedFrom(from: SiteModelFrom): string {
+  return from === 'launcher' ? 'the launcher' : 'the app'
 }
 
-/** The hint under the site's model: what it is, where it comes from, and where it stays. */
-function siteHint(site: SiteModelLine): string {
-  return site.kept
-    ? `${site.title} is kept in this browser already. `
-    : `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+/**
+ * The line over the bar while the site's model is got: megabytes while it downloads (kilobytes for a file under one
+ * megabyte, so a small one never reads "0 of 0 MB"), a percent while it is kept. The app's model and the launcher's
+ * are copied, not downloaded: they are on this machine already.
+ */
+function gettingLine(p: SiteModelProgress, from: SiteModelFrom = 'site'): string {
+  if (p.step === 'keep') return `Keeping it in this page · ${percent(p)}%`
+  const verb = from === 'site' ? 'Downloading' : `Copying from ${copiedFrom(from)}`
+  if (p.total <= 0) return `${verb}…`
+  const [unit, name] = p.total >= 1024 ** 2 ? [1024 ** 2, 'MB'] : [1024, 'KB']
+  return `${verb} · ${Math.floor(p.done / unit)} of ${Math.round(p.total / unit)} ${name}`
+}
+
+/** The hint under the site's model (or the app's, or the launcher's): what it is, where it comes from, and where it stays. */
+function siteHint(site: SiteModelLine, from: SiteModelFrom = 'site'): string {
+  if (site.kept) return `${site.title} is kept in this ${from === 'app' ? 'page' : 'browser'} already. `
+  if (from === 'app') return `${site.title}, ${site.size}: it came with this app, and is checked against the copy the app was built for and kept in this page (Apache-2.0). `
+  if (from === 'launcher') return `${site.title}, ${site.size}: it came with this package and is served by its launcher on this machine, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+  return `${site.title}, ${site.size}: downloaded once from this site, checked against the copy this page was built for, and kept in this browser (Apache-2.0). `
+}
+
+/** The hint where the app's own model could not start: its reason, never the model's name (nativeMind.ts takes it out). */
+function appHint(why: string): string {
+  return `The model inside this app couldn’t start: ${why.replace(/[.\s]+$/, '')}.`
 }
 
 function serverNote(origin: string): string {
