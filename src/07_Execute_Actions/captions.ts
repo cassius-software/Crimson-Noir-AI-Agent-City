@@ -33,7 +33,7 @@ export type SoundPhase = 'start' | 'change' | 'stop'
  * shows as text alone. `text` is a speaker's exact words, `label` a display name the host supplies (a skill bearer's
  * label, a peer's name, a ping's label, the title of the skill a chime confirms), `agent` the speaker's number, and
  * `detail` the kind's own word: engine 'approaching' | 'passing' | 'up' | 'down' | 'idle', murmur 'quiet' | 'busy',
- * walk-signal 'ns' | 'ew', speech 'muffled' | 'clear', chime 'success' | 'critical'.
+ * walk-signal 'ns' | 'ew', speech 'muffled' | 'clear', chime 'success' | 'critical' | 'refused'.
  */
 export interface CaptionEvent {
   kind: SoundKind
@@ -223,7 +223,7 @@ export function soundText(e: CaptionEvent): string {
       return e.label ? `[ping: ${e.label}]` : '[ping]'
     case 'chime': {
       if (e.phase === 'stop') return ''
-      const degree = e.detail === 'critical' ? 'critical success' : 'success'
+      const degree = e.detail === 'critical' ? 'critical success' : e.detail === 'refused' ? 'refused' : 'success'
       return e.label ? `[chime: ${e.label}, ${degree}]` : `[chime: ${degree}]`
     }
   }

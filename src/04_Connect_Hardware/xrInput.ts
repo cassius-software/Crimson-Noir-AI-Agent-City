@@ -25,7 +25,8 @@
  * sectors on foot (never both at once) and a touchpad by an edge click; at the wheel it steers and drives. Its trigger
  * is the throttle at the wheel and on foot does what is at hand; its squeeze brakes; its stick's click latches a run on
  * foot, and at the wheel is the handbrake where it has an upper face button (its door) or, where it has none, the door
- * itself held for a second; a touchpad's centre click does what is at hand. The left hand's click held a second steps
+ * itself held for a second; a touchpad's centre click does what is at hand (one beside a stick, where there is no upper
+ * face button, is the door; where there is one, nothing). The left hand's click held a second steps
  * out too. That second counts only while the car stays stopped, and every door (a button, a click, a pinch) is refused
  * while the car is faster than XR_STEP_OUT_SPEED: said (`takeRefused`, the engine's toast for the monitor) and buzzed
  * on the controller that asked, where its browser has an actuator. A trigger held into the wheel (the press that
@@ -143,12 +144,12 @@ export const PINCH = Object.freeze({
   /** Drawn this far, it runs. */
   runM: 0.21,
   /**
-   * A drag outside the walk sector (as the head faces) and past turnM sideways snap-turns once, again only after it has
-   * come back inside turnOffM.
+   * A drag outside the walk sector (against the way the head faced when it began) and past turnM sideways snap-turns
+   * once, again only after it has come back inside turnOffM.
    */
   turnM: 0.08,
   turnOffM: 0.04,
-  /** On foot it walks within this angle of forward or back, as the head faces; the rest of the circle is the turn's. */
+  /** On foot it walks within this angle of forward or back, as the head faced when it began; the rest of the circle is the turn's. */
   walkSector: (50 * Math.PI) / 180,
   /** The drag's direction is smoothed with this time constant. */
   smoothMs: 100,
@@ -234,10 +235,12 @@ export class PinchDrag {
   private turnArmed = true
   /** The head's facing (yaw less the body's) when this drag first read: it is judged against that, so a glance does not snap. */
   private facing: number | null = null
+  /** The walker's hand or the head is untracked this frame: the drag gives nothing, and its speed and snap are kept as they were. */
+  private blindNow = false
 
   /** A drag is walking. */
   get dragging(): boolean {
-    return this.walker !== null && this.level > 0
+    return this.walker !== null && !this.blindNow && this.level > 0
   }
 
   /** How many pinches are held. */
@@ -279,6 +282,7 @@ export class PinchDrag {
       this.walker = id
     }
     if (this.walker !== id) return
+    this.blindNow = false
     this.dx = dx
     this.dz = dz
     this.step(t)
@@ -347,14 +351,16 @@ export class PinchDrag {
   }
 
   private halt(): void {
-    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true; this.facing = null
+    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true; this.facing = null; this.blindNow = false
   }
 
-  /** A frame with no pose for the walker: it stands still, on foot and at the wheel (never the last vector, which could go on blind). */
+  /**
+   * A frame with no pose for the walker: it stands still, on foot and at the wheel (never the last vector, which could go
+   * on blind). Its speed step and its snap's arming are kept, so a blink neither drops it to half speed nor reads as
+   * the hand coming back to the middle (which would re-arm the snap for a second turn).
+   */
   private still(t: number): void {
-    this.dx = 0
-    this.dz = 0
-    this.level = 0
+    this.blindNow = true
     this.lastT = t
   }
 
@@ -386,7 +392,7 @@ export class PinchDrag {
    * At the wheel x steers and z drives. False when it gives nothing.
    */
   read(out: Analog, driving: boolean, headOffset = 0): boolean {
-    if (this.walker === null) return false
+    if (this.walker === null || this.blindNow) return false
     const dx = this.dx, dz = this.dz
     if (driving) {
       const steer = Math.max(-1, Math.min(1, dx / PINCH.fullM))
@@ -548,9 +554,11 @@ export class XrMapper {
       const was = this.lastRole.get(s)
       const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
       this.lastRole.set(s, role)
-      if (this.driving && holding(XR_BUTTON.trigger) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
-      else if (!holding(XR_BUTTON.trigger) && triggerValue(g.buttons[XR_BUTTON.trigger]) < 0.05) this.triggerHeld.delete(s)
-      const throttle = this.triggerHeld.has(s) ? 0 : triggerValue(g.buttons[XR_BUTTON.trigger])
+      // Any pull that would give throttle counts, a light one as much as a press.
+      const pull = triggerValue(g.buttons[XR_BUTTON.trigger])
+      if (this.driving && (holding(XR_BUTTON.trigger) || pull >= 0.05) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
+      else if (!holding(XR_BUTTON.trigger) && pull < 0.05) this.triggerHeld.delete(s)
+      const throttle = this.triggerHeld.has(s) ? 0 : pull
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
       const d = this.stick
       let sx = 0, sy = 0, rim = false

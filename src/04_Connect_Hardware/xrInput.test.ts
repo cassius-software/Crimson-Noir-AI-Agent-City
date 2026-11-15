@@ -873,3 +873,55 @@ test('a trigger held as it takes on the throttle (its partner left) gives none u
   r.m.read()
   assert.equal(r.m.analog.throttle, 1, 'let go and pulled: the throttle')
 })
+
+test('a blink while a draw is held out to the side is no second snap, and a blink in the speed band keeps full speed', () => {
+  const id = {}
+  for (const lose of ['hand', 'head'] as const) {
+    for (const frames of [1, 3, 20]) {
+      const d = new PinchDrag()
+      d.start(id, 'grip', false, 0, P(0, -0.3))
+      d.sample(id, 10, P(0, -0.3), HEAD)
+      let t = 10, total = 0
+      const frame = (hand: XrPoint | null, head: XrPoint | null) => { d.sample(id, (t += 11), hand, head); d.read(createAnalog(), false); total += d.takeTurn() }
+      frame(P(0.11, -0.3), HEAD)
+      frame(P(0.11, -0.3), HEAD)
+      for (let k = 0; k < frames; k++) frame(lose === 'hand' ? null : P(0.11, -0.3), lose === 'head' ? null : HEAD)
+      for (let k = 0; k < 4; k++) frame(P(0.11, -0.3), HEAD)
+      assert.ok(close(total, XR_TURN.step), `${lose} lost for ${frames} frame(s): one snap in all (${total})`)
+    }
+  }
+  // Drawn into the band where the speed holds (between the steps' hysteresis), a blink comes back at the same speed.
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  d.sample(id, 20, P(0, -0.45), HEAD)
+  d.sample(id, 30, P(0, -0.405), HEAD) // back to 10.5 cm: still full speed by hysteresis
+  const o = createAnalog()
+  d.read(o, false)
+  assert.ok(close(o.moveY, 1, 1e-6), `held in the band: ${o.moveY}`)
+  d.sample(id, 41, null, HEAD)
+  assert.equal(d.read(createAnalog(), false), false)
+  d.sample(id, 52, P(0, -0.405), HEAD)
+  const o2 = createAnalog()
+  d.read(o2, false)
+  assert.ok(close(o2.moveY, 1, 1e-6), `after the blink: still full (${o2.moveY})`)
+})
+
+test('a light pull on a trigger as it takes on the throttle is held at nothing too', () => {
+  for (const value of [0.2, 0.3, 0.45]) {
+    const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
+    const r = rig([left, right])
+    r.m.driving = true
+    r.m.read()
+    left.buttons[XR_BUTTON.trigger].value = value
+    r.m.read()
+    r.m.sources = [left]
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `a ${value} pull: no throttle as it takes over`)
+    left.buttons[XR_BUTTON.trigger].value = 0
+    r.m.read()
+    left.buttons[XR_BUTTON.trigger].value = value
+    r.m.read()
+    assert.ok(r.m.analog.throttle > 0, 'let go and pulled again: it drives')
+  }
+})

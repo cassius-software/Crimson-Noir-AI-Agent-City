@@ -2721,9 +2721,9 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
-    // A headset's door (a button, a click) that would have stepped out of a moving car: not done, and said on the
-    // monitor (the controller that asked was buzzed; the page's panels do not show inside the headset).
-    if (xi.takeRefused()) this.toast('Headset', 'Stop the car to step out')
+    // A headset's door (a button, a click) that would have stepped out of a moving car: not done (the controller that
+    // asked was buzzed), and said (refuseStepOut).
+    if (xi.takeRefused()) this.refuseStepOut()
     // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
     // unless this poll was drained, or a headset is on (neither the menu nor the keys would show inside it).
     const padUi = input.takeUi()
@@ -3913,6 +3913,15 @@ export class Engine {
   }
 
   /** The headset's side of the engine (xrSession.ts XrHost). */
+  /**
+   * A step out of a moving car refused under a headset: the refusal's chime in the wearer's ears (the page's panels do
+   * not show inside the headset, and a hand has no actuator to buzz), and a toast for anyone at the monitor.
+   */
+  private refuseStepOut(): void {
+    this.audio.chime('refused', 'step out')
+    this.toast('Headset', 'Stop the car to step out')
+  }
+
   private xrHost(): XrHost {
     return {
       frame: (nowMs) => this.frame(nowMs),
@@ -3924,7 +3933,7 @@ export class Engine {
         const st = this.sim.state
         if (st.driving >= 0 && Math.abs(st.poses[st.driving * POSE.stride + POSE.speed]) >= XR_STEP_OUT_SPEED) {
           buzz(src)
-          this.toast('Headset', 'Stop the car to step out')
+          this.refuseStepOut()
           return
         }
         const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0

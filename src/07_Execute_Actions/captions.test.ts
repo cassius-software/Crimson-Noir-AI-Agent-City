@@ -143,6 +143,7 @@ test('soundText and captionText: every kind reads as the house style, with the a
   assert.equal(soundText(ev('chime', 'start', 0, { label: 'Piloting', detail: 'critical' })), '[chime: Piloting, critical success]')
   assert.equal(soundText(ev('chime', 'start', 0, { detail: 'critical' })), '[chime: critical success]')
   assert.equal(soundText(ev('chime', 'start', 0)), '[chime: success]')
+  assert.equal(soundText(ev('chime', 'start', 0, { label: 'step out', detail: 'refused' })), '[chime: step out, refused]')
   assert.equal(soundText(ev('chime', 'stop', 0, { label: 'Piloting', detail: 'success' })), '', 'a stop keeps the text')
 
   const track = new CaptionTrack()

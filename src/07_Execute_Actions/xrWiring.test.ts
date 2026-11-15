@@ -58,7 +58,8 @@ test('the frame: only the headset\'s frames run while presenting; the head offse
   // the head's yaw against the body's on foot (the sticks walk where the headset looks; at the wheel the car's way).
   const ctx = between(ENGINE, '    const xi = this.xrInput\n', '    input.poll(dt)')
   assert.match(ctx, /if \(this\.rig\.headset\) \{\n\s+xi\.driving = driving >= 0\n\s+xi\.headOffset = driving >= 0 \? 0 : this\.rig\.pose\.yaw - input\.yaw\n\s+xi\.nearCar = driving < 0 && this\.nearestCar\(st\.avatar\.x, st\.avatar\.z, ENTER_RANGE, true\) >= 0\n\s+xi\.stopped = driving < 0 \|\| Math\.abs\(st\.poses\[driving \* POSE\.stride \+ POSE\.speed\]\) < XR_STEP_OUT_SPEED\n\s+\} else \{\n\s+xi\.driving = false; xi\.headOffset = 0; xi\.nearCar = false; xi\.stopped = true\n\s+\}/)
-  assert.match(ENGINE, /input\.poll\(dt\)[^]*?if \(xi\.takeRefused\(\)\) this\.toast\('Headset', 'Stop the car to step out'\)/, 'a refused step out is said')
+  assert.match(ENGINE, /input\.poll\(dt\)[^]*?if \(xi\.takeRefused\(\)\) this\.refuseStepOut\(\)/, 'a refused step out is said')
+  assert.match(ENGINE, /private refuseStepOut\(\): void \{\n\s+this\.audio\.chime\('refused', 'step out'\)\n\s+this\.toast\('Headset', 'Stop the car to step out'\)\n\s+\}/, 'heard in the headset, shown on the monitor')
   // A pad held inside a headset walks where the headset looks and snap-turns, never smoothly.
   before(INPUT, 'if (xr && xr.live) xr.toHead(this.pad)', 'p = xr ? mergeAnalog(this.padXr, this.pad, xr.analog)', 'turned before the merge, so the controllers\' own (already turned) moves are not turned twice')
   assert.match(INPUT, /if \(xr && xr\.live\) \{\n\s+const step = xr\.padSnap\(a\.lookX\)\n\s+if \(step !== 0\) this\.yaw -= step\n\s+a\.lookX = 0\n\s+a\.lookY = 0\n\s+\}/)
@@ -74,7 +75,7 @@ test('under a headset: the canvas resize waits, the post chain and the ghost are
   assert.match(host, /ended: \(\) => \{\n\s+this\.rig\.setHeadset\(null\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = false\n\s+this\.applyTier\(\)\n\s+if \(!this\.disposed\) \{ this\.resize\(\); this\.toast\('Headset', 'off'\) \}/)
   assert.match(host, /sources: \(list\) => this\.input\.hal\.setHeadset\(list\)/)
   assert.match(host, /this\.input\.press\(near \? 'interact' : 'ping'\)/, 'a pinch is the interaction at hand, else a ping')
-  assert.match(host, /if \(st\.driving >= 0 && Math\.abs\(st\.poses\[st\.driving \* POSE\.stride \+ POSE\.speed\]\) >= XR_STEP_OUT_SPEED\) \{\n\s+buzz\(src\)\n\s+this\.toast\('Headset', 'Stop the car to step out'\)\n\s+return\n\s+\}/, 'never out of a moving car on a tap')
+  assert.match(host, /if \(st\.driving >= 0 && Math\.abs\(st\.poses\[st\.driving \* POSE\.stride \+ POSE\.speed\]\) >= XR_STEP_OUT_SPEED\) \{\n\s+buzz\(src\)\n\s+this\.refuseStepOut\(\)\n\s+return\n\s+\}/, 'never out of a moving car on a tap')
   assert.match(CINEMA, /if \(this\.passthrough\) return this\.present\(nowMs\)/)
 })
 

@@ -260,7 +260,21 @@ export const CHIME = {
     amplitude: 0.08,
     overtone: 0.1,
   },
+  /**
+   * Two short notes falling a fourth, low: something asked was not done (a headset's step out of a moving car), heard
+   * where nothing else says so (the page's panels do not show inside a headset).
+   */
+  refused: {
+    notes: [[0, 0.08, 329.63, 329.63], [0.11, 0.14, 246.94, 246.94]] as readonly (readonly [number, number, number, number])[],
+    rise: 0.006,
+    fall: 0.06,
+    amplitude: 0.18,
+    overtone: 0.15,
+  },
 } as const
+
+/** The chimes: a check's success or critical success, and a refusal. */
+export type ChimeKind = 'success' | 'critical' | 'refused'
 
 /**
  * The room's reverberation (acoustics.ts): one convolver fed by a send per sound group, its impulse swapped when the
@@ -734,15 +748,18 @@ export function renderPing(sampleRate: number, out: Float32Array): void {
 }
 
 /** Samples in the check chime of `kind`: its last note, and a little silence so it ends on nothing. */
-export function chimeLength(kind: 'success' | 'critical', sampleRate: number): number {
-  const end = Math.max(...CHIME[kind === 'critical' ? 'critical' : 'success'].notes.map(([start, length]) => start + length))
+export function chimeLength(kind: ChimeKind, sampleRate: number): number {
+  const end = Math.max(...CHIME[chimeSpec(kind)].notes.map(([start, length]) => start + length))
   return Math.round((end + 0.02) * sampleRate)
 }
 
 /** The check chime of `kind`, rendered like the recruitment cue (raised-cosine edges, a quiet overtone). */
-export function renderChime(kind: 'success' | 'critical', sampleRate: number, out: Float32Array): void {
-  renderNotes(CHIME[kind === 'critical' ? 'critical' : 'success'], sampleRate, out)
+export function renderChime(kind: ChimeKind, sampleRate: number, out: Float32Array): void {
+  renderNotes(CHIME[chimeSpec(kind)], sampleRate, out)
 }
+
+/** A chime's spec by kind; anything unknown is a success's, as before there were three. */
+const chimeSpec = (kind: ChimeKind): ChimeKind => (kind === 'critical' || kind === 'refused' ? kind : 'success')
 
 interface NoteSpec {
   notes: readonly (readonly [number, number, number, number])[]
@@ -1049,7 +1066,7 @@ interface Graph {
    * The check chime: its gain into the master, both rendered buffers, the sources still sounding (chimes overlap
    * rather than cut each other) and when the last of them ends. Kept apart from `cues`: it has no slot and no place.
    */
-  chime: { gain: GainNode; success: AudioBuffer; critical: AudioBuffer; playing: AudioBufferSourceNode[]; until: number }
+  chime: { gain: GainNode; success: AudioBuffer; critical: AudioBuffer; refused: AudioBuffer; playing: AudioBufferSourceNode[]; until: number }
   speech: Speech
   /** Null where the browser has no ConvolverNode: every voice is dry, nothing else changes. */
   reverb: Reverb | null
@@ -1439,13 +1456,13 @@ export class Soundscape {
    * Chimes that overlap mix instead of cutting each other mid-note, and the caption stops with the last of them.
    * `label` (the skill's title) names it in its caption. Returns whether it sounded or is waiting to.
    */
-  chime(kind: 'success' | 'critical', label?: string): boolean {
+  chime(kind: ChimeKind, label?: string): boolean {
     const ctx = this.ctx, g = this.graph
     if (!ctx || !g || !this.enabled || ctx.state !== 'running') return false
     try {
       const now = ctx.currentTime, ch = g.chime
-      const critical = kind === 'critical'
-      const buffer = critical ? ch.critical : ch.success
+      const k = chimeSpec(kind)
+      const buffer = ch[k]
       const src = ctx.createBufferSource()
       src.buffer = buffer
       src.connect(ch.gain)
@@ -1461,7 +1478,7 @@ export class Soundscape {
       src.start(start)
       ch.playing.push(src)
       ch.until = Math.max(ch.until, start + buffer.length / buffer.sampleRate)
-      const detail = critical ? 'critical' : 'success'
+      const detail = k
       this.emit('chime', 'start', 0, Number.NaN, Number.NaN, now, label === undefined ? { detail } : { detail, label })
       return true
     } catch {
@@ -1895,12 +1912,12 @@ export class Soundscape {
     renderCue(SYNTH_RATE, cue.getChannelData(0))
     const ping = ctx.createBuffer(1, pingLength(SYNTH_RATE), SYNTH_RATE)
     renderPing(SYNTH_RATE, ping.getChannelData(0))
-    const chimeBuffer = (kind: 'success' | 'critical'): AudioBuffer => {
+    const chimeBuffer = (kind: ChimeKind): AudioBuffer => {
       const buffer = ctx.createBuffer(1, chimeLength(kind, SYNTH_RATE), SYNTH_RATE)
       renderChime(kind, SYNTH_RATE, buffer.getChannelData(0))
       return buffer
     }
-    const chime: Graph['chime'] = { gain: chimeGain, success: chimeBuffer('success'), critical: chimeBuffer('critical'), playing: [], until: -Infinity }
+    const chime: Graph['chime'] = { gain: chimeGain, success: chimeBuffer('success'), critical: chimeBuffer('critical'), refused: chimeBuffer('refused'), playing: [], until: -Infinity }
     const cues: Cue[] = []
     const cueSend = convolver ? ctx.createGain() : null
     if (cueSend && convolver) { cueSend.gain.value = 0; cueSend.connect(convolver) }
