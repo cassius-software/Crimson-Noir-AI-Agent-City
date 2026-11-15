@@ -1653,8 +1653,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const live = browserLive()
           // Settled closed (off, muted, blocked, failed) rather than still opening: the recogniser stops whatever the
           // edge, so a mute pressed while the pill read Opening never leaves it listening behind a Muted pill.
-          // A download under way stops with it: the pack is fetched only while the microphone is open (what was kept
-          // already stays kept, and the next open fetches only the rest).
+          // A download under way stops with it, and so does a start (it may fetch a bad file again): the pack is fetched
+          // only while the microphone is open (what was kept already stays kept, and the next open fetches only the rest).
           if (!open && mic.phase !== 'opening') { micWasOpen = false; speech.flush(); if (speech.fetching) speech.stop(); if (live) r.stop(); unasked = false; return }
           if (open === micWasOpen) return
           micWasOpen = open

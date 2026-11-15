@@ -223,10 +223,16 @@ test('an utterance: too short or too quiet is not read; unsure or wordless gives
   assert.equal(fed.length, Math.round((0.4 + 2 * SPEECH_LIMITS.margin) * SPEECH_SHAPE.rate), 'the word and the margin either side')
   assert.equal(fed[Math.round(SPEECH_LIMITS.margin * SPEECH_SHAPE.rate)], Math.fround(0.2), 'the word starts after the margin')
   assert.ok(Math.abs(word.r.seconds - 2) < 1e-9, 'the utterance\'s own length is reported')
-  // A fast "no, no, no, no" (8 tokens in the 0.7 s read) in a 2 s utterance: the limit is the utterance's (13), so the
-  // decoder reaches its own end mark and nothing is cut.
+  // A fast "no, no, no, no" (8 tokens in the 0.7 s read) in a 2 s utterance: the limit counts the read and up to 1.5 s
+  // more of the utterance (all 2 s of it: 13 tokens), so the decoder reaches its own end mark and nothing is cut.
+  assert.equal(SPEECH_LIMITS.slack, 1.5)
   const fast = await run([3, 4, 5, 4, 5, 4, 5, 4], room)
   assert.deepEqual([fast.r.cut, fast.r.tokens.length], [false, 8])
+  // The same word in a 12 s piece: the limit is the read's 0.7 s and the 1.5 s of slack (14 tokens), not the piece's 78.
+  const piece = new Float32Array(12 * SPEECH_SHAPE.rate).fill(0.0005)
+  piece.fill(0.2, 0.8 * SPEECH_SHAPE.rate, 1.2 * SPEECH_SHAPE.rate)
+  const wander = await run(Array.from({ length: 100 }, (_, i) => 3 + (i % 7)), piece)
+  assert.deepEqual([wander.r.cut, wander.r.tokens.length], [true, Math.trunc((0.7 + 1.5) * SPEECH_LIMITS.tokensPerSecond)])
   assert.ok(Math.abs(long.r.seconds - (SPEECH_LIMITS.maxSeconds + 5)) < 1e-9, 'and its true length reported')
 })
 
@@ -261,12 +267,33 @@ test('voicedSpan: from a margin before the first loud frame to a margin after th
   const k = voicedSpan(knock, rate)
   assert.ok(k.byteOffset / 4 <= Math.round(0.4 * rate), `starts at ${k.byteOffset / 4 / rate} s, before the words`)
   assert.ok(k.byteOffset / 4 + k.length >= Math.round(1.48 * rate), 'and runs past the knock')
-  // A cough before the words, 200 ms: the same.
-  const cough = new Float32Array(3 * rate).fill(0.001)
-  cough.fill(0.9, Math.round(0.3 * rate), Math.round(0.5 * rate))
-  cough.fill(0.05, Math.round(1.2 * rate), Math.round(2.0 * rate))
-  const g = voicedSpan(cough, rate)
-  assert.ok(g.byteOffset / 4 + g.length >= Math.round(2.0 * rate), 'the words after the cough are kept')
+  // A clap before the words, 140 ms (7 frames over the bar, the most a burst may have): the same.
+  const clap = new Float32Array(3 * rate).fill(0.001)
+  clap.fill(0.9, Math.round(0.3 * rate), Math.round(0.44 * rate))
+  clap.fill(0.05, Math.round(1.2 * rate), Math.round(2.0 * rate))
+  const g = voicedSpan(clap, rate)
+  assert.ok(g.byteOffset / 4 + g.length >= Math.round(2.0 * rate), 'the words after the clap are kept')
+  // Loud words with quieter sound around them (another voice 26 dB down, keys, a breath): the words are what is loud
+  // for longer than a burst (a "Stop." is 12 frames over the bar), so the rest is trimmed as the room, however busy.
+  const busy = (extra: (a: Float32Array) => void): Float32Array => {
+    const a = new Float32Array(Math.round(1.8 * rate)).fill(0.0001)
+    a.fill(0.1, Math.round(0.4 * rate), Math.round(1.2 * rate))
+    extra(a)
+    return voicedSpan(a, rate)
+  }
+  const words = Math.round((0.8 + 2 * SPEECH_LIMITS.margin) * rate)
+  const voice = busy((a) => a.fill(0.005, Math.round(1.3 * rate), Math.round(1.8 * rate)))
+  assert.deepEqual([voice.byteOffset / 4, voice.length], [Math.round(0.25 * rate), words], 'another voice after the words is not read')
+  const keys = busy((a) => { for (let k = 0; k < 6; k++) a.fill(0.01, Math.round((1.4 + 0.06 * k) * rate), Math.round((1.42 + 0.06 * k) * rate)) })
+  assert.deepEqual([keys.byteOffset / 4, keys.length], [Math.round(0.25 * rate), words], 'nor keys')
+  const breath = busy((a) => a.fill(0.003, 0, Math.round(0.2 * rate)))
+  assert.deepEqual([breath.byteOffset / 4, breath.length], [Math.round(0.25 * rate), words], 'nor a breath before them')
+  // A word just long enough to be one (8 frames over the bar) beside another voice is a word, trimmed as such.
+  const short = new Float32Array(Math.round(1.8 * rate)).fill(0.0001)
+  short.fill(0.1, Math.round(0.4 * rate), Math.round(0.56 * rate))
+  short.fill(0.005, Math.round(0.9 * rate), Math.round(1.6 * rate))
+  const sv = voicedSpan(short, rate)
+  assert.deepEqual([sv.byteOffset / 4, sv.length], [Math.round(0.25 * rate), Math.round((0.16 + 2 * SPEECH_LIMITS.margin) * rate)])
   // Speech alone in a quiet room is still cut to the words and the margin.
   const plain = new Float32Array(2 * rate).fill(0.0005)
   plain.fill(0.1, Math.round(0.8 * rate), Math.round(1.2 * rate))

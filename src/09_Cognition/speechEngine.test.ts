@@ -727,6 +727,15 @@ test('two files fetched again at once: the load\'s timer waits for the last of t
   assert.deepEqual([s.phase, s.detail], ['ready', 'Tiny'], 'the encoder\'s return did not start the timer while the decoder was still coming')
   assert.deepEqual([r.engine.fetching, r.time.pending()], [false, 0])
   assert.equal(r.workers[0].loads.length, 3, 'the four files, then each one fetched again')
+  // Starting is stopped by a mute too, before any file is found bad: the load may yet fetch one again.
+  const m = rig({ kept: ['runtime', 'encoder', 'decoder', 'tokens'] })
+  m.opts.makeWorker = () => { const w = new FakeWorker(); w.onLoad = null; return w }
+  const mp = m.engine.start()
+  await settle()
+  assert.deepEqual([m.engine.phase, m.engine.fetching], ['starting', true])
+  m.engine.stop()
+  assert.equal((await mp).phase, 'off')
+  assert.deepEqual([m.asked, m.time.pending()], [[], 0], 'nothing was asked of the network, and no timer is left')
   // A mute while a file is coming again stops that download (App.tsx stops the engine when it is fetching).
   const q = rig()
   let cancelled = false

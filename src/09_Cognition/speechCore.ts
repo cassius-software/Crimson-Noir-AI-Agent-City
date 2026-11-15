@@ -60,6 +60,8 @@ export const SPEECH_LIMITS = Object.freeze({
   /** Seconds under which an utterance is not read at all, and over which it is read only up to here. */
   minSeconds: 0.3,
   maxSeconds: 30,
+  /** Seconds of the utterance past the part read that still count toward the length limit (readUtterance). */
+  slack: 1.5,
   /** Tokens a second of speech can hold (fast speech is about four words, six tokens): the loop stops there, so a
    *  noise the decoder would describe for ever costs a bounded time. Never under `floor` tokens. */
   tokensPerSecond: 6.5,
@@ -174,14 +176,18 @@ export function loopCut(ids: readonly number[], times: number = SPEECH_LIMITS.re
 /**
  * The part of an utterance that holds the words: from `margin` seconds before the first 20 ms frame whose loudness
  * (RMS) is over `voicedShare` of the third loudest frame's (and over `quiet`) to `margin` after the last, as a view of
- * the same samples. The whole utterance when no frame is that loud. A loud sound that is not speech (a knock on the
- * desk, a cough, a door) can set that bar over the words themselves; so the room's own level is measured too (the
- * quietest tenth of the frames: the microphone keeps room before and after the words), and when frames well over
- * the room (ROOM_RISE times it) lie outside the span for a tenth of a second or more, the span runs from the first
- * such frame to the last instead: the words are kept, with the noise.
+ * the same samples. The whole utterance when no frame is that loud. A short loud sound that is not speech (a knock on
+ * the desk, a clap, a door) can set that bar over the words themselves; so when no more than BURST_FRAMES frames are
+ * over the bar (shorter than any word: the shortest command recorded, "Stop.", had 12) the room's own level is
+ * measured too (the quietest tenth of the frames: the microphone keeps room before and after the words), and if frames
+ * well over the room (ROOM_RISE times it) lie outside the span for a tenth of a second or more, the span runs from the
+ * first such frame to the last instead: the words are kept, with the noise. Over the bar for longer, the loud part is
+ * taken for the words and the rest for the room, however busy (another voice, a television, keys): that is trimmed.
  */
 /** How far over the room's level (as a ratio of loudness, about 12 dB) a frame must be to count as sound in voicedSpan's check. */
 const ROOM_RISE = 4
+/** Frames over voicedSpan's bar (20 ms each) up to which the loud part may be a burst rather than words. */
+const BURST_FRAMES = 7
 
 export function voicedSpan(samples: Float32Array, rate: number = SPEECH_SHAPE.rate, share: number = SPEECH_LIMITS.voicedShare, margin: number = SPEECH_LIMITS.margin): Float32Array {
   const frame = Math.max(1, Math.round(rate * 0.02))
@@ -197,10 +203,11 @@ export function voicedSpan(samples: Float32Array, rate: number = SPEECH_SHAPE.ra
   const sorted = Float32Array.from(loud).sort()
   const top = sorted[Math.max(0, frames - 3)]
   const bar = Math.max(SPEECH_LIMITS.quiet, top * share)
-  let first = -1, last = -1
-  for (let f = 0; f < frames; f++) if (loud[f] > bar) { if (first < 0) first = f; last = f }
+  let first = -1, last = -1, loudFrames = 0
+  for (let f = 0; f < frames; f++) if (loud[f] > bar) { if (first < 0) first = f; last = f; loudFrames++ }
   if (first < 0) return samples
-  // The room, and what stands well over it outside the span (with its margin): words a loud burst hid.
+  if (loudFrames > BURST_FRAMES) return framesOf(samples, rate, first, last, frame, margin)
+  // A burst: the room, and what stands well over it outside the span (with its margin): words the burst hid.
   const room = sorted[Math.floor(frames / 10)]
   const over = Math.max(SPEECH_LIMITS.quiet, room * ROOM_RISE)
   const near = Math.ceil(margin / 0.02)
@@ -212,6 +219,11 @@ export function voicedSpan(samples: Float32Array, rate: number = SPEECH_SHAPE.ra
     if (f > wideLast) wideLast = f
   }
   if (outside >= 5) { first = wideFirst; last = wideLast }
+  return framesOf(samples, rate, first, last, frame, margin)
+}
+
+/** Frames `first` to `last` of `samples`, `margin` seconds more each side, as a view (the whole when that is all of it). */
+function framesOf(samples: Float32Array, rate: number, first: number, last: number, frame: number, margin: number): Float32Array {
   const pad = Math.round(margin * rate)
   const from = Math.max(0, first * frame - pad)
   const to = Math.min(samples.length, (last + 1) * frame + pad)
@@ -220,8 +232,8 @@ export function voicedSpan(samples: Float32Array, rate: number = SPEECH_SHAPE.ra
 
 /**
  * Reads one utterance: the encoder once, then the decoder a token at a time from the start mark until the end mark or
- * the length limit (where a repeating tail is taken off: loopCut). The limit is `tokensPerSecond` of `seconds` (the
- * utterance's own length, which may be longer than the part read), never under `floor`. Returns the tokens and the
+ * the length limit (where a repeating tail is taken off: loopCut). The limit is `tokensPerSecond` of `seconds` (by
+ * default the length of the samples read; readUtterance gives a little more), never under `floor`. Returns the tokens and the
  * certainty (the geometric mean of the probabilities of the tokens kept); `tokensText` makes them words. Throws only
  * what the runtime throws.
  */
@@ -335,9 +347,11 @@ export async function readUtterance(rt: SpeechRuntime, samples: Float32Array, vo
   const most = Math.round(SPEECH_LIMITS.maxSeconds * shape.rate)
   const voiced = voicedSpan(samples, shape.rate)
   const heard = voiced.length > most ? voiced.subarray(0, most) : voiced
-  // The length limit counts the whole utterance, as long as it was (up to `maxSeconds`), not only the part read: a
-  // fast "no, no, no, no" in under a second must not run into the floor.
-  const { tokens, sure, cut } = await readTokens(rt, heard, shape, Math.min(seconds, SPEECH_LIMITS.maxSeconds))
+  // The length limit counts what was read and up to `slack` seconds more of the utterance: the trim leaves fast speech
+  // little room ("no, no, no, no" in under a second must not run into the floor), and a decoder that hears only a
+  // second of words in a long piece is not given that whole piece's tokens to wander in.
+  const limitSeconds = Math.min(seconds, SPEECH_LIMITS.maxSeconds, heard.length / shape.rate + SPEECH_LIMITS.slack)
+  const { tokens, sure, cut } = await readTokens(rt, heard, shape, limitSeconds)
   const text = tokensText(tokens, vocab)
   if (!saysSomething(text)) return { text: '', dropped: 'empty', tokens, sure, cut, seconds }
   if (sure < SPEECH_LIMITS.sure) return { text: '', dropped: 'unsure', tokens, sure, cut, seconds }

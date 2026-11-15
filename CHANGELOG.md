@@ -41,7 +41,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
     for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
     where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
-    dropped: no audio leaves the device. A loud sound in the sentence (a knock, a cough) does not cut the words away.
+    dropped: no audio leaves the device. A short loud sound in the sentence (a knock, a clap) does not cut the words away.
     A repeat the person said ("no, no, no", "five five five") is kept; only a model that writes the same thing until
     its length runs out is cut back. A site that does not answer in 20 s or a
     download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started

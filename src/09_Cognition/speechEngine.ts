@@ -215,9 +215,10 @@ export class SpeechEngine extends EventTarget {
   get claims(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || this.#phase === 'starting' || this.#phase === 'ready' }
   /** Waiting only because the connection says not to download unasked (mobile data, a data saver): a forced start() gets it. */
   get held(): boolean { return this.#phase === 'waiting' && this.#linkHeld }
-  /** Asking the site or downloading the pack (or a file of it again, while starting): what a mute stops (stop()), since
-   *  the visitor's microphone is no longer open. */
-  get fetching(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || (this.#phase === 'starting' && this.#refetching > 0) }
+  /** Asking the site, downloading the pack, or starting it (a start may find a kept file bad and fetch it again): what a
+   *  mute stops (stop()), since the visitor's microphone is no longer open. The next open starts again from what is
+   *  kept, without the network. */
+  get fetching(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || this.#phase === 'starting' }
   /** Whether this copy of the page can have a pack at all (it was served by a site with the web copy's files). */
   get served(): boolean { return this.#d.served() }
   /** Why the connection says not to download unasked, or null. */
@@ -369,7 +370,9 @@ export class SpeechEngine extends EventTarget {
       let timer: unknown = late()
       let settled = false
       const pause = (): void => { if (timer !== null) this.#clearTimeout(timer); timer = null }
-      const done = (fn: () => void): void => { settled = true; pause(); this.#refetching = 0; fn() }
+      // Only the first end of this load counts: a late one (a refusal or a failed download that settles after a stop)
+      // must not touch a newer load's count of files coming again.
+      const done = (fn: () => void): void => { if (settled) return; settled = true; pause(); this.#refetching = 0; fn() }
       // Stopped while it was loading: the wait ends now, not when the timer would have.
       signal.addEventListener('abort', () => done(() => reject(new Error('the recogniser was stopped'))), { once: true })
       worker.onerror = (e) => done(() => reject(new Error(`the recogniser's worker stopped (${say((e as { message?: unknown })?.message ?? e)})`)))

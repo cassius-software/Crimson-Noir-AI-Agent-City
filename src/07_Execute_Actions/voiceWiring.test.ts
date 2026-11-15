@@ -117,7 +117,7 @@ test('the page\'s own recogniser: one per page over the site\'s own fetch; sente
   assert.match(HUD, /<span className="truncate">\{pillWord\(voice\.phase, voice\.speaking, quiet, hushed\)\}<\/span>/, 'an open device that sends nothing reads Mic silent; one that has sent only zeros, No sound yet')
   assert.match(HUD, /const hushed = !quiet && voice\.hushed === true && voice\.phase === 'listening' && !voice\.speaking/, 'the hint never wears the failure\'s colour')
   assert.match(HUD, /\{micBadge && <div className="absolute bottom-0 left-0">\{micBadge\}<\/div>\}\n\s+\{micWordsChip\}\n\s+<\/div>/, 'on a compact layout the words stand in a chip beside the badge, inside the minimap\'s box, so they move nothing')
-  assert.match(HUD, /className=\{`pointer-events-none absolute bottom-0 left-\[30px\] max-w-20 truncate /, 'and stay inside it: 30 px plus 80 px of a 112 px box')
+  assert.match(HUD, /className=\{`pointer-events-none absolute bottom-0 left-8 max-w-20 truncate /, 'and stay inside it, in its own units: 2 rem (the 1.75 rem badge and its focus ring) plus 5 rem of a 7 rem box')
   assert.match(HUD, /const micWords = micBadge && micOpen && voice \? voice\.said \? `\\u201c\$\{voice\.said\}\\u201d` : voice\.words \? '' : voice\.note \?\? '' : ''/, 'in the pill\'s order: a sentence, nothing while words are read, else the note')
   assert.match(HUD, /if \(voice\.words\) return `\$\{state\}, words on-device`/, 'the reader is told what the pill shows')
   assert.doesNotMatch(HUD, /Heard: \$\{voice\.said\}/, 'a sentence is not in the state\'s region (its quote going would tell the state again)')

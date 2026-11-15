@@ -340,7 +340,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // of the two to show. The same order as the pill's: a sentence, else nothing while words are read, else the note.
   const micWords = micBadge && micOpen && voice ? voice.said ? `\u201c${voice.said}\u201d` : voice.words ? '' : voice.note ?? '' : ''
   const micWordsChip = micWords !== '' && (
-    <div className={`pointer-events-none absolute bottom-0 left-[30px] max-w-20 truncate px-2 py-0.5 text-[10px] font-medium ${voice?.said ? 'italic' : ''} ${muted} ${panel}`} title={voice?.speech || undefined} data-mic-chip aria-hidden="true">{micWords}</div>
+    <div className={`pointer-events-none absolute bottom-0 left-8 max-w-20 truncate px-2 py-0.5 text-[10px] font-medium ${voice?.said ? 'italic' : ''} ${muted} ${panel}`} title={voice?.speech || undefined} data-mic-chip aria-hidden="true">{micWords}</div>
   )
   // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team at work (Sloane's
   // for a goal, or the first walk's swarm), in one line (08_Swarm/team.ts). Without a host microphone (an older host,
