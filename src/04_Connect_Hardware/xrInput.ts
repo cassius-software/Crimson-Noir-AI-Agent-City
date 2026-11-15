@@ -343,7 +343,7 @@ export class PinchDrag {
    */
   private blind(id: object, p: Pinch, t: number): void {
     if (p.blindSince < 0) p.blindSince = t
-    if (this.walker === id) this.still(t)
+    if (this.walker === id) this.still()
     if (!p.spent && t - p.blindSince >= PINCH.lostMs) {
       p.spent = true
       if (this.walker === id) this.dropWalker()
@@ -357,11 +357,13 @@ export class PinchDrag {
   /**
    * A frame with no pose for the walker: it stands still, on foot and at the wheel (never the last vector, which could go
    * on blind). Its speed step and its snap's arming are kept, so a blink neither drops it to half speed nor reads as
-   * the hand coming back to the middle (which would re-arm the snap for a second turn).
+   * the hand coming back to the middle (which would re-arm the snap for a second turn). Its smoothed direction is not:
+   * the first frame back takes the way the hand lies now, since it may have crossed the anchor unseen (smoothing from
+   * the old way would walk on it at speed for a third of a second).
    */
-  private still(t: number): void {
+  private still(): void {
     this.blindNow = true
-    this.lastT = t
+    this.lastT = -1
   }
 
   private step(t: number): void {
@@ -554,10 +556,11 @@ export class XrMapper {
       const was = this.lastRole.get(s)
       const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
       this.lastRole.set(s, role)
-      // Any pull that would give throttle counts, a light one as much as a press.
+      // Any pull that would give throttle counts, a light one as much as a press, and it lasts until the trigger gives
+      // none at all (back inside its dead zone), so a finger's tremor around a light pull never lets the car creep.
       const pull = triggerValue(g.buttons[XR_BUTTON.trigger])
-      if (this.driving && (holding(XR_BUTTON.trigger) || pull >= 0.05) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
-      else if (!holding(XR_BUTTON.trigger) && pull < 0.05) this.triggerHeld.delete(s)
+      if (this.driving && (holding(XR_BUTTON.trigger) || pull > 0) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
+      else if (!holding(XR_BUTTON.trigger) && pull === 0) this.triggerHeld.delete(s)
       const throttle = this.triggerHeld.has(s) ? 0 : pull
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
       const d = this.stick

@@ -3912,7 +3912,6 @@ export class Engine {
     try { this.onHalt?.(reason) } catch { /* likewise */ }
   }
 
-  /** The headset's side of the engine (xrSession.ts XrHost). */
   /**
    * A step out of a moving car refused under a headset: the refusal's chime in the wearer's ears (the page's panels do
    * not show inside the headset, and a hand has no actuator to buzz), and a toast for anyone at the monitor.
@@ -3922,6 +3921,7 @@ export class Engine {
     this.toast('Headset', 'Stop the car to step out')
   }
 
+  /** The headset's side of the engine (xrSession.ts XrHost). */
   private xrHost(): XrHost {
     return {
       frame: (nowMs) => this.frame(nowMs),

@@ -10,9 +10,10 @@
  * building of the physics realm's own geometry that stands between them and the listener, and placed in the room it
  * is said from (acoustics.ts: the street canyon's reverberation through one convolver with per-group sends, the
  * through-the-wall coupling of a voice in another street). A peer's voice (a MediaStream the host hands in; no
- * connection is opened here) is placed in the same space. One sound is head-locked: the check chime, a short arpeggio
- * or chord that confirms a successful check (02_Define_The_Rules/progression.ts), joined straight to the master so
- * the volume and the limiter apply but the street's panners, the cabin and the room do not. Every sound's
+ * connection is opened here) is placed in the same space. One sound is head-locked: the chime, a short arpeggio or
+ * chord that confirms a successful check (02_Define_The_Rules/progression.ts), or two falling notes when a headset's
+ * step out of a moving car is refused, joined straight to the master so the volume and the limiter apply but the
+ * street's panners, the cabin and the room do not. Every sound's
  * start, change and stop is reported to one listener (`onSound`, a plain event with the sound's world point, NaN for
  * the cabin and the chime) so the HUD can caption it (captions.ts). The maths
  * (gearbox, gain curves, voice assignment, Doppler, synthesis) is exported as pure functions and unit-tested; the
@@ -226,20 +227,22 @@ export const PING = {
 } as const
 
 /**
- * The check chime: a short confirmation when the operator's check succeeds (02_Define_The_Rules/progression.ts),
- * head-locked, so it is heard in the ears rather than placed on the street. A success is a quick rising C5, E5, G5
- * arpeggio; a critical success is one open chord of C4, C6 and G6 (notes with the same start add into a chord). One
- * fixed sound per degree and none for a failure: it confirms, it does not escalate. It never covers a sound the player
- * acts on: at the ear it stays under the recruitment cue from anyone near enough to be asked over, it waits for a cue
- * or a ping that is still sounding, and a cue or a ping that starts over it fades it out (Soundscape.chime and shot).
+ * The chime: a short confirmation when the operator's check succeeds (02_Define_The_Rules/progression.ts), or a refusal
+ * when a headset's step out of a moving car is not done, head-locked, so it is heard in the ears rather than placed on
+ * the street. A success is a quick rising C5, E5, G5 arpeggio; a critical success is one open chord of C4, C6 and G6
+ * (notes with the same start add into a chord). One fixed sound per degree and none for a failed check: it confirms, it
+ * does not escalate; the refusal is two low notes falling a fourth, at the success's level. It never covers a sound the
+ * player acts on: at the ear it stays under the recruitment cue from anyone near enough to be asked over, it waits for
+ * a cue or a ping that is still sounding, and a cue or a ping that starts over it fades it out (Soundscape.chime and
+ * shot).
  */
 export const CHIME = {
   /**
    * The chime's own gain, joined straight to the master: on/off, the volume and the limiter apply, not the cabin. The
    * chime reaches both ears whole, while the recruitment cue loses level to its panner: the inverse distance (0.4 at
    * AUDIBLE_RADIUS, 5 m, the farthest anyone is asked over from) and an equal-power pan (about 0.71 an ear). So the
-   * level is set against the cue as heard from there, its peak of about 0.28 times both, near 0.08; the louder of the
-   * two chimes, the chord at about 0.2, comes out near 0.06.
+   * level is set against the cue as heard from there, its peak of about 0.28 times both, near 0.08; the loudest of the
+   * chimes, the chord at about 0.2, comes out near 0.06.
    */
   level: 0.3,
   /** The fade's time constant, s, when a cue or a ping starts over a chime; the chime stops six of them later. */
@@ -1063,7 +1066,7 @@ interface Graph {
   ping: AudioBuffer
   cues: Cue[]
   /**
-   * The check chime: its gain into the master, both rendered buffers, the sources still sounding (chimes overlap
+   * The chime: its gain into the master, its three rendered buffers, the sources still sounding (chimes overlap
    * rather than cut each other) and when the last of them ends. Kept apart from `cues`: it has no slot and no place.
    */
   chime: { gain: GainNode; success: AudioBuffer; critical: AudioBuffer; refused: AudioBuffer; playing: AudioBufferSourceNode[]; until: number }
@@ -1448,13 +1451,14 @@ export class Soundscape {
   }
 
   /**
-   * The check chime (CHIME): a success's arpeggio or a critical success's chord, head-locked, so it has no panner, no
-   * room and no place, and its caption is the text alone. Sounds only while the soundscape does (unlocked, on,
-   * running), like cue(). A fresh source per play from a buffer rendered at build time, so a check earned inside a
-   * worker message or a frame costs one node and no allocation per sample. A cue or a ping still sounding goes first
-   * (the console's `ping go` earns in the same task that cues the mark), and the chime starts as the last of them ends.
-   * Chimes that overlap mix instead of cutting each other mid-note, and the caption stops with the last of them.
-   * `label` (the skill's title) names it in its caption. Returns whether it sounded or is waiting to.
+   * The chime (CHIME): a success's arpeggio, a critical success's chord or a refusal's two falling notes, head-locked,
+   * so it has no panner, no room and no place, and its caption is the text alone. Sounds only while the soundscape does
+   * (unlocked, on, running), like cue(). A fresh source per play from a buffer rendered at build time, so a check
+   * earned inside a worker message or a frame costs one node and no allocation per sample. A cue or a ping still
+   * sounding goes first (the console's `ping go` earns in the same task that cues the mark), and the chime starts as
+   * the last of them ends. Chimes that overlap mix instead of cutting each other mid-note, and the caption stops with
+   * the last of them. `label` (the skill's title, or what was refused: 'step out') names it in its caption. Returns
+   * whether it sounded or is waiting to.
    */
   chime(kind: ChimeKind, label?: string): boolean {
     const ctx = this.ctx, g = this.graph

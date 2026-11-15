@@ -258,7 +258,7 @@ test('a controller alone, of any hand: forward and back walk, sideways snaps, ne
     m.read()
     assert.ok(close(m.analog.moveY, 1) && m.turn === 0, `${hand}: up walks, no turn`)
     // A diagonal push: the sectors give it to one or the other, never both.
-    const at = (deg: number) => { c.axes[XR_AXIS.thumbX] = Math.cos((deg * Math.PI) / 180); c.axes[XR_AXIS.thumbY] = -Math.sin((deg * Math.PI) / 180); c.axes[XR_AXIS.thumbX] = c.axes[XR_AXIS.thumbX]; m.read() }
+    const at = (deg: number) => { c.axes[XR_AXIS.thumbX] = Math.cos((deg * Math.PI) / 180); c.axes[XR_AXIS.thumbY] = -Math.sin((deg * Math.PI) / 180); m.read() }
     at(0); at(90) // re-arm
     c.axes[XR_AXIS.thumbX] = 0; c.axes[XR_AXIS.thumbY] = 0; m.read()
     at((XR_SECTOR.snap * 180) / Math.PI - 5)
@@ -924,4 +924,58 @@ test('a light pull on a trigger as it takes on the throttle is held at nothing t
     r.m.read()
     assert.ok(r.m.analog.throttle > 0, 'let go and pulled again: it drives')
   }
+})
+
+test('a hand that crosses its pinch unseen during a blink walks the way it now lies, never on the old way', () => {
+  const id = {}
+  for (const [back, level] of [[0.15, 1], [0.08, 0.5]] as const) {
+    for (const side of [0, 0.001, 0.02]) {
+      const d = new PinchDrag()
+      d.start(id, 'grip', false, 0, P(0, -0.3))
+      d.sample(id, 10, P(0, -0.3), HEAD)
+      d.sample(id, 21, P(0, -0.45), HEAD)
+      const o = createAnalog()
+      d.read(o, false)
+      assert.ok(close(o.moveY, 1, 1e-6), `walking forward first (${o.moveY})`)
+      let t = 21
+      for (let k = 0; k < 8; k++) d.sample(id, (t += 11), null, HEAD)
+      // Back behind where the pinch began (z grows backward), a little to the side.
+      d.sample(id, (t += 11), P(side, -0.3 + back), HEAD)
+      const o2 = createAnalog()
+      d.read(o2, false)
+      assert.ok(o2.moveY < 0, `${back} m behind, ${side} m aside: walks back on the first frame (${o2.moveY})`)
+      assert.ok(close(Math.hypot(o2.moveX, o2.moveY), level >= 1 ? 1 : 0.5, 1e-6), `at the speed step it kept (${o2.moveX}, ${o2.moveY})`)
+    }
+  }
+})
+
+test('a light pull below a twentieth as a controller takes the throttle is held too, and a tremor never lifts it', () => {
+  // Raw values just inside the throttle's range (the dead zone is 0.04): each gives some throttle, so each is held.
+  for (const value of [0.045, 0.06, 0.085]) {
+    const lone = ctl('right', 6, 4)
+    const r = rig([lone])
+    r.m.read()
+    lone.buttons[XR_BUTTON.trigger].value = value
+    r.m.driving = true
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `${value} raw as it took the wheel: no throttle`)
+  }
+  // Held at a light pull, a tremor that dips it to a lighter one (still a pull) keeps it held; let go fully, it drives.
+  const lone = ctl('right', 6, 4)
+  const r = rig([lone])
+  r.m.read()
+  lone.buttons[XR_BUTTON.trigger].value = 0.095
+  r.m.driving = true
+  r.m.read()
+  for (const value of [0.095, 0.086, 0.05, 0.095, 0.2]) {
+    lone.buttons[XR_BUTTON.trigger].value = value
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `a tremor to ${value}: still held at nothing`)
+  }
+  lone.buttons[XR_BUTTON.trigger].value = 0.03
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 0)
+  lone.buttons[XR_BUTTON.trigger].value = 0.3
+  r.m.read()
+  assert.ok(r.m.analog.throttle > 0, 'back inside the dead zone, then pulled: it drives')
 })
