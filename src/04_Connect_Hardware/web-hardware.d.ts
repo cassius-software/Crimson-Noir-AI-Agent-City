@@ -150,7 +150,12 @@ export interface Bluetooth {
 
 // ── Gamepad API (DOM Gamepad objects satisfy these shapes structurally) ────────────────────────────
 
-export interface GamepadButtonLike { readonly pressed: boolean; readonly value: number }
+export interface GamepadButtonLike {
+  readonly pressed: boolean
+  readonly value: number
+  /** Whether a finger rests on it (a touchpad, a thumbstick's cap); absent where a slice or a browser leaves it out. */
+  readonly touched?: boolean
+}
 
 export interface GamepadHapticsLike {
   playEffect?(type: 'dual-rumble', params: { startDelay?: number; duration?: number; weakMagnitude?: number; strongMagnitude?: number }): Promise<unknown>
@@ -189,12 +194,35 @@ export interface XrInputSourceLike {
   readonly gamepad?: XrGamepadLike | null
   /** WebXR Hand Input: present when the source is an articulated hand. */
   readonly hand?: unknown
+  /** Where the source is held (a hand's pinching fingers on a transient pointer); null for a screen or a gaze. */
+  readonly gripSpace?: unknown
+  /** The source's pointing ray. */
+  readonly targetRaySpace?: unknown
+}
+
+/** A pose's place in a reference space, metres. */
+export interface XrPoseLike { readonly transform: { readonly position: { readonly x: number; readonly y: number; readonly z: number } } }
+
+/** An XRFrame, as far as the pinch reads it: a source's pose, and the head's (which throws inside an input event's frame). */
+export interface XrFrameLike {
+  getPose(space: unknown, base: unknown): XrPoseLike | null
+  getViewerPose?(base: unknown): XrPoseLike | null
+}
+
+/** An XRReferenceSpace: its 'reset' event is a recentre, which moves its origin. */
+export interface XrReferenceSpaceLike {
+  addEventListener?(type: 'reset', listener: () => void): void
+  removeEventListener?(type: 'reset', listener: () => void): void
 }
 
 // ── WebXR session (the slice xrSession.ts drives and xrInput.ts reads; a DOM XRSession satisfies it structurally) ─
 
 /** A select or squeeze event: the source that pinched or pulled. */
-export interface XrInputSourceEventLike { readonly inputSource: XrInputSourceLike }
+export interface XrInputSourceEventLike {
+  readonly inputSource: XrInputSourceLike
+  /** The frame of the action's moment: poses may be read in it while it is dispatched (not the head's). */
+  readonly frame?: XrFrameLike
+}
 
 /** The `inputsourceschange` event: what arrived and what left. */
 export interface XrInputSourcesChangeEventLike { readonly added: readonly XrInputSourceLike[]; readonly removed: readonly XrInputSourceLike[] }

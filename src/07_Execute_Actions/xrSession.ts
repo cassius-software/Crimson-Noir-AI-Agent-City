@@ -19,8 +19,8 @@
  */
 
 import { Matrix4, WebGPUCoordinateSystem, type PerspectiveCamera } from 'three/webgpu'
-import type { XrInputSourceLike, XrSessionLike, XrSessionMode, XrSystemLike } from '../04_Connect_Hardware/web-hardware.d.ts'
-import { isPointerOnly, isTrackedController, type XrMapper } from '../04_Connect_Hardware/xrInput.ts'
+import type { XrFrameLike, XrInputSourceEventLike, XrInputSourceLike, XrReferenceSpaceLike, XrSessionLike, XrSessionMode, XrSystemLike } from '../04_Connect_Hardware/web-hardware.d.ts'
+import { isController, isPointerOnly, pinchKindOf, type XrMapper, type XrPoint } from '../04_Connect_Hardware/xrInput.ts'
 import { hasWebGpuBinding, sessionModes, type XrState } from '../04_Connect_Hardware/xrSystem.ts'
 import type { HeadCompose } from './head.ts'
 
@@ -48,6 +48,10 @@ export interface XrManagerLike {
   setSession(session: XrSessionLike): Promise<void>
   /** The headset frame being drawn, non-null only inside the headset's loop. */
   getFrame(): unknown
+  /** The reference space three asked the session for (null until setSession has it): the pinch's poses are read in it. */
+  getReferenceSpace?(): unknown
+  /** The type of reference space setSession asks for ('local-floor' unless told otherwise). */
+  setReferenceSpaceType?(type: string): void
   /** three's own XR camera: the eyes under `cameras`, and the camera three culls and sorts with while presenting. */
   getCamera(): XrCameraLike
   updateCamera(camera: PerspectiveCamera): void
@@ -60,7 +64,7 @@ export interface XrCameraLike extends EyeCameraLike {
 
 export interface XrRendererLike {
   readonly xr: XrManagerLike
-  setAnimationLoop(callback: ((time: number) => void) | null): Promise<void> | void
+  setAnimationLoop(callback: ((time: number, frame?: unknown) => void) | null): Promise<void> | void
 }
 
 /** What the session reaches of the engine. */
@@ -69,7 +73,7 @@ export interface XrHost {
   frame(nowMs: number): void
   /** The session's sources came or went (plugged, pinched): the HAL's headset rows; null when the session ends. */
   sources(list: ArrayLike<XrInputSourceLike> | null): void
-  /** A select from a source with no usable gamepad: a pinch on a gaze-and-pinch headset, a hand. */
+  /** A tap from a source with no usable gamepad: a quick pinch on a gaze-and-pinch headset or of a hand, a screen tap. */
   select(source: XrInputSourceLike): void
   /** Presenting: `blend` is the session's environmentBlendMode ('opaque', 'alpha-blend' or 'additive'). */
   started(mode: XrSessionMode, blend: string): void
@@ -172,19 +176,87 @@ export class XrPresence {
   /** enter() ran and no end has come: a session is wanted (being asked for, or presenting). */
   private wanted = false
   private blend = 'opaque'
-  private readonly loop = (time: number): void => { this.host.frame(time) }
-  private readonly onSources = (): void => { const s = this.session; if (s) this.host.sources(s.inputSources) }
-  private readonly onSelect = (e: { readonly inputSource: XrInputSourceLike }): void => {
-    if (this.session && isPointerOnly(e.inputSource)) this.host.select(e.inputSource)
+  /** The session was not granted 'local-floor': its space is 'local', whose origin is where the head began. */
+  private noFloor = false
+  /** The reference space listened to for a recentre, while presenting. */
+  private space: XrReferenceSpaceLike | null = null
+  private readonly clock: () => number
+  private readonly loop = (time: number, frame?: unknown): void => {
+    this.sample(frame as XrFrameLike | undefined, time)
+    this.host.frame(time)
   }
+  private readonly onSources = (): void => {
+    const s = this.session
+    if (!s) return
+    // A pinch whose source has left (a hand out of view, a transient pointer let go) is dropped: no tap, no drag.
+    const live = new Set<object>()
+    for (let i = 0; i < s.inputSources.length; i++) live.add(s.inputSources[i])
+    const gone: object[] = []
+    for (const id of this.mapper.pinches.ids()) if (!live.has(id)) gone.push(id)
+    for (const id of gone) this.mapper.pinches.cancel(id)
+    this.host.sources(s.inputSources)
+  }
+  /** A pointer's pinch (or a screen's touch, a gaze button's press) begins: where its hand is now. */
+  private readonly onSelectStart = (e: XrInputSourceEventLike): void => {
+    const src = e.inputSource
+    if (!this.session || !isPointerOnly(src)) return
+    const kind = pinchKindOf(src)
+    this.mapper.pinches.start(src, kind, src.targetRayMode === 'transient-pointer', this.clock(), kind === 'tap' ? null : this.handIn(e.frame, src))
+  }
+  /** It is let go: a tap when it was quick and still, which the engine acts on; nothing after a drag. */
+  private readonly onSelect = (e: XrInputSourceEventLike): void => {
+    const src = e.inputSource
+    if (!this.session || !isPointerOnly(src)) return
+    const kind = pinchKindOf(src)
+    if (this.mapper.pinches.end(src, this.clock(), kind === 'tap' ? null : this.handIn(e.frame, src)) === 'tap') this.host.select(src)
+  }
+  /** It ended (after its select, or cancelled without one): forgotten. */
+  private readonly onSelectEnd = (e: XrInputSourceEventLike): void => {
+    if (isPointerOnly(e.inputSource)) this.mapper.pinches.cancel(e.inputSource)
+  }
+  /** The session's menu or a system prompt over the city: every pinch is dropped, so none walks on behind it. */
+  private readonly onVisibility = (): void => {
+    const s = this.session
+    if (s && s.visibilityState !== undefined && s.visibilityState !== 'visible') this.mapper.pinches.clear()
+  }
+  /** A recentre moves the space's origin: a held drag would jump, so it is dropped. */
+  private readonly onRecentre = (): void => { this.mapper.pinches.clear() }
   private readonly onEnd = (): void => { this.ended() }
 
-  constructor(xr: XrSystemLike | null, renderer: XrRendererLike, host: XrHost, mapper: XrMapper, binding: () => boolean = () => hasWebGpuBinding()) {
+  constructor(xr: XrSystemLike | null, renderer: XrRendererLike, host: XrHost, mapper: XrMapper, binding: () => boolean = () => hasWebGpuBinding(), clock: () => number = () => performance.now()) {
     this.xr = xr
     this.renderer = renderer
     this.host = host
     this.mapper = mapper
     this.binding = binding
+    this.clock = clock
+  }
+
+  /** The reference space three holds, or null (before setSession has it, or a renderer without one). */
+  private reference(): unknown {
+    try { return this.renderer.xr.getReferenceSpace?.() ?? null } catch { return null }
+  }
+
+  /** Where a pointer's hand is in a frame: its grip, else (a tracked pointer with none) its ray; null untracked. */
+  private handIn(frame: XrFrameLike | undefined, src: XrInputSourceLike): XrPoint | null {
+    const ref = this.reference()
+    if (!frame || !ref) return null
+    const space = pinchKindOf(src) === 'grip' ? src.gripSpace : src.targetRaySpace
+    if (space === undefined || space === null) return null
+    try { return frame.getPose(space, ref)?.transform.position ?? null } catch { return null }
+  }
+
+  /** Each headset frame, before the engine's: every held pinch's hand, and the head, for the drag. */
+  private sample(frame: XrFrameLike | undefined, time: number): void {
+    const pinches = this.mapper.pinches
+    if (pinches.size === 0 || !frame) return
+    const ref = this.reference()
+    let head: XrPoint | null = null
+    if (ref) { try { head = frame.getViewerPose?.(ref)?.transform.position ?? null } catch { head = null } }
+    for (const id of pinches.ids()) {
+      const src = id as XrInputSourceLike
+      pinches.sample(id, time, pinchKindOf(src) === 'tap' ? null : this.handIn(frame, src), head)
+    }
   }
 
   /** WebXR and the WebGPU binding are both here: a session can be asked for. */
@@ -201,6 +273,11 @@ export class XrPresence {
   /** A session is up: the headset drives the frames and composes the head. */
   get presenting(): boolean {
     return this.session !== null
+  }
+
+  /** Presenting in a space with no floor ('local'): the head rig stands its floor an eye's height above the feet. */
+  get floorless(): boolean {
+    return this.session !== null && this.noFloor
   }
 
   /** The session's environmentBlendMode: 'opaque' for a VR headset, else passthrough or see-through. */
@@ -250,11 +327,20 @@ export class XrPresence {
     this.blend = typeof session.environmentBlendMode === 'string' ? session.environmentBlendMode : 'opaque'
     this.mapper.sources = session.inputSources
     session.addEventListener('inputsourceschange', this.onSources)
+    session.addEventListener('selectstart', this.onSelectStart)
     session.addEventListener('select', this.onSelect)
+    session.addEventListener('selectend', this.onSelectEnd)
+    session.addEventListener('visibilitychange', this.onVisibility)
     this.host.sources(session.inputSources)
     const r = this.renderer
     r.xr.enabled = true
     r.xr.cameraAutoUpdate = false
+    // three asks for a 'local-floor' space, which the session was only asked for as optional: where it was not
+    // granted, a plain 'local' one (its origin where the head began, so the head rig lifts its floor by an eye's
+    // height: floorless), or setSession would refuse every headset that withholds the floor. Set every session, so
+    // one without the floor does not leave the next asking for 'local' too.
+    this.noFloor = features !== undefined && !features.includes('local-floor')
+    try { r.xr.setReferenceSpaceType?.(this.noFloor ? 'local' : 'local-floor') } catch { /* keeps three's own */ }
     // The loop is registered first: setSession captures the loop registered at that moment and stops the page's own
     // animation, then calls the captured loop once per headset frame.
     void r.setAnimationLoop(this.loop)
@@ -271,6 +357,8 @@ export class XrPresence {
     // Listened to after setSession, so three's own end handler runs first (it gives the loop back to the page's
     // animation; ended() then takes it off).
     session.addEventListener('end', this.onEnd)
+    const space = this.reference() as XrReferenceSpaceLike | null
+    if (space && typeof space.addEventListener === 'function') { space.addEventListener('reset', this.onRecentre); this.space = space }
     this.host.started(mode, this.blend)
     return `${mode === 'immersive-ar' ? 'ar' : 'vr'}: on`
   }
@@ -298,24 +386,37 @@ export class XrPresence {
     void r.setAnimationLoop(null)
     r.xr.enabled = false
     session.removeEventListener('inputsourceschange', this.onSources)
+    session.removeEventListener('selectstart', this.onSelectStart)
     session.removeEventListener('select', this.onSelect)
+    session.removeEventListener('selectend', this.onSelectEnd)
+    session.removeEventListener('visibilitychange', this.onVisibility)
     session.removeEventListener('end', this.onEnd)
+    this.space?.removeEventListener?.('reset', this.onRecentre)
+    this.space = null
     this.mapper.sources = null
     this.mapper.reset()
     this.session = null
     this.mode = null
     this.blend = 'opaque'
+    this.noFloor = false
   }
 
   /** One line for the HUD and `hal`: off, entering, or the mode with what the session holds. */
   describe(): string {
     const s = this.session
     if (!s) return this.state
-    let controllers = 0, pointers = 0
+    let controllers = 0, hands = 0, pointers = 0
     const list = s.inputSources
-    for (let i = 0; i < list.length; i++) { if (isTrackedController(list[i])) controllers++; else pointers++ }
+    for (let i = 0; i < list.length; i++) {
+      const src = list[i]
+      // A tracked pointer that is no hand is a controller, read by its gamepad or (with no axes) by its pinch.
+      if (src.hand) hands++
+      else if (isController(src) || src.targetRayMode === 'tracked-pointer') controllers++
+      else pointers++
+    }
     const parts: string[] = []
     if (controllers) parts.push(`${controllers} controller${controllers === 1 ? '' : 's'}`)
+    if (hands) parts.push(`${hands} hand${hands === 1 ? '' : 's'}`)
     if (pointers) parts.push(`${pointers} pinch${pointers === 1 ? '' : 'es'}`)
     return `${this.state}${this.blend !== 'opaque' ? ' (passthrough)' : ''}: ${parts.length ? parts.join(', ') : 'no input yet'}`
   }

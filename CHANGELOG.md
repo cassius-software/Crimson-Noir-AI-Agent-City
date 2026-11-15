@@ -31,6 +31,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the halted city's lock screen or a headset session folds the keys and closes the menu. Checked by unit suites and by the browser smoke
   test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
   a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
+- **Headset controllers of every registry shape, hands that walk by pinch.** The headset's mapper
+  (`04_Connect_Hardware/xrInput.ts`) now reads the three kinds of controller the WebXR input profiles registry
+  describes (thumbstick with up to two face buttons, touchpad wands, single pointing controllers with a touchpad), as a
+  pair or alone in either hand, so each can walk, turn, enter and leave a car, ping and drive: touchpads walk only
+  while touched and turn on an edge click, a controller alone walks forward and back and snap-turns by a sideways
+  push, and roles come from the whole source list (two of one hand split by order). Hands, gaze-and-pinch pointers,
+  styluses and screens tap with a quick still pinch and walk by holding it and drawing the hand (against the head, so
+  a lean does not walk; a sideways draw snap-turns); a pinch is dropped when cancelled, when its hand leaves view, and
+  through the headset's menu or a recentre (`07_Execute_Actions/xrSession.ts`). Out of a moving car is refused with a
+  toast. A pad held inside a headset walks where the headset looks and snap-turns. A session without a floor-level
+  space runs in a local one with the floor lifted by the eye height instead of being refused. Checked by unit suites
+  against fake sources of every registry shape and scripted select events; unverified on any real headset.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

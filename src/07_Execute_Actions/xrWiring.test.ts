@@ -54,7 +54,14 @@ test('the engine owns one headset mapper and one session, built over the rendere
 test('the frame: only the headset\'s frames run while presenting; the head offset is set before Input polls; a driven body faces the car', () => {
   assert.match(ENGINE, /if \(this\.xr\.presenting && \(this\.gpu\.renderer as unknown as XrRendererLike\)\.xr\.getFrame\(\) === null\) return/)
   before(ENGINE, '.xr.getFrame() === null) return', 'this.pacer.tick(nowMs)', 'a page frame without a headset frame is let go before anything is paced')
-  before(ENGINE, 'this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0', 'input.poll(dt)', 'the offset is this frame\'s posed head against the body yaw, set before the poll reads the sticks')
+  // What is at hand, told before the poll reads the sticks: the wheel, a door in reach, a car slow enough to leave, and
+  // the head's yaw against the body's on foot (the sticks walk where the headset looks; at the wheel the car's way).
+  const ctx = between(ENGINE, '    const xi = this.xrInput\n', '    input.poll(dt)')
+  assert.match(ctx, /if \(this\.rig\.headset\) \{\n\s+xi\.driving = driving >= 0\n\s+xi\.headOffset = driving >= 0 \? 0 : this\.rig\.pose\.yaw - input\.yaw\n\s+xi\.nearCar = driving < 0 && this\.nearestCar\(st\.avatar\.x, st\.avatar\.z, ENTER_RANGE, true\) >= 0\n\s+xi\.stopped = driving < 0 \|\| Math\.abs\(st\.poses\[driving \* POSE\.stride \+ POSE\.speed\]\) < XR_STEP_OUT_SPEED\n\s+\} else \{\n\s+xi\.driving = false; xi\.headOffset = 0; xi\.nearCar = false; xi\.stopped = true\n\s+\}/)
+  assert.match(ENGINE, /input\.poll\(dt\)[^]*?if \(xi\.takeRefused\(\)\) this\.toast\('Headset', 'Stop the car to step out'\)/, 'a refused step out is said')
+  // A pad held inside a headset walks where the headset looks and snap-turns, never smoothly.
+  before(INPUT, 'if (xr && xr.live) xr.toHead(this.pad)', 'p = xr ? mergeAnalog(this.padXr, this.pad, xr.analog)', 'turned before the merge, so the controllers\' own (already turned) moves are not turned twice')
+  assert.match(INPUT, /if \(xr && xr\.live\) \{\n\s+const step = xr\.padSnap\(a\.lookX\)\n\s+if \(step !== 0\) this\.yaw -= step\n\s+a\.lookX = 0\n\s+a\.lookY = 0\n\s+\}/)
   assert.match(ENGINE, /input\.yaw = this\.rig\.headset \? yawFacing\(h\) : carriedYaw\(input\.yaw, this\.carHeading, h\)/)
 })
 
@@ -63,10 +70,11 @@ test('under a headset: the canvas resize waits, the post chain and the ghost are
   assert.match(ENGINE, /if \(on && this\.rig\.headset\) return 'needs the post-processing chain, which is off under a headset'/)
   assert.match(ENGINE, /if \(this\.rig\.headset\) \{ k\.post = false; k\.lampLights = 0 \}/, 'and the clustered lamps, binned for the one render the headset does not present')
   const host = between(ENGINE, '  private xrHost(): XrHost {', '\n  }\n')
-  assert.match(host, /started: \(mode, blend\) => \{\n\s+this\.rig\.setHeadset\(composerFor\(this\.gpu\.renderer as unknown as XrRendererLike\)\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = true\n\s+this\.applyTier\(\)/)
+  assert.match(host, /started: \(mode, blend\) => \{\n\s+this\.rig\.setHeadset\(composerFor\(this\.gpu\.renderer as unknown as XrRendererLike\), this\.xr\.floorless\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = true\n\s+this\.applyTier\(\)/)
   assert.match(host, /ended: \(\) => \{\n\s+this\.rig\.setHeadset\(null\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = false\n\s+this\.applyTier\(\)\n\s+if \(!this\.disposed\) \{ this\.resize\(\); this\.toast\('Headset', 'off'\) \}/)
   assert.match(host, /sources: \(list\) => this\.input\.hal\.setHeadset\(list\)/)
   assert.match(host, /this\.input\.press\(near \? 'interact' : 'ping'\)/, 'a pinch is the interaction at hand, else a ping')
+  assert.match(host, /if \(st\.driving >= 0 && Math\.abs\(st\.poses\[st\.driving \* POSE\.stride \+ POSE\.speed\]\) >= XR_STEP_OUT_SPEED\) \{\n\s+this\.toast\('Headset', 'Stop the car to step out'\)\n\s+return\n\s+\}/, 'never out of a moving car on a tap')
   assert.match(CINEMA, /if \(this\.passthrough\) return this\.present\(nowMs\)/)
 })
 
@@ -97,7 +105,7 @@ test('Input: the headset mapper is read with the pad under the same shield; its 
 })
 
 test('the head rig: under a headset the camera is composed under the rig and detached with its world transform; the eye point stays the driver\'s', () => {
-  assert.match(HEAD, /if \(this\.compose\) \{ this\.applyHeadset\(camera, feetX, feetY, feetZ, yaw\); return \}/)
+  assert.match(HEAD, /if \(this\.compose\) \{ this\.applyHeadset\(camera, feetX, this\.floorless \? feetY \+ this\.eye : feetY, feetZ, yaw\); return \}/, 'a space with no floor stands the rig an eye above the feet')
   assert.match(HEAD, /if \(this\.compose\) \{ this\.applyHeadset\(camera, x, y - this\.headHeight, z, yaw\); return \}/)
   const apply = between(HEAD, '  private applyHeadset(', '\n  }\n')
   assert.match(apply, /camera\.parent = rig\n\s+this\.compose!\(camera\)\n\s+camera\.parent = null\n\s+camera\.rotation\.order = 'YXZ'\n\s+camera\.matrix\.copy\(camera\.matrixWorld\)\n\s+camera\.matrix\.decompose\(camera\.position, camera\.quaternion, camera\.scale\)/)
