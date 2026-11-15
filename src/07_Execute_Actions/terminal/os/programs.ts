@@ -9,8 +9,10 @@
  */
 import { DIFF_MANUAL, DIFF_PROGRAMS } from './diff.ts'
 import { FILE_MANUAL, FILE_PROGRAMS } from './fileutils.ts'
+import { GREP_MANUAL, GREP_PROGRAMS } from './grep.ts'
 import type { Program } from './kernel.ts'
 import { OS_MANUAL } from './manual.ts'
+import { SED_MANUAL, SED_PROGRAMS } from './sed.ts'
 import { SYS_MANUAL, SYS_PROGRAMS } from './sysutils.ts'
 import { TEXT_MANUAL, TEXT_PROGRAMS } from './textutils.ts'
 
@@ -20,6 +22,8 @@ export const PROGRAM_TABLES: Readonly<Record<string, Readonly<Record<string, Pro
   textutils: TEXT_PROGRAMS,
   sysutils: SYS_PROGRAMS,
   diff: DIFF_PROGRAMS,
+  grep: GREP_PROGRAMS,
+  sed: SED_PROGRAMS,
 })
 
 /** The manual's tables as the files write them, each under the name of its file. */
@@ -29,6 +33,8 @@ export const MANUAL_TABLES: Readonly<Record<string, Readonly<Record<string, stri
   textutils: TEXT_MANUAL,
   sysutils: SYS_MANUAL,
   diff: DIFF_MANUAL,
+  grep: GREP_MANUAL,
+  sed: SED_MANUAL,
 })
 
 /** Every program, by the name it runs by. */
