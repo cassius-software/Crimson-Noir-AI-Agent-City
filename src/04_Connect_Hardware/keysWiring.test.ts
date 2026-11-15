@@ -39,10 +39,11 @@ test('the keys are mounted once, after the app, outside every shell', () => {
   assert.equal(count(APP, '<ScreenKeys'), 0, 'not inside App, which returns the console shell on its own')
 })
 
-test('the pad\'s menu and keys buttons go from the engine to App, unless a doorstep card has the pad', () => {
+test('the pad\'s menu and keys buttons go from the engine to App, unless a doorstep card has the pad or a headset is on', () => {
   before(ENGINE, 'if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }', 'const padUi = input.takeUi()',
     'taken after the drain, which leaves the page\'s buttons alone')
-  assert.match(ENGINE, /if \(padUi !== 0 && this\.homeCard === null\) this\.onPadUi\?\.\(padUi\)/)
+  assert.match(ENGINE, /const draining = this\.homeCard !== null \|\| this\.drainNext\n\s+input\.poll\(dt\)/, 'read before the poll: the poll right after a card closes is drained')
+  assert.match(ENGINE, /if \(padUi !== 0 && !draining && !this\.rig\.headset\) this\.onPadUi\?\.\(padUi\)/, 'never under a headset: no page card shows inside it')
   assert.match(APP, /e\.onPadUi = \(ui\) => \{\n\s+if \(ui & PAD_UI\.menu\) setPadMenu\(\(o\) => !o\)\n\s+if \(ui & PAD_UI\.keys\) summonKeys\(\)\n\s+\}/)
 })
 
@@ -58,8 +59,11 @@ test('the pads are lent per lender and the game has them back once every lender 
 test('a card that must be answered first closes the pad\'s menu and folds the keys', () => {
   assert.match(APP, /keysBlocked\.set\(blocked\)\n\s+if \(blocked\) setPadMenu\(false\)/)
   assert.match(APP, /<PadMenu open=\{padMenu && !blocked\} items=\{padItems\} onClose=\{closePadMenu\} \/>/)
-  assert.match(APP, /\{ label: 'Keyboard', run: \(\) => \{ summonKeys\(\) \} \}/)
-  assert.match(APP, /\.\.\.menuItems\(menuHost, engine\.input\),/)
+  assert.match(APP, /\.\.\.\(access\.keys === 'off' \? \[\] : \[\{ label: 'Keyboard', run: \(\) => \{ summonKeys\(\) \} \}\]\),/)
+  assert.match(APP, /const blocked = \(act !== null && veilDone && locked === null && bridge !== null\) \|\| failure !== null \|\| locked !== null \|\| inHeadset/)
+  // The pad's Console raises the keys on the prompt it focuses (the first walk says they rise with it).
+  assert.match(APP, /\.\.\.menuItems\(\{ \.\.\.menuHost, onConsole: \(\) => \{ expectKeys\(\); menuHost\.onConsole\(\) \} \}, engine\.input\),/)
+  assert.match(PAD_MENU, /case 'close': case 'enter': case 'back': case 'caretLeft': onClose\(\); return/)
 })
 
 test('a finger on a key is not a press outside Sloane\'s card or the first walk', () => {
@@ -70,6 +74,13 @@ test('a finger on a key is not a press outside Sloane\'s card or the first walk'
 
 test('the watcher\'s device changes reach the desk, and the panels stand clear of the open keys', () => {
   assert.match(SCREEN_KEYS, /sense\.onChange = \(\) => d\.deviceChanged\(\)/)
-  assert.match(CSS, /html\[data-keys-open\] main > \.ui-zoom \{[^}]*bottom: calc\(var\(--keys-height, 0px\) \/ var\(--ui-zoom, 1\)\) !important;/)
-  assert.match(CSS, /html\[data-keys-open\] \.r0-root\[data-full\] \{[^}]*height: calc\(100% - var\(--keys-height, 0px\)\)/)
+  assert.match(CSS, /html\[data-keys-room\] main > \.ui-zoom \{[^}]*bottom: calc\(var\(--keys-height, 0px\) \/ var\(--ui-zoom, 1\)\) !important;/)
+  assert.match(CSS, /html\[data-keys-room\] \.r0-root\[data-full\] \{[^}]*height: calc\(100% - var\(--keys-height, 0px\)\)/)
+  // The room is the chip's while only it shows, so the prompt line at the foot is not under it.
+  assert.match(SCREEN_KEYS, /toggleAttribute\('data-keys-room', v\.mode !== 'hidden'\)\n\s+if \(v\.mode === 'hidden'\) document\.documentElement\.style\.removeProperty\('--keys-height'\)/)
+  assert.match(SCREEN_KEYS, /<div ref=\{rowRef\} className="sk-chip-row ui-zoom">/)
+  // Sloane's cards take the keys' height off the viewport's, so a card anchored at the top ends above them.
+  const cardAt = /const CARD_AT = \{[\s\S]*?\} as const/.exec(CONCIERGE)?.[0] ?? ''
+  assert.equal(cardAt.split('calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))').length - 1, 5)
+  assert.ok(!cardAt.includes('calc(100dvh_/_var(--ui-zoom,1))'), 'no height left that ignores the keys')
 })

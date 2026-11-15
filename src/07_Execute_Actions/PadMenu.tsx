@@ -62,12 +62,15 @@ function Panel({ items, onClose }: { items: readonly MenuItem[]; onClose: () => 
       case 'up': case 'left': setAt((a) => (Math.min(a, n - 1) - 1 + n) % n); setNote(null); return
       case 'down': case 'right': setAt((a) => (Math.min(a, n - 1) + 1) % n); setNote(null); return
       case 'press': choose(here); return
-      case 'close': case 'enter': case 'back': onClose(); return
+      // The left shoulder too: a pad read by position with no centre buttons opens the menu with it (gamepad.ts PAD_UI).
+      case 'close': case 'enter': case 'back': case 'caretLeft': onClose(); return
     }
   })
 
-  // The pads, for as long as the menu is open: lent by the city, borrowed from every card, read here once a frame.
+  // The pads, for as long as the menu is open: lent by the city, borrowed from every card, read here once a frame. The
+  // focus it takes for its highlight goes back where it was when it closes (the field the player was typing in).
   useEffect(() => {
+    const before = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
     let lentTo = keysHost.get()
     lentTo?.lend('menu', true)
     const giveBack = borrowPads('menu')
@@ -87,6 +90,9 @@ function Panel({ items, onClose }: { items: readonly MenuItem[]; onClose: () => 
       cancelAnimationFrame(raf)
       lentTo?.lend('menu', false)
       giveBack()
+      const now = document.activeElement
+      const lost = now === null || now === document.body || !now.isConnected || (now instanceof Element && now.closest('[data-pad-menu]') !== null)
+      if (before && before.isConnected && lost) before.focus({ preventScroll: true })
     }
   }, [])
   // The highlighted item has the focus, so a screen reader says it and the focus ring shows it.

@@ -33,6 +33,8 @@ export const DESK = Object.freeze({
   rateMs: 60,
   /** A field marked for a press that never focused it gets its marks back after this long. */
   premarkMs: 1000,
+  /** A field given the focus back this soon after it lost it (the pad's menu closed) is as it was, open or offered. */
+  returnMs: 30_000,
 })
 
 /** What the desk needs of the page. */
@@ -120,13 +122,18 @@ export class KeysDesk {
   private summonAt = -Infinity
   private readonly yielded = new WeakSet<object>()
   private left: Left | null = null
+  /** The field the keys last followed, after it lost the focus (to the pad's menu, say): summoned, they go back to it. */
+  private lastField: FieldLike | null = null
+  /** Whether the keys stood open for it, and when it lost the focus. */
+  private lastWanted = false
+  private lastAt = -Infinity
   private keys: KeysState = KEYS_START
   private cursor: Cursor | null = null
   private heldKey: { id: string; stroke: KeyStroke; field: FieldLike | null } | null = null
   private hands: DeskHands = DESK_HANDS
   private blocked = false
   private marked: FieldLike | null = null
-  private premarked: { field: FieldLike; stop: () => void } | null = null
+  private premarked: { readonly field: FieldLike; stop: () => void } | null = null
   private lent = false
   private leaving: (() => void) | null = null
   private repeat: (() => void) | null = null
@@ -183,12 +190,16 @@ export class KeysDesk {
     const summoned = now - this.summonAt <= DESK.summonMs
     // A pad's press that opened the console (the card's button, the pad's menu): the prompt is what the press was for,
     // and a pad has nothing else to type on there. A card that focuses its own field is only offered (the chip).
-    const padOpened = (this.sense.last === 'gamepad' || this.sense.last === 'headset') && now - this.padAt <= DESK.summonMs
+    // The field given the focus back soon after it lost it (the pad's menu closing) is as it was, open or offered.
+    const back = field === this.lastField && now - this.lastAt <= DESK.returnMs
+    const padOpened = !back && (this.sense.last === 'gamepad' || this.sense.last === 'headset') && now - this.padAt <= DESK.summonMs
       && isCodeField(field as { getAttribute?(n: string): string | null })
     // Asked for: a press on the page just before (a tap on the console), the keys summoned, a dwell resting on the field.
     const asked = now - this.sense.pointerAt <= DESK.solicitMs || summoned || padOpened || (this.hands.dwell && this.env.hovered(field))
-    this.wanted = asked || (sticky && was.wanted)
     this.summonedFor = summoned || (sticky && was.summoned) ? field : null
+    // Asked for a field the keys do not serve (a mouse's click, a tap on a chat line) is not kept: a pad picked up
+    // later offers them on the chip, as for any field.
+    this.wanted = (asked || (sticky && was.wanted) || (back && this.lastWanted)) && this.serves(field)
     if (summoned) this.summonAt = -Infinity
     this.keys = KEYS_START
     this.refresh()
@@ -202,27 +213,45 @@ export class KeysDesk {
   }
 
   /**
-   * A press on the page (a pointerdown, at the capture phase): a press on the field the keys serve asks for them again,
-   * and so does a finger anywhere in its dialog or form (a tap on the console's lines, beside its prompt); a press on
-   * a field they will serve marks it before it takes the focus, so the device's own keyboard does not rise.
+   * A press on the page (a pointerdown, at the capture phase): a press on the field the keys serve asks for them again;
+   * a press on a field they will serve marks it before it takes the focus, so the device's own keyboard does not rise.
+   * The marks last while the press is held and premarkMs after it lets go (pointerUp), a second press starting again.
    */
-  pointerDown(target: unknown, pointerType = ''): void {
-    if (insideKeys(target)) return
-    if (!isTextField(target)) {
-      const f = this.field
-      if (f && (pointerType === 'touch' || pointerType === 'pen') && !this.yielded.has(f) && this.env.around(f, target)) { this.wanted = true; this.refresh() }
-      return
-    }
+  pointerDown(target: unknown): void {
+    if (insideKeys(target) || !isTextField(target)) return
     const field = target as FieldLike
     if (field === this.field) {
-      if (!this.yielded.has(field)) { this.wanted = true; this.refresh() }
+      if (this.serves(field)) { this.wanted = true; this.refresh() }
       return
     }
-    if (!this.serves(field) || this.premarked?.field === field) return
+    if (!this.serves(field)) return
+    const p = this.premarked
+    if (p?.field === field) { p.stop(); p.stop = this.env.timer(() => { if (this.premarked === p) this.unpremark() }, DESK.premarkMs * 5); return }
     this.unpremark()
     this.env.mark(field, true)
-    const stop = this.env.timer(() => { if (this.premarked?.field === field) this.unpremark() }, DESK.premarkMs)
-    this.premarked = { field, stop }
+    const mark = { field, stop: (): void => {} }
+    // A press held long (a finger resting before it lifts) keeps the marks; a press that never lets go gives them back.
+    mark.stop = this.env.timer(() => { if (this.premarked === mark) this.unpremark() }, DESK.premarkMs * 5)
+    this.premarked = mark
+  }
+
+  /** A press let go (a pointerup or pointercancel, at the capture phase): a field it marked keeps the marks premarkMs more. */
+  pointerUp(): void {
+    const p = this.premarked
+    if (!p) return
+    p.stop()
+    p.stop = this.env.timer(() => { if (this.premarked === p) this.unpremark() }, DESK.premarkMs)
+  }
+
+  /**
+   * A tap on the page (a touch or a pen that went down and up without moving): a tap anywhere in the dialog or form of
+   * the field the keys serve (the console's lines, beside its prompt) asks for them again. A swipe through the
+   * console's lines to read them is no tap, and asks nothing.
+   */
+  tap(target: unknown, pointerType: string): void {
+    const f = this.field
+    if (!f || insideKeys(target) || isTextField(target) || (pointerType !== 'touch' && pointerType !== 'pen')) return
+    if (this.serves(f) && this.env.around(f, target)) { this.wanted = true; this.refresh() }
   }
 
   /** A field marked for a press that has not focused it gets its marks back. */
@@ -261,6 +290,8 @@ export class KeysDesk {
    */
   summon(): void {
     if (this.view.mode === 'open') { this.wanted = false; this.refresh(); return }
+    // Off is never on screen; a card that must be answered first keeps the pads and the screen.
+    if (this.hands.setting === 'off' || this.blocked) return
     const f = this.field && isLiveField(this.field) ? this.field : null
     if (f) {
       this.summonedFor = f
@@ -272,6 +303,13 @@ export class KeysDesk {
     this.summonAt = this.env.now()
     const active = this.env.active()
     if (isLiveField(active)) { this.focusIn(active); return }
+    // The field the player was in before the pad's menu took the focus.
+    const last = this.lastField && isLiveField(this.lastField) ? this.lastField : null
+    if (last) {
+      this.env.focus(last)
+      if (this.field !== last) this.focusIn(last)
+      return
+    }
     const first = this.env.firstField()
     if (first) {
       this.env.focus(first)
@@ -292,7 +330,7 @@ export class KeysDesk {
     let f = this.field
     if (f && !isLiveField(f)) { this.drop(); f = null }
     const serve = f !== null && this.serves(f)
-    const mode = keysStand({ field: f !== null, serve: serve || (f !== null && this.summonedFor === f), yielded: f !== null && this.yielded.has(f), wanted: this.wanted, blocked: this.blocked })
+    const mode = keysStand({ field: f !== null, serve, yielded: f !== null && this.yielded.has(f), wanted: this.wanted, blocked: this.blocked })
     // The marks keep the device's keyboard down while ours serve the field (open or offered).
     const markFor = mode === 'hidden' ? null : f
     if (this.marked !== markFor) {
@@ -310,7 +348,7 @@ export class KeysDesk {
     const open = mode === 'open'
     if (open !== this.lent) {
       this.lent = open
-      if (open) this.cursor = cursorOn(this.board, 'g')
+      if (open) this.cursor = this.home()
       else this.stopHold()
       this.env.lend(open)
     }
@@ -365,7 +403,7 @@ export class KeysDesk {
   padAsk(ask: PadAsk): void {
     if (this.view.mode !== 'open') return
     const board = this.board
-    const cursor = this.cursor ?? cursorOn(board, 'g')
+    const cursor = this.cursor ?? this.home()
     switch (ask.control) {
       case 'up': case 'down': case 'left': case 'right': {
         if (!cursor) return
@@ -379,6 +417,8 @@ export class KeysDesk {
         const key = keyAt(board, cursor)
         // A held button types its letter again, as a held key does; it does not flip Shift or the layer on and off.
         if (ask.repeat && key.kind !== 'char' && key.kind !== 'named') return
+        // A browser raises its own keyboard only inside a person's own press, and a pad's button is none.
+        if (key.kind === 'system') { this.env.say('The device\'s own keyboard opens from a tap on this key'); return }
         this.pressDef(key)
         return
       }
@@ -416,9 +456,14 @@ export class KeysDesk {
 
   /** Whether the keys serve a field: the policy, or the player summoned them for it, and it was not handed to the device's keyboard. */
   private serves(field: FieldLike): boolean {
-    if (this.yielded.has(field)) return false
+    if (this.yielded.has(field) || this.hands.setting === 'off') return false
     if (this.summonedFor === field) return true
     return keysServe(this.sense.facts(this.hands.setting, isCodeField(field as { getAttribute?(n: string): string | null }), this.hands))
+  }
+
+  /** Where the pad's highlight starts: on g, in the middle of the letters; on another board, its first key. */
+  private home(): Cursor {
+    return cursorOn(this.board, 'g') ?? fitCursor(this.board, { row: 0, index: 0, x: 0 })
   }
 
   private keyById(id: string): PlacedKey | null {
@@ -489,9 +534,16 @@ export class KeysDesk {
     const a = f.selectionStart, b = f.selectionEnd
     if (a === null || b === null || a === b || (f.type ?? '').toLowerCase() === 'password') return
     const p = this.env.writeClip(f.value.slice(Math.min(a, b), Math.max(a, b)))
-    if (!p) { this.env.say('Copying is not allowed here'); return }
-    p.catch(() => this.env.say('The clipboard could not be written'))
-    if (k === 'x') insertText(f, '', this.env.entry, 'deleteByCut')
+    if (!p) { this.env.say(k === 'x' ? 'Cutting is not allowed here' : 'Copying is not allowed here'); return }
+    if (k === 'c') { p.catch(() => this.env.say('The clipboard could not be written')); return }
+    // Cut only once the text is on the clipboard, and only what is still selected: a refused write loses nothing.
+    const value = f.value
+    p.then(
+      () => this.enqueue(() => {
+        if (this.liveField() === f && f.value === value && f.selectionStart === a && f.selectionEnd === b) insertText(f, '', this.env.entry, 'deleteByCut')
+      }),
+      () => this.env.say('The clipboard could not be written, so nothing was cut'),
+    )
   }
 
   private paste(): void {
@@ -559,6 +611,13 @@ export class KeysDesk {
 
   /** Forgets the field (refresh gives its marks back). */
   private drop(): void {
+    // A field handed to the device's keyboard is handed over for as long as it keeps the caret, not for good.
+    if (this.field) {
+      this.yielded.delete(this.field)
+      this.lastField = this.field
+      this.lastWanted = this.wanted
+      this.lastAt = this.env.now()
+    }
     this.field = null
     this.scope = null
     this.wanted = false

@@ -179,38 +179,50 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   centre buttons, the left shoulder; with a one-handed layout, select with that hand's shoulder held) opens a menu that
   holds the touch Menu's items (Console, Model file, Clock, Ghost view, Rain mode, Microphone, Headset, High contrast,
   Text size, Hide HUD; one list, `04_Connect_Hardware/menuItems.ts`, so the two never drift apart), with Keyboard (the
-  on-screen keys) and Sloane (her card, while her chip shows) first. The d-pad or the stick moves the highlight, the
-  south button chooses, the east button or the menu button again closes it. While it is open it has player 1's pads,
-  so the game stands still and no card acts on the same press. Model file and Headset need a person's own press (the
-  browser opens a file picker or a headset session only inside a key, a click or a tap, and a pad's button is none),
-  so the menu says to press them again that way. The controls' hints and the first walk name the pad's own menu
-  button (Menu, +, Start) where they named `~` before.
+  on-screen keys; not offered with `access keys off`) and Sloane (her card, while her chip shows) first. The d-pad or
+  the stick moves the highlight. With both hands south chooses, and east, west, start or the left shoulder closes it
+  (the left shoulder being what opens it on a pad read by position); with the left hand the left trigger chooses and
+  start or the left shoulder closes it; with the right hand south or the right trigger chooses and east, west or start
+  closes it. A pad read by position with no centre buttons has the menu only with both hands. Its Console opens the
+  console with the on-screen keys up. While it is open it has player 1's pads, so the game stands still and no card
+  acts on the same press. Model file and Headset need a person's own press (the browser opens a file picker or a
+  headset session only inside a key, a click or a tap, and a pad's button is none), so the menu says to press them
+  again that way. The controls' hints and the first walk name the pad's own menu button (Menu, +, Start; with one
+  hand, select with that shoulder held) where they named `~` before.
 - **On-screen keys** (`04_Connect_Hardware/ScreenKeys.tsx`, `keysDesk.ts`, `keyboardSense.ts`). A keyboard the page
-  draws, with the keys a console needs (Esc, Tab, Ctrl, the arrows, a symbols board, an accents board, Shift and caps
-  lock), which types into the field with the caret as a real key would (the key down, the edit, the field's input
-  event, the key up after the page has had its turn), so the console's history, Tab completion and Ctrl+C work from
-  it. No browser says whether a keyboard is plugged in, so the page goes by the device last used instead. After a pad
-  (or a headset's controller) the keys are offered on any text field as a chip at the foot of the screen, and open when
-  asked for: the select button, the pad's menu's Keyboard, or the chip. On a phone or tablet (a coarse main pointer and
-  a touch screen) they open on a tap on the console's prompt, keeping the phone's own keyboard down, since a phone's
-  keyboard has no Esc, Tab, Ctrl or arrows; a chat line or a name keeps the phone's own keyboard, which has the
-  languages and the dictation the page's keys lack. A key pressed on a real keyboard (a key down the browser made, with
-  a board key's code, not a key in the middle of composing, which a phone's keyboard sends) puts them away; on a phone
-  or tablet they stay away for ten minutes after the last such key, and a pad's button offers them again. With switch scanning or the dwell click on, they serve every text
-  field. `access keys on` serves every field and `access keys off` never shows them (`?keys=`, kept with the other
-  settings). With a pad the legend above the keys names its own buttons: the d-pad or the left stick moves, south
-  types, west deletes, north is a space, the shoulders move the caret, the left trigger is Shift, the right trigger or
-  the menu button is Enter, select changes the board, east puts the keys down to the chip (the caret stays); a held
-  south button repeats a letter. A tap or a click types on release, on the key it ends on; Backspace and the arrows
-  act on press and repeat while held. On a phone the keyboard key hands the field to the phone's own keyboard (a pad's
-  select takes it back). While they are open they have player 1's pads, the panels and the console stand above them,
-  and a card that must be answered first (the action card, the way-out card) folds them to the chip. A finger on a key
-  never counts as a press outside Sloane's card or the first walk's. Checked in CI and emulation only: unit suites for
-  each part, and the browser smoke test (headless Chrome with a simulated standard pad on the console alone, and the
-  console on an emulated Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or
-  with a screen reader. An iPhone's own keyboard sends real key codes, so once it is chosen with the keyboard key the
-  page takes it for a keyboard for those ten minutes. Firefox for Android has been reported to expose no gamepads to
-  pages; there a pad's d-pad reaches the field as arrow keys and `access keys on` brings the keys.
+  draws, with the keys a console needs (Esc, Tab, Ctrl, the arrows, a numbers board and a symbols board, an accent key
+  that turns the letter before the caret into its next accented form, Shift and caps lock), which types into the field
+  with the caret as a real key would (the key down, the edit, the field's input event, the key up after the page has
+  had its turn), so the console's history, Tab completion and Ctrl+C work from it. No browser says whether a keyboard
+  is plugged in, so the page goes by the device last used instead. After a pad's button the keys are offered on any
+  text field as a chip at the foot of the screen (the panels and the console's prompt stand above it), and open when
+  asked for: the select button, the pad's menu's Keyboard or Console, a pad press that opened the console, or the chip.
+  On a phone or tablet (a coarse main pointer and a touch screen) they open on a tap on the console's prompt (a tap, not
+  a swipe across it), keeping the phone's own keyboard down, since a phone's keyboard has no Esc, Tab, Ctrl or arrows; a
+  chat line or a name keeps the phone's own keyboard, which has the languages and the dictation the page's keys lack.
+  A key pressed on a real keyboard (a key down the browser made, with a board key's code, not a key in the middle of
+  composing) puts them away; on a phone or tablet a key typed into a field the phone's own keyboard may be serving is
+  not counted (a phone's keyboard can send the same codes), and after a counted key they stay away for ten minutes,
+  until a pad's button offers them again. With switch scanning or the dwell click on, they serve every text field.
+  `access keys on` serves every field and `access keys off` never shows them (`?keys=`, kept with the other settings).
+  With a pad the legend above the keys names its own buttons: the d-pad or the left stick moves, south types, west
+  deletes, north is a space, the shoulders move the caret, the left trigger is Shift, the right trigger or the menu
+  button is Enter, select changes the board, east puts the keys down to the chip (the caret stays); a held south button
+  repeats a letter; a stick that drifts off centre is still at rest. A tap or a click types on release, on the key it
+  ends on, and two thumbs can type at once; Backspace and the arrows act on press and repeat while held. On a phone the
+  keyboard key hands the field to the phone's own keyboard until the field loses the caret (a pad's select takes it
+  back). In the console shell with the caret at the prompt, a pad's south button presses nothing, so a letter is never
+  taken for Back to the city: the d-pad reaches the shell's buttons first. While the keys are open they have player 1's
+  pads, Sloane's card and the console stand above them and the field with the caret is scrolled into view above them,
+  and a card that must be answered first (the action card, the way-out card, the halted city's lock screen) or a
+  headset session folds them to the chip and closes the pad's menu. A finger on a key never counts as a press outside
+  Sloane's card or the first walk's. With the system's forced colours (a Windows contrast theme) the lit keys and the
+  highlight are drawn in its colours. Checked in CI and emulation only: unit suites for each part, and the browser
+  smoke test (headless Chrome with a simulated standard pad on the console alone, and the console on an emulated
+  Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or with a screen reader.
+  Headset controllers do not yet count as a device of their own (the page is not shown inside a headset session).
+  Firefox for Android has been reported to expose no gamepads to pages; there a pad's d-pad reaches the field as arrow
+  keys and `access keys on` brings the keys.
 
 ## URL options
 

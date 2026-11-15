@@ -22,7 +22,8 @@
  * What breaks if it is removed? A player with only a pad has no way out of a failed boot or a halted city.
  */
 import { useEffect, type RefObject } from 'react'
-import { keysHost } from '../04_Connect_Hardware/keysHost.ts'
+import { keysBlocked, keysHost } from '../04_Connect_Hardware/keysHost.ts'
+import { isLiveField } from '../04_Connect_Hardware/textEntry.ts'
 import type { KeysPadLike } from '../04_Connect_Hardware/keysPad.ts'
 import type { PadHand } from '../04_Connect_Hardware/gamepad.ts'
 
@@ -148,8 +149,18 @@ export function readPads(): readonly (Gamepad | null)[] {
 /**
  * While `active`, reads the pads every animation frame for the buttons inside `root`: A presses the focused one (the
  * first when focus is elsewhere), the d-pad moves focus. The first poll only learns what is already held. `accept`
- * (stable across renders) limits it to some pads, by index: a card that is one player's, in split screen.
+ * (stable across renders) limits it to some pads, by index: a card that is one player's, in split screen. With the
+ * caret in a text field (the console shell's prompt, where the on-screen keys serve a pad), A presses nothing: the
+ * player may be typing there, and the d-pad reaches the buttons first (the shell's Back to the city among them).
  */
+/**
+ * Whether the caret is in a text field (the console's prompt), with no card that must be answered first over it. Not
+ * whether the keys show yet: the first press of a pad is read here in the same frame it tells the keys a pad is in use.
+ */
+function typingHere(): boolean {
+  return !keysBlocked.get() && isLiveField(document.activeElement)
+}
+
 export function usePadNav(root: RefObject<HTMLElement | null>, active = true, accept?: (padIndex: number) => boolean): void {
   useEffect(() => {
     if (!active) return
@@ -163,7 +174,7 @@ export function usePadNav(root: RefObject<HTMLElement | null>, active = true, ac
       if (!first && action && el) {
         const buttons = [...el.querySelectorAll('button')].filter((b) => !b.disabled)
         const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
-        if (action === 'press') (buttons[at] ?? buttons[0])?.click()
+        if (action === 'press') (buttons[at] ?? (typingHere() ? null : buttons[0]))?.click()
         else if (buttons.length > 0) buttons[at < 0 ? 0 : (at + (action === 'next' ? 1 : buttons.length - 1)) % buttons.length].focus()
       }
       raf = requestAnimationFrame(poll)

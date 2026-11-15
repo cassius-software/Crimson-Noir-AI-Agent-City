@@ -228,7 +228,9 @@ export function pressKey(state: KeysState, key: KeyDef): KeyPress {
     case 'named': {
       const named = key.named ?? 'Enter'
       if (CARET_KEYS.has(named)) return { state: { ...state, ctrl: false }, out: { kind: 'stroke', stroke: strokeOf(named, false, state.ctrl) } }
-      const shift = named !== 'Escape' && state.shift !== 'off'
+      // Shift pressed once goes with the next key (Shift+Enter: a new line at the prompt; Shift+Tab: back a field); caps
+      // lock, like a keyboard's, raises letters and leaves Enter and Tab as they are.
+      const shift = named !== 'Escape' && state.shift === 'once'
       return {
         state: { ...state, ctrl: false, shift: state.shift === 'once' ? 'off' : state.shift },
         out: { kind: 'stroke', stroke: strokeOf(named, shift, state.ctrl) },

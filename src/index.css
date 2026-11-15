@@ -340,17 +340,52 @@ html[data-contrast='high'] .sk-legend b {
   color: #fff !important;
 }
 
-/* Everything else stands clear of the open keys: each overlay's root (the cards and the HUD inside it) ends at their
-   top edge (divided by the text-size zoom, which scales the root's own lengths too), the console drawn down from the
-   top is never taller than the room above them, and the console alone ends at them. */
-html[data-keys-open] main > .ui-zoom {
+/* The legend follows the text size only up to 125 %, and steps aside on a screen too short to spare it a line: at
+   200 % on a landscape phone it would wrap to lines that push the keys' room up past the field. */
+.sk-legend.ui-zoom {
+  zoom: min(var(--ui-zoom, 1), 1.25);
+}
+@media (max-height: 359px) {
+  .sk-legend {
+    display: none;
+  }
+}
+
+/* With the system's forced colours (Windows contrast themes) the browser repaints every background with its own, so
+   the lit keys, the highlight's ring and the space bar's line are drawn in the system's own colours instead. */
+@media (forced-colors: active) {
+  .sk-key[aria-pressed='true'],
+  .sk-key[data-down],
+  .sk-key[data-held] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: HighlightText;
+  }
+  .sk-key[data-key-at] {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+    outline: 4px solid Highlight;
+  }
+  .sk-space {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}
+
+/* Everything else stands clear of the keys, open or only offered by their chip (ScreenKeys.tsx publishes the room
+   either takes): each overlay's root (the cards and the HUD inside it) ends at their top edge (divided by the
+   text-size zoom, which scales the root's own lengths too), the console drawn down from the top is never taller than
+   the room above them, and the console alone ends at them. */
+html[data-keys-room] main > .ui-zoom {
   bottom: calc(var(--keys-height, 0px) / var(--ui-zoom, 1)) !important;
 }
-html[data-keys-open] .r0-root[data-open]:not([data-full]) {
+html[data-keys-room] .r0-root[data-open]:not([data-full]) {
   max-height: calc(100dvh - var(--keys-height, 0px));
   min-height: 0;
 }
-html[data-keys-open] .r0-root[data-full] {
+html[data-keys-room] .r0-root[data-full] {
   height: calc(100% - var(--keys-height, 0px));
 }
 

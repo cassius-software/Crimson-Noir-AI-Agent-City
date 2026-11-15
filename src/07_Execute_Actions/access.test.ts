@@ -187,7 +187,7 @@ test('applyAccess writes data-contrast and --ui-zoom onto the root; the status l
   assert.match(lines[5], /^scan {6}off {2}\(access scan on\|off\)$/)
   assert.match(lines[6], /^pad {7}left hand: its stick moves, with L1 held it looks; select runs, start pings {2}\(access pad both\|left\|right\)$/)
   assert.match(lines[7], /^announce {2}on: the district, a vehicle beside you, a seat and the toasts are read {2}\(access announce on\|off\)$/)
-  assert.match(lines[8], /^keys {6}auto: on screen for a pad, a headset, a switch, a resting pointer, and a phone at the prompt {2}\(access keys auto\|on\|off\)$/)
+  assert.match(lines[8], /^keys {6}auto: on screen for a pad, a switch, a resting pointer, and a phone at the prompt {2}\(access keys auto\|on\|off\)$/)
   assert.match(accessStatus({ ...ACCESS_DEFAULTS, keys: 'on' }, false)[8], /^keys {6}on: on screen for every field {2}/)
   assert.match(accessStatus({ ...ACCESS_DEFAULTS, keys: 'off' }, false)[8], /^keys {6}off: never on screen {2}/)
   assert.ok(lines[9].includes(ACCESS_KEY) && lines[9].includes('?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= ?keys='))

@@ -7,8 +7,10 @@
  * plugged in. So this file judges by evidence, the only thing a page has. It watches which device acted last (a
  * key, a mouse, a finger, a pen, a pad's button, a headset's controller) and whether a key only a real keyboard
  * sends has been seen lately: a trusted keydown that names a place on the board (`code` "KeyA", "Digit4",
- * "ShiftLeft"). A phone's own on-screen keyboard names none (its keys arrive with an empty or "Unidentified" code,
- * or as the composition key 229), and a remote's arrows and OK are not evidence of letters, so neither counts.
+ * "ShiftLeft"). A phone's own on-screen keyboard mostly names none (its keys arrive with an empty or "Unidentified"
+ * code, or as the composition key 229), and a remote's arrows and OK are not evidence of letters, so neither counts;
+ * and since some phone keyboards are reported to name real codes, on a touch-first device a key into a field the
+ * device's own keyboard may be serving is not counted either.
  * `keysServe` is the whole policy, one pure function over those facts and the player's setting (`access keys
  * auto|on|off`): a pad or a headset in the hand gets our keys for every field; a keyboard or a mouse gets none; a
  * finger on a touch-first device gets ours for a command field (the prompt: no phone keyboard has Esc, Tab, Ctrl or
@@ -131,6 +133,15 @@ export function insideKeys(target: unknown): boolean {
   return !!el && typeof el.closest === 'function' && el.closest(`[${KEYS_ROOT}]`) !== null
 }
 
+/** Whether `target` is a field the device's own keyboard may be typing into: a text field not marked inputmode none. */
+function deviceKeyboardMayServe(target: unknown): boolean {
+  const el = target as { tagName?: string; isContentEditable?: boolean; getAttribute?(name: string): string | null } | null
+  if (!el) return false
+  const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : ''
+  if (tag !== 'INPUT' && tag !== 'TEXTAREA' && el.isContentEditable !== true) return false
+  return el.getAttribute?.('inputmode') !== 'none'
+}
+
 /** What the watcher needs of a window: its events, its media queries, its touch points. */
 export interface SenseWindow {
   addEventListener(type: string, listener: (e: Event) => void, options?: boolean | { capture?: boolean; passive?: boolean }): void
@@ -142,7 +153,7 @@ export interface SenseWindow {
 /**
  * The watcher: listens at the window, in the capture phase (a handler that stops a key still leaves it seen), for
  * the keys and pointers that say which device is in use. The pads and the headset have no events: whoever reads
- * them calls `note`. `onChange` is told whenever a fact a decision rests on has changed.
+ * them calls `note`. `onChange` is told whenever a fact a decision rests on has changed, and at every real key.
  */
 export class KeyboardSense {
   last: LastDevice | null = null
@@ -157,11 +168,16 @@ export class KeyboardSense {
   private readonly now: () => number
   private readonly onKey = (e: Event): void => {
     const k = e as Event & KeyEventLike
-    if (!k.isTrusted) return
-    if (isPhysicalKey(k, this.switchCode)) {
-      this.keyboardAt = this.now()
-      this.set('keyboard')
-    }
+    if (!k.isTrusted || !isPhysicalKey(k, this.switchCode)) return
+    // On a touch-first device a key into a field the device's own keyboard may be serving can be that keyboard's (an
+    // iPhone's sends real codes for every letter). Only a key into a field ours keep it down for, or with no field to
+    // type in, is surely a keyboard's.
+    if (this.touchFirst && deviceKeyboardMayServe(e.target)) return
+    this.keyboardAt = this.now()
+    // Every such key is told, not only the first: keys opened while the keyboard was already the last device used
+    // still go away at the next real key.
+    if (this.last === 'keyboard') this.onChange?.()
+    else this.set('keyboard')
   }
   private readonly onPointer = (e: Event): void => {
     // A press on one of the on-screen keys is typing, whatever pressed it: the keys opened by a pad and typed on with
@@ -179,7 +195,8 @@ export class KeyboardSense {
     win.addEventListener('pointerdown', this.onPointer, { capture: true, passive: true })
   }
 
-  /** A pad's button went down, or a headset's controller acted (a stick that drifts is not a hand on the pad). */
+  /** A pad's button went down, or a headset's controller acted (a stick that drifts is not a hand on the pad). Only the
+   *  pads are noted so far: inside a headset session the page is not on show, and App.tsx folds the keys there. */
   note(device: 'gamepad' | 'headset'): void {
     this.set(device)
   }

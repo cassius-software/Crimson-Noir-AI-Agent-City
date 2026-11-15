@@ -2700,6 +2700,9 @@ export class Engine {
     // Gamepads and touch first, so their presses are seen by take() this same frame. Under a headset the sticks are
     // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
+    // Whether this frame's poll is drained below (a home's card open, or the poll right after it closed): its menu and
+    // keys buttons are dropped with it, so the start that closed the card does not open the pad's menu too.
+    const draining = this.homeCard !== null || this.drainNext
     input.poll(dt)
     // The microphone's mute (V, the right stick's click) is a privacy switch that nothing holds back, an action card's
     // shield included: taken before a home's card drains the rest.
@@ -2709,7 +2712,7 @@ export class Engine {
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
     // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
-    // unless a home's doorstep card has the pad.
+    // unless this poll was drained, or a headset is on (neither the menu nor the keys would show inside it).
     const padUi = input.takeUi()
     // While a home is furnished the card's right stick turns its draft camera, and the head the poll just turned by
     // that stick (Input reads the look even under suspend) is held where it was: the player's figure does not turn in
@@ -2735,7 +2738,7 @@ export class Engine {
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (mute) this.onMute?.()
-    if (padUi !== 0 && this.homeCard === null) this.onPadUi?.(padUi)
+    if (padUi !== 0 && !draining && !this.rig.headset) this.onPadUi?.(padUi)
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.

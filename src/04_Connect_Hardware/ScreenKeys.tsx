@@ -3,19 +3,20 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It draws the on-screen keys and wires them to the page: a keyboard along the bottom of
- * the screen for a player with no keyboard to hand (a pad, a headset's controllers, a phone at the console's prompt,
- * a single switch, a resting pointer), mounted once beside the app (main.tsx), so the city, the onboarding and the
+ * the screen for a player with no keyboard to hand (a pad, a phone at the console's prompt, a single switch, a
+ * resting pointer), mounted once beside the app (main.tsx), so the city, the onboarding and the
  * console alone all have it. What it decides is keysDesk.ts's; here are its eyes and hands: the page's focus and
  * presses go in, the board comes out as real buttons (a screen reader and a switch reach every key), a press on a key
  * keeps the caret in the field (the key never takes the focus), a key commits when the finger lifts on it (a finger
  * slid off cancels), Backspace and the arrows act at once and repeat while held, the pad types while the keys stand
  * open (keysPad.ts), and when they are only offered a small chip says how to open them. The keys publish their height
- * (`--keys-height`, `data-keys-open` on <html>) so the cards and the console stand clear of them (index.css), and what
+ * (`--keys-height`, `data-keys-room` on <html>; the chip's while only it shows, `data-keys-open` while they stand) so
+ * the cards and the console stand clear of them (index.css), and what
  * they are doing (keysHost.ts keysView) so Sloane's card does not fold while its line is typed. Every key is drawn
  * with plain shapes and words: no font has to hold an icon, and no vendor's mark is drawn.
  * What breaks if it is removed? A player holding a pad, or a phone at the prompt, has no way to type.
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type JSX, type MouseEvent, type PointerEvent } from 'react'
 import { BOARD_COLUMNS, type KeyIcon, type PlacedKey } from './keyLayout.ts'
 import { browserEntryEnv, isLiveField, isTextField, type FieldLike } from './textEntry.ts'
 import { KeyboardSense, KEYS_ROOT, KEYS_SETTINGS, type KeysSetting } from './keyboardSense.ts'
@@ -29,6 +30,9 @@ import { padButtonName, type PadFamily } from '../07_Execute_Actions/glyphs.ts'
 
 /** A click with no press of a pointer this close before it came from a screen reader, a switch or the dwell, ms. */
 const ASSIST_CLICK_MS = 600
+/** A touch that lifts within this distance of where it went down, px, and this soon, ms, is a tap. */
+const TAP_SLOP_PX = 10
+const TAP_MS = 600
 const HIDDEN_VIEW: KeysView = Object.freeze({ mode: 'hidden', field: null })
 const ALL_FIELDS = 'input, textarea'
 
@@ -41,15 +45,40 @@ function pageHands(touchFirst: boolean): DeskHands {
   return { ...DESK_HANDS, setting, scan: assist.includes('scan'), dwell: assist.includes('dwell'), system: touchFirst }
 }
 
-/** Scrolls the field's nearest scrolling box so the field ends above `top` (the keys' top edge), when it does not. */
-function clearOfKeys(field: unknown, top: number): void {
+/** Where the room for the field ends, in window pixels: at the keys' top edge (the board, or the chip while they are
+ *  only offered), else at the visible viewport's foot (a device's own keyboard shrinks it). */
+function roomBottom(): number {
+  const keys = document.querySelector(`[${KEYS_ROOT}] .sk-root, [${KEYS_ROOT}] .sk-chip-row`)
+  const vv = window.visualViewport
+  const foot = vv ? vv.offsetTop + vv.height : window.innerHeight
+  return keys ? Math.min(foot, keys.getBoundingClientRect().top) : foot
+}
+
+/** Scrolls the field's nearest scrolling box so the whole field shows inside it and above `bottom` (the keys' top
+ *  edge), when it does not: a focus the keys move (Tab, a summon) is made without the browser's own scroll, which
+ *  would scroll the whole page under the fixed panels (and a plain scrollIntoView scrolls hidden boxes too). The
+ *  distance is in window pixels and a scroll in the box's own, which differ inside the text-size zoom, and engines
+ *  measure a zoomed box differently: so it scrolls by the box's own ratio, sees how far the field really moved, and
+ *  scales what is left by that once. */
+function reveal(field: unknown, bottom: number): void {
   const el = field as HTMLElement | null
   if (!el || typeof el.getBoundingClientRect !== 'function') return
-  const over = el.getBoundingClientRect().bottom - top + 8
-  if (over <= 0) return
   for (let p = el.parentElement; p; p = p.parentElement) {
     const y = getComputedStyle(p).overflowY
-    if ((y === 'auto' || y === 'scroll') && p.scrollHeight > p.clientHeight) { p.scrollTop += over; return }
+    if ((y !== 'auto' && y !== 'scroll') || p.scrollHeight <= p.clientHeight) continue
+    const box = p.getBoundingClientRect()
+    const f = el.getBoundingClientRect()
+    const top = box.top + 8
+    const end = Math.min(box.bottom, bottom) - 8
+    // Down until its foot clears the end, never so far its head goes over the top; up when its head is over the top.
+    const by = f.bottom > end ? Math.min(f.bottom - end, f.top - top) : f.top < top ? f.top - top : 0
+    if (by === 0 || box.height <= 0) return
+    const from = p.scrollTop
+    p.scrollTop = from + by * (p.offsetHeight / box.height)
+    const units = p.scrollTop - from
+    const moved = f.top - el.getBoundingClientRect().top
+    if (units !== 0 && moved !== 0 && Math.abs(by - moved) > 1) p.scrollTop += (by - moved) * (units / moved)
+    return
   }
 }
 
@@ -72,7 +101,11 @@ function pageDeskEnv(say: (text: string) => void, lend: (on: boolean) => void): 
       return i < 0 ? null : all[i + (back ? -1 : 1)] ?? null
     },
     firstField: () => fieldsIn(document)[0] ?? null,
-    focus: (field) => { (field as unknown as HTMLElement).focus({ preventScroll: true }) },
+    focus: (field) => {
+      const el = field as unknown as HTMLElement
+      el.focus({ preventScroll: true })
+      reveal(el, roomBottom())
+    },
     hovered: (field) => { try { return (field as unknown as Element).matches(':hover') } catch { return false } },
     around: (field, target) => {
       const box = (field as unknown as Element).closest?.('[role="dialog"], [role="alertdialog"], form')
@@ -159,12 +192,27 @@ export function ScreenKeys(): JSX.Element {
 
     const onFocusIn = (e: FocusEvent): void => d.focusIn(e.target)
     const onFocusOut = (e: FocusEvent): void => d.focusOut(e.target, e.relatedTarget)
-    // Registered after the sense's own: the device in use is already known when the press is looked at.
-    const onPointer = (e: globalThis.PointerEvent): void => { if (e.isTrusted) d.pointerDown(e.target, e.pointerType) }
+    // Registered after the sense's own: the device in use is already known when the press is looked at. A touch or a pen
+    // that lifts where it went down, soon, is a tap (a swipe moves, or the browser takes it over with a pointercancel).
+    const downs = new Map<number, { x: number; y: number; t: number; target: EventTarget | null; type: string }>()
+    const onPointer = (e: globalThis.PointerEvent): void => {
+      if (!e.isTrusted) return
+      d.pointerDown(e.target)
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') downs.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp, target: e.target, type: e.pointerType })
+    }
+    const onPointerUp = (e: globalThis.PointerEvent): void => {
+      if (!e.isTrusted) return
+      d.pointerUp()
+      const down = downs.get(e.pointerId)
+      downs.delete(e.pointerId)
+      if (down && e.type === 'pointerup' && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= TAP_SLOP_PX && e.timeStamp - down.t <= TAP_MS) d.tap(down.target, down.type)
+    }
     const onKey = (e: KeyboardEvent): void => { if (e.isTrusted && e.code === SCAN.key && !e.repeat) d.switchOn(e.target) }
     document.addEventListener('focusin', onFocusIn, true)
     document.addEventListener('focusout', onFocusOut, true)
     window.addEventListener('pointerdown', onPointer, { capture: true, passive: true })
+    window.addEventListener('pointerup', onPointerUp, { capture: true, passive: true })
+    window.addEventListener('pointercancel', onPointerUp, { capture: true, passive: true })
     window.addEventListener('keydown', onKey, true)
     const offBlocked = keysBlocked.subscribe(() => d.setBlocked(keysBlocked.get()))
     d.setBlocked(keysBlocked.get())
@@ -178,7 +226,8 @@ export function ScreenKeys(): JSX.Element {
       published = next
       keysView.set(next)
       document.documentElement.toggleAttribute('data-keys-open', v.mode === 'open')
-      if (v.mode !== 'open') document.documentElement.style.removeProperty('--keys-height')
+      document.documentElement.toggleAttribute('data-keys-room', v.mode !== 'hidden')
+      if (v.mode === 'hidden') document.documentElement.style.removeProperty('--keys-height')
     })
     if (document.activeElement && isTextField(document.activeElement)) d.focusIn(document.activeElement)
 
@@ -229,6 +278,8 @@ export function ScreenKeys(): JSX.Element {
       document.removeEventListener('focusin', onFocusIn, true)
       document.removeEventListener('focusout', onFocusOut, true)
       window.removeEventListener('pointerdown', onPointer, { capture: true })
+      window.removeEventListener('pointerup', onPointerUp, { capture: true })
+      window.removeEventListener('pointercancel', onPointerUp, { capture: true })
       window.removeEventListener('keydown', onKey, true)
       coarse?.removeEventListener?.('change', hands)
       attrs.disconnect()
@@ -240,6 +291,7 @@ export function ScreenKeys(): JSX.Element {
       sense.dispose()
       keysView.set(HIDDEN_VIEW)
       document.documentElement.removeAttribute('data-keys-open')
+      document.documentElement.removeAttribute('data-keys-room')
       document.documentElement.style.removeProperty('--keys-height')
       setDesk(null)
     }
@@ -262,8 +314,25 @@ function Keys({ desk, family }: { desk: KeysDesk; family: PadFamily }): JSX.Elem
 
 /** The keys offered, not open: one small button that opens them, with the pad's button for it. */
 function Chip({ desk, pad, family }: { desk: KeysDesk; pad: boolean; family: PadFamily }): JSX.Element {
+  const rowRef = useRef<HTMLDivElement>(null)
+  // The room the chip takes at the foot, published as the keys' height: the console's prompt line and a card's field
+  // at the foot end above it instead of under it, as they do above the open keys.
+  useLayoutEffect(() => {
+    const el = rowRef.current
+    if (!el) return
+    const publish = (): void => {
+      const h = Math.ceil(window.innerHeight - el.getBoundingClientRect().top + 6)
+      document.documentElement.style.setProperty('--keys-height', `${Math.max(0, h)}px`)
+      requestAnimationFrame(() => reveal(desk.get().field, roomBottom()))
+    }
+    publish()
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
+    ro?.observe(el)
+    window.addEventListener('resize', publish)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', publish) }
+  }, [desk])
   return (
-    <div className="sk-chip-row ui-zoom">
+    <div ref={rowRef} className="sk-chip-row ui-zoom">
       <button
         type="button"
         className="sk-chip"
@@ -273,18 +342,20 @@ function Chip({ desk, pad, family }: { desk: KeysDesk; pad: boolean; family: Pad
       >
         <Icon name="system" />
         <span>Keys</span>
-        {pad && <span className="sk-pill">{padButtonName(family, PAD.select)}</span>}
+        {/* With both hands select opens them; with one, select is the run latch and the keys are an item of the pad's menu. */}
+        {pad && pageHand() === 'both' && <span className="sk-pill">{padButtonName(family, PAD.select)}</span>}
       </button>
     </div>
   )
 }
 
-/** A key being pressed by a pointer: which key, by which pointer, and whether it acts while held. */
-interface Pressing { readonly id: string; readonly pointer: number; readonly held: boolean; readonly el: Element }
+/** A key being pressed by a pointer: which key, and whether it acts while held. */
+interface Pressing { readonly id: string; readonly held: boolean; readonly el: Element }
 
 function Board({ desk, view, family }: { desk: KeysDesk; view: DeskView; family: PadFamily }): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null)
-  const pressing = useRef<Pressing | null>(null)
+  // Every finger on the keys, by pointer: two thumbs typing fast put the second down before the first lifts.
+  const pressing = useRef(new Map<number, Pressing>())
   const pointerAt = useRef(-Infinity)
   const keys = view.board.rows.flat()
   const byId = (id: string | null): PlacedKey | undefined => (id ? keys.find((k) => k.id === id) : undefined)
@@ -296,7 +367,7 @@ function Board({ desk, view, family }: { desk: KeysDesk; view: DeskView; family:
     const publish = (): void => {
       const h = Math.ceil(el.getBoundingClientRect().height)
       document.documentElement.style.setProperty('--keys-height', `${h}px`)
-      requestAnimationFrame(() => clearOfKeys(desk.get().field, el.getBoundingClientRect().top))
+      requestAnimationFrame(() => reveal(desk.get().field, roomBottom()))
     }
     publish()
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(publish) : null
@@ -310,21 +381,21 @@ function Board({ desk, view, family }: { desk: KeysDesk; view: DeskView; family:
     const el = keyOf(e.target)
     // The caret stays in the field: no key, and no gap between keys, takes the focus.
     e.preventDefault()
-    if (!el || pressing.current) return
+    if (!el || pressing.current.has(e.pointerId)) return
     const id = el.getAttribute('data-key') ?? ''
     const key = byId(id)
     if (!key) return
     pointerAt.current = e.timeStamp
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId) } catch { /* the pointer is gone already */ }
     el.setAttribute('data-down', '')
-    pressing.current = { id, pointer: e.pointerId, held: key.held === true, el }
+    pressing.current.set(e.pointerId, { id, held: key.held === true, el })
     if (key.held) desk.holdStart(id)
   }
   const end = (e: PointerEvent<HTMLDivElement>, commit: boolean): void => {
-    const p = pressing.current
-    if (!p || p.pointer !== e.pointerId) return
-    pressing.current = null
-    p.el.removeAttribute('data-down')
+    const p = pressing.current.get(e.pointerId)
+    if (!p) return
+    pressing.current.delete(e.pointerId)
+    if (![...pressing.current.values()].some((q) => q.el === p.el)) p.el.removeAttribute('data-down')
     pointerAt.current = e.timeStamp
     if (p.held) { desk.holdEnd(p.id); return }
     // A key commits when the finger lifts on it: one slid off onto another key, or off the keys, presses nothing.

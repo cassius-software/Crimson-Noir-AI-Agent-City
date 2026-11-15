@@ -2216,9 +2216,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     textScale: access.scale,
     onTextScale: () => onAccess(cycleScale(access)),
   } : null
-  // A card that must be answered first (the action card, the way-out card) has the pad and the screen: the pad's menu
-  // closes and the on-screen keys fold to their chip (keysHost.ts keysBlocked) until it is gone.
-  const blocked = (act !== null && veilDone && locked === null && bridge !== null) || failure !== null
+  // A card that must be answered first (the action card, the way-out card, the halted city's lock screen) has the pad
+  // and the screen, and a headset shows no page at all: the pad's menu closes and the on-screen keys fold to their chip
+  // (keysHost.ts keysBlocked), taking no pad, until it is gone.
+  const inHeadset = hud !== null && (hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar')
+  const blocked = (act !== null && veilDone && locked === null && bridge !== null) || failure !== null || locked !== null || inHeadset
   useEffect(() => {
     keysBlocked.set(blocked)
     if (blocked) setPadMenu(false)
@@ -2248,7 +2250,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   // on-screen keys open; where her card is open already, the keys go to its field.
   const sloaneShown = hud !== null && veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null
   const padItems: MenuItem[] = menuHost && engine ? [
-    { label: 'Keyboard', run: () => { summonKeys() } },
+    // With the keys set off (access keys off: never on screen) the menu offers none.
+    ...(access.keys === 'off' ? [] : [{ label: 'Keyboard', run: () => { summonKeys() } }]),
     ...(sloaneShown ? [{
       label: CONCIERGE_NAME,
       run: () => {
@@ -2258,7 +2261,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         chip.click()
       },
     }] : []),
-    ...menuItems(menuHost, engine.input),
+    // Its Console opens the console with the keys up on the prompt (the touch Menu's, a finger's, opens them on a tap).
+    ...menuItems({ ...menuHost, onConsole: () => { expectKeys(); menuHost.onConsole() } }, engine.input),
   ] : []
 
   return (

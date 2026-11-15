@@ -79,6 +79,13 @@ export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, pi
 export const PAD_UI = { menu: 1, keys: 2 } as const
 
 /**
+ * How far from the centre a stick may rest, past the dead zone and on its 0..1 scale, and still count as let go when
+ * the pads come back from the on-screen keys or the pad's menu (PadMapper.lend): well short of the push that steps the
+ * keys' highlight (keysPad.ts, 0.6), well past a worn stick's drift.
+ */
+export const STICK_REST = 0.3
+
+/**
  * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
  * the mapper's button word, above any button index it reads: the left paddle is a second L3 (the run latch), the
  * right paddle a second R1 (a ping), so the sticks' thumbs never leave them.
@@ -437,7 +444,8 @@ export class PadMapper {
    * lent a read still follows every button (so no press replays afterwards), the device and the family, but gives the
    * game stillness and no edge but the microphone's mute, a privacy switch nothing borrows; the run latch stays as it
    * is. Taken back, the game still gets nothing from the buttons and triggers until every one of them has been let go
-   * once, and nothing from the sticks until they have all been seen at rest once: the press that closed the keys, a
+   * once, and nothing from the sticks until they have all been seen at rest once (within STICK_REST of the centre, past
+   * the dead zone, so a stick that drifts is at rest too): the press that closed the keys, a
    * trigger still squeezed from typing, or the stick that was stepping the highlight never opens a door or moves a
    * car or the avatar. (The two waits are apart, so a stick that rests off centre holds back only the sticks.)
    */
@@ -551,7 +559,8 @@ export class PadMapper {
     for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
     this.before.set(this.seen)
     if (this.settling && !held) this.settling = false
-    if (this.settlingSticks && bestStick === 0 && bestLook === 0) this.settlingSticks = false
+    // At rest is near the centre, not exactly on it: a worn stick that drifts past the dead zone rests there for good.
+    if (this.settlingSticks && bestStick < STICK_REST * STICK_REST && bestLook < STICK_REST * STICK_REST) this.settlingSticks = false
     this.ui = this.lent || this.settling ? 0 : ui
     if (this.lent || this.settling) {
       // Lent (lend), or handed back and still held: stillness, and no edge but the mute. The run latch is left alone.

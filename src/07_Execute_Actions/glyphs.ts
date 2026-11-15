@@ -17,6 +17,7 @@
  * the south button reads 'B'.
  */
 import type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
+import { PAD, type PadHand } from '../04_Connect_Hardware/gamepad.ts'
 
 export type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 
@@ -118,6 +119,15 @@ export function padButtonName(family: PadFamily, button: number): string {
   return PAD_BUTTON_NAMES[family][button] ?? ''
 }
 
+/**
+ * The pad's menu button for the player's hand, as the pad prints it (gamepad.ts PAD_UI): start with both hands; with
+ * one hand, whose centre buttons are its ping and run latch, select with that hand's shoulder held.
+ */
+export function padMenuWord(family: PadFamily, hand: PadHand): string {
+  if (hand === 'both') return padButtonName(family, PAD.start)
+  return `${padButtonName(family, PAD.select)} with ${padButtonName(family, hand === 'left' ? PAD.l1 : PAD.r1)} held`
+}
+
 type Row = readonly [ControlAction, string]
 
 const FOOT_ALL: readonly Row[] = [
@@ -169,7 +179,7 @@ const PAD_MENU_LABEL = 'Menu: console, HUD, ghost view, on-screen keys'
  * has (unbound ones skipped, the touch stick's throttle folded into "Steer and accelerate", and the touch
  * Menu's actions into one row).
  */
-export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all'): Hint[] {
+export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all', hand: PadHand = 'both'): Hint[] {
   const group = family === 'keyboard' || family === 'touch' ? family : 'pad'
   let rows = scope === 'tips' ? TIPS[group][driving ? 'drive' : 'foot'] : driving ? DRIVE_ALL : FOOT_ALL
   if (scope === 'all' && driving && family === 'touch') {
@@ -184,7 +194,7 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
       continue
     }
     if (isPadFamily(family) && (action === 'console' || action === 'hud' || action === 'ghost')) {
-      if (!out.some((h) => h.label === PAD_MENU_LABEL)) out.push({ action, glyph: g, kind: glyphKind(action, family), label: PAD_MENU_LABEL })
+      if (!out.some((h) => h.label === PAD_MENU_LABEL)) out.push({ action, glyph: hand === 'both' ? g : padMenuWord(family, hand), kind: glyphKind(action, family), label: PAD_MENU_LABEL })
       continue
     }
     out.push({ action, glyph: g, kind: glyphKind(action, family), label })

@@ -293,7 +293,7 @@ export function accessStatus(s: AccessSettings, prefersMore: boolean, visionNote
     `scan      ${s.scan ? 'on: the controls are offered in turn, Space presses the one offered' : 'off'}  (access scan on|off)`,
     `pad       ${s.pad === 'both' ? 'both hands' : `${s.pad} hand: its stick moves, with ${s.pad === 'left' ? 'L1' : 'R1'} held it looks; select runs, start pings`}  (access pad both|left|right)`,
     `announce  ${s.announce ? 'on: the district, a vehicle beside you, a seat and the toasts are read' : 'off'}  (access announce on|off)`,
-    `keys      ${s.keys === 'auto' ? 'auto: on screen for a pad, a headset, a switch, a resting pointer, and a phone at the prompt' : s.keys === 'on' ? 'on: on screen for every field' : 'off: never on screen'}  (access keys auto|on|off)`,
+    `keys      ${s.keys === 'auto' ? 'auto: on screen for a pad, a switch, a resting pointer, and a phone at the prompt' : s.keys === 'on' ? 'on: on screen for every field' : 'off: never on screen'}  (access keys auto|on|off)`,
     `kept      ${ACCESS_KEY}; for one visit: ?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= ?keys=`,
   ]
 }

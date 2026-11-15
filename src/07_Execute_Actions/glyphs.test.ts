@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, PAD_BUTTON_NAMES, padButtonName, spokenGlyph, type ControlAction, type GlyphFamily,
+  padMenuWord, controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, PAD_BUTTON_NAMES, padButtonName, spokenGlyph, type ControlAction, type GlyphFamily,
 } from './glyphs.ts'
 
 const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping', 'mic']
@@ -204,4 +204,14 @@ test('a pad\'s printed button names: position-true, plain words and signs, no bu
   assert.deepEqual([padButtonName('bayx', 8), padButtonName('bayx', 9)], ['−', '+'])
   assert.deepEqual([padButtonName('numbered', 8), padButtonName('numbered', 9)], ['Select', 'Start'])
   assert.equal(padButtonName('generic', 99), '', 'an index the mapping has no name for')
+})
+
+test('the pad\'s menu is named for the player\'s hand: start with both, select with that hand\'s shoulder with one', () => {
+  assert.equal(padMenuWord('abxy', 'both'), 'Menu')
+  assert.equal(padMenuWord('numbered', 'both'), 'Start')
+  assert.equal(padMenuWord('abxy', 'left'), 'View with LB held')
+  assert.equal(padMenuWord('bayx', 'right'), '− with R held')
+  const one = controlHints('abxy', false, 'all', 'left').find((h) => h.action === 'console')
+  assert.equal(one?.glyph, 'View with LB held')
+  assert.equal(controlHints('abxy', false, 'all').find((h) => h.action === 'console')?.glyph, 'Menu')
 })

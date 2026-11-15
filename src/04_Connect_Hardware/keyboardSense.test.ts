@@ -107,12 +107,23 @@ test('the watcher follows the device in use and remembers a keyboard for ten min
   assert.equal(sense.last, 'touch')
   assert.equal(sense.keyboardLately, false)
 
-  // A keyboard clipped on and typed on.
-  win.fire('keydown', { code: 'KeyL', key: 'l', keyCode: 76 })
+  // An iPhone's own keyboard sends real codes into the chat line it serves: no evidence either.
+  const chat = { tagName: 'INPUT', getAttribute: () => null }
+  win.fire('keydown', { code: 'KeyH', key: 'h', keyCode: 72, target: chat })
+  assert.equal(sense.last, 'touch', 'the phone\'s keyboard in a field it serves is not a keyboard clipped on')
+  assert.equal(sense.keyboardLately, false)
+
+  // A keyboard clipped on and typed on: into the prompt ours keep the phone's keyboard down for.
+  const prompt = { tagName: 'TEXTAREA', getAttribute: (n: string) => (n === 'inputmode' ? 'none' : null) }
+  win.fire('keydown', { code: 'KeyL', key: 'l', keyCode: 76, target: prompt })
   assert.equal(sense.last, 'keyboard')
   assert.equal(changes, 2)
+  // Every real key is told, so keys opened while the keyboard was already the last device go away at the next one.
+  win.fire('keydown', { code: 'KeyS', key: 's', keyCode: 83, target: prompt })
+  assert.equal(changes, 3, 'the keyboard again is still told')
   assert.equal(keysServe(sense.facts('auto', true)), false)
   win.fire('pointerdown', { pointerType: 'touch' })
+  assert.equal(changes, 4)
   assert.equal(keysServe(sense.facts('auto', true)), false, 'a tap right after typing: the keyboard is still there')
   now += KEYBOARD_MEMORY_MS - 1
   assert.equal(sense.keyboardLately, true)

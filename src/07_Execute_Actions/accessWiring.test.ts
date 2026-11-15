@@ -220,7 +220,8 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
   }
   const dvh = layout.match(/100dvh/g)?.length ?? 0
   assert.ok(dvh > 0)
-  assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
+  // (Sloane's cards take the on-screen keys' height off the viewport's first, both window pixels: ScreenKeys.tsx)
+  assert.equal(layout.match(/calc\((?:100dvh|calc\(100dvh_-_var\(--keys-height,0px\)\))(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
   // The first walk's card: the touch buttons' edges and the stick's zone with and without its gaps (the unzoomed touch
   // layer's), the top of the HUD's chips at the foot (window pixels, Hud.tsx), the window's height and the console's share.
   // (the HUD's foot latched at its highest, with the live foot as its fallback, is divided once for both)

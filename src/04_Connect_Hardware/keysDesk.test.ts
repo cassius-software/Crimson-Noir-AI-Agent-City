@@ -96,7 +96,7 @@ interface Rig {
   scopes: Map<FieldLike, unknown>
 }
 
-function rig(opts: { touchFirst?: boolean; hands?: Partial<DeskHands>; console?: Field | null } = {}): Rig {
+function rig(opts: { touchFirst?: boolean; hands?: Partial<DeskHands>; console?: Field | null | true; refuseClip?: boolean } = {}): Rig {
   const clock = new Clock()
   const marks = new Map<FieldLike, boolean>()
   const lends: boolean[] = []
@@ -143,7 +143,7 @@ function rig(opts: { touchFirst?: boolean; hands?: Partial<DeskHands>; console?:
       return true
     },
     readClip: () => { clip.reads++; return Promise.resolve(clip.text) },
-    writeClip: (t) => { clip.text = t; return Promise.resolve() },
+    writeClip: (t) => { if (opts.refuseClip) return Promise.reject(new Error('refused')); clip.text = t; return Promise.resolve() },
     say: (t) => { said.push(t) },
   }
   r.desk = new KeysDesk(env, sense)
@@ -168,6 +168,20 @@ test('a real key typed puts away keys a pad asked for; the pad asks again', () =
   assert.equal(r.desk.get().mode, 'peek', 'a pad button only offers them again')
   r.desk.summon()
   assert.equal(r.desk.get().mode, 'open', 'select asks again')
+})
+
+test('keys on, opened with the keyboard already the last device: the next real key still folds them to the chip', () => {
+  const r = rig({ hands: { setting: 'on' } })
+  r.sense.last = 'keyboard'
+  r.sense.keyboardLately = true
+  const p = prompt()
+  focusOn(r, p)
+  assert.equal(r.desk.get().mode, 'peek', 'on: offered on every field')
+  r.desk.summon()
+  assert.equal(r.desk.get().mode, 'open')
+  // The watcher tells every real key (keyboardSense.ts onKey), though the last device has not changed.
+  r.desk.deviceChanged()
+  assert.equal(r.desk.get().mode, 'peek', 'put away to the chip, as after any other device')
 })
 
 test('a pad\'s press that opens the console opens the keys on its prompt; a card that focuses its own field is only offered', () => {
@@ -240,12 +254,14 @@ test('a phone: a tap on the console\'s prompt opens the keys; a chat line keeps 
   r.desk.pointerDown(q)
   assert.equal(r.desk.get().mode, 'open', 'a tap on the field asks for them')
   r.desk.padAsk({ control: 'close', repeat: false })
-  r.desk.pointerDown(AROUND, 'mouse')
+  r.desk.tap(AROUND, 'mouse')
   assert.equal(r.desk.get().mode, 'peek', 'a mouse beside the prompt asks nothing')
-  r.desk.pointerDown(PAGE_BUTTON, 'touch')
+  r.desk.tap(PAGE_BUTTON, 'touch')
   assert.equal(r.desk.get().mode, 'peek', 'a finger elsewhere on the page asks nothing')
-  r.desk.pointerDown(AROUND, 'touch')
-  assert.equal(r.desk.get().mode, 'open', 'a finger on the console\'s lines, beside the prompt, asks for them')
+  r.desk.pointerDown(AROUND)
+  assert.equal(r.desk.get().mode, 'peek', 'a finger going down on the console\'s lines (a swipe to read them, perhaps) asks nothing yet')
+  r.desk.tap(AROUND, 'touch')
+  assert.equal(r.desk.get().mode, 'open', 'a tap on the console\'s lines, beside the prompt, asks for them')
 })
 
 test('a real key typed puts the keys away and gives the field its attributes back', () => {
@@ -400,7 +416,15 @@ test('a press on a field the keys will serve marks it before it takes the focus;
   const p = prompt()
   r.desk.pointerDown(p)
   assert.equal(r.marks.get(p), true, 'marked before the focus, so the phone\'s keyboard does not rise')
-  r.clock.advance(DESK.premarkMs)
+  r.clock.advance(DESK.premarkMs * 2)
+  assert.equal(r.marks.get(p), true, 'a finger resting before it lifts keeps the marks')
+  r.desk.pointerUp()
+  r.clock.advance(DESK.premarkMs - 1)
+  r.desk.pointerDown(p)
+  r.desk.pointerUp()
+  r.clock.advance(DESK.premarkMs - 1)
+  assert.equal(r.marks.get(p), true, 'a second tap starts the time again')
+  r.clock.advance(1)
   assert.equal(r.marks.get(p), false)
   const chat = new Field()
   r.desk.pointerDown(chat)
@@ -426,6 +450,34 @@ test('the system key hands the field to the device\'s keyboard inside the press,
   r.sense.last = 'gamepad'
   r.desk.summon()
   assert.equal(r.desk.get().mode, 'open')
+  // A pad's south button on the key: no gesture, so no device keyboard either; the keys stay.
+  r.desk.padAsk({ control: 'close', repeat: false })
+  r.desk.summon()
+  const sys = r.desk.get().board.rows.findIndex((row) => row.some((k) => k.id === 'system'))
+  const rowOf = (id: string | null): number => r.desk.get().board.rows.findIndex((row) => row.some((k) => k.id === id))
+  for (let i = 0; i < 8 && rowOf(r.desk.get().at) !== sys; i++) r.desk.padAsk({ control: 'down', repeat: false })
+  for (let i = 0; i < 12 && r.desk.get().at !== 'system'; i++) r.desk.padAsk({ control: 'left', repeat: false })
+  assert.ok(sys >= 0 && r.desk.get().at === 'system', `the highlight reached the key (${r.desk.get().at})`)
+  r.desk.padAsk({ control: 'press', repeat: false })
+  assert.equal(r.desk.get().mode, 'open', 'a pad cannot hand the field over')
+  assert.deepEqual(r.shown, [p])
+  assert.match(r.said.at(-1) ?? '', /from a tap on this key/)
+})
+
+test('a field handed to the device\'s keyboard is handed over while it keeps the caret, not for good', () => {
+  const r = rig({ touchFirst: true })
+  r.sense.last = 'touch'
+  const p = prompt()
+  focusOn(r, p, true)
+  r.desk.press('system')
+  assert.equal(r.desk.get().mode, 'hidden')
+  r.focus.el = null
+  r.desk.focusOut(p, null)
+  r.clock.advance(DESK.graceMs)
+  r.clock.advance(5000)
+  r.desk.pointerDown(p)
+  focusOn(r, p, true)
+  assert.equal(r.desk.get().mode, 'open', 'tapped again after it lost the caret: the keys serve it again')
 })
 
 test('a card that must be answered first folds the keys to the chip and takes the pads back', () => {
@@ -469,6 +521,118 @@ test('Tab goes to the card\'s next field and the keys stay open there; Ctrl+C co
   r.clock.advance(0)
   assert.equal(b.value, 'hello world!')
   assert.equal(r.clip.reads, 1)
+})
+
+test('Ctrl+X cuts only once the text is on the clipboard; a refused write loses nothing', async () => {
+  const r = rig()
+  r.sense.last = 'gamepad'
+  const f = new Field()
+  r.fields.push(f)
+  focusOn(r, f)
+  r.desk.summon()
+  f.value = 'keep this'
+  f.selectionStart = 5
+  f.selectionEnd = 9
+  r.desk.press('ctrl')
+  r.desk.press('x')
+  r.clock.advance(0)
+  assert.equal(f.value, 'keep this', 'not before the clipboard has it')
+  await Promise.resolve()
+  await Promise.resolve()
+  r.clock.advance(0)
+  assert.equal(r.clip.text, 'this')
+  assert.equal(f.value, 'keep ')
+  // The clipboard refuses (a browser that wants a person's own press for it): the text stays.
+  const refused = rig({ refuseClip: true })
+  refused.sense.last = 'gamepad'
+  const g = new Field()
+  focusOn(refused, g)
+  refused.desk.summon()
+  g.value = 'secret'
+  g.selectionStart = 0
+  g.selectionEnd = 6
+  refused.desk.press('ctrl')
+  refused.desk.press('x')
+  for (let i = 0; i < 4; i++) { await Promise.resolve(); refused.clock.advance(0) }
+  assert.equal(g.value, 'secret')
+  assert.match(refused.said.at(-1) ?? '', /nothing was cut/)
+})
+
+test('off is never on screen, even summoned; a card that must be answered first is not covered by a summon', () => {
+  const r = rig({ console: true, hands: { setting: 'off' } })
+  r.sense.last = 'gamepad'
+  const f = new Field()
+  focusOn(r, f)
+  r.desk.summon()
+  assert.equal(r.desk.get().mode, 'hidden')
+  assert.deepEqual(r.lends, [])
+  const b = rig({ console: true })
+  b.sense.last = 'gamepad'
+  b.desk.setBlocked(true)
+  b.desk.summon()
+  assert.equal(b.consoles, 0, 'no console opened under the card')
+})
+
+test('asked for a field the keys do not serve is not kept: a pad picked up later only offers them', () => {
+  const r = rig()
+  r.sense.last = 'mouse'
+  const p = prompt()
+  focusOn(r, p, true)
+  assert.equal(r.desk.get().mode, 'hidden', 'a desktop\'s click into the console: no keys')
+  r.clock.advance(3000)
+  r.sense.last = 'gamepad'
+  r.desk.deviceChanged()
+  assert.equal(r.desk.get().mode, 'peek', 'the chip, not the keys thrown open')
+  assert.deepEqual(r.lends, [])
+})
+
+test('reopened on another board, the pad\'s highlight is on its first key and the pad types', () => {
+  const r = rig()
+  r.sense.last = 'gamepad'
+  const f = new Field()
+  focusOn(r, f)
+  r.desk.summon()
+  r.desk.padAsk({ control: 'layer', repeat: false })
+  assert.equal(r.desk.get().keys.layer, 'numbers')
+  r.desk.padAsk({ control: 'close', repeat: false })
+  r.desk.summon()
+  const at = r.desk.get().at
+  assert.ok(at !== null, 'a highlight on the numbers board')
+  r.desk.padAsk({ control: 'press', repeat: false })
+  r.clock.advance(0)
+  assert.equal(f.value.length, at === 'Escape' || at === 'Tab' ? 0 : 1, `pressed ${at}`)
+})
+
+test('summoned after the pad\'s menu took the focus, the keys go back to the field the player was in', () => {
+  const r = rig()
+  r.sense.last = 'gamepad'
+  const a = new Field(), b = new Field()
+  r.fields.push(a, b)
+  focusOn(r, b)
+  r.focus.el = null
+  r.desk.focusOut(b, PAGE_BUTTON)
+  r.desk.focusIn(PAGE_BUTTON)
+  r.clock.advance(DESK.graceMs + 1)
+  assert.equal(r.desk.get().field, null)
+  r.desk.summon()
+  assert.equal(r.focus.el, b, 'not the first field on the page')
+  assert.equal(r.desk.get().mode, 'open')
+})
+
+test('the prompt given the focus back as the pad\'s menu closes is as it was: offered stays offered', () => {
+  const r = rig()
+  r.sense.last = 'gamepad'
+  const p = prompt()
+  focusOn(r, p)
+  assert.equal(r.desk.get().mode, 'peek')
+  r.focus.el = null
+  r.desk.focusOut(p, PAGE_BUTTON)
+  r.desk.focusIn(PAGE_BUTTON)
+  r.clock.advance(2000)
+  r.desk.padPressed()
+  r.clock.advance(100)
+  focusOn(r, p)
+  assert.equal(r.desk.get().mode, 'peek', 'choosing Ghost view on the menu does not throw the keys open over the console')
 })
 
 test('the pad types: the highlight steps, Shift and the layer change the board, a held south button repeats letters only', () => {

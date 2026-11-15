@@ -689,6 +689,15 @@ test('lend: the pads borrowed by the on-screen keys give the game stillness and 
   // Lending twice, or handing back what was not lent, changes nothing.
   m.lend(false)
   assert.equal(m.borrowed, false)
+  // A worn stick that rests past the dead zone is at rest: handed back, the sticks walk again once let go.
+  const worn = new PadMapper()
+  worn.read([pad({ axes: [0.2, 0, 0.18, 0] })], out)
+  worn.lend(true)
+  worn.read([pad({ axes: [0.2, 1, 0.18, 0] })], out)
+  worn.lend(false)
+  worn.read([pad({ axes: [0.2, 0, 0.18, 0] })], out)
+  worn.read([pad({ axes: [0.2, -1, 0.18, 0] })], out)
+  assert.ok(out.moveY > 0.9, `a drifting stick does not freeze the sticks for good (moveY ${out.moveY})`)
 })
 
 test('views: the pads of the last read in the standard shape, and whether a button went down', () => {

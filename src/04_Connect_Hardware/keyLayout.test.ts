@@ -103,6 +103,9 @@ test('Enter and Tab carry Shift; the caret keys neither carry it nor use it up',
   assert.deepEqual(enter.out, [{ key: 'Enter', code: 'Enter', text: '', shift: true, ctrl: false }], 'Shift+Enter: a new line at the prompt')
   assert.equal(enter.state.shift, 'off')
   assert.deepEqual(run(['Enter']).out, [{ key: 'Enter', code: 'Enter', text: '', shift: false, ctrl: false }])
+  const caps = run(['shift', 'shift', 'h', 'Enter', 'Tab'])
+  assert.deepEqual((caps.out as { key: string; shift: boolean }[]).map((o) => [o.key, o.shift]), [['H', true], ['Enter', false], ['Tab', false]], 'caps lock: Enter runs the line, Tab goes forward')
+  assert.equal(caps.state.shift, 'lock')
   const moved = run(['shift', 'ArrowLeft', 'Backspace'])
   assert.deepEqual(moved.out, [
     { key: 'ArrowLeft', code: 'ArrowLeft', text: '', shift: false, ctrl: false },
