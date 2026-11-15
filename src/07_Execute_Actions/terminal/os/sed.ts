@@ -17,7 +17,12 @@
  * nothing in a script can loop for ever: there are no branches, and D restarts the cycle without reading only while
  * each restart leaves a shorter pattern space than the one before, which a script cannot keep up for long.
  * Long loops that ask nothing of the kernel give the other tasks a turn every 1024 rounds, and pattern searches do
- * after every so much matching work (counted in the engine's own steps), however few searches that took.
+ * after every so much matching work (counted in the engine's own steps): a search is run as a scan, a slice of work
+ * at a time, so even one search of a pattern of thousands of instructions over a line of megabytes, or the square of
+ * a line's length that s///g can cost, never holds the console for more than a slice, and Ctrl+C is heard between two.
+ * The patterns of a script are made ready a few at a time and held to PROGRAMS_MAX instructions in all; a new pattern
+ * space and the text -i writes back are put together a part at a time; and the writing back starts a turn of its own,
+ * so Ctrl+C never leaves a file half written.
  */
 import { EMPTY, encode } from './bytes.ts'
 import { OsError } from './errno.ts'
@@ -25,7 +30,7 @@ import type { Program, Sys } from './kernel.ts'
 import { READ_ALL_MAX } from './kernel.ts'
 import { Out, complain, usage } from './lib.ts'
 import { RegexError, compile } from './regex.ts'
-import type { Match, Regex } from './regex.ts'
+import type { Match, Regex, Scan } from './regex.ts'
 import type { Task } from './task.ts'
 import { O_READ, O_WRITE } from './vfs.ts'
 
@@ -37,8 +42,31 @@ const SPACE_TEXT = `8 MiB (${SPACE_MAX} characters)`
 const RESULT_MAX = READ_ALL_MAX
 /** A loop that asks nothing of the kernel gives the other tasks a turn when its count has none of these bits. */
 const PACE = 1023
-/** How much matching work (steps of the engine, or characters searched or copied) a run does between two turns of the others. */
-const PACE_WORK = 1 << 20
+/**
+ * How much matching work (steps of the engine, or characters copied) a run does between two turns of the others. A
+ * step takes from about 10 to about 150 nanoseconds, so a turn of sed lasts from a few milliseconds to about twenty.
+ */
+const PACE_WORK = 1 << 17
+/**
+ * The most instructions all the patterns of a script together may be laid out as (one may take 20000). Each holds a
+ * few dozen bytes once searched with, and a script can carry thousands of patterns that each lay out as many as one
+ * may: this is what keeps them from holding gigabytes and taking minutes to make ready.
+ */
+const PROGRAMS_MAX = 1 << 20
+/**
+ * Work of reading a script between two turns given to the other tasks: the instructions its patterns lay out, eight
+ * for each character of a pattern and 256 for each pattern or command. The largest pattern takes a millisecond or two.
+ */
+const COMPILE_WORK = 1 << 15
+/**
+ * Pieces of a new pattern space gathered before they are joined into one: s///g can make millions of them, and
+ * joining them all at once at the end held the console for a quarter of a second.
+ */
+const JOIN_PIECES = 4096
+/** Characters of what -i keeps for a file gathered before they are turned into bytes (so that never happens all at once). */
+const ENCODE_BATCH = 1 << 16
+/** Bytes of what -i writes back put together between two turns of the others. */
+const COPY_BATCH = 8 << 20
 const USAGE = 'sed [-n] [-E] [-i] [-e script]... [script] [file ...]'
 
 // What can go wrong, each as its own kind so that one is never taken for another.
@@ -125,7 +153,8 @@ const isLetter = (c: string | undefined): boolean => c !== undefined && ((c >= '
 
 /**
  * Reads a script into a flat list of commands; a `{` knows where its block ends, so running the list needs no
- * recursion. Every pattern is compiled here, so a bad one is refused before any input is read.
+ * recursion. Every pattern is compiled here, so a bad one is refused before any input is read. It reads a command at
+ * a time and counts the work, so that the program can give the other tasks a turn between two commands.
  */
 class Parser {
   private readonly src: string
@@ -135,6 +164,10 @@ class Parser {
   private readonly open: number[] = []
   /** The last pattern written so far, for an empty pattern to fall back on. */
   private written: Regex | null = null
+  /** The instructions laid out by every pattern so far. */
+  private laid = 0
+  /** Work done since the caller last cleared it (see COMPILE_WORK). */
+  work = 0
 
   constructor(src: string) {
     this.src = src
@@ -148,39 +181,44 @@ class Parser {
     while (this.src[this.i] === ' ' || this.src[this.i] === '\t') this.i++
   }
 
-  parse(): Cmd[] {
+  /** Reads the next command (or comment); false once the script is over, and then `done` gives the commands. */
+  next(): boolean {
     const src = this.src
-    for (;;) {
-      while (this.i < src.length && (src[this.i] === ' ' || src[this.i] === '\t' || src[this.i] === '\n' || src[this.i] === ';')) this.i++
-      if (this.i >= src.length) break
-      if (src[this.i] === '#') {
-        this.comment()
-        continue
-      }
-      const a1 = this.address()
-      let a2: Addr | null = null
-      if (a1 !== null) {
-        this.blanks()
-        if (src[this.i] === ',') {
-          this.i++
-          this.blanks()
-          a2 = this.second()
-        }
-      }
+    this.work += 256
+    while (this.i < src.length && (src[this.i] === ' ' || src[this.i] === '\t' || src[this.i] === '\n' || src[this.i] === ';')) this.i++
+    if (this.i >= src.length) return false
+    if (src[this.i] === '#') {
+      this.comment()
+      return true
+    }
+    const a1 = this.address()
+    let a2: Addr | null = null
+    if (a1 !== null) {
       this.blanks()
-      let negate = false
-      while (src[this.i] === '!') {
-        if (negate) this.fail('more than one ! in a row')
-        negate = true
+      if (src[this.i] === ',') {
         this.i++
         this.blanks()
+        a2 = this.second()
       }
-      const cp = src.codePointAt(this.i)
-      if (cp === undefined || cp === 10 || cp === 59) this.fail('missing command')
-      const name = String.fromCodePoint(cp)
-      this.i += name.length
-      this.command(name, a1, a2, negate)
     }
+    this.blanks()
+    let negate = false
+    while (src[this.i] === '!') {
+      if (negate) this.fail('more than one ! in a row')
+      negate = true
+      this.i++
+      this.blanks()
+    }
+    const cp = src.codePointAt(this.i)
+    if (cp === undefined || cp === 10 || cp === 59) this.fail('missing command')
+    const name = String.fromCodePoint(cp)
+    this.i += name.length
+    this.command(name, a1, a2, negate)
+    return true
+  }
+
+  /** The commands, once `next` has said the script is over. */
+  done(): Cmd[] {
     if (this.open.length > 0) this.fail('unmatched {')
     return this.cmds
   }
@@ -401,6 +439,9 @@ class Parser {
       if (e instanceof RegexError) this.fail(e.message)
       throw e
     }
+    this.laid += re.size
+    this.work += re.size + 8 * text.length + 256
+    if (this.laid > PROGRAMS_MAX) this.fail(`the patterns of the script are too large in all: more than ${PROGRAMS_MAX} instructions`)
     this.written = re
     return { own: re, fallback: re }
   }
@@ -570,7 +611,11 @@ class Parser {
  */
 class Sink {
   private readonly out: Out | null
-  private readonly kept: string[] = []
+  /** For -i: what was printed and not yet turned into bytes, and how many characters that is. */
+  private kept: string[] = []
+  private keptSize = 0
+  /** For -i: what was printed before that, as UTF-8 bytes, a batch at a time. */
+  private readonly encoded: Uint8Array[] = []
   private size = 0
   /** Whether the last thing printed was a pattern space that went without its line end. */
   private missing = false
@@ -599,6 +644,8 @@ class Sink {
       this.size += text.length
       if (this.size > RESULT_MAX) throw new Halt(`the edited text would be larger than ${RESULT_MAX >> 20} MiB`)
       this.kept.push(text)
+      this.keptSize += text.length
+      if (this.keptSize >= ENCODE_BATCH) this.settle(false)
       return
     }
     try {
@@ -617,9 +664,42 @@ class Sink {
     }
   }
 
-  /** What was kept in memory, as one text. */
-  result(): string {
-    return this.kept.join('')
+  /**
+   * Turns what was kept into bytes. Unless it is the end, the first half of a pair of UTF-16 units at the end waits
+   * for the next batch, so the bytes are those of the whole text turned at once.
+   */
+  private settle(end: boolean): void {
+    let text = this.kept.join('')
+    this.kept = []
+    this.keptSize = 0
+    const last = text.charCodeAt(text.length - 1)
+    if (!end && last >= 0xd800 && last <= 0xdbff) {
+      this.kept.push(text.slice(-1))
+      this.keptSize = 1
+      text = text.slice(0, -1)
+    }
+    if (text !== '') this.encoded.push(encode(text))
+  }
+
+  /** What was kept in memory, as UTF-8 bytes in one array, put together a few mebibytes a turn. */
+  *bytes(sys: Sys): Task<Uint8Array> {
+    this.settle(true)
+    let total = 0
+    for (const piece of this.encoded) total += piece.length
+    const out = new Uint8Array(total)
+    let at = 0
+    let since = 0
+    for (const piece of this.encoded) {
+      out.set(piece, at)
+      at += piece.length
+      since += piece.length
+      if (since >= COPY_BATCH) {
+        since = 0
+        yield* sys.breathe()
+      }
+    }
+    this.encoded.length = 0
+    return out
   }
 }
 
@@ -803,18 +883,6 @@ function after(text: string, at: number): number {
     if (d >= 0xdc00 && d <= 0xdfff) return at + 2
   }
   return at + 1
-}
-
-/**
- * What the search `re` just made cost: the engine's own count of the steps it took, which it keeps on the pattern it
- * hands out (regex.ts names it `steps`, though its interface does not), or, for a plain-text pattern it finds without
- * stepping, the `chars` it could have looked at. One search over a long text can cost far more than its characters
- * (a pattern that has to look ahead to the end of the text, every time `s///g` searches again), so counting
- * searches alone would let one line hold the console for seconds.
- */
-function cost(re: Regex, chars: number): number {
-  const steps = 'steps' in re && typeof re.steps === 'number' ? re.steps : 0
-  return steps > 0 ? steps : chars
 }
 
 /** One run of a script over one input. */
@@ -1039,13 +1107,10 @@ class Editor {
   }
 
   private *test(p: Pat): Task<boolean> {
-    const re = this.resolve(p)
-    const hit = re.test(this.pattern)
-    yield* this.charge(cost(re, this.pattern.length))
-    return hit
+    return yield* this.finish(this.resolve(p).probe(this.pattern))
   }
 
-  /** Counts matching work, and gives the other tasks a turn when there has been a lot of it. */
+  /** Counts matching work (and a little for the call itself); gives the other tasks a turn after a lot of it. */
   private *charge(amount: number): Task<void> {
     this.work += amount + 32
     if (this.work >= PACE_WORK) {
@@ -1055,20 +1120,42 @@ class Editor {
   }
 
   /**
+   * Runs a search to its answer, a slice at a time: each run of the scan is given the work left before the other
+   * tasks are due a turn, which they get when it is spent. One search can cost far more than its characters (a
+   * pattern that has to look ahead to the end of the text, every time s///g searches again; a pattern of thousands
+   * of instructions), so pacing whole searches would let one line hold the console for seconds or minutes.
+   */
+  private *finish<T>(scan: Scan<T>): Task<T> {
+    for (;;) {
+      const before = scan.steps
+      const answer = scan.run(PACE_WORK - this.work)
+      yield* this.charge(scan.steps - before)
+      if (answer !== undefined) return answer
+    }
+  }
+
+  /**
    * `s`: the matches are found left to right, each search starting where the last match ended. A match of no
    * characters right where a match just ended is not one of its own (so replacing every run of a's, empty runs
    * included, by x turns `baaac` into `xbxcx`); after a match of no characters the search steps on by one character,
-   * which is copied as it is.
+   * which is copied as it is. So with g a pattern that looks far ahead costs in the square of the line's length:
+   * that is what finding the leftmost match each time costs here, and it is paced like any other work, never cut short.
    */
   private *substitute(sub: Subst): Task<void> {
     const re = this.resolve(sub.pat)
     const text = this.pattern
-    const pieces: string[] = []
+    // The new pattern space, in pieces, joined JOIN_PIECES at a time as they come.
+    const joined: string[] = []
+    let pieces: string[] = []
     let size = 0
     const keep = (piece: string): void => {
       size += piece.length
       if (size > SPACE_MAX) throw new Halt(`the pattern space would hold more than ${SPACE_TEXT}`)
       pieces.push(piece)
+      if (pieces.length >= JOIN_PIECES) {
+        joined.push(pieces.join(''))
+        pieces = []
+      }
     }
     let pos = 0
     let copied = 0
@@ -1076,8 +1163,7 @@ class Editor {
     let ended = -1
     let changed = false
     while (pos <= text.length) {
-      const m: Match | null = re.exec(text, pos)
-      yield* this.charge(cost(re, (m === null ? text.length : m.end) - pos))
+      const m: Match | null = yield* this.finish(re.search(text, pos))
       if (m === null) break
       const empty = m.start === m.end
       if (!(empty && m.start === ended)) {
@@ -1103,7 +1189,8 @@ class Editor {
     }
     if (!changed) return
     keep(text.slice(copied))
-    this.pattern = pieces.join('')
+    joined.push(pieces.join(''))
+    this.pattern = joined.length === 1 ? joined[0] : joined.join('')
     yield* this.charge(size)
     if (sub.print) yield* this.sink.space(this.pattern, this.bare)
   }
@@ -1200,7 +1287,15 @@ const sed: Program = function* (sys, argv) {
   if (script.startsWith('#n') && (script.length === 2 || script[2] === '\n')) quiet = true
   let cmds: Cmd[]
   try {
-    cmds = new Parser(script).parse()
+    // A script of thousands of large patterns takes seconds to make ready: the other tasks get a turn now and then.
+    const parser = new Parser(script)
+    while (parser.next()) {
+      if (parser.work >= COMPILE_WORK) {
+        parser.work = 0
+        yield* sys.breathe()
+      }
+    }
+    cmds = parser.done()
   } catch (e) {
     if (!(e instanceof ScriptError)) throw e
     yield* sys.eprint(`sed: ${e.message}\n`)
@@ -1249,7 +1344,12 @@ const sed: Program = function* (sys, argv) {
     if (feed.failed) failed = true
     else {
       try {
-        yield* writeBack(sys, path, encode(sink.result()))
+        const data = yield* sink.bytes(sys)
+        // The writing starts a turn of its own: its few calls then all fit in that turn, so Ctrl+C, which is heard
+        // only between turns, can never come between the new text going over the old and the rest being cut off
+        // (which would leave the file holding the new text and then the end of the old).
+        yield* sys.breathe()
+        yield* writeBack(sys, path, data)
       } catch (e) {
         if (!(e instanceof OsError)) throw e
         yield* complain(sys, 'sed', path, e)
@@ -1301,11 +1401,12 @@ WHAT IT DOES
     Patterns are always the extended kind: . is any character, * + ?
     and {m,n} repeat what is before them, ( ) groups, | separates
     choices, [abc] [a-z] [^a-z] are sets, ^ and $ are the start and the
-    end of the pattern space, \\n is a line feed, \\t a tab, \\w a letter,
-    digit or _, \\d a digit, \\s white space, and a backslash before any
-    other sign makes it plain (\\. is a dot, \\/ a slash). An empty
-    pattern // stands for the last pattern used; until one has been
-    used, for the last one written before it in the script.
+    end of the pattern space, \\n is a line feed, \\t a tab, \\r a
+    carriage return (so s/\\r$// takes one off the end of a line), \\w a
+    letter, digit or _, \\d a digit, \\s white space, and a backslash
+    before any other sign makes it plain (\\. is a dot, \\/ a slash). An
+    empty pattern // stands for the last pattern used; until one has
+    been used, for the last one written before it in the script.
 
     Commands (each may follow an address unless said otherwise):
       s/re/text/flags  replace what re matches with text (see below)
@@ -1383,7 +1484,17 @@ NOTES
     edited in place gets back at most 64 MiB. Past a limit sed says so
     and stops. D runs the script again without reading only while that
     leaves a shorter pattern space each time; when it would not (as in
-    G;D), sed says so and stops instead of going round for ever.
+    G;D), sed says so and stops instead of going round for ever. The
+    matcher lays a pattern out as at most 20000 instructions (so
+    a{1000}{1000} is refused as too large), and all the patterns of a
+    script as at most 1048576 in all; past that the script is refused.
+
+    A search costs at most the length of the pattern space times the
+    size of the pattern, so a very large pattern over a very long line
+    can take a while; with g each search starts again where the last
+    match ended, which on a line with many matches can make the work
+    grow with the square of the line's length. Either way sed lets the
+    other programs run as it goes, and Ctrl+C stops it at once.
 
 STATUS
     0; 1 when a file could not be read or written or sed stopped at a

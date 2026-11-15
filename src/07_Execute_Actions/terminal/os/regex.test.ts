@@ -6,16 +6,17 @@
  * which match a pattern must give on a text; every refusal is checked by its message; the engine is run beside the
  * host's own matcher on patterns generated here from a small grammar that both read alike (the host's matcher is
  * only the yardstick: it sees nothing but patterns this file made, and the engine's own source never names it);
- * and the shapes that stall a matcher which tries one path at a time are held to a count of steps, so the bound is
- * a number that is checked and not a hope about the clock.
+ * the shapes that stall a matcher which tries one path at a time are held to a count of steps, so the bound is a
+ * number that is checked and not a hope about the clock; and a search cut into runs of every budget is held to the
+ * very answer and steps of the same search done in one go.
  * What breaks if it is removed? A change to the engine could alter what a search finds or how a group is reported,
  * or let one typed pattern run long, and nothing would say so.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { compile, RegexError } from './regex.ts'
-import type { Match, Regex, RegexOptions } from './regex.ts'
+import { compile, folded, RegexError } from './regex.ts'
+import type { Match, Regex, RegexOptions, Scan } from './regex.ts'
 
 /**
  * A match as the tables write it: the whole match as `start,end`, then each group up to the last one that took
@@ -65,10 +66,9 @@ function refusal(pattern: string, options?: RegexOptions): string {
 
 /** The engine's own counts: how many instructions a pattern was laid out as, and how many steps the last run took. */
 function counts(re: Regex): { readonly size: number; readonly steps: number } {
-  const { size, steps } = re as Regex & { readonly size: number; readonly steps: number }
-  assert.equal(typeof size, 'number')
-  assert.equal(typeof steps, 'number')
-  return { size, steps }
+  assert.ok(Number.isSafeInteger(re.size) && re.size >= 1)
+  assert.ok(Number.isSafeInteger(re.steps) && re.steps >= 0)
+  return { size: re.size, steps: re.steps }
 }
 
 /** A tiny linear congruential generator: the same numbers on every run, so every generated case is the same. */
@@ -460,6 +460,13 @@ test('escapes: a backslash makes a special character ordinary, and names a few o
     ['a\\tb', 'a\tb', '0,3'],
     ['a\\nb', 'a\nb', '0,3'],
     ['\\t+', 'a\t\tb', '1,3'],
+    // a carriage return, as a line from a file written with two-character line ends carries at its end
+    ['a\\rb', 'a\rb', '0,3'],
+    ['\\r$', 'one\r', '3,4'],
+    ['one\\r$', 'one\r\n', 'none'],
+    ['[\\r\\n]+', 'a\r\nb', '1,3'],
+    ['[^\\r]+', '\rab\r', '1,3'],
+    ['\\r', 'a\nb', 'none'],
     ['\\w+', '-ab_1-', '1,5'],
     ['\\W+', 'ab -cd', '2,4'],
     ['\\d+', 'ab12cd', '2,4'],
@@ -761,7 +768,8 @@ test('refusals: each one by its message', () => {
     ['[\\1]', 'back-references are not supported'],
     ['\\q', 'unknown escape \\q'],
     ['\\0', 'unknown escape \\0'],
-    ['\\r', 'unknown escape \\r'],
+    ['\\v', 'unknown escape \\v'],
+    ['\\R', 'unknown escape \\R'],
     ['\\A', 'unknown escape \\A'],
     ['\\x41', 'unknown escape \\x'],
     ['[\\q]', 'unknown escape \\q'],
@@ -1051,6 +1059,193 @@ test('wild patterns: only a RegexError ever comes out, and every match keeps its
   assert.ok(compiled > 1500, `${compiled} compiled`)
   assert.ok(refused > 1500, `${refused} refused`)
   assert.ok(matches > 1500, `${matches} matches`)
+})
+
+test('folded: the case fold the engine matches by, there for a program that folds a text itself', () => {
+  const rows: readonly (readonly [number, number])[] = [
+    [65, 97], [97, 97], [90, 122], [48, 48], [95, 95], [0xc9, 0xe9], [0xe9, 0xe9], [0x3a3, 0x3c3], [0x3c2, 0x3c3],
+    // the long s, the dotless i and the Kelvin sign fold into ASCII; the sharp s would fold to two characters, so it does not
+    [0x17f, 0x73], [0x131, 0x69], [0x212a, 0x6b], [0xdf, 0xdf], [0x10400, 0x10428], [0x10428, 0x10428], [0x1f600, 0x1f600],
+  ]
+  for (const [c, f] of rows) assert.equal(folded(c), f, `u+${c.toString(16)}`)
+  // It is what -i matches by, and it never moves a character into or out of the first 65536, so offsets keep.
+  for (let c = 0; c <= 0x1ffff; c++) {
+    if (c >= 0xd800 && c <= 0xdfff) continue
+    const f = folded(c)
+    if ((c > 0xffff) !== (f > 0xffff) || folded(f) !== f) assert.fail(`u+${c.toString(16)} folds to u+${f.toString(16)}`)
+    if (c < 0x3000 && f !== c && !compile(String.fromCodePoint(c), { ignoreCase: true }).test(String.fromCodePoint(f))) {
+      assert.fail(`u+${c.toString(16)} does not match u+${f.toString(16)} with case ignored`)
+    }
+  }
+})
+
+/**
+ * Runs `scan` to its answer, `budget` at a time, holding every run to its promise: it takes at least one step until
+ * the answer is known, fewer than budget + 3 x size, and nothing at all once the answer is known. The answer and the
+ * number of runs it took.
+ */
+function drive<T>(scan: Scan<T>, budget: number, size: number, label: string): { readonly answer: T; readonly runs: number } {
+  for (let runs = 1; runs < 1_000_000; runs++) {
+    const before = scan.steps
+    const answer = scan.run(budget)
+    const took = scan.steps - before
+    assert.ok(took < (budget >= 1 ? budget : 1) + 3 * size, `${label}: one run of budget ${budget} took ${took} steps (size ${size})`)
+    if (answer !== undefined) {
+      // Asked again, it answers the same at once.
+      const steps = scan.steps
+      assert.equal(scan.run(budget), answer, label)
+      assert.equal(scan.steps, steps, label)
+      return { answer, runs }
+    }
+    assert.ok(took >= 1 || runs > 1, `${label}: a first run that did nothing and found no answer`)
+  }
+  return assert.fail(`${label}: no answer`)
+}
+
+/**
+ * For one pattern, text and place: exec and test, then the same searches as scans run with every budget from 1 up
+ * to one more than exec's steps (where a single run is enough), each held to the same answer and the same steps.
+ */
+function sameEveryWay(re: Regex, text: string, from: number, label: string): number {
+  const want = re.exec(text, from)
+  const steps = re.steps
+  const yes = re.test(text)
+  const testSteps = re.steps
+  let runs = 0
+  for (let budget = 1; budget <= steps + 1; budget++) {
+    const scan = re.search(text, from)
+    assert.equal(scan.steps, 0, label)
+    const got = drive(scan, budget, re.size, `${label}, budget ${budget}`)
+    assert.deepEqual(got.answer, want, `${label}, budget ${budget}`)
+    assert.equal(scan.steps, steps, `${label}, budget ${budget}: steps`)
+    assert.equal(re.steps, steps, `${label}, budget ${budget}: the pattern's own count`)
+    if (budget === steps + 1) assert.equal(got.runs, 1, `${label}: a budget past the whole search takes one run`)
+    runs += got.runs
+  }
+  for (let budget = 1; budget <= testSteps + 1; budget++) {
+    const scan = re.probe(text)
+    const got = drive(scan, budget, re.size, `probe ${label}, budget ${budget}`)
+    assert.equal(got.answer, yes, `probe ${label}, budget ${budget}`)
+    assert.equal(scan.steps, testSteps, `probe ${label}, budget ${budget}: steps`)
+  }
+  return runs
+}
+
+test('scans: cut into runs of any budget, a search gives exec\'s answer and steps, and a probe test\'s', () => {
+  const rnd = generator(4242)
+  const letters = ['a', 'b', 'c']
+  const sets = ['[ab]', '[^a]', '[a-c]', '[^bc]', '\\w', '\\W']
+  const next = grammar(rnd, letters, sets)
+  const alphabet = ['a', 'b', 'c', 'a', 'b', 'x', '\n', ' ', GRIN]
+  // Anchors, word edges and groups past the grammar's, at the start, the end and in between.
+  const extras = ['^', '$', '\\b', '\\<', '\\>', '\\B', '(^|x)', '(a|$)', '((a)|b)*', '(a?){3}', '[^\\n]*', '.', GRIN]
+  let cases = 0
+  let matched = 0
+  let cut = 0
+  for (let round = 0; round < 500; round++) {
+    let pattern = next()
+    if (rnd(3) === 0) pattern = rnd(2) === 0 ? `${extras[rnd(extras.length)]}${pattern}` : `${pattern}${extras[rnd(extras.length)]}`
+    const options: RegexOptions = { ignoreCase: rnd(4) === 0, literal: rnd(12) === 0 }
+    const re = compile(pattern, options)
+    for (let k = 0; k < 3; k++) {
+      let text = ''
+      for (let n = rnd(10); n > 0; n--) text += alphabet[rnd(alphabet.length)]
+      // Every kind of place: the start, inside, between the halves of a pair, the end, past the end.
+      const from = rnd(3) === 0 ? 0 : rnd(text.length + 3) - 1
+      const label = `${JSON.stringify(pattern)} ${JSON.stringify(options)} on ${JSON.stringify(text)} from ${from}`
+      const runs = sameEveryWay(re, text, from, label)
+      if (re.exec(text, from) !== null) matched++
+      if (runs > re.steps + 1) cut++
+      cases++
+    }
+  }
+  // Plain characters too, found by a plain text search: its steps are the characters it went past.
+  for (const [pattern, text, from] of [['ab', 'xxabyab', 0], ['ab', 'xxabyab', 3], ['ab', 'xxx', 1], ['', 'abc', 2], [GRIN, `a${GRIN}`, 0]] as const) {
+    sameEveryWay(compile(pattern), text, from, JSON.stringify([pattern, text, from]))
+  }
+  const ab = compile('ab')
+  assert.equal(ab.exec('xxabyab', 3)?.start, 5)
+  assert.equal(ab.steps, 4)
+  assert.equal(ab.exec('xxabyab', 6), null)
+  assert.equal(ab.steps, 1)
+  assert.equal(cases, 1500)
+  assert.ok(matched > cases / 4, `${matched} of ${cases} matched`)
+  assert.ok(cut > cases / 2, `${cut} of ${cases} were cut into more than one run at small budgets`)
+})
+
+test('scans: many at once on one pattern, each with its space, beside exec and test', () => {
+  const re = compile('(a|b)*(c)(\\w+)?')
+  const texts = ['xxababcab', 'c', 'ababab', `${'ab'.repeat(40)}c${'d'.repeat(40)}`, '', 'zzzzc!']
+  const want = texts.map((t) => re.exec(t))
+  const wantSteps = texts.map((t) => {
+    re.exec(t)
+    return re.steps
+  })
+  // Six scans run by turns, two steps at a time, with an exec and a test of other texts between their runs.
+  const scans = texts.map((t) => re.search(t))
+  const answers: (Match | null | undefined)[] = texts.map(() => undefined)
+  for (let turn = 0; answers.some((a) => a === undefined); turn++) {
+    assert.ok(turn < 10000)
+    for (let i = 0; i < scans.length; i++) {
+      if (answers[i] === undefined) answers[i] = scans[i].run(2)
+      assert.equal(re.test('ccc'), true)
+      assert.deepEqual(re.exec('ac'), { start: 0, end: 2, groups: [[0, 2], [0, 1], [1, 2], null, null, null, null, null, null, null] })
+    }
+  }
+  assert.deepEqual(answers, want)
+  assert.deepEqual(scans.map((s) => s.steps), wantSteps)
+  // A scan left part way holds only its own space: searches after it are as they were, and it can still go on.
+  const left = re.search(texts[3])
+  assert.equal(left.run(5), undefined)
+  for (let i = 0; i < texts.length; i++) assert.deepEqual(re.exec(texts[i]), want[i])
+  assert.deepEqual(left.run(Number.POSITIVE_INFINITY), want[3])
+  assert.equal(left.steps, wantSteps[3])
+  // Probes too.
+  const probes = texts.map((t) => re.probe(t))
+  const said = probes.map((p) => drive(p, 1, re.size, 'probe').answer)
+  assert.deepEqual(said, texts.map((t) => re.test(t)))
+})
+
+test('scans: budgets that are no count, places past the end, and what the pattern says it did', () => {
+  const re = compile('a+b')
+  const text = `${'a'.repeat(50)}b`
+  const whole = re.exec(text)
+  const steps = re.steps
+  // A budget below one, or no number at all, is one: each run still moves on by a place.
+  for (const budget of [0, -3, Number.NaN, 0.5, 1.9]) {
+    const scan = re.search(text)
+    const got = drive(scan, budget, re.size, `budget ${budget}`)
+    assert.deepEqual(got.answer, whole)
+    assert.ok(got.runs > 10, `budget ${budget}: ${got.runs} runs`)
+    assert.equal(scan.steps, steps)
+  }
+  const once = re.search(text)
+  assert.deepEqual(once.run(Number.POSITIVE_INFINITY), whole)
+  // A place past the end finds nothing, at once and at no cost; so does no place at all.
+  const past = re.search('ab', 3)
+  assert.equal(past.run(1), null)
+  assert.equal(past.steps, 0)
+  assert.equal(re.steps, 0)
+  assert.equal(re.search('ab', Number.POSITIVE_INFINITY).run(1), null)
+  assert.deepEqual(re.search('ab', Number.NaN).run(100), re.exec('ab'))
+  // The pattern's steps are those of the last search run, a scan's being all it has done so far.
+  const slow = re.search(text)
+  slow.run(10)
+  assert.equal(re.steps, slow.steps)
+  re.exec('b')
+  const small = re.steps
+  assert.ok(small < slow.steps)
+  slow.run(Number.POSITIVE_INFINITY)
+  assert.equal(re.steps, steps)
+  // A large pattern over a long text, a little at a time: no run goes far past its budget.
+  const wide = compile('[ab]{600}c|(a?){200}b')
+  const long = 'a'.repeat(1500)
+  const scan = wide.search(long)
+  const got = drive(scan, 500, wide.size, 'wide')
+  assert.equal(got.answer, null)
+  assert.ok(scan.steps > 1_000_000 && got.runs > scan.steps / (500 + 3 * wide.size), `${got.runs} runs for ${scan.steps} steps`)
+  assert.equal(wide.exec(long), null)
+  assert.equal(wide.steps, scan.steps)
 })
 
 test('the engine is its own: its source imports nothing and never names the host matcher', () => {

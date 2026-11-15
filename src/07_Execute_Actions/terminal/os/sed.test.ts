@@ -5,8 +5,9 @@
  * Why does this file exist? It holds sed (sed.ts) to what its manual page promises, run through the real shell on a
  * system booted in memory: every address form, every command, the corners of substitution (matches of no
  * characters, the Nth match, case folding, the special characters of a replacement), the text commands, the hold
- * space, several files, in-place editing, input without a final line end, the exact words of every refusal, and
- * the limits that keep a script from running away.
+ * space, several files, in-place editing, input without a final line end, the exact words of every refusal, the
+ * limits that keep a script from running away, and searches so long they must be cut into turns of the kernel and
+ * stopped by Ctrl+C.
  * What breaks if it is removed? A change to sed could quietly alter what a script does to a file, and nobody would
  * hear of it until the file was already rewritten.
  */
@@ -15,6 +16,7 @@ import { test } from 'node:test'
 import { encode } from './bytes.ts'
 import { boot } from './kit.test.ts'
 import type { Kit } from './kit.test.ts'
+import { compile } from './regex.ts'
 import { SED_MANUAL, SED_PROGRAMS } from './sed.ts'
 
 /** A word as the shell reads it back unchanged: in single quotes, a quote inside written as '\''. */
@@ -231,6 +233,14 @@ test('sed: substitution, its flags and the special characters of a replacement',
     ['', 's/a{2}/X/', 'aaa\n', 'Xa\n'],
     ['', 's/[[:cntrl:]]$//', 'a\r\n', 'a\n'],
     ['', 's/a/b/', 'a\r\nc\r\n', 'b\r\nc\r\n'],
+    // \r is a carriage return: the usual way to take two-character line ends down to one.
+    ['', 's/\\r$//', 'a\r\nb\nc\r\n', 'a\nb\nc\n'],
+    ['', 's/\\r$//', 'a\r', 'a'],
+    ['', 's/\\r//g', '\ra\rb\r\n', 'ab\n'],
+    ['', '/\\r$/d', 'a\r\nb\n', 'b\n'],
+    ['', 's/[\\r]/<CR>/g', 'a\rb\n', 'a<CR>b\n'],
+    ['', 'N;s/\\r\\n/ /', 'a\r\nb\n', 'a b\n'],
+    ['-n', '/x\\r/p', 'xr\nx\r\n', 'x\r\n'],
     // p prints after a replacement only.
     ['-n', 's/a/b/p', 'a\nc\na\n', 'b\nb\n'],
     ['', 's/a/b/p', 'a\n', 'b\nb\n'],
@@ -530,6 +540,155 @@ test('sed: searches that cost far more than their characters still give the othe
   k.write('/tmp/f', `${'a'.repeat(65536)}\n`)
   assert.ok(turns(`sed -n ${q('/a*b/p;'.repeat(40))} /tmp/f > /tmp/out`) > 10)
   assert.equal(k.read('/tmp/out'), '')
+})
+
+/**
+ * The most work of the engine a turn of sed may do with a pattern of `size` instructions: one slice of 131072 steps,
+ * and what the last place of the text looked at can add past it (three steps for each instruction). At the slowest a
+ * step goes (about 150 nanoseconds, folding letters past ASCII) that is some twenty milliseconds, and mostly a few.
+ * A sed that let two slices go by between turns would take half the turns these tests ask for.
+ */
+const turnSteps = (size: number): number => (1 << 17) + 3 * size
+
+/** Types a command line and runs the system a turn at a time until nothing can move: how many turns that took. */
+function turnsOf(k: Kit, line: string): number {
+  k.system.type(`${line}\n`)
+  let n = 0
+  while (!k.system.idle) {
+    k.system.run(1, Number.POSITIVE_INFINITY)
+    n++
+  }
+  return n
+}
+
+test('sed: one long search is cut into turns, none with more than a slice of the engine\'s work', () => {
+  const k = boot(SED_PROGRAMS)
+  const turns = (line: string): number => turnsOf(k, line)
+  // Every instruction of this pattern stays alive along a run of a's: millions of steps for one address, one search.
+  const pattern = '[ab]{1000}c'
+  const line = 'a'.repeat(4000)
+  k.write('/tmp/f', `${line}\n`)
+  const re = compile(pattern)
+  assert.equal(re.test(line), false)
+  assert.ok(re.steps > 4_000_000, `${re.steps} steps`)
+  assert.ok(turns(`sed -n ${q(`/${pattern}/p`)} /tmp/f > /tmp/out`) >= Math.floor(re.steps / turnSteps(re.size)))
+  assert.equal(k.read('/tmp/out'), '')
+  // And one search of s, the same.
+  assert.equal(re.exec(line), null)
+  assert.ok(turns(`sed ${q(`s/${pattern}//`)} /tmp/f > /tmp/out`) >= Math.floor(re.steps / turnSteps(re.size)))
+  assert.equal(k.read('/tmp/out'), `${line}\n`)
+})
+
+test('sed: Ctrl+C stops a search of a pattern near the size cap over a line of a mebibyte, and a long s///g', () => {
+  const k = boot(SED_PROGRAMS, { tmpBytes: 16 << 20 })
+  const text = `${'a'.repeat(1 << 20)}\n`
+  k.write('/tmp/huge', text)
+  // Near the 20000 instructions a pattern may have, every one alive at every place: done in one go, any of these
+  // would take hours.
+  const big = '[ab]{19980}c'
+  assert.ok(compile(big).size > 19980)
+  const commands = [`sed -n ${q(`/${big}/p`)} /tmp/huge`, `sed ${q(`s/${big}//I`)} /tmp/huge > /tmp/out`, `sed ${q('s/a*b|a/x/g')} /tmp/huge > /tmp/out`]
+  commands.push(`sed -i ${q(`s/${big}|a/x/g`)} /tmp/huge`)
+  for (const command of commands) {
+    k.system.type(`${command}; echo not here\n`)
+    for (let n = 0; n < 40; n++) k.system.run(1, Number.POSITIVE_INFINITY)
+    // Forty turns on, sed is still searching, and the shell and the kernel have had every turn back.
+    assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh', 'sed'], command)
+    assert.equal(k.system.interrupt(), true, command)
+    assert.deepEqual(k.settle(), [], command)
+    assert.deepEqual(k.sh('echo $?'), ['130'], command)
+    assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh'], command)
+  }
+  // Stopped part way, -i wrote nothing back: the file is as it was.
+  assert.equal(k.read('/tmp/huge'), text)
+})
+
+test('sed -i: Ctrl+C cannot come between the new text going over the old and the rest of the old being cut off', () => {
+  const k = boot(SED_PROGRAMS)
+  // Ctrl+C is heard only between two turns. With each count of lines the calls sed makes fall differently across
+  // turns, and with some (248, once) the old text past the new stood in the file at the end of a turn: Ctrl+C there
+  // left the new lines and then the tail of the old ones. At every turn's end the file is the old text or the new.
+  for (let lines = 1; lines <= 300; lines++) {
+    const old = 'abcdef\n'.repeat(lines)
+    const edited = 'x\n'.repeat(lines)
+    k.write('/tmp/f', old)
+    k.system.type("sed -i 's/.*/x/' /tmp/f\n")
+    for (let n = 0; !k.system.idle; n++) {
+      assert.ok(n < 1000)
+      k.system.run(1, Number.POSITIVE_INFINITY)
+      const now = k.read('/tmp/f')
+      if (now !== old && now !== edited) assert.fail(`${lines} lines: after turn ${n} the file holds ${now.length} characters`)
+    }
+    assert.equal(k.read('/tmp/f'), edited)
+  }
+  // And Ctrl+C at the end of each turn in turn: the file is always whole, old or new.
+  for (let stop = 1; ; stop++) {
+    k.write('/tmp/f', 'abcdef\n'.repeat(248))
+    k.system.type("sed -i 's/.*/x/' /tmp/f; echo not here\n")
+    for (let n = 0; n < stop && !k.system.idle; n++) k.system.run(1, Number.POSITIVE_INFINITY)
+    const ended = k.system.kernel.ps().every((p) => p.name !== 'sed')
+    k.system.interrupt()
+    k.settle()
+    assert.ok(['abcdef\n'.repeat(248), 'x\n'.repeat(248)].includes(k.read('/tmp/f')), `stopped after ${stop} turns`)
+    if (ended) break
+  }
+})
+
+test('sed: what s///g and -i put together is joined and turned into bytes a part at a time, and comes out whole', () => {
+  // Joined or turned into bytes all at once at the end, millions of pieces held the console for up to a third of a
+  // second (s/x*/-/g over a line of 3 MiB; -i over a file of 55 MiB): now that happens as they come.
+  const k = boot(SED_PROGRAMS, { tmpBytes: 32 << 20 })
+  k.write('/tmp/a', `${'ab'.repeat(30000)}\n`)
+  k.sh("sed 's/a/<&>/g' /tmp/a > /tmp/out")
+  assert.equal(k.read('/tmp/out'), `${'<a>b'.repeat(30000)}\n`)
+  k.sh("sed 's/b/[&]/3g' /tmp/a > /tmp/out")
+  assert.equal(k.read('/tmp/out'), `abab${'a[b]'.repeat(29998)}\n`)
+  k.sh("sed 's/x*/-/g' /tmp/a > /tmp/out")
+  assert.equal(k.read('/tmp/out'), `-${'a-b-'.repeat(30000)}\n`)
+  // -i over characters of one, two, three and four bytes, in lines short and long, across many batches.
+  const mixed = 'x\u00e9\u4e00\u{1F600}'
+  const lines: string[] = []
+  for (let n = 0; n < 3000; n++) lines.push(mixed.repeat(n % 50))
+  lines.push(mixed.repeat(100000))
+  const text = `${lines.join('\n')}\n`
+  const second = (line: string): string => {
+    const at = line.indexOf('x', line.indexOf('x') + 1)
+    return at < 0 || line.indexOf('x') < 0 ? line : `${line.slice(0, at)}X${line.slice(at + 1)}`
+  }
+  k.write('/tmp/m', text)
+  assert.deepEqual(k.sh("sed -i 's/x/X/2' /tmp/m; echo $?"), ['0'])
+  assert.deepEqual(k.bytes('/tmp/m'), encode(`${lines.map(second).join('\n')}\n`))
+  // More than the 8 MiB put together between two turns.
+  const wide = `${'a'.repeat(1 << 20)}\n`
+  k.write('/tmp/w', wide.repeat(9))
+  assert.deepEqual(k.sh("sed -i 's/^a/b/' /tmp/w; echo $?"), ['0'])
+  assert.equal(k.read('/tmp/w'), `b${wide.slice(1)}`.repeat(9))
+})
+
+test('sed: a script of many large patterns is made ready a few at a time, Ctrl+C is heard meanwhile, and it is bounded', () => {
+  const k = boot(SED_PROGRAMS)
+  k.write('/tmp/f', 'one\n')
+  const big = '[ab]{19980}c'
+  const one = compile(big).size
+  const script = (n: number): string => ` -e ${q(`s/${big}//`)}`.repeat(n)
+  // As many patterns of near the largest size as a script may hold: made ready in one go they held the kernel for a
+  // tenth of a second, and as many as the arguments can carry (thousands) for seconds.
+  const most = Math.floor((1 << 20) / one)
+  assert.ok(most >= 50)
+  assert.ok(turnsOf(k, `sed${script(most)} /tmp/f > /tmp/out`) >= most / 3)
+  assert.equal(k.read('/tmp/out'), 'one\n')
+  k.system.type(`sed${script(most)} /tmp/f; echo not here\n`)
+  for (let n = 0; n < 10; n++) k.system.run(1, Number.POSITIVE_INFINITY)
+  assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh', 'sed'])
+  assert.equal(k.system.interrupt(), true)
+  assert.deepEqual(k.settle(), [])
+  assert.deepEqual(k.sh('echo $?'), ['130'])
+  // One more is too many, refused before any input is read; an address counts as a pattern too.
+  const refusal = '!sed: the patterns of the script are too large in all: more than 1048576 instructions'
+  assert.deepEqual(k.sh(`sed${script(most + 1)} /nosuch; echo $?`), [refusal, '2'])
+  assert.deepEqual(k.sh(`sed${script(most)} -e ${q(`/${big}/d`)} /nosuch; echo $?`), [refusal, '2'])
+  // Thousands of small commands are no trouble.
+  assert.deepEqual(k.sh(`sed -n${' -e s/zz/y/'.repeat(4000)} -e 's/o/0/gp' /tmp/f`), ['0ne'])
 })
 
 test('sed: long lines, a long run of lines, and a closed pipe that ends it quickly', () => {

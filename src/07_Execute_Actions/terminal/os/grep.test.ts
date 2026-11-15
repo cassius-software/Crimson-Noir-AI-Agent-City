@@ -7,8 +7,9 @@
  * used, alone and with the ones it changes, and so are the ways a search is refused or cut short: a pattern that is
  * not well formed, a file that is not there among files that are, a directory without -r, a file that is binary,
  * input with no line end at its end, no input at all, lines longer than one read and longer than the longest line,
- * patterns that would stall a matcher that tries one path at a time, an output that takes nothing, and a reader that
- * takes one line of a large answer and leaves.
+ * patterns that would stall a matcher that tries one path at a time, searches so long they must be cut into turns of
+ * the kernel and stopped by Ctrl+C, an output that takes nothing, and a reader that takes one line of a large answer
+ * and leaves.
  * What breaks if it is removed? A change to grep could alter what a script depends on (which lines are selected,
  * the text of a count or a file name, an exit status, the words of a refusal) and nothing would say so.
  */
@@ -19,6 +20,7 @@ import { ROOT_CRED } from './fs.ts'
 import { GREP_MANUAL, GREP_PROGRAMS } from './grep.ts'
 import { boot } from './kit.test.ts'
 import type { Kit } from './kit.test.ts'
+import { compile } from './regex.ts'
 import { now } from './task.ts'
 
 const FRUIT = 'apple\nbanana\ncherry\napricot\n'
@@ -153,6 +155,12 @@ test('grep: the last line needs no line end, and is printed with one', () => {
   k.write('/tmp/crlf', 'one\r\ntwo\r\n')
   assert.equal(textOf(k, 'grep two crlf'), 'two\r\n')
   assert.deepEqual(k.sh("grep -c 'one$' crlf"), ['0'])
+  // \r in a pattern is a carriage return, so such a line can be matched to its end; with -F it is two characters.
+  k.write('/tmp/mixed', 'one\r\ntwo\nthr\ree\n')
+  assert.deepEqual(k.sh("grep -c 'one\\r$' mixed; grep -c '\\r' mixed; grep -c -v '\\r' mixed"), ['1', '2', '1'])
+  assert.equal(textOf(k, "grep -n '\\r$' mixed"), '1:one\r\n')
+  assert.equal(textOf(k, "grep -o 'r\\re' mixed"), 'r\re\n')
+  assert.deepEqual(k.sh("grep -c '[\\r]e' mixed; grep -c -F '\\r' mixed; grep -c -x 'two\\r?' mixed; grep -c -w 'one\\r' mixed"), ['1', '0', '1', '1'])
 })
 
 test('grep: patterns are the extended kind; -E changes nothing', () => {
@@ -309,6 +317,10 @@ test('grep -F: the pattern is plain text', () => {
   assert.deepEqual(k.sh("grep -F -w -i -o 'école' fold; grep -F -w -i -n king fold; grep -F -i -o KING fold"), ['ÉCOLE', 'école', '2:the King', 'King'])
   k.write('/tmp/nul', '\n\nx\n')
   assert.deepEqual(k.sh("grep -F -x -c '' nul; grep -x -c '' nul"), ['2', '2'])
+  // A long line is folded a piece at a time, and a character of two units on the border of two pieces stays whole.
+  k.write('/tmp/border', `${'x'.repeat(16382)} \u{10400} \u{10400}\u{10400}x \u{10400}\n`)
+  assert.equal(textOf(k, "grep -F -w -i -o '\u{10428}' border"), '\u{10400}\n'.repeat(3))
+  assert.equal(textOf(k, "grep -F -i -o '\u{10428}' border"), '\u{10400}\n'.repeat(4))
 })
 
 test('grep -H, -h: file names before lines; the default is names for more than one file or -r', () => {
@@ -448,6 +460,106 @@ test('grep: patterns that would stall a matcher trying one path at a time finish
   // search from each would cost the square of the pattern's length there (hours here, with nothing else let run).
   k.write('/tmp/run', `${'a'.repeat(200000)} ${'A'.repeat(300)} x\n`)
   assert.deepEqual(k.sh(`grep -c -F -w -i ${'a'.repeat(300)} run; grep -o -F -w -i ${'a'.repeat(300)} run`), ['1', 'A'.repeat(300)])
+})
+
+// Long searches
+
+/** Types a command line and runs the system a turn at a time until nothing can move: how many turns that took. */
+function turns(k: Kit, line: string): number {
+  k.system.type(`${line}\n`)
+  let n = 0
+  while (!k.system.idle) {
+    k.system.run(1, Number.POSITIVE_INFINITY)
+    n++
+  }
+  return n
+}
+
+/**
+ * The most work of the engine a turn of grep may do with a pattern of `size` instructions: one slice of 131072 steps,
+ * and what the last place of the text looked at can add past it (three steps for each instruction). At the slowest a
+ * step goes (about 150 nanoseconds, folding letters past ASCII) that is some twenty milliseconds, and mostly a few.
+ * A grep that let two slices go by between turns would take half the turns these tests ask for.
+ */
+const turnSteps = (size: number): number => (1 << 17) + 3 * size
+
+test('grep: one long search is cut into turns, none with more than a slice of the engine\'s work', () => {
+  const k = fresh()
+  // Every instruction of this pattern stays alive along a run of a's: millions of steps for one line.
+  const pattern = '[ab]{1000}c'
+  const line = 'a'.repeat(4000)
+  k.write('/tmp/run', `${line}\n`)
+  const re = compile(pattern)
+  assert.equal(re.test(line), false)
+  const steps = re.steps
+  assert.ok(steps > 4_000_000, `${steps} steps`)
+  assert.ok(turns(k, `grep -c '${pattern}' run > /tmp/.out`) >= Math.floor(steps / turnSteps(re.size)))
+  assert.equal(k.read('/tmp/.out'), '0\n')
+  // -o looks again from where each part ended: here every search runs on to the end of the line, the square of its
+  // length in all, over a few thousand searches that each take a slice or less.
+  const half = line.slice(2000)
+  k.write('/tmp/half', `${half}\n`)
+  const parts = compile('a*b|a')
+  let all = 0
+  parts.test(half)
+  all += parts.steps
+  for (let from = 0; from < half.length; from++) {
+    parts.exec(half, from)
+    all += parts.steps
+  }
+  assert.ok(all > 6_000_000, `${all} steps`)
+  assert.ok(turns(k, "grep -o 'a*b|a' half | grep -c a > /tmp/.out") >= Math.floor(all / turnSteps(parts.size)))
+  assert.equal(k.read('/tmp/.out'), '2000\n')
+})
+
+test('grep: Ctrl+C stops a search of a pattern near the size cap over a line of a mebibyte, and a long -o', () => {
+  const k = fresh(16 << 20)
+  k.write('/tmp/huge', `${'a'.repeat(1 << 20)}\n`)
+  // Near the 20000 instructions a pattern may have, every one alive at every place: done in one go, any of these
+  // searches would take hours.
+  const big = '[ab]{19980}c'
+  assert.ok(compile(big).size > 19980)
+  assert.ok(compile(`(^|\\W)(${big})(\\W|$)`, { ignoreCase: true }).size > 19990)
+  for (const command of [`grep -c '${big}' huge`, `grep -w -i -n '${big}' huge`, "grep -o 'a*b|a' huge", `grep -v -e x -e '${big}' huge`]) {
+    k.system.type(`${command}; echo not here\n`)
+    for (let n = 0; n < 40; n++) k.system.run(1, Number.POSITIVE_INFINITY)
+    // Forty turns on, grep is still searching, and the shell and the kernel have had every turn back.
+    assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh', 'grep'], command)
+    assert.equal(k.system.interrupt(), true, command)
+    assert.deepEqual(k.settle(), [], command)
+    assert.deepEqual(k.sh('echo $?'), ['130'], command)
+    assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh'], command)
+  }
+})
+
+test('grep: many large patterns are made ready a few at a time, Ctrl+C is heard meanwhile, and all together are bounded', () => {
+  const k = fresh()
+  const big = '[ab]{19980}c'
+  const one = compile(big).size
+  const outer = compile(`(^|\\W)(${big})(\\W|$)`).size
+  const many = (n: number, flags = ''): string => `grep -c${flags}${` -e '${big}'`.repeat(n)}`
+  // As many patterns of near the largest size as all of them together may lay out: made ready in one go they held
+  // the kernel for a tenth of a second, and as many as the arguments can carry (thousands) for seconds.
+  const most = Math.floor((1 << 20) / one)
+  assert.ok(most >= 50)
+  assert.ok(turns(k, `${many(most)} f > /tmp/.out`) >= most / 3)
+  assert.equal(k.read('/tmp/.out'), '0\n')
+  // Ctrl+C is heard while they are being made ready.
+  k.system.type(`${many(most)} f; echo not here\n`)
+  for (let n = 0; n < 10; n++) k.system.run(1, Number.POSITIVE_INFINITY)
+  assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh', 'grep'])
+  assert.equal(k.system.interrupt(), true)
+  assert.deepEqual(k.settle(), [])
+  assert.deepEqual(k.sh('echo $?'), ['130'])
+  // One more is too many, refused before any file is opened. -w lays each one out twice (on its own, and inside a
+  // larger pattern), so half as many reach the bound.
+  const refusal = '!grep: patterns too large in all: more than 1048576 instructions'
+  assert.deepEqual(k.sh(`${many(most + 1)} nosuch; echo $?`), [refusal, '2'])
+  const wordy = Math.floor((1 << 20) / (one + outer))
+  assert.deepEqual(k.sh(`${many(wordy, ' -w')} f; echo $?`), ['0', '1'])
+  assert.deepEqual(k.sh(`${many(wordy + 1, ' -w')} nosuch; echo $?`), [refusal, '2'])
+  // Thousands of small patterns are no trouble.
+  assert.deepEqual(k.sh(`grep -c -F${' -e zz'.repeat(5000)} -e an f`), ['1'])
 })
 
 // Files that are not there, directories, devices

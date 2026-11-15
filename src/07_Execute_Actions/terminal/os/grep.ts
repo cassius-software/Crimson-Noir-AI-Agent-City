@@ -6,9 +6,10 @@
  * below a directory) a line at a time and prints the lines a pattern is found in, or counts them, or names the files
  * that hold them, with lines of context around them when asked. The patterns a person types are matched by the
  * layer's own engine (regex.ts), which keeps every way through a pattern alive at once, so no pattern can stall the
- * console however it is written; the host's own matcher never sees one. Lines are cut from bytes and printed as the
- * bytes they were, so what is not UTF-8 text passes through unchanged, and a file that holds a NUL byte near its
- * start is reported as binary instead of being poured onto the screen.
+ * console however it is written; the host's own matcher never sees one, and a long search is run a slice at a time
+ * with the other tasks given a turn between slices, so Ctrl+C stops it at once. Lines are cut from bytes and printed
+ * as the bytes they were, so what is not UTF-8 text passes through unchanged, and a file that holds a NUL byte near
+ * its start is reported as binary instead of being poured onto the screen.
  * What breaks if it is removed? `ls /bin | grep sh`, `stats --once | grep fps` and every script that tests whether
  * a file holds a word with `grep -q` stop working: the pipeline loses its filter.
  */
@@ -19,8 +20,8 @@ import type { Program, Sys } from './kernel.ts'
 import { READ_ALL_MAX } from './kernel.ts'
 import { LINE_BYTES_MAX, complain, count, usage } from './lib.ts'
 import { join } from './path.ts'
-import { RegexError, compile } from './regex.ts'
-import type { Match } from './regex.ts'
+import { RegexError, compile, folded } from './regex.ts'
+import type { Match, Regex, RegexOptions, Scan } from './regex.ts'
 import type { Task } from './task.ts'
 import { O_READ } from './vfs.ts'
 
@@ -32,8 +33,22 @@ const PIECE = 65536
 const DEPTH = 64
 /** The most bytes of lines kept back for -B: older ones are let go past it. */
 const HOLD_MAX = READ_ALL_MAX
-/** Characters matched between two turns given to the other tasks. */
-const PACE_WORK = 1 << 18
+/**
+ * Work done between two turns given to the other tasks: steps of the engine, characters looked at otherwise. A step
+ * takes from about 10 to about 150 nanoseconds, so a turn of grep lasts from a few milliseconds to about twenty.
+ */
+const PACE_WORK = 1 << 17
+/**
+ * The most instructions all the patterns together may be laid out as (one may take 20000). Each instruction holds a
+ * few dozen bytes once searched with, and the arguments can carry thousands of patterns that each lay out as many
+ * as one may: this is what keeps them from holding gigabytes and taking minutes to make ready.
+ */
+const PROGRAMS_MAX = 1 << 20
+/**
+ * Work of making patterns ready between two turns given to the other tasks: the instructions laid out, eight for each
+ * character read and 256 for each pattern. A pattern of the largest size takes a millisecond or two to make ready.
+ */
+const COMPILE_WORK = 1 << 15
 /** A line feed, as bytes (shared, never written). */
 const NEWLINE: Uint8Array = Uint8Array.of(10)
 /** What the input is called where a file name would stand. */
@@ -193,12 +208,23 @@ class Source {
 /** Where a pattern was found in a line: its first UTF-16 unit and the one after its last. */
 type Span = readonly [number, number]
 
+/**
+ * What a finder runs its searches through, so that no search, however long, keeps the other tasks waiting: a scan of
+ * the engine is run to its answer a slice at a time, and other work is counted.
+ */
+interface Pacer {
+  /** Runs a scan of the engine to its answer, giving the other tasks a turn whenever enough work has been done. */
+  finish<T>(scan: Scan<T>): Task<T>
+  /** Counts work done outside the engine (characters looked at), giving the other tasks a turn after a lot of it. */
+  charge(work: number): Task<void>
+}
+
 /** One pattern made ready, with -w or -x already taken into account. */
 interface Finder {
   /** Whether it is found anywhere in the line. */
-  test(line: string): boolean
+  test(line: string, pace: Pacer): Task<boolean>
   /** The leftmost place it is found that starts at or after `from`, or null. */
-  find(line: string, from: number): Span | null
+  find(line: string, from: number, pace: Pacer): Task<Span | null>
 }
 
 /** A letter, digit or underscore of ASCII: what a word is made of, as the engine's own `\w` has it. */
@@ -209,30 +235,17 @@ const isWord = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 
  */
 const isFoldedWord = (c: number): boolean => isWord(c) || c === 0x131 || c === 0x17f || c === 0x212a
 
-/** The span of a match, or of one of its groups. */
-function span(m: Match | null, group: number): Span | null {
+/** The span of the match a scan finds, or of one of its groups. */
+function* spanOf(pace: Pacer, scan: Scan<Match | null>, group: number): Task<Span | null> {
+  const m = yield* pace.finish(scan)
   if (m === null) return null
   return group === 0 ? [m.start, m.end] : m.groups[group]
 }
 
-/** `changed` as one code point, or `c` itself when the change gave more than one character. */
-function single(changed: string, c: number): number {
-  const p = changed.codePointAt(0)
-  return p !== undefined && changed.length === (p > 0xffff ? 2 : 1) ? p : c
-}
-
 /**
- * A character as -i compares it, the way regex.ts does: the small letter of its capital, each change taken only when
- * it gives one character. No character changes its width in UTF-16 by this, so a folded text keeps every offset.
+ * A text with every character folded as -i compares it, by the engine's own fold (a surrogate pair is one character,
+ * a lone half is itself). No character changes its width in UTF-16 by this, so a folded text keeps every offset.
  */
-function folded(c: number): number {
-  if (c < 128) return c >= 65 && c <= 90 ? c + 32 : c
-  const up = single(String.fromCodePoint(c).toUpperCase(), c)
-  if (up < 128) return up >= 65 && up <= 90 ? up + 32 : up
-  return single(String.fromCodePoint(up).toLowerCase(), up)
-}
-
-/** A text with every character folded (a surrogate pair is one character, a lone half is itself). */
 function foldText(text: string): string {
   const parts: string[] = []
   let kept = 0
@@ -250,39 +263,63 @@ function foldText(text: string): string {
   return parts.join('')
 }
 
+/** How many UTF-16 units of a line are folded between two counts of the work. */
+const FOLD_PIECE = 16384
+
 /**
- * Makes one pattern ready; a pattern the engine refuses throws its RegexError. For -w and -x a pattern is first
+ * A line folded as foldText folds it, a piece at a time, with the work counted as it goes (a letter past ASCII costs
+ * about as much to fold as a few steps of the engine), so a long line of such letters never makes one long turn.
+ */
+function* foldLine(line: string, pace: Pacer): Task<string> {
+  const pieces: string[] = []
+  for (let at = 0; at < line.length;) {
+    let end = Math.min(at + FOLD_PIECE, line.length)
+    // A piece never ends between the two halves of a surrogate pair.
+    const last = line.charCodeAt(end - 1)
+    if (end < line.length && last >= 0xd800 && last <= 0xdbff) end++
+    pieces.push(foldText(at === 0 && end === line.length ? line : line.slice(at, end)))
+    yield* pace.charge(4 * (end - at))
+    at = end
+  }
+  return pieces.length === 1 ? pieces[0] : pieces.join('')
+}
+
+/** Makes a pattern ready, as `compile` does, and counts what that laid out (it may refuse when that is too much). */
+type Maker = (pattern: string, options: RegexOptions) => Regex
+
+/**
+ * Makes one pattern ready with `make`; a pattern the engine refuses throws its RegexError. For -w and -x a pattern is first
  * made ready on its own, so one that is not well formed is refused for what it is; only then is it set inside a
  * group of a larger pattern (`^(p)$`, or `(^|\W)(p)(\W|$)` whose second group is the part reported), which a
  * well-formed pattern cannot break out of. Plain text (-F) cannot be set inside a pattern, and needs no such thing:
  * every place it is found is as many characters long (with -i too: a character folds to one character), so there
  * is one candidate at each place, and the whole line, or each place in turn, is checked instead.
  */
-function finder(pattern: string, plain: boolean, fold: boolean, whole: 'word' | 'line' | null): Finder {
-  const re = compile(pattern, { ignoreCase: fold, literal: plain })
-  if (whole === null) return { test: (line) => re.test(line), find: (line, from) => span(re.exec(line, from), 0) }
+function finder(pattern: string, plain: boolean, fold: boolean, whole: 'word' | 'line' | null, make: Maker): Finder {
+  const re = make(pattern, { ignoreCase: fold, literal: plain })
+  if (whole === null) return { test: (line, pace) => pace.finish(re.probe(line)), find: (line, from, pace) => spanOf(pace, re.search(line, from), 0) }
   if (plain && whole === 'line') {
-    const find = (line: string, from: number): Span | null => {
+    const find = function* (line: string, from: number, pace: Pacer): Task<Span | null> {
       if (from !== 0) return null
-      const m = re.exec(line, 0)
+      const m = yield* pace.finish(re.search(line, 0))
       return m !== null && m.start === 0 && m.end === line.length ? [0, line.length] : null
     }
-    return { test: (line) => find(line, 0) !== null, find }
+    return { *test(line, pace) { return (yield* find(line, 0, pace)) !== null }, find }
   }
   if (plain) {
     // With -i the pattern and the line are folded first and searched as they are: asked to fold, the engine would
     // start each search over after a refused place, at a cost that grows with the square of the pattern's length.
-    const exact = fold ? compile(foldText(pattern), { literal: true }) : re
+    const exact = fold ? make(foldText(pattern), { literal: true }) : re
     const wordy = fold ? isFoldedWord : isWord
     let seen: string | null = null
     let hay = ''
-    const find = (line: string, from: number): Span | null => {
+    const find = function* (line: string, from: number, pace: Pacer): Task<Span | null> {
       if (line !== seen) {
+        hay = fold ? yield* foldLine(line, pace) : line
         seen = line
-        hay = fold ? foldText(line) : line
       }
       for (let at = from; at <= line.length;) {
-        const m = exact.exec(hay, at)
+        const m = yield* pace.finish(exact.search(hay, at))
         if (m === null) return null
         const before = m.start > 0 && wordy(line.charCodeAt(m.start - 1))
         const after = m.end < line.length && wordy(line.charCodeAt(m.end))
@@ -291,11 +328,11 @@ function finder(pattern: string, plain: boolean, fold: boolean, whole: 'word' | 
       }
       return null
     }
-    return { test: (line) => find(line, 0) !== null, find }
+    return { *test(line, pace) { return (yield* find(line, 0, pace)) !== null }, find }
   }
-  const outer = compile(whole === 'line' ? `^(${pattern})$` : `(^|\\W)(${pattern})(\\W|$)`, { ignoreCase: fold })
+  const outer = make(whole === 'line' ? `^(${pattern})$` : `(^|\\W)(${pattern})(\\W|$)`, { ignoreCase: fold })
   const group = whole === 'line' ? 1 : 2
-  return { test: (line) => outer.test(line), find: (line, from) => span(outer.exec(line, from), group) }
+  return { test: (line, pace) => pace.finish(outer.probe(line)), find: (line, from, pace) => spanOf(pace, outer.search(line, from), group) }
 }
 
 // The options
@@ -384,7 +421,7 @@ interface Held {
 /** What stands in the place of a held line once it is let go, so its bytes are not kept alive until the list is compacted. */
 const GONE: Held = Object.freeze({ no: 0, bytes: EMPTY })
 
-class Search {
+class Search implements Pacer {
   private readonly sys: Sys
   private readonly out: Writer
   private readonly s: Settings
@@ -394,7 +431,7 @@ class Search {
   trouble = false
   /** Whether any line has been printed, so a later group of context is set apart from it by `--`. */
   private printed = false
-  /** Characters matched since the other tasks last had a turn. */
+  /** Work done since the other tasks last had a turn. */
   private work = 0
 
   constructor(sys: Sys, out: Writer, s: Settings) {
@@ -411,25 +448,39 @@ class Search {
     yield* complain(this.sys, 'grep', label, e)
   }
 
-  /** Counts matching work, and gives the other tasks a turn when there has been a lot of it. */
-  private *charge(chars: number): Task<void> {
-    this.work += (chars + 32) * this.s.finders.length
+  /** Counts work (and a little for the call itself); gives the other tasks a turn when there has been a lot of it. */
+  *charge(work: number): Task<void> {
+    this.work += work + 32
     if (this.work >= PACE_WORK) {
       this.work = 0
       yield* this.sys.breathe()
     }
   }
 
-  private test(text: string): boolean {
-    for (const f of this.s.finders) if (f.test(text)) return true
+  /**
+   * Runs a scan to its answer. Each run is given the work left before the other tasks are due a turn, and the turn is
+   * given when that is spent, so however long one search is (a pattern of thousands of instructions over a line of a
+   * mebibyte can take minutes), no turn of grep is longer than one slice and Ctrl+C is heard between two.
+   */
+  *finish<T>(scan: Scan<T>): Task<T> {
+    for (;;) {
+      const before = scan.steps
+      const answer = scan.run(PACE_WORK - this.work)
+      yield* this.charge(scan.steps - before)
+      if (answer !== undefined) return answer
+    }
+  }
+
+  private *test(text: string): Task<boolean> {
+    for (const f of this.s.finders) if (yield* f.test(text, this)) return true
     return false
   }
 
   /** The leftmost place any pattern is found from `from` on; of two that start together, the longer. */
-  private find(text: string, from: number): Span | null {
+  private *find(text: string, from: number): Task<Span | null> {
     let best: Span | null = null
     for (const f of this.s.finders) {
-      const at = f.find(text, from)
+      const at = yield* f.find(text, from, this)
       if (at !== null && (best === null || at[0] < best[0] || (at[0] === best[0] && at[1] > best[1]))) best = at
     }
     return best
@@ -448,8 +499,7 @@ class Search {
   /** The parts of a line that match, each on a line of its own; a part with no characters is left out. */
   private *parts(label: string, no: number, text: string): Task<void> {
     for (let from = 0; from <= text.length;) {
-      yield* this.charge(text.length - from)
-      const at = this.find(text, from)
+      const at = yield* this.find(text, from)
       if (at === null) break
       if (at[1] > at[0]) {
         yield* this.emit(label, no, ':', encode(text.slice(at[0], at[1])))
@@ -477,7 +527,7 @@ class Search {
       no++
       const text = decode(line)
       yield* this.charge(text.length)
-      if (this.test(text) === s.invert) {
+      if ((yield* this.test(text)) === s.invert) {
         if (s.mode !== 'lines') continue
         if (afterLeft > 0) {
           yield* this.emit(label, no, '-', line)
@@ -630,8 +680,27 @@ const grep: Program = function* (sys, argv) {
   const f = r.flags
   const whole = f.has('x') ? 'line' : f.has('w') ? 'word' : null
   const finders: Finder[] = []
+  // Every pattern is made ready before any input is read, with the other tasks given a turn now and then: thousands
+  // of patterns can take seconds to make ready, and all of them together are held to PROGRAMS_MAX instructions.
+  let laid = 0
+  let work = 0
+  const make: Maker = (pattern, options) => {
+    const re = compile(pattern, options)
+    laid += re.size
+    work += re.size + 8 * pattern.length + 256
+    if (laid > PROGRAMS_MAX) throw new RegexError(`patterns too large in all: more than ${PROGRAMS_MAX} instructions`)
+    return re
+  }
   try {
-    for (const source of sources) for (const pattern of source.split('\n')) finders.push(finder(pattern, f.has('F'), f.has('i'), whole))
+    for (const source of sources) {
+      for (const pattern of source.split('\n')) {
+        finders.push(finder(pattern, f.has('F'), f.has('i'), whole, make))
+        if (work >= COMPILE_WORK) {
+          work = 0
+          yield* sys.breathe()
+        }
+      }
+    }
   } catch (e) {
     if (!(e instanceof RegexError)) throw e
     yield* complain(sys, 'grep', null, e.message)
@@ -705,10 +774,11 @@ WHAT IT DOES
     dogs. The characters ( ) { } + ? | are special without a backslash;
     a backslash before any special character makes it plain (\\. is a
     full stop). \\w is a letter, digit or underscore, \\s a blank or tab,
-    \\d a digit, and \\< and \\> the start and the end of a word. Several
-    patterns (-e given more than once, or one pattern with line feeds in
-    it) select a line when any one of them is found in it. An empty
-    pattern is found in every line.
+    \\d a digit, \\t a tab, \\r a carriage return (which ends each line of
+    a file written with two-character line ends), and \\< and \\> the
+    start and the end of a word. Several patterns (-e given more than
+    once, or one pattern with line feeds in it) select a line when any
+    one of them is found in it. An empty pattern is found in every line.
 
 OPTIONS
     -e P    the pattern is P; may be given more than once, and then
@@ -760,7 +830,9 @@ NOTES
     start and end of a word still do not. There are no back-references
     (\\1), no patterns read from a file, and no colours. A pattern is at
     most 4096 characters long, and unless -F is given, -w makes it 14
-    characters longer and -x 4 longer.
+    characters longer and -x 4 longer. The matcher lays a pattern out as
+    at most 20000 instructions (a{1000}{1000} is refused as too large),
+    and all the patterns given at once as at most 1048576 in all.
 
     A file whose first 8192 bytes hold a NUL byte is taken as binary:
     instead of its first selected line it prints Binary file NAME
@@ -777,6 +849,13 @@ NOTES
     of lines are kept back. Lines go out as the bytes they came in as,
     but -o prints what it found as text, so there a byte that is not
     UTF-8 comes out as a replacement character.
+
+    A search costs at most the length of the line times the size of the
+    pattern, so a very large pattern over a very long line can take a
+    while; with -o each part is looked for again from where the last one
+    ended, which on a line with many parts can make the work grow with
+    the square of the line's length. Either way grep lets the other
+    programs run as it goes, and Ctrl+C stops it at once.
 
 STATUS
     0 when a line was selected, 1 when none was, and 2 on trouble: a

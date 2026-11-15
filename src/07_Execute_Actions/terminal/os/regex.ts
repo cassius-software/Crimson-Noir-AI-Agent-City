@@ -12,6 +12,9 @@
  * The paths are kept in order of preference, and that order decides the answer: the match that starts leftmost,
  * and among those the one a path-at-a-time matcher would reach first, where a repetition prefers more rounds to
  * fewer (it is greedy) and of two alternatives the one written first wins a tie.
+ * A search can also be handed out as a scan that stops after a given amount of work and later goes on from exactly
+ * where it stopped, with the same paths alive: a program run by a kernel that only switches tasks when they let it
+ * can then give the others a turn in the middle of one long search, and be stopped there by Ctrl+C.
  * What breaks if it is removed? Every program that takes a pattern would need a matcher of its own, and the first
  * one to lean on the host's would let one typed line stall the whole console.
  *
@@ -19,9 +22,9 @@
  * line feed included; `[abc]`, `[a-z]`, `[^a-z]` are sets (`]` first in a set is itself, `-` first or last is
  * itself, `[:alpha:]` and the other named classes go inside a set); `^` and `$` are the start and the end of the
  * whole text; `( )` groups and captures; `|` separates alternatives; `*`, `+`, `?`, `{m}`, `{m,}`, `{m,n}` repeat
- * the item before them. A backslash before a character that is no letter or digit makes it ordinary; `\t \n` are a
- * tab and a line feed; `\w \d \s` are a word character, a digit, white space, and `\W \D \S` anything else;
- * `\b \B` are a word edge and its absence; `\< \>` are the start and the end of a word.
+ * the item before them. A backslash before a character that is no letter or digit makes it ordinary; `\t \n \r` are
+ * a tab, a line feed and a carriage return; `\w \d \s` are a word character, a digit, white space, and `\W \D \S`
+ * anything else; `\b \B` are a word edge and its absence; `\< \>` are the start and the end of a word.
  *
  * What was chosen where that list leaves a gap:
  * - The named classes, `\w \d \s` and the word edges know the ASCII letters and digits only. With ignoreCase a
@@ -68,6 +71,14 @@ export interface Regex {
   readonly source: string
   /** How many groups the pattern has (only the first nine are reported). */
   readonly groupCount: number
+  /** How many instructions the pattern was laid out as, the one that says a match has arrived included. */
+  readonly size: number
+  /**
+   * The work done by the last search of this pattern: an exec, a test, or a run of one of its scans (which counts
+   * all that scan has done so far). It is the instructions visited or, for a pattern of plain characters that a
+   * plain text search finds, the characters that search went past; never more than 2 x size x (characters + 1).
+   */
+  readonly steps: number
   /**
    * The leftmost match that starts at or after `from` (0 when not given), or null. Anchors and word edges still
    * look at the whole text, and a match of no characters is a match. A `from` between the two halves of a surrogate
@@ -76,6 +87,29 @@ export interface Regex {
   exec(text: string, from?: number): Match | null
   /** Whether the pattern matches anywhere in the text. */
   test(text: string): boolean
+  /**
+   * The search exec makes, as a scan that can stop part way and go on later: each run of it does about the work it
+   * is given and returns, so a caller that must let others have a turn can do so between two runs. The answer, and
+   * the steps taken to reach it, are exactly what exec gives and counts for the same text and `from`, however the
+   * work is cut up. Every scan has working space of its own, so scans of one pattern may be run by turns, with each
+   * other and with exec and test; a scan that is never run to its answer is simply let go.
+   */
+  search(text: string, from?: number): Scan<Match | null>
+  /** The search test makes, as a scan in the same way: its answer and steps are exactly what test gives and counts. */
+  probe(text: string): Scan<boolean>
+}
+
+/** A search that can stop part way and go on later, from where it stopped. */
+export interface Scan<T> {
+  /**
+   * Goes on with the search until it has done `budget` more steps or has its answer, and gives the answer, or
+   * undefined while there is none yet. It stops only between two places in the text, so one run takes at least one
+   * place and fewer than budget + 3 x size steps (a budget is cut to a whole number, and one below one counts as
+   * one). Once there is an answer, every later run gives it again at once and does nothing.
+   */
+  run(budget: number): T | undefined
+  /** The steps taken so far, over every run. */
+  readonly steps: number
 }
 
 /** A pattern that was refused; the message says why, in lower case and without a full stop. */
@@ -191,8 +225,13 @@ function upper(c: number): number {
   return single(String.fromCodePoint(c).toUpperCase(), c)
 }
 
-/** What a character is compared as when case is ignored. */
-function folded(c: number): number {
+/**
+ * What a character is compared as when case is ignored: the lower case of its upper case, each change taken only
+ * when it gives a single character. No character changes its width in UTF-16 by this, so a text folded a character
+ * at a time keeps every offset. A program that folds a text itself, to search it as plain text, uses this one so
+ * that it folds exactly as a pattern does.
+ */
+export function folded(c: number): number {
   return lower(upper(c))
 }
 
@@ -525,6 +564,7 @@ class Reader {
   private plain(c: number): number {
     if (c === 116) return 9
     if (c === 110) return 10
+    if (c === 114) return 13
     if (c >= 49 && c <= 57) fail('back-references are not supported')
     if (isLetter(c) || isDigit(c)) fail(`unknown escape \\${show(c)}`)
     return c
@@ -843,6 +883,36 @@ function paths(size: number): Paths {
   return { pc: new Int32Array(size), start: new Int32Array(size), slots: [], count: 0 }
 }
 
+/** What a search holds while it has paths alive: never a list of its own. */
+const NO_PATHS: Paths = Object.freeze({ pc: new Int32Array(0), start: new Int32Array(0), slots: [], count: 0 })
+
+/**
+ * The working space of one search: two lists of paths (the place being left and the place being filled, which
+ * swap at each step) and the marks of the instructions visited at the place being filled. A search that stops part
+ * way keeps all of it untouched until it goes on, which is what makes the rest of the search the same as if it had
+ * never stopped.
+ */
+interface Space {
+  readonly one: Paths
+  readonly two: Paths
+  /** `seen[pc] === stamp` when instruction `pc` was visited at the place now being filled. */
+  readonly seen: Int32Array
+  stamp: number
+}
+
+function space(size: number): Space {
+  return { one: paths(size), two: paths(size), seen: new Int32Array(size), stamp: 0 }
+}
+
+/** A new stamp: the next place has seen nothing yet. */
+function fresh(s: Space): void {
+  if (s.stamp >= 0x7ffffff0) {
+    s.seen.fill(0)
+    s.stamp = 0
+  }
+  s.stamp++
+}
+
 /** Whether an assertion holds at `pos`: it looks at the whole text, wherever the search began. */
 function holds(what: number, text: string, pos: number): boolean {
   if (what === TEXT_START) return pos === 0
@@ -865,37 +935,33 @@ function emptied(slots: readonly number[], from: number, to: number): readonly n
   return copy
 }
 
-/** A pattern laid out and the working space to run it; one run at a time, which is all a single thread can ask. */
+/** A pattern laid out, ready to be searched with. */
 class Machine implements Regex {
   readonly source: string
   readonly groupCount: number
-  /** How many instructions the pattern was laid out as. */
   readonly size: number
-  /** Instruction visits made by the last `exec` or `test`; the tests hold it against the bound. */
+  /** The work of the last search; the tests hold it against the bound. */
   steps = 0
-  private readonly op: Int32Array
-  private readonly a: Int32Array
-  private readonly b: Int32Array
-  private readonly sets: readonly CharSet[]
-  private readonly fold: boolean
+  // The program and what is known of it; the searches read these.
+  readonly op: Int32Array
+  readonly a: Int32Array
+  readonly b: Int32Array
+  readonly sets: readonly CharSet[]
+  readonly fold: boolean
   /** When the whole pattern is plain characters and case matters: those characters, found by a plain search. */
-  private readonly literal: string | null
+  readonly literal: string | null
   /** When every match must begin with one certain character: that character, so the search can skip to it. */
-  private readonly lead: string
+  readonly lead: string
   /** Whether every match must begin at the start of the text. */
-  private readonly tied: boolean
+  readonly tied: boolean
   /** The slots of a path that has passed no group yet. */
-  private readonly blank: readonly number[]
-  /** `seen[pc] === stamp` when instruction `pc` was visited at the place now being filled. */
-  private readonly seen: Int32Array
-  private stamp = 0
-  private readonly listA: Paths
-  private readonly listB: Paths
+  readonly blank: readonly number[]
+  /** Working space that no search holds: the next search takes it, and a search that ends hands its own back. */
+  private spare: Space | null
+  // The branches still to follow while one path is followed: used only inside `add`, which never stops part way, so
+  // every search can share them.
   private readonly stackPc: Int32Array
   private readonly stackSlots: (readonly number[])[] = []
-  private foundStart = 0
-  private foundEnd = 0
-  private foundSlots: readonly number[]
 
   constructor(source: string, groupCount: number, tree: Node, sets: readonly CharSet[], fold: boolean) {
     const layout = new Layout(fold)
@@ -915,64 +981,62 @@ class Machine implements Regex {
     this.lead = first === CHAR && !fold && !isSurrogate(this.a[0]) ? String.fromCodePoint(this.a[0]) : ''
     this.tied = first === ASSERT && this.a[0] === TEXT_START
     this.blank = Object.freeze(new Array<number>(2 * Math.min(groupCount, REPORTED)).fill(-1))
-    this.foundSlots = this.blank
-    this.seen = new Int32Array(this.size)
-    this.listA = paths(this.size)
-    this.listB = paths(this.size)
+    this.spare = this.literal === null ? space(this.size) : null
     this.stackPc = new Int32Array(this.size + 1)
   }
 
   exec(text: string, from = 0): Match | null {
-    let begin = from > 0 ? Math.floor(from) : 0
-    if (!(begin <= text.length)) return null
-    // Between the two halves of a surrogate pair no character starts: the search begins after the pair, so a caller
-    // that steps on by one unit after a match of no characters never has a pair cut in two.
-    if (begin > 0 && begin < text.length && isLowHalf(text.charCodeAt(begin)) && isHighHalf(text.charCodeAt(begin - 1))) begin++
-    this.steps = 0
-    if (this.literal !== null) {
-      const at = text.indexOf(this.literal, begin)
-      if (at < 0) return null
-      this.foundStart = at
-      this.foundEnd = at + this.literal.length
-      this.foundSlots = this.blank
-    } else if (!this.run(text, begin, true)) return null
-    const slots = this.foundSlots
-    this.foundSlots = this.blank
-    const groups: (readonly [number, number] | null)[] = [[this.foundStart, this.foundEnd]]
-    for (let g = 1; g <= REPORTED; g++) {
-      const known = 2 * g <= slots.length
-      const start = known ? slots[2 * g - 2] : -1
-      const end = known ? slots[2 * g - 1] : -1
-      groups.push(start >= 0 && end >= start ? [start, end] : null)
-    }
-    return { start: this.foundStart, end: this.foundEnd, groups }
+    return new Hunt(this, text, from, true).run(Number.POSITIVE_INFINITY) ?? null
   }
 
   test(text: string): boolean {
-    this.steps = 0
-    return this.literal !== null ? text.includes(this.literal) : this.run(text, 0, false)
+    const hunt = new Hunt(this, text, 0, false)
+    hunt.run(Number.POSITIVE_INFINITY)
+    return hunt.state === FOUND
   }
 
-  /** A new stamp: the next place has seen nothing yet. */
-  private fresh(): void {
-    if (this.stamp >= 0x7ffffff0) {
-      this.seen.fill(0)
-      this.stamp = 0
-    }
-    this.stamp++
+  search(text: string, from = 0): Scan<Match | null> {
+    return new Hunt(this, text, from, true)
+  }
+
+  probe(text: string): Scan<boolean> {
+    return new Probe(new Hunt(this, text, 0, false))
+  }
+
+  /** Working space for a search that is starting: the spare one when no other search holds it, else a new one. */
+  borrow(): Space {
+    const s = this.spare
+    if (s === null) return space(this.size)
+    this.spare = null
+    return s
+  }
+
+  /** Working space a search no longer needs; kept as the spare when there is none. */
+  giveBack(s: Space): void {
+    s.one.slots.length = 0
+    s.two.slots.length = 0
+    s.one.count = 0
+    s.two.count = 0
+    if (this.spare === null) this.spare = s
+  }
+
+  /** Lets go of the groups the shared stack still points at. */
+  letGo(): void {
+    this.stackSlots.length = 0
   }
 
   /**
-   * Adds to `list` every instruction where the path at `pc0` comes to wait at `pos`: it follows the instructions
-   * that take no character, most preferred branch first, and stops wherever another path has been at this place
-   * already (that one is preferred, and from here on the two would do the same). The branches still to follow are
-   * kept on a stack of its own, never the host's, so a long chain of choices costs memory in step with the pattern.
+   * Adds to `list` every instruction where the path at `pc0` comes to wait at `pos`, and gives the steps that took:
+   * it follows the instructions that take no character, most preferred branch first, and stops wherever another
+   * path has been at this place already (that one is preferred, and from here on the two would do the same). The
+   * branches still to follow are kept on a stack of its own, never the host's, so a long chain of choices costs
+   * memory in step with the pattern.
    */
-  private add(list: Paths, pc0: number, start: number, slots0: readonly number[], pos: number, text: string, keep: boolean): void {
+  add(s: Space, list: Paths, pc0: number, start: number, slots0: readonly number[], pos: number, text: string, keep: boolean): number {
     const op = this.op
     const a = this.a
-    const seen = this.seen
-    const stamp = this.stamp
+    const seen = s.seen
+    const stamp = s.stamp
     const stackPc = this.stackPc
     const stackSlots = this.stackSlots
     let steps = 0
@@ -1018,42 +1082,122 @@ class Machine implements Regex {
         pc++
       }
     }
-    this.steps += steps
+    return steps
+  }
+}
+
+// How far a search has got.
+const RUNNING = -1
+const MISSED = 0
+const FOUND = 1
+
+/**
+ * One search of one text, which can stop between two places and go on later. At each place, from `from` to the end
+ * of the text: a new path starts there as the least preferred one (unless a match is already in hand), then every
+ * waiting path takes the character at that place and those it suits go on to wait at the next. A path that has
+ * arrived is the match so far and ends every path less preferred than it; the ones more preferred run on and may
+ * replace it. With `keep` off nothing is recorded but whether there is a match, and the first to arrive ends it.
+ * Everything the search needs to go on (the place, the paths alive, the marks of where they have been, the match so
+ * far) is in this object and its working space, which no other search touches while this one holds it.
+ */
+class Hunt implements Scan<Match | null> {
+  private readonly m: Machine
+  private readonly text: string
+  private readonly keep: boolean
+  steps = 0
+  state = RUNNING
+  private answer: Match | null = null
+  private pos: number
+  private found = false
+  private space: Space | null = null
+  private now: Paths = NO_PATHS
+  private next: Paths = NO_PATHS
+  private foundStart = 0
+  private foundEnd = 0
+  private foundSlots: readonly number[]
+
+  constructor(m: Machine, text: string, from: number, keep: boolean) {
+    this.m = m
+    this.text = text
+    this.keep = keep
+    this.foundSlots = m.blank
+    let begin = from > 0 ? Math.floor(from) : 0
+    if (!(begin <= text.length)) {
+      // Past the end of the text: nothing to find.
+      begin = text.length
+      this.state = MISSED
+    } else if (begin > 0 && begin < text.length && isLowHalf(text.charCodeAt(begin)) && isHighHalf(text.charCodeAt(begin - 1))) {
+      // Between the two halves of a surrogate pair no character starts: the search begins after the pair, so a
+      // caller that steps on by one unit after a match of no characters never has a pair cut in two.
+      begin++
+    }
+    this.pos = begin
   }
 
-  /**
-   * The search. At each place, from `from` to the end of the text: a new path starts here as the least preferred
-   * one (unless a match is already in hand), then every waiting path takes the character at this place and those it
-   * suits go on to wait at the next. A path that has arrived is the match so far and ends every path less preferred
-   * than it; the ones more preferred run on and may replace it. With `keep` off nothing is recorded but the answer.
-   */
-  private run(text: string, from: number, keep: boolean): boolean {
+  run(budget: number): Match | null | undefined {
+    if (this.state === RUNNING) this.go(budget >= 1 ? Math.floor(budget) : 1)
+    this.m.steps = this.steps
+    return this.state === RUNNING ? undefined : this.answer
+  }
+
+  /** The search, on from where it stopped, until the answer is known or `budget` more steps have been taken. */
+  private go(budget: number): void {
+    const m = this.m
+    const text = this.text
+    const literal = m.literal
+    if (literal !== null) {
+      // Plain characters with case mattering: a plain search, its work the characters it went past. It looks at
+      // `budget` places at a time (and the characters a match starting at the last of them would take).
+      const pos = this.pos
+      const stop = pos + budget + literal.length - 1
+      const at = (stop < text.length ? text.slice(0, stop) : text).indexOf(literal, pos)
+      if (at < 0 && stop < text.length) {
+        this.pos = pos + budget
+        this.steps += budget
+        return
+      }
+      this.steps += (at < 0 ? text.length : at + literal.length) - pos
+      this.foundStart = at
+      this.foundEnd = at + literal.length
+      this.end(at >= 0)
+      return
+    }
+    let s = this.space
+    let now = this.now
+    let next = this.next
+    if (s === null) {
+      s = m.borrow()
+      this.space = s
+      now = s.one
+      next = s.two
+      now.count = 0
+      fresh(s)
+    }
     const n = text.length
-    const op = this.op
-    const a = this.a
-    const fold = this.fold
-    let now = this.listA
-    let next = this.listB
-    now.count = 0
-    let found = false
-    let pos = from
-    let steps = 0
-    this.fresh()
+    const op = m.op
+    const a = m.a
+    const sets = m.sets
+    const fold = m.fold
+    const keep = this.keep
+    const first = this.steps
+    let steps = first
+    let found = this.found
+    let pos = this.pos
     for (;;) {
       if (!found) {
         if (now.count === 0) {
           // Nothing is under way, so a match can only begin where the pattern allows one to.
-          if (this.tied && pos > 0) break
-          if (this.lead !== '') {
-            const at = text.indexOf(this.lead, pos)
+          if (m.tied && pos > 0) break
+          if (m.lead !== '') {
+            const at = text.indexOf(m.lead, pos)
             if (at < 0) break
             if (at !== pos) {
               pos = at
-              this.fresh()
+              fresh(s)
             }
           }
         }
-        this.add(now, 0, pos, this.blank, pos, text, keep)
+        steps += m.add(s, now, 0, pos, m.blank, pos, text, keep)
       } else if (now.count === 0) break
       // The character at this place: one code point, a surrogate pair counting as one; -1 at the end of the text.
       let c = -1
@@ -1077,7 +1221,7 @@ class Machine implements Regex {
         up = upper(c)
         same = lower(up)
       }
-      this.fresh()
+      fresh(s)
       next.count = 0
       for (let i = 0; i < now.count; i++) {
         const pc = now.pc[i]
@@ -1087,7 +1231,7 @@ class Machine implements Regex {
         if (o === CHAR) suits = a[pc] === same
         else if (o === ANY) suits = c >= 0
         else if (o === SET) {
-          const set = this.sets[a[pc]]
+          const set = sets[a[pc]]
           if (c < 0) suits = false
           else if (c < 128) suits = set.ascii[c] === 1
           else {
@@ -1100,31 +1244,81 @@ class Machine implements Regex {
           this.foundEnd = pos
           this.foundSlots = now.slots[i]
           if (!keep) {
-            this.steps += steps
-            return true
+            this.steps = steps
+            this.end(true)
+            return
           }
           break
         }
-        if (suits) this.add(next, pc + 1, now.start[i], now.slots[i], pos + width, text, keep)
+        if (suits) steps += m.add(s, next, pc + 1, now.start[i], now.slots[i], pos + width, text, keep)
       }
       if (pos >= n) break
       pos += width
       const swap = now
       now = next
       next = swap
+      if (steps - first >= budget) {
+        // Stop here, between two places: the paths waiting at `pos` are in `now`, with the marks of this place.
+        this.steps = steps
+        this.found = found
+        this.pos = pos
+        this.now = now
+        this.next = next
+        m.letGo()
+        return
+      }
     }
-    this.steps += steps
-    // Let go of the groups of paths that came to nothing.
-    this.listA.slots.length = 0
-    this.listB.slots.length = 0
-    this.stackSlots.length = 0
-    return found
+    this.steps = steps
+    this.end(found)
+  }
+
+  /** The search is over: the answer is made, and the working space handed back. */
+  private end(found: boolean): void {
+    this.state = found ? FOUND : MISSED
+    if (found && this.keep) {
+      const slots = this.foundSlots
+      const groups: (readonly [number, number] | null)[] = [[this.foundStart, this.foundEnd]]
+      for (let g = 1; g <= REPORTED; g++) {
+        const known = 2 * g <= slots.length
+        const start = known ? slots[2 * g - 2] : -1
+        const end = known ? slots[2 * g - 1] : -1
+        groups.push(start >= 0 && end >= start ? [start, end] : null)
+      }
+      this.answer = { start: this.foundStart, end: this.foundEnd, groups }
+    }
+    this.foundSlots = this.m.blank
+    const s = this.space
+    if (s !== null) {
+      this.space = null
+      this.now = NO_PATHS
+      this.next = NO_PATHS
+      this.m.giveBack(s)
+    }
+    this.m.letGo()
+  }
+}
+
+/** The search test makes, as a scan: a Hunt that keeps nothing, its answer told as yes or no. */
+class Probe implements Scan<boolean> {
+  private readonly hunt: Hunt
+
+  constructor(hunt: Hunt) {
+    this.hunt = hunt
+  }
+
+  get steps(): number {
+    return this.hunt.steps
+  }
+
+  run(budget: number): boolean | undefined {
+    this.hunt.run(budget)
+    return this.hunt.state === RUNNING ? undefined : this.hunt.state === FOUND
   }
 }
 
 /**
  * Makes a pattern ready, or refuses it with a `RegexError` that says what is wrong with it. The cost of every
- * later `exec` and `test` is bounded by the pattern's size times the length of the text.
+ * later search with it (exec, test, or a scan run to its end) is bounded by its size times the length of the text.
  */
 export function compile(pattern: string, options: RegexOptions = {}): Regex {
   if (pattern.length > PATTERN_MAX) fail(`pattern too long: more than ${PATTERN_MAX} characters`)
