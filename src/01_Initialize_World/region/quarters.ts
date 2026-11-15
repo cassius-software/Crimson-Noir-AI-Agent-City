@@ -13,6 +13,12 @@
  */
 import type { RegionPack } from './pack.ts'
 
+/**
+ * The ground codes of the layer's `terrain` (the generator's own, lakefront.ts TERRAIN, which placement.test.ts holds
+ * them to): the lake, its shore, flat land, a ravine's floor, a bluff over the water, the ridge.
+ */
+export const GROUND = Object.freeze({ lake: 0, shore: 1, flat: 2, ravine: 3, bluff: 4, ridge: 5 })
+
 /** Where a pack sits in the engine's frame: a layout (regionWorld.ts layoutOf) or its offset alone, m. */
 export type QuartersFrame = { x: number; z: number } | { offset: { x: number; z: number } }
 

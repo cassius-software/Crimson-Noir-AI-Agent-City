@@ -2114,6 +2114,38 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **Lakefront Metro's workplaces, shops and homes stand all over the map, and every visitor starts in the region they
+  chose.** The sixteen indoor workplaces, five shops and seven homes used to take the lots nearest the start inside the
+  one 640 m street window, so four fifths of the 2.56 km map had none of them; the start itself was the midpoint of the
+  arterial run nearest the chosen region's centre (the metropolis's visitor stood 742 m from its centre, in North Ridge,
+  and North Ridge and The Grand Ravine shared one start), and the page's map worker ignored the chosen region
+  altogether. Now the pack carries the map's quarters, its five regions and its ground per block (`pack.ts` `Quarters`,
+  read by `region/quarters.ts`), the worker builds the pack for the region asked for, the whole map's street grid is
+  read once (`streets.ts` `mapStreetGrid`, the window a crop of it), and `region/placement.ts` shares the 28 places out
+  by a programme: every region a shop, at least one home and at least two workplaces of the kinds that suit it; each
+  region's heart the middle of its tallest cluster, its shop within three lots of the heart and two more places within
+  two lots of the shop; the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
+  lake; the same lots whichever region the visitor starts in. The visitor stands on the sidewalk across the street from
+  their region's shop, facing along the street toward its heart (`regionWorld.ts` `regionStart`, `RegionPlaces.spawnAt`;
+  the metropolis's visitor about 200 m from The Spire), `?place=<slug>` chooses the region for one visit
+  (`onboarding/script.ts` `placeWanted`), and the HUD's street line leads with the region you stand in
+  (`RegionPlaces.label`). The physics worker takes a place on any lot of the region, not only on the window's; the
+  crowd works only in the rooms on the window's lots (`interiors.ts` `packRooms` takes a presence rule and
+  `workplaces.ts` `packRoutes` gives a room off the window an empty table, both by `streets.ts` `lotInWindow`; no WGSL
+  text changed, so no device's crowd kernel memory resets). `region/shops.ts` and `region/homes.ts` are removed;
+  `workplaces.ts` keeps the lot rules the placement reads (`lotCandidates`, `lotTier`). New tests: `placement.test.ts`
+  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (8, three seeds by
+  five regions: the start in its own region, on a sidewalk's middle, a metre clear of every wall and out of the water,
+  facing toward the heart, the five starts over 300 m apart, the fallbacks and the HUD line) and `hollowPlaces.test.ts`
+  (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
+  (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
+  `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. PAGE_SIZE_LINE Not there yet: the
+  people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
+  it stands on an empty street, dark inside at night, with nobody at work in it; a start's window holds two to four
+  workplaces, one or two shops and up to two homes. Unverified on a real phone or GPU (the pictures are software
+  WebGPU).
+
 - **The KV page table evicts the cached page least likely to be reused, not the one left longest ago.** Each cached
   page carries the log-odds that it will be read again: a prior from where it came from (a pinned prefix 0.95, a
   prompt 0.50, a generated token 0.10), raised by a Bayes factor of 3 at every cache hit or fork, and relaxing toward
@@ -2376,6 +2408,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **Lakefront Metro's ferry pier never opens with a guideway column inside it.** At the new waterfront start of
+  Lakefront Metropolis two columns of the elevated loop stood inside the pier's railings (columns every 8 m on the
+  quay's kerb, the pier 8 m wide). `region/transit.ts` `ferryDock` now passes over a shore point where a column of the
+  window's loop stands in the pier's mouth or its platform, grown by the column's radius and a metre; on seed 1337 the
+  pier opens at the foot of a cross street. `transit.test.ts` holds that no column stands in any pier on fifteen windows
+  of three seeds.
 
 - **A cached KV page could outlive the page before it.** The page table released an agent's pages head first, so a
   chain's head could be evicted while its tail stayed cached under a key no prompt can reach any more, holding a page

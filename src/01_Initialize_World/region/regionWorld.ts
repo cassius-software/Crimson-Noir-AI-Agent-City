@@ -17,7 +17,7 @@
  * - the physics: every wall as a segment with its height, the lake's shoreline as a low wall, and the region's edge;
  * - places: the fictional name of the street you stand on and the nearest cross street, and a spawn on a sidewalk;
  * - the workplaces', the shops' and the homes' lots hollowed (hollowLots): the buildings on the lots
- *   region/workplaces.ts, region/shops.ts and region/homes.ts chose are put out of sight and out of the walls, and the
+ *   region/placement.ts chose, all over the map, are put out of sight and out of the walls, and the
  *   rooms (interiors.ts), the shops (storefronts.ts) and the homes (properties.ts) stand there instead, as boxes the
  *   city's renderer and colliders take: the glass shell, the furniture or the fixtures, the ceiling slab in the
  *   podium's finish, and whatever stood above the slab carried on it; each room's, shop's and home's floor is paved.
@@ -38,6 +38,8 @@ import { applyMatrixMode } from '../matrixMode.ts'
 import { clipRing, isRect, type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
 import { PAINT_MARGIN, PAINT_TEXEL, type PaintedLight } from './paintedLight.ts'
+import type { RegionPlacement } from './placement.ts'
+import { quarterAt, quarterName } from './quarters.ts'
 import { LANE_WIDTH, SIDEWALK, roadWidth } from './streets.ts'
 import type { Crossing, RegionTransit } from './transit.ts'
 import { buildingLot, slabPodium, type LotBuilding } from './workplaces.ts'
@@ -271,9 +273,11 @@ export class RegionPlaces {
   private readonly rings: Pt[][] = []
   private readonly water: Pt[][][] = []
   private readonly pack: RegionPack
+  private readonly offset: { x: number; z: number }
 
   constructor(pack: RegionPack, l: RegionLayout) {
     this.pack = pack
+    this.offset = { x: l.offset.x, z: l.offset.z }
     for (let i = 0; i < polygonCount(pack.water); i++) this.water.push(polygonAt(pack.water, i).map((r) => shift(l, r)))
     for (let i = 0; i < pack.roads.cls.length; i++) {
       const pts = shift(l, roadAt(pack, i))
@@ -304,6 +308,14 @@ export class RegionPlaces {
     return best
   }
 
+  /**
+   * The name of the map's quarter under a point (pack.ts Quarters: the lakefront's five regions), or null over open
+   * water, off the map, and in a region without the layer (a surveyed one).
+   */
+  quarter(x: number, z: number): string | null {
+    return quarterName(this.pack, quarterAt(this.pack, this.offset, x, z))
+  }
+
   /** "Street & Cross Street" where the point stands, or the region's name if no street is near. */
   place(x: number, z: number): string {
     const here = this.nearestRoad(x, z, 60)
@@ -313,6 +325,17 @@ export class RegionPlaces {
     const cross = this.nearestRoad(x, z, 90, n)
     const crossName = cross ? names[this.pack.roads.name[cross.road]] : ''
     return crossName ? `${names[n]} & ${crossName}` : names[n]
+  }
+
+  /**
+   * The HUD's line for a point: "Region · Street & Cross Street". The lead is the one of the map's quarters the point
+   * stands in (quarter: the lakefront's five regions, so the line says which of them the visitor is walking), the
+   * map's own name where it stands in none (open water, a surveyed region); the lead alone where no street is near.
+   */
+  label(x: number, z: number): string {
+    const here = this.place(x, z)
+    const lead = this.quarter(x, z) ?? this.pack.name
+    return here !== this.pack.name ? `${lead} · ${here}` : lead
   }
 
   /**
@@ -382,6 +405,56 @@ export class RegionPlaces {
     }
     return { x: near.x, z: near.z, heading: 0 }
   }
+
+  /**
+   * A place to stand at `hint`, a sidewalk's middle (placement.ts PlacedStart: across the street from a quarter's
+   * shop): the hint itself where it is clear of every building by a metre and of the water, else the nearest such
+   * point along its street, a few metres at a time, to either hand; facing along the street, the way that looks more
+   * toward `toward` (a quarter's heart, placement.ts anchors) when it is given. Where no street passes within a block
+   * of the hint, or the whole stretch is built on, the old rule answers (spawn: the nearest arterial's sidewalk).
+   */
+  spawnAt(hint: { x: number; z: number }, toward?: { x: number; z: number }): { x: number; z: number; heading: number } {
+    let near: { ux: number; uz: number; d: number } | null = null
+    for (const i of this.roads.near(hint.x, hint.z, 40)) {
+      const pts = this.roadPts[i]
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const len = Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1])
+        if (len < 1e-6) continue
+        const d = segDist(hint.x, hint.z, pts[k], pts[k + 1])
+        if (d <= 40 && (!near || d < near.d)) near = { ux: (pts[k + 1][0] - pts[k][0]) / len, uz: (pts[k + 1][1] - pts[k][1]) / len, d }
+      }
+    }
+    if (!near) return this.spawn(hint)
+    let { ux, uz } = near
+    if (toward ? (toward.x - hint.x) * ux + (toward.z - hint.z) * uz < 0 : ux + uz < 0) { ux = -ux; uz = -uz }
+    for (const step of [0, 3, -3, 6, -6, 9, -9, 12, -12]) {
+      const x = hint.x + ux * step, z = hint.z + uz * step
+      if (!this.inBuilding(x, z, 1) && !this.inWater(x, z)) return { x, z, heading: Math.atan2(ux, uz) }
+    }
+    return this.spawn(hint)
+  }
+
+  /** Whether a point is in the region's water (inside a water polygon's outer ring and none of its islands). */
+  inWater(x: number, z: number): boolean {
+    for (const poly of this.water) {
+      if (poly.length > 0 && pointIn(x, z, poly[0]) && !poly.slice(1).some((hole) => pointIn(x, z, hole))) return true
+    }
+    return false
+  }
+}
+
+/**
+ * Where the visitor of a region first stands, and which way they face. In a generated region (one with a placement,
+ * placement.ts): the sidewalk across the street from the shop of the quarter they chose (pack.quarters.home; the
+ * first quarter in a pack without the layer), facing along the street the way that looks toward that quarter's heart.
+ * In a surveyed region (no placement): a sidewalk of the arterial nearest the region's origin, its downtown.
+ */
+export function regionStart(pack: RegionPack, l: RegionLayout, places: RegionPlaces, placement: RegionPlacement | null): { x: number; z: number; heading: number } {
+  const quarter = pack.quarters ? pack.quarters.home : 0
+  const hint = placement?.starts.find((s) => s.quarter === quarter) ?? placement?.starts[0]
+  if (!placement || !hint) return places.spawn({ x: l.offset.x, z: l.offset.z })
+  const heart = placement.anchors.find((a) => a.quarter === hint.quarter)
+  return places.spawnAt(hint, heart && { x: (heart.k + 0.5) * CITY.pitch, z: (heart.m + 0.5) * CITY.pitch })
 }
 
 // ---------------------------------------------------------------- meshes
@@ -977,9 +1050,8 @@ export interface HollowRegion {
 }
 
 /**
- * The region with rooms on `lots` (region/workplaces.ts regionWorkplaceLots), shops on `shopLots` (region/shops.ts
- * regionShopLots, never one of the rooms' lots) and homes on `homeLots` (region/homes.ts regionHomeLots, never a room's
- * or a shop's lot), as a copy: the pack is only read, since the page builds its world again whenever it remounts. A
+ * The region with rooms on `lots`, shops on `shopLots` (never one of the rooms' lots) and homes on `homeLots` (never a
+ * room's or a shop's lot), the three lists of region/placement.ts regionPlacement, as a copy: the pack is only read, since the page builds its world again whenever it remounts. A
  * shop's lot and a home's are hollowed exactly as a room's is; only what stands inside differs. The rooms' boxes and
  * floors come first, then the shops', then the homes', so each kind leaves the ones before it as they were.
  * - Every building standing on a chosen lot (its box's centre in the lot's square: workplaces.ts buildingLot) gets

@@ -204,3 +204,13 @@ export function mapWanted(q: URLSearchParams, saved: SavedOnboarding | null, reg
   if (regionFirst) return 'region'
   return saved && !saved.skipped && saved.place !== null ? 'lakefront' : 'city'
 }
+
+/**
+ * Which of the metropolis's five regions the visitor starts in: `?place=<slug>` (lakefront-metropolis, west-sprawl,
+ * the-east-bluffs, north-ridge, the-grand-ravine) ahead of everything, else the one chosen in the onboarding, else
+ * null (the caller's default: the metropolis). A word that names no region is no word. It says where to stand, not
+ * which map to walk: that is mapWanted's.
+ */
+export function placeWanted(q: URLSearchParams, saved: SavedOnboarding | null): Zone | null {
+  return zoneOf(q.get('place')) ?? zoneOf(saved?.place)
+}

@@ -29,8 +29,9 @@ import { MACRO, STREET } from '../macroCity.ts'
 import { carLoops, capacity, type Track } from '../../06_Make_Decisions/tracks.ts'
 import { TRAFFIC } from '../../02_Define_The_Rules/civic.ts'
 import { REGION_FORMAT, ROAD_CLASS, polygonAt, polygonCount, polygons, roadAt, validatePack, type RegionPack } from './pack.ts'
+import { regionPlacement } from './placement.ts'
 import {
-  SEG, STREET_SEGMENTS, STREET_VEC4S, STREET_WORDS, WINDOW_BLOCKS, WINDOW_GEOMETRY, cityStreetGrid, hSeg, mapStreetGrid, packStreets, ringRectangles, spawnSegment,
+  SEG, STREET_SEGMENTS, STREET_VEC4S, STREET_WORDS, WINDOW_BLOCKS, WINDOW_GEOMETRY, cityStreetGrid, hSeg, lotInWindow, mapStreetGrid, packStreets, ringRectangles, spawnSegment,
   streetCapacity, streetCounts, streetGridOf, streetLoops, streetNetwork, vSeg, windowFurniture, windowOf, windowOrigin, type StreetGrid,
 } from './streets.ts'
 
@@ -42,7 +43,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { LANE_WIDTH, REGION_CORNER, RegionPlaces, SHORE_WALL, SIDEWALK, layoutOf, regionPhysics } = await import('./regionWorld.ts')
+const { LANE_WIDTH, REGION_CORNER, RegionPlaces, SHORE_WALL, SIDEWALK, layoutOf, regionPhysics, regionStart } = await import('./regionWorld.ts')
 
 const P = CITY.pitch
 const B = WINDOW_BLOCKS
@@ -54,8 +55,8 @@ function windowFor(zone: Zone, seed = SEED) {
   const map = generateLakefront(seed, 64)
   const pack = packOf(map, zone)
   const layout = layoutOf(pack)
-  const places = new RegionPlaces(pack, layout)
-  const start = places.spawn({ x: layout.offset.x, z: layout.offset.z })
+  // The start the engine gives the zone (regionWorld.ts regionStart: across from the quarter's shop, placement.ts).
+  const start = regionStart(pack, layout, new RegionPlaces(pack, layout), regionPlacement(pack, layout, seed))
   const grid = streetGridOf(pack, layout.offset, start)
   assert.ok(grid, 'the metropolis has a window')
   return { map, pack, layout, start, grid }
@@ -133,7 +134,8 @@ test('the metropolis\'s window: on the pitch, around the start, inside the regio
     }
     assert.equal(checked, STREET_SEGMENTS)
     const counts = streetCounts(g)
-    assert.ok(counts.walk > STREET_SEGMENTS * 0.7, `${name}: ${counts.walk} walkable of ${STREET_SEGMENTS}`)
+    // The metropolis starts on the waterfront, by The Spire: over a third of its window is the lake, where no street runs.
+    assert.ok(counts.walk > STREET_SEGMENTS * (zone === ZONE.metropolis ? 0.6 : 0.7), `${name}: ${counts.walk} walkable of ${STREET_SEGMENTS}`)
     assert.equal(counts.walk, STREET_SEGMENTS - dropped)
     assert.equal(counts.drive, STREET_SEGMENTS - dropped - pedestrian)
     const spawn = spawnSegment(g)
@@ -163,7 +165,7 @@ test('the metropolis\'s rings: disjoint rectangles whose every side is a car str
       }
     }
     assert.ok(rects.length >= 40, `${name}: ${rects.length} rings`)
-    assert.ok(used.reduce((n, u) => n + u, 0) >= B * B * 0.6, `${name}: most blocks ringed`)
+    assert.ok(used.reduce((n, u) => n + u, 0) >= B * B * (zone === ZONE.metropolis ? 0.5 : 0.6), `${name}: most blocks ringed (the waterfront window: most of its land)`)
     // The rings as tracks: in the engine's frame, every straight on a window street's right-hand lane.
     const loops = streetLoops(SEED, g)
     assert.equal(loops.length, rects.length)
@@ -381,10 +383,12 @@ test('streetGridOf is the whole map\'s grid, cropped: the very window its old bo
       const pack = packOf(map, zone)
       const layout = layoutOf(pack)
       const b = layout.bounds
-      const old = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
-      // The old start (the arterial run nearest the quarter's centre), the quarter's centre itself (the pack's origin: where
-      // a start in the chosen quarter is), the map's corners and a block past them, and its middle.
-      const starts = [old, { x: layout.offset.x, z: layout.offset.z }, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2 }]
+      const places = new RegionPlaces(pack, layout)
+      const old = places.spawn({ x: layout.offset.x, z: layout.offset.z })
+      // The old start (the arterial run nearest the quarter's centre), the start the engine gives now (across from the
+      // quarter's shop), the quarter's centre itself (the pack's origin), the map's corners and a block past them, and
+      // its middle.
+      const starts = [old, regionStart(pack, layout, places, regionPlacement(pack, layout, seed)), { x: layout.offset.x, z: layout.offset.z }, { x: (b.x0 + b.x1) / 2, z: (b.z0 + b.z1) / 2 }]
       for (const x of [b.x0 - P, b.x0, b.x1, b.x1 + P]) for (const z of [b.z0 - P, b.z0, b.z1, b.z1 + P]) starts.push({ x, z })
       // And, once a seed (the streets stand at the same engine metres whichever quarter is home): a lattice over the whole
       // map and past every edge, four blocks apart and off the street lines, so the clamp and the crop are met everywhere.
@@ -526,6 +530,29 @@ test('the window is a crop of the map\'s grid wherever it is put, and windowOrig
   const bare: StreetGrid = { originX: 400, originZ: 800, blocks: 20, ...WINDOW_GEOMETRY, h: new Uint8Array(21 * 20), v: new Uint8Array(21 * 20) }
   assert.deepEqual(windowOrigin(bare, { x: 0, z: 0 }), { k0: 10, m0: 20 })
   assert.deepEqual(windowOrigin(bare, { x: 1e6, z: 1e6 }), { k0: 14, m0: 24 })
+})
+
+test('lotInWindow: the window\'s own sixteen by sixteen lots and no other, in the engine\'s lot indices', () => {
+  // A window whose north-west street lines are (54, 61): its lots are 54..69 by 61..76.
+  const g = { originX: 54 * CITY.pitch, originZ: 61 * CITY.pitch, blocks: 16 }
+  for (const [k, m, inside] of [
+    [54, 61, true], [69, 76, true], [60, 70, true], [54, 76, true], [69, 61, true],
+    [53, 61, false], [54, 60, false], [70, 76, false], [69, 77, false], [0, 0, false], [-1, -1, false], [114, 114, false],
+  ] as const) assert.equal(lotInWindow(g, k, m), inside, `lot ${k},${m}`)
+  let count = 0
+  for (let m = 40; m < 120; m++) for (let k = 40; k < 120; k++) if (lotInWindow(g, k, m)) count++
+  assert.equal(count, 256)
+  // The whole map's grid holds every lot of the map, and a real window holds the lot its visitor starts on.
+  const pack = packOf(generateLakefront(1337, 64), ZONE.eastBluffs)
+  const layout = layoutOf(pack)
+  const map = mapStreetGrid(pack, layout.offset)!
+  const placed = regionPlacement(pack, layout, 1337)!
+  for (const lot of [...placed.workplaces, ...placed.shops, ...placed.homes]) assert.ok(lotInWindow(map, lot.k, lot.m), 'every place is on the map')
+  const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placed)
+  const win = streetGridOf(pack, layout.offset, start)!
+  assert.ok(lotInWindow(win, Math.floor(start.x / CITY.pitch), Math.floor(start.z / CITY.pitch)), 'the start\'s own lot')
+  const onWindow = [...placed.workplaces, ...placed.shops, ...placed.homes].filter((lot) => lotInWindow(win, lot.k, lot.m)).length
+  assert.ok(onWindow >= 3 && onWindow < 28, `${onWindow} of the 28 places stand on the start's window`)
 })
 
 // A grid that is not a StreetGrid (the type is structural): the engine refuses nothing here, the host does (regionPhysics.test.ts).

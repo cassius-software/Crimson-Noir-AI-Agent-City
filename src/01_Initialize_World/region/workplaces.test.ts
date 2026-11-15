@@ -2,21 +2,21 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? Lakefront Metro's workplaces are chosen from its pack (region/workplaces.ts) and walked to
- * on a street window that has dropped streets, dead ends and water. These tests hold the choice to its promises on the
- * real generated map (three seeds, the five zones each): at most sixteen lots of the window, each with its doorway on a
- * two-way street with a sidewalk whose corner the visitor can walk to, never The Spire's lot or a lot under water, the
- * kinds in order, the same lots every time and the pack untouched, and seed 1337's metropolis on its twelve transit-hub
- * lots first. They hold the route table too, through a mirror of the shader's commute (crowd.wgsl commuteCorner): from every
- * corner the visitor's can reach, a commuter arrives at the workplace's corner within twice the streets between plus
- * two, on streets that exist; while the greedy walk the city uses, with its dice, strands someone for good. And they
- * hold the hollowing (regionWorld.ts hollowLots): a copy of the pack with only the chosen lots' buildings put out of
- * sight, the ceiling slab in the podium's finish, what stood above the slab carried on it as the box it was, the
- * meshes short of exactly the hidden buildings, and the frame facts it leans on. And they hold the lot and corner
- * helpers to reading the whole map's grid (streets.ts mapStreetGrid) as they read the window: the same buildings on
- * the same lots, the same fronts, a window's candidates the map's own with the corners the window cannot reach left
- * out, and, with no start, the lots the largest part of the corner graph reaches, which on these maps is every dry lot
- * with a two-way front but The Spire's.
+ * Why does this file exist? Lakefront Metro's workplaces stand on lots of its pack (region/placement.ts chooses them,
+ * placement.test.ts holds the choice) and are walked to on a street window that has dropped streets, dead ends and
+ * water. These tests hold what region/workplaces.ts gives that choice and that walk, on the real generated map (three
+ * seeds, the five zones each, each from the start the engine gives it). They hold the route table, through a mirror of
+ * the shader's commute (crowd.wgsl commuteCorner): from every corner that can reach a room's, a commuter arrives at it
+ * within twice the streets between plus two, on streets that exist, for sixteen rooms a window (the window's
+ * best-built lots: a fixture, so that every slot is walked) and for the placement's own rooms that stand on the
+ * window; a room off the window has no table; while the greedy walk the city uses, with its dice, strands someone for
+ * good. And they hold the hollowing (regionWorld.ts hollowLots) of the placement's sixteen lots, wherever on the map
+ * they stand: a copy of the pack with only the chosen lots' buildings put out of sight, the ceiling slab in the
+ * podium's finish, what stood above the slab carried on it as the box it was, the meshes short of exactly the hidden
+ * buildings, and the frame facts it leans on. And they hold the lot and corner helpers to reading the whole map's grid
+ * (streets.ts mapStreetGrid) as they read the window: the same buildings on the same lots, the same fronts, a window's
+ * candidates the map's own with the corners the window cannot reach left out, and, with no start, the lots the largest
+ * part of the corner graph reaches, which on these maps is every dry lot with a two-way front but The Spire's.
  * What breaks if it is removed? A room could open onto a missing street or the lake, a worker could circle a dead end
  * for a whole shift, a room could stand inside a building still drawn round it, and only the GPU laptop would show it.
  */
@@ -35,10 +35,11 @@ import { ZONE, generateLakefront } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
 import { LOT, STREET } from '../macroCity.ts'
 import { polygonAt, polygonCount, pushPolygon, tallestBuilding, validatePack, type RegionPack } from './pack.ts'
-import { SEG, WINDOW_GEOMETRY, hSeg, mapStreetGrid, streetGridOf, vSeg, type StreetGrid } from './streets.ts'
+import { regionPlacement } from './placement.ts'
+import { SEG, WINDOW_GEOMETRY, hSeg, lotInWindow, mapStreetGrid, streetGridOf, vSeg, type StreetGrid } from './streets.ts'
 import {
   ROUTE, ROUTE_LINES, ROUTE_ROOM_VEC4S, ROUTE_VEC4S, buildingLot, cornerAt, cornerComponent, cornerExists, cornerKey, cornerNear, cornerWays, frontOf,
-  largestCornerComponent, lotCandidates, lotTier, packRoutes, podiumOf, regionWorkplaceLots, windowLotBuildings, type Corner, type LotCandidate,
+  largestCornerComponent, lotCandidates, lotTier, packRoutes, windowLotBuildings, type Corner, type LotCandidate,
 } from './workplaces.ts'
 
 // Vite's `?raw` import, for Node: regionWorld.ts (the visitor's start, RegionPlaces; the hollowing; the meshes) imports
@@ -50,18 +51,30 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { REGION_CORNER, RegionPlaces, buildingStyle, hollowLots, layoutOf, regionMeshes } = await import('./regionWorld.ts')
+const { REGION_CORNER, RegionPlaces, buildingStyle, hollowLots, layoutOf, regionMeshes, regionStart } = await import('./regionWorld.ts')
 
 const P = CITY.pitch
-interface Window { seed: number; zone: string; pack: RegionPack; layout: ReturnType<typeof layoutOf>; start: { x: number; z: number }; g: StreetGrid; lots: WorkplaceLot[] }
+interface Window {
+  seed: number; zone: string; pack: RegionPack; layout: ReturnType<typeof layoutOf>; start: { x: number; z: number }
+  /** The street window round the start, and the whole map's grid. */
+  g: StreetGrid
+  map: StreetGrid
+  /** The placement's sixteen workplaces: all over the map, the same lots whichever zone the pack starts in. */
+  lots: WorkplaceLot[]
+  /** Sixteen rooms on the window's own lots, for the route table: the best built first, then the nearest the start. */
+  near: WorkplaceLot[]
+}
 const WINDOWS: Window[] = [1337, 7, 42].flatMap((seed) => {
   const map = generateLakefront(seed, 64)
   return Object.entries(ZONE).filter(([name]) => name !== 'lake').map(([zone, z]) => {
     const pack = packOf(map, z)
     const layout = layoutOf(pack)
-    const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+    const placement = regionPlacement(pack, layout, seed)!
+    const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placement)
     const g = streetGridOf(pack, layout.offset, start)!
-    return { seed, zone, pack, layout, start, g, lots: regionWorkplaceLots(pack, layout, g, start, seed) }
+    const near = lotCandidates(pack, layout, g, start).sort((a, b) => a.tier - b.tier || a.ring - b.ring || a.j - b.j || a.i - b.i).slice(0, ROOM.slots)
+      .map((c, n): WorkplaceLot => ({ kind: WORKPLACE_KINDS[n], k: g.originX / P + c.i, m: g.originZ / P + c.j, side: c.sides[0] }))
+    return { seed, zone, pack, layout, start, g, map: mapStreetGrid(pack, layout.offset)!, lots: placement.workplaces, near }
   })
 })
 /** A lot's window indices. */
@@ -72,54 +85,6 @@ const target = (w: Window, l: { k: number; m: number; side: Side }): Corner => {
   const t = targetCorner({ k: i, m: j, side: l.side })
   return { k: t.k, m: t.m, sx: t.sx, sz: t.sz }
 }
-const pointIn = (x: number, z: number, ring: readonly (readonly [number, number])[]): boolean => {
-  let c = false
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, zi] = ring[i], [xj, zj] = ring[j]
-    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) c = !c
-  }
-  return c
-}
-
-test('sixteen lots of the window, each with its doorway on a two-way street the visitor can walk to; never The Spire\'s lot or the lake; the kinds in order; the same every time; the pack untouched', () => {
-  for (const w of WINDOWS) {
-    const at = `seed ${w.seed} ${w.zone}`
-    const { lots, g } = w
-    // Every window of the three seeds has at least sixteen candidates (fewer would be legal: the slots would stay empty).
-    assert.equal(lots.length, ROOM.slots, `${at}: ${lots.length} lots`)
-    assert.equal(new Set(lots.map((l) => `${l.k},${l.m}`)).size, lots.length, `${at}: every lot once`)
-    assert.deepEqual(lots.map((l) => l.kind), WORKPLACE_KINDS.slice(0, lots.length), `${at}: the kinds in order`)
-    const reach = cornerComponent(g, cornerNear(g, w.start))
-    const tallest = tallestBuilding(w.pack)!
-    for (const l of lots) {
-      const { i, j } = local(w, l)
-      assert.ok(Number.isInteger(i) && Number.isInteger(j) && i >= 0 && j >= 0 && i < g.blocks && j < g.blocks, `${at}: lot ${l.k},${l.m} is in the window`)
-      assert.equal(frontOf(g, i, j, l.side), SEG.walk | SEG.drive, `${at}: lot ${l.k},${l.m}'s doorway is on a two-way street with a sidewalk`)
-      assert.ok(reach.has(cornerKey(target(w, l))), `${at}: lot ${l.k},${l.m}'s workplace corner is reachable from the start`)
-      assert.ok(!(Math.floor((tallest.x + w.layout.offset.x) / P) === l.k && Math.floor((tallest.z + w.layout.offset.z) / P) === l.m), `${at}: not The Spire's lot`)
-      const cx = (l.k + 0.5) * P - w.layout.offset.x, cz = (l.m + 0.5) * P - w.layout.offset.z
-      for (let p = 0; p < polygonCount(w.pack.water); p++) assert.ok(!polygonAt(w.pack.water, p).some((r) => pointIn(cx, cz, r)), `${at}: lot ${l.k},${l.m} is dry land`)
-    }
-    const before = JSON.stringify(w.pack)
-    assert.deepEqual(regionWorkplaceLots(w.pack, w.layout, g, w.start, w.seed), lots, `${at}: the same lots again`)
-    assert.equal(JSON.stringify(w.pack), before, `${at}: the pack is only read`)
-  }
-  assert.notDeepEqual(WINDOWS[0].lots, WINDOWS[5].lots, 'another seed, other doorways')
-})
-
-test('seed 1337\'s metropolis puts its first twelve workplaces on the transit-hub lots (a low podium over the lot carrying a tower), the first six where the six rooms stood, and the last four on the next tier', () => {
-  const w = WINDOWS.find((x) => x.seed === 1337 && x.zone === 'metropolis')!
-  // Map lots: the engine's lot indices less the region corner's 50 blocks (regionWorld.ts REGION_CORNER, 2000 m).
-  const at = (l: { k: number; m: number }) => `${l.k - 50},${l.m - 50}`
-  assert.deepEqual(w.lots.slice(0, 6).map(at).sort(), ['30,16', '30,17', '31,17', '32,17', '33,16', '33,17'], 'the six rooms\' lots, first')
-  assert.deepEqual(w.lots.map(at).sort(), ['30,14', '30,15', '30,16', '30,17', '31,14', '31,17', '32,14', '32,17', '32,22', '32,23', '33,14', '33,15', '33,16', '33,17', '33,22', '33,24'])
-  const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
-  w.lots.forEach((l, n) => {
-    const { i, j } = local(w, l)
-    assert.equal(podiumOf(on[j * w.g.blocks + i]) !== null, n < 12, `lot ${l.k},${l.m} (pick ${n}) ${n < 12 ? 'is' : 'is not'} a hub`)
-  })
-})
-
 // ---------------------------------------------------------------- the commute, mirrored from crowd.wgsl
 
 /** Manhattan distance between two corners' positions (towardCorner's measure). */
@@ -184,7 +149,9 @@ test('the route table: from every corner the visitor can reach, a commuter arriv
   let walks = 0
   for (const w of WINDOWS) {
     const { g } = w
-    const rooms = workplacesAt(w.lots)
+    // Every window of the three seeds has sixteen lots a room could stand on (the fixture: every slot is walked).
+    assert.equal(w.near.length, ROOM.slots, `seed ${w.seed} ${w.zone}: ${w.near.length} lots`)
+    const rooms = workplacesAt(w.near)
     const words = packRoutes(rooms, g)
     assert.equal(words.length, ROUTE_VEC4S * 4)
     assert.ok(words.subarray(rooms.length * 40).every((v) => v === 0), 'an empty slot is all zero')
@@ -212,6 +179,47 @@ test('the route table: from every corner the visitor can reach, a commuter arriv
   assert.ok(walks > 10000, `${walks} walks`)
 })
 
+test('the placement\'s own rooms: one on the window\'s lots is routed, from every corner that reaches its own, in its own slot; one off the window has no table; every window has a room to walk to', () => {
+  let onWindow = 0, walks = 0
+  for (const w of WINDOWS) {
+    const at = `seed ${w.seed} ${w.zone}`
+    const { g } = w
+    const rooms = workplacesAt(w.lots)
+    assert.equal(rooms.length, ROOM.slots, `${at}: sixteen rooms on the map`)
+    const words = packRoutes(rooms, g)
+    const rng = createRng(w.seed)
+    let here = 0, fromStart = 0
+    rooms.forEach((room, r) => {
+      const slot = words.subarray(r * ROUTE_ROOM_VEC4S * 4, (r + 1) * ROUTE_ROOM_VEC4S * 4)
+      if (!lotInWindow(g, room.k, room.m)) {
+        // Even a room on the lot just outside, whose workplace corner is one of the window's own intersections.
+        assert.ok(slot.every((v) => v === 0), `${at} ${room.kind}: off the window, no table`)
+        return
+      }
+      here++
+      const dest = target(w, room)
+      assert.equal(routeWayOf(words, r, dest.k, dest.m), ROUTE.here, `${at} ${room.kind}: routed`)
+      // Everyone who can reach the room's corner over the window's sidewalks does, by the table.
+      const between = hops(g, dest.k, dest.m)
+      for (const from of cornerComponent(g, dest).values()) {
+        const limit = 2 * between.get(`${from.k},${from.m}`)! + 2
+        let c = from, moves = 0
+        while (cornerKey(c) !== cornerKey(dest)) {
+          c = commuteCorner(g, words, r, dest, c, rng())
+          assert.ok(++moves <= limit, `${at} ${room.kind}: from ${cornerKey(from)}, still walking after ${moves} moves`)
+        }
+        walks++
+      }
+      if (cornerComponent(g, dest).has(cornerKey(cornerNear(g, w.start)))) fromStart++
+    })
+    // A window's streets are cut where it ends and at a ravine, so a room across one may be out of the start's reach
+    // inside the window (its workers on the far side walk as anyone does); never every room.
+    assert.ok(here >= 2 && fromStart >= 1, `${at}: ${here} rooms on the window, ${fromStart} the start's corner walks to inside it`)
+    onWindow += here
+  }
+  assert.ok(onWindow >= 30 && walks > 10000, `${onWindow} rooms on their windows, ${walks} walks`)
+})
+
 test('why the table: the greedy walk the city commutes by, with its dice, strands someone for good on seed 1337\'s windows', () => {
   // The first start that never arrives in four times as many moves as the window has reachable corners (the table
   // brings everyone in within a few dozen) is the witness.
@@ -219,7 +227,7 @@ test('why the table: the greedy walk the city commutes by, with its dice, strand
     for (const w of WINDOWS.filter((x) => x.seed === 1337)) {
       const reach = [...cornerComponent(w.g, cornerNear(w.g, w.start)).values()]
       const rng = createRng(99)
-      for (const room of workplacesAt(w.lots)) {
+      for (const room of workplacesAt(w.near)) {
         const dest = target(w, room)
         for (const from of reach) {
           let c = from
@@ -382,14 +390,13 @@ test('each room\'s ceiling slab carries its lot\'s podium in the podium\'s finis
   for (const w of WINDOWS) {
     const at = `seed ${w.seed} ${w.zone}`
     const h = hollowLots(w.pack, w.layout, w.lots)
-    const on = windowLotBuildings(w.pack, w.layout.offset, w.g)
+    const on = windowLotBuildings(w.pack, w.layout.offset, w.map)
     const inRoom = new Set(h.rooms.flatMap((r) => [...r.shell, ...r.furniture]))
     for (const b of inRoom) assert.ok(h.plan.includes(b), `${at}: every shell and furniture box is drawn`)
     const lifted = h.plan.filter((b) => !inRoom.has(b))
     let above = 0
     for (const room of h.rooms) {
-      const { i, j } = local(w, room)
-      const here = on[j * w.g.blocks + i]
+      const here = on[(room.m - w.map.originZ / P) * w.map.blocks + room.k - w.map.originX / P]
       // The podium: a low building over most of the lot (two floors at most), tower or none.
       const podium = here.find((b) => b.area >= 0.8 * LOT_AREA && b.height <= 6.6 + 1e-6)
       const top = Math.max(podium?.height ?? 0, ROOM.height + 0.3)
@@ -405,12 +412,16 @@ test('each room\'s ceiling slab carries its lot\'s podium in the podium\'s finis
     carried += above
   }
   assert.ok(carried > 0, 'something stood above a slab')
-  // Seed 1337's metropolis: twelve hubs, each slab its two-floor podium, each tower carried from it; then four lots of
-  // the next tier, whose slab is the room's least (4.5 m) and carries nothing.
+  // Seed 1337: three rooms stand on a hub (the robotics lab, the control tower and the acoustics chamber, each by its
+  // quarter's heart), their slab the hub's two-floor podium; every other slab is the room's least (4.5 m).
   const m = WINDOWS.find((x) => x.seed === 1337 && x.zone === 'metropolis')!
   const h = hollowLots(m.pack, m.layout, m.lots)
-  assert.deepEqual(h.rooms.map((r) => r.shell[5].box[4]), [...Array(12).fill(6.6), ...Array(4).fill(ROOM.height + 0.3)])
-  assert.equal(h.plan.length - h.rooms.reduce((n, r) => n + r.shell.length + r.furniture.length, 0), 12, 'a tower on each hub')
+  const hubs = new Set(['roboticsLab', 'controlTower', 'acousticsLab'])
+  assert.deepEqual(h.rooms.map((r) => r.shell[5].box[4]), h.rooms.map((r) => (hubs.has(r.kind) ? 6.6 : ROOM.height + 0.3)))
+  // What is carried: the tower of each hub, and the towers of the core's four tower lots (the server vault, the twin
+  // studio, the clearing floor and the console deck, two each), a tall building on two more.
+  const carriedOn = (kind: string) => { const r = h.rooms.find((x) => x.kind === kind)!; return h.plan.filter((b) => !r.shell.includes(b) && !r.furniture.includes(b) && overLot(r, b)).length }
+  assert.deepEqual(WORKPLACE_KINDS.map(carriedOn), [1, 0, 2, 1, 1, 0, 0, 2, 0, 0, 1, 0, 2, 1, 0, 2])
 })
 
 test('a building on a chosen lot that is not one plain rectangle is hidden and not carried: a turned square, a courtyard', () => {

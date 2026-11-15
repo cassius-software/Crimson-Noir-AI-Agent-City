@@ -163,6 +163,16 @@ export function windowOrigin(map: StreetGrid, around: { x: number; z: number }):
 }
 
 /**
+ * Whether engine lot (k, m) is one of grid `g`'s lots. The crowd's rooms and their route table both ask this of the
+ * street window (interiors.ts packRooms, workplaces.ts packRoutes): a region's workplaces stand all over its map
+ * (placement.ts), and only those on the window's lots are rooms to the people who walk it.
+ */
+export function lotInWindow(g: Pick<StreetGrid, 'originX' | 'originZ' | 'blocks'>, k: number, m: number): boolean {
+  const i = k - Math.round(g.originX / P), j = m - Math.round(g.originZ / P)
+  return i >= 0 && j >= 0 && i < g.blocks && j < g.blocks
+}
+
+/**
  * The window of a map's grid whose north-west corner is the street lines (k0, m0), in the engine's block indices
  * (windowOrigin gives them): WINDOW_BLOCKS across, every segment the map's, nothing where the map has no street or the
  * window reaches past it. The map's own geometry; a new grid, the map only read.

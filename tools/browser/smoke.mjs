@@ -127,6 +127,8 @@
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
+ *   its 28 places stand in all five regions, the visitor starts in Lakefront Metropolis with the HUD's line led by its
+ *   name, and again with ?place=the-grand-ravine in The Grand Ravine, the places on the same lots;
  * - homes: the seven homes of seed 1337 and their deeds, on the progression keeper (nothing here costs a credit): B in
  *   Lintel & Lumen Design House opens its card, the Micro-Loft's deed is claimed for nothing and the Pierside's asks for
  *   level 6, Go home puts the avatar on the sidewalk in front of the loft's doorway, W walks it in through the
@@ -2973,13 +2975,21 @@ const SCENARIOS = {
       // The rooms as the page drew them (the lots it picked from the pack) and as the physics worker's crowd was handed
       // them (SimMeta.rooms: the worker builds them from the lots it was sent).
       const r = await p.eval(`(() => { const e = window.__SIM__.engine, s = window.__SIM__.snapshot()
-        return { region: e.places !== null, window: e.streets !== null, drawn: e.rooms.length, crowd: e.sim.meta.rooms,
+        return { region: e.places !== null, window: e.streets !== null, drawn: e.rooms.length, crowd: e.sim.meta.rooms, rooms: e.rooms.map((r) => r.k + ',' + r.m).join(' '),
           people: s.process.pedestrians, working: s.process.working, errors: window.__SIM__.errors().slice(0, 5) } })()`)
       check(r.region && r.window, 'lakefront: ?map=lakefront walks the generated metropolis through its street window', `region ${r.region}, window ${r.window}`)
       check(r.people > 0, 'lakefront: the window has people', `${r.people} pedestrians`)
-      // Sixteen: seed 1337's metropolis window has at least sixteen candidate lots (twelve transit hubs and four more), so
-      // every slot is filled (region/workplaces.test.ts pins the lots).
+      // Sixteen: the placement shares all sixteen out over the whole map (region/placement.ts; placement.test.ts pins
+      // seed 1337's lots), and every one is drawn and handed to the worker; the crowd commutes to those on the window.
       check(r.drawn === 16 && r.crowd === 16, 'lakefront: sixteen indoor workplaces drawn, and sixteen reached the worker\'s crowd', `${r.drawn} drawn, ${r.crowd} in the worker's crowd`)
+      // The places stand in all five regions, and the visitor starts in the one they chose (the metropolis by default),
+      // with the HUD's line led by that region's name.
+      const spread = await p.eval(`(() => { const e = window.__SIM__.engine, c = window.__SIM__.snapshot().customer
+        const all = [...e.rooms.map((r) => r.door), ...e.shops.map((s) => s.door), ...e.homes.map((h) => h.door)]
+        return { regions: [...new Set(all.map((d) => e.places.quarter(d.x, d.z)))].filter(Boolean).length, places: all.length,
+          here: e.places.quarter(c.x, c.z), district: c.district } })()`)
+      check(spread.places === 28 && spread.regions === 5, 'lakefront: the 28 places stand in all five regions', `${spread.places} places in ${spread.regions} regions`)
+      check(spread.here === 'Lakefront Metropolis' && spread.district.startsWith('Lakefront Metropolis · '), 'lakefront: the visitor starts in Lakefront Metropolis and the HUD says so', `${spread.here}; ${spread.district}`)
       check(Number.isInteger(r.working) && r.working >= 0, 'lakefront: the HUD counts who is at work indoors', `working ${r.working}`)
       // The window's transit (region/transit.ts): the realm schedules craft on the window's own network (its elevated loop,
       // drone corridors and racetrack at least) and the page draws them and the painted crossings.
@@ -3000,6 +3010,16 @@ const SCENARIOS = {
       check(r.errors.length === 0, 'lakefront: the engine recorded no error', r.errors.join(' | ').slice(0, 300))
       await p.shot('lakefront')
       p.health('lakefront')
+      // ?place= says which region to stand in: the same 28 places, another start, in The Grand Ravine, its name leading.
+      await reload(p, `${origin}/?map=lakefront&place=the-grand-ravine&${LIGHT}`)
+      const ravine = await p.eval(`(() => { const e = window.__SIM__.engine, c = window.__SIM__.snapshot().customer
+        return { here: e.places.quarter(c.x, c.z), district: c.district, rooms: e.rooms.map((r) => r.k + ',' + r.m).join(' '),
+          people: window.__SIM__.snapshot().process.pedestrians, errors: window.__SIM__.errors().slice(0, 5) } })()`)
+      check(ravine.here === 'The Grand Ravine' && ravine.district.startsWith('The Grand Ravine · '), 'lakefront: ?place=the-grand-ravine starts the visitor in The Grand Ravine and the HUD says so', `${ravine.here}; ${ravine.district}`)
+      check(ravine.rooms === r.rooms, 'lakefront: the workplaces stand on the same lots whichever region the visitor starts in')
+      check(ravine.people > 0 && ravine.errors.length === 0, 'lakefront: the ravine\'s window has people and the engine recorded no error', `${ravine.people} pedestrians; ${ravine.errors.join(' | ').slice(0, 300)}`)
+      await p.shot('lakefront-ravine')
+      p.health('lakefront ravine')
     } finally { await p.b.close() }
   },
 

@@ -10,12 +10,13 @@
  * What breaks if it is removed? A line could gain jargon, a step a fourth choice, or the saved choice stop being honoured.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { REGIONS, ZONE } from '../../01_Initialize_World/lakefront.ts'
 import type { Answer, Mind, Piece } from '../operator.ts'
 import {
   MAP_KEY, NO_ANSWERS, ONBOARDING_KEY, PLACES, SKIPPED, SOUNDS, STEPS, TIMES, answer, choicesFor, lineFor, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, nextStep, saveMapChoice,
-  optionsFrom, outcomeOf, said, saveOnboarding,
+  optionsFrom, outcomeOf, placeWanted, said, saveOnboarding,
 } from './script.ts'
 import { modelVoice, mustKeep, scriptedVoice } from './voice.ts'
 
@@ -107,6 +108,29 @@ test('which map: the URL first, then the visitor\'s saved choice, else the proce
   assert.equal(mapWanted(q('region=on'), chosen, false), 'region')
   assert.equal(mapWanted(q(''), chosen, true), 'region')
   assert.equal(mapWanted(q('region=off'), null, true), 'city')
+})
+
+test('which region to stand in: ?place= first, then the onboarding\'s choice, else none; a word that names no region is no word', () => {
+  const q = (s: string) => new URLSearchParams(s)
+  const chosen = { v: 1 as const, place: 'west-sprawl', hour: 9, audio: true, skipped: false }
+  assert.equal(placeWanted(q(''), null), null)
+  assert.equal(placeWanted(q(''), SKIPPED), null)
+  assert.equal(placeWanted(q(''), chosen), ZONE.westSprawl)
+  // Every region's slug, as the onboarding saves it (lakefront.ts REGIONS), reaches its own zone from the address bar.
+  for (const r of REGIONS) assert.equal(placeWanted(q(`place=${r.slug}`), null), r.id)
+  assert.equal(REGIONS.length, 5)
+  assert.equal(placeWanted(q('place=the-grand-ravine'), chosen), ZONE.grandRavine, 'the address bar ahead of the saved choice')
+  assert.equal(placeWanted(q('map=lakefront&place=north-ridge&quality=3'), null), ZONE.northRidge)
+  // A word that names no region (a typo, another case, an empty value) falls through to the saved choice, then to none.
+  for (const word of ['', 'narnia', 'West-Sprawl', 'west sprawl', '1']) {
+    assert.equal(placeWanted(q(`place=${encodeURIComponent(word)}`), chosen), ZONE.westSprawl, `"${word}" with a saved choice`)
+    assert.equal(placeWanted(q(`place=${encodeURIComponent(word)}`), null), null, `"${word}" alone`)
+  }
+  // It only says where to stand: the map is mapWanted's, and ?place= alone does not choose the lakefront.
+  assert.equal(mapWanted(q('place=north-ridge'), null, false), 'city')
+  // App reads it once, with the metropolis as the default.
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  assert.ok(app.includes('const zone = placeWanted(new URLSearchParams(window.location.search), chosen) ?? ZONE.metropolis'))
 })
 
 test('a map chosen at the console is kept between visits and beats the onboarding and the pilot default, never the URL', () => {

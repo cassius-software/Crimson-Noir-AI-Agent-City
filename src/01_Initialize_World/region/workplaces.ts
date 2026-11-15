@@ -2,36 +2,36 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It gives a generated region (Lakefront Metro, through its street window, streets.ts) the
- * procedural city's sixteen indoor workplaces (interiors.ts): which lots of the window become rooms, which street front
- * each doorway faces, and the commute's route table the crowd shader walks to them.
+ * Why does this file exist? It gives a generated region (Lakefront Metro) the procedural city's sixteen indoor
+ * workplaces (interiors.ts): which lots may become rooms, which street front each doorway faces, and the commute's
+ * route table the crowd shader walks to them.
  * - The lots. The city picks its sixteen from the seed alone, on a grid where every lot has four streets. A region's
- *   window has dropped streets, pedestrian streets, water and ravines, so the lots are read from the pack: a lot is a
- *   candidate when one of its street fronts is a two-way street with a sidewalk (SEG.walk | SEG.drive) whose sidewalk
- *   corner on the corner graph is reachable from where the visitor starts. The candidates are ranked by what stands on
- *   them (a low podium carrying a tower first: the transit hubs, whose podium becomes the ceiling and whose tower is
- *   carried above the room; then lots one or two tall buildings fill; then one mid-rise; then one low building; then
- *   open lots), then by how near the start's lot they are, then by the seed's dice; never the tallest building's lot
- *   (the landmark stays) and never a lot under water. Sixteen (ROOM.slots) at most, the kinds in WORKPLACE_KINDS order;
- *   fewer is legal, and a window short of candidates gives fewer.
+ *   map has dropped streets, pedestrian streets, water and ravines, so the lots are read from the pack: a lot is a
+ *   candidate (lotCandidates) when one of its street fronts is a two-way street with a sidewalk (SEG.walk | SEG.drive)
+ *   whose sidewalk corner is on the grid's largest connected piece of the corner graph (or the piece a given start
+ *   stands on); never the tallest building's lot (the landmark stays) and never a lot under water. Each candidate
+ *   carries its tier by what stands on it (lotTier: a low podium carrying a tower first, the transit hubs, whose podium
+ *   becomes the ceiling and whose tower is carried above the room; then lots one or two tall buildings fill; then one
+ *   mid-rise; then one low building; then open lots). Which candidates become which places is region/placement.ts's:
+ *   it shares the workplaces, shops and homes out over the whole map by quarter.
  *   The page picks them and the physics worker receives them as data (simProtocol.ts SimInit.workplaces), so the two
  *   never disagree.
  * - The route table. The city's commuters walk the corner graph greedily towards the workplace's corner, which always
  *   arrives where every street exists. In a window it can stall against a missing street for good. So each room gets
  *   a table over the window's intersections (packRoutes, crowd.wgsl Params.routes): from each intersection, the street
  *   to take to come one intersection nearer the workplace's (a breadth-first search over the streets with a sidewalk),
- *   5 at the workplace's own, 0 where it cannot be reached. The procedural city's table is all zero: its commute is
- *   the greedy one, bit for bit.
+ *   5 at the workplace's own, 0 where it cannot be reached. A room whose lot is off the window has an empty table (the
+ *   crowd lives in the window, and nobody commutes out of it). The procedural city's table is all zero: its commute
+ *   is the greedy one, bit for bit.
  * The lot and corner helpers (windowLotBuildings, lotCandidates, cornerComponent, frontOf) read any street grid, the
  * window's or the whole map's (streets.ts mapStreetGrid); the route table alone is the window's, as the shader's is.
  * Pure, and no three.js: the physics worker builds the route table from it.
  * What breaks if it is removed? Lakefront Metro has no indoor workplaces: no rooms, no workday, nobody at work indoors.
  */
-import { createRng } from '../../02_Define_The_Rules/degrees.ts'
 import { CITY } from '../city.ts'
-import { ROOM, WORKPLACE_KINDS, targetCorner, type Side, type WorkplaceLot } from '../interiors.ts'
+import { ROOM, targetCorner, type Side } from '../interiors.ts'
 import { DM, polygonAt, polygonCount, tallestBuilding, type Polygons, type RegionPack } from './pack.ts'
-import { SEG, WINDOW_BLOCKS, hSeg, vSeg, type StreetGrid } from './streets.ts'
+import { SEG, WINDOW_BLOCKS, hSeg, lotInWindow, vSeg, type StreetGrid } from './streets.ts'
 
 const P = CITY.pitch
 /** A lot's square, m: CITY.lotHalf either side of the lot's centre, the macro map's built square (macroCity.ts). */
@@ -294,25 +294,6 @@ export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z
   return candidates
 }
 
-/**
- * The region's workplace lots in the window `g` (streets.ts streetGridOf), for a visitor starting at `start` (engine
- * metres): at most ROOM.slots, in WORKPLACE_KINDS order, as interiors.ts workplacesAt takes them (engine lot indices).
- * The ranking is the file's header's: among lotCandidates, the tier (lotTier), then the Chebyshev ring of lots from
- * the start's, then the dice (createRng(seed ^ 0x1a7e): one draw per window lot in row order, then one per pick for
- * its doorway's side among the fronts that qualify). Deterministic, and the pack is only read.
- */
-export function regionWorkplaceLots(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }, seed: number): WorkplaceLot[] {
-  const candidates = lotCandidates(pack, layout, g, start)
-  const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
-  const rng = createRng((seed ^ 0x1a7e) >>> 0)
-  const dice = new Float64Array(B * B)
-  for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) dice[j * B + i] = rng()
-  candidates.sort((a, b) => a.tier - b.tier || a.ring - b.ring || dice[a.j * B + a.i] - dice[b.j * B + b.i] || a.j - b.j || a.i - b.i)
-  return candidates.slice(0, ROOM.slots).map((c, n) => ({
-    kind: WORKPLACE_KINDS[n], k: K0 + c.i, m: M0 + c.j, side: c.sides[Math.min(c.sides.length - 1, Math.floor(rng() * c.sides.length))],
-  }))
-}
-
 // ---------------------------------------------------------------- the route table (crowd.wgsl Params.routes)
 
 /** Intersections per axis of the window. */
@@ -337,8 +318,9 @@ export function routeWay(words: Uint32Array, r: number, k: number, m: number): n
  * The route table of the rooms (interiors.ts Workplace, on lots of window `g`) as crowd.wgsl reads it: per room slot,
  * a breadth-first search from the intersection of the room's workplace corner (interiors.ts targetCorner) over the
  * window's streets with a sidewalk, each intersection given the first street (in the order +x, −x, +z, −z) that leads
- * one intersection nearer. A slot with no room, or a room whose corner is outside the window, is all zero (the greedy
- * commute). Little-endian nibbles in u32s, ROUTE_ROOM_VEC4S rows per slot.
+ * one intersection nearer. A slot with no room, or a room whose lot is not one of the window's (streets.ts lotInWindow:
+ * the same rule interiors.ts packRooms is given, so a room the shader does not have has no table either), is all zero.
+ * Little-endian nibbles in u32s, ROUTE_ROOM_VEC4S rows per slot.
  */
 export function packRoutes(rooms: readonly { k: number; m: number; side: Side }[], g: StreetGrid): Uint32Array {
   if (g.blocks !== WINDOW_BLOCKS) throw new RangeError(`a street window is ${WINDOW_BLOCKS} blocks across, got ${g.blocks}`)
@@ -351,6 +333,7 @@ export function packRoutes(rooms: readonly { k: number; m: number; side: Side }[
     [k, m + 1, walk(vSeg(g, k, m))], [k, m - 1, walk(vSeg(g, k, m - 1))],
   ]
   rooms.forEach((room, r) => {
+    if (!lotInWindow(g, room.k, room.m)) return
     const t = targetCorner(room)
     const tk = t.k - K0, tm = t.m - M0
     if (tk < 0 || tm < 0 || tk >= L || tm >= L) return

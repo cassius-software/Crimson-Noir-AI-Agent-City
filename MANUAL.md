@@ -189,6 +189,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?lite=1`, `?lite=0` | Forces the lite profile on any device, or keeps it off one the profile would make lite (default: the device profile decides; see Autoscaling) |
 | `?kernel=lite`, `?kernel=narrow`, `?kernel=full` | The first crowd kernel the GPU is asked for, where absent the full one (the light one on a Mali Bifrost GPU) or what this browser remembers of this GPU. The page writes `?kernel=lite` itself when it starts again after the full kernel took the GPU down; `?kernel=full` asks for everything again (see When the city cannot start or stops) |
 | `?map=city` | The procedural city (people and traffic); `?map=lakefront` the generated metropolis; `?region=on` the embedded surveyed map. With neither, the console's `map` choice, else the onboarding's metropolis, else the city |
+| `?place=the-east-bluffs` | Which of Lakefront Metro's five regions you start in (`lakefront-metropolis`, `west-sprawl`, `the-east-bluffs`, `north-ridge`, `the-grand-ravine`), ahead of the onboarding's answer; default: the onboarding's, else Lakefront Metropolis. It only says where to stand: `?map=lakefront` chooses the map (see The surveyed map) |
 | `?time=17` | Start hour (default 17:00, golden hour) |
 | `?day=24` | Real minutes per simulated day |
 | `?scale=1` | Base pixel ratio |
@@ -249,8 +250,9 @@ Sanctuary, a Ring-0 executive console deck (a room; the First Law's Sanctuary in
 is unrelated). Every room has eight workstations in two rows; a share of the GPU crowd (one pedestrian in about 205,
 never fewer than one in eight) is dealt one of the 128 stations and works there in shifts of 5 minutes in every 8,
 walking the streets to the doorway, in to the station and back out; the HUD's "At work indoors" counts them and the
-minimap draws the rooms. Lakefront Metro gets the same rooms on up to sixteen lots of its street window (seed 1337's
-metropolis fills all sixteen: twelve transit hubs and four more), chosen from its pack by `region/workplaces.ts`. For
+minimap draws the rooms. Lakefront Metro gets the same sixteen rooms, shared out with its shops and homes over all five
+of its regions (`region/placement.ts`; see The surveyed map), and its crowd works in those that stand in its street
+window. For
 another thread (a swarm that sends people to work), the engine keeps the rooms as two flat tables, built once:
 `window.__SIM__.engine.workplaceTable` (with `?debug`) is a `Float32Array` of 16 rows of 8 floats, `kind, x, y, z,
 doorX, doorZ, doorYaw, stations` (row *i* is kind *i*; `kind` is −1 and the rest 0 where this map has no such room;
@@ -388,9 +390,9 @@ workplace, with a counter and a mirror at the back and its own fixtures: mannequ
 the tattoo studio, gait rails at the atelier, display cases at the watch shop, and seven scale models of the city's
 homes on plinths at the design house. The minimap draws them in teal. Pedestrians walk past them, not in.
 
-Lakefront Metro has the same five shops (`01_Initialize_World/region/shops.ts`), on the lots of its street window
-nearest where you start, once its workplaces have taken theirs: every doorway on a two-way street with a sidewalk you
-can walk to from the start, never on the landmark's lot or in the lake. Each lot is hollowed as a workplace's is
+Lakefront Metro has the same five shops, one in each of its five regions (`01_Initialize_World/region/placement.ts`,
+with its workplaces and homes; see The surveyed map): every doorway on a two-way street with a sidewalk, never on the
+landmark's lot, a ravine's floor or in the lake. Each lot is hollowed as a workplace's is
 (`regionWorld.ts` `hollowLots`): what stood there is put out of sight, the ceiling slab takes the podium's height and
 finish, a tower that stood on the podium is carried on the slab, and the floor and the forecourt are paved. The
 physics worker is handed the same lots and builds the same glass, so a car left in a shop puts its driver down clear
@@ -472,12 +474,11 @@ through, under the tower's own slab. You furnish it like the home below, with it
 floor finish, Rest and Staff. Its walls are its windows, so the Walls tab has nothing to finish. A deed you do not own
 shows a staged floor.
 
-Lakefront Metro has the seven homes too (`01_Initialize_World/region/homes.ts`), on lots of its street window once its
-workplaces and shops have taken theirs, hollowed the same way. The seven nearest free lots to your start are chosen
-first, and among them the grander homes get the better-built ones (if a podium that carries a tower is among them, the
-grandest home there takes it), so a home's name does not promise a view of the lake or a tower there, and no home there
-has a sky floor; a window with too few lots has fewer homes, and the surveyed region has none. A region home's card
-names the streets it stands on.
+Lakefront Metro has the seven homes too (`01_Initialize_World/region/placement.ts`), at least one in each of its five
+regions, each set where its name says it stands as far as the map allows (a tower's foot downtown, the bluffs, the
+shore, a hub's podium on the ridge), and hollowed the same way. A home's name still does not promise a view of the
+lake or a tower there, and no home there has a sky floor; a map with too few lots has fewer homes, and the surveyed
+region has none. A region home's card names the streets it stands on.
 
 On foot inside a home, the HUD shows **For sale**, the home's name, its level and its price, or **Furnish** and the
 name of a home you own. E (unless a car is in reach), B, the pad's south button (with no car near) or a tap on that chip opens the
@@ -638,7 +639,27 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
   the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  metropolis is still quiet. The window has its **transit map** too (`region/transit.ts`, pure: the page and the
+  streets are still quiet: no people, cars or lamps there yet, though the places stand there (next).
+  **Its places are the whole map's** (`region/placement.ts`): the sixteen indoor workplaces, five shops and seven homes
+  are shared out over all five regions, every region given a shop, at least one home and at least two workplaces of
+  the kinds that suit it (Lakefront Metropolis the executive console deck, the clearing floor, the server vault and
+  the digital twin studio round the towers; West Sprawl the robotics lab, the micro-fab, the warehouse and the fleet
+  bay; The East Bluffs the prep line, the acoustics chamber, the disaster recovery sim centre and two homes on the
+  bluffs; North Ridge the control tower, the gait lab, the microgrid control room and the sky-mansion; The Grand
+  Ravine the greenhouse, the operations and dispatch centre and the brownstone). Each
+  region's heart is the middle of its tallest cluster; its shop stands within three lots of it with two more places
+  within two lots of the shop, and the rest are spread at least two lots from every other place, never on neighbouring
+  lots, a ravine's floor, the landmark's lot or in the lake. The lots do not depend on where the visitor starts, so a
+  place is on the same corner whichever region was chosen. **The visitor starts in the region they chose**
+  (`regionWorld.ts` `regionStart`): on the sidewalk across the street from that region's shop, facing along the
+  street toward its heart (the metropolis's visitor stands about 200 m from The Spire). `?place=<slug>` chooses the
+  region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
+  ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
+  people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
+  outside it stands on an empty street, is dark inside at night beyond the window's painted light and has nobody at
+  work in it, and nobody from the crowd can be walked out to it; a start's window holds two to four of the
+  workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
+  The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
   round the city's own corridor where every side of it has a sidewalk, else the largest walkable rectangle of the
   window (at least 4 blocks a side), with four mid-side stations and guideway columns at the window's own 3.9 m kerb;
@@ -1937,7 +1958,8 @@ while you type.
   choose. A `?map=` or `?region=` word in the URL still wins for that visit.
 - `rooms` lists the indoor workplaces of the map you are on (see The city): one row each, in slot order, with the slot
   (the kind's id, the row of `engine.workplaceTable`), the kind, the lot (`k,m`), the doorway's `x z` in metres, the
-  station count and the name; sixteen in the procedural city, the lots the window gave in Lakefront Metro, `rooms:
+  station count and the name; sixteen in the procedural city, the sixteen shared out over Lakefront Metro's five
+  regions there, `rooms:
   none` on the surveyed region, and refused in the console-alone shell, which has no city. Read-only: it touches
   nothing but the rows the bridge hands it.
 - `render off` stops drawing: the canvas is cleared to black once and the HUD shows `RENDER OFF · console only ·

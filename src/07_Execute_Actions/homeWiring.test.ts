@@ -62,7 +62,9 @@ test('the city and the region: the homes hollowed after the shops; the region\'s
   const src = flat(read('./engine.ts'))
   before(src, 'const shopLots = ', 'const homeLots = ', 'the shops pick before the homes')
   before(src, 'const homeLots = ', 'const hollow = ', 'and the homes are hollowed with the rest')
-  assert.ok(src.includes('const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []'), 'never on a workplace\'s or a shop\'s lot')
+  // The placement's homes (region/placement.ts: never on a workplace's or a shop's lot, placement.test.ts).
+  assert.ok(src.includes('const homeLots = placement && streets ? placement.homes : []'), 'the placement\'s homes, and none without a window')
+  assert.ok(!src.includes('regionHomeLots'), 'never the window\'s own picker')
   assert.ok(src.includes('const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null'))
   // The homes' glass reaches the worker as the world's boxes; the region's lots go with the shops' only so the worker
   // can check each home's furniture against that home's room frame (the 'home' command).

@@ -89,11 +89,10 @@ import embeddedRegion, { regionFirst } from 'virtual:region-pack'
 import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
 import { ZONE, type Zone } from './01_Initialize_World/lakefront.ts'
 import { LakefrontBuilder } from './01_Initialize_World/lakefrontClient.ts'
-import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, placeWanted, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, modelVoice, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -802,7 +801,7 @@ function App() {
   }
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
-  const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
+  const zone = placeWanted(new URLSearchParams(window.location.search), chosen) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : resumed ? { ...options, startHour: resumed.startHour, audio: resumed.audio } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
