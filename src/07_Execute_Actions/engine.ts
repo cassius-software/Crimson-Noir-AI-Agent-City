@@ -130,6 +130,7 @@ import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type HardwareReport, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
+import { screenPoint, type ScreenPoint } from './screenPoint.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
 
 /** POSE.mode of a parked car (simProtocol.ts MODES): nobody at its wheel, the kind of car a player may take. */
@@ -342,6 +343,8 @@ function audioFrameOf(cars: number): AudioFrame {
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`
 /** What a ping landed on, for its caption: 'a spot', 'person 12', 'car 3', 'pole 7'. */
 const pingWhat = (p: Ping): string => (p.pick === 'point' ? 'a spot' : `${p.pick} ${p.index}`)
+/** The first walk's marker stands this high over its place, metres: over a car's roof and a doorway's lintel, where its chip reads. */
+const BEACON_Y = 2.4
 /** The city's street address of a point, in the snapshot's own words: '9th Ave & 12th St'. */
 const cityAddress = (x: number, z: number): string => `${ordinal(Math.round(x / CITY.pitch) + 1)} Ave & ${ordinal(Math.round(z / CITY.pitch) + 1)} St`
 /** The eight compass words, clockwise from north (the engine's north is −z, its east +x, as the minimap draws them). */
@@ -791,7 +794,8 @@ export class Engine {
   private readonly ray: AimRay = { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 }
   private readonly lastPick: Pick = { kind: 'point', index: -1, x: 0, y: 0, z: 0, distance: 0 }
   private readonly pings = new PingBoard()
-  private readonly pingPoint = new Vector3()
+  /** The first walk's marker (setBeacon), or null. */
+  private beacon: { x: number; z: number; label: string } | null = null
   /**
    * The network session (NetHost, set by App): the client, the address joined, the poses read this frame (drawn by
    * netView in present(), placed for the peer voices in listen()), inputs the client refused since the join, the
@@ -2371,20 +2375,42 @@ export class Engine {
     return { count: this.views.length, rects: this.views.map((v) => ({ x: v.rect.x, y: v.rect.y, width: v.rect.width, height: v.rect.height })), seats }
   }
 
+  /**
+   * The first walk's marker (onboarding/useFirstWalk.ts beaconOf): a place the stage sends the visitor to, drawn by the
+   * HUD over the world and on the minimap; null takes it away. View-only: it is no ping (nothing rallies to it, no cue,
+   * no caption, no slot taken from the Q key) and never reaches the realm or the network. A label is cut to 40
+   * characters, and a place that is not finite is no marker.
+   */
+  setBeacon(b: { x: number; z: number; label: string } | null): void {
+    this.beacon = b && Number.isFinite(b.x) && Number.isFinite(b.z) ? { x: b.x, z: b.z, label: String(b.label).slice(0, 40) } : null
+  }
+
+  /** The marker as the HUD draws it: its distance from the head and its place on the screen (a little over head height, where a chip reads). */
+  private beaconMark(): SipocSnapshot['output']['beacon'] {
+    const b = this.beacon
+    if (!b) return undefined
+    const eye = this.rig.pose, { sx, sy } = this.screenOf(b.x, BEACON_Y, b.z)
+    return { label: b.label, x: b.x, z: b.z, distance: Math.hypot(b.x - eye.x, b.z - eye.z), sx, sy }
+  }
+
   /** The pings standing now as the HUD draws them: the board's marks with their distance from the head and their place on the screen. */
   private pingMarks(): SipocSnapshot['output']['pings'] {
     const alive = this.pings.alive(this.simTime)
     if (alive.length === 0) return undefined
-    const cam = this.world.camera, eye = this.rig.pose, v = this.pingPoint, now = this.simTime
+    const eye = this.rig.pose, now = this.simTime
     return alive.map((p) => {
-      v.set(p.x, p.y, p.z).project(cam)
-      const ahead = v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1
+      const { sx, sy } = this.screenOf(p.x, p.y, p.z)
       return {
         id: p.id, kind: p.kind, pick: p.pick, index: p.index, x: p.x, z: p.z, age: now - p.at, left: p.until - now,
-        distance: Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z),
-        sx: ahead ? (v.x + 1) / 2 : Number.NaN, sy: ahead ? (1 - v.y) / 2 : Number.NaN,
+        distance: Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z), sx, sy,
       }
     })
+  }
+
+  /** Where a world point falls on the screen through player 1's camera (screenPoint.ts), in player 1's viewport when the screen is split. */
+  private screenOf(x: number, y: number, z: number): ScreenPoint {
+    if (this.views.length <= 1) return screenPoint(this.world.camera, x, y, z)
+    return screenPoint(this.world.camera, x, y, z, { rect: this.views[0].rect, width: this.canvas.clientWidth, height: this.canvas.clientHeight })
   }
 
   /** A new state from the physics realm: what changed for the player, the distance counters, the haptic edge. */
@@ -3375,6 +3401,7 @@ export class Engine {
     const next = [SIGNAL.ewGreen, SIGNAL.ewAmber, SIGNAL.nsGreen, SIGNAL.cycle].find((b) => b > phase) ?? SIGNAL.cycle
     const kernel = this.kernelStats()
     const pings = this.pingMarks()
+    const beacon = this.beaconMark()
     const fps = mean > 0 ? 1000 / mean : 0
     const clock = formatClock(this.hours)
     const speedKmh = Math.abs(speed) * 3.6
@@ -3415,6 +3442,7 @@ export class Engine {
         contact: { passage: this.contactPulse.value, kind: this.contactPulse.kind, count: this.contactPulse.count },
         dissolve: { active: this.dissolve.active, count: this.dissolve.count },
         ...(pings && { pings }),
+        ...(beacon && { beacon }),
         ...(this.netClient && { net: { state: this.netClient.status, peers: this.netPeers.length, dropped: this.netDropped } }),
         ...(this.views.length > 1 && { players: this.playersView(st) }),
         ...(this.pacer && {

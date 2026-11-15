@@ -138,13 +138,17 @@ export interface TerminalHandle {
    */
   open(): void
   /**
-   * Opens the console and puts `text` into its prompt in place of whatever is typed, without taking focus: the first
-   * walk's card (onboarding/FirstWalk.tsx) types the exit program's lines this way, and a phone's keyboard does not
-   * rise for a tap on the card. Enter (or `run`) submits it.
+   * Opens the console and puts `text` into its prompt in place of whatever is typed, without taking focus (a phone's
+   * keyboard does not rise for it). Enter (or `run`) submits it.
    */
   type(text: string): void
   /** Opens the console and submits `line` as if typed (the prompt's own text is left as it is); with no line, submits the prompt's text. */
   run(line?: string): void
+  /**
+   * Adds `lines` to the scrollback as the console's own lines, open or not, without running anything or touching the
+   * prompt or the history: the first walk's banner when the city opens (App.tsx, firstWalk.ts passedBanner).
+   */
+  print(lines: readonly string[]): void
 }
 
 export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, onLine, disk = null, ref }: {
@@ -152,7 +156,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   /** Where the console's disk is kept between visits (the host's storage); without one, its files last as long as the page. */
   disk?: DiskStore | null
   onOpenChange(open: boolean): void
-  /** Every line submitted, as typed (trimmed), after it ran: the first walk's Ring-0 stage listens for a law line. */
+  /** Every line submitted, as typed (trimmed), after it ran: the first walk hears of the console in use. */
   onLine?(line: string): void
   /** Track B: the console is the whole page, open from the start; the toggle key and Esc never close it. */
   fullscreen?: boolean
@@ -208,6 +212,14 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const osTimer = useRef<number | null>(null)
   const saveTimer = useRef<number | null>(null)
 
+  const append = useCallback((lines: readonly Shown[]) => {
+    if (!lines.length) return
+    setRows((prev) => {
+      const next = prev.concat(lines.map((l) => (l.ps === undefined ? { kind: l.kind, text: l.text, id: nextId.current++ } : { kind: l.kind, text: l.text, ps: l.ps, id: nextId.current++ })))
+      return next.length > MAX_ROWS ? next.slice(next.length - MAX_ROWS) : next
+    })
+  }, [])
+
   useImperativeHandle(ref, () => ({
     open() {
       if (fullRef.current) return
@@ -225,7 +237,10 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       if (!fullRef.current) flushSync(() => setOpen(true))
       submitRef.current(line ?? inputRef.current?.value ?? '')
     },
-  }), [])
+    print(lines) {
+      append(lines.map((text): Line => ({ kind: 'sys', text })))
+    },
+  }), [append])
 
   useEffect(() => {
     bridgeRef.current = bridge
@@ -245,14 +260,6 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         onOpenChangeRef.current(false)
       }
     }
-  }, [])
-
-  const append = useCallback((lines: readonly Shown[]) => {
-    if (!lines.length) return
-    setRows((prev) => {
-      const next = prev.concat(lines.map((l) => (l.ps === undefined ? { kind: l.kind, text: l.text, id: nextId.current++ } : { kind: l.kind, text: l.text, ps: l.ps, id: nextId.current++ })))
-      return next.length > MAX_ROWS ? next.slice(next.length - MAX_ROWS) : next
-    })
   }, [])
 
   // Every city action event the console did not cause (allowed or refused on the card or by a host, ended by the
