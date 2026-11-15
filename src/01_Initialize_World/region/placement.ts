@@ -134,8 +134,9 @@ export interface RegionPlacement {
   /** By property index, ascending, likewise. */
   homes: HomeLot[]
   /**
-   * One per quarter, in id order: across the street from the quarter's shop's doorway (or its first place, or its heart),
-   * on a sidewalk in the quarter itself wherever one of its places allows it (regionStart.test.ts, 401 seeds).
+   * One per quarter, in id order: across the street from the quarter's shop's doorway (or another of its places, or its
+   * heart), on a sidewalk in the quarter itself wherever one of its places allows it (regionStart.test.ts: the seeds
+   * whose shop stands on a region's edge, and a made-up map whose shop faces only the next region).
    */
   starts: PlacedStart[]
   /** Each quarter's heart: an engine lot. */
@@ -402,11 +403,13 @@ function finish(chosen: readonly Chosen[], map: StreetGrid, anchors: readonly ({
     const a = anchors[q]
     if (!a) continue
     hearts.push({ quarter: q, k: K0 + a.i, m: M0 + a.j })
-    // Across from the quarter's shop, else its first home, else its first workplace, else the heart itself; of those,
-    // the first whose far sidewalk is in the quarter (the shop's, but for a shop whose every front faces another
-    // quarter across its street), and the shop's when none is.
+    // Across from the quarter's shop, else another of its starters (by the heart: a home before a workplace), else
+    // one of its other places (homes, then workplaces), else the heart itself; of those, the first whose far sidewalk
+    // is in the quarter (the shop's, but for a shop whose every front faces another quarter across its street), and
+    // the shop's when none is. Programme order within each kind.
     const mine = chosen.filter((c) => c.quarter === q)
-    const order = [...mine.filter((c) => c.place.type === 'shop'), ...mine.filter((c) => c.place.type === 'home'), ...mine.filter((c) => c.place.type === 'work')]
+    const rank = (c: Chosen): number => (c.place.starter ? 0 : 3) + (c.place.type === 'shop' ? 0 : c.place.type === 'home' ? 1 : 2)
+    const order = mine.map((c, n) => ({ c, n })).sort((a, b) => rank(a.c) - rank(b.c) || a.n - b.n).map(({ c }) => c)
     const inside = order.find((c) => { const at = acrossFrom(map, c.lot, c.side); return quarterHere(at.x, at.z) === q })
     const front = inside ?? order[0]
     const s = front ? acrossFrom(map, front.lot, front.side) : { x: map.originX + (a.i + 0.5) * P, z: map.originZ + (a.j + 0.5) * P }

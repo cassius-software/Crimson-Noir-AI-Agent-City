@@ -2170,7 +2170,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   built from the pack (`streets.ts` `mapStreetGrid`, the window a crop of it), and `region/placement.ts` shares the 28 places out
   by a programme: every region a shop, at least one home and at least two workplaces of the kinds that suit it; each
   region's heart the middle of its tallest cluster, its shop within three lots of the heart and two more places near it
-  (within two lots wherever the map has a free one); the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
+  (within two lots wherever its region has a free one); the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
   lake; the same lots whichever region the visitor starts in. The visitor stands on the sidewalk across the street from
   their region's shop, five metres along it (`START_LEAD`, clear of the street's trees and lamps), facing along the
   street toward its heart, always inside that region, even where the shop stands on its edge (`regionWorld.ts`
@@ -2182,8 +2182,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `workplaces.ts` `packRoutes` gives a room off the window an empty table, both by `streets.ts` `lotInWindow`; no WGSL
   text changed, so no device's crowd kernel memory resets). `region/shops.ts` and `region/homes.ts` are removed;
   `workplaces.ts` keeps the lot rules the placement reads (`lotCandidates`, `lotTier`). New tests: `placement.test.ts`
-  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (10, three seeds by
-  five regions: the start in its own region, also on 401 seeds whose shop may stand on a region's edge, on a sidewalk's middle, a metre clear of every wall and out of the water,
+  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (11, three seeds by
+  five regions: the start in its own region, also on the five seeds a sweep of 2,550 starts found starting in the
+  next region before (their shop on a region's edge) and on a made-up map whose shop faces only the next region, on
+  a sidewalk's middle, a metre clear of every wall and out of the water,
   every street pole a metre past the visitor's body, facing toward the heart, the five starts over 300 m apart, the
   fallbacks and the HUD line) and `hollowPlaces.test.ts`
   (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests

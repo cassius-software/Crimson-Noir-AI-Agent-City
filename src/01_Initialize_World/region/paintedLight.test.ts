@@ -25,7 +25,7 @@ import { CITY } from '../city.ts'
 import { LAMP, lampHead } from '../cityLights.ts'
 import { FbmSet } from '../fbmTexture.ts'
 import { ROOM } from '../interiors.ts'
-import { ZONE, generateLakefront } from '../lakefront.ts'
+import { ZONE, generateLakefront, type Zone } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
 import type { Pt } from './clip.ts'
 import { PAINT_MARGIN, PAINT_TEXEL, POOL, SPILL, bakePaintedLight, paintAt, poolAt, type PaintInput } from './paintedLight.ts'
@@ -204,15 +204,15 @@ test('the bake is deterministic and leaves its input alone', () => {
 // ---------------------------------------------------------------------------------------------------
 // The metropolis, as the page builds it (engine.ts Engine.create, world.ts buildWorld)
 
-function metropolis() {
+function metropolis(zone: Zone = ZONE.metropolis) {
   const seed = 1337
-  const pack = packOf(generateLakefront(seed, 64), ZONE.metropolis)
+  const pack = packOf(generateLakefront(seed, 64), zone)
   const layout = layoutOf(pack)
   const placement = regionPlacement(pack, layout, seed)
-  assert.ok(placement, 'the metropolis has its places')
+  assert.ok(placement, 'the map has its places')
   const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placement)
   const streets = streetGridOf(pack, layout.offset, start)
-  assert.ok(streets, 'the metropolis has a street window')
+  assert.ok(streets, 'the start has a street window')
   const hollow = hollowLots(pack, layout, placement.workplaces, placement.shops, placement.homes)
   const lamps = windowFurniture(streets, seed).lamps
   const interiors = [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))]
@@ -311,6 +311,26 @@ test('the metropolis: every room, shop and home the picture holds is lit inside,
   for (let i = 1; i < picture.data.length; i += 4) if (picture.data[i] > 25) lit++
   const share = lit / (picture.size * picture.size)
   assert.ok(share > 0.1 && share < 0.7, `${Math.round(share * 100)}% of the picture is under a frontage's spill`)
+})
+
+test('North Ridge: the lots the picture\'s edge runs through, a real map\'s, have no floor painted, and the lots it holds are lit', () => {
+  // Seed 1337's North Ridge window has places on the ring of blocks round it (the metropolis's has none): the
+  // picture's edge, PAINT_MARGIN past the window, runs through their middles.
+  const { interiors, picture, streets } = metropolis(ZONE.northRidge)
+  const edge = paintBounds(streets), h = CITY.lotHalf
+  const inside = (lot: { cx: number; cz: number }) => lot.cx - h >= edge.x0 && lot.cx + h <= edge.x1 && lot.cz - h >= edge.z0 && lot.cz + h <= edge.z1
+  const touches = (lot: { cx: number; cz: number }) => lot.cx + h > edge.x0 && lot.cx - h < edge.x1 && lot.cz + h > edge.z0 && lot.cz - h < edge.z1
+  const cut = interiors.filter((lot) => touches(lot) && !inside(lot))
+  assert.ok(cut.length >= 2, `${cut.length} places on the picture's edge`)
+  assert.ok(cut.some((l) => l.fixtures) && cut.some((l) => !l.fixtures), 'a workplace and a shop or home among them')
+  for (const lot of cut) {
+    for (let dx = -h; dx <= h; dx += 1) {
+      for (let dz = -h; dz <= h; dz += 1) assert.deepEqual(paintAt(picture, lot.cx + dx, lot.cz + dz).slice(2), [0, 0], `the lot at ${lot.cx},${lot.cz}: no floor at ${dx},${dz}`)
+    }
+  }
+  const held = interiors.filter(inside)
+  assert.ok(held.length >= 1)
+  for (const lot of held) assert.deepEqual(paintAt(picture, lot.cx, lot.cz).slice(2), lot.fixtures ? [1, 0] : [0, 1], `the lot at ${lot.cx},${lot.cz}`)
 })
 
 // ---------------------------------------------------------------------------------------------------

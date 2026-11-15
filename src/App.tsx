@@ -547,7 +547,8 @@ interface MapPlan { choice: MapChoice; pack: RegionPack | null; zone: Zone }
 
 /**
  * The map the engine is handed: the embedded region, the lakefront metropolis (the pack the onboarding built, or one
- * built now in the worker for ?map=lakefront and returning visitors), or null for the procedural city.
+ * built now in the worker for ?map=lakefront, returning visitors and a first visit whose ?place= names another region
+ * than the onboarding's answer: onboardingPackFor), or null for the procedural city.
  */
 async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
   if (plan.choice === 'region') return loadRegion()

@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? Lakefront Metro's transit (transit.ts) is laid over a street window that has dropped
  * streets, dead ends, water and a 554 m needle, and the physics worker lays it again from what the page sends. These
- * tests hold it to its promises on the real generated map (three seeds, the four land zones each): the elevated loop
+ * tests hold it to its promises on the real generated map (three seeds, the five land zones each): the elevated loop
  * rounds walkable streets with four stations and its columns stand clear of every lamp, tree, signal and the
  * carriageway; every train, drone, plane and VTOL piece clears every craft box as the city's INV-1 holds (same
  * envelopes); the racetrack stays inside the region and off The Spire; the network's craft audit clean on the realm's

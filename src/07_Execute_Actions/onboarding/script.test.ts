@@ -151,6 +151,23 @@ test('the onboarding\'s pack is used only when it starts where the visitor stand
   assert.ok(!app.includes('pack: outcome?.pack ?? null'), 'the onboarding\'s pack never reaches the shell unchecked')
 })
 
+test('the onboarding builds its pack for the very region its saved answer names, so with no ?place= the page never builds a second', () => {
+  // Onboarding.tsx saves outcomeOf(answers) and builds the pack for answers.place (the metropolis when none): App then
+  // reads the region back from that saved answer (placeWanted), and onboardingPackFor keeps the pack when the two agree.
+  const q = (s: string) => new URLSearchParams(s)
+  for (const r of REGIONS) {
+    const answers = { ...NO_ANSWERS, name: 'Ada', place: r.id, hour: 9, audio: true }
+    const zone = placeWanted(q(''), outcomeOf(answers))
+    assert.equal(zone, answers.place ?? ZONE.metropolis, `${r.slug}: the saved answer reads back as the region built for`)
+    assert.ok(onboardingPackFor({ quarters: { home: answers.place ?? ZONE.metropolis } }, zone ?? ZONE.metropolis), `${r.slug}: the pack is kept`)
+  }
+  const none = { ...NO_ANSWERS, name: 'Ada' }
+  assert.equal(placeWanted(q(''), outcomeOf(none)), ZONE.metropolis, 'no place answered: saved and built as the metropolis')
+  const onboarding = readFileSync(new URL('./Onboarding.tsx', import.meta.url), 'utf8')
+  assert.ok(onboarding.includes('const saved = outcomeOf(answers)'))
+  assert.ok(onboarding.includes('pack = (await builderRef.current?.pack(answers.place ?? ZONE.metropolis)) ?? null'), 'built for the answer it saves')
+})
+
 test('a map chosen at the console is kept between visits and beats the onboarding and the pilot default, never the URL', () => {
   const q = (s: string) => new URLSearchParams(s)
   const chosen = { v: 1 as const, place: 'west-sprawl', hour: 9, audio: true, skipped: false }

@@ -13,6 +13,8 @@
  *   out of the water, within a few metres of the placement's hint;
  * - facing along that street, the way that looks toward the region's heart;
  * - five starts per map, no two within 300 m, each across the street from its region's shop;
+ * - in its own region where the shop stands on the region's edge (the seeds that once started elsewhere) and, on a
+ *   made-up map, where no front of the shop faces its own region at all (another of its places gives the start);
  * - the fallbacks: no placement (a surveyed region) answers the old rule, a placement without the chosen region's
  *   start answers its first, and a hint with no street near answers the old rule from the hint;
  * - quarter() names the region under a point, null over the lake, off the map and in a pack without the layer.
@@ -28,7 +30,7 @@ import { CITY, POLES } from '../city.ts'
 import { doorDir } from '../interiors.ts'
 import { ZONE, generateLakefront } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
-import { polygonAt, polygonCount, type RegionPack } from './pack.ts'
+import { REGION_FORMAT, ROAD_CLASS, polygonAt, polygonCount, polygons, pushPolygon, type RegionPack } from './pack.ts'
 import { regionPlacement, type RegionPlacement } from './placement.ts'
 import { quarterAt } from './quarters.ts'
 import { SEG, SIDEWALK, hSeg, mapStreetGrid, streetGridOf, vSeg, windowFurniture, type StreetGrid } from './streets.ts'
@@ -105,9 +107,10 @@ test('in its own region on seeds whose shop stands on a region\'s edge, its near
   // Each of these once started the visitor across the street in another region: the shop's front nearest the heart
   // faced a street whose far sidewalk is the next region's (seed 35's Grand Ravine design house, lot 36,26, faced
   // north into The East Bluffs). The first starter's doorway now faces a street whose far side is its own region's
-  // (placement.ts attempt), and the start is read from the first place of the region that allows it (finish). A sweep
-  // of seeds 0 to 400, all five regions, found no start outside its region after the change.
-  for (const [seed, zone] of [[35, 'grandRavine'], [232, 'grandRavine'], [315, 'grandRavine'], [387, 'grandRavine']] as const) {
+  // (placement.ts attempt), and the start is read from the first place of the region that allows it (finish). These
+  // are the five a one-off sweep found starting elsewhere before the change (seeds 0 to 400 and 1000 to 1100 and eight
+  // large ones, all five regions: 2,550 starts); after it the same sweep found none.
+  for (const [seed, zone] of [[35, 'grandRavine'], [232, 'grandRavine'], [315, 'grandRavine'], [387, 'grandRavine'], [1046, 'grandRavine']] as const) {
     const pack = packOf(generateLakefront(seed, 64), ZONE[zone])
     const layout = layoutOf(pack)
     const places = new RegionPlaces(pack, layout)
@@ -117,6 +120,68 @@ test('in its own region on seeds whose shop stands on a region\'s edge, its near
     assert.ok(places.label(at.x, at.z).startsWith(`${pack.quarters!.names[ZONE[zone]]} · `))
     assert.ok(!places.inBuilding(at.x, at.z, 1) && !places.inWater(at.x, at.z), `seed ${seed} ${zone}: clear and dry`)
   }
+})
+
+/**
+ * A made-up map: a grid of `n` blocks, every street a two-lane local one, a 20 m square building of `heightOf` metres on
+ * every lot, and the quarters layer from `quarterOf` (five names, flat ground).
+ */
+function gridPack(n: number, quarterOf: (k: number, m: number) => number, heightOf: (k: number, m: number) => number): RegionPack {
+  const size = n * P
+  const roads: RegionPack['roads'] = { cls: [], lanes: [], flow: [], name: [], start: [0], xz: [] }
+  for (let line = 0; line <= n; line++) {
+    for (const [x0, z0, x1, z1] of [[0, line * P, size, line * P], [line * P, 0, line * P, size]]) {
+      roads.cls.push(ROAD_CLASS.local); roads.lanes.push(2); roads.flow.push(0); roads.name.push(1)
+      roads.xz.push(x0 * 10, z0 * 10, x1 * 10, z1 * 10)
+      roads.start.push(roads.xz.length / 2)
+    }
+  }
+  const buildings: RegionPack['buildings'] = { ...polygons(), height: [], kind: [] }
+  const id: number[] = [], terrain: number[] = []
+  for (let m = 0; m < n; m++) {
+    for (let k = 0; k < n; k++) {
+      const cx = (k + 0.5) * P, cz = (m + 0.5) * P
+      pushPolygon(buildings, [[[cx - 10, cz - 10], [cx + 10, cz - 10], [cx + 10, cz + 10], [cx - 10, cz + 10]]])
+      buildings.height.push(heightOf(k, m) * 10); buildings.kind.push(0)
+      id.push(quarterOf(k, m)); terrain.push(2)
+    }
+  }
+  return {
+    format: REGION_FORMAT, name: 'Testmere', grid: { lon0: 0, lat0: 0, k0: 1 }, bounds: { x0: 0, z0: 0, x1: size, z1: size }, attribution: ['a test'],
+    names: ['', 'Grid Street'], roads, water: { ...polygons(), kind: [], name: [] }, buildings,
+    quarters: { blocks: n, pitch: P, names: ['A', 'B', 'C', 'D', 'E'], id, terrain, home: 0 },
+  }
+}
+
+test('a region whose shop faces only the next region across every street starts across from another of its places, inside it', () => {
+  // Region A is one block with a tower (its heart, so its shop stands there, every front of it facing region B) and a
+  // strip of blocks a column wide well off it, where its other places go; region B is the rest, with the map's tallest
+  // building. Across from the shop is region B whichever way its doorway faces, so the start is taken from the first
+  // of A's places whose far sidewalk is A's (placement.ts finish), and the visitor stands in A.
+  const inA = (k: number, m: number) => (k === 10 && m === 10) || (k === 20 && m >= 16 && m <= 26)
+  const pack = gridPack(30, (k, m) => (inA(k, m) ? 0 : 1), (k, m) => (k === 10 && m === 10 ? 200 : k === 3 && m === 3 ? 300 : 12))
+  const layout = layoutOf(pack)
+  const g = mapStreetGrid(pack, layout.offset)!
+  const placed = regionPlacement(pack, layout, 5)!
+  assert.ok(placed, 'the made-up map has its places')
+  const K0 = Math.round(g.originX / P), M0 = Math.round(g.originZ / P)
+  const tailor = placed.shops.find((s) => s.kind === 'tailor')!
+  assert.deepEqual([tailor.k - K0, tailor.m - M0], [10, 10], 'region A\'s shop on its one block by the heart')
+  // Every front of the shop faces region B across its street.
+  const across = (p: { k: number; m: number; side: number }) => {
+    const d = doorDir(p.side as 0 | 1 | 2 | 3), reach = g.roadHalf + SIDEWALK / 2
+    return { x: (p.k + 0.5) * P + d.x * (P / 2 + reach), z: (p.m + 0.5) * P + d.z * (P / 2 + reach) }
+  }
+  for (const side of [0, 1, 2, 3]) { const at = across({ ...tailor, side }); assert.equal(quarterAt(pack, layout, at.x, at.z), 1, `the shop's side ${side} faces region B`) }
+  const start = placed.starts.find((s) => s.quarter === 0)!
+  assert.equal(quarterAt(pack, layout, start.x, start.z), 0, 'region A\'s start is in region A')
+  // Across the street from one of region A's other places.
+  const mine = [...placed.homes, ...placed.workplaces].filter((p) => inA(p.k - K0, p.m - M0))
+  assert.ok(mine.some((p) => { const at = across(p); return Math.abs(at.x - start.x) < 1e-9 && Math.abs(at.z - start.z) < 1e-9 }), 'across from one of its places')
+  // And the visitor stands there: on the sidewalk, in region A.
+  const at = regionStart(pack, layout, new RegionPlaces(pack, layout), placed)
+  assert.equal(quarterAt(pack, layout, at.x, at.z), 0)
+  assert.ok(Math.hypot(at.x - start.x, at.z - start.z) <= START_LEAD + 12)
 })
 
 test('on a sidewalk: beside a street with one, half a sidewalk past the kerb, clear of buildings and water, by the hint', () => {

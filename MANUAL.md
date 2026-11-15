@@ -648,7 +648,7 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   bluffs; North Ridge the control tower, the gait lab, the microgrid control room and the sky-mansion; The Grand
   Ravine the greenhouse, the operations and dispatch centre and the brownstone). Each
   region's heart is the middle of its tallest cluster; its shop stands within three lots of it with two more places
-  near it (within two lots wherever the map has a free one), and the rest are spread at least two lots from every other place, never on neighbouring
+  near it (within two lots wherever its region has a free one), and the rest are spread at least two lots from every other place, never on neighbouring
   lots, a ravine's floor, the landmark's lot or in the lake. The lots do not depend on where the visitor starts, so a
   place is on the same corner whichever region was chosen. **The visitor starts in the region they chose**
   (`regionWorld.ts` `regionStart`): on the sidewalk across the street from that region's shop, five metres along it
@@ -669,7 +669,7 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   drone corridors at 40 and 46 m over every walkable 4-block cell; the plane racetrack at 400 m, centred on the window
   and held inside the region, moved by whole blocks off The Spire; VTOL routes between rooftop pads of the window's own
   buildings, in the city's band of 24 to 60 m roofs where the window has them and in a second band over the map's
-  towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window with no such roofs has none: seed 7's east
+  towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window where no four such roofs make a clear loop has none: seed 7's east
   bluffs); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
   the plaza lots (the hubs' squares) paved at the sidewalks' height; a harbour ferry pier from the lake shore nearest
   the window, 60 m out over the water with railings and a berth platform at its end, the shore wall opened for it
