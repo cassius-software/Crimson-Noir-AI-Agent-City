@@ -133,7 +133,7 @@ const CORE = [
   { name: 'rooms', usage: 'rooms', summary: 'the indoor workplaces of this map: slot, kind, lot, doorway, stations and name (the city has sixteen; the metropolis the lots its window gave)' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "Crimson Noir Script, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
-  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on, and the three-line Crimson Noir Script program that is its only way out (nothing here turns the walk off)" },
+  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line Crimson Noir Script program that ends it from any stage" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -1712,7 +1712,8 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines }
   },
 
-  // Read-only: the walk's stage and its exit program. There is no `tutorial off`: the program is the way out.
+  // Read-only: the walk's stage and its exit program. There is no `tutorial off`: the console, reached on the walk's
+  // last stage, is the way out, and the program the shortcut from any stage.
   tutorial(args, b) {
     const a = args[0]
     if (args.length > 1 || (a !== undefined && a !== 'status' && a !== 'program')) return fail(usage('tutorial'))
@@ -1720,7 +1721,7 @@ const HANDLERS: Record<Name, Handler> = {
     const lines: Line[] = []
     if (a !== 'program') lines.push(out(e === undefined ? 'tutorial: no first walk in this shell (it runs in the city)' : e.status()))
     if (a !== 'status') {
-      lines.push(sys("the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):"))
+      lines.push(sys("the exit program, from any stage, one 'noir' line at a time (the session keeps seal and swarm between lines):"))
       for (const l of e?.program() ?? EXAM_PROGRAM) lines.push(out(`  noir ${l}`))
     }
     return { lines }

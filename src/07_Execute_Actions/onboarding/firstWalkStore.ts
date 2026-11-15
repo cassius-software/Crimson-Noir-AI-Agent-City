@@ -4,21 +4,23 @@
 /**
  * Why does this file exist? It is the one place that decides whether the first-run tutorial (Sloane's "first walk",
  * 09_Cognition/firstWalk.ts) is on, and the one record that it was passed. The walk is on for every first run of the
- * city shell until its exit program has been run once, and only three things in the URL say otherwise: `?boot=tty`
- * (no city, nothing to walk), `?tutorial=0|off` (the setting off for this visit), and `?onboarding=0|off` (the expert
- * path the browser smoke, the harnesses and a developer take); `?tutorial=1|on` shows it again after a pass. No
- * button, key or menu turns it off (that is the point of it; FIRST_WALK_DEFAULT is the one constant that makes it
- * opt-in instead). The pass is kept under the package id like the onboarding's outcome, so a product rename keeps
- * it; it is written only when the console's exam unlocked the city, never by the card.
+ * city shell until the visitor has reached the console on its last stage (or run its exit program) once, and only
+ * three things in the URL say otherwise: `?boot=tty` (no city, nothing to walk), `?tutorial=0|off` (the setting off for
+ * this visit), and `?onboarding=0|off` (the expert path the browser smoke, the harnesses and a developer take);
+ * `?tutorial=1|on` shows it again after a pass. No button, key or menu turns it off before the console (that is the
+ * point of it; FIRST_WALK_DEFAULT is the one constant that makes it opt-in instead). The pass is kept under the
+ * package id like the onboarding's outcome, so a product rename keeps it; it is written only when the walk is passed,
+ * never by the card.
  * What breaks if it is removed? The walk has no switch and no memory: it shows every visit, or never.
  */
 import type { KeyStore } from './script.ts'
 
 /**
- * Whether a first run opens on the walk at all. True: the walk is mandatory on a first run, as the brief asks, and
- * the only way out is the console's exit program (its three words, verify_ring0, spawn_subagents and unlock_city, are
- * Crimson Noir Script's: terminal/noirscript, wired through onboarding/exam.ts). False: the walk shows only with
- * `?tutorial=1`. Flip this one constant to change the default; nothing else reads a setting.
+ * Whether a first run opens on the walk at all. True: the walk is held on a first run, as the brief asks, until the
+ * visitor reaches the console on its last stage; then everything is open (the console's exit program, verify_ring0,
+ * spawn_subagents and unlock_city, ends it from any stage: terminal/noirscript, wired through onboarding/exam.ts).
+ * False: the walk shows only with `?tutorial=1`. Flip this one constant to change the default; nothing else reads a
+ * setting.
  */
 export const FIRST_WALK_DEFAULT = true
 
@@ -44,7 +46,7 @@ export function loadFirstWalk(store: KeyStore | null = browserStore()): SavedFir
   } catch { return null }
 }
 
-/** The city was unlocked by the exit program: kept, so the next visit opens on the city. */
+/** The walk was passed (the console reached, or the exit program run): kept, so the next visit opens on the city. */
 export function saveFirstWalkPassed(at: number, store: KeyStore | null = browserStore()): void {
   if (!store) return
   const s: SavedFirstWalk = { v: 1, passed: true, at: Number.isFinite(at) ? at : 0 }

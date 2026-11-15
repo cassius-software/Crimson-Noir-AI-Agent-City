@@ -190,7 +190,7 @@ Host: `tune(key: str, v: f32) -> f32`, `intent(car: i32, throttle: f32, brake: f
 `cull(density: f32) -> f32`, `steer(feature: str, v: f32) -> f32`. Without `host.write` these fail at RUN time with
 `host.locked ?? 'elite tier locked'` as the error (they still type-check and compile, so `asm` works).
 Exam: `verify_ring0() -> u32`, `spawn_subagents(n: i32, role: str) -> i32`, `unlock_city(seal: u32, swarm: i32) -> bool`
-(the first walk's exit program: `let seal = verify_ring0(); let swarm = spawn_subagents(24, "sim2real_workplaces");
+(the first walk's exit program, which ends the walk from any stage: `let seal = verify_ring0(); let swarm = spawn_subagents(24, "sim2real_workplaces");
 unlock_city(seal, swarm);`, three lines on one session or one). Without `host.exam` these fail at RUN time with
 `host.noExam ?? 'no first walk here'`. The results are coerced to their lanes (a seal `>>> 0`, a count `| 0`, an
 unlock by truthiness). Neither surface opens the other: an exam is no write, and the console hands the exam over

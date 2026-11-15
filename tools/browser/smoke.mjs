@@ -109,14 +109,15 @@
  *   App.tsx launcherSource): the launcher's own server, a model folder laid out as the package lays it, the page with
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
- * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
- *   the way out through the three Crimson Noir Script lines, with Sloane's name question beside the walk's card at
- *   five desktop sizes and the walk's card stepping aside for it under 960 px;
+ * - walk: the first walk (?tutorial=1) end to end on its accessible path: the machine rows, the console opened early
+ *   passing nothing, the lent hand and its rings, the markers, the look stage through the wardrobe card, the console
+ *   ending the walk with Sloane's line printed, then the three Crimson Noir Script lines finding the city open; with Sloane's
+ *   name question beside the walk's card at five desktop sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
  * - walkhome: the same stage through a home: Sloane names the homes in the keyboard's words, the home's chip is clear of
  *   the walk's card, B opens the doorstep card and the walk's card steps aside, nothing is bought, and Esc puts the
- *   card away and passes the stage;
+ *   card away and passes the stage; the ~ key then ends the walk at the console;
  * - walkphone: the first walk on an iPhone: the walk's card steps aside while Sloane asks the name, then stands clear of
  *   her chip, the minimap and every touch control held upright, between the thumbs held sideways at three phone
  *   sizes (above a shop's Browse chip), under her chip moved up to the top row where that band is short (125 % in the
@@ -125,7 +126,9 @@
  *   clear of her chip and every control, the HUD's chips at the foot stand above the stick and left of the buttons, and
  *   the shop's Browse chip takes a tap; beside a car there (the band under her chip short) the open card stands above
  *   her chip, never over it; at the wheel upright the card is folded and, opened from its strip, below her chip and
- *   above the car's buttons; away at the wheel sideways until the visitor is on foot again;
+ *   above the car's buttons; away at the wheel sideways until the visitor is on foot again; left idle, the walk lends
+ *   a hand on the touch control the stage asks for; the console from the Menu on an early stage passes nothing, and
+ *   the exit program typed there ends the walk, the ring and any marker gone with it;
  * - lakefront: the generated metropolis (?map=lakefront, built in the page's worker from the seed), whose crowd walks
  *   its street window with the workplaces the page picked from the pack and the HUD counting who is at work, at
  *   Medium, the first tier with shadows, so the sun's shadow pass draws the region's buildings and its shaders build;
@@ -2525,12 +2528,15 @@ const SCENARIOS = {
 
   /**
    * The first walk (09_Cognition/firstWalk.ts, onboarding/FirstWalk.tsx and exam.ts) end to end on its accessible
-   * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
-   * stage's action (walk, plan a goal, a car's door, a workplace's doorway, the wardrobe card, `laws`) and the page's
-   * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's Crimson Noir Script session,
-   * where the exam seals the live kernel, sets twenty-four sub-agents to work through the team runner from where the
-   * workplace stage left the visitor (inside a room, where nobody within earshot can be asked over) and unlocks the
-   * city; the card goes and the pass is kept.
+   * path: `?tutorial=1` opens on it; no button or key puts the card away; the first card reads the machine; the console
+   * opened before the last stage passes nothing; each stage's one button has Sloane do the stage's action (walk, plan a
+   * goal, a car's door, a workplace's doorway, the wardrobe card) and the page's own readings pass it (the wardrobe's
+   * stage when its Done puts the card away); a stage left alone lends a hand (its button and the control it asks for
+   * ringed) and the car and indoor stages put a marker on the nearest parked car and the nearest doorway; on the last
+   * card its button opens the console, which ends the walk: Sloane's line and where to go from here are printed there,
+   * the card goes and the pass is kept. The exit program still runs after it: the exam seals the live kernel and sets
+   * twenty-four sub-agents to work through the team runner from inside the room the workplace stage left the visitor in
+   * (where nobody within earshot can be asked over), and the city is already open.
    */
   async walk(chrome, origin) {
     const p = await open(chrome)
@@ -2569,6 +2575,19 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
       await p.frames(3)
       check(await card(), 'walk: Escape does not put the card away')
+      // The first card reads the machine: the device, the picture's tier and Sloane, in words.
+      const machine = await p.eval(`document.querySelector('[data-walk-machine]')?.innerText ?? ''`)
+      check(/Device/.test(machine) && /(?:A phone|A laptop or desktop|A workstation)/.test(machine) && /Picture/.test(machine) && /Ready to plan/.test(machine), 'walk: the first card reads the machine (device, picture, Sloane)', machine.replace(/\s+/g, ' ').slice(0, 200))
+      // The console opened before the last stage passes nothing: the walk is held until the visitor reaches it there.
+      // (Sloane's name field may still hold the keyboard, where the tilde is a character: the page takes it back first.)
+      await p.eval('document.activeElement?.blur?.()')
+      await p.tap('Backquote', '`', 192)
+      const early = await p.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).then(() => true, () => false)
+      await p.frames(3)
+      const held = await stage()
+      await p.tap('Escape', 'Escape', 27)
+      const shut = await p.waitFor(`!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
+      check(early && held === 'move' && shut, 'walk: the console opened on the first stage passes nothing, and Esc puts it away with the card still there', `opened ${early}, stage ${held}, shut ${shut}`)
 
       // 1 Look and walk: "Walk for me" turns the head and walks; the page's own readings pass the stage.
       const seen = () => p.eval(`(() => { const s = window.__SIM__.snapshot(); return { yaw: s.customer.viewYaw, m: s.experience.distanceWalked, x: s.customer.x, z: s.customer.z } })()`)
@@ -2577,17 +2596,29 @@ const SCENARIOS = {
       const walked = await past('move')
       const w1 = await seen()
       check(walked, `walk: "${b1}" turns the head and walks the three metres`, `stage ${await stage()}; yaw ${w0.yaw.toFixed(2)} -> ${w1.yaw.toFixed(2)}, ${(w1.m - w0.m).toFixed(1)} m walked, from (${w0.x.toFixed(1)}, ${w0.z.toFixed(1)}) to (${w1.x.toFixed(1)}, ${w1.z.toFixed(1)})`)
-      // 2 Talk to Sloane: "Plan one for me" plans a goal as the chip would.
+      // 2 Talk to Sloane: left alone for the walk's eight seconds the stage lends a hand (its button ringed, Sloane's chip
+      // ringed on the page, the keys and a line on the card); then "Plan one for me" plans a goal as the chip would.
       check((await stage()) === 'voice', 'walk: stage 2 is a goal for Sloane', `stage ${await stage()}`)
+      const hand = await p.waitFor(`!!document.querySelector('[data-walk-show][data-walk-assist]') && document.documentElement.dataset.walkAssist === 'chip' && !!document.querySelector('[data-walk-hand]')`, 15_000).then(() => true, () => false)
+      const ring = await p.eval(`(() => { const c = document.querySelector('[data-concierge="chip"]'); return c ? getComputedStyle(c).outlineStyle + ' ' + getComputedStyle(c).outlineWidth : 'no chip' })()`)
+      await p.shot('walk-hand')
+      check(hand && /^solid 3px/.test(ring), 'walk: a stage left alone lends a hand: its button and Sloane\'s chip are ringed and the card offers to do it', `hand ${hand}, chip ${ring}, root ${await p.eval('document.documentElement.dataset.walkAssist ?? null')}`)
       const b2 = await show()
       check(await past('voice'), `walk: "${b2}" plans a goal and the stage passes`, `stage ${await stage()}`)
-      // 3 The parked fleet: "Take me to a car" puts the visitor at a parked car's door and the realm opens it.
+      check(await p.waitFor(`document.documentElement.dataset.walkAssist === undefined && !document.querySelector('[data-walk-show][data-walk-assist]')`, 5_000).then(() => true, () => false), 'walk: the hand is taken back with the stage')
+      // 3 The parked fleet: a marker on the nearest parked car (over the world and on the minimap), then "Take me to a
+      // car" puts the visitor at a parked car's door and the realm opens it.
       check((await stage()) === 'fleet', 'walk: stage 3 is the parked fleet', `stage ${await stage()}`)
+      const carMark = await p.waitFor(`window.__SIM__.snapshot().output.beacon?.label === 'Parked car' && window.__SIM__.snapshot().output.beacon`, 10_000).catch(() => null)
+      check(carMark !== null && Number.isFinite(carMark.distance), 'walk: the car stage marks the nearest parked car', JSON.stringify(carMark))
       const b3 = await show()
       check(await past('fleet', 60_000), `walk: "${b3}" puts the visitor at a car's door and the realm opens it`, `stage ${await stage()}`)
       check((await p.snap()).mode === 'vehicle', 'walk: at the wheel after stage 3')
-      // 4 Inside a workplace: "Take me inside" puts the visitor down just inside a doorway (out of the car first).
+      // 4 Inside a workplace: a marker on the nearest doorway, then "Take me inside" puts the visitor down just inside a
+      // doorway (out of the car first).
       check((await stage()) === 'work', 'walk: stage 4 is a workplace', `stage ${await stage()}`)
+      const doorMark = await p.waitFor(`(() => { const b = window.__SIM__.snapshot().output.beacon; return b?.label === 'Workplace door' && window.__SIM__.engine.workplaces().some((r) => r.door.x === b.x && r.door.z === b.z) && b })()`, 10_000).catch(() => null)
+      check(doorMark !== null, 'walk: the indoor stage marks the nearest workplace\'s doorway', JSON.stringify(doorMark ?? await p.eval(`(() => { const e = window.__SIM__.engine, s = window.__SIM__.snapshot(); return { stage: window.__SIM__.walk(), set: e.beacon ?? null, shown: s.output.beacon ?? null, rooms: e.workplaces().length, at: [s.customer.x, s.customer.z], mode: s.input.mode } })()`)))
       const b4 = await show()
       check(await past('work', 60_000), `walk: "${b4}" puts the visitor inside a workplace`, `stage ${await stage()}`)
       check((await p.snap()).mode === 'foot', 'walk: on foot again inside')
@@ -2602,41 +2633,32 @@ const SCENARIOS = {
       const away = await past('style', 10_000)
       check(away && await p.waitFor(`!document.querySelector('[data-customizer]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
         'walk: Done puts the wardrobe away, the stage passes and the walk\'s card is back', `stage ${await stage()}`)
-      // 6 Ring-0: "Open it for me" runs laws at the console.
-      check((await stage()) === 'ring0', 'walk: stage 6 is Ring-0', `stage ${await stage()}`)
+      // 6 The console: no marker; its button opens the console, and that ends the walk. Sloane's line and where to go
+      // from here are printed in the console, the card goes and the pass is kept for the next visit.
+      check((await stage()) === 'console' && await p.eval('window.__SIM__.snapshot().output.beacon === undefined'), 'walk: stage 6 is the console, with no marker', `stage ${await stage()}`)
+      await p.shot('walk-console')
       const b6 = await show()
-      check(await past('ring0', 30_000), `walk: "${b6}" runs laws and the stage passes`, `stage ${await stage()}`)
-      // 7 The way out, from where the workplace stage left the visitor: inside a room, where the recruiter can ask nobody
-      // over (the spot a swarm of people within earshot left a visitor shut in), then the three line buttons and Run,
-      // each line's doors reported by the console.
-      check((await stage()) === 'exam', 'walk: stage 7 is the exit program', `stage ${await stage()}`)
+      const gone = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]') && !!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).then(() => true, () => false)
+      const banner = await p.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return /Sloane: /.test(t) && /The city is open: nothing is held back any more/.test(t) && t })()`, 10_000).catch(() => null)
+      const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
+      p.transcript.push(`[the console reached]\n${banner ?? await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`)
+      check(gone && banner !== null && kept?.v === 1 && kept?.passed === true, `walk: "${b6}" opens the console, the walk ends there with Sloane's line printed, the card goes and the pass is kept`, `gone ${gone}, banner ${banner !== null}, kept ${JSON.stringify(kept)}`)
+      await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      // The exit program after the pass, from where the workplace stage left the visitor: inside a room, where the
+      // recruiter can ask nobody over (the spot a swarm of people within earshot left a visitor shut in). The exam still
+      // seals the live kernel and sets the swarm to work through the team runner; the city is already open.
       const ear = await earshot(p)
       check(ear.me !== null && ear.near.length === 0, 'walk: where the workplace stage left the visitor, nobody within earshot can be asked over', ear.me ? `at ${ear.me.x.toFixed(1)}, ${ear.me.z.toFixed(1)}: ${ear.near.length ? `agents ${ear.near.join(', ')}` : 'nobody'}` : 'not on foot')
-      const lines = await p.eval(`[...document.querySelectorAll('[data-walk-line-button]')].length`)
-      check(lines === 3 && await p.eval(`!!document.querySelector('[data-walk-run]')`), 'walk: the last card has three line buttons and Run', `${lines} lines`)
-      await p.shot('walk-exam')
-      const line = async (i, done) => {
-        await p.eval(`document.querySelector('[data-walk-line-button="${i}"]')?.click()`)
-        const typed = await p.waitFor(`(document.querySelector('[aria-label="Ring-0 command line"]')?.value ?? '').startsWith('noir ')`, 10_000).then(() => true, () => false)
-        await p.eval(`document.querySelector('[data-walk-run]')?.click()`)
-        const t = await p.waitFor(`(() => { const t = ${CONSOLE_LOG}?.innerText ?? ''; return ${done}.test(t) && t })()`, 30_000).catch(() => null)
-        p.transcript.push(`[line ${i}, typed ${typed}]\n${t ?? `(nothing matching ${done} after 30 s)\n${await p.eval(`${CONSOLE_LOG}?.innerText ?? ''`).catch(() => '')}`}`)
-        return { typed, t }
-      }
-      const l1 = await line(1, /verify_ring0: seal [0-9a-f]{8} over 4 laws, 15 checks, contained, realm standing/)
-      check(l1.typed && l1.t !== null, 'walk: line 1 is typed into the prompt and Run seals the live kernel', lastLine(l1.t))
-      const l2 = await line(2, /spawn_subagents: \d+ of 24 (?:sub-agents at work|set to work) for sim2real_workplaces/)
-      check(l2.t !== null && !/spawn_subagents: 0 of 24/.test(l2.t), 'walk: line 2 sets the swarm to work through the team runner with nobody near (at least one lane running)', lastLine(l2.t))
-      const l3 = await line(3, /unlock_city: /)
-      check(/unlock_city: the city is yours/.test(l3.t ?? ''), 'walk: line 3 unlocks the city', lastLine(l3.t))
-      const gone = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false)
-      const kept = await p.eval(`(() => { try { return JSON.parse(localStorage.getItem('civic-simulation:first-walk:v1') ?? 'null') } catch { return null } })()`)
-      check(gone && kept?.v === 1 && kept?.passed === true, 'walk: the card goes and the pass is kept for the next visit', JSON.stringify(kept))
-      await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      const l1 = await p.command('noir let seal = verify_ring0();', /verify_ring0: seal [0-9a-f]{8} over 4 laws, 15 checks, contained, realm standing/, 30_000)
+      check(l1 !== null, 'walk: the program\'s first line seals the live kernel', lastLine(l1))
+      const l2 = await p.command('noir let swarm = spawn_subagents(24, "sim2real_workplaces");', /spawn_subagents: \d+ of 24 (?:sub-agents at work|set to work) for sim2real_workplaces/, 30_000)
+      check(l2 !== null && !/spawn_subagents: 0 of 24/.test(l2), 'walk: the program\'s second line sets the swarm to work through the team runner with nobody near (at least one lane running)', lastLine(l2))
+      const l3 = await p.command('noir unlock_city(seal, swarm);', /unlock_city: /, 30_000)
+      check(/unlock_city: the city is already yours/.test(l3 ?? ''), 'walk: the program\'s last line finds the city already open', lastLine(l3))
       // The swarm stays at work once the city is open: the console's lanes reads the team the exit program dispatched.
       const lanesOut = await p.command('lanes', /team: |lanes: /)
       const running = Number(/team: Send 24 sub-agents to the robotics lab, [^\n]* \((\d+) running, \d+ isolated/.exec(lanesOut ?? '')?.[1] ?? 0)
-      check(running >= 1, 'walk: lanes shows the twenty-four sub-agents at the sixteen workplaces, still running after the city opens', (lanesOut ?? '').split('\n').find((l) => /team: |lanes: /.test(l))?.trim().slice(0, 240) ?? 'nothing printed')
+      check(running >= 1, 'walk: lanes shows the twenty-four sub-agents at the sixteen workplaces, still running', (lanesOut ?? '').split('\n').find((l) => /team: |lanes: /.test(l))?.trim().slice(0, 240) ?? 'nothing printed')
       const status = await p.command('tutorial status', /tutorial: /)
       check(/^tutorial: the first walk is passed: the city is yours$/.test(lastLine(status)), 'walk: tutorial status says the walk is passed', lastLine(status))
       await p.shot('walk')
@@ -2653,7 +2675,7 @@ const SCENARIOS = {
    * car and the room, which the walk scenario takes by their buttons), Sloane names the shops on a map that has
    * them; the visitor stands in the first shop, the HUD's Browse chip is not under the walk's card and opens the
    * shop's card; the walk's card steps aside; trying a line on costs nothing and passes nothing; Done puts the shop's
-   * card away, which passes the stage, and the walk's card is back on Ring-0.
+   * card away, which passes the stage, and the walk's card is back on its last stage, the console.
    */
   async walkshop(chrome, origin) {
     const p = await open(chrome)
@@ -2668,11 +2690,17 @@ const SCENARIOS = {
         await p.tap('Escape', 'Escape', 27)
       }
       await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
-      // Walk for me, then Plan one for me (a goal planned as the chip would).
-      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
-      await past('move')
-      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
-      await past('voice')
+      // Walk for me, then Plan one for me (a goal planned as the chip would). A slow frame (the software GPU, a busy
+      // runner) can hold the scripted walk past half a minute: the next button is pressed only once the card is on the
+      // goal stage, or it would press Walk for me again.
+      const press = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return 'no button (' + (document.querySelector('aside[data-concierge]')?.getAttribute('data-concierge') ?? 'no card of Sloane\\'s') + ')'; const t = b.textContent.trim(); b.click(); return t })()`)
+      const t0 = Date.now()
+      const first = await press()
+      const onGoal = await p.waitFor(`window.__SIM__.walk() === 'voice' && document.querySelector('[data-walk]')?.getAttribute('data-walk') === 'voice'`, 90_000).then(() => true, () => false)
+      const t1 = Date.now()
+      const second = await press()
+      const planned = await past('voice')
+      check(onGoal && planned, 'walkshop: the first two stages pass by their buttons', `"${first}" ${onGoal ? `passed in ${((t1 - t0) / 1000).toFixed(1)} s` : 'did not pass in 90 s'}; "${second}" ${planned ? 'passed' : 'did not pass'}; stage ${await stage()}; clock ${await p.eval('window.__SIM__.snapshot().customer.clock')}`)
       for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
       const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
       const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
@@ -2696,8 +2724,8 @@ const SCENARIOS = {
       await p.shot('walk-shop')
       await p.eval(`document.querySelector('[data-store] [data-action="done"]')?.click()`)
       const away = await past('style', 10_000)
-      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
-        'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      check(away && (await stage()) === 'console' && await p.waitFor(`!document.querySelector('[data-store]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkshop: Done puts the shop\'s card away, the stage passes and the walk\'s card is back on the console', `stage ${await stage()}`)
       p.health('walkshop')
     } finally { await p.b.close() }
   },
@@ -2705,7 +2733,8 @@ const SCENARIOS = {
   /**
    * The first walk's look stage through a home (src/01_Initialize_World/properties.ts, HomeCard.tsx): the stage names the
    * homes, the home's chip shows clear of the walk's card, B opens the doorstep card (nothing is bought, and the walk's
-   * card steps aside), and the card put away with Esc passes the stage.
+   * card steps aside), and the card put away with Esc passes the stage; on the last stage the tilde key, as its card
+   * says, opens the console and ends the walk.
    */
   async walkhome(chrome, origin) {
     const p = await open(chrome)
@@ -2719,10 +2748,17 @@ const SCENARIOS = {
         await p.tap('Escape', 'Escape', 27)
       }
       await p.waitFor(`!!document.querySelector('[data-walk-show]')`, 30_000).catch(() => {})
-      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
-      await past('move')
-      await p.eval(`document.querySelector('[data-walk-show]')?.click()`)
-      await past('voice')
+      // Walk for me, then Plan one for me (a goal planned as the chip would). A slow frame (the software GPU, a busy
+      // runner) can hold the scripted walk past half a minute: the next button is pressed only once the card is on the
+      // goal stage, or it would press Walk for me again.
+      const press = () => p.eval(`(() => { const b = document.querySelector('[data-walk-show]'); if (!b) return 'no button (' + (document.querySelector('aside[data-concierge]')?.getAttribute('data-concierge') ?? 'no card of Sloane\\'s') + ')'; const t = b.textContent.trim(); b.click(); return t })()`)
+      const t0 = Date.now()
+      const first = await press()
+      const onGoal = await p.waitFor(`window.__SIM__.walk() === 'voice' && document.querySelector('[data-walk]')?.getAttribute('data-walk') === 'voice'`, 90_000).then(() => true, () => false)
+      const t1 = Date.now()
+      const second = await press()
+      const planned = await past('voice')
+      check(onGoal && planned, 'walkhome: the first two stages pass by their buttons', `"${first}" ${onGoal ? `passed in ${((t1 - t0) / 1000).toFixed(1)} s` : 'did not pass in 90 s'}; "${second}" ${planned ? 'passed' : 'did not pass'}; stage ${await stage()}; clock ${await p.eval('window.__SIM__.snapshot().customer.clock')}`)
       for (const ev of ['vehicle', 'inside']) await p.eval(`window.__SIM__.walkNote(${JSON.stringify(ev)})`)
       const at = await p.waitFor(`window.__SIM__.walk() === 'style'`, 10_000).then(() => true, () => false)
       const said = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
@@ -2749,9 +2785,16 @@ const SCENARIOS = {
       await p.shot('walk-home')
       await p.tap('Escape', 'Escape', 27)
       const away = await past('style', 10_000)
-      check(away && (await stage()) === 'ring0' && await p.waitFor(`!document.querySelector('aside[data-home]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
-        'walkhome: Esc puts the doorstep card away, the stage passes and the walk\'s card is back on Ring-0', `stage ${await stage()}`)
+      check(away && (await stage()) === 'console' && await p.waitFor(`!document.querySelector('aside[data-home]') && !!document.querySelector('[data-walk-show]')`, 10_000).then(() => true, () => false),
+        'walkhome: Esc puts the doorstep card away, the stage passes and the walk\'s card is back on the console', `stage ${await stage()}`)
       check((await credits()) === c0 && ((await p.eval('window.__SIM__.snapshot().customer.ownedHomes')) & 1) === 0, 'walkhome: reading the deed bought nothing', `credits ${c0} -> ${await credits()}`)
+      // The last stage, by the key its card names: the tilde opens the console, and that ends the walk.
+      const ask = await p.eval(`document.querySelector('[data-walk]')?.innerText ?? ''`)
+      await p.mouse('mousePressed', 480, 270, 1)
+      await p.mouse('mouseReleased', 480, 270)
+      await p.tap('Backquote', '`', 192)
+      const ended = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk-show]') && !!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).then(() => true, () => false)
+      check(/~ key/.test(ask) && ended, 'walkhome: the last card names the ~ key, and the key opens the console and ends the walk', `ended ${ended}; ${ask.replace(/\s+/g, ' ').slice(0, 160)}`)
       p.health('walkhome')
     } finally { await p.b.close() }
   },
@@ -2866,7 +2909,7 @@ const SCENARIOS = {
       check(lowChip > 100 && raisedChip !== null && raisedChip < 40 && clear(raised).length === 0 && heldChip === raisedChip && heldWalk?.t === raised.walk?.t && lowAgain === lowChip,
         'walkphone: a taller foot moves her chip up and the card under it, a shorter one leaves them there, and a new window size lets go',
         `chip top ${lowChip} -> ${raisedChip} (card ${JSON.stringify(raised.walk)} ${clear(raised).join(', ')}) -> ${heldChip} (card top ${heldWalk?.t}) -> ${lowAgain} after a new size`)
-      // The touch Menu opens over the card (the Ring-0 stage sends the visitor to it): every item, scrolled to, is on top.
+      // The touch Menu opens over the card (the console stage sends the visitor to it): every item, scrolled to, is on top.
       await view(IPHONE.width, IPHONE.height)
       let sheet = 'did not open'
       if (await tapOn(MENU, 39) && await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)) {
@@ -2987,6 +3030,34 @@ const SCENARIOS = {
         const out = await p.waitFor(`window.__SIM__.snapshot().input.mode !== 'vehicle' && !!document.querySelector('[data-walk-show]')`, 20_000).then(() => true, () => false)
         check(parked && folded && clear(wheel).length === 0 && out, 'walkphone: at the wheel the card steps aside held sideways, is folded upright and, opened from its strip, keeps under her chip and above the car\'s buttons, and is back on foot', `sideways away ${parked}; upright folded ${folded}, opened ${JSON.stringify(wheel.walk)} ${clear(wheel).join(', ')}; back on foot ${out}`)
       } else check(false, 'walkphone: the Enter car button enters the nearest car', `car ${car}`)
+      // The console from the touch Menu before the last stage passes nothing (the walk is held until it reaches the
+      // console there); the exit program typed in it ends the walk from the stage it is on, a knowing visitor's way out.
+      await view(IPHONE.width, IPHONE.height)
+      const before = await p.eval('window.__SIM__.walk()')
+      // Left alone on that stage, the walk lends a hand on the touch control it asks for (firstWalk.ts assistTargetOf:
+      // the stick on the first stage): lit here, so the walk ending below has a ring (and on a car or indoor stage, a
+      // marker) to take back.
+      const lit = await p.waitFor(`document.documentElement.dataset.walkAssist`, 15_000).catch(() => null)
+      const marked = await p.eval('window.__SIM__.snapshot().output.beacon?.label ?? null')
+      let early = 'the Menu did not open'
+      if (await tapOn(MENU, 50) && await p.waitFor(`!!document.querySelector('[role="menu"]')`, 5_000).then(() => true, () => false)) {
+        const item = await tapOn({ pick: `(b) => b.getAttribute('data-menu-item') === 'console'` }, 51)
+        const opened = item && await p.waitFor(`!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).then(() => true, () => false)
+        await p.frames(3)
+        early = opened ? String(await p.eval('window.__SIM__.walk()')) : `the Console item ${item ? 'did not open it' : 'is missing'}`
+      }
+      check(before !== null && before !== 'console' && early === before, 'walkphone: the console opened from the touch Menu before the last stage passes nothing', `stage ${before} -> ${early}`)
+      await p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`)
+      const seal = await p.command('noir let seal = verify_ring0();', /verify_ring0: seal [0-9a-f]{8}/, 30_000)
+      const swarm = await p.command('noir let swarm = spawn_subagents(24, "sim2real_workplaces");', /spawn_subagents: \d+ of 24/, 30_000)
+      const unlock = await p.command('noir unlock_city(seal, swarm);', /unlock_city: /, 30_000)
+      const over = await p.waitFor(`window.__SIM__.walk() === null && !document.querySelector('[data-walk]') && !document.querySelector('[data-walk-strip]')`, 10_000).then(() => true, () => false)
+      const told = await p.waitFor(`/The city is open: nothing is held back any more/.test(${CONSOLE_LOG}?.innerText ?? '')`, 10_000).then(() => true, () => false)
+      check(seal !== null && swarm !== null && /unlock_city: the city is yours/.test(unlock ?? '') && over && told, `walkphone: the exit program typed in the console ends the walk from stage ${before}, card and strip gone, Sloane's line printed`, `${lastLine(seal)} | ${lastLine(swarm)} | ${lastLine(unlock)} | over ${over}, printed ${told}`)
+      const unlit = await p.waitFor('document.documentElement.dataset.walkAssist === undefined && window.__SIM__.snapshot().output.beacon === undefined', 5_000).then(() => true, () => false)
+      check(typeof lit === 'string' && unlit, `walkphone: left idle on stage ${before} the walk lends a hand on the touch ${lit ?? 'control'}, and once the walk is over that ring${marked ? ' and the marker are' : ' is'} gone`,
+        `lit ${lit}, marker ${marked}, after: ring ${await p.eval('document.documentElement.dataset.walkAssist ?? null')}, marker ${await p.eval('window.__SIM__.snapshot().output.beacon?.label ?? null')}`)
+      p.saveTranscript('walkphone')
       p.health('walkphone')
     } finally { await p.b.close() }
   },
