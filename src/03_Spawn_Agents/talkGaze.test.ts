@@ -6,13 +6,15 @@
  * operator talks to them; a head eased round to the operator and back, never snapped, at any frame rate the city
  * runs at (the phone's few frames a second among them); a slot freed only once its person has turned all the way
  * back; room for every recruit standing by and the person a conversation names at once; a newcomer who finds the
- * slots full waiting rather than taking one mid-turn; and the reach and the floor a conversation holds across.
+ * slots full waiting rather than taking one mid-turn; the reach and the floor a conversation holds across; and the
+ * place the heads look at, the eye itself while it moves as a body moves, held through a cut when the eye goes into a
+ * car's seat or jumps (up to a sky floor, across the street) so no head is swung round after it.
  * What breaks if it is removed? The slots could snap a head, leave someone looking after the conversation ended, or
  * let a person on the street below a sky floor's window be talked to, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { GAZE } from './humanoid.ts'
+import { GAZE, gazeAt } from './humanoid.ts'
 import { RECRUIT_SLOTS } from './skills.ts'
 import { TALK, TalkGaze, talkWeight, withinTalk } from './talkGaze.ts'
 
@@ -126,4 +128,102 @@ test('withinTalk: within the leash across the ground and on the eye\'s own floor
   assert.equal(withinTalk(new Float32Array(0), 1, eye), null, 'no copy yet')
   assert.equal(withinTalk(pose, 1.5, eye), null, 'not an index')
   assert.equal(withinTalk(pose, -1, eye), null)
+})
+
+/** An eye at (x, y, z). */
+const at = (x: number, y: number, z: number) => ({ x, y, z })
+
+test('TalkGaze.look: the heads look at the eye itself while it moves as a body moves; with nobody turned a jump moves the place at once; an eye that is not a number moves nothing', () => {
+  const g = new TalkGaze()
+  g.look([], at(1, 2, 3), false, 1 / 60)
+  assert.deepEqual([...g.eye], [1, 2, 3], 'the first eye is taken as it is')
+  g.look([], at(50, 2, 3), false, 1 / 60)
+  assert.deepEqual([...g.eye], [50, 2, 3], 'nobody turned: a jump shows on nobody')
+  let x = 50
+  for (let k = 0; k < 60; k++) { x += 5.2 / 60; g.look([7], at(x, 2, 3), false, 1 / 60) }
+  assert.deepEqual([...g.eye], [x, 2, 3], 'a run is followed exactly')
+  assert.equal(weightOf(g, 7), 1)
+  for (let k = 0; k < 10; k++) { x += 5.2 * 0.1; g.look([7], at(x, 2, 3), false, 0.05) }
+  assert.deepEqual([...g.eye], [x, 2, 3], 'even the longest step a frame can carry (RUN for engine.ts MAX_STEP_DT) is a body moving, not a jump')
+  assert.equal(weightOf(g, 7), 1, 'and nobody turns away')
+  assert.ok(5.2 * 0.1 < TALK.jump / 2, 'with room to spare')
+  g.look([7], at(Number.NaN, 0, 0), false, 1 / 60)
+  assert.deepEqual([...g.eye], [x, 2, 3], 'a broken eye moves nothing')
+  for (let k = 0; k < 40; k++) g.look([], at(x, 2, 3), false, 0.05)
+  assert.deepEqual([...g.who], Array(TALK.slots).fill(-1), 'the conversation over, everyone turned back')
+})
+
+test('TalkGaze.look: a jump of the eye while someone is turned to it is a cut: the place holds, every head turns back from there, the place moves, and whoever is still talked to turns round again', () => {
+  for (const dt of [1 / 60, 0.05]) {
+    const g = new TalkGaze()
+    for (let k = 0; k < 40; k++) g.look([7], at(0, 1.6, 0), false, dt)
+    assert.equal(weightOf(g, 7), 1)
+    let frames = 0, rising = false, back = false
+    let prev = 1
+    for (; frames < 200; frames++) {
+      g.look([7], at(3, 1.6, 0), false, dt)
+      const w = weightOf(g, 7)
+      if (w === 0) back = true
+      if (!back) assert.deepEqual([...g.eye], [0, 1.6, 0], 'held while their head turns back, though they are still talked to')
+      else assert.deepEqual([...g.eye], [3, 1.6, 0], 'once nobody is turned the place is the eye again')
+      if (!back) assert.ok(w <= prev, 'turning back first')
+      if (back && w > prev) rising = true
+      if (w === 1 && rising) break
+      prev = w
+    }
+    assert.ok(rising && weightOf(g, 7) === 1, 'round to the new place again')
+    assert.ok(Math.abs(frames * dt - (TALK.easeOut + TALK.easeIn)) <= 3 * dt, `back and round again in about a second (${(frames * dt).toFixed(2)} s at dt ${dt.toFixed(3)})`)
+  }
+  const g = new TalkGaze()
+  for (let k = 0; k < 40; k++) g.look([7], at(0, 1.6, 0), false, 0.05)
+  assert.ok(Math.hypot(0.4, 1.6 - 1.15, 0.8) < TALK.jump, 'a seat nearer than a jump: only `away` can cut here')
+  g.look([], at(0.4, 1.15, 0.8), true, 0.05)
+  assert.deepEqual([...g.eye], [0, 1.6, 0], 'into a car\'s seat at the door: away, so the place holds')
+  for (let k = 0; k < 20; k++) g.look([], at(0.4, 1.15, 0.8), true, 0.05)
+  assert.deepEqual([...g.eye], [0.4, 1.15, 0.8], 'and with everyone turned back it is the seat')
+  const h = new TalkGaze()
+  for (let k = 0; k < 40; k++) h.look([7], at(0, 1.6, 0), false, 0.05)
+  h.look([7], at(0.6, 1.6, 0), false, 0.05)
+  assert.deepEqual([...h.eye], [0.6, 1.6, 0], 'a move shorter than a jump while talking: the view jumps with it and they go on looking at the operator')
+  assert.equal(weightOf(h, 7), 1, 'no cut')
+})
+
+test('when the operator\'s eye jumps (into a car beside a recruit, up to a sky floor, a teleport away or to beside them or behind them, a long correction from the room) a recruit\'s head turning back turns no more than 0.03 rad a frame, at sixty frames a second and at five', () => {
+  // A recruit at the origin facing +z (heading 0), the operator's eye 1.5 m in front of them (skills.ts INTERVIEW_DISTANCE).
+  const neck: [number, number, number] = [0, 1.45, 0]
+  const heading = 0
+  const start = at(0, 1.6, 1.5)
+  const turn = (a: { chest: number; head: number; pitch: number }, b: typeof a) => Math.abs(a.chest - b.chest) + Math.abs(a.head - b.head) + Math.abs(a.pitch - b.pitch)
+  // Where the eye lands, whether the operator is then in a seat, and whether the recruit is still within reach (talked to).
+  const jumps: [string, number, number, number, boolean, boolean][] = [
+    ['the seat of a car beside them', 1.5, 1.15, 1.5, true, false], ['the seat of a car further off', 3.5, 1.15, 1.5, true, false],
+    ['a seat behind them', -1, 1.15, -1.5, true, false], ['a sky floor overhead', 0, 61.6, 1.5, false, false], ['a teleport away', 40, 1.6, 0, false, false],
+    ['a parked car\'s side behind them', -1.75, 1.6, -3.75, false, true], ['beside their shoulder', 1.3, 1.6, 0.1, false, true],
+    ['a correction from the room past a jump', 1.4, 1.6, 2.2, false, true],
+  ]
+  let caught = 0
+  for (const [where, jx, jy, jz, away, near] of jumps) {
+    for (const dt of [1 / 60, 0.05]) {
+      const g = new TalkGaze()
+      for (let k = 0; k < 40; k++) g.look([7], start, false, dt)
+      let prev = gazeAt(neck, heading, 0, 0, [g.eye[0], g.eye[1], g.eye[2]], weightOf(g, 7))
+      const first = prev
+      assert.ok(prev.pitch > 0.05, 'looking at the operator\'s eye to begin with')
+      if (turn(first, gazeAt(neck, heading, 0, 0, [jx, jy, jz], weightOf(g, 7))) > 0.3) caught++
+      let worst = 0, back = false
+      for (let t = 0; t < TALK.easeOut + TALK.easeIn + 0.2; t += dt) {
+        g.look(near ? [7] : [], at(jx, jy, jz), away, dt)
+        const w = weightOf(g, 7)
+        const now = gazeAt(neck, heading, 0, 0, [g.eye[0], g.eye[1], g.eye[2]], w)
+        if (!back) worst = Math.max(worst, turn(prev, now))
+        if (w === 0) back = true
+        prev = now
+      }
+      assert.ok(back, `${where}: turned all the way back first`)
+      assert.ok(worst <= 0.03, `${where} at dt ${dt.toFixed(3)}: turning back, the worst frame turned ${worst.toFixed(4)} rad`)
+      if (near) assert.ok(weightOf(g, 7) === 1, `${where}: still talked to, so round to the new place again`)
+      else assert.deepEqual([prev.chest, prev.head, prev.pitch], [0, 0, 0], `${where}: facing the front`)
+    }
+  }
+  assert.ok(caught >= 8, `chasing the eye itself would have turned a head more than 0.3 rad in one frame in ${caught} of these`)
 })

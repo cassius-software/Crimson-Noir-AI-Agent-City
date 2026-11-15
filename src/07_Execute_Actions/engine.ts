@@ -584,7 +584,7 @@ export class Engine {
    * take it off again (App.tsx), so a link copied from here does not hold another device to this one's kernel.
    */
   readonly kernelKept: boolean
-  /** The operator's eye, for the people the operator is talking to (crowd.ts CrowdView.gazeTarget). */
+  /** Where the people the operator is talking to look (crowd.ts CrowdView.gazeTarget): the eye, as TalkGaze.look keeps it. */
   private readonly crowdGaze: UniformNode<'vec4', Vector4>
   /** Who the operator is talking to, into the crowd's uniforms (crowd.ts CrowdView.talk): the slots' indices and weights. */
   private readonly crowdTalk: (who: Float32Array, weight: Float32Array) => void
@@ -2458,7 +2458,8 @@ export class Engine {
    * Who looks the operator in the eye this frame (talkGaze.ts): the recruits standing by and the person a conversation
    * names (setTalkingTo, first, so it is never the one left waiting for a slot), each within reach of the operator's
    * eye and on its floor, and nobody while the operator drives; the slots eased `dt` toward them and handed to the
-   * crowd's uniforms with the eye (its last good place kept for a head still easing back). A named person out of
+   * crowd's uniforms with the place their heads look at (TalkGaze.look: the eye, held where it was through a cut, so
+   * getting into a car, riding to another floor or a teleport swings nobody's head after it). A named person out of
    * reach ends their conversation here.
    */
   private lookAtOperator(driving: boolean, dt: number): void {
@@ -2473,8 +2474,9 @@ export class Engine {
       }
       for (const a of this.standingBy) if (a !== this.talkingTo && withinTalk(this.crowdPose, a, eye) === true) talkers.push(a)
     }
-    this.talk.step(talkers, dt)
-    if (seen) this.crowdGaze.value.set(eye.x, eye.y, eye.z, 1)
+    this.talk.look(talkers, eye, driving, dt)
+    const at = this.talk.eye
+    this.crowdGaze.value.set(at[0], at[1], at[2], 1)
     this.crowdTalk(this.talk.who, this.talk.weight)
   }
 

@@ -2172,16 +2172,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `bodyGaze` scales the eye by it, so the crowd kernel, its fingerprint and the storage buffers are unchanged (the
   crowd's shaders bind 4 uniform and 7 storage buffers per stage, as before) and every tier, Lite included, runs the
   same code. A conversation holds your eye out to 6.5 m and lets it go by 8.5 m, where a named conversation also ends
-  by itself, as it does when you are on another floor; from a car nobody looks. The gaze's hard edges are fades now:
+  by itself, as it does when you are on another floor; from a car nobody looks. Their heads follow your eye exactly
+  while you move as a body moves, and through a move under 1.2 m in one frame (a short correction from the room);
+  when you get into a car, or your eye jumps farther (a ride to another floor, a teleport across the street) while
+  anyone is turned to you, that is a cut: heads turn back from where you stood, and whoever you are still talking
+  to then turns round to where you are now, instead of a head swinging after your eye in one frame
+  (`TalkGaze.look`). The gaze's hard edges are fades now:
   past a right angle the head swings back to the front as you walk round behind someone instead of snapping at the
   edge of the cone, it fades in close to the person's own neck, and a person stepping backwards keeps their head
   ahead instead of flicking it from one shoulder to the other. Tests: `gazeAt` with and without a conversation, sweeps
   in which no step of 0.005 rad of bearing or 5 mm of distance turns a head more than 0.03 rad, and `bodyGaze` and
   `bodyTalk` compiled through `wgslHost.ts` and compared with `gazeAt` and `talkWeight` over 360 cases to f32, the
   first test to run the gaze's WGSL (`humanoid.test.ts`); the slots' easing at 60 and at 5 frames a second, eight
-  recruits and a named person looking at once, a newcomer waiting for a free slot, the reach and the floor
-  (`talkGaze.test.ts`); the engine's wiring
-  (`talkWiring.test.ts`). The page grows by 3,436 bytes (12,159,558 of the 14,817,000 budget). Before and after
+  recruits and a named person looking at once, a newcomer waiting for a free slot, the reach and the floor, the
+  cut (a car's seat nearer than 1.2 m included), and a recruit's head turning back by no more than 0.03 rad a frame,
+  at 60 and at 5 frames a second, when your eye jumps into a car's seat, up to a sky floor, away, or to beside or
+  behind them (`talkGaze.test.ts`); the engine's wiring
+  (`talkWiring.test.ts`). The page grows by 3,896 bytes (12,165,822 of the 14,817,000 budget). Before and after
   pictures were taken on the software WebGPU adapter only; how it looks on a real GPU and on a real phone is
   unverified.
 

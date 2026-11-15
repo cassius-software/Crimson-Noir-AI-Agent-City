@@ -6,8 +6,9 @@
  * which Node cannot run: nobody is named until a caller names them, and nothing but a pedestrian's index can be;
  * the recruits standing by are read from the kernel's own report before the upload hands the frame back; every
  * animation frame eases the slots toward the people the operator is talking to (nobody from a car, nobody once a
- * named person is out of reach, which ends that conversation) and hands them to the crowd's uniforms with the eye,
- * the eye written there alone; and the boot gives the engine the crowd view's slots.
+ * named person is out of reach, which ends that conversation) and hands them to the crowd's uniforms with the place
+ * their heads look at, as TalkGaze.look keeps it, written there alone; and the boot gives the engine the crowd
+ * view's slots.
  * What breaks if it is removed? Someone could put the old eye write back (every passer-by within reach staring), let a
  * conversation outlive its person walking away, or name the operator's own figure, unnoticed.
  */
@@ -34,8 +35,8 @@ test('engine: the eye reaches the crowd in lookAtOperator alone, with the slots;
   assert.equal((ENGINE.match(/this\.crowdGaze\.value\.set\(/g) ?? []).length, 1, 'one write of the eye')
   assert.doesNotMatch(ENGINE, /driving >= 0 \? 0 : 1\)/, 'no longer on for everyone afoot')
   const look = between(ENGINE, '  private lookAtOperator(driving: boolean, dt: number): void {', '\n  }\n')
-  assert.match(look, /if \(seen\) this\.crowdGaze\.value\.set\(eye\.x, eye\.y, eye\.z, 1\)/, 'a broken eye keeps its last good place for a head easing back')
-  assert.match(look, /this\.talk\.step\(talkers, dt\)\n\s+if \(seen\)[^\n]*\n\s+this\.crowdTalk\(this\.talk\.who, this\.talk\.weight\)/, 'the slots eased, then handed over with the eye')
+  assert.match(look, /this\.talk\.look\(talkers, eye, driving, dt\)\n\s+const at = this\.talk\.eye\n\s+this\.crowdGaze\.value\.set\(at\[0\], at\[1\], at\[2\], 1\)\n\s+this\.crowdTalk\(this\.talk\.who, this\.talk\.weight\)/, 'the slots eased and the place their heads look at kept (held through a cut: a car seat, another floor or a teleport swings nobody round), then both handed over')
+  assert.doesNotMatch(look, /crowdGaze\.value\.set\(eye\./, 'never the raw eye, which jumps when the operator gets into a car or changes floor')
   assert.match(look, /talkers\.length = 0\n\s+if \(!driving && seen\) \{/, 'nobody from a car, nobody without an eye')
   assert.match(look, /if \(this\.talkingTo > PLAYER_INDEX\) \{\n\s+const near = withinTalk\(this\.crowdPose, this\.talkingTo, eye\)\n\s+if \(near === false\) this\.talkingTo = -1\n\s+else if \(near === true\) talkers\.push\(this\.talkingTo\)\n\s+\}\n\s+for \(const a of this\.standingBy\) if \(a !== this\.talkingTo && withinTalk\(this\.crowdPose, a, eye\) === true\) talkers\.push\(a\)/, 'the named person first, while within reach (out of reach the conversation ends; with no reading yet it waits), then the recruits standing by, within reach and on the floor')
   assert.equal((look.match(/talkers\.push\(/g) ?? []).length, 2, 'those two and nobody else: no passer-by is ever added')

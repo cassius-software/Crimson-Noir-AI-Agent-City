@@ -1315,10 +1315,12 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   (`setTalkingTo`), ready for the proximity talk with whoever is nearest; nothing on this build calls it yet. Their
   head and chest turn round to you over about 0.4 s and back over about 0.6 s once it ends; they hold your eye out
   to six and a half metres and let it go by eight and a half, where a named conversation also ends by itself, as it
-  does on another floor; from a car nobody looks, and walking round behind someone you are talking to, you see their
-  head swing back to the front. Everyone else looks the way they are going, the head leading a turn and staying
-  ahead when they step backwards. The CPU runs the same arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
-  street draws, to the number.
+  does on another floor; from a car nobody looks. When you get into a car, ride to another floor or are moved more
+  than about a metre in a moment, their head turns back from where you stood instead of swinging after you, and
+  someone you are still talking to then turns round to where you are now. Walking round behind someone you are
+  talking to, you see their head swing back to the front. Everyone else looks the way they are going, the head
+  leading a turn and staying ahead when they step backwards. The CPU runs the same arithmetic for the card's
+  silhouette, its face view and the tests, so the body the card draws is the body the street draws, to the number.
 - **The face.** The skull is twelve-sided rings from the chin to the crown, each ring in a region (the chin, the
   jaw, the cheekbones, the brow line), and the features are small lofted pillows laid on the skull's own front: two
   eyes (a white with an iris in front), two brows, a nose rooted on the skull, the lips, two ears. Seven face
