@@ -7,7 +7,7 @@
  * equally its own, and the shell's file and size and the installer's config name the same file; the runner's pins in
  * the shell, the computer's SHA-256, the phones' file, size and hash, and the tiny test model's, are the page's and
  * the tiny model's own), the file's name is one the
- * in-page model accepts as a text model, siteUrl admits only a models/ file beside the page on its own origin, the
+ * in-page model accepts as a text model, siteUrl admits only a models/ file (or a speech/ file: the speech pack's folder) beside the page on its own origin, the
  * manifest offers only exactly the pin, and fetchSiteModel turns into a File only what arrived whole, with the pinned
  * size and SHA-256 (a short body, a long one, a wrong hash, an HTTP error and a stop each end with no File and a plain
  * sentence), counting as it goes. The fetch is a fake serving the tiny model (tools/browser/tinyGguf.mjs) under a pin
@@ -165,13 +165,19 @@ test('siteModel.ts names no address and fetches nothing itself: the fetch is han
   assert.doesNotMatch(code, /\bfetch\s*\(/)
 })
 
-test('siteUrl admits a models/ file beside the page on its own origin, and nothing else', () => {
+test('siteUrl admits a models/ or speech/ file beside the page on its own origin, and nothing else', () => {
   const base = 'https://owner.github.io/Crimson-Noir-AI-Agent-City/?players=2#x'
   assert.equal(siteUrl('models/manifest.json', base), 'https://owner.github.io/Crimson-Noir-AI-Agent-City/models/manifest.json')
   assert.equal(siteUrl(`models/${SITE_MODEL.file}`, base), `https://owner.github.io/Crimson-Noir-AI-Agent-City/models/${SITE_MODEL.file}`)
   assert.equal(siteUrl('models/LICENSE', 'https://owner.github.io/Crimson-Noir-AI-Agent-City/index.html'), 'https://owner.github.io/Crimson-Noir-AI-Agent-City/models/LICENSE')
   assert.equal(siteUrl('models/x.gguf', 'http://127.0.0.1:8000/'), 'http://127.0.0.1:8000/models/x.gguf')
   // The origin's root is another site on GitHub Pages; anything that climbs, names a host or a scheme is refused.
+  // The speech pack's folder is the one other folder the page serves itself from (speechPack.ts), under the same rules.
+  assert.equal(siteUrl('speech/manifest.json', base), 'https://owner.github.io/Crimson-Noir-AI-Agent-City/speech/manifest.json')
+  assert.equal(siteUrl('speech/encoder_model.onnx', 'http://127.0.0.1:8000/'), 'http://127.0.0.1:8000/speech/encoder_model.onnx')
+  for (const path of ['/speech/x.onnx', 'speech/../index.html', 'speech/', 'speech/a/b.onnx', 'speech/..', 'speech/.hidden', 'speechx/a.onnx', 'other/a.onnx', 'modelsspeech/a']) {
+    assert.throws(() => siteUrl(path, base), /is not a file this site serves beside the page/, path)
+  }
   for (const path of ['/models/x.gguf', 'models/../index.html', 'models/', 'models/a/b.gguf', '../models/x.gguf', 'https://evil.example/models/x.gguf', '//evil.example/models/x.gguf', 'models/..', 'models/.hidden', 'x.gguf', 'models/x y.gguf', 'models/x?.gguf', 'models\\x.gguf']) {
     assert.throws(() => siteUrl(path, base), /is not a file this site serves beside the page/, path)
   }

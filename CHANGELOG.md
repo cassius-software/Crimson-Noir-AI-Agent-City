@@ -15,6 +15,66 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The microphone understands what you say, with a recogniser of the page's own.** The document that asked for
+  proximity voice said the microphone does not work. It was checked first: the microphone opened, metered the room and
+  told speech from noise; what was missing was the words. Speech was turned into text only by the browser's own
+  on-device recogniser, which a few browsers have and most do not, so in most browsers nothing said was understood.
+  The page now brings its own (`src/09_Cognition/speechEngine.ts`, `speechPack.ts`, `speech.worker.ts`,
+  `speechCore.ts`, `speechOrt.ts`; `src/04_Connect_Hardware/utterance.ts`):
+  - **The speech pack.** The web copy serves Moonshine Tiny (English; MIT, Useful Sensors, Inc.) as quantized ONNX and
+    the WebAssembly module of ONNX Runtime Web 1.31.1 (MIT, Microsoft; the project's sixth runtime dependency, pinned
+    exactly) beside the page in `speech/`: four files, 41 MB. `tools/web/speechPack.mjs` takes the model from the npm
+    registry's tarball of `@moonshine-ai/moonshine-js` 0.1.29, the module from the installed dependency and the
+    vocabulary from `third_party/moonshine-tiny-en/`, checks each against the size and SHA-256 `speechPack.ts` pins,
+    and places them in `dist-web/speech/` with a manifest and both projects' licences and notices; `web.yml` runs it
+    on every publish, with the model cached by the pin. Nothing of the pack is in `dist/index.html`
+    (`tools/verify/page_dist.mjs` now refuses an `.onnx` file there as it refuses a `.gguf`), and the Windows, Linux,
+    macOS, Android, iOS, NixOS and OS builds carry no pack yet: there the browser's own recogniser still stands in
+    where there is one.
+  - **In the page.** The detector's worklet now also cuts what it hears into sentences (from 0.4 s before speech to
+    0.35 s after, 12 s at most), resampled to 16 kHz by a windowed-sinc filter, and hands them over only while the
+    recogniser asks. When the microphone opens, the page asks its own site for the pack's manifest and files, keeps
+    them in Cache Storage (`speech-pack:<id>`; the service worker leaves `speech/` to the network and never clears
+    that keep, so the pack is downloaded once a browser, not once a publish), and hands them to a worker that
+    installs the air gap first, hashes every file against the pin before it runs any, and runs the model on one
+    thread from bytes, so it fetches nothing, starts no worker and needs no cross-origin isolation. A sentence is
+    cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
+    for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
+    where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
+    dropped: no audio leaves the device. A short loud sound in the sentence (a knock, a clap) does not cut the words away.
+    A repeat the person said ("no, no, no", "five five five") is kept; only a model that writes the same thing until
+    its length runs out is cut back. A site that does not answer in 20 s or a
+    download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started
+    again for ever; a mute stops a download under way; a page with no pack is never said to be waiting for one.
+  - **What you see.** The microphone pill reads **words soon**, **words 40%**, **words starting**, then **words
+    on-device**, and shows each sentence it understood in quotes for a few seconds; on a phone, where the microphone
+    is a badge, the same words stand in a chip beside it on the minimap, and a screen reader is told each sentence
+    once. While the pack is on its way a browser with its own recogniser reads in the meantime, if its model needs
+    nothing installed. On mobile data, 2G or a data saver, and on a phone or tablet whose browser does not say what it
+    is connected to (an iPhone's Safari never does), the 41 MB are
+    not downloaded unasked: the pill reads **words waiting**, a toast says why, and pressing the microphone yourself
+    (or `mic on`) gets it. A microphone whose audio stops arriving, or that the system holds muted, reads **Mic
+    silent**; one that has sent only exact silence since it opened reads **No sound yet**, a hint in the usual colour
+    (an input behind a noise gate does that until the first word).
+  - **Licences.** `NOTICE.md` (shipped part, trademarks, operator note 15), `LICENSE` section 4, `docs/ip-audit.md`
+    and `docs/zero-trust-audit.md` record the model, the runtime and what its WebAssembly module is built from
+    (`third_party/onnxruntime-web/1.31.1/`: ONNX Runtime's licence and third-party notices at the same tag, and the
+    licences of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt). The npm package of the runtime ships
+    no licence file, so the build embeds a text recorded for that exact version, and still fails for any other
+    bundled package without one. The same vendor's Spanish model, whose licence limits commercial use, is not used.
+  - **What CI showed** (on the pull request). The new `speech` job reads a sentence spoken by a speech synthesiser
+    with the pinned pack under Node, then serves the built web copy with the pack, opens it in a desktop Chromium
+    whose microphone is that recording, and sees the sentence on the pill on a first visit (the site asked for the
+    manifest and each file exactly once) and again on a second visit that asks for nothing under `speech/`
+    (`tools/browser/speech.mjs`). Unit suites cover the tap, the engine, the pack, the worker's checks, the tool and
+    the licences. The short-command figure above is from the real pack under Node on public-domain and synthesised
+    recordings, not from CI.
+  - **Not verified.** A real voice through a real microphone; Safari and an iPhone, Firefox, Android Chrome and any
+    phone; the time to the first sentence on a slow device. The model is small and English only, and it mishears:
+    in testing here it read the synthesiser's "Take me to the tailor." wrongly in several ways while reading other
+    sentences exactly. Talking to the people nearby and the agents' shared terminals, which the same document asks
+    for, are not in this change.
+
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

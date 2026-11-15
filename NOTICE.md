@@ -117,6 +117,7 @@ ORC License. The build embeds the full license text of every bundled package at 
 | @dimforge/rapier3d-simd-compat (Rapier) | Apache-2.0 | Dimforge and the Rapier contributors |
 | tailwindcss (generated CSS) | MIT | Tailwind Labs, Inc. |
 | @wllama/wllama (wllama, the in-page model runtime) | MIT | Xuan Son Nguyen |
+| onnxruntime-web (ONNX Runtime Web, the speech recogniser's runtime) | MIT | Microsoft Corporation |
 
 **The in-page model runtime.** A page that carries the in-page model runtime carries it as `wllama.wasm`, the
 WebAssembly module @wllama/wllama 3.8.1 publishes, unchanged (pinned in `third_party/wllama/3.8.1/`, with its sha256).
@@ -135,6 +136,35 @@ It is wllama's build of llama.cpp, build b11364-46ca246, and has these compiled 
 wllama's JavaScript also carries feature tests from wasm-feature-detect (Apache-2.0, Google Inc.). A page that carries
 the runtime also carries the full text of each of these licenses at the end of `dist/index.html`, from
 `third_party/wllama/3.8.1/NOTICE`.
+
+**The speech recogniser's runtime.** The page carries the JavaScript of ONNX Runtime Web 1.31.1 inside its speech
+worker (one self-contained script of the package, which has its sibling package `onnxruntime-common`, MIT, Microsoft
+Corporation, compiled into it; none of the other packages it lists as dependencies is bundled), and that script
+carries Emscripten's JavaScript support code (MIT or the University of Illinois/NCSA license, the Emscripten
+authors). The npm package ships no licence file of its own, so the build embeds the text recorded for that exact
+version in `third_party/onnxruntime-web/1.31.1/SCRIPT-LICENCE`: ONNX Runtime's own LICENSE at the same tag, then
+Emscripten's. The runtime's WebAssembly module and the speech model are not in the page file.
+
+**The speech pack the web copy serves.** The page file, the Windows app, the Linux packages, the NixOS package and
+the OS media carry no speech model. The published web copy of the page serves a speech pack beside it, in `speech/`,
+so that the microphone understands what is said in the browsers that can run it, on the visitor's own device: ONNX Runtime's
+WebAssembly module (`ort-wasm-simd-threaded.wasm`, from the same package, unchanged) and Moonshine Tiny, the English
+speech-to-text model by Useful Sensors, Inc. (`encoder_model.onnx`, `decoder_model_merged.onnx` and its vocabulary,
+`tokens.json`), 41 MB in all. The page downloads the pack from its own site while the microphone is open (a mute
+stops a download under way). It does so by itself where the browser describes a connection that is not mobile data,
+a data saver or a 2G link, and on a computer whose browser describes none; on mobile data, a data saver or a 2G link,
+and on a phone or tablet whose browser does not say (Safari, Firefox), only once the visitor has pressed the
+microphone themselves. It checks every file's SHA-256 before it runs any, keeps the pack in that visitor's browser,
+and runs it there in a worker that fetches nothing (its network is held to the page's own site and this machine):
+speech is turned into words on the device, and no audio and no text of it leaves the device.
+Moonshine Tiny is licensed under the MIT License, Copyright (c) 2025 Useful Sensors, Inc.; ONNX Runtime under the MIT
+License, Copyright (c) Microsoft Corporation, with the third-party components compiled into its WebAssembly module
+each under its own licence (among them Emscripten's runtime, musl libc and LLVM's libc++, libc++abi and compiler-rt).
+They remain under their own licences, not under this product's licence: the licence texts and notices are served
+beside the pack as `speech/MODEL-LICENSE`, `speech/MODEL-NOTICE`, `speech/RUNTIME-LICENSE`, `speech/RUNTIME-NOTICE`,
+`speech/RUNTIME-ThirdPartyNotices.txt` and `speech/RUNTIME-EMSCRIPTEN-NOTICES.txt`, from
+`third_party/moonshine-tiny-en/` and `third_party/onnxruntime-web/1.31.1/`. The same vendor's Spanish model is under
+a licence that limits commercial use; it is not used, fetched or served.
 
 **The native model runner in the Linux app.** The Linux app (its .deb, .rpm and AppImage) runs the model it carries in
 its own process: llama.cpp's model library and ggml are compiled into its executable from the sources the Rust crate
@@ -194,7 +224,8 @@ Chrome, Android and Go (Google LLC), Edge, Windows, WebView2 and TypeScript (Mic
 Software, Inc.), Safari, iPhone, iPad and Mac (Apple Inc.), PlayStation and DualSense (Sony Interactive
 Entertainment Inc.), Bluetooth (Bluetooth SIG, Inc.), Rust (the Rust Foundation), Python (the Python
 Software Foundation), Ollama (Ollama, Inc.), OpenAI (OpenAI and its affiliates), Qwen (Alibaba Cloud), Claude and
-Anthropic (Anthropic, PBC), llama.cpp (its authors) and Tauri (the Tauri Programme within The Commons
+Anthropic (Anthropic, PBC), llama.cpp (its authors), ONNX Runtime (Microsoft Corporation), ONNX (the Linux
+Foundation), Moonshine (Useful Sensors, Inc.) and Tauri (the Tauri Programme within The Commons
 Conservancy) are trademarks of their respective owners. The browsers, platforms, native shells and hardware are
 named only to identify what the product runs on; the programming languages are named only as skills the city's
 pedestrians have, so the operator can ask for them (`03_Spawn_Agents/skills.ts`); Ollama is named only to identify
@@ -215,9 +246,13 @@ it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B Instruct, which th
 packages carry beside the app and the NixOS package's launcher serves beside its page
 (`third_party/qwen2.5-1.5b-instruct/`, beside it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright
 2024 Alibaba Cloud, the files quantized by bartowski, each under its own licence. The network provider
-answers only with the operator's own key, which stays in their browser. No speech engine, speech
-model or voice ships either: the operator's `say` talks to a speech server the operator runs on the same machine
-(`09_Cognition/localSpeech.ts`). This product is not affiliated with or endorsed by any of them.
+answers only with the operator's own key, which stays in their browser. No speech synthesis engine and no voice
+ships: the operator's `say` talks to a speech server the operator runs on the same machine
+(`09_Cognition/localSpeech.ts`). The one speech recognition model the product offers is Moonshine Tiny (English), which
+the web copy serves beside its page with ONNX Runtime's WebAssembly module, the runtime that runs it
+(`third_party/moonshine-tiny-en/`, `third_party/onnxruntime-web/1.31.1/`; both MIT, each under its own licence, their
+texts served beside them in `speech/`); ONNX Runtime, ONNX and Moonshine are named only to say which runtime and which
+model those are (`09_Cognition/speechPack.ts`). This product is not affiliated with or endorsed by any of them.
 
 ## Operator notes
 
@@ -338,6 +373,43 @@ release; each one is something the release engineering could not confirm.
       same two points apply. A binary cache that serves the built package would redistribute it: the file is its own
       store path, and the LICENSE and NOTICE sit in the package's model folder that links to it, so a cache serving
       the package's closure serves them together but could serve the file's path alone.
+
+15. **The speech pack the web copy serves.** The web copy serves Moonshine Tiny (English) and ONNX Runtime's
+    WebAssembly module beside its page (`src/09_Cognition/speechPack.ts` pins the four files;
+    `third_party/moonshine-tiny-en/`, `third_party/onnxruntime-web/1.31.1/` and `docs/ip-audit.md` section 1 record
+    them). The model's weights are not in this repository, in `dist/index.html` or in any app or release build; its
+    vocabulary (`third_party/moonshine-tiny-en/tokens.json`) is committed, since the page reads words with it.
+    Before a public release:
+    - **The model's licence.** The LICENSE file of the vendor's npm package (`@moonshine-ai/moonshine-js` 0.1.29)
+      says the code and the English-language model are under the MIT License; `third_party/moonshine-tiny-en/LICENSE`
+      is that section of it. It was not compared with the model card in the vendor's Hugging Face repository
+      (`UsefulSensors/moonshine`), which was not reachable from the container that wrote it. Compare it once.
+    - **Where the files come from.** The two model files are taken from the vendor's npm package, not from its
+      Hugging Face repository; whether they are byte for byte the files there was not checked. The vocabulary
+      (`tokens.json`) is the word-piece table of the vendor's tokenizer file, from its PyPI package, written as a
+      plain list. It is, as far as could be checked without Meta's own file, the 32,000-piece SentencePiece vocabulary
+      of the LLaMA model family (the same size, the same special and byte pieces, and the same pieces at every id
+      looked at); the vendor publishes it inside its MIT-licensed packages, and its first source was not traced. A
+      list of word pieces is unlikely to be protected expression, and the product ships none of Meta's code or
+      weights; ask counsel whether it counts among the materials of a Llama licence and needs that licence's notice.
+    - **What the model was trained on** is the vendor's statement, not something this project verified. As with every
+      model: its licence covers the weights, and says nothing about its training data.
+    - **The runtime's notices.** `RUNTIME-ThirdPartyNotices.txt` is ONNX Runtime's own list for the project as a
+      whole; which of those components are in the WebAssembly build was not audited. It does not list what the
+      Emscripten compiler adds, so `RUNTIME-EMSCRIPTEN-NOTICES.txt` adds Emscripten's runtime, musl, libc++, libc++abi
+      and compiler-rt, with texts taken from the Emscripten version ONNX Runtime's build script names by default at
+      that tag (4.0.23); that Microsoft's release was built with exactly that version was not verified.
+    - **Privacy and bandwidth.** The microphone opens when the city starts (the owner's decision) and the pack is
+      then downloaded (41 MB, once a browser; not unasked on mobile data, a data saver or a 2G link, nor on a phone or
+      tablet whose browser does not say what it is on; Safari may clear a site's storage after seven days without a
+      visit, and the pack is then downloaded again). Speech is turned into words
+      on the visitor's device and nothing of it is sent anywhere; say so in a privacy notice if the web copy gets one,
+      and say that the microphone is used. Each new visitor's pack counts against GitHub Pages' soft limit of 100 GB
+      a month, with the 0.4 GB model of item 14.
+    - **What it can and cannot do.** A small English-only model: it mishears, more so with an accent, a far
+      microphone or noise, and it understands no other language. What was checked is in the CHANGELOG entry that
+      added it: a synthetic voice in one desktop Chromium on CI. A real microphone, a phone, Safari and Firefox were
+      not checked by anyone.
 
 ### Candidate names: trademark notes (AEGIS, ONYX, SENTIS)
 

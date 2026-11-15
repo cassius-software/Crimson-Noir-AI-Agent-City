@@ -1,0 +1,29 @@
+ONNX Runtime Web 1.31.1: the runtime that runs the speech model
+==============================================================
+
+This directory records the runtime the page's own speech recogniser runs its model with
+(src/09_Cognition/speech.worker.ts): ONNX Runtime's WebAssembly build, from the npm package onnxruntime-web, version
+1.31.1 (a dependency of this project, pinned exactly in package.json).
+
+- Its JavaScript (dist/ort.wasm.bundle.min.mjs of the package, one self-contained file: it imports none of the
+  packages the package lists as dependencies) is bundled into the page inside the speech worker. The page's embedded
+  notices carry SCRIPT-LICENCE from this directory for it: LICENSE below, then the licence of the Emscripten support
+  code that script carries.
+- Its WebAssembly module (dist/ort-wasm-simd-threaded.wasm of the package) is NOT in the page file: it is served
+  beside the web copy as speech/ort-wasm-simd-threaded.wasm, with this NOTICE, LICENSE, ThirdPartyNotices.txt and
+  EMSCRIPTEN-NOTICES.txt beside it (as RUNTIME-NOTICE, RUNTIME-LICENSE, RUNTIME-ThirdPartyNotices.txt and
+  RUNTIME-EMSCRIPTEN-NOTICES.txt), copied from the installed package by tools/web/speechPack.mjs, which refuses it
+  unless its size and SHA-256 are exactly these (the page checks the same before it runs it):
+
+  ort-wasm-simd-threaded.wasm   14848852 bytes, sha256 4b884c203b0fa48d057be3332c65513ff85aa3c5bddd6946acc0fab7ecda001d
+  (SHA256SUMS beside this file has the same line)
+
+Licence: MIT. Copyright (c) Microsoft Corporation. The npm package carries no licence file of its own (its
+package.json says MIT); LICENSE and ThirdPartyNotices.txt here are the files of the same names at the tag v1.31.1 of
+the project's repository (github.com/microsoft/onnxruntime), byte for byte. ThirdPartyNotices.txt lists the
+third-party components of ONNX Runtime as a whole, with their licences; the WebAssembly build contains a subset of
+them. It does not list what the Emscripten compiler adds to a WebAssembly build (its runtime, musl libc, LLVM's
+libc++, libc++abi and compiler-rt): EMSCRIPTEN-NOTICES.txt records those, with where each text was taken from.
+
+The runtime remains under its own licence, not under the product's licence. "ONNX Runtime" is a name of Microsoft
+Corporation and "ONNX" of the Linux Foundation, used here only to say which software this is.

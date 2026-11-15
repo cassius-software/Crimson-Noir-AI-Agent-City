@@ -114,6 +114,25 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/site-model/$FILE"
       - name: The site's model beside the page (dist-web/models/ only), checked against the pin
         run: node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out dist-web
+      # The speech pack (src/09_Cognition/speechPack.ts SPEECH_PACK), served beside the page so the microphone
+      # understands words in every browser, on the visitor's own device: the model's two files come from the npm
+      # registry's tarball of the pinned package whenever the cache, keyed by the whole pin, lacks them; the runtime's
+      # module is the installed dependency's; the vocabulary is committed. All four are checked against the pin's sizes
+      # and SHA-256 on every publish, cached or not. A file that fails the check fails the run, so the copy already
+      # published (with its pack) stays up.
+      - id: speech
+        name: The speech pack, by the page's own pin
+        run: node tools/web/speechPack.mjs pin >> "$GITHUB_OUTPUT"
+      - id: speech-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-pack
+          key: ${{ steps.speech.outputs.key }}
+      - name: The speech model from the npm registry, at the pinned version (only when the cache does not hold it)
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: node tools/web/speechPack.mjs fetch --to "$RUNNER_TEMP/speech-pack"
+      - name: The speech pack beside the page (dist-web/speech/ only), checked against the pin
+        run: node tools/web/speechPack.mjs place --from "$RUNNER_TEMP/speech-pack" --out dist-web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-web
@@ -175,4 +194,9 @@ jobs:
             echo "::notice::${file} is served, ${length} bytes, as the manifest says"
           else
             echo "::warning::${file}: the site reports ${length:-no} Content-Length; the manifest says ${bytes}"
+          fi
+          if speech=$(curl -sSf "${PAGE}speech/manifest.json" 2>/dev/null) && [ -n "$speech" ]; then
+            echo "::notice::the speech pack's manifest is served: $(printf '%s' "$speech" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+          else
+            echo "::warning::${PAGE}speech/manifest.json is not served"
           fi

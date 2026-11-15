@@ -111,11 +111,14 @@ export interface SiteModelOffer {
   readonly sha256: string
 }
 
-/** A path inside the served folder: models/ and one plain file name, nothing that climbs out or names a host. */
-const SITE_PATH = /^models\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+/**
+ * A path inside a served folder: models/ (the model) or speech/ (the speech pack, speechPack.ts) and one plain file
+ * name, nothing that climbs out or names a host.
+ */
+const SITE_PATH = /^(?:models|speech)\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
- * The address of `path` (a file under models/) beside the page at `base`, on the page's own origin over http(s); throws
+ * The address of `path` (a file under models/ or speech/) beside the page at `base`, on the page's own origin over http(s); throws
  * with the reason otherwise. Relative to the page's own folder, never the origin's root: on GitHub Pages the root of
  * the origin is another site of the same owner.
  */
