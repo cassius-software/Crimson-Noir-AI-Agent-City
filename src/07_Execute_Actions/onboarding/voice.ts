@@ -151,13 +151,32 @@ export const SCRIPTED_CHOSEN = 'the scripted mind is chosen, and it does not hol
 /** The person's turns the model would be shown, each through the 14A screen the operator tier puts every prompt through. */
 const admitted = (turns: readonly ChatTurn[]): boolean => turns.slice(-CHAT_TURNS).every((t) => t.who !== 'you' || admitWords(t.text).admitted)
 
-/** Sloane's framing for a conversation: who Sloane is, what the city can do when asked, and the turns so far. */
-export function chatPrompt(turns: readonly ChatTurn[]): string {
-  const said = turns.slice(-CHAT_TURNS).map((t) => `${t.who === 'you' ? 'Person' : 'Sloane'}: ${t.text.replace(/\s+/g, ' ').trim().slice(0, TURN_MAX)}`)
-  return [
+/** Where a conversation with Sloane happens: her card in the city, or the console alone (?boot=tty), where no city runs. */
+export type ChatPlace = 'city' | 'console'
+
+/** Sloane's framing for each place: who she is, what she can do there when asked, and that she never acts. */
+const FRAMING: Readonly<Record<ChatPlace, readonly string[]>> = Object.freeze({
+  city: [
     'You are Sloane, the concierge of Crimson Noir: Agent City, a city of software agents that the person is walking through. Talk with them as yourself: warm, plain and brief, one to three short sentences, no lists and no headings.',
     'If they ask what you can do: you can change the time of day, the crowds, the traffic, the picture quality and the sound, show them the controls, and send sub-agents to work at the city\'s sixteen workplaces; they only need to say what they want.',
     'Nothing you say in this conversation changes the city, so never write an ACTION line; tell them what to ask for instead. You know nothing of the news, the weather outside or the person beyond what they tell you, and you say so when asked.',
+  ],
+  console: [
+    'You are Sloane, the concierge of Crimson Noir: Agent City, a city of software agents. The city is not running here: the person is talking to you from its console alone. Talk with them as yourself: warm, plain and brief, one to three short sentences, no lists and no headings.',
+    'You can only talk here. If they ask what you can do, or ask you to change the time of day, the crowds, the traffic, the picture or the sound, say plainly that nothing can change from this console, and that the city itself needs a browser or app whose web view has WebGPU.',
+    'Never write an ACTION line. You know nothing of the news, the weather outside or the person beyond what they tell you, and you say so when asked.',
+  ],
+})
+
+/**
+ * Sloane's framing for a conversation and the turns so far. In the city (her card): who she is, what the city can do
+ * when asked (the city's planner acts on what the person asks). In the console alone: no city runs there and nothing
+ * can change, so she offers no change to it.
+ */
+export function chatPrompt(turns: readonly ChatTurn[], where: ChatPlace = 'city'): string {
+  const said = turns.slice(-CHAT_TURNS).map((t) => `${t.who === 'you' ? 'Person' : 'Sloane'}: ${t.text.replace(/\s+/g, ' ').trim().slice(0, TURN_MAX)}`)
+  return [
+    ...FRAMING[where],
     '',
     'The conversation so far:',
     ...said,
@@ -232,9 +251,9 @@ const messageOf = (e: unknown): string => (e instanceof Error && e.message ? e.m
  * loading, reading the prompt; never another request's) goes to `onPhase`, so a slow phone shows that it is working. The router's own waits bound the reply (the first piece, a stall, a load in
  * this page), so nothing here times it out: a model loading in this page is never stopped by a deadline of Sloane's;
  * one that runs out is `slow` with the runtime's words. `live` is asked at every reply: false (the scripted provider
- * is set) answers `none`.
+ * is set) answers `none`. `where` picks her framing (chatPrompt): her card in the city, or the console alone.
  */
-export function sloaneChat(mind: Mind, live: () => boolean = () => true): Chat {
+export function sloaneChat(mind: Mind, live: () => boolean = () => true, where: ChatPlace = 'city'): Chat {
   return {
     reply: async (turns, signal, onText, onPhase) => {
       let asks = false
@@ -265,7 +284,7 @@ export function sloaneChat(mind: Mind, live: () => boolean = () => true): Chat {
         }
       }
       try {
-        const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt: chatPrompt(turns), talk: true, onPhase: (p) => { if (!text) tell(p) } }, (p) => {
+        const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt: chatPrompt(turns, where), talk: true, onPhase: (p) => { if (!text) tell(p) } }, (p) => {
           if (p.kind !== 'text' || held || full) return
           if (!text) tell(null)
           text += p.text

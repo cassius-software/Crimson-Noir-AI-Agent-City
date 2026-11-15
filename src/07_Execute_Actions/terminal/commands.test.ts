@@ -2349,7 +2349,9 @@ test('boot: the track the console was mounted on; boot gui|tty hands the host a 
   assert.match(line, /Track B: this console alone; no 3D engine was built \(\?boot=tty\)\. Type 'boot gui' for the city\./)
   assert.match(line, /TESTBRAND 9\.8\.7/)
   assert.match(line, /r0/)
-  assert.doesNotMatch(motd(BRAND).map((l) => l.text).join('\n'), /Track B/)
+  // That Sloane can answer here, said as a possibility (it takes a model on this machine or in this app), and how.
+  assert.match(line, /^Sloane can answer here too, through a model on this machine or in this app: type 'operator unlock', then ask and your words\.$/m)
+  assert.doesNotMatch(motd(BRAND).map((l) => l.text).join('\n'), /Track B|Sloane can answer/)
   assert.doesNotMatch(motd({ ...BRAND, track: 'gui' }).map((l) => l.text).join('\n'), /Track B/)
 })
 

@@ -1083,6 +1083,93 @@ const answeringProvider = (mind: Mind): string | undefined => {
 }
 
 /**
+ * The answering provider's server, for the gate's loopback bound: none for the scripted provider, a model running in
+ * this page or the model the app runs itself (none of them addresses a server).
+ */
+const endpointOf = (mind: Mind): string | null => {
+  const p = answeringProvider(mind)
+  return p === 'scripted' || p === 'inpage' || p === 'native' ? null : mind.settings().server
+}
+
+/**
+ * The Zeroth Law before a model is asked (ring0Gate.ts admitAsk), as the operator tier asks it: the page contained,
+ * the model on this machine or none, the tier unlocked. Its sentence, or null when admitted. The console alone asks it
+ * before each of Sloane's answers (terminal/consoleBridge.ts); the tier asks it inline (askThrough).
+ */
+export function askRefusal(mind: Mind, contained: Vouched, unlocked: boolean): string | null {
+  const admitted = admitAsk({ contained, endpoint: endpointOf(mind), unlocked })
+  return admitted.admitted ? null : lawSentence(admitted)
+}
+
+/** The knobs `ask <key> <value>` turns (terminal/bridge.ts OperatorBridge askSet). */
+export type MindKnob = 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram'
+
+/**
+ * `ask` alone: the settings as they are after the server was asked (the auto provider looks for one as it is asked),
+ * and what it has. The operator tier's askStatus and the console alone's (terminal/consoleBridge.ts) are this.
+ */
+export function mindStatus(mind: Mind): Promise<MindStatus> {
+  const base = () => {
+    const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage, fit } = mind.settings()
+    return {
+      server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
+      ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
+      ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
+      ...(runtime !== undefined && { runtime }), ...(storage !== undefined && { storage }), ...(fit !== undefined && { fit }),
+    }
+  }
+  return mind.installed().then(
+    (installed) => ({ ...base(), installed }),
+    (e: unknown) => ({ ...base(), installed: null, error: e instanceof Error ? e.message : String(e) }),
+  )
+}
+
+/**
+ * `ask <key> <value>`: one of the mind's settings; returns the console's line for its new value. Throws on a bad one,
+ * and where the mind has no such setting. The operator tier's askSet and the console alone's are this.
+ */
+export function setMind(mind: Mind, key: MindKnob, value: string): string {
+  if (key === 'model') return mind.setModel(value)
+  if (key === 'server') return mind.setServer(value)
+  if (key === 'provider') {
+    if (!mind.setProvider) throw new Error('this page has one model provider only')
+    // The router's own line on the provider (09_Cognition/router.ts PROVIDER_TEXT) when it has one; the name otherwise.
+    if (mind.connect) return mind.connect(value)
+    return mind.setProvider(value)
+  }
+  if (key === 'key') {
+    if (!mind.setKey) throw new Error('no provider on this page takes a key')
+    const masked = mind.setKey(value === 'none' ? '' : value)
+    return masked === null ? 'none: cleared (the gateway on this machine adds the key)' : `${masked}: kept in this browser's local storage (ask key none clears it)`
+  }
+  if (key === 'effort') {
+    if (!mind.setEffort) throw new Error('no provider on this page takes an effort')
+    return mind.setEffort(value === 'none' ? '' : value) ?? "none: the provider's own default"
+  }
+  if (key === 'think') {
+    if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
+    if (!mind.setThink) throw new Error('this model server has no think switch')
+    return mind.setThink(value === 'on') ? 'on: the model reasons before it answers (slower; its thinking shows live)' : 'off: the model answers without reasoning first'
+  }
+  if (key === 'api') {
+    if (!mind.setApi) throw new Error('this model server speaks one wire format only')
+    const api = mind.setApi(value)
+    return api === 'chat' ? 'chat: /v1/chat/completions (the chat-completions format most local servers speak)' : `${api}: /api/generate (the default)`
+  }
+  if (key === 'vram') {
+    if (!mind.setVram) throw new Error('no model provider on this page grows with the GPU')
+    return mind.setVram(value)
+  }
+  throw new TypeError(`nothing to set called '${String(key)}': model, server, think, api, provider, key, effort or vram`)
+}
+
+/** `ask connect`: the provider and, when given, its server and key in one line (09_Cognition/router.ts connect). */
+export function connectMind(mind: Mind, provider: string, url?: string, key?: string): string {
+  if (!mind.connect) throw new Error('this page has one model provider only')
+  return mind.connect(provider, url, key)
+}
+
+/**
  * Builds TerminalBridge.operator for the engine: one facade over `sim`, an unlock latch that gates
  * scripts, prompts, speech, tuning keys and harnesses (the terminal refuses them first; this refuses again), every
  * script, every prompt to the local model and everything said aloud through `gate` (nothing runs any other way), one
@@ -1094,14 +1181,8 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
   const { voice, speech, diary, awareness, voiceOf, nameOf, city, vault, people } = senses
   /** What the host vouches to the gate (null: nothing, which admits nothing). */
   const contained = (): Vouched => (senses.contained ? senses.contained() === true : null)
-  /**
-   * The answering provider's server, for the gate's loopback bound: none for the scripted provider, a model running
-   * in this page or the model the app runs itself (none of them addresses a server).
-   */
-  const endpoint = (): string | null => {
-    const p = answeringProvider(mind)
-    return p === 'scripted' || p === 'inpage' || p === 'native' ? null : mind.settings().server
-  }
+  /** The answering provider's server, for the gate's loopback bound (endpointOf). */
+  const endpoint = (): string | null => endpointOf(mind)
   let unlocked = false
   let running: string | null = null
   let asking: (GatedAsk & { stop(): void }) | null = null
@@ -1411,61 +1492,16 @@ export function operatorBridge(sim: SimControls, gate: SkillGate, mind: Mind, sl
     },
     askConnect: (provider: string, url?: string, key?: string): string => {
       if (!unlocked) throw locked('ask')
-      if (!mind.connect) throw new Error('this page has one model provider only')
-      return mind.connect(provider, url, key)
+      return connectMind(mind, provider, url, key)
     },
     swarm,
     askStatus: (): Promise<MindStatus> => {
       if (!unlocked) throw locked('ask')
-      // The settings as they are after the server was asked (the auto provider looks for one as it is asked).
-      const base = () => {
-        const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage, fit } = mind.settings()
-        return {
-          server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
-          ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
-          ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
-          ...(runtime !== undefined && { runtime }), ...(storage !== undefined && { storage }), ...(fit !== undefined && { fit }),
-        }
-      }
-      return mind.installed().then(
-        (installed) => ({ ...base(), installed }),
-        (e: unknown) => ({ ...base(), installed: null, error: text(e) }),
-      )
+      return mindStatus(mind)
     },
     askSet: (key: 'model' | 'server' | 'think' | 'api' | 'provider' | 'key' | 'effort' | 'vram', value: string): string => {
       if (!unlocked) throw locked('ask')
-      if (key === 'model') return mind.setModel(value)
-      if (key === 'server') return mind.setServer(value)
-      if (key === 'provider') {
-        if (!mind.setProvider) throw new Error('this page has one model provider only')
-        // The router's own line on the provider (09_Cognition/router.ts PROVIDER_TEXT) when it has one; the name otherwise.
-        if (mind.connect) return mind.connect(value)
-        return mind.setProvider(value)
-      }
-      if (key === 'key') {
-        if (!mind.setKey) throw new Error('no provider on this page takes a key')
-        const masked = mind.setKey(value === 'none' ? '' : value)
-        return masked === null ? 'none: cleared (the gateway on this machine adds the key)' : `${masked}: kept in this browser's local storage (ask key none clears it)`
-      }
-      if (key === 'effort') {
-        if (!mind.setEffort) throw new Error('no provider on this page takes an effort')
-        return mind.setEffort(value === 'none' ? '' : value) ?? "none: the provider's own default"
-      }
-      if (key === 'think') {
-        if (value !== 'on' && value !== 'off') throw new TypeError('ask think takes on or off')
-        if (!mind.setThink) throw new Error('this model server has no think switch')
-        return mind.setThink(value === 'on') ? 'on: the model reasons before it answers (slower; its thinking shows live)' : 'off: the model answers without reasoning first'
-      }
-      if (key === 'api') {
-        if (!mind.setApi) throw new Error('this model server speaks one wire format only')
-        const api = mind.setApi(value)
-        return api === 'chat' ? 'chat: /v1/chat/completions (the chat-completions format most local servers speak)' : `${api}: /api/generate (the default)`
-      }
-      if (key === 'vram') {
-        if (!mind.setVram) throw new Error('no model provider on this page grows with the GPU')
-        return mind.setVram(value)
-      }
-      throw new TypeError(`nothing to set called '${String(key)}': model, server, think, api, provider, key, effort or vram`)
+      return setMind(mind, key, value)
     },
     askStop: (): string => {
       if (!unlocked) throw locked('ask')

@@ -401,7 +401,13 @@ const sys = (text: string): Line => ({ kind: 'sys', text })
 const fail = (...text: string[]): CommandResult => ({ lines: text.map(err) })
 const usage = (name: Name): string => `usage: ${COMMANDS.find((c) => c.name === name)!.usage}`
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-const locked = (name: Name): CommandResult => fail(`${name}: locked; type 'operator unlock' first`)
+/**
+ * Why a command the operator tier gates is refused while it is locked. In the console alone (?boot=tty) every such
+ * command but `ask` needs the city, so there it says so, as it would once the tier is open, rather than sending the
+ * person to unlock a tier that still could not run it.
+ */
+const locked = (name: Name, b?: TerminalBridge): CommandResult =>
+  fail(b?.brand?.track === 'tty' && name !== 'ask' ? `${name}: engine not running` : `${name}: locked; type 'operator unlock' first`)
 
 const fixed = (v: number, digits: number): string => (Number.isFinite(v) ? v.toFixed(digits) : '-')
 const count = (v: number): string => (Number.isFinite(v) ? String(Math.round(v)) : '-')
@@ -961,6 +967,34 @@ function mindLines(m: MindStatus): Line[] {
 
 const isGpuMode = (v: string): v is (typeof GPU_MODES)[number] => (GPU_MODES as readonly string[]).includes(v)
 
+/** No value, or one that `ok` takes. */
+const oneOf = (a: readonly string[], ok: (v: string) => boolean): boolean => a.length === 0 || (a.length === 1 && ok(a[0]))
+const isProviderArg = (v: string): boolean => (PROVIDER_ARGS as readonly string[]).includes(v.toLowerCase())
+/**
+ * The console alone puts any other line to Sloane, so there a line is a setting only in its exact form: the setting's
+ * name, then nothing or one value of the kind it takes (connect: a provider's name, then at most a url and a key; file:
+ * one of its words, or forget and a name, which may hold spaces). `ask key facts about this city` is a question there,
+ * not a key.
+ */
+const TTY_SETTING: Readonly<Record<string, (a: readonly string[]) => boolean>> = Object.freeze({
+  connect: (a) => a.length === 0 || (a.length <= 3 && isProviderArg(a[0])),
+  provider: (a) => oneOf(a, isProviderArg),
+  think: (a) => oneOf(a, (v) => v === 'on' || v === 'off'),
+  api: (a) => oneOf(a, (v) => v === 'generate' || v === 'chat'),
+  effort: (a) => oneOf(a, (v) => /^(low|medium|high|xhigh|max|none)$/i.test(v)),
+  vram: (a) => oneOf(a, (v) => /^(auto|\d+(\.\d+)?)$/i.test(v)),
+  gpu: (a) => oneOf(a, (v) => isGpuMode(v.toLowerCase())),
+  server: (a) => oneOf(a, (v) => /^(https?:\/\/|localhost\b|127\.|\[::1\])/i.test(v)),
+  model: (a) => a.length <= 1,
+  key: (a) => a.length <= 1,
+  file: (a) => a.length === 0 || a[0] === 'forget' || (a.length === 1 && /^(load|unload|log)$/.test(a[0])),
+})
+/** Whether a console-alone `ask` line is one of the settings in its exact form (TTY_SETTING). */
+const ttySetting = (rest: string): boolean => {
+  const [word, ...a] = rest.trim().split(/\s+/)
+  return Object.hasOwn(TTY_SETTING, word) && TTY_SETTING[word](a)
+}
+
 /**
  * `ask file [forget <name>|load|unload|log]`: alone, the browser's file picker (opened inside the Enter keydown, like
  * `hal pair`), and the file chosen is kept in this page for the in-page provider; `forget` drops the kept model named
@@ -1440,19 +1474,19 @@ const HANDLERS: Record<Name, Handler> = {
     }
     if (a === 'steer' || a === 'clamp') {
       if (args.length !== 3) return fail(`usage: feature ${a} <NAME> <value>`)
-      if (!operatorOf(b).unlocked()) return locked('feature')
+      if (!operatorOf(b).unlocked()) return locked('feature', b)
       const v = Number(args[2])
       if (args[2].trim() === '' || !Number.isFinite(v)) return fail(`feature: the value must be a number, not '${args[2]}'`)
       return { lines: (a === 'steer' ? f.steer(args[1], v) : [f.clamp(args[1], v)]).map(out) }
     }
     if (a === 'release') {
       if (args.length !== 2) return fail('usage: feature release <NAME>')
-      if (!operatorOf(b).unlocked()) return locked('feature')
+      if (!operatorOf(b).unlocked()) return locked('feature', b)
       return { lines: f.release(args[1]).map(out) }
     }
     if (a === 'reset') {
       if (args.length !== 1) return fail(usage('feature'))
-      if (!operatorOf(b).unlocked()) return locked('feature')
+      if (!operatorOf(b).unlocked()) return locked('feature', b)
       return { lines: f.reset().map(out) }
     }
     if (args.length === 1) {
@@ -1476,7 +1510,7 @@ const HANDLERS: Record<Name, Handler> = {
     }
     if (args.length === 2 && args[0] === 'forget') {
       // Reading reaches nobody; erasing is for good, so it is the operator's, like every other change.
-      if (!operatorOf(b).unlocked()) return locked('memory')
+      if (!operatorOf(b).unlocked()) return locked('memory', b)
       const which = args[1] === 'all' ? 'all' : agent(args[1])
       if (which === null) return fail(`memory: not a pedestrian's number: '${args[1]}'`, usage('memory'))
       return { lines: [], pending: m.forget(which).then((t) => [out(`memory: ${t}`)], (e: unknown): Line[] => [err(`memory: ${message(e)}`)]) }
@@ -1709,6 +1743,21 @@ const HANDLERS: Record<Name, Handler> = {
     if (a !== 'unlock') return fail(`operator: unknown command '${a}'`, usage('operator'))
     if (op.unlocked()) return { lines: [sys('operator: already unlocked')] }
     op.unlock()
+    // The console alone: no city runs, so the tier grants the one thing it can, a conversation with Sloane.
+    if (b.brand?.track === 'tty') {
+      return {
+        lines: [
+          out('Ring-0 operator tier unlocked.'),
+          out('Granted: ask <words> of Sloane, answered through the model on this machine or in this app, as her card'),
+          out('         answers in the city; ask alone shows which model that is; ask stop stops an answer.'),
+          out("         A line that starts with a setting's name and one value it takes is that setting; ask -- <words>"),
+          out('         is always hers. ask file load|unload|forget|log act on the model file already kept in this page.'),
+          out('Choosing a file (ask file), ask gpu and everything else that needs the city (run, say, get/set,'),
+          out('harness, the crowd) say engine not running here.'),
+          sys("Type 'boot gui' for the city, 'operator lock' to close the tier."),
+        ],
+      }
+    }
     return {
       lines: [
         out('Ring-0 operator tier unlocked.'),
@@ -1734,13 +1783,13 @@ const HANDLERS: Record<Name, Handler> = {
     const unlock = /^unlock(?:\s+(--elite)(?:\s+([\s\S]+))?)?$/.exec(rest)
     if (unlock) {
       if (!unlock[1] || !unlock[2]) return fail('ring0: say what to unlock and with what: ring0 unlock --elite <passphrase>')
-      if (!op.unlocked()) return locked('ring0')
+      if (!op.unlocked()) return locked('ring0', b)
       return { lines: op.elite.unlock(unlock[2].trim()).map(out) }
     }
     const set = /^elite(?:\s+set(?:\s+([\s\S]+))?)?$/.exec(rest)
     if (set) {
       if (!set[1]) return fail('usage: ring0 elite set <passphrase>')
-      if (!op.unlocked()) return locked('ring0')
+      if (!op.unlocked()) return locked('ring0', b)
       return { lines: [out(op.elite.set(set[1].trim()))] }
     }
     return fail(usage('ring0'))
@@ -1751,7 +1800,7 @@ const HANDLERS: Record<Name, Handler> = {
   // it when that tether breaks, follows. Rejected never ran.
   run(args, b) {
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('run')
+    if (!op.unlocked()) return locked('run', b)
     const intent = runIntent(args[0] ?? '')
     if (!intent) return fail('run: name the skill the script needs first, e.g. run rust: sim.physics.tune()', usage('run'))
     if (!intent.script) return fail(usage('run'))
@@ -1763,26 +1812,49 @@ const HANDLERS: Record<Name, Handler> = {
   // Raw, like run: the skills the answer needs, a colon, then the prompt (quotes and newlines kept). Alone, it reports
   // the local model server; `model <name>` and `server <url>` set it up; `stop` stops the answer being generated.
   // `file` and `gpu` come first, before the lock: they keep a model file in this page or a setting, and send no prompt.
+  // The console alone (?boot=tty) puts any other line to Sloane, so there a setting is one only in its exact form
+  // (ttySetting), and `ask -- <words>` is always hers.
   ask(args, b) {
     const rest = args[0] ?? ''
-    const file = /^file(?:\s+(\S+)(?:\s+([\s\S]*))?)?\s*$/.exec(rest)
-    if (file) return askFile(b, file[1], (file[2] ?? '').trim())
-    const gpu = /^gpu(?:\s+([\s\S]*))?$/.exec(rest)
-    if (gpu) {
-      const mode = (gpu[1] ?? '').trim().toLowerCase()
-      if (!mode) return fail('usage: ask gpu <auto|on|off>')
-      if (!isGpuMode(mode)) return fail('ask: ask gpu takes auto, on or off')
-      return { lines: [out(row('gpu', modelOf(b).gpu(mode)))] }
+    const tty = b.brand?.track === 'tty'
+    const escaped = tty ? /^--(?:\s+([\s\S]*))?$/.exec(rest) : null
+    const talk = escaped !== null || (tty && rest !== '' && rest !== 'stop' && !ttySetting(rest))
+    if (!talk) {
+      const file = /^file(?:\s+(\S+)(?:\s+([\s\S]*))?)?\s*$/.exec(rest)
+      if (file) return askFile(b, file[1], (file[2] ?? '').trim())
+      const gpu = /^gpu(?:\s+([\s\S]*))?$/.exec(rest)
+      if (gpu) {
+        const mode = (gpu[1] ?? '').trim().toLowerCase()
+        if (!mode) return fail('usage: ask gpu <auto|on|off>')
+        if (!isGpuMode(mode)) return fail('ask: ask gpu takes auto, on or off')
+        return { lines: [out(row('gpu', modelOf(b).gpu(mode)))] }
+      }
     }
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('ask')
+    if (!op.unlocked()) return locked('ask', b)
+    // The console alone: no one is tethered and no crowd runs, so the whole line is put to Sloane
+    // (terminal/consoleBridge.ts), streamed in whole words as it comes.
+    if (talk) {
+      const words = escaped ? (escaped[1] ?? '').trim() : rest
+      if (!words) return fail('usage: ask -- <words>')
+      const a = op.ask([], words)
+      const pending = Promise.resolve(a.result).then(askLines, (e: unknown): Line[] => [err(`ask: ${message(e)}`)])
+      return { lines: [sys('ask: asking Sloane')], pending, stream: { subscribe: (fn) => a.follow(fn) } }
+    }
     if (!rest) return { lines: [], pending: Promise.resolve(op.askStatus()).then(mindLines, (e: unknown): Line[] => [err(`ask: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`ask: ${op.askStop()}`)] }
+    // A setting is answered at once, or, where the model providers load on first use (the console alone), once they have
+    // (a tier locked meanwhile refuses it then, in its own words, which already name `ask`).
+    const setting = (line: () => string): CommandResult => {
+      const ready = op.ready?.() ?? null
+      if (ready === null) return { lines: [out(line())] }
+      return { lines: [], pending: ready.then(() => [out(line())]).catch((e: unknown): Line[] => [err(`ask: ${message(e).replace(/^ask: /, '')}`)]) }
+    }
     // One line for a provider and its address (and the Claude provider's key): the router checks everything before it changes anything.
     const connect = /^connect(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+(\S+))?\s*$/.exec(rest)
     if (connect) {
       if (!connect[1]) return fail(`usage: ask connect <${PROVIDER_ARGS.join('|')}> [<url>] [<key>]`)
-      return { lines: [out(row('provider', op.askConnect(connect[1], connect[2], connect[3])))] }
+      return setting(() => row('provider', op.askConnect(connect[1], connect[2], connect[3])))
     }
     const set = /^(model|server|think|api|provider|key|effort|vram)(?:\s+([\s\S]*))?$/.exec(rest)
     if (set) {
@@ -1790,7 +1862,7 @@ const HANDLERS: Record<Name, Handler> = {
       const value = (set[2] ?? '').trim()
       const takes = { model: 'name', server: 'url', api: 'generate|chat', think: 'on|off', provider: PROVIDER_ARGS.join('|'), key: 'key|none', effort: 'low|medium|high|xhigh|max|none', vram: 'GB|auto' }[key]
       if (!value) return fail(`usage: ask ${key} <${takes}>`)
-      return { lines: [out(row(key, op.askSet(key, value)))] }
+      return setting(() => row(key, op.askSet(key, value)))
     }
     const intent = runIntent(rest)
     if (!intent) return fail('ask: name the skill the answer needs first, e.g. ask rust: how does car.grip work?', usage('ask'))
@@ -1809,7 +1881,7 @@ const HANDLERS: Record<Name, Handler> = {
   // `voice`, `model`, `server` and `auto` set it up; `stop` cuts off whatever is being said.
   say(args, b) {
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('say')
+    if (!op.unlocked()) return locked('say', b)
     const rest = args[0] ?? ''
     if (!rest) return { lines: [], pending: Promise.resolve(op.sayStatus()).then(voiceLines, (e: unknown): Line[] => [err(`say: ${message(e)}`)]) }
     if (rest === 'stop') return { lines: [out(`say: ${op.sayStop()}`)] }
@@ -1832,7 +1904,7 @@ const HANDLERS: Record<Name, Handler> = {
   // the same gate as `ask`; the console shows each step's answer live, then the report, and `swarm audit` the chain.
   swarm(args, b) {
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('swarm')
+    if (!op.unlocked()) return locked('swarm', b)
     const rest = (args[0] ?? '').trim()
     const sw = op.swarm
     if (!rest || rest === 'status') return { lines: swarmStatusLines(sw.status()) }
@@ -1911,7 +1983,7 @@ const HANDLERS: Record<Name, Handler> = {
       }
     }
     if (a !== 'ok' && a !== 'no') return fail(`act: unknown command '${a}'`, usage('act'))
-    if (!op.unlocked()) return locked('act')
+    if (!op.unlocked()) return locked('act', b)
     if (a === 'no') {
       const p = acts.refuse('console')
       return { lines: [sys(`act ${p.seq}: refused: ${p.sentence} (agent ${p.agent} is told next time)`)] }
@@ -1947,7 +2019,7 @@ const HANDLERS: Record<Name, Handler> = {
   get(args, b) {
     if (args.length > 1) return fail(usage('get'))
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('get')
+    if (!op.unlocked()) return locked('get', b)
     const prefix = args[0] ?? ''
     const rows = tableRows(op.tuning())
     if (!rows) return fail('get: the tuning tables did not read back as expected')
@@ -1960,7 +2032,7 @@ const HANDLERS: Record<Name, Handler> = {
   set(args, b) {
     if (args.length !== 2) return fail(usage('set'))
     const op = operatorOf(b)
-    if (!op.unlocked()) return locked('set')
+    if (!op.unlocked()) return locked('set', b)
     const m = /^(physics|shaders)\.(.+)$/.exec(args[0])
     if (!m) return fail(`set: the path must be physics.<key> or shaders.<key>, not '${args[0]}'`, usage('set'))
     const value = Number(args[1])
@@ -1980,7 +2052,7 @@ const HANDLERS: Record<Name, Handler> = {
     }
     if (a !== 'run') return fail(`harness: unknown command '${a}'`, usage('harness'))
     if (args.length !== 2) return fail(usage('harness'))
-    if (!op.unlocked()) return locked('harness')
+    if (!op.unlocked()) return locked('harness', b)
     const name = args[1]
     const known = op.harnesses().map((h) => h.name)
     if (!known.includes(name)) return fail(`harness: unknown '${name}'`, `harnesses: ${known.join(', ')}`)
@@ -2000,7 +2072,7 @@ const HANDLERS: Record<Name, Handler> = {
     }
     if (a === 'stop') {
       if (args.length > 1) return fail(usage('record'))
-      if (!operatorOf(b).unlocked()) return locked('record')
+      if (!operatorOf(b).unlocked()) return locked('record', b)
       if (!rec.status().active) return { lines: [sys('record: not recording')] }
       const pending = Promise.resolve(rec.stop()).then(
         (where): Line[] => [out(`record: stopped: ${recordingParts(rec.status())}${where ? `  ${where}` : ''}`)],
@@ -2011,7 +2083,7 @@ const HANDLERS: Record<Name, Handler> = {
     if (a !== 'start') return fail(`record: unknown command '${a}'`, usage('record'))
     const source = args[1] ?? 'canvas'
     if (source !== 'canvas' && source !== 'camera') return fail(`record: unknown source '${source}'`, usage('record'))
-    if (!operatorOf(b).unlocked()) return locked('record')
+    if (!operatorOf(b).unlocked()) return locked('record', b)
     const support = rec.supported()
     if (!support.ok) return fail(`record: ${support.reason}`)
     const st = rec.status()
@@ -2032,14 +2104,14 @@ const HANDLERS: Record<Name, Handler> = {
     if (a === 'status') return args.length > 1 ? fail(usage('net')) : { lines: netLines(n.status()) }
     if (a === 'leave' || a === 'forget') {
       if (args.length > 1) return fail(usage('net'))
-      if (!operatorOf(b).unlocked()) return locked('net')
+      if (!operatorOf(b).unlocked()) return locked('net', b)
       return { lines: [out(`net: ${a === 'leave' ? n.leave() : n.forget()}`)] }
     }
     if (a !== 'join') return fail(`net: unknown command '${a}'`, usage('net'))
     if (args.length < 2 || args.length > 3) return fail(usage('net'))
     const url = args[1]
     if (!/^wss?:\/\/\S+$/.test(url)) return fail(`net: not a room address: '${url}' (ws or wss, on this machine only)`, usage('net'))
-    if (!operatorOf(b).unlocked()) return locked('net')
+    if (!operatorOf(b).unlocked()) return locked('net', b)
     const pending = n.join(url, args[2]).then((t): Line[] => [out(`net: ${t}`)], (e: unknown): Line[] => [err(`net: ${message(e)}`)])
     return { lines: [sys(`net: joining ${url}...`)], pending }
   },
@@ -2076,19 +2148,19 @@ const HANDLERS: Record<Name, Handler> = {
         const station = Number(args[2])
         const st = stations.find((s) => s.kind === args[1] && s.station === station)
         if (!st) return fail(`robot: no station ${station} in a '${args[1]}' room (robot cell lists them)`)
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return { lines: [out(r.cell(args[1], station, { x: st.x, z: st.z, yaw: st.yaw }))] }
       }
       case 'shape': {
         if (n !== 2 && n !== 3) return fail(usage('robot'))
         if (n === 2) return { lines: r.shape(args[1]).split('\n').map(out) }
         if (args[2] !== 'off' && !/^\d{1,10}$/.test(args[2])) return fail(`robot: not a seed: '${args[2]}' (a whole number, or off)`, usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return { lines: r.shape(args[1], args[2] === 'off' ? 'off' : Number(args[2])).split('\n').map(out) }
       }
       case 'fit': {
         if (n !== 3) return fail(usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return later(`robot: fitting ${args[2]} of ${args[1]} (a hold, one small step, two models)...`, r.fit(args[1], args[2]))
       }
       case 'relay': {
@@ -2097,20 +2169,20 @@ const HANDLERS: Record<Name, Handler> = {
         if (n !== 3) return fail(usage('robot'))
         const url = args[1]
         if (!/^wss?:\/\/\S+$/.test(url)) return fail(`robot: not a relay address: '${url}' (ws or wss, on this machine only)`, usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return later(`robot: joining ${url}...`, r.relay(url, args[2]))
       }
       case 'spawn': {
         if (n !== 2 && n !== 4) return fail(usage('robot'))
         const x = n === 4 ? Number(args[2]) : undefined, z = n === 4 ? Number(args[3]) : undefined
         if (n === 4 && (!Number.isFinite(x) || !Number.isFinite(z))) return fail('robot: x and z must be numbers', usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return { lines: [out(r.spawn(args[1], x, z))] }
       }
       case 'urdf': {
         if (n !== 2 && n !== 3) return fail(usage('robot'))
         if (!/^https?:\/\/\S+$/.test(args[1])) return fail(`robot: not a URL: '${args[1]}' (http or https, on this machine only)`, usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return later(`robot: reading ${args[1]}...`, r.urdf(args[1], args[2]))
       }
       case 'demo': return n <= 2 ? { lines: [out(r.demo(args[1]))] } : fail(usage('robot'))
@@ -2123,13 +2195,13 @@ const HANDLERS: Record<Name, Handler> = {
       }
       case 'arm': {
         if (n !== 2) return fail(usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return later(`robot: arming ${args[1]}...`, r.arm(args[1]))
       }
       case 'disarm': return n === 2 ? { lines: [out(r.disarm(args[1]))] } : fail(usage('robot'))
       case 'calibrate': {
         if (n !== 3) return fail(usage('robot'))
-        if (!operatorOf(b).unlocked()) return locked('robot')
+        if (!operatorOf(b).unlocked()) return locked('robot', b)
         return later(`robot: calibrating ${args[2]} of ${args[1]} (a hold, then one small step)...`, r.calibrate(args[1], args[2]))
       }
       case 'remove': return n === 2 ? { lines: [out(r.remove(args[1]))] } : fail(usage('robot'))
@@ -2269,7 +2341,7 @@ export function motd(brand: TerminalBridge['brand']): Line[] {
   return [
     sys(`${brand.name} ${brand.version} Ring-0 console`),
     ...(tty ? [sys("Track B: this console alone; no 3D engine was built (?boot=tty). Type 'boot gui' for the city.")] : []),
-    sys("Observe and tune; 'operator unlock' opens the scripted tier (the laws stay in force)."),
+    sys(tty ? "Sloane can answer here too, through a model on this machine or in this app: type 'operator unlock', then ask and your words." : "Observe and tune; 'operator unlock' opens the scripted tier (the laws stay in force)."),
     sys(tty ? "Type 'help' for commands; 'r0' is the console's own stack machine." : "Type 'help' for commands. ` or Esc closes."),
     sys(''),
   ]

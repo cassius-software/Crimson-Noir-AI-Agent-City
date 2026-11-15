@@ -118,7 +118,7 @@ test('the keeper: built in App\'s city shell alone, never at module scope, never
   const calls = count(APP_CODE, /\bpageProgress\(/g)
   assert.ok(calls > 0)
   assert.equal(count(code(GUI), /\bpageProgress\(/g), calls, 'every call inside GuiShell\'s closures')
-  assert.doesNotMatch(between(APP, 'function TtyShell() {', 'function App() {'), /pageProgress|progress/i, 'the console shell has no city to earn in')
+  assert.doesNotMatch(between(APP, 'function TtyShell({ vram }: { vram: string | null }) {', 'function App() {'), /pageProgress|progress/i, 'the console shell has no city to earn in')
   for (const [name, src] of [['engine.ts', ENGINE], ['recruitment.ts', RECRUITMENT]] as const) {
     assert.doesNotMatch(code(src), /pageProgress|progress\.ts'/, `${name} never reaches the keeper`)
   }

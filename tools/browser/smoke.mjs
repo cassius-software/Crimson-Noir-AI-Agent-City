@@ -78,7 +78,9 @@
  *   refused; last, the proposer let go (`recruit dismiss`) ends a waiting proposal in the gateway's words (Aborted,
  *   Spatial Tether Lost), and `act log verify` shows every proposal, decision and end in a chain of 11 entries that
  *   verifies from genesis;
- * - tty: the console alone (?boot=tty), which must not touch WebGPU at all;
+ * - tty: the console alone (?boot=tty), which must not touch WebGPU at all, and whose `ask` (after `operator unlock`)
+ *   reaches the page's router: with nothing answering on this machine it prints the router's one sentence, and every
+ *   request it made was a look at this machine, none for a model file;
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker and costing the host only its build word, a model
@@ -1891,6 +1893,31 @@ const SCENARIOS = {
       check(up, 'tty: ?boot=tty opens the full-screen console')
       const asks = await p.eval('[window.__adapterAsks, document.querySelectorAll("canvas").length]')
       check(asks[0] === 0 && asks[1] === 0, 'tty: the console alone asks for no GPU and draws no canvas', `adapter requests ${asks[0]}, canvases ${asks[1]}`)
+      // Sloane through the page's router (terminal/consoleBridge.ts): nothing answers on this machine here, so the ask
+      // ends in the router's one sentence, and every request it made was a look at this machine, none for a model file.
+      const watch = await watchTargets(p.b)
+      await p.waitFor(`document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`, 10_000).catch(() => p.eval(`document.querySelector('[aria-label="Ring-0 command line"]')?.focus()`))
+      const unlocked = await p.command('operator unlock', /operator tier unlocked/, 10_000)
+      const said = await p.command('ask hello', /-- answered in|ask: (?!asking Sloane)|-- no reply --/, 90_000)
+      const answer = (said ?? 'nothing printed in time').trim().split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? ''
+      check(!!unlocked && /^ask: no model is answering on this machine \(looked for .+\): start one, or choose one with ask provider <name>$/.test(answer),
+        'tty: ask in the console alone reaches the page\'s router, and where nothing answers prints its one sentence', answer)
+      // Words that start with a setting's name are Sloane's here too, not that setting (commands.ts ttySetting): the
+      // router's same sentence, and nothing kept in the router's settings (App.tsx COGNITION_KEY).
+      const keyed = await p.command('ask key facts about this city please', /-- answered in|ask: (?!asking Sloane)|-- no reply --|^key\s/m, 90_000)
+      const keyEnd = (keyed ?? 'nothing printed in time').trim().split('\n').map((l) => l.trim()).filter(Boolean).at(-1) ?? ''
+      const kept = await p.eval(`localStorage.getItem('civic-simulation:cognition:v2')`)
+      check(/^ask: no model is answering on this machine \(/.test(keyEnd) && !/facts about/.test(String(kept)),
+        'tty: words that start with a setting\'s name go to Sloane, and nothing is kept as that setting', `${keyEnd.slice(0, 100)}; kept ${String(kept).slice(0, 160)}`)
+      const own = (u) => u === origin || u.startsWith(`${origin}/`) || u.startsWith('blob:') || u.startsWith('data:')
+      const loopback = (u) => /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\//.test(u)
+      const strays = watch.requests.filter((r) => !own(r.url) && !loopback(r.url))
+      const files = watch.requests.filter((r) => /\.gguf\b|\/models\//.test(r.url))
+      check(strays.length === 0 && files.length === 0, 'tty: its only requests were looks at this machine, and no model file was fetched',
+        `${watch.requests.length} requests${strays.length ? `; strays ${strays.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}${files.length ? `; files ${files.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}`)
+      const after = await p.eval('[window.__adapterAsks, document.querySelectorAll("canvas").length]')
+      check(after[0] === 0 && after[1] === 0, 'tty: and still asked for no GPU and drew no canvas', `adapter requests ${after[0]}, canvases ${after[1]}`)
+      p.saveTranscript('tty')
       await p.shot('tty')
       check(p.errors.length === 0, 'tty: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
     } finally { await p.b.close() }
