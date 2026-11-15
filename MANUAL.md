@@ -989,7 +989,8 @@ not been seen. Where the browser offers no immersive session the whole path is i
     is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
     a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
     still held from opening the door, or held as a lone controller takes on the throttle (however lightly), gives no
-    throttle until it is let go, so the car does not lurch or creep.
+    throttle until it is let go, so the car does not lurch or creep (a worn trigger that rests a little above nothing
+    counts as let go at its own rest).
   - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
     or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
     lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
@@ -1005,9 +1006,9 @@ not been seen. Where the browser offers no immersive session the whole path is i
   mid-drag changes nothing: within 50° of that forward or back it walks, further round and past 8 cm sideways it
   snap-turns once. At the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and
   when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
-  still: back within a quarter of a second it resumes at the same speed and with no second snap, walking the way the
-  hand now lies from where the pinch began; gone longer the pinch is spent and walks no more until it is pinched
-  again. A pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is
+  still: back within a quarter of a second it resumes where it was, at the same speed and with no second snap, unless
+  the hand comes back on the far side of the way it was heading, which counts as a pass through the middle (it stands,
+  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is
   dropped, with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller
   has no mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head;
   hand microgestures are not read.

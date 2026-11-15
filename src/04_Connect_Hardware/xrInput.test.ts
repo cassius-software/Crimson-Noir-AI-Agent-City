@@ -944,9 +944,37 @@ test('a hand that crosses its pinch unseen during a blink walks the way it now l
       const o2 = createAnalog()
       d.read(o2, false)
       assert.ok(o2.moveY < 0, `${back} m behind, ${side} m aside: walks back on the first frame (${o2.moveY})`)
-      assert.ok(close(Math.hypot(o2.moveX, o2.moveY), level >= 1 ? 1 : 0.5, 1e-6), `at the speed step it kept (${o2.moveX}, ${o2.moveY})`)
+      assert.ok(close(Math.hypot(o2.moveX, o2.moveY), level >= 1 ? 1 : 0.5, 1e-6), `at the speed step a pass through the middle reaches (${o2.moveX}, ${o2.moveY})`)
     }
   }
+  // Overshot only a little past the middle (5 cm behind): as if seen passing through the dead zone, it stands still.
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  d.sample(id, 21, P(0, -0.45), HEAD)
+  let t = 21
+  for (let k = 0; k < 8; k++) d.sample(id, (t += 11), null, HEAD)
+  for (let k = 0; k < 90; k++) {
+    d.sample(id, (t += 11), P(0.002, -0.25), HEAD)
+    assert.equal(d.read(createAnalog(), false), false, `5 cm behind after the blink, frame ${k}: stands still`)
+  }
+})
+
+test('tracking that drops every other frame still smooths the direction (no jitter from the blinks)', () => {
+  const id = {}
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  let t = 10
+  for (let k = 0; k < 20; k++) d.sample(id, (t += 11), P(0, -0.45), HEAD)
+  // Swung 30 degrees right (still the same side) with every other frame lost: each frame seen turns only part way.
+  const aim = (30 * Math.PI) / 180
+  d.sample(id, (t += 11), null, HEAD)
+  d.sample(id, (t += 11), P(0.15 * Math.sin(aim), -0.3 - 0.15 * Math.cos(aim)), HEAD)
+  const o = createAnalog()
+  assert.ok(d.read(o, false))
+  assert.ok(o.moveX > 0.05 && o.moveX < 0.5 * Math.sin(aim) + 0.25, `part way round after one blink (${o.moveX})`)
+  assert.ok(o.moveX < Math.sin(aim) - 0.1, `not all the way at once (${o.moveX})`)
 })
 
 test('a light pull below a twentieth as a controller takes the throttle is held too, and a tremor never lifts it', () => {
@@ -978,4 +1006,36 @@ test('a light pull below a twentieth as a controller takes the throttle is held 
   lone.buttons[XR_BUTTON.trigger].value = 0.3
   r.m.read()
   assert.ok(r.m.analog.throttle > 0, 'back inside the dead zone, then pulled: it drives')
+})
+
+test('a worn trigger resting above the dead zone is let go at its own rest, so it still drives', () => {
+  const lone = ctl('right', 6, 4)
+  lone.buttons[XR_BUTTON.trigger].value = 0.06
+  const r = rig([lone])
+  for (let k = 0; k < 3; k++) r.m.read() // on foot: it rests at 0.06, never lower
+  r.m.driving = true
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 0, 'into the wheel resting at 0.06: held at nothing')
+  r.m.read()
+  lone.buttons[XR_BUTTON.trigger].value = 1
+  r.m.read()
+  assert.ok(close(r.m.analog.throttle, 1), `back at its rest, then pulled: full throttle (${r.m.analog.throttle})`)
+  // A finger that has lain half way down a trigger since it woke on foot is no worn rest: held until it lets go.
+  const half = ctl('right', 6, 4)
+  half.buttons[XR_BUTTON.trigger].value = 0.3
+  const h = rig([half])
+  h.m.read()
+  h.m.driving = true
+  for (let k = 0; k < 4; k++) {
+    h.m.read()
+    assert.equal(h.m.analog.throttle, 0, `woke on foot at 0.3 and took the wheel there, frame ${k}: nothing`)
+  }
+  // A controller that wakes at the wheel with a finger resting lightly on its trigger knows no rest yet: held.
+  const woke = ctl('right', 6, 4)
+  woke.buttons[XR_BUTTON.trigger].value = 0.085
+  r.m.sources = [woke]
+  for (let k = 0; k < 4; k++) {
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `woke at the wheel with a light pull, frame ${k}: nothing`)
+  }
 })
