@@ -2191,7 +2191,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
   (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
   `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
-  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,631 bytes, from 12,161,926 to 12,173,557; the limit in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,672 bytes, from 12,161,926 to 12,173,598; the limit in
   `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
   it stands on an empty street with nobody at work in it, and after dark a shop or home there is unlit inside (a
