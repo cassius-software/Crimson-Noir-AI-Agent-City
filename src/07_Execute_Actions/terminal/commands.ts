@@ -392,6 +392,8 @@ export class OsSession {
   save(): Promise<void> {
     const store = this.store
     if (this.saving || this.holding || this.volatile !== null) return Promise.resolve()
+    // With nowhere to keep a disk, a new one that holds only what every disk starts with has nothing to lose yet.
+    if (store === null && this.unsaved === null && this.system.pristine) return Promise.resolve()
     const image = this.unsaved ?? this.system.snapshot()
     if (image === null) return Promise.resolve()
     if (store === null) {

@@ -149,6 +149,9 @@ THE CITY'S COMMANDS
     say, noir, r0 and a few more) still do. Inside a pipe or a file a
     command gives its lines only: clearing the screen, closing the
     console or a live view happen only when it is typed at the prompt.
+    Where a city command and a program in /bin share a name (time,
+    uname, whoami), the city's command answers, and the program runs by
+    its full path: /bin/time sleep 1.
 
 WHAT IT DOES NOT DO
     There are no functions, no case, no ( ) subshells, no set, no

@@ -95,6 +95,8 @@ export class System {
   private session = 0
   /** The disk's change counter as of the last image handed to the host. */
   private saved = -1
+  /** The disk's version once a new disk was given its first files; -1 for a disk that came back. */
+  private seeded = -1
 
   constructor(opts: SystemOptions) {
     const clock = opts.clock
@@ -176,6 +178,7 @@ export class System {
         yield* sys.writeFile('/etc/hostname', encode(`${opts.hostname}\n`))
         yield* sys.writeFile('/etc/passwd', encode(`root:x:0:0:operator:${HOME}:/bin/sh\n`))
         yield* sys.writeFile(`${HOME}/README`, encode(README))
+        system.seeded = disk.version
       }
       yield* sys.mount('/bin', bin, 'rom')
       yield* sys.mount('/usr', usr, 'rom')
@@ -285,4 +288,7 @@ export class System {
 
   /** Whether the disk has changes no image has been made of. */
   get dirty(): boolean { return this.state !== 'waiting' && this.disk.version !== this.saved }
+
+  /** Whether the disk is new and still holds only what every new disk is given: nothing of the person's to lose. */
+  get pristine(): boolean { return this.state !== 'waiting' && this.disk.version === this.seeded }
 }

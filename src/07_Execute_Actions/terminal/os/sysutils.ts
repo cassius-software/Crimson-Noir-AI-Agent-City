@@ -1375,7 +1375,9 @@ NOTES
     for the work the command itself did. Only a program kept as a file
     can be timed, not a command the shell carries out itself or a
     command of the city, and not a whole pipeline: time a | b times
-    only a. There are no options, so -p is refused.
+    only a. There are no options, so -p is refused. At the city's
+    console the word time is the city's clock (help time), so type
+    /bin/time to run this program there.
 
 STATUS
     The command's own status. 126 when it was found but could not be
@@ -1383,6 +1385,6 @@ STATUS
     for a wrong call.
 
 EXAMPLE
-    time sleep 1
+    /bin/time sleep 1
 `,
 })

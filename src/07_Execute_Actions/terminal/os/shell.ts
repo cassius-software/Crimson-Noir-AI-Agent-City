@@ -781,7 +781,7 @@ class Shell {
         this.set(a.name, yield* this.one(a.value))
       }
       try {
-        return yield* this.redirected(cmd.redirects, () => builtin.call(this, argv), final)
+        return yield* this.redirected(cmd.redirects, () => this.runBuiltin(builtin, argv), final)
       } finally {
         for (const h of held) {
           if (h.value === undefined) this.unset(h.name)
@@ -841,6 +841,20 @@ class Shell {
       }
     }
     return null
+  }
+
+  /**
+   * Runs a builtin. A refusal it does not catch itself (a write to a full disk, a knob under /sys that says no) is
+   * that command's failure: said, status 1, and the rest of the line goes on. A closed pipe still ends the task.
+   */
+  private *runBuiltin(builtin: Builtin, argv: string[]): Task<number> {
+    try {
+      return yield* builtin.call(this, argv)
+    } catch (e) {
+      if (!(e instanceof OsError) || e.errno === 'EPIPE') throw e
+      yield* this.sys.eprint(`${SELF}: ${argv[0]}: ${e.message}\n`)
+      return 1
+    }
   }
 
   private *cityRun(name: string, args: readonly string[], line: string, plain: boolean): Task<number> {

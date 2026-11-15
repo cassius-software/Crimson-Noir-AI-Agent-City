@@ -145,9 +145,10 @@ const CITY_REDIRECT = /^(?:[0-9]?(?:>>|>|<)|[0-9]?>&[0-9])$/
 
 /**
  * Reads one blank-delimited piece at `at` the way the console has always split a line: '...' is literal, "..."
- * honours \" and \\, a backslash outside quotes takes the next character. Null when a quote is left open.
+ * honours \" and \\, a backslash outside quotes takes the next character. Null when a quote is left open. With
+ * `paren`, a `)` outside quotes also ends the piece: inside `$( )` it closes the substitution.
  */
-function chunkAt(src: string, at: number): Chunk | null {
+function chunkAt(src: string, at: number, paren = false): Chunk | null {
   let i = at
   let text = ''
   let plain = true
@@ -167,7 +168,7 @@ function chunkAt(src: string, at: number): Chunk | null {
     } else if (c === '\\' && i + 1 < src.length) {
       text += src[++i]
       plain = false
-    } else if (c === ' ' || c === '\t' || c === '\n') {
+    } else if (c === ' ' || c === '\t' || c === '\n' || (paren && c === ')')) {
       break
     } else {
       text += c
@@ -203,6 +204,8 @@ class Parser {
   private readonly city: CityNames
   private i = 0
   private depth = 0
+  /** How many `$(` are open around the position: a city command inside one ends at the `)` that closes it. */
+  private open = 0
   /** Here-documents whose text starts after the next line end. */
   private waiting: { redirect: Redirect; marker: string; quoted: boolean; strip: boolean }[] = []
 
@@ -300,7 +303,13 @@ class Parser {
     if (c === '(') {
       this.i += 2
       this.deeper()
-      const body = this.list(')')
+      this.open++
+      let body: List
+      try {
+        body = this.list(')')
+      } finally {
+        this.open--
+      }
       if (s[this.i] !== ')') this.fail("'$(' has no ')'", true)
       this.i++
       this.depth--
@@ -741,17 +750,18 @@ class Parser {
     const s = this.src
     const args: string[] = []
     if (this.city.whole(name)) {
-      let end = s.indexOf('\n', this.i)
+      let end = this.open > 0 ? this.closing(this.i) : s.indexOf('\n', this.i)
       if (end < 0) end = s.length
       const rest = s.slice(this.i, end).trim()
       this.i = end
       return { t: 'city', name, args: rest === '' ? [] : [rest], line: s.slice(from, end).trim(), redirects }
     }
     let end = this.i
+    const paren = this.open > 0
     for (;;) {
       while (this.i < s.length && (s[this.i] === ' ' || s[this.i] === '\t')) this.i++
-      if (this.i >= s.length || s[this.i] === '\n') break
-      const chunk = chunkAt(s, this.i)
+      if (this.i >= s.length || s[this.i] === '\n' || (paren && s[this.i] === ')')) break
+      const chunk = chunkAt(s, this.i, paren)
       if (chunk === null) this.fail('a quote is left open', true)
       if (chunk.plain && CITY_ENDS.has(chunk.text)) break
       if (chunk.plain && CITY_REDIRECT.test(chunk.text)) {
@@ -771,6 +781,35 @@ class Parser {
       end = this.i
     }
     return { t: 'city', name, args, line: s.slice(from, end).trim(), redirects }
+  }
+
+  /**
+   * Where a command that takes the rest of its line whole ends inside `$( )`: at the line end, or at the first `)`
+   * outside quotes that no `(` of its own opened (`$(noir print(1))` hands noir `print(1)`). -1 at the end of the text.
+   */
+  private closing(at: number): number {
+    const s = this.src
+    let depth = 0
+    let quote = ''
+    for (let i = at; i < s.length; i++) {
+      const c = s[i]
+      if (quote !== '') {
+        if (c === '\\' && quote === '"') i++
+        else if (c === quote) quote = ''
+      } else if (c === "'" || c === '"') {
+        quote = c
+      } else if (c === '\\') {
+        i++
+      } else if (c === '(') {
+        depth++
+      } else if (c === ')') {
+        if (depth === 0) return i
+        depth--
+      } else if (c === '\n') {
+        return i
+      }
+    }
+    return -1
   }
 }
 
