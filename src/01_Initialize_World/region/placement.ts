@@ -6,7 +6,7 @@
  * Metro become its sixteen indoor workplaces (interiors.ts), its five storefronts (storefronts.ts) and its seven homes
  * (properties.ts), which street front each doorway faces, and where a visitor who chose a quarter first stands.
  * The places used to be the nearest lots to the start inside the one street window (streets.ts: 640 m of a map 2.56 km
- * across), so four fifths of the map had none and every quarter the visitor did not start in was empty of them. Here
+ * across), so more than nine tenths of the map had none and every quarter the visitor did not start in was empty of them. Here
  * the map is read whole (streets.ts mapStreetGrid) and the places go by a programme (PROGRAMME): each of the pack's
  * quarters (pack.ts Quarters: the lakefront's five regions) gets the kinds that suit it, one shop and at least one
  * workplace in every quarter, the homes where their names say they stand (a tower's foot downtown, the bluffs, the
@@ -14,7 +14,8 @@
  * - A quarter's heart (its anchor) is the middle of its tallest cluster: the lot with the most built volume round it,
  *   or, in a quarter with no tower at all, the lot nearest its centroid.
  * - Its first places, the starters, stand by the heart: the shop within three lots of it, the others within two lots
- *   of the shop, so whoever starts there has a shop and a workplace in sight.
+ *   of the shop (farther only where no lot that near is free), so whoever starts there has a shop and a workplace in
+ *   sight.
  * - The rest are spread: each takes a lot at least `cap` lots from every place already chosen and from the heart
  *   (as far as the quarter allows), the dice choosing among those, so they stand apart like a thrown handful and not
  *   in a row.
@@ -132,7 +133,10 @@ export interface RegionPlacement {
   shops: ShopLot[]
   /** By property index, ascending, likewise. */
   homes: HomeLot[]
-  /** One per quarter, in id order: across the street from the quarter's shop's doorway (or its first place, or its heart). */
+  /**
+   * One per quarter, in id order: across the street from the quarter's shop's doorway (or its first place, or its heart),
+   * on a sidewalk in the quarter itself wherever one of its places allows it (regionStart.test.ts, 401 seeds).
+   */
   starts: PlacedStart[]
   /** Each quarter's heart: an engine lot. */
   anchors: { quarter: number; k: number; m: number }[]
@@ -200,7 +204,8 @@ function place(pack: RegionPack, off: { x: number; z: number }, seed: number): R
   const programme: readonly (readonly Programmed[])[] = layered ? PROGRAMME : [SINGLE]
   const quarters = layered ? Math.max(programme.length, pack.quarters!.names.length) : 1
   const centre = (i: number, j: number) => ({ x: map.originX + (i + 0.5) * P, z: map.originZ + (j + 0.5) * P })
-  const quarterOf = (i: number, j: number): number => { const c = centre(i, j); return layered ? quarterAt(pack, off, c.x, c.z) : 0 }
+  const quarterHere = (x: number, z: number): number => (layered ? quarterAt(pack, off, x, z) : 0)
+  const quarterOf = (i: number, j: number): number => { const c = centre(i, j); return quarterHere(c.x, c.z) }
   const groundOf = (i: number, j: number): number => { const c = centre(i, j); return layered ? terrainAt(pack, off, c.x, c.z) : GROUND.flat }
 
   // The dice: one draw per lot of the map in row order (the sides' draws follow, one per place, as it is placed).
@@ -282,9 +287,9 @@ function place(pack: RegionPack, off: { x: number; z: number }, seed: number): R
   const full = { work: WORKPLACE_KINDS.length, home: PROPERTY_KINDS.length, shop: SHOP_KINDS.length } as const
   const counts: { work: number; home: number; shop: number } = { ...full }
   for (;;) {
-    const chosen = attempt(map, programme, lots, anchors, land, counts, seed)
-    if (chosen) return finish(chosen, map, anchors, quarters)
-    if (counts.work + counts.home + counts.shop === 0) return finish([], map, anchors, quarters)
+    const chosen = attempt(map, programme, lots, anchors, land, counts, seed, quarterHere)
+    if (chosen) return finish(chosen, map, anchors, quarters, quarterHere)
+    if (counts.work + counts.home + counts.shop === 0) return finish([], map, anchors, quarters, quarterHere)
     let most: 'work' | 'home' | 'shop' = 'work'
     // Shares compared as cross products, in whole numbers.
     for (const kind of ['home', 'shop'] as const) if (counts[kind] * full[most] > counts[most] * full[kind]) most = kind
@@ -296,10 +301,13 @@ interface Chosen { place: Programmed; quarter: number; lot: Lot; side: Side }
 
 const indexOf = (p: Programmed): number => (p.type === 'shop' ? SHOP_KINDS.indexOf(p.kind) : p.type === 'home' ? PROPERTY_KINDS.indexOf(p.kind) : WORKPLACE_KINDS.indexOf(p.kind))
 
-/** One pass of the placement with `counts` of each kind standing; null when a place of those found no lot at all. */
+/**
+ * One pass of the placement with `counts` of each kind standing; null when a place of those found no lot at all.
+ * `quarterHere` is the quarter under a point (engine metres), -1 in none.
+ */
 function attempt(
   map: StreetGrid, programme: readonly (readonly Programmed[])[], lots: readonly Lot[], anchors: readonly ({ i: number; j: number } | null)[],
-  land: readonly number[], counts: { work: number; home: number; shop: number }, seed: number,
+  land: readonly number[], counts: { work: number; home: number; shop: number }, seed: number, quarterHere: (x: number, z: number) => number,
 ): Chosen[] | null {
   const S = map.blocks
   // The sides' dice restart with every pass, after the lots' draws, so a pass is a function of the seed and the counts.
@@ -350,7 +358,14 @@ function attempt(
       let side: Side
       if (p.starter && a) {
         const s = lead === null ? null : startOf(q)
-        side = s ? frontNear(lot, s.x, s.z) : frontNear(lot, map.originX + (a.i + 0.5) * P, map.originZ + (a.j + 0.5) * P)
+        if (s) side = frontNear(lot, s.x, s.z)
+        else {
+          // The first starter's doorway is where the quarter's visitor starts, across its street (acrossFrom): of its
+          // fronts, those whose far sidewalk is in the quarter itself (a lot on the quarter's edge can face a street
+          // whose far side is the next quarter's), the one nearest the heart; any front only where none is.
+          const own = lot.sides.filter((side) => { const at = acrossFrom(map, lot!, side); return quarterHere(at.x, at.z) === q })
+          side = frontNear(own.length > 0 ? { ...lot, sides: own } : lot, map.originX + (a.i + 0.5) * P, map.originZ + (a.j + 0.5) * P)
+        }
       } else side = lot.sides[Math.min(lot.sides.length - 1, Math.floor(draw * lot.sides.length))]
       chosen.push({ place: p, quarter: q, lot, side })
       if (p.starter && lead === null) lead = lot
@@ -374,7 +389,7 @@ function acrossFrom(map: StreetGrid, lot: { i: number; j: number }, side: Side):
   return { x: map.originX + (lot.i + 0.5) * P + d.x * reach, z: map.originZ + (lot.j + 0.5) * P + d.z * reach }
 }
 
-function finish(chosen: readonly Chosen[], map: StreetGrid, anchors: readonly ({ i: number; j: number } | null)[], quarters: number): RegionPlacement {
+function finish(chosen: readonly Chosen[], map: StreetGrid, anchors: readonly ({ i: number; j: number } | null)[], quarters: number, quarterHere: (x: number, z: number) => number): RegionPlacement {
   const K0 = Math.round(map.originX / P), M0 = Math.round(map.originZ / P)
   const at = (c: Chosen) => ({ k: K0 + c.lot.i, m: M0 + c.lot.j, side: c.side })
   const of = (type: Programmed['type']) => chosen.filter((c) => c.place.type === type).sort((a, b) => indexOf(a.place) - indexOf(b.place))
@@ -387,9 +402,13 @@ function finish(chosen: readonly Chosen[], map: StreetGrid, anchors: readonly ({
     const a = anchors[q]
     if (!a) continue
     hearts.push({ quarter: q, k: K0 + a.i, m: M0 + a.j })
-    // Across from the quarter's shop, else its first home, else its first workplace, else the heart itself.
+    // Across from the quarter's shop, else its first home, else its first workplace, else the heart itself; of those,
+    // the first whose far sidewalk is in the quarter (the shop's, but for a shop whose every front faces another
+    // quarter across its street), and the shop's when none is.
     const mine = chosen.filter((c) => c.quarter === q)
-    const front = mine.find((c) => c.place.type === 'shop') ?? mine.find((c) => c.place.type === 'home') ?? mine.find((c) => c.place.type === 'work')
+    const order = [...mine.filter((c) => c.place.type === 'shop'), ...mine.filter((c) => c.place.type === 'home'), ...mine.filter((c) => c.place.type === 'work')]
+    const inside = order.find((c) => { const at = acrossFrom(map, c.lot, c.side); return quarterHere(at.x, at.z) === q })
+    const front = inside ?? order[0]
     const s = front ? acrossFrom(map, front.lot, front.side) : { x: map.originX + (a.i + 0.5) * P, z: map.originZ + (a.j + 0.5) * P }
     starts.push({ quarter: q, x: s.x, z: s.z })
   }

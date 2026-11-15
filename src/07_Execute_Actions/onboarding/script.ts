@@ -214,3 +214,13 @@ export function mapWanted(q: URLSearchParams, saved: SavedOnboarding | null, reg
 export function placeWanted(q: URLSearchParams, saved: SavedOnboarding | null): Zone | null {
   return zoneOf(q.get('place')) ?? zoneOf(saved?.place)
 }
+
+/**
+ * The pack the onboarding built, when it starts where the visitor is to stand (its quarters' home is `zone`, the
+ * region placeWanted chose), else null so the page builds one that does. The onboarding builds the pack for its own
+ * answer; a `?place=` naming another region wins on that visit too, as it does on every later one, so the same address
+ * always starts in the same region (a reload, the page's own restart on a lighter kernel).
+ */
+export function onboardingPackFor<P extends { quarters?: { home: number } }>(pack: P | null | undefined, zone: Zone): P | null {
+  return pack && pack.quarters?.home === zone ? pack : null
+}

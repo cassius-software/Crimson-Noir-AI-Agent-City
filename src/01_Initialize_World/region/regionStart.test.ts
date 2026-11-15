@@ -101,6 +101,24 @@ test('the start stands in the region the visitor chose, and the HUD\'s lead name
   assert.equal(names.size, 5)
 })
 
+test('in its own region on seeds whose shop stands on a region\'s edge, its nearest front facing the next region', () => {
+  // Each of these once started the visitor across the street in another region: the shop's front nearest the heart
+  // faced a street whose far sidewalk is the next region's (seed 35's Grand Ravine design house, lot 36,26, faced
+  // north into The East Bluffs). The first starter's doorway now faces a street whose far side is its own region's
+  // (placement.ts attempt), and the start is read from the first place of the region that allows it (finish). A sweep
+  // of seeds 0 to 400, all five regions, found no start outside its region after the change.
+  for (const [seed, zone] of [[35, 'grandRavine'], [232, 'grandRavine'], [315, 'grandRavine'], [387, 'grandRavine']] as const) {
+    const pack = packOf(generateLakefront(seed, 64), ZONE[zone])
+    const layout = layoutOf(pack)
+    const places = new RegionPlaces(pack, layout)
+    const placed = regionPlacement(pack, layout, seed)!
+    const at = regionStart(pack, layout, places, placed)
+    assert.equal(quarterAt(pack, layout, at.x, at.z), ZONE[zone], `seed ${seed} ${zone}: starts in ${places.label(at.x, at.z)}`)
+    assert.ok(places.label(at.x, at.z).startsWith(`${pack.quarters!.names[ZONE[zone]]} · `))
+    assert.ok(!places.inBuilding(at.x, at.z, 1) && !places.inWater(at.x, at.z), `seed ${seed} ${zone}: clear and dry`)
+  }
+})
+
 test('on a sidewalk: beside a street with one, half a sidewalk past the kerb, clear of buildings and water, by the hint', () => {
   for (const s of STARTS) {
     const beside = streetBeside(s.g, s.at)

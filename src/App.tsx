@@ -91,7 +91,7 @@ import { LakefrontBuilder } from './01_Initialize_World/lakefrontClient.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, placeWanted, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, onboardingPackFor, placeWanted, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -839,7 +839,7 @@ function App() {
   const mentored = outcome !== null && !outcome.saved.skipped
   // The same visitor, after the page's own restart on a lighter crowd kernel.
   const watched = mentored || (outcome === null && resumed?.mentored === true)
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={watched} restarted={resumed !== null} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: onboardingPackFor(outcome?.pack, zone), zone }} mentored={watched} restarted={resumed !== null} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
 }
 
 /**

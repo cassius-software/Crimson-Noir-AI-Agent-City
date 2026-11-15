@@ -151,6 +151,31 @@ test('a lit lot paints its floor inside the glass, by whether real fixtures hang
   }
 })
 
+test('a lot the picture\'s edge runs through paints no floor at all, never one lit to a line, and its glass still spills inside', () => {
+  // The ring of blocks round the window: the picture's edge (PAINT_MARGIN past the window) runs through its lots.
+  const h = CITY.lotHalf, x1 = WINDOW.originX + EXTENT + PAINT_MARGIN
+  const straddling = [
+    { cx: x1, cz: 3000 + 3.5 * P, fixtures: false },
+    { cx: x1 - 6, cz: 3000 + 6.5 * P, fixtures: true },
+    { cx: 2000 + 7.5 * P, cz: WINDOW.originZ - PAINT_MARGIN + 4, fixtures: false },
+  ]
+  const held = { cx: x1 - h, cz: 3000 + 9.5 * P, fixtures: false }
+  const p = bakePaintedLight(scene({ interiors: [...straddling, held] }))
+  for (const lot of straddling) {
+    for (let dx = -h; dx <= h; dx += 0.5) {
+      for (let dz = -h; dz <= h; dz += 0.5) {
+        const got = paintAt(p, lot.cx + dx, lot.cz + dz)
+        assert.deepEqual(got.slice(2), [0, 0], `no floor at ${lot.cx + dx},${lot.cz + dz}`)
+      }
+    }
+  }
+  // Its glass on the window's side still lights the pavement before it.
+  near(paintAt(p, x1 - h - 2.5, 3000 + 3.5 * P)[1], strip(2.5), 0.03, 'the straddling shop\'s glass spills on the window\'s side')
+  // A lot the picture holds whole, to its very edge, is lit inside as ever.
+  assert.equal(paintAt(p, held.cx, held.cz)[3], 1, 'a lot held to the edge is lit')
+  assert.equal(paintAt(p, held.cx + h - ROOM.wall - 2, held.cz)[3], 1, 'to its glass')
+})
+
 test('nothing is painted on the picture\'s outermost texels, whatever stands there', () => {
   // A lamp, a frontage and a lot right on the picture's corner.
   const x = WINDOW.originX - PAINT_MARGIN, z = WINDOW.originZ - PAINT_MARGIN
@@ -244,7 +269,7 @@ test('the metropolis: every lamp of the street window stands over a lit pool, an
   assert.ok(missing > 0, 'the window has streets missing (superblocks, water): the picture follows the map, not the grid')
 })
 
-test('the metropolis: every room, shop and home the picture holds is lit inside, one beyond it is not painted at all, and its frontages light the ground before them', () => {
+test('the metropolis: every room, shop and home the picture holds is lit inside, one on its edge or beyond it has no floor painted, and its frontages light the ground before them', () => {
   const { interiors, frontages, picture, hollow, streets } = METROPOLIS
   assert.equal(interiors.length, hollow.rooms.length + hollow.shops.length + hollow.homes.length)
   assert.ok(hollow.rooms.length > 0 && hollow.shops.length > 0 && hollow.homes.length > 0)
@@ -262,6 +287,11 @@ test('the metropolis: every room, shop and home the picture holds is lit inside,
     } else if (Math.abs(lot.cx - (edge.x0 + edge.x1) / 2) > (edge.x1 - edge.x0) / 2 + CITY.lotHalf || Math.abs(lot.cz - (edge.z0 + edge.z1) / 2) > (edge.z1 - edge.z0) / 2 + CITY.lotHalf) {
       assert.deepEqual([pool, spill, fixtured, bare], [0, 0, 0, 0], `the lot at ${lot.cx},${lot.cz}, beyond the picture`)
       beyond++
+    } else {
+      // On the picture's edge: no floor anywhere on it (paintedLight.ts header).
+      for (let dx = -CITY.lotHalf; dx <= CITY.lotHalf; dx += 1) {
+        for (let dz = -CITY.lotHalf; dz <= CITY.lotHalf; dz += 1) assert.deepEqual(paintAt(picture, lot.cx + dx, lot.cz + dz).slice(2), [0, 0], `the lot at ${lot.cx},${lot.cz}, on the edge`)
+      }
     }
   }
   assert.deepEqual([...kinds].sort(), [false, true], 'the window holds a room with fixtures and a shop or home without')

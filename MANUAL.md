@@ -648,17 +648,19 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   bluffs; North Ridge the control tower, the gait lab, the microgrid control room and the sky-mansion; The Grand
   Ravine the greenhouse, the operations and dispatch centre and the brownstone). Each
   region's heart is the middle of its tallest cluster; its shop stands within three lots of it with two more places
-  within two lots of the shop, and the rest are spread at least two lots from every other place, never on neighbouring
+  near it (within two lots wherever the map has a free one), and the rest are spread at least two lots from every other place, never on neighbouring
   lots, a ravine's floor, the landmark's lot or in the lake. The lots do not depend on where the visitor starts, so a
   place is on the same corner whichever region was chosen. **The visitor starts in the region they chose**
   (`regionWorld.ts` `regionStart`): on the sidewalk across the street from that region's shop, five metres along it
   so no street tree or lamp stands at your shoulder, facing along the street toward the region's heart (the
-  metropolis's visitor stands within 200 m of The Spire). `?place=<slug>` chooses the
+  metropolis's visitor stands a few blocks from The Spire, under 300 m on every tested seed). `?place=<slug>` chooses the
   region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
   ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
-  outside it stands on an empty street, is dark inside at night beyond the window's painted light and has nobody at
-  work in it, and nobody from the crowd can be walked out to it; a start's window holds one to four of the
+  outside it stands on an empty street and has nobody at work in it, and nobody from the crowd can be walked out to
+  it; after dark a shop or home there is unlit inside (the painted light covers the window and its margin only, and
+  paints no floor on a lot its edge runs through), while a workplace's own ceiling lights still come on wherever the
+  tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
   workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
   The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
@@ -668,12 +670,12 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   and held inside the region, moved by whole blocks off The Spire; VTOL routes between rooftop pads of the window's own
   buildings, in the city's band of 24 to 60 m roofs where the window has them and in a second band over the map's
   towers (roofs of 60 to 140 m, flown between at 150 and 160 m; a window with no such roofs has none: seed 7's east
-  bluffs and north ridge); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
+  bluffs); zebra crossings on every walkable arm of every intersection, as paint over the asphalt;
   the plaza lots (the hubs' squares) paved at the sidewalks' height; a harbour ferry pier from the lake shore nearest
   the window, 60 m out over the water with railings and a berth platform at its end, the shore wall opened for it
   (no vessel sails yet); and a STOL strip, 300 × 24 m of asphalt with threshold bars and a centreline on the open land
   nearest the window, clear of everything built (the planes keep the racetrack and do not land). No subterranean
-  line: a track has one height. `transit.test.ts` proves all of it on fourteen windows of three seeds, the craft to
+  line: a track has one height. `transit.test.ts` proves all of it on fifteen windows of three seeds, the craft to
   the same INV-1 envelopes as the city's. The visitor's answers are saved, so the next visit opens on the same city at the chosen region;
   `?map=city` or `?region=off` opens the procedural city, `?onboarding=0` skips the onboarding (the expert path) and
   `?onboarding=1` shows it again. The structural layouts, one JSON file per region with an index naming The Spire and
@@ -4386,7 +4388,7 @@ releases, byte for byte (the same seats, drivers and paint from the same stream)
   the window's middle held inside the region (and moved by whole blocks when The Spire comes within the envelope's
   half-length of it), and the VTOL routes from the window's **craft boxes**: the rectangular buildings on the window's
   lots and the ring of lots round them, every building that reaches into the racetrack's envelope, and the region's
-  plan, which the page computes from the pack it drew and sends in the init (`SimInit.craftBoxes`, at most 4,096,
+  plan where it stands on those same lots, which the page computes from the pack it drew and sends in the init (`SimInit.craftBoxes`, at most 4,096,
   judged in the worker like every other field), since the worker holds the pack's walls and not its boxes.
   `vtolRoutes(boxes, cells, band)` takes the window's cells and a band of roofs: the city's (24 to 60 m, cruising at
   75 and 85) where the window has such roofs, and a second over a generated map's towers (60 to 140 m, cruising at

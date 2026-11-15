@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? Lakefront Metro's sixteen workplaces, five shops and seven homes used to stand on the
- * nearest lots to the start, inside the one street window, so four fifths of the map had none. region/placement.ts
+ * nearest lots to the start, inside the one street window, so more than nine tenths of the map had none. region/placement.ts
  * shares them out over the whole map by quarter, and gives each quarter a start. These tests hold that choice to its
  * promises on the real generated map (three seeds):
  * - every place of the programme stands, in its own quarter, the lists in the order their readers index them by;
@@ -12,7 +12,7 @@
  * - no two on neighbouring lots, not even corner to corner;
  * - each quarter's starters by its heart: the shop within three lots of it, the others within two of the shop, the
  *   start across the street from the shop's doorway, in its own quarter, the five starts far apart, the metropolis's
- *   by The Spire;
+ *   under 300 m from The Spire;
  * - the rest spread: places in every quarter, across most of the map's width and height, no street window's worth of
  *   lots holding more than a third of them, and the homes named for a place standing on it (the bluffs, the shore,
  *   a tower);
@@ -194,7 +194,7 @@ test('the rest are spread: places across most of the map, in every quarter, neve
       most = Math.max(most, all.filter((p) => p.k - K0 >= i && p.k - K0 < i + WINDOW_BLOCKS && p.m - M0 >= j && p.m - M0 < j + WINDOW_BLOCKS).length)
     }
     assert.ok(most <= 9, `seed ${w.seed}: one window holds ${most} of the 28 places (all 28 stood in one before)`)
-    // Half the places stand more than a window's half-width from every start.
+    // At least six places (eight or nine on these seeds) stand more than a window's half-width from every start.
     const farOnes = all.filter((p) => w.placed.starts.every((s) => { const c = centre(p); return Math.max(Math.abs(c.x - s.x), Math.abs(c.z - s.z)) > 320 }))
     assert.ok(farOnes.length >= 6, `seed ${w.seed}: ${farOnes.length} places beyond every start's window`)
   }

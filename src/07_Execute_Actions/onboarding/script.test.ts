@@ -16,7 +16,7 @@ import { REGIONS, ZONE } from '../../01_Initialize_World/lakefront.ts'
 import type { Answer, Mind, Piece } from '../operator.ts'
 import {
   MAP_KEY, NO_ANSWERS, ONBOARDING_KEY, PLACES, SKIPPED, SOUNDS, STEPS, TIMES, answer, choicesFor, lineFor, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, nextStep, saveMapChoice,
-  optionsFrom, outcomeOf, placeWanted, said, saveOnboarding,
+  onboardingPackFor, optionsFrom, outcomeOf, placeWanted, said, saveOnboarding,
 } from './script.ts'
 import { modelVoice, mustKeep, scriptedVoice } from './voice.ts'
 
@@ -131,6 +131,24 @@ test('which region to stand in: ?place= first, then the onboarding\'s choice, el
   // App reads it once, with the metropolis as the default.
   const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
   assert.ok(app.includes('const zone = placeWanted(new URLSearchParams(window.location.search), chosen) ?? ZONE.metropolis'))
+})
+
+test('the onboarding\'s pack is used only when it starts where the visitor stands; ?place= naming another region wins on that visit too', () => {
+  const built = (home: number) => ({ name: 'Lakefront Metro', quarters: { home } })
+  for (const r of REGIONS) {
+    const pack = built(r.id)
+    assert.equal(onboardingPackFor(pack, r.id), pack, `${r.slug}: the onboarding's own pack, not built again`)
+    for (const other of REGIONS) if (other.id !== r.id) assert.equal(onboardingPackFor(pack, other.id), null, `${r.slug} pack, ${other.slug} wanted: built again`)
+  }
+  assert.equal(onboardingPackFor(null, ZONE.metropolis), null, 'skipped onboarding: no pack')
+  assert.equal(onboardingPackFor(undefined, ZONE.metropolis), null, 'no onboarding this visit: no pack')
+  const old: { name: string; quarters?: { home: number } } = { name: 'old' }
+  assert.equal(onboardingPackFor(old, ZONE.metropolis), null, 'a pack with no quarters layer says nothing of its start: built again')
+  // App hands the shell the pack through it, and loadMap builds one for the zone when it hands none.
+  const app = readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8')
+  assert.ok(app.includes('plan={{ choice, pack: onboardingPackFor(outcome?.pack, zone), zone }}'))
+  assert.ok(app.includes('if (plan.pack) return plan.pack') && app.includes('return await b.pack(plan.zone)'))
+  assert.ok(!app.includes('pack: outcome?.pack ?? null'), 'the onboarding\'s pack never reaches the shell unchecked')
 })
 
 test('a map chosen at the console is kept between visits and beats the onboarding and the pilot default, never the URL', () => {
