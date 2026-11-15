@@ -3413,7 +3413,7 @@ test('xr: the status line at once; vr, ar and off reach the bridge inside the ke
 
 test('tutorial reads the walk\'s stage and the exit program from the exam, or says the shell has none; noir hands the exam over, prints what its doors said, and opens no write', () => {
   const b = fake()
-  const program = ["the exit program, one 'noir' line at a time (the session keeps seal and swarm between lines):", ...PROGRAM.map((l) => `  noir ${l}`)]
+  const program = ["the exit program, from any stage, one 'noir' line at a time (the session keeps seal and swarm between lines):", ...PROGRAM.map((l) => `  noir ${l}`)]
   // No exam (the console shell): one plain line and the program, nothing touched, and no `tutorial off`.
   assert.deepEqual(texts(run('tutorial', b, [])), ['tutorial: no first walk in this shell (it runs in the city)', ...program])
   assert.deepEqual(texts(run('tutorial status', b, [])), ['tutorial: no first walk in this shell (it runs in the city)'])
@@ -3437,10 +3437,10 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
     spawnSubagents: (n, role) => { doors.push(['spawn', n, role]); said.push(`spawn_subagents: 2 of ${n} sub-agents at work for ${role}`); return 2 },
     unlockCity: (seal, swarm) => { doors.push(['unlock', seal, swarm]); said.push('unlock_city: the city is yours'); return true },
     report: () => said.splice(0),
-    status: () => 'tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)',
+    status: () => 'tutorial: the first walk, stage 6 of 6 (console); it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)',
     program: () => PROGRAM,
   }
-  assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (exam); the exit program ends it (tutorial program)'])
+  assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (console); it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)'])
   const session = replSession()
   assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing' }])
   assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 sub-agents at work for sim2real_workplaces' }])

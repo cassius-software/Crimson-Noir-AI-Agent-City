@@ -95,11 +95,11 @@ import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, onboardingPa
 import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
-import { useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
+import { familyOf, useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
 import { FirstWalkCard } from './07_Execute_Actions/onboarding/FirstWalk.tsx'
 import { createExam } from './07_Execute_Actions/onboarding/exam.ts'
 import { loadFirstWalk, needsFirstWalk } from './07_Execute_Actions/onboarding/firstWalkStore.ts'
-import { useFirstWalk } from './07_Execute_Actions/onboarding/useFirstWalk.ts'
+import { beaconOf, machineOf, useFirstWalk } from './07_Execute_Actions/onboarding/useFirstWalk.ts'
 import { ROOM, toWorld } from './01_Initialize_World/interiors.ts'
 import { yawFacing } from './07_Execute_Actions/head.ts'
 import { MAX_WALK_MS } from './07_Execute_Actions/scriptedWalk.ts'
@@ -112,7 +112,7 @@ import { swarmTeam, teamRows } from './06_Make_Decisions/dispatch.ts'
 import type { GoalPlan } from './07_Execute_Actions/terminal/bridge.ts'
 import type { Voice as SpeechVoice } from './07_Execute_Actions/operator.ts'
 import type { Event as MentorEvent } from './09_Cognition/tutorial.ts'
-import { PROGRAM, WALK, type WalkEvent } from './09_Cognition/firstWalk.ts'
+import { WALK, assistTargetOf, passedBanner, type WalkEvent } from './09_Cognition/firstWalk.ts'
 
 const HUD_INTERVAL_MS = 100
 /**
@@ -801,7 +801,7 @@ function App() {
   // background and hands its outcome here; a returning visitor goes straight to the map they chose (script.ts).
   const [saved] = useState<SavedOnboarding | null>(loadOnboarding)
   const [onboard] = useState(() => needsOnboarding(new URLSearchParams(window.location.search), saved, loadProfile()))
-  // The first walk (onboarding/firstWalkStore.ts): on until its exit program has unlocked the city once, unless the URL says otherwise.
+  // The first walk (onboarding/firstWalkStore.ts): on until it has been passed once (the console reached on its last stage, or its exit program run), unless the URL says otherwise.
   const [walk] = useState(() => needsFirstWalk(new URLSearchParams(window.location.search), loadFirstWalk()))
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   // The page restarted itself a moment ago on a lighter crowd kernel (GuiShell's failed boot): what the visitor had
@@ -1066,9 +1066,10 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   // tether like `act ok`; a press after the proposal ended (the console answered first, the tether broke) is nothing.
   const allowAct = useCallback(() => { try { void bridge?.operator.acts.allow('card').result.catch(noop) } catch { /* already ended */ } }, [bridge])
   const refuseAct = useCallback(() => { try { bridge?.operator.acts.refuse('card') } catch { /* already ended */ } }, [bridge])
-  // The first walk (onboarding/useFirstWalk.ts): Sloane's six stages before the city is the visitor's, ended only by the
-  // console's exit program. Its reports come from the Concierge (a goal sent), the console (a line run, its opening),
-  // the HUD (the microphone, the captions) and, in time, the exam; walkRef is the handlers' view of it.
+  // The first walk (onboarding/useFirstWalk.ts): Sloane's six stages before the city is the visitor's, ended the moment
+  // the console opens on the last one (or by the console's exit program, from any stage). Its reports come from the
+  // Concierge (a goal sent), the console (a line run, its opening), the HUD (the microphone, the captions) and the
+  // exam; walkRef is the handlers' view of it.
   const fw = useFirstWalk({ active: walk && veilDone, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice, termOpen })
   const walking = walk && !fw.passed
   // Sloane's card (not her chip) on screen: in a wide window too narrow for both, the walk's card steps aside for it.
@@ -1087,8 +1088,35 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     if (captionsRef.current !== null && captionsRef.current !== captionsOn) walkRef.current.note('captions')
     captionsRef.current = captionsOn
   }, [captionsOn, hasHud])
-  const typeWalk = useCallback((line: string) => termRef.current?.type(line), [])
-  const runWalk = useCallback(() => termRef.current?.run(), [])
+  // The walk's lent hand (09_Cognition/firstWalk.ts assistTargetOf): the control the stage asks for, lit on the page
+  // while the walk is assisting (index.css draws the ring from the root's data-walk-assist; nothing else reads it).
+  const assistTarget = walking && fw.assisting && fw.stage !== null ? assistTargetOf(fw.stage, familyOf(hud?.supplier.glyphs ?? 'keyboard')) : null
+  useEffect(() => {
+    const root = document.documentElement
+    if (assistTarget === null) { delete root.dataset.walkAssist; return }
+    root.dataset.walkAssist = assistTarget
+    return () => { delete root.dataset.walkAssist }
+  }, [assistTarget])
+  // The walk's marker (useFirstWalk.ts beaconOf): the nearest parked car on the car stage, the nearest workplace's
+  // doorway on the indoor stage, drawn by the HUD over the world and on the minimap (engine.setBeacon: view-only).
+  useEffect(() => {
+    const e = engineRef.current
+    if (!e) return
+    e.setBeacon(walking && hud ? beaconOf(fw.stage, {
+      cars: hud.map.map((c) => ({ x: c.x, z: c.z, mode: c.player ? 'player' : c.parked ? 'parked' : 'moving' })),
+      rooms: e.workplaces(),
+    }, hud.customer.x, hud.customer.z) : null)
+  }, [walking, fw.stage, hud])
+  // The walk passed (the console reached, or the exit program run): Sloane says her line once, and the console prints
+  // it with where to go from here.
+  const passedSaid = useRef(-1)
+  useEffect(() => {
+    const b = fw.beat
+    if (b === null || b.kind !== 'passed' || passedSaid.current !== -1) return
+    passedSaid.current = b.id
+    termRef.current?.print(passedBanner(profile?.name ?? '', familyOf(hud?.supplier.glyphs ?? 'keyboard')))
+    onSay(b.text)
+  }, [fw.beat, profile?.name, onSay, hud?.supplier.glyphs])
   // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts), once the walk is over: its lines reach the
   // Concierge as nudges, and a prompt sent to someone in the city is reported to it from the mind below (noteRef,
   // built once with the engine).
@@ -1230,7 +1258,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
    * who cannot. A turn of the head and four metres forward, as the keys would do it; a goal planned as the card plans
    * one; the visitor put down at the nearest parked car's door and the door opened; put down just inside the nearest
    * workplace's doorway; the wardrobe card opened (the visitor puts it away, which finishes the stage); the console
-   * opened on `laws`; the program's first line typed into the prompt. Everything goes
+   * opened, which ends the walk. Everything goes
    * through the same controls the console's operator tier has (engine.simControls), never past the realm.
    */
   const showWalk = useCallback(() => {
@@ -1300,8 +1328,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         return
       }
       case 'style': openLook(); return
-      case 'ring0': termRef.current?.run('laws'); return
-      case 'exam': termRef.current?.type(`noir ${PROGRAM[0]}`); return
+      case 'console': termRef.current?.open(); return
     }
   }, [bridge, openLook])
 
@@ -2221,18 +2248,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       )}
       {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe, a
           shop's card or a home's doorstep card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
-          (from 60 rem her card stands left of it). It has no close: the console's exit program ends it. */}
+          (from 60 rem her card stands left of it). It has no close: reaching the console on its last stage ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
           visible={veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
           card={fw.card}
           beat={fw.beat}
-          exam={fw.exam}
+          assisting={fw.assisting}
+          family={hud.supplier.glyphs}
+          machine={engine ? machineOf(engine.hardware, engine.profile.gpuClass, hud.quality) : null}
           overlay={hud.supplier.touch}
           termOpen={termOpen}
           onShow={showWalk}
-          onType={typeWalk}
-          onRun={runWalk}
           onSay={onSay}
           crowded={sloaneOpen}
           driving={hud.input.mode === 'vehicle'}
