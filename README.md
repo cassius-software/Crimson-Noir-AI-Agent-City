@@ -15,7 +15,7 @@
   <a href="https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/"><strong>Launch the live build</strong></a> ·
   <a href="https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current"><strong>Current downloads</strong></a> ·
   <a href="MANUAL.md"><strong>Operator Manual</strong></a> ·
-  <a href="docs/noirscript.md"><strong>NoirScript</strong></a> ·
+  <a href="docs/crimson-noir-script.md"><strong>Crimson Noir Script</strong></a> ·
   <a href="docs/zero-trust-audit.md"><strong>Containment audit</strong></a> ·
   <a href="crimson_noir_os/README.md"><strong>Crimson Noir OS (UEFI)</strong></a>
 </p>
@@ -42,7 +42,7 @@ Everything below is what the code on `main` does and what CI has shown. Where so
 
 * **The air gap.** `fetch`, `WebSocket`, `XMLHttpRequest`, `EventSource` and `importScripts` are replaced in the page and in the physics worker with versions that refuse any address that is not loopback, same-origin or a page-made `blob:`/`data:` URL; `RTCPeerConnection`, `WebTransport` and `sendBeacon` are removed and the properties frozen; the content security policy admits the page's own origin, `localhost` and `127.0.0.1` only. Local model and speech servers are reached at loopback, and no prompt leaves the machine; the web copy's one download, the small model it serves beside the page, comes from its own site, by itself once the city is on screen or on a tap.
 * **The Ring-0 audit.** An auditor in the physics worker halts the realm on a non-finite state, a vehicle outside the world slab, a runaway velocity or a car closing on a person; a panic severs the hardware bridge and locks the page. The Ring-0 action gate's twelve checks under four laws vet every action a model proposes, and a model's only effect on the city is one catalogued action (time, rain, light, quality, cars, crowd, sound) after the operator allows it.
-* **Bounded languages.** The R0 stack machine and NoirScript are Turing complete and end every run at a step budget (1,000,000 steps), an output cap, a memory cap and a call-depth cap; NoirScript checks every array, vector and column index. Its writes (`tune`, `intent`, `cull`, `steer`) open only on the `ring0` elite tier.
+* **Bounded languages.** The R0 stack machine and Crimson Noir Script are Turing complete and end every run at a step budget (1,000,000 steps), an output cap, a memory cap and a call-depth cap; Crimson Noir Script checks every array, vector and column index. Its writes (`tune`, `intent`, `cull`, `steer`) open only on the `ring0` elite tier.
 * **Hardware gate.** Setpoints to a robot are clamped to the URDF's position, velocity and effort limits and go out only through a default-deny gate (operator tier, lease, arming handshake, heartbeat, 250 ms time-to-live, 20 commands a second); a device declaring the drone class is held to a geofence, a 30 m ceiling, 5 m/s and a 50 m range.
 * **Proofs.** `npm run verify` runs the Z3 theorems, the WebAssembly air-gap check over the committed modules, the LLVM-IR call scan of the routing core and sixteen Kani harnesses.
 
@@ -120,12 +120,12 @@ src/
 ├── 04_Connect_Hardware/   URDF reader, actuator fitting and domain randomization, robot links, DualSense, WebXR, touch, gamepad
 ├── 05_Observe_Environment/ Quality governor and hardware classes, ISA-95 namespace, telemetry, the .agv recorder
 ├── 06_Make_Decisions/     5-Whys intent engine, GPU flow field, street and track AI drivers, the track network, the action catalogue
-├── 07_Execute_Actions/    Engine, physics worker, cars and craft, collision layers, post chain, Crimson Terminal with the NoirScript VM, onboarding
+├── 07_Execute_Actions/    Engine, physics worker, cars and craft, collision layers, post chain, Crimson Terminal with the Crimson Noir Script VM, onboarding
 ├── 08_Swarm/              Swarm orchestrator, recruitment, capability gateway, each pedestrian's episodic memory
 ├── 09_Cognition/          Cognition router (Claude gateway, Ollama, llama.cpp, in-page GGUF), prefix cache, speech, first-walk data
 └── 10_Network/            Opt-in loopback room, headless Ring-0 mirror, Sparkplug B robot relay, OS ledger door
 tools/                  Build matrix, browser checks, proofs (npm run verify), licence headers, self-heal agent (MIT)
-docs/                   Architecture blueprint, NoirScript, joint bridge and HAL specs, zero-trust audits, IP audit (MIT)
+docs/                   Architecture blueprint, Crimson Noir Script, joint bridge and HAL specs, zero-trust audits, IP audit (MIT)
 ```
 
 ---

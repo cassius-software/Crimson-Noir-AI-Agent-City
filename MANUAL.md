@@ -1081,7 +1081,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
   Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
   now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
-  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  Crimson Noir Script lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
   control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
   goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
@@ -1262,25 +1262,24 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   noir unlock_city(seal, swarm);
   ```
 
-  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
-  console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
-  the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
-  by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
-  standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
-  memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for the role through
-  the same team runner Sloane's goals use: one lane each, a small NoirScript program at one of the sixteen workplaces,
-  dealt round the desks in order (twenty-four are two at each of the first eight and one at each of the rest), under
-  the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
-  anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
-  answers with how many lanes are still running after their first tick, never the number wished for, says which team
-  it replaced, and opens nothing while the page is not contained or the realm is halted. On a map without workplaces
-  (a surveyed region) its lanes read the city around where you started and nobody is asked over. The swarm stays at
-  work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads "Team 24 · 16
-  workplaces". `unlock_city(seal, swarm)` opens the city
-  for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
-  pass answers that the city is already yours. After each line the console prints what the doors said. In the console
-  shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
-  stage and the program; there is no `tutorial off`.
+  The three words are ordinary Crimson Noir Script intrinsics (`docs/crimson-noir-script.md`) behind an exam the city
+  wires into the console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the
+  elite tier, and the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now
+  (the four laws by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it,
+  the Ring-0 audit standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a
+  number typed from memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for
+  the role through the same team runner Sloane's goals use: one lane each, a small Crimson Noir Script program at one of
+  the sixteen workplaces, dealt round the desks in order (twenty-four are two at each of the first eight and one at each
+  of the rest), under the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with
+  nobody near, and anyone within earshot who has a desk's skill is asked over too. The one role today is
+  `sim2real_workplaces`. It answers with how many lanes are still running after their first tick, never the number
+  wished for, says which team it replaced, and opens nothing while the page is not contained or the realm is halted. On
+  a map without workplaces (a surveyed region) its lanes read the city around where you started and nobody is asked
+  over. The swarm stays at work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads
+  "Team 24 · 16 workplaces". `unlock_city(seal, swarm)` opens the city for a seal that matches the live one and a swarm
+  of one or more, refuses with its reason otherwise, and after the pass answers that the city is already yours. After
+  each line the console prints what the doors said. In the console shell (`?boot=tty`) there is no city and no exam: the
+  three words answer so. `tutorial [status|program]` reads the stage and the program; there is no `tutorial off`.
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
   `__SIM__.walkNote(event)` reports an event into it, for the browser smoke. Its `walk` scenario does the whole walk
   on the accessible path in CI's Chrome (the machine rows, the console opened early passing nothing, every button,
@@ -1759,21 +1758,21 @@ anywhere in the product.
   `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
   (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
   `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
-  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
-  own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
+  without a branch. A lane runs one Crimson Noir Script program a tick (`08_Swarm/lanes.ts`), in a session of its own
+  (its own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
   tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
-  own arena each tick, however many rows the city has), 32 frames of stack. The gate
-  reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
-  out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
-  words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the
-  lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is hashed onto a
-  ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0 LANE 3]
-  isolated (gas): Zeroth Law: the lane ran its 4096-step budget out this tick; … audit 9f3a…`), and the frame goes
-  on: the other lanes run their next tick, and unlike the realm's kernel panic, which locks the page, a lane's panic
-  isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
-  the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
-  the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
-  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
+  own arena each tick, however many rows the city has), 32 frames of stack. The gate reads every tick and every effect:
+  `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas out or reached past its bounds (an index
+  past an array or a column, memory, depth, output, each in the VM's own words), `LaneCapable` (Second Law) refuses a
+  write or an effect the word does not cover, and a refusal trips the lane panic: the lane's word is zeroed and sealed
+  (nothing is granted to it again), the fault is hashed onto a ledger chained from a fixed genesis with the city's
+  SHA-256, one line goes to the console (`[RING-0 LANE 3] isolated (gas): Zeroth Law: the lane ran its 4096-step budget
+  out this tick; … audit 9f3a…`), and the frame goes on: the other lanes run their next tick, and unlike the realm's
+  kernel panic, which locks the page, a lane's panic isolates the lane and nothing else. A plain mistake in a program (a
+  division by zero, a type error) is an error on the lane's readout and the lane runs again next tick. The network and
+  window doors are the air gap's to hold on the page's own global (`window.open` is held to this machine like `fetch`);
+  the code and host doors are not reachable from a lane at all, since a lane runs Crimson Noir Script, whose folder
+  names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -2108,22 +2107,21 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
-- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
-  bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
+- **`noir`** is Crimson Noir Script, the console's second language (`terminal/noirscript/`): statically typed, compiled
+  to bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
   operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
   `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
   `mask(bool)` for branchless code, horizontals (`hsum`, `hmin`, `hmax`, `any`, `all`), and the bit intrinsics
-  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound
-  operators, `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`,
-  `loop`, `for i in a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are
-  built-in tables: `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`,
-  `cars.mode` (0 ai, 1 player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`;
-  `query cars where speed > 5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four
-  lanes of a column (past the end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for
-  i in 0..10 { s += i * i; } print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1)
-  + fib(n - 2) } } print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v *
-  splat_f32x4(2.0), hsum(v));` prints `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing
-  instead of running it.
+  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound operators,
+  `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`, `loop`, `for i in
+  a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are built-in tables:
+  `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`, `cars.mode` (0 ai, 1
+  player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`; `query cars where speed >
+  5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four lanes of a column (past the
+  end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for i in 0..10 { s += i * i; }
+  print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+  print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v * splat_f32x4(2.0), hsum(v));` prints
+  `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing instead of running it.
   - **What it reads, and what it cannot touch.** The tables are copies: the engine builds fresh arrays from the
     realm's newest reading when a line runs (the bridge's one `soa.tables` reader), and the VM copies them again
     into its own arena, so a run is one consistent moment and nothing of the realm is ever handed out by reference.
@@ -2132,7 +2130,7 @@ cinema camera, the HUD. Track B is this console on its own.
     compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
     at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
     operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
-    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/crimson-noir-script.md`.
   - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
     three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
     characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
@@ -2473,10 +2471,10 @@ A short two-note cue sounds where the person you asked stands, so you hear who i
 ### The Ring-0 elite tier (`ring0`)
 
 Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
-<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
-`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
-set a tuning knob, send a parked car a player-style intent (a car with a driver is refused, as the realm's door
-refuses it: park it first with `setMode parked`), set the crowd's density or lean a feature of the inspector.
+<passphrase>`. It exists for the owner's own hand on the city: it opens Crimson Noir Script's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises Crimson Noir Script's limits for the console session, so a Crimson Noir Script
+program can set a tuning knob, send a parked car a player-style intent (a car with a driver is refused, as the realm's
+door refuses it: park it first with `setMode parked`), set the crowd's density or lean a feature of the inspector.
 
 - **Setting the passphrase.** `operator unlock`, then `ring0 elite set <passphrase>` (8 to 256 characters;
   inner spaces kept). The page keeps a record of it, `v1:<salt>:<SHA-256 of salt:passphrase>`, in this browser's

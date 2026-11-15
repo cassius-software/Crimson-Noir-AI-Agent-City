@@ -256,7 +256,7 @@ test('the doors: every network and window door is guarded or removed by the air 
     assert.ok(held.has(name), `${d.name}: the air gap neither guards nor removes it (${[...held].join(', ')})`)
   }
   assert.equal(g.navigator.sendBeacon, undefined)
-  // The lane modules: no door's bare name in their code (comments aside), as the NoirScript folder is held to.
+  // The lane modules: no door's bare name in their code (comments aside), as the Crimson Noir Script folder is held to.
   const code = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
   const bare = FORBIDDEN_DOORS.map((d) => d.name.split('.').at(-1)!).filter((n) => n !== 'open')
   for (const file of ['capabilities.ts', 'ring0Panic.ts', 'ring0Gate.ts']) {

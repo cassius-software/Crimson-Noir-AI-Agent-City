@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is how NoirScript values become console text: integers in decimal, booleans as
+ * Why does this file exist? It is how Crimson Noir Script values become console text: integers in decimal, booleans as
  * words, f32 as the shortest decimal that rounds back to the same binary32 (so `0.1` prints as `0.1`, not as the
  * double it is not; written the way JS writes a number, so magnitudes below 1e-6 and from 1e21 take exponent form,
  * `1e-7` and `3.4028235e+38`, which is the pinned decision where the spec asks for a plain decimal), vectors as

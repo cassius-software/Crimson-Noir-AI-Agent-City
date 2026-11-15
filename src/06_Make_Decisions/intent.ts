@@ -1122,7 +1122,7 @@ function markdownOf(goal: string, whys: readonly { question: string; answer: str
   if (!plan.length) lines.push('_Nothing to change._')
   if (now.length) lines.push('### Now — the Concierge applies these', ...now.map(item))
   if (later.length) lines.push('### Later — the operator’s console or a restart', ...later.map(item))
-  if (team) lines.push('', '## Team', `${team.lanes.length} ${team.scouting ? 'scouts' : 'sub-agents'}, one isolated lane each (\`08_Swarm/lanes.ts\`), a NoirScript probe a tick under the lane limits:`, ...teamLines(team))
+  if (team) lines.push('', '## Team', `${team.lanes.length} ${team.scouting ? 'scouts' : 'sub-agents'}, one isolated lane each (\`08_Swarm/lanes.ts\`), a Crimson Noir Script probe a tick under the lane limits:`, ...teamLines(team))
   const there = unmapped.filter((u) => u.exists === true)
   const gaps = unmapped.filter((u) => u.exists !== true)
   if (there.length) lines.push('', '## Already in the city', ...there.map((u) => `- ${u.label}${u.modules.length ? ` — ${code(u.modules)}` : ''}`))
