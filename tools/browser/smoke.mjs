@@ -55,7 +55,8 @@
  *   never builds the occlusion either). SwiftShader still draws
  *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
  *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
- *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
+ *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after; the
+ *   console the Menu opens has its prompt served by the on-screen keys, the phone's own keyboard kept down;
  * - inpage: the model kept in this page (09_Cognition/inPage.ts over wllama), cross-origin isolated and asked for two
  *   threads, with the tiny model tools/browser/tinyGguf.mjs writes (it answers "aaaa…" until its token limit):
  *   `ask file` through the console's own Enter and the browser's file picker, `ask gpu off`, someone who knows Design
@@ -80,7 +81,9 @@
  *   verifies from genesis;
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all, and whose `ask` (after `operator unlock`)
  *   reaches the page's router: with nothing answering on this machine it prints the router's one sentence, and every
- *   request it made was a look at this machine, none for a model file;
+ *   request it made was a look at this machine, none for a model file; then the on-screen keys from a pad (none shown
+ *   before a pad is used; Select raises them on the prompt, A types, the d-pad steps, X deletes, a click types, RT is
+ *   Enter, B folds them to the chip, and a real keyboard's key puts them away);
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker and costing the host only its build word, a model
@@ -1848,6 +1851,10 @@ const SCENARIOS = {
       check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'lite: Menu › Model file opens the picker from the tap and keeps the file, not loaded until asked',
         `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
       check(await menuConsole(p), 'lite: the Menu opens the console')
+      // A phone's console prompt is served by the on-screen keys (Esc, Tab, Ctrl and the arrows a terminal needs): open,
+      // or offered on the chip when the tap came too long before the focus, and the phone's own keyboard kept down.
+      const served = await p.waitFor(`document.querySelector('[aria-label="Ring-0 command line"]')?.getAttribute('inputmode') === 'none' && !!document.querySelector('.sk-root, .sk-chip')`, 10_000).then(() => true, () => false)
+      check(served, 'lite: on a phone the console\'s prompt is served by the on-screen keys, the phone\'s own keyboard kept down')
       const hw = await p.command('hardware', /^machine {3}/m)
       check(/^class {5}phone {2}profile lite {2}start -1 Lite {2}tiers -1\.\.0$/m.test(hw ?? '') && /^lanes {5}2500 simulated {2}\(2500 default for a phone, 60000 ceiling\)$/m.test(hw ?? ''),
         'lite: hardware names the phone class, the lite profile and its 2,500 lanes', (hw ?? '').split('\n').filter((l) => /^(class|lanes) /.test(l.trim())).join(' | ').slice(0, 300))
@@ -1915,6 +1922,42 @@ const SCENARIOS = {
         `${watch.requests.length} requests${strays.length ? `; strays ${strays.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}${files.length ? `; files ${files.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}`)
       const after = await p.eval('[window.__adapterAsks, document.querySelectorAll("canvas").length]')
       check(after[0] === 0 && after[1] === 0, 'tty: and still asked for no GPU and drew no canvas', `adapter requests ${after[0]}, canvases ${after[1]}`)
+      // The on-screen keys (ScreenKeys.tsx) from a pad: nothing shows until a pad is used; Select raises them on the
+      // prompt, the d-pad steps, A types, X deletes, a click types, RT is Enter, B folds them to the chip (the caret
+      // stays), and a real keyboard's key puts them away.
+      await p.enter('clear')
+      check(await p.eval(`!document.querySelector('.sk-root, .sk-chip')`), 'tty: before a pad is used, no on-screen keys and no chip')
+      const pad = async (b) => {
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0], [${b}])`); await p.frames(3)
+        await p.eval('window.__smokePad.set([0, 0, 0, 0], [])'); await p.frames(3)
+      }
+      const promptValue = `document.querySelector('[aria-label="Ring-0 command line"]')?.value`
+      await p.eval('window.__smokePad.connect(0); window.__smokePad.set([0, 0, 0, 0], [])')
+      await p.frames(4)
+      await pad(8)
+      const keysUp = await p.waitFor(`!!document.querySelector('.sk-root') && document.querySelector('[data-key-at]')?.getAttribute('data-key') === 'g' && document.documentElement.hasAttribute('data-keys-open')`, 10_000).then(() => true, () => false)
+      check(keysUp, 'tty: a pad\'s Select raises the on-screen keys on the prompt, the highlight on g')
+      await pad(0); await pad(15); await pad(0)
+      check(await p.eval(promptValue) === 'gh' && await p.eval(`location.search.includes('boot=tty')`), 'tty: A types the highlighted key, the d-pad steps, and Back to the city is not pressed', String(await p.eval(promptValue)))
+      await pad(2); await pad(2)
+      for (const k of ['l', 's']) {
+        const at = await p.eval(`(() => { const r = document.querySelector('[data-key="${k}"]')?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null })()`)
+        if (!at) break
+        await p.mouse('mouseMoved', at[0], at[1]); await p.mouse('mousePressed', at[0], at[1], 1); await p.mouse('mouseReleased', at[0], at[1])
+        await p.frames(2)
+      }
+      check(await p.eval(promptValue) === 'ls' && await p.eval(`document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`), 'tty: X deletes, clicked keys type, and the prompt keeps the caret', String(await p.eval(promptValue)))
+      await pad(7)
+      const ran = await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').includes('# ls') && ${promptValue} === ''`, 10_000).then(() => true, () => false)
+      const clear = await p.eval(`(() => { const a = document.querySelector('.r0-prompt')?.getBoundingClientRect(), k = document.querySelector('.sk-root')?.getBoundingClientRect(); return !!a && !!k && a.bottom <= k.top + 1 })()`)
+      check(ran && clear, 'tty: RT is Enter (the command ran), and the prompt stands above the keys', `ran ${ran}, clear ${clear}`)
+      await p.shot('tty-keys')
+      await pad(1)
+      check(await p.eval(`!document.querySelector('.sk-root') && !!document.querySelector('.sk-chip') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`), 'tty: B folds the keys to the chip and the prompt keeps the caret')
+      await p.tap('KeyX', 'x', 88)
+      await p.frames(3)
+      check(await p.eval(`!document.querySelector('.sk-root, .sk-chip')`) && await p.eval(promptValue) === 'x', 'tty: a real keyboard\'s key puts the keys away and types as usual', String(await p.eval(promptValue)))
+      await p.tap('Backspace', 'Backspace', 8)
       p.saveTranscript('tty')
       await p.shot('tty')
       check(p.errors.length === 0, 'tty: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))

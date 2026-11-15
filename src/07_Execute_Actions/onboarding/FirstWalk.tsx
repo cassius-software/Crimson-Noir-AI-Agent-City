@@ -35,6 +35,7 @@ import { besideRoom } from '../Concierge.tsx'
 import { WALK_SLOT } from '../walkSlot.ts'
 import { CONCIERGE_NAME } from './script.ts'
 import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
+import { insideKeys } from '../../04_Connect_Hardware/keyboardSense.ts'
 
 /** Where the card stands (full class strings, so Tailwind sees them). The card is inside the text size's zoom
  *  (index.css `.ui-zoom`), like the HUD it keeps clear of: the HUD's wide readout is 18 rem wide and about 14 rem tall
@@ -195,7 +196,8 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   const focusIn = useRef(false)
   const folding = foldable && shown && open
   const onOutside = useEffectEvent((e: PointerEvent) => {
-    if (e.pointerType === 'mouse') return
+    // A press on the on-screen keys (04_Connect_Hardware/ScreenKeys.tsx) is typing, not the visitor under way.
+    if (e.pointerType === 'mouse' || insideKeys(e.target)) return
     const at = e.target instanceof Node ? e.target : null
     if (at && (cardRef.current?.contains(at) || stripRef.current?.contains(at))) return
     setFolded(true)

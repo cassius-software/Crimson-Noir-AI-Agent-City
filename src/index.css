@@ -207,3 +207,149 @@ html[data-contrast='high'] [class*='animate-pulse'] {
   outline-offset: 3px;
   box-shadow: 0 0 0 7px rgba(0, 0, 0, 0.6);
 }
+
+/* The on-screen keys (04_Connect_Hardware/ScreenKeys.tsx): along the bottom, over the console and the cards and under
+   a card that must be answered first (z 10000), in the screen's own pixels (the text-size zoom is for words: the
+   legend and the chip zoom, the keys are sized by the screen). A row is at most 52 px and at least 30, about a tenth of
+   the screen's height between, so a landscape phone keeps room above them. The key under a pad's highlight wears the
+   scan's yellow ring; a held key and a pressed Shift or Ctrl are lit. */
+.sk-root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9999;
+  box-sizing: border-box;
+  padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
+  background: rgba(9, 11, 16, 0.96);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.sk-board {
+  --sk-row: clamp(30px, 9dvh, 52px);
+  display: grid;
+  grid-auto-rows: var(--sk-row);
+  gap: 4px;
+  max-width: 64rem;
+  margin: 0 auto;
+}
+.sk-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.11);
+  color: #e9ecf2;
+  font: 600 calc(var(--sk-row) * 0.4) / 1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+.sk-key:not([data-kind='char']) {
+  background: rgba(255, 255, 255, 0.05);
+  font-size: calc(var(--sk-row) * 0.32);
+}
+.sk-key[data-down],
+.sk-key[data-held] {
+  background: rgba(255, 255, 255, 0.3);
+}
+.sk-key[aria-pressed='true'] {
+  background: #e9ecf2;
+  color: #090b10;
+}
+.sk-key[data-key-at] {
+  position: relative;
+  z-index: 1;
+  outline: 4px solid #ffd400;
+  outline-offset: 0;
+}
+.sk-space {
+  display: block;
+  width: 40%;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.5;
+}
+.sk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 12px;
+  margin: 0 auto 4px;
+  max-width: 64rem;
+  color: #b9bfcc;
+  font: 500 12px / 1.3 ui-sans-serif, system-ui, sans-serif;
+}
+.sk-legend b {
+  color: #fff;
+  font-weight: 700;
+}
+.sk-chip-row {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(max(12px, env(safe-area-inset-bottom, 0px)) / var(--ui-zoom, 1));
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.sk-chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(9, 11, 16, 0.92);
+  color: #e9ecf2;
+  font: 600 14px / 1 ui-sans-serif, system-ui, sans-serif;
+}
+.sk-pill {
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+}
+html[data-contrast='high'] .sk-root,
+html[data-contrast='high'] .sk-chip {
+  background: #000 !important;
+  border-color: #fff !important;
+  border-width: 2px !important;
+}
+html[data-contrast='high'] .sk-key {
+  background: #000 !important;
+  color: #fff !important;
+  border: 2px solid #fff !important;
+}
+html[data-contrast='high'] .sk-key[aria-pressed='true'],
+html[data-contrast='high'] .sk-key[data-down],
+html[data-contrast='high'] .sk-key[data-held] {
+  background: #fff !important;
+  color: #000 !important;
+}
+html[data-contrast='high'] .sk-legend,
+html[data-contrast='high'] .sk-legend b {
+  color: #fff !important;
+}
+
+/* Everything else stands clear of the open keys: each overlay's root (the cards and the HUD inside it) ends at their
+   top edge (divided by the text-size zoom, which scales the root's own lengths too), the console drawn down from the
+   top is never taller than the room above them, and the console alone ends at them. */
+html[data-keys-open] main > .ui-zoom {
+  bottom: calc(var(--keys-height, 0px) / var(--ui-zoom, 1)) !important;
+}
+html[data-keys-open] .r0-root[data-open]:not([data-full]) {
+  max-height: calc(100dvh - var(--keys-height, 0px));
+  min-height: 0;
+}
+html[data-keys-open] .r0-root[data-full] {
+  height: calc(100% - var(--keys-height, 0px));
+}

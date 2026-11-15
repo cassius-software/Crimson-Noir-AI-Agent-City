@@ -841,6 +841,12 @@ export class Engine {
    */
   onBrowse: ((index: number) => void) | null = null
   /**
+   * The host's: what player 1's pads asked of the page this frame (04_Connect_Hardware/gamepad.ts PAD_UI: the pad's
+   * menu, the on-screen keys), never while a home's doorstep card has the pad (its own menu button closes it). Null:
+   * the asks go nowhere.
+   */
+  onPadUi: ((ui: number) => void) | null = null
+  /**
    * The host's: a home's doorstep card asked for (E or B on foot inside home `home`, its property index, with no car in
    * reach to take the E). Null: nothing opens.
    */
@@ -2676,6 +2682,9 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
+    // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
+    // unless a home's doorstep card has the pad.
+    const padUi = input.takeUi()
     // While a home is furnished the card's right stick turns its draft camera, and the head the poll just turned by
     // that stick (Input reads the look even under suspend) is held where it was: the player's figure does not turn in
     // the draft, and no tilt is left over when the card closes.
@@ -2700,6 +2709,7 @@ export class Engine {
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (mute) this.onMute?.()
+    if (padUi !== 0 && this.homeCard === null) this.onPadUi?.(padUi)
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.

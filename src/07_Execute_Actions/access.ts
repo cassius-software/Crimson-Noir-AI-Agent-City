@@ -11,7 +11,8 @@
  * `?vision=deutan`, `?ui=150`, `?captions=large`), and 'auto' contrast follows the operating system's own switch
  * (`prefers-contrast: more`). Four more are for the hands and the ears: the dwell click (04_Connect_Hardware/dwell.ts),
  * single-switch scanning (scanning.ts), a one-handed pad layout (gamepad.ts PadHand) and the screen reader's lines
- * (07_Execute_Actions/announcer.ts). The console's `access` command reads and writes them (accessBridge); the touch
+ * (07_Execute_Actions/announcer.ts), and one for typing: whether the on-screen keys (04_Connect_Hardware/ScreenKeys.tsx)
+ * follow the device in use, always serve a field, or never do (`keys`). The console's `access` command reads and writes them (accessBridge); the touch
  * Menu holds the two most wanted (contrast, text size). Pure: every function here runs in a Node test; `applyAccess`
  * takes the document's root element as an argument.
  *
@@ -26,6 +27,7 @@
  */
 import type { AccessBridge } from './terminal/bridge.ts'
 import type { PadHand } from '../04_Connect_Hardware/gamepad.ts'
+import { KEYS_SETTINGS, type KeysSetting } from '../04_Connect_Hardware/keyboardSense.ts'
 
 export type Contrast = 'auto' | 'high' | 'normal'
 export type Vision = 'none' | 'protan' | 'deutan' | 'tritan'
@@ -50,9 +52,11 @@ export interface AccessSettings {
   readonly pad: PadHand
   /** The screen reader told of the district, a vehicle beside you, a seat and the toasts (announcer.ts). */
   readonly announce: boolean
+  /** The on-screen keys: by the device in use ('auto', keyboardSense.ts), for every field ('on'), or never ('off'). */
+  readonly keys: KeysSetting
 }
 
-export const ACCESS_DEFAULTS: AccessSettings = Object.freeze({ contrast: 'auto', vision: 'none', scale: 100, captions: 'normal', dwell: false, scan: false, pad: 'both', announce: true })
+export const ACCESS_DEFAULTS: AccessSettings = Object.freeze({ contrast: 'auto', vision: 'none', scale: 100, captions: 'normal', dwell: false, scan: false, pad: 'both', announce: true, keys: 'auto' })
 
 /** Where the settings are kept between visits. */
 export const ACCESS_KEY = 'civic-simulation:access:v1'
@@ -62,7 +66,7 @@ export const VISIONS: readonly Vision[] = ['none', 'protan', 'deutan', 'tritan']
 export const CAPTION_SIZES: readonly CaptionSize[] = ['normal', 'large', 'huge']
 export const PAD_HANDS: readonly PadHand[] = ['both', 'left', 'right']
 /** The console's field words, in the order accessStatus prints their lines. */
-export const ACCESS_FIELDS = ['contrast', 'vision', 'text', 'captions', 'dwell', 'scan', 'pad', 'announce'] as const
+export const ACCESS_FIELDS = ['contrast', 'vision', 'text', 'captions', 'dwell', 'scan', 'pad', 'announce', 'keys'] as const
 /** The caption strip's font size per setting, CSS px before the text scale. */
 export const CAPTION_PX: Readonly<Record<CaptionSize, number>> = Object.freeze({ normal: 13, large: 18, huge: 24 })
 
@@ -77,6 +81,7 @@ const isContrast = (v: unknown): v is Contrast => typeof v === 'string' && (CONT
 const isVision = (v: unknown): v is Vision => typeof v === 'string' && (VISIONS as readonly string[]).includes(v)
 const isCaptionSize = (v: unknown): v is CaptionSize => typeof v === 'string' && (CAPTION_SIZES as readonly string[]).includes(v)
 const isHand = (v: unknown): v is PadHand => typeof v === 'string' && (PAD_HANDS as readonly string[]).includes(v)
+const isKeys = (v: unknown): v is KeysSetting => typeof v === 'string' && (KEYS_SETTINGS as readonly string[]).includes(v)
 /** The console's and the URL's on and off words. */
 const onOff = (v: string): boolean | null => (v === 'on' || v === '1' || v === 'true' ? true : v === 'off' || v === '0' || v === 'false' ? false : null)
 
@@ -86,7 +91,7 @@ export function loadAccess(store: KeyStore | null = browserStore()): AccessSetti
   try {
     const raw = store.getItem(ACCESS_KEY)
     if (typeof raw !== 'string' || !raw || raw.length > 256) return ACCESS_DEFAULTS
-    const d = JSON.parse(raw) as { v?: unknown; contrast?: unknown; vision?: unknown; scale?: unknown; captions?: unknown; dwell?: unknown; scan?: unknown; pad?: unknown; announce?: unknown }
+    const d = JSON.parse(raw) as { v?: unknown; contrast?: unknown; vision?: unknown; scale?: unknown; captions?: unknown; dwell?: unknown; scan?: unknown; pad?: unknown; announce?: unknown; keys?: unknown }
     if (!d || typeof d !== 'object' || d.v !== 1) return ACCESS_DEFAULTS
     return Object.freeze({
       contrast: isContrast(d.contrast) ? d.contrast : ACCESS_DEFAULTS.contrast,
@@ -97,23 +102,24 @@ export function loadAccess(store: KeyStore | null = browserStore()): AccessSetti
       scan: typeof d.scan === 'boolean' ? d.scan : ACCESS_DEFAULTS.scan,
       pad: isHand(d.pad) ? d.pad : ACCESS_DEFAULTS.pad,
       announce: typeof d.announce === 'boolean' ? d.announce : ACCESS_DEFAULTS.announce,
+      keys: isKeys(d.keys) ? d.keys : ACCESS_DEFAULTS.keys,
     })
   } catch { return ACCESS_DEFAULTS }
 }
 
 export function saveAccess(s: AccessSettings, store: KeyStore | null = browserStore()): void {
   if (!store) return
-  try { store.setItem(ACCESS_KEY, JSON.stringify({ v: 1, contrast: s.contrast, vision: s.vision, scale: s.scale, captions: s.captions, dwell: s.dwell, scan: s.scan, pad: s.pad, announce: s.announce })) } catch { /* storage unavailable */ }
+  try { store.setItem(ACCESS_KEY, JSON.stringify({ v: 1, contrast: s.contrast, vision: s.vision, scale: s.scale, captions: s.captions, dwell: s.dwell, scan: s.scan, pad: s.pad, announce: s.announce, keys: s.keys })) } catch { /* storage unavailable */ }
 }
 
 /**
  * The settings for this visit from the URL over `base`: `?contrast=high|normal|auto`, `?vision=protan|deutan|tritan|none`,
  * `?ui=100|125|150|175|200` (any number is rounded to the nearest step), `?captions=large|huge|normal`
  * (`?captions=0`, the strip's off switch, is another option's and ignored here), `?dwell=1|0`, `?scan=1|0`,
- * `?pad=both|left|right` and `?announce=1|0`. Anything else leaves `base` as it is.
+ * `?pad=both|left|right`, `?announce=1|0` and `?keys=auto|on|off`. Anything else leaves `base` as it is.
  */
 export function accessFromQuery(q: { get(name: string): string | null }, base: AccessSettings = ACCESS_DEFAULTS): AccessSettings {
-  const contrast = q.get('contrast'), vision = q.get('vision'), ui = q.get('ui'), captions = q.get('captions'), pad = q.get('pad')
+  const contrast = q.get('contrast'), vision = q.get('vision'), ui = q.get('ui'), captions = q.get('captions'), pad = q.get('pad'), keys = q.get('keys')
   // An empty ?ui= is no number (Number('') is 0, which would round to 100 % over a kept size).
   const n = ui === null || ui.trim() === '' ? Number.NaN : Number(ui)
   const nearest = Number.isFinite(n) ? [...SCALES].sort((a, b) => Math.abs(a - n) - Math.abs(b - n) || a - b)[0] : null
@@ -127,6 +133,7 @@ export function accessFromQuery(q: { get(name: string): string | null }, base: A
     scan: flag('scan', base.scan),
     pad: isHand(pad) ? pad : base.pad,
     announce: flag('announce', base.announce),
+    keys: isKeys(keys) ? keys : base.keys,
   }
   return (Object.keys(next) as (keyof AccessSettings)[]).every((k) => next[k] === base[k]) ? base : Object.freeze(next)
 }
@@ -139,7 +146,7 @@ export function highContrast(s: AccessSettings, prefersMore: boolean): boolean {
 /**
  * One field set from the console's words: `contrast auto|high|normal`, `vision none|protan|deutan|tritan`,
  * `text 100|125|150|175|200` (`text 100%` too), `captions normal|large|huge`, `dwell on|off`, `scan on|off`,
- * `pad both|left|right`, `announce on|off`. Returns the next settings, or the error for the console (a string).
+ * `pad both|left|right`, `announce on|off`, `keys auto|on|off`. Returns the next settings, or the error for the console (a string).
  */
 export function withAccess(s: AccessSettings, field: string, value: string): AccessSettings | string {
   const f = field.trim().toLowerCase(), v = value.trim().toLowerCase()
@@ -162,6 +169,8 @@ export function withAccess(s: AccessSettings, field: string, value: string): Acc
     }
     case 'pad':
       return isHand(v) ? Object.freeze({ ...s, pad: v }) : `access: pad is one of ${PAD_HANDS.join(', ')}`
+    case 'keys':
+      return isKeys(v) ? Object.freeze({ ...s, keys: v }) : `access: keys is one of ${KEYS_SETTINGS.join(', ')}`
     default:
       return `access: nothing to set called '${field.trim()}': ${ACCESS_FIELDS.join(', ')}`
   }
@@ -241,15 +250,19 @@ export function visionWord(v: Vision): string {
 // ---------------------------------------------------------------- the page
 
 /** The document's root element, by what is written to it. */
-export interface RootLike { dataset: { contrast?: string; pad?: string }; style: { setProperty(name: string, value: string): void } }
+export interface RootLike { dataset: { contrast?: string; pad?: string; keys?: string; assist?: string }; style: { setProperty(name: string, value: string): void } }
 
 /**
  * Writes the settings onto the page's root: `data-contrast` (index.css keys its rules on it), `--ui-zoom`, and
- * `data-pad`, the hand the ways out of a stopped city read (padNav.ts), since they can stand where no prop reaches.
+ * `data-pad`, the hand the ways out of a stopped city read (padNav.ts), since they can stand where no prop reaches, and
+ * for the on-screen keys, mounted beside the app (ScreenKeys.tsx), `data-keys` (the setting) and `data-assist` (the
+ * hands they serve: "scan", "dwell", both or neither; never `data-scan`, which marks the control the scan offers).
  */
 export function applyAccess(s: AccessSettings, prefersMore: boolean, root: RootLike): void {
   root.dataset.contrast = highContrast(s, prefersMore) ? 'high' : 'normal'
   root.dataset.pad = s.pad
+  root.dataset.keys = s.keys
+  root.dataset.assist = [s.scan ? 'scan' : '', s.dwell ? 'dwell' : ''].filter(Boolean).join(' ')
   root.style.setProperty('--ui-zoom', String(s.scale / 100))
 }
 
@@ -280,7 +293,8 @@ export function accessStatus(s: AccessSettings, prefersMore: boolean, visionNote
     `scan      ${s.scan ? 'on: the controls are offered in turn, Space presses the one offered' : 'off'}  (access scan on|off)`,
     `pad       ${s.pad === 'both' ? 'both hands' : `${s.pad} hand: its stick moves, with ${s.pad === 'left' ? 'L1' : 'R1'} held it looks; select runs, start pings`}  (access pad both|left|right)`,
     `announce  ${s.announce ? 'on: the district, a vehicle beside you, a seat and the toasts are read' : 'off'}  (access announce on|off)`,
-    `kept      ${ACCESS_KEY}; for one visit: ?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce=`,
+    `keys      ${s.keys === 'auto' ? 'auto: on screen for a pad, a headset, a switch, a resting pointer, and a phone at the prompt' : s.keys === 'on' ? 'on: on screen for every field' : 'off: never on screen'}  (access keys auto|on|off)`,
+    `kept      ${ACCESS_KEY}; for one visit: ?contrast= ?vision= ?ui= ?captions= ?dwell= ?scan= ?pad= ?announce= ?keys=`,
   ]
 }
 
@@ -305,7 +319,7 @@ export function accessBridge(
     },
     reset: (): string => {
       write(ACCESS_DEFAULTS, true)
-      return 'access: the defaults (auto contrast, no colour filter, text 100 %, normal captions, no dwell, no scan, both hands, announcing)'
+      return 'access: the defaults (auto contrast, no colour filter, text 100 %, normal captions, no dwell, no scan, both hands, announcing, keys by the device in use)'
     },
   })
 }

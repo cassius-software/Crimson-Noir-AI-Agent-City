@@ -78,11 +78,13 @@ at all, where Sloane still answers through a model on this machine or in the app
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
-| Ghost view | G | | Menu: Ghost view |
-| Rain mode | M | | Menu: Rain mode |
+| Ghost view | G | menu button, then Ghost view | Menu: Ghost view |
+| Rain mode | M | menu button, then Rain mode | Menu: Rain mode |
 | Microphone on · mute (the HUD's pill does the same) | V | right-stick click | Menu: Microphone |
-| Hide HUD | H | | Menu: Hide HUD |
-| Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
+| Hide HUD | H | menu button, then Hide HUD | Menu: Hide HUD |
+| Ring-0 console | `~` (Backquote) | menu button, then Console | Menu: Console (Close shuts it) |
+| The pad's menu | | menu button (start) | |
+| On-screen keys (see below) | not shown | select button, or the pad's menu: Keyboard | a tap on the console's prompt; the keys' chip |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
 | Allow / refuse a city action an agent proposed | Y / N with the console closed; act ok / act no, or y / n, in it | d-pad and the south face button on the card | tap Allow / Refuse |
 
@@ -95,8 +97,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   Like them it answers the touch itself, so it opens with the other thumb on the stick. It opens a sheet with the
   keyboard's one-key actions, upward and to the button's left (above the button where there is no room to its left),
   never past the edge of the screen (a sheet taller than the room scrolls); turning the phone or getting in or out of
-  a car closes it. The console opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button
-  on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
+  a car closes it. The console opens from the tap itself, its prompt served by the page's own keys (see On-screen keys
+  below), and shows a Close button on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
   takes focus. Held upright while driving, Ping, Reset and Exit car stand in a column, clear of the stick (on a phone
   under 376 px across, Reset and Exit car share a row above the brakes, which stand one over the other). On a short
   screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
@@ -173,6 +175,42 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   when centred), and then the order is dropped for good. Two real triggers held still at half pull together for half
   a second drop it too, until the pad reconnects. It is still a guess: a lever parked at its middle when the pad
   wakes, or a pair of triggers on a four-axis pad, is read as a stick and can turn or spin the view.
+- **The pad's menu** (`07_Execute_Actions/PadMenu.tsx`). The menu button (start; on a pad read by position with no
+  centre buttons, the left shoulder; with a one-handed layout, select with that hand's shoulder held) opens a menu that
+  holds the touch Menu's items (Console, Model file, Clock, Ghost view, Rain mode, Microphone, Headset, High contrast,
+  Text size, Hide HUD; one list, `04_Connect_Hardware/menuItems.ts`, so the two never drift apart), with Keyboard (the
+  on-screen keys) and Sloane (her card, while her chip shows) first. The d-pad or the stick moves the highlight, the
+  south button chooses, the east button or the menu button again closes it. While it is open it has player 1's pads,
+  so the game stands still and no card acts on the same press. Model file and Headset need a person's own press (the
+  browser opens a file picker or a headset session only inside a key, a click or a tap, and a pad's button is none),
+  so the menu says to press them again that way. The controls' hints and the first walk name the pad's own menu
+  button (Menu, +, Start) where they named `~` before.
+- **On-screen keys** (`04_Connect_Hardware/ScreenKeys.tsx`, `keysDesk.ts`, `keyboardSense.ts`). A keyboard the page
+  draws, with the keys a console needs (Esc, Tab, Ctrl, the arrows, a symbols board, an accents board, Shift and caps
+  lock), which types into the field with the caret as a real key would (the key down, the edit, the field's input
+  event, the key up after the page has had its turn), so the console's history, Tab completion and Ctrl+C work from
+  it. No browser says whether a keyboard is plugged in, so the page goes by the device last used instead. After a pad
+  (or a headset's controller) the keys are offered on any text field as a chip at the foot of the screen, and open when
+  asked for: the select button, the pad's menu's Keyboard, or the chip. On a phone or tablet (a coarse main pointer and
+  a touch screen) they open on a tap on the console's prompt, keeping the phone's own keyboard down, since a phone's
+  keyboard has no Esc, Tab, Ctrl or arrows; a chat line or a name keeps the phone's own keyboard, which has the
+  languages and the dictation the page's keys lack. A key pressed on a real keyboard (a key down the browser made, with
+  a board key's code, not a key in the middle of composing, which a phone's keyboard sends) puts them away; on a phone
+  or tablet they stay away for ten minutes after the last such key, and a pad's button offers them again. With switch scanning or the dwell click on, they serve every text
+  field. `access keys on` serves every field and `access keys off` never shows them (`?keys=`, kept with the other
+  settings). With a pad the legend above the keys names its own buttons: the d-pad or the left stick moves, south
+  types, west deletes, north is a space, the shoulders move the caret, the left trigger is Shift, the right trigger or
+  the menu button is Enter, select changes the board, east puts the keys down to the chip (the caret stays); a held
+  south button repeats a letter. A tap or a click types on release, on the key it ends on; Backspace and the arrows
+  act on press and repeat while held. On a phone the keyboard key hands the field to the phone's own keyboard (a pad's
+  select takes it back). While they are open they have player 1's pads, the panels and the console stand above them,
+  and a card that must be answered first (the action card, the way-out card) folds them to the chip. A finger on a key
+  never counts as a press outside Sloane's card or the first walk's. Checked in CI and emulation only: unit suites for
+  each part, and the browser smoke test (headless Chrome with a simulated standard pad on the console alone, and the
+  console on an emulated Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or
+  with a screen reader. An iPhone's own keyboard sends real key codes, so once it is chosen with the keyboard key the
+  page takes it for a keyboard for those ten minutes. Firefox for Android has been reported to expose no gamepads to
+  pages; there a pad's d-pad reaches the field as arrow keys and `access keys on` brings the keys.
 
 ## URL options
 
@@ -1058,7 +1096,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
-  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
+  glance with the shoulder leaves it), select with the shoulder held opens the pad's menu instead, and start is a ping
+  for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
   clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
   position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
@@ -1071,7 +1110,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
   has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
   first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
-  own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
+  own. The **on-screen keys** (`access keys auto|on|off`, `?keys=`) are under Controls. Sticky keys are the operating
+  system's own feature. How the filter and the zoom look on a real display, and the
   dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,

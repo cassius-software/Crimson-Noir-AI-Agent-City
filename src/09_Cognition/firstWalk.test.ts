@@ -285,6 +285,9 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('fleet', PAD).text, /press A/)
   assert.match(askFor('ring0', TOUCH).text, /Menu/)
   assert.match(askFor('ring0', KEYS).text, /~ key/)
+  const padMenu: FirstWalkOptions = { ...PAD, words: { ...PAD.words, console: 'Menu' } }
+  assert.match(askFor('ring0', padMenu).text, /Press Menu for the menu, choose Console, type the word laws on the keys that rise/, 'a pad has no ~ key: its own menu')
+  assert.match(hintFor('ring0', padMenu).text, /once you press Menu and choose Console, and the keys rise with it/)
   assert.match(askFor('style', TOUCH).text, /Tap Look/)
   assert.match(askFor('style', KEYS).text, /Click Look/)
   assert.deepEqual([...askFor('style', PAD).keep], ['Look', 'Done'])

@@ -15,6 +15,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **On-screen keys and a menu for the pad.** A keyboard the page draws (`04_Connect_Hardware/ScreenKeys.tsx`, with
+  `keysDesk.ts`, `keyboardSense.ts`, `keyLayout.ts`, `keysPad.ts` and `textEntry.ts`) types into the field with the
+  caret as a real key would, with the Esc, Tab, Ctrl and arrow keys a console needs. No browser says whether a
+  keyboard is plugged in, so it goes by the device last used: after a pad it is offered on any text field and opens on
+  the select button, the pad's menu or its chip; on a phone or tablet it opens on a tap on the console's prompt (a chat
+  line keeps the phone's own keyboard, and its keyboard key hands any field back to it); a real keyboard's key puts it
+  away; switch scanning and the dwell click get it on every field; `access keys auto|on|off` and `?keys=` choose. The
+  pad's menu button (start) opens a menu with the touch Menu's items, the on-screen keys and Sloane, so a pad alone
+  reaches the console, ghost view, the HUD and the text size; hints and the first walk name the pad's own menu button
+  where they named `~`. While either is open it has player 1's pads. Checked by unit suites and by the browser smoke
+  test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
+  a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

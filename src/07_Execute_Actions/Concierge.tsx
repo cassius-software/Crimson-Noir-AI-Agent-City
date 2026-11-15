@@ -40,6 +40,8 @@ import type { LaneLine } from '../08_Swarm/team.ts'
 import { phaseLine, type Chat, type ChatTurn, type Voice } from './onboarding/voice.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
 import { heardGoal } from './onboarding/heard.ts'
+import { insideKeys } from '../04_Connect_Hardware/keyboardSense.ts'
+import { keysView } from '../04_Connect_Hardware/keysHost.ts'
 
 /** The Concierge's name (onboarding/script.ts), for any other surface that mentions them. */
 export { CONCIERGE_NAME }
@@ -702,8 +704,10 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
 
   // Greetings settle into the chip; so does the name question for a controller player, who may have no
-  // keyboard — unless they have started typing (typing into the field leaves the family unchanged).
-  const padAsk = view === 'ask' && isPadFamily(family) && draft === ''
+  // keyboard — unless they have started typing (typing into the field leaves the family unchanged), or have the
+  // on-screen keys open to type it (04_Connect_Hardware/ScreenKeys.tsx: the pad is theirs while they stand open).
+  const keys = useSyncExternalStore(keysView.subscribe, keysView.get, keysView.get)
+  const padAsk = view === 'ask' && isPadFamily(family) && draft === '' && keys.mode !== 'open'
   useEffect(() => {
     if (!visible || (view !== 'greet' && view !== 'nudge' && !padAsk)) return
     const id = window.setTimeout(() => setView('chip'), view === 'nudge' ? Math.max(settleMs, SLOANE.nudgeMs * (settleMs / SLOANE.settleMs)) : settleMs)
@@ -726,7 +730,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     }
   })
   const onWindowPointer = useEffectEvent((e: PointerEvent) => {
-    if (e.pointerType === 'mouse' || cardRef.current?.contains(e.target as Node)) return
+    // A press on the on-screen keys is typing in the card's field, not a step away from it.
+    if (e.pointerType === 'mouse' || cardRef.current?.contains(e.target as Node) || insideKeys(e.target)) return
     settle()
   })
   // Ground covered since the card opened (or came back into view) is movement whatever the input. A

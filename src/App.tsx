@@ -53,7 +53,11 @@ import { createNetClient } from './10_Network/netClient.ts'
 import { admissibleChat, admissibleName } from './10_Network/replication.ts'
 import type { NetControls } from './07_Execute_Actions/engine.ts'
 import { GATE_CHECK_NAMES, type GateHandle, type GateLease, type Mind, type SkillGate } from './07_Execute_Actions/operator.ts'
-import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
+import { TouchControls, type TouchMenuHost } from './04_Connect_Hardware/TouchControls.tsx'
+import { menuItems, type MenuItem } from './04_Connect_Hardware/menuItems.ts'
+import { expectKeys, keysBlocked, keysHost, summonKeys } from './04_Connect_Hardware/keysHost.ts'
+import { PAD_UI } from './04_Connect_Hardware/gamepad.ts'
+import { PadMenu } from './07_Execute_Actions/PadMenu.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
@@ -92,7 +96,7 @@ import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { CONCIERGE_NAME, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -910,6 +914,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const termRef = useRef<TerminalHandle>(null)
   const [engine, setEngine] = useState<Engine | null>(null)
   const [bridge, setBridge] = useState<TerminalBridge | null>(null)
+  // The pad's own menu (PadMenu.tsx), opened and closed by the pad's menu button (the engine's onPadUi).
+  const [padMenu, setPadMenu] = useState(false)
+  const closePadMenu = useCallback(() => setPadMenu(false), [])
   const [termOpen, setTermOpen] = useState(false)
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
@@ -1943,6 +1950,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // its doorstep card (the chip calls openHome itself).
         e.onBrowse = openStore
         e.onHome = openHome
+        // The pad's menu button opens or closes its menu; its select button asks for the on-screen keys
+        // (04_Connect_Hardware/ScreenKeys.tsx), on the field that has the caret, else the console's prompt.
+        e.onPadUi = (ui) => {
+          if (ui & PAD_UI.menu) setPadMenu((o) => !o)
+          if (ui & PAD_UI.keys) summonKeys()
+        }
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
@@ -2130,6 +2143,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       link.source = null
       link.sound = () => true
       setEngine(null)
+      setPadMenu(false)
       setBridge(null)
       setSloane(null)
       setSloaneTalk(null)
@@ -2156,6 +2170,70 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const env = useMemo(() => pageEnv(), [])
   const failure = error !== null ? classify(error.cause, env) : locked !== null && haltClass(locked) !== 'audit' ? explainHalt(locked, env) : null
 
+  // The one-key actions for a pad's menu and a phone's touch Menu alike (TouchControls.tsx menuItems).
+  const menuHost: TouchMenuHost | null = engine && hud ? {
+    onConsole: () => termRef.current?.open(),
+    // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
+    onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
+    onHud: () => setHudVisible((v) => !v),
+    hudVisible,
+    ghost: hud.output.ghost === true,
+    rain: hud.output.matrix === true,
+    // The headset item only where a session can be asked for; the tap itself is the user activation.
+    onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
+    headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
+    mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
+    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+    contrast: high,
+    onContrast: () => onAccess(toggleContrast(access, prefersMore)),
+    textScale: access.scale,
+    onTextScale: () => onAccess(cycleScale(access)),
+  } : null
+  // A card that must be answered first (the action card, the way-out card) has the pad and the screen: the pad's menu
+  // closes and the on-screen keys fold to their chip (keysHost.ts keysBlocked) until it is gone.
+  const blocked = (act !== null && veilDone && locked === null && bridge !== null) || failure !== null
+  useEffect(() => {
+    keysBlocked.set(blocked)
+    if (blocked) setPadMenu(false)
+  }, [blocked])
+  useEffect(() => () => keysBlocked.set(false), [])
+  // What the on-screen keys need of the running city: player 1's pads as the game reads them, the lending of them (to
+  // the keys and the pad's menu, each its own lender: the game has them back once both have given them), the console.
+  useEffect(() => {
+    if (!engine) return
+    const lenders = new Set<string>()
+    keysHost.set({
+      pads: () => engine.input.padViews,
+      polledAt: () => engine.input.polledAt,
+      lend: (owner, on) => {
+        if (on) lenders.add(owner)
+        else lenders.delete(owner)
+        engine.input.lend(lenders.size > 0)
+      },
+      openConsole: () => termRef.current?.open(),
+    })
+    return () => {
+      keysHost.set(null)
+      engine.input.lend(false)
+    }
+  }, [engine])
+  // Sloane's card is opened from the pad's menu as her chip's own press opens it, and the goal field it focuses gets the
+  // on-screen keys open; where her card is open already, the keys go to its field.
+  const sloaneShown = hud !== null && veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null
+  const padItems: MenuItem[] = menuHost && engine ? [
+    { label: 'Keyboard', run: () => { summonKeys() } },
+    ...(sloaneShown ? [{
+      label: CONCIERGE_NAME,
+      run: () => {
+        const chip = document.querySelector<HTMLElement>('[data-concierge="chip"]')
+        if (!chip) { summonKeys(); return }
+        expectKeys()
+        chip.click()
+      },
+    }] : []),
+    ...menuItems(menuHost, engine.input),
+  ] : []
+
   return (
     <main ref={mainRef} className="relative h-full w-full overflow-hidden bg-slate-900">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
@@ -2169,24 +2247,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           input={engine.input}
           driving={hud.input.mode === 'vehicle'}
           nearVehicle={hud.input.nearVehicle}
-          menu={{
-            onConsole: () => termRef.current?.open(),
-            // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
-            onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
-            onHud: () => setHudVisible((v) => !v),
-            hudVisible,
-            ghost: hud.output.ghost === true,
-            rain: hud.output.matrix === true,
-            // The headset item only where a session can be asked for; the tap itself is the user activation.
-            onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
-            headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
-            mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
-            // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
-            contrast: high,
-            onContrast: () => onAccess(toggleContrast(access, prefersMore)),
-            textScale: access.scale,
-            onTextScale: () => onAccess(cycleScale(access)),
-          }}
+          menu={menuHost ?? undefined}
         />
       )}
       {/* Never over a halted city: the way-out card (RecoveryCard.tsx) holds focus on Restart, and Sloane's name field,
@@ -2287,6 +2348,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           dark={hud.customer.daylight < 0.35}
         />
       )}
+      {/* The pad's own menu: over the console (a pad player may open it there), under a card that must be answered first,
+          which closes it. */}
+      <PadMenu open={padMenu && !blocked} items={padItems} onClose={closePadMenu} />
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}

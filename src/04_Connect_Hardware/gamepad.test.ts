@@ -20,7 +20,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { PADDLE } from './dualsense.ts'
 import {
-  createAnalog, GENERIC_MS, GenericPads, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
+  createAnalog, GENERIC_MS, GenericPads, isUsablePad, PAD, PAD_EDGE, PAD_LOOK, PAD_TUNING, PAD_UI, PadLook, PadMapper, padFamilyOf, padName, parsePadId,
   radialDeadzone, triggerValue,
 } from './gamepad.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
@@ -652,4 +652,144 @@ test('one hand (PadHand): that stick moves, and looks while its shoulder is held
   assert.equal(a.run, false, 'both hands: the stick home ends it at once')
   m.read([pad({ axes: [0.6, 0, 0, -0.6] })], a)
   assert.ok(a.moveX > 0.5 && a.lookY > 0, 'two sticks again')
+})
+
+test('lend: the pads borrowed by the on-screen keys give the game stillness and no edge but the mute, and no press replays when they come back', () => {
+  const m = new PadMapper()
+  const out = createAnalog()
+  m.read([pad()], out)
+  m.lend(true)
+  assert.equal(m.borrowed, true)
+  // Everything pressed and pushed at once: the game hears only the mute.
+  const busy = pad({ axes: [1, 0, 1, 0], pressed: [PAD.south, PAD.north, PAD.east, PAD.left, PAD.right, PAD.r1, PAD.l3, PAD.r3], values: { [PAD.r2]: 1, [PAD.l2]: 1 } })
+  assert.equal(m.read([busy], out), PAD_EDGE.mute)
+  assert.deepEqual({ ...out }, { ...createAnalog() }, 'no stick, no trigger, no handbrake, no run')
+  assert.equal(m.running, false, 'the left stick\'s click did not latch a run behind the keys')
+  assert.equal(m.active, true, 'the device line still says a pad is in use')
+  assert.equal(m.pressed, true)
+  assert.equal(m.views.length, 1, 'the borrower reads the same pads')
+  assert.equal(m.read([busy], out), 0, 'held: no edge')
+  // Handed back with the buttons still down: nothing until they are let go.
+  m.lend(false)
+  assert.equal(m.borrowed, true)
+  assert.equal(m.read([busy], out), 0)
+  assert.deepEqual({ ...out }, { ...createAnalog() })
+  // The buttons and the sticks are waited for apart: a button let go is the game's again while a stick is still pushed.
+  assert.equal(m.read([pad({ axes: [1, 0, 0, 0], pressed: [PAD.south] })], out), 0)
+  assert.equal(out.moveX, 0)
+  assert.equal(m.read([pad({ axes: [1, 0, 1, 0] })], out), 0)
+  assert.equal(m.borrowed, false, 'every button is up')
+  assert.equal(out.moveX, 0, 'the stick that stepped the highlight does not walk the avatar until it has been centred')
+  assert.equal(out.lookX, 0)
+  assert.equal(m.read([pad({ axes: [1, 0, 0, 0], pressed: [PAD.south] })], out), PAD_EDGE.interact, 'a press is a press again, stick or no stick')
+  assert.equal(out.moveX, 0)
+  m.read([pad()], out)
+  m.read([pad({ axes: [1, 0, 0, 0] })], out)
+  assert.ok(out.moveX > 0.9, 'centred once: the stick walks again')
+  // Lending twice, or handing back what was not lent, changes nothing.
+  m.lend(false)
+  assert.equal(m.borrowed, false)
+})
+
+test('views: the pads of the last read in the standard shape, and whether a button went down', () => {
+  const m = new PadMapper()
+  const out = createAnalog()
+  const a = pad({ index: 0 }), b = pad({ index: 1, pressed: [PAD.select] })
+  m.read([a, null, b], out)
+  assert.deepEqual(m.views, [a, b])
+  assert.equal(m.pressed, true, 'any button, mapped to an action or not')
+  const views = m.views
+  m.read([a, b], out)
+  assert.equal(m.views, views, 'the same list, refilled')
+  assert.equal(m.pressed, false, 'held is not pressed')
+  m.read([pad({ axes: [1, 1, 1, 1] })], out)
+  assert.equal(m.pressed, false, 'a stick is not a button')
+  assert.equal(m.views.length, 1)
+  m.read(null, out)
+  assert.equal(m.views.length, 0)
+  // A pad without the standard mapping is seen as the mapper lays it out: seventeen buttons, four axes.
+  const odd = pad({ index: 2, mapping: '', id: 'Unknown pad (Vendor: 1234 Product: 5678)' })
+  m.read([odd], out)
+  assert.equal(m.views.length, 1)
+  assert.notEqual(m.views[0], odd, 'a view, not the raw pad')
+  assert.equal(m.views[0].index, 2)
+})
+
+test('ui: the centre buttons ask for the page\'s menu and keys, never for anything in the game', () => {
+  const m = new PadMapper()
+  const out = createAnalog()
+  m.read([pad()], out)
+  assert.equal(m.read([pad({ pressed: [PAD.start] })], out), 0, 'no edge for the game')
+  assert.equal(m.ui, PAD_UI.menu)
+  assert.equal(m.read([pad({ pressed: [PAD.start] })], out), 0)
+  assert.equal(m.ui, 0, 'held: asked once')
+  m.read([pad({ pressed: [PAD.select] })], out)
+  assert.equal(m.ui, PAD_UI.keys)
+  m.read([pad({ pressed: [PAD.select, PAD.start] })], out)
+  assert.equal(m.ui, PAD_UI.menu, 'only the one that went down')
+  m.read([pad()], out)
+  m.read([pad({ pressed: [PAD.select, PAD.start] })], out)
+  assert.equal(m.ui, PAD_UI.menu | PAD_UI.keys)
+  // West and the left shoulder stay nobody's on a standard pad.
+  m.read([pad()], out)
+  assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1] })], out), 0)
+  assert.equal(m.ui, 0)
+  // Lent, the pads ask the page for nothing: the keys read the centre buttons themselves.
+  m.read([pad()], out)
+  m.lend(true)
+  m.read([pad({ pressed: [PAD.start, PAD.select] })], out)
+  assert.equal(m.ui, 0)
+  m.lend(false)
+  m.read([pad({ pressed: [PAD.start, PAD.select] })], out)
+  assert.equal(m.ui, 0, 'handed back still held: nothing')
+  m.read([pad()], out)
+  m.read([pad({ pressed: [PAD.start] })], out)
+  assert.equal(m.ui, PAD_UI.menu)
+})
+
+test('ui, one hand: select with the hand\'s shoulder held is the menu and latches no run; the shoulder with start stays the aimed ping', () => {
+  for (const [hand, shoulder] of [['left', PAD.l1], ['right', PAD.r1]] as const) {
+    const m = new PadMapper()
+    m.hand = hand
+    const out = createAnalog()
+    m.read([pad()], out)
+    // Select alone: the run latch, as before, and nothing asked of the page.
+    m.read([pad({ pressed: [PAD.select] })], out)
+    assert.equal(m.ui, 0, hand)
+    assert.equal(m.running, true, `${hand}: select alone still latches the run`)
+    m.read([pad()], out)
+    m.read([pad({ pressed: [PAD.select] })], out)
+    assert.equal(m.running, false)
+    m.read([pad()], out)
+    // The shoulder held, then select: the menu, and no run.
+    m.read([pad({ pressed: [shoulder] })], out)
+    assert.equal(m.read([pad({ pressed: [shoulder, PAD.select] })], out), 0)
+    assert.equal(m.ui, PAD_UI.menu, hand)
+    assert.equal(m.running, false, `${hand}: the chord latched no run`)
+    m.read([pad()], out)
+    // The shoulder held, then start: the ping where the glance looks, as before.
+    m.read([pad({ pressed: [shoulder] })], out)
+    assert.equal(m.read([pad({ pressed: [shoulder, PAD.start] })], out), PAD_EDGE.ping, hand)
+    assert.equal(m.ui, 0)
+    // Start alone is still the ping.
+    m.read([pad()], out)
+    assert.equal(m.read([pad({ pressed: [PAD.start] })], out), PAD_EDGE.ping)
+    assert.equal(m.ui, 0)
+  }
+})
+
+test('lent, one hand: the stick that steps the highlight does not mute the microphone when it is pushed and clicked', () => {
+  const m = new PadMapper()
+  m.hand = 'left'
+  const out = createAnalog()
+  m.read([pad()], out)
+  m.lend(true)
+  assert.equal(m.read([pad({ axes: [1, 0, 0, 0], pressed: [PAD.l3] })], out), 0, 'pushed hard enough to click: not a mute')
+  m.read([pad()], out)
+  assert.equal(m.read([pad({ pressed: [PAD.l3] })], out), PAD_EDGE.mute, 'clicked at rest: the mute, a privacy switch nothing holds back')
+  // With both hands the right stick steps nothing, so its click is always the mute.
+  const b = new PadMapper()
+  b.read([pad()], out)
+  b.lend(true)
+  assert.equal(b.read([pad({ axes: [0, 0, 1, 0], pressed: [PAD.r3] })], out), PAD_EDGE.mute)
 })

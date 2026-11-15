@@ -237,6 +237,8 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
     }
     case 'ring0':
       if (o.family === 'touch') return { text: 'Under the city is a kernel called Ring-0. Open the Menu in the corner, tap Console, type the word laws and tap go.', keep: ['Console', 'laws'] }
+      // A pad opens the console from its own menu, and types on the on-screen keys that rise with it.
+      if (o.family === 'pad') return { text: `Under the city is a kernel called Ring-0. Press ${o.words.console} for the menu, choose Console, type the word laws on the keys that rise and press Enter.`, keep: [o.words.console, 'Console', 'laws'] }
       return { text: `Under the city is a kernel called Ring-0. Open the console with the ${o.words.console} key, type the word laws and press Enter.`, keep: [o.words.console, 'laws'] }
     case 'exam':
       return { text: `Last thing, and the only way out. In the console, run the three lines on this card, in order: verify_ring0 checks the seal on the kernel, spawn_subagents calls ${inWords(SWARM_SIZE)} sub-agents to work, and unlock_city opens the city when both hold.`, keep: ['verify_ring0', 'spawn_subagents', 'unlock_city'] }
@@ -267,7 +269,9 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
     case 'ring0':
       return { text: o.family === 'touch'
         ? 'The console drops down from the top of the screen once you tap Console in the Menu. Type laws and tap go; act gate and kernel work too.'
-        : `The console drops down from the top of the screen on the ${o.words.console} key. Type laws and press Enter; act gate and kernel work too.`, keep: ['laws'] }
+        : o.family === 'pad'
+          ? `The console drops down from the top of the screen once you press ${o.words.console} and choose Console, and the keys rise with it. Type laws and press Enter; act gate and kernel work too.`
+          : `The console drops down from the top of the screen on the ${o.words.console} key. Type laws and press Enter; act gate and kernel work too.`, keep: ['laws'] }
     case 'exam':
       return { text: 'Type noir, a space, then the first line, and press Enter; the console keeps seal for the next line. The buttons on this card type each line for you, and the last one runs it.', keep: ['noir'] }
   }

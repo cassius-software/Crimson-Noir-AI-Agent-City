@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, spokenGlyph, type ControlAction, type GlyphFamily,
+  controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, PAD_BUTTON_NAMES, padButtonName, spokenGlyph, type ControlAction, type GlyphFamily,
 } from './glyphs.ts'
 
 const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping', 'mic']
@@ -30,14 +30,14 @@ test('keyboard glyphs are the keys the Input class reads', () => {
 test('numbered layout: face buttons by position (no button symbols), shoulders and stick clicks by number', () => {
   assert.deepEqual(row('numbered'), {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1', mic: 'R3',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'R1', mic: 'R3',
   })
 })
 
 test('abxy layout: A south, B east, Y north', () => {
   assert.deepEqual(row('abxy'), {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'RB', mic: 'RS',
   })
 })
 
@@ -87,16 +87,14 @@ test('every glyph is plain text or an arrow: no private-use logo code points, no
   for (const f of FAMILIES) {
     for (const a of ACTIONS) {
       const g = glyph(a, f)
-      assert.ok(/^[A-Za-z0-9 [\]~\-◀▶▲]*$/u.test(g), `${f}.${a} = ${JSON.stringify(g)}`)
+      assert.ok(/^[A-Za-z0-9 [\]~\-+◀▶▲]*$/u.test(g), `${f}.${a} = ${JSON.stringify(g)}`)
       assert.ok(!/[✕×○◯△□▢⨯]/u.test(g), `${f}.${a}: a button symbol`)
       assert.ok(!/[-]/u.test(g))
     }
-    // Controllers have no console, HUD or ghost view binding: the key is shown.
+    // A pad reaches the console, the HUD and ghost view through its own menu (PadMenu.tsx): its menu button, as printed.
     if (isPadFamily(f)) {
-      assert.equal(glyph('console', f), '~')
-      assert.equal(glyph('hud', f), 'H')
-      assert.equal(glyph('ghost', f), 'G')
-      assert.equal(glyphKind('ghost', f), 'key')
+      for (const a of ['console', 'hud', 'ghost'] as const) assert.equal(glyph(a, f), PAD_BUTTON_NAMES[f][9], `${f}.${a}`)
+      assert.equal(glyphKind('ghost', f), 'pill')
     }
   }
   assert.equal(glyph('move', 'bogus' as GlyphFamily), '')
@@ -127,8 +125,9 @@ test('glyphKind: keycaps, round face buttons, sticks, pills', () => {
   assert.equal(glyphKind('run', 'abxy'), 'pill')
   assert.equal(glyphKind('ping', 'abxy'), 'pill', 'a shoulder button is a pill, not a face button')
   assert.equal(glyphKind('ping', 'keyboard'), 'key')
-  assert.equal(glyphKind('console', 'numbered'), 'key', 'keyboard-only actions stay keycaps')
-  assert.equal(glyphKind('hud', 'generic'), 'key')
+  assert.equal(glyphKind('console', 'numbered'), 'pill', 'the pad\'s menu button, a word')
+  assert.equal(glyphKind('hud', 'generic'), 'pill')
+  assert.equal(glyphKind('console', 'keyboard'), 'key')
   for (const a of ACTIONS) assert.equal(glyphKind(a, 'touch'), 'pill')
 })
 
@@ -164,7 +163,7 @@ test('all controls: complete per family, unbound ones skipped', () => {
   ])
   assert.deepEqual(summary('numbered', true, 'all'), [
     'L=Steer', 'R2=Accelerate', 'L2=Brake · reverse', 'East=Handbrake', 'North=Right the car', 'South=Leave the car', 'R1=Ping a spot or a person',
-    'R=Look around', 'R3=Microphone on · mute', 'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
+    'R=Look around', 'R3=Microphone on · mute', 'D-pad ◀ ▶=Clock −1 h / +1 h', 'Start=Menu: console, HUD, ghost view, on-screen keys',
   ])
   // Touch's Menu holds five keyboard rows: one row says so, or the list would push a landscape phone's card off the top.
   assert.deepEqual(summary('touch', false, 'all'), [
@@ -184,4 +183,25 @@ test('all controls: complete per family, unbound ones skipped', () => {
       }
     }
   }
+})
+
+test('a pad\'s printed button names: position-true, plain words and signs, no button symbols, the same length for every layout', () => {
+  for (const f of ['abxy', 'bayx', 'numbered', 'generic'] as const) {
+    assert.equal(PAD_BUTTON_NAMES[f].length, 17, f)
+    for (const n of PAD_BUTTON_NAMES[f]) {
+      assert.ok(/^[A-Za-z0-9+−]+$/u.test(n), `${f}: ${JSON.stringify(n)}`)
+      assert.ok(!/[✕×○◯△□▢⨯]/u.test(n), `${f}: a button symbol`)
+    }
+    // The same buttons the controls table names.
+    assert.equal(padButtonName(f, 0), glyph('interact', f))
+    assert.equal(padButtonName(f, 1), glyph('handbrake', f))
+    assert.equal(padButtonName(f, 3), glyph('reset', f))
+    assert.equal(padButtonName(f, 7), glyph('throttle', f))
+    assert.equal(padButtonName(f, 6), glyph('brake', f))
+    assert.equal(padButtonName(f, 5), glyph('ping', f))
+  }
+  assert.deepEqual([padButtonName('abxy', 8), padButtonName('abxy', 9)], ['View', 'Menu'])
+  assert.deepEqual([padButtonName('bayx', 8), padButtonName('bayx', 9)], ['−', '+'])
+  assert.deepEqual([padButtonName('numbered', 8), padButtonName('numbered', 9)], ['Select', 'Start'])
+  assert.equal(padButtonName('generic', 99), '', 'an index the mapping has no name for')
 })
