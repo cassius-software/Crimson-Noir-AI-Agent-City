@@ -10,6 +10,7 @@
  * nothing is changed. Every change bumps a counter, which is how the host knows the disk needs saving.
  * What breaks if it is removed? The console has nowhere to keep a file.
  */
+import { decode, encode } from './bytes.ts'
 import { refuse } from './errno.ts'
 import type { Attr, Cred, Driver, Entry, Stat, Usage } from './fs.ts'
 import { validName } from './path.ts'
@@ -42,11 +43,22 @@ interface Node {
   size: number
   /** A directory's names. */
   readonly names: Map<string, number> | null
+  /** How many of a directory's names are directories: its link count is two more, without counting on every stat. */
+  dirs: number
   /** A directory's parent (the root is its own). */
   parent: number
 }
 
 const NO_BYTES = new Uint8Array(0)
+
+/**
+ * Whether a name can be kept: a valid name whose text survives being written as UTF-8, as the disk's image writes it.
+ * Half a surrogate pair does not (it is written as U+FFFD), so two such names would come back as one and the whole
+ * image would be refused.
+ */
+function keepable(name: string): boolean {
+  return validName(name) && decode(encode(name)) === name
+}
 
 export class MemFs implements Driver {
   readonly type: string
@@ -63,7 +75,7 @@ export class MemFs implements Driver {
   constructor(opts: MemFsOptions) {
     this.opts = opts
     this.type = opts.type ?? 'memfs'
-    this.nodes.set(1, { ino: 1, kind: 'dir', mode: 0o755, uid: 0, gid: 0, mtime: opts.clock(), data: NO_BYTES, size: 0, names: new Map(), parent: 1 })
+    this.nodes.set(1, { ino: 1, kind: 'dir', mode: 0o755, uid: 0, gid: 0, mtime: opts.clock(), data: NO_BYTES, size: 0, names: new Map(), dirs: 0, parent: 1 })
     this.used = NODE_COST
   }
 
@@ -75,6 +87,7 @@ export class MemFs implements Driver {
     this.nodes.clear()
     if (root !== undefined && root.names !== null) {
       root.names.clear()
+      root.dirs = 0
       this.nodes.set(1, root)
     }
     this.used = NODE_COST
@@ -115,11 +128,7 @@ export class MemFs implements Driver {
 
   stat(ino: number): Stat {
     const n = this.node(ino)
-    let nlink = 1
-    if (n.names !== null) {
-      nlink = 2
-      for (const child of n.names.values()) if (this.nodes.get(child)?.kind === 'dir') nlink++
-    }
+    const nlink = n.names === null ? 1 : 2 + n.dirs
     return { kind: n.kind, ino: n.ino, mode: n.mode, uid: n.uid, gid: n.gid, size: n.size, mtime: n.mtime, nlink }
   }
 
@@ -162,6 +171,8 @@ export class MemFs implements Driver {
   write(ino: number, offset: number, data: Uint8Array, _cred?: Cred): number {
     const n = this.file(ino)
     if (offset < 0 || !Number.isSafeInteger(offset)) refuse('EINVAL')
+    // A write of nothing changes nothing, even from past the end: not the length, not the time, not the counter.
+    if (data.length === 0) return 0
     const end = offset + data.length
     const before = n.size
     this.grow(n, end)
@@ -192,14 +203,17 @@ export class MemFs implements Driver {
   create(dir: number, name: string, kind: 'file' | 'dir', mode: number, cred: Cred): number {
     const d = this.dir(dir)
     if (name.length > 255) refuse('ENAMETOOLONG')
-    if (!validName(name)) refuse('EINVAL', 'not a name a file can have')
+    if (!keepable(name)) refuse('EINVAL', 'not a name a file can have')
     if (d.names.has(name)) refuse('EEXIST')
     if (this.nodes.size >= this.opts.maxNodes) refuse('ENOSPC', 'no room for another file')
     const cost = NODE_COST + name.length
     if (this.used + cost > this.opts.capacity) refuse('ENOSPC')
     const ino = this.nextIno++
-    this.nodes.set(ino, { ino, kind, mode: mode & 0o1777, uid: cred.uid, gid: cred.gid, mtime: this.opts.clock(), data: NO_BYTES, size: 0, names: kind === 'dir' ? new Map() : null, parent: dir })
+    const names = kind === 'dir' ? new Map<string, number>() : null
+    const mtime = this.opts.clock()
+    this.nodes.set(ino, { ino, kind, mode: mode & 0o1777, uid: cred.uid, gid: cred.gid, mtime, data: NO_BYTES, size: 0, names, dirs: 0, parent: dir })
     d.names.set(name, ino)
+    if (kind === 'dir') d.dirs++
     this.used += cost
     this.touch(d)
     return ino
@@ -218,6 +232,7 @@ export class MemFs implements Driver {
     const n = this.node(ino)
     if (n.names !== null && n.names.size > 0) refuse('ENOTEMPTY')
     d.names.delete(name)
+    if (n.names !== null) d.dirs--
     this.drop(n, name)
     this.touch(d)
   }
@@ -228,7 +243,7 @@ export class MemFs implements Driver {
     const ino = from.names.get(name)
     if (ino === undefined) refuse('ENOENT')
     if (toName.length > 255) refuse('ENAMETOOLONG')
-    if (!validName(toName)) refuse('EINVAL', 'not a name a file can have')
+    if (!keepable(toName)) refuse('EINVAL', 'not a name a file can have')
     const n = this.node(ino)
     if (n.kind === 'dir') {
       // A directory cannot move into itself or anything under it.
@@ -251,10 +266,18 @@ export class MemFs implements Driver {
     // The longer name is charged before anything moves, so a refusal changes nothing.
     const cost = toName.length - name.length
     if (this.used - freed + cost > this.opts.capacity) refuse('ENOSPC')
-    if (there !== undefined) this.drop(this.node(there), toName)
+    if (there !== undefined) {
+      const old = this.node(there)
+      if (old.names !== null) to.dirs--
+      this.drop(old, toName)
+    }
     from.names.delete(name)
     to.names.set(toName, ino)
-    if (n.kind === 'dir') n.parent = to.ino
+    if (n.kind === 'dir') {
+      n.parent = to.ino
+      from.dirs--
+      to.dirs++
+    }
     this.used += cost
     this.touch(from)
     if (to !== from) this.touch(to)

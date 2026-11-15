@@ -29,7 +29,8 @@ export class Later<T> {
   done = false
   value: T | undefined = undefined
   error: OsError | null = null
-  private heard: ((from: Later<T>) => void)[] | null = null
+  /** Who to tell when it settles. They take no argument, so a Later of a narrower type serves where a wider one is asked for. */
+  private heard: (() => void)[] | null = null
 
   /** Settles with the value (a second settling is ignored). */
   resolve(value: T): void {
@@ -50,13 +51,13 @@ export class Later<T> {
   private tell(): void {
     const heard = this.heard
     this.heard = null
-    if (heard !== null) for (const fn of heard) fn(this)
+    if (heard !== null) for (const fn of heard) fn()
   }
 
   /** Calls `fn` when this settles: at once when it already has. */
   settled(fn: (from: Later<T>) => void): void {
     if (this.done) fn(this)
-    else (this.heard ??= []).push(fn)
+    else (this.heard ??= []).push(() => fn(this))
   }
 
   /** A Later that settles with `fn` of this one's value; a refusal, here or thrown by `fn`, passes through. */

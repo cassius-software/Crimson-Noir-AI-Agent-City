@@ -33,7 +33,9 @@ export class Pipe {
 
   /** Up to `length` bytes, in order; waits while the pipe is empty and someone may still write; none at the end. */
   *read(length: number): Task<Uint8Array> {
-    if (length <= 0) return EMPTY
+    // Whole bytes only: a fraction or a non-number must not leave the count between two bytes.
+    length = Math.floor(length)
+    if (!(length > 0)) return EMPTY
     while (this.size === 0) {
       if (this.writers === 0) return EMPTY
       yield { why: 'pipe', ready: () => this.size > 0 || this.writers === 0 }

@@ -3,10 +3,10 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It works out the sums the shell writes as `$(( ... ))`: whole numbers, the names of
- * variables (an unset or empty one counts as 0), `+ - * / %`, comparisons, `!`, `&&`, `||`, `? :`, brackets, and
- * `name = sum` to store a result. It is a small recursive-descent reader over the text, with every result checked:
- * a division by zero, a number too large to be exact, or text that is no sum is refused by name instead of giving a
- * wrong answer. A loop counter (`i=$((i+1))`) is the reason it exists.
+ * variables (an unset or empty one counts as 0), `+ - * / %`, comparisons, `!`, `&&`, `||`, `? :` (each works out only
+ * the side it takes), brackets, and `name = sum` to store a result. It is a small recursive-descent reader over the
+ * text, with every result checked: a division by zero, a number too large to be exact, or text that is no sum is
+ * refused by name instead of giving a wrong answer. A loop counter (`i=$((i+1))`) is the reason it exists.
  * What breaks if it is removed? The shell cannot count: a `while` loop has no way to end after a number of turns.
  */
 
@@ -20,12 +20,18 @@ export interface Names {
 export class SumError extends Error {}
 
 const DEPTH_MAX = 64
+/** How many variables a sum follows, each naming the next, before it gives up. */
+const HOPS_MAX = 8
 
 class Reader {
   private readonly s: string
   private readonly names: Names
   private i = 0
   private depth = 0
+  /** How many variables were followed to reach this text. */
+  private hops = 0
+  /** Above 0 inside a side of `&&`, `||` or `? :` that is not taken: it is read, not worked out (no refusal, nothing stored). */
+  private skip = 0
 
   constructor(text: string, names: Names) {
     this.s = text
@@ -47,19 +53,31 @@ class Reader {
   }
 
   private whole(n: number): number {
-    if (!Number.isSafeInteger(n)) throw new SumError('a number too large to be exact')
-    return n
+    if (Number.isSafeInteger(n)) return n
+    if (this.skip > 0) return 0
+    throw new SumError('a number too large to be exact')
   }
 
-  private valueOf(name: string, seen: number): number {
+  private valueOf(name: string): number {
+    if (this.skip > 0) return 0
     const text = (this.names.get(name) ?? '').trim()
     if (text === '') return 0
     if (/^[+-]?[0-9]+$/.test(text)) return this.whole(Number(text))
     // A variable may name another, or hold a sum: follow it a few steps, never in a ring.
-    if (seen >= 8) throw new SumError(`'${name}' never comes to a number`)
+    if (this.hops >= HOPS_MAX) throw new SumError(`'${name}' never comes to a number`)
     const inner = new Reader(text, this.names)
-    inner.depth = this.depth + seen + 1
+    inner.depth = this.depth + 1
+    inner.hops = this.hops + 1
     return inner.all()
+  }
+
+  /** One side of `&&`, `||` or `? :`: worked out when it is `taken`, otherwise only read (and counted as 0). */
+  private side(taken: boolean, read: () => number): number {
+    if (taken) return read()
+    this.skip++
+    read()
+    this.skip--
+    return 0
   }
 
   all(): number {
@@ -77,15 +95,15 @@ class Reader {
     if (m !== null) {
       this.i += m[0].length
       const v = this.ternary()
-      this.names.set(m[1], String(v))
+      if (this.skip === 0) this.names.set(m[1], String(v))
       this.depth--
       return v
     }
     const cond = this.or()
     if (this.take('?')) {
-      const a = this.ternary()
+      const a = this.side(cond !== 0, () => this.ternary())
       if (!this.take(':')) throw new SumError("'?' needs ':'")
-      const b = this.ternary()
+      const b = this.side(cond === 0, () => this.ternary())
       this.depth--
       return cond !== 0 ? a : b
     }
@@ -95,13 +113,13 @@ class Reader {
 
   private or(): number {
     let v = this.and()
-    while (this.take('||')) { const r = this.and(); v = v !== 0 || r !== 0 ? 1 : 0 }
+    while (this.take('||')) { const r = this.side(v === 0, () => this.and()); v = v !== 0 || r !== 0 ? 1 : 0 }
     return v
   }
 
   private and(): number {
     let v = this.equal()
-    while (this.take('&&')) { const r = this.equal(); v = v !== 0 && r !== 0 ? 1 : 0 }
+    while (this.take('&&')) { const r = this.side(v !== 0, () => this.equal()); v = v !== 0 && r !== 0 ? 1 : 0 }
     return v
   }
 
@@ -140,12 +158,12 @@ class Reader {
       if (this.take('*')) v = this.whole(v * this.unary())
       else if (this.take('/')) {
         const d = this.unary()
-        if (d === 0) throw new SumError('division by zero')
-        v = Math.trunc(v / d)
+        if (d === 0 && this.skip === 0) throw new SumError('division by zero')
+        v = d === 0 ? 0 : Math.trunc(v / d)
       } else if (this.take('%')) {
         const d = this.unary()
-        if (d === 0) throw new SumError('division by zero')
-        v %= d
+        if (d === 0 && this.skip === 0) throw new SumError('division by zero')
+        v = d === 0 ? 0 : v % d
       } else return v
     }
   }
@@ -177,7 +195,7 @@ class Reader {
     const name = /^[A-Za-z_][A-Za-z0-9_]*/.exec(rest)
     if (name !== null) {
       this.i += name[0].length
-      return this.valueOf(name[0], 0)
+      return this.valueOf(name[0])
     }
     throw new SumError(rest.trim() === '' ? 'a sum ends too soon' : `'${rest.trim()}' is not part of a sum`)
   }

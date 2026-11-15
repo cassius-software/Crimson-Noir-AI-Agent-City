@@ -27,10 +27,13 @@ export function dump(fs: MemFs): Uint8Array {
   const count = new Uint8Array(4)
   chunks.push(count)
   let nodes = 0
-  const visit = (ino: number, parent: number, name: string): void => {
-    const st = fs.stat(ino)
+  // Depth first, each directory's entries in the order of their names. What is still to visit is kept on a list of
+  // its own, not on the call stack, so no tree is too deep to save (renames can build one deeper than any path).
+  const pending: { ino: number; parent: number; name: string }[] = [{ ino: fs.root, parent: 0, name: '' }]
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const st = fs.stat(next.ino)
     const index = nodes++
-    const nameBytes = encode(name)
+    const nameBytes = encode(next.name)
     const head = new Uint8Array(1 + 2 + 4 + 4 + 8 + 4 + 2)
     head[0] = st.kind === 'dir' ? 1 : 2
     head[1] = st.mode & 255
@@ -38,20 +41,20 @@ export function dump(fs: MemFs): Uint8Array {
     writeU32(head, 3, st.uid)
     writeU32(head, 7, st.gid)
     new DataView(head.buffer).setFloat64(11, st.mtime, true)
-    writeU32(head, 19, parent)
+    writeU32(head, 19, next.parent)
     head[23] = nameBytes.length & 255
     head[24] = (nameBytes.length >> 8) & 255
     chunks.push(head, nameBytes)
     if (st.kind === 'dir') {
-      const entries = fs.list(ino).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-      for (const e of entries) visit(e.ino, index, e.name)
+      // Last name first onto the list, so the first name comes off it first.
+      const entries = fs.list(next.ino).sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0))
+      for (const e of entries) pending.push({ ino: e.ino, parent: index, name: e.name })
     } else {
       const size = new Uint8Array(4)
       writeU32(size, 0, st.size)
-      chunks.push(size, fs.read(ino, 0, st.size))
+      chunks.push(size, fs.read(next.ino, 0, st.size))
     }
   }
-  visit(fs.root, 0, '')
   writeU32(count, 0, nodes)
   const body = concat(chunks)
   return concat([body, sha256(body)])
@@ -59,7 +62,8 @@ export function dump(fs: MemFs): Uint8Array {
 
 /**
  * Fills an empty disk from an image. Refuses, as EINVAL, an image that is not one, that fails its seal, or that
- * holds anything the disk would not take; the disk may then hold part of it, so the caller restores into a new one.
+ * holds anything the disk would not take; a refused image leaves nothing behind: the disk is empty again, and its
+ * root keeps the permission bits, owner and time it had.
  */
 export function restore(image: Uint8Array, fs: MemFs): void {
   const bad = (why: string): never => refuse('EINVAL', `not a disk image (${why})`)
@@ -73,6 +77,9 @@ export function restore(image: Uint8Array, fs: MemFs): void {
   let at = MAGIC.length
   const count = readU32(image, at)
   at += 4
+  if (count === 0) bad('no root')
+  /** The root's time before anything was put in it: a refused image gives it back. */
+  const rootTime = fs.stat(fs.root).mtime
   /** Node number on the disk for each index in the image; -1 for a file (nothing can be inside it). */
   const dirs: number[] = []
   const attrs: { ino: number; mode: number; uid: number; gid: number; mtime: number }[] = []
@@ -111,11 +118,14 @@ export function restore(image: Uint8Array, fs: MemFs): void {
       attrs.push({ ino, mode, uid, gid, mtime })
       dirs.push(kind === 1 ? ino : -1)
     }
-    // Last, so a directory keeps the time the image gave it and not the time its files were put back.
+    if (at !== end) bad('bytes left over')
+    // Last, once nothing more can be refused, so a directory keeps the time the image gave it and not the time its
+    // files were put back, and a refused image never changes the root.
     for (const a of attrs) fs.setattr(a.ino, { mode: a.mode, uid: a.uid, gid: a.gid, mtime: a.mtime })
   } catch (e) {
+    fs.wipe()
+    fs.setattr(fs.root, { mtime: rootTime })
     if (e instanceof OsError && e.errno !== 'EINVAL') bad(e.message)
     throw e
   }
-  if (at !== end) bad('bytes left over')
 }

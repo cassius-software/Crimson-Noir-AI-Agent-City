@@ -40,6 +40,11 @@ const EXITED_MAX = 256
 const LOG_MAX = 200
 /** How deep `#!` may chain (a script whose interpreter is a script ...). */
 const SHEBANG_DEPTH = 4
+/**
+ * How many programs one task may run in place of one another. Each exec runs the new program inside the one that
+ * called it, so a chain without end (`env env env ... cat`) would grow the host's stack until it gave out.
+ */
+const EXEC_DEPTH = 64
 /** Where programs are looked for when PATH is not set. */
 export const DEFAULT_PATH = '/bin:/usr/apps'
 
@@ -183,6 +188,8 @@ export interface Proc {
   readonly started: number
   /** Calls into the kernel so far. */
   steps: number
+  /** Programs running in place of one another now: one for each exec still running. */
+  execs: number
   /** Set to stop it: the status it ends with on its next turn. */
   ending: number | null
 }
@@ -211,7 +218,8 @@ export interface SpawnOptions {
   readonly cwd?: string
   /**
    * The child's descriptors, by the parent's own numbers: `[0, 5, 2]` gives the child the parent's 0 as 0, its 5 as
-   * 1 and its 2 as 2; null leaves one closed. The parent's first three when absent.
+   * 1 and its 2 as 2; null leaves one closed. The parent's first three when absent (closed in the child when closed
+   * in the parent).
    */
   readonly fds?: readonly (number | null)[]
   /** The child's group: its own ('new'), or the parent's (absent), or a named one. */
@@ -239,7 +247,8 @@ export class Kernel {
   readonly wall: () => number
   private readonly programs: ReadonlyMap<string, Program>
   private readonly table = new Map<number, Proc>()
-  private readonly exited = new Map<number, number>()
+  /** Statuses of tasks that ended and went, each with the parent that may still collect it. */
+  private readonly exited = new Map<number, { readonly ppid: number; readonly status: number }>()
   private readonly lines: string[] = []
   private nextPid = 1
   private nextPipe = 1
@@ -247,6 +256,8 @@ export class Kernel {
   slice = 0
   /** The task whose turn it is, while it runs. */
   current: Proc | null = null
+  /** The task whose turn ended the last call to `run`: the next call starts after it. */
+  private last = 0
   /** The clock when the kernel was made. */
   readonly booted: number
   /** The group reads fall back to when the foreground group has ended: the console's shell. */
@@ -294,14 +305,29 @@ export class Kernel {
     const name = argv.length > 0 ? argv[0].slice(argv[0].lastIndexOf('/') + 1) : '?'
     const proc: Proc = {
       pid, ppid: parent === null ? 0 : parent.pid, pgid: group === 'new' ? pid : group, cred, argv, name, env, cwd, umask, fds,
-      task: null, wait: null, state: 'ready', status: 0, started: this.clock(), steps: 0, ending: null,
+      task: null, wait: null, state: 'ready', status: 0, started: this.clock(), steps: 0, execs: 0, ending: null,
     }
     this.table.set(pid, proc)
     return proc
   }
 
   private start(proc: Proc, program: Program): void {
-    proc.task = program(new Sys(this, proc), proc.argv)
+    try {
+      proc.task = program(new Sys(this, proc), proc.argv)
+    } catch (e) {
+      // A body that fails before it is a task fails on its first turn, as one that fails later does.
+      proc.task = (function* (): Task<number> { throw e })()
+    }
+  }
+
+  /** Refuses arguments or an environment past ARGS_MAX. */
+  private sized(argv: readonly string[], env: ReadonlyMap<string, string>): void {
+    let bytes = 0
+    for (const a of argv) bytes += a.length + 1
+    if (bytes > ARGS_MAX) refuse('E2BIG')
+    bytes = 0
+    for (const [k, v] of env) bytes += k.length + v.length + 2
+    if (bytes > ARGS_MAX) refuse('E2BIG', 'the environment is too long')
   }
 
   /** The program a name or path runs for `proc`, with the arguments it is to be given. ENOENT when there is none. */
@@ -348,13 +374,8 @@ export class Kernel {
 
   /** Starts a child of `parent`. The program is looked up first, so a name that runs nothing is refused here. */
   *spawn(parent: Proc, argv: readonly string[], opts: SpawnOptions = {}): Task<Proc> {
-    let bytes = 0
-    for (const a of argv) bytes += a.length + 1
-    if (bytes > ARGS_MAX) refuse('E2BIG')
     const env = new Map(opts.env ?? parent.env)
-    bytes = 0
-    for (const [k, v] of env) bytes += k.length + v.length + 2
-    if (bytes > ARGS_MAX) refuse('E2BIG', 'the environment is too long')
+    this.sized(argv, env)
     let program = opts.program
     let args = argv
     if (program === undefined) {
@@ -363,7 +384,8 @@ export class Kernel {
       args = found.argv
     }
     const cwd = opts.cwd === undefined ? parent.cwd : normalize(opts.cwd, parent.cwd)
-    const numbers = opts.fds ?? [0, 1, 2]
+    // Absent, the parent's first three as they are: one the parent has closed is closed in the child, not refused.
+    const numbers = opts.fds ?? [0, 1, 2].map((n) => (parent.fds[n] === null || parent.fds[n] === undefined ? null : n))
     if (numbers.length > FDS_MAX) refuse('EMFILE')
     const fds: (Channel | null)[] = []
     for (const n of numbers) {
@@ -380,18 +402,23 @@ export class Kernel {
   /**
    * Turns a task into another program: it keeps its number, its descriptors and its directory, and takes the new
    * program's name and arguments (and environment, when one is given). The program is looked up first, so a name
-   * that runs nothing is refused while the task is still what it was. The new program's status. Once it runs, a
-   * refusal it does not catch ends the task the way it would end any task (a closed pipe quietly, with 141), so the
-   * program that called exec never mistakes it for a failure to start.
+   * that runs nothing is refused while the task is still what it was, and so is an exec EXEC_DEPTH deep (ENOMEM).
+   * The new program's status. Once it runs, a refusal it does not catch ends the task the way it would end any task
+   * (a closed pipe quietly, with 141), so the program that called exec never mistakes it for a failure to start.
    */
   *exec(proc: Proc, argv: readonly string[], env?: ReadonlyMap<string, string>): Task<number> {
-    const found = yield* this.load(env === undefined ? proc : { ...proc, env: new Map(env) }, argv)
-    if (env !== undefined) {
+    // A copy: the map handed in may be the task's own, which is emptied below.
+    const vars = env === undefined ? undefined : new Map(env)
+    this.sized(argv, vars ?? proc.env)
+    if (proc.execs >= EXEC_DEPTH) refuse('ENOMEM', 'too many programs run in place of one another')
+    const found = yield* this.load(vars === undefined ? proc : { ...proc, env: vars }, argv)
+    if (vars !== undefined) {
       proc.env.clear()
-      for (const [k, v] of env) proc.env.set(k, v)
+      for (const [k, v] of vars) proc.env.set(k, v)
     }
     proc.argv = found.argv
     proc.name = argv[0].slice(argv[0].lastIndexOf('/') + 1)
+    proc.execs++
     try {
       return yield* found.program(new Sys(this, proc), found.argv)
     } catch (e) {
@@ -399,16 +426,22 @@ export class Kernel {
       if (e.errno === 'EPIPE') throw new Exit(141)
       this.complain(proc, `${proc.name}: ${e.message}`)
       throw new Exit(1)
+    } finally {
+      proc.execs--
     }
   }
 
   /** Runs tasks until `steps` calls are spent, the clock reaches `deadline`, or none can go on. True when some still could. */
   run(steps: number, deadline: number): boolean {
     let left = steps
+    // The first pass picks up after the task whose turn ended the last call, so a turn that spends a whole call
+    // never keeps the tasks after it from theirs.
+    let after = this.last
+    this.last = 0
     for (;;) {
       let moved = false
       for (const proc of [...this.table.values()]) {
-        if (proc.state === 'ended') continue
+        if (proc.pid <= after || proc.state === 'ended') continue
         if (proc.ending !== null) {
           this.finish(proc, proc.ending)
           moved = true
@@ -422,9 +455,14 @@ export class Kernel {
         }
         moved = true
         left -= this.turn(proc)
-        if (left <= 0 || this.clock() >= deadline) return true
+        if (left <= 0 || this.clock() >= deadline) {
+          this.last = proc.pid
+          return true
+        }
       }
-      if (!moved) return false
+      // A first pass that started part way and moved nothing is not yet a whole pass.
+      if (!moved && after === 0) return false
+      after = 0
     }
   }
 
@@ -446,7 +484,12 @@ export class Kernel {
         this.complain(proc, `${proc.name}: ${e.message}`)
         this.finish(proc, 1)
       } else {
-        const text = reasonOf(e)
+        let text: string
+        try {
+          text = reasonOf(e)
+        } catch {
+          text = 'an error that cannot be shown'
+        }
         this.complain(proc, `${proc.name}: fault: ${text}`)
         this.log(`task ${proc.pid} (${proc.name}) faulted: ${text}`)
         this.finish(proc, 70)
@@ -502,7 +545,7 @@ export class Kernel {
 
   private reap(proc: Proc): void {
     this.table.delete(proc.pid)
-    this.exited.set(proc.pid, proc.status)
+    this.exited.set(proc.pid, { ppid: proc.ppid, status: proc.status })
     if (this.exited.size > EXITED_MAX) {
       for (const oldest of this.exited.keys()) { this.exited.delete(oldest); break }
     }
@@ -587,7 +630,13 @@ export class Kernel {
   proc(pid: number): Proc | undefined { return this.table.get(pid) }
 
   /** The status a task that has ended and gone ended with, if it is still remembered. */
-  ended(pid: number): number | undefined { return this.exited.get(pid) }
+  ended(pid: number): number | undefined { return this.exited.get(pid)?.status }
+
+  /** The remembered status of a task that was `parent`'s child, if it ended and went. */
+  private gone(parent: Proc, pid: number): number | undefined {
+    const was = this.exited.get(pid)
+    return was !== undefined && was.ppid === parent.pid ? was.status : undefined
+  }
 
   /** Every task, by number. */
   ps(): ProcInfo[] {
@@ -607,6 +656,8 @@ export class Kernel {
 
   /** The lowest free descriptor of a task, holding `ch`. */
   install(proc: Proc, ch: Channel, least = 0): number {
+    // A descriptor below zero or between two numbers would sit outside the table, never to be closed.
+    if (!Number.isInteger(least) || least < 0) refuse('EINVAL')
     for (let fd = least; fd < FDS_MAX; fd++) {
       if (proc.fds[fd] === null || proc.fds[fd] === undefined) {
         while (proc.fds.length < fd) proc.fds.push(null)
@@ -662,7 +713,7 @@ export class Kernel {
     for (;;) {
       const child = this.table.get(pid)
       if (child === undefined || child.ppid !== parent.pid) {
-        const status = this.exited.get(pid)
+        const status = this.gone(parent, pid)
         if (status !== undefined) return status
         return refuse('ECHILD')
       }
@@ -677,7 +728,7 @@ export class Kernel {
   /** A child's status if it has ended (collecting it), 'running' if not, null when there is no such child. */
   poll(parent: Proc, pid: number): number | 'running' | null {
     const child = this.table.get(pid)
-    if (child === undefined || child.ppid !== parent.pid) return this.exited.get(pid) ?? null
+    if (child === undefined || child.ppid !== parent.pid) return this.gone(parent, pid) ?? null
     if (child.state !== 'ended') return 'running'
     this.reap(child)
     return child.status

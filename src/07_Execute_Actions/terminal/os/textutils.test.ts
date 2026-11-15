@@ -1255,7 +1255,21 @@ test('sha256sum: the digest of each file and of the input', () => {
   k.write('/tmp/million', 'a'.repeat(1000000))
   assert.deepEqual(k.sh('sha256sum million'), ['cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0  million'])
   assert.deepEqual(k.sh('sha256sum -c abc; echo $?'), ["!sha256sum: unknown option '-c'", '!usage: sha256sum [file ...]', '2'])
-  assert.deepEqual(k.sh('sha256sum /dev/zero; echo $?'), ['!sha256sum: /dev/zero: too much to hold in memory', '1'])
+})
+
+test('sha256sum: the input is digested a piece at a time, so its length has no limit and an endless one runs until Ctrl+C', () => {
+  const k = fresh()
+  // One byte past the 64 MiB a program may hold: the digest of that many zeros, worked out apart from this program.
+  assert.deepEqual(k.sh('head -c 67108865 /dev/zero | sha256sum; echo $?'), ['91990977345985aaf03af1358f4f989d7eaf985b58529efb72f613c588f6599a  -', '0'])
+  // An input that never ends is read for as long as it lasts: a few turns in, the program is still at it, and says nothing.
+  k.system.type('sha256sum /dev/zero; echo $?')
+  const seen: string[] = []
+  for (let turn = 0; turn < 4; turn++) for (const e of k.system.run(50, Number.POSITIVE_INFINITY)) seen.push(e.kind === 'post' ? 'POST' : e.text)
+  assert.deepEqual(seen, [])
+  assert.deepEqual(tasks(k), [...AT_REST, 'sha256sum'])
+  assert.equal(k.system.interrupt(), true)
+  assert.deepEqual(k.settle(), [])
+  assert.deepEqual(tasks(k), AT_REST)
 })
 
 // xargs

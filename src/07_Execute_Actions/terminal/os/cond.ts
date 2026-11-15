@@ -51,10 +51,17 @@ class Reader {
     return v
   }
 
+  /** Whether the word at `j` joins two questions or two texts (`=`, `-eq`, `-a` ...) and has a word after it. */
+  private joins(j: number): boolean {
+    const w = this.a[j]
+    return w !== undefined && (BINARY.has(w) || w === '-a' || w === '-o') && j + 1 < this.a.length
+  }
+
   private *not(): Task<boolean> {
-    // A run of `!` is counted, not recursed into: a line can hold thousands of them.
+    // A run of `!` is counted, not recursed into: a line can hold thousands of them. A `!` with a two-sided operator
+    // and its right side after it is that question's left side, a text like any other (`[ "$a" = x ]` with a set to `!`).
     let flips = 0
-    while (this.a[this.i] === '!' && this.i + 1 < this.a.length) {
+    while (this.a[this.i] === '!' && this.i + 1 < this.a.length && !this.joins(this.i + 1)) {
       this.i++
       flips++
     }
@@ -99,7 +106,8 @@ class Reader {
         }
       }
     }
-    if (first === '(' ) {
+    // A `(` with nothing after it is a word: `[ "$x" ]` asks only whether the text is empty, whatever it says.
+    if (first === '(' && next !== undefined) {
       this.i++
       const v = yield* this.or()
       if (a[this.i] !== ')') throw new Bad("'(' needs ')'")

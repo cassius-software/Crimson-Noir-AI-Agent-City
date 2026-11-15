@@ -27,8 +27,8 @@ export function validName(name: string): boolean {
 
 /**
  * The names of the absolute, canonical form of `path` taken against `cwd` (itself absolute): no empty name, no `.`,
- * no `..` (one above the root stays at the root). Refuses a path that is empty, too long, too deep, or holds a NUL
- * or an over-long name.
+ * no `..` (one above the root stays at the root). Refuses a path that is empty, too long (as typed or once made
+ * canonical), too deep, or holds a NUL or an over-long name.
  */
 export function parts(path: string, cwd = '/'): string[] {
   if (path.length === 0) refuse('ENOENT')
@@ -46,6 +46,10 @@ export function parts(path: string, cwd = '/'): string[] {
   if (!path.startsWith('/')) feed(cwd)
   feed(path)
   if (out.length > DEPTH_MAX) refuse('ENAMETOOLONG', `a path is at most ${DEPTH_MAX} names deep`)
+  // The canonical form must fit too, or a directory could be made and entered that no path could name again.
+  let length = 0
+  for (const name of out) length += name.length + 1
+  if (length > PATH_MAX) refuse('ENAMETOOLONG')
   return out
 }
 
@@ -103,15 +107,15 @@ function bracket(pattern: string, at: number, ch: string): { end: number; hit: b
   let first = true
   for (;;) {
     if (i >= pattern.length) return null
-    let lo = pattern[i]!
+    let lo = pattern[i]
     if (lo === ']' && !first) break
     first = false
-    if (lo === '\\' && i + 1 < pattern.length) { i++; lo = pattern[i]! }
+    if (lo === '\\' && i + 1 < pattern.length) { i++; lo = pattern[i] }
     i++
     if (pattern[i] === '-' && i + 1 < pattern.length && pattern[i + 1] !== ']') {
-      let hi = pattern[i + 1]!
+      let hi = pattern[i + 1]
       i += 2
-      if (hi === '\\' && i < pattern.length) { hi = pattern[i]!; i++ }
+      if (hi === '\\' && i < pattern.length) { hi = pattern[i]; i++ }
       if (ch >= lo && ch <= hi) hit = true
     } else if (ch === lo) hit = true
   }
@@ -142,7 +146,7 @@ export function matches(pattern: string, name: string, dots = false): boolean {
     }
     if (pc === '?') { p++; n++; step = true }
     else if (pc === '[') {
-      const set = bracket(pattern, p, name[n]!)
+      const set = bracket(pattern, p, name[n])
       if (set === null) {
         if (name[n] === '[') { p++; n++; step = true }
       } else if (set.hit) { p = set.end; n++; step = true }

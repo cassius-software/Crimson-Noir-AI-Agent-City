@@ -13,6 +13,9 @@ import type { Kernel, ProcInfo } from './kernel.ts'
 import { dir, text } from './synth.ts'
 import type { SynthDir, SynthNode } from './synth.ts'
 
+/** Whether a name is a number spelled the one way it is listed: digits, with no leading zero. `01` finds nothing. */
+const numeral = (name: string): boolean => /^(0|[1-9][0-9]*)$/.test(name)
+
 function task(kernel: Kernel, pid: number): SynthDir | null {
   const find = (): ProcInfo | null => kernel.ps().find((p) => p.pid === pid) ?? null
   if (find() === null) return null
@@ -27,7 +30,7 @@ function task(kernel: Kernel, pid: number): SynthDir | null {
     },
     child: (name) => {
       const p = find()
-      const label = p === null || !/^[0-9]+$/.test(name) ? undefined : p.fds[Number(name)]
+      const label = p === null || !numeral(name) ? undefined : p.fds[Number(name)]
       return label === null || label === undefined ? null : text(() => `${label}\n`)
     },
   }
@@ -50,7 +53,10 @@ function task(kernel: Kernel, pid: number): SynthDir | null {
   })
 }
 
-/** The kernel's part of /proc, with `extra` (the host's readings) beside it. A name in `extra` wins over none of the kernel's. */
+/**
+ * The kernel's part of /proc, with `extra` (the host's readings) beside it. A name in `extra` wins over none of the
+ * kernel's (a task's number, `self`, a fixed reading), and is not listed beside it either.
+ */
 export function procfs(kernel: Kernel, version: string, extra: Readonly<Record<string, SynthNode>> = {}): SynthDir {
   const fixed: Record<string, SynthNode> = {
     mounts: text(() => kernel.vfs.mounts().map((m) => `${m.source} ${m.path} ${m.driver.type} ${m.driver.readOnly ? 'ro' : 'rw'}\n`).join('')),
@@ -61,7 +67,7 @@ export function procfs(kernel: Kernel, version: string, extra: Readonly<Record<s
     const out = kernel.ps().map((p) => String(p.pid))
     out.push('self')
     for (const name of Object.keys(fixed)) out.push(name)
-    for (const name of Object.keys(extra)) if (!Object.hasOwn(fixed, name)) out.push(name)
+    for (const name of Object.keys(extra)) if (!Object.hasOwn(fixed, name) && name !== 'self' && !numeral(name)) out.push(name)
     return out
   }
   return {
@@ -69,7 +75,7 @@ export function procfs(kernel: Kernel, version: string, extra: Readonly<Record<s
     names,
     child(name) {
       if (name === 'self') return kernel.current === null ? null : task(kernel, kernel.current.pid)
-      if (/^[0-9]+$/.test(name)) return task(kernel, Number(name))
+      if (numeral(name)) return task(kernel, Number(name))
       if (Object.hasOwn(fixed, name)) return fixed[name]
       return Object.hasOwn(extra, name) ? extra[name] : null
     },

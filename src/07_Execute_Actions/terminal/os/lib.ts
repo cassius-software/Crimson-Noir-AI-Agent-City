@@ -14,41 +14,57 @@ import type { Sys } from './kernel.ts'
 import type { Task } from './task.ts'
 import { O_READ } from './vfs.ts'
 
-/** The longest line `Lines` hands back whole: a longer one is cut there (and the rest follows as a next line). */
+/**
+ * The longest line `Lines` hands back whole, counted as the text's length counts it: in UTF-16 code units of the
+ * decoded line (one for most characters, two for one beyond U+FFFF), not in bytes, whatever the name says. A longer
+ * line, wherever its end falls among the reads, comes back in pieces of at most this many, each but the last with
+ * `cut` set; a piece never ends between the two halves of a pair, so it may be one shorter.
+ */
 export const LINE_BYTES_MAX = 1 << 20
 
 /** Reads a descriptor a line at a time. */
 export class Lines {
   private readonly sys: Sys
   private readonly fd: number
-  private readonly decoder = new TextDecoder('utf-8')
+  // A byte order mark at the start is kept as the character it is, so text passes through a program unchanged.
+  private readonly decoder = new TextDecoder('utf-8', { ignoreBOM: true })
   private buffer = ''
   private at = 0
   private ended = false
+  /**
+   * Whether the line `next` handed back last was only a piece of a line longer than LINE_BYTES_MAX: the rest of the
+   * same line (never nothing) comes from the next call. False for a whole line, or for the last piece of one.
+   */
+  cut = false
 
   constructor(sys: Sys, fd: number) {
     this.sys = sys
     this.fd = fd
   }
 
-  /** The next line without its line end (a carriage return before it is kept); null at the end of the input. */
+  /**
+   * The next line without its line end (a carriage return before it is kept), or the next piece of a line longer than
+   * LINE_BYTES_MAX (see `cut`); null at the end of the input.
+   */
   *next(): Task<string | null> {
     for (;;) {
-      const end = this.buffer.indexOf('\n', this.at)
+      const feed = this.buffer.indexOf('\n', this.at)
+      // Where the line ends: at its line feed, at the end of the input, or not known yet (-1).
+      const end = feed >= 0 ? feed : this.ended ? this.buffer.length : -1
+      if ((end >= 0 ? end : this.buffer.length) - this.at > LINE_BYTES_MAX) {
+        let stop = this.at + LINE_BYTES_MAX
+        const last = this.buffer.charCodeAt(stop - 1)
+        if (last >= 0xd800 && last <= 0xdbff) stop--
+        const piece = this.buffer.slice(this.at, stop)
+        this.at = stop
+        this.cut = true
+        return piece
+      }
       if (end >= 0) {
+        this.cut = false
+        if (feed < 0 && this.at >= this.buffer.length) return null
         const line = this.buffer.slice(this.at, end)
-        this.at = end + 1
-        return line
-      }
-      if (this.ended) {
-        if (this.at >= this.buffer.length) return null
-        const line = this.buffer.slice(this.at)
-        this.at = this.buffer.length
-        return line
-      }
-      if (this.buffer.length - this.at > LINE_BYTES_MAX) {
-        const line = this.buffer.slice(this.at, this.at + LINE_BYTES_MAX)
-        this.at += LINE_BYTES_MAX
+        this.at = feed >= 0 ? end + 1 : end
         return line
       }
       // Drop what was already handed out before reading more.
@@ -263,5 +279,8 @@ export function human(bytes: number): string {
   let v = bytes / 1024
   let u = 0
   while (v >= 1024 && u < units.length - 1) { v /= 1024; u++ }
-  return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10}${units[u]}`
+  let shown = v >= 10 ? Math.round(v) : Math.round(v * 10) / 10
+  // Rounded up to 1024 of one unit, it is one of the next.
+  if (shown >= 1024 && u < units.length - 1) { shown = 1; u++ }
+  return `${shown}${units[u]}`
 }

@@ -11,8 +11,9 @@
  */
 import { encode } from './bytes.ts'
 import { devices } from './devices.ts'
-import { OsError, reasonOf } from './errno.ts'
+import { OsError, reasonOf, refuse } from './errno.ts'
 import { ROOT_CRED } from './fs.ts'
+import type { Driver } from './fs.ts'
 import { dump, restore } from './image.ts'
 import { Kernel } from './kernel.ts'
 import type { Program } from './kernel.ts'
@@ -23,7 +24,7 @@ import type { CityHost } from './shell.ts'
 import { SynthFs, dir, text } from './synth.ts'
 import type { SynthNode } from './synth.ts'
 import { io, now } from './task.ts'
-import type { Io } from './task.ts'
+import type { Io, Task } from './task.ts'
 import type { TtyEvent } from './tty.ts'
 import { Vfs } from './vfs.ts'
 
@@ -71,6 +72,21 @@ export type DiskState =
   | 'restored'
   /** There was one and it failed its checks: the disk started empty and the image is kept in `refused` for the host to set aside. */
   | 'refused'
+
+/** Where task 1 mounts the system's own file systems. */
+const MOUNT_POINTS: readonly string[] = ['/bin', '/usr', '/tmp', '/dev', '/proc', '/sys']
+
+/**
+ * Refuses a disk that came back with something other than a directory where a file system is mounted: the system
+ * could not be laid out over it (a person who unmounted /tmp and made a file of that name, or an image built so).
+ */
+function mountable(disk: MemFs): void {
+  const names = new Map(disk.list(disk.root).map((e) => [e.name, e.kind]))
+  for (const path of MOUNT_POINTS) {
+    const kind = names.get(path.slice(1))
+    if (kind !== undefined && kind !== 'dir') refuse('ENOTDIR', `${path} is not a directory`)
+  }
+}
 
 const README = `This is your home directory. What you keep here stays between visits.
 
@@ -156,42 +172,60 @@ export class System {
       }
       if (bytes === null) system.state = 'new'
       else {
+        const root = disk.stat(disk.root)
         try {
           restore(bytes, disk)
+          mountable(disk)
           system.state = 'restored'
         } catch (e) {
+          // Set aside whole: nothing of it stays, not even what it said of the root.
           disk.wipe()
+          disk.setattr(disk.root, { mode: root.mode, uid: root.uid, gid: root.gid, mtime: root.mtime })
           system.state = 'refused'
           system.refused = bytes
           sys.log(`the saved disk was set aside: ${reasonOf(e)}`)
         }
       }
       const fresh = system.state !== 'restored'
+      /** One step of laying the tree out: a refusal (a disk that came back full, say) is logged and the rest goes on, so the shell always starts. */
+      const step = function* (what: string, task: Task<void>): Task<void> {
+        try {
+          yield* task
+        } catch (e) {
+          if (!(e instanceof OsError)) throw e
+          sys.log(`${what}: ${e.message}`)
+        }
+      }
       for (const path of ['/bin', '/dev', '/etc', '/home', HOME, '/mnt', '/proc', '/sys', '/tmp', '/usr']) {
         try {
           yield* sys.mkdir(path, 0o755)
         } catch (e) {
-          if (!(e instanceof OsError) || e.errno !== 'EEXIST') throw e
+          if (!(e instanceof OsError)) throw e
+          if (e.errno !== 'EEXIST') sys.log(`${path} could not be made: ${e.message}`)
         }
       }
       if (fresh) {
-        yield* sys.writeFile('/etc/hostname', encode(`${opts.hostname}\n`))
-        yield* sys.writeFile('/etc/passwd', encode(`root:x:0:0:operator:${HOME}:/bin/sh\n`))
-        yield* sys.writeFile(`${HOME}/README`, encode(README))
+        yield* step('/etc/hostname could not be written', sys.writeFile('/etc/hostname', encode(`${opts.hostname}\n`)))
+        yield* step('/etc/passwd could not be written', sys.writeFile('/etc/passwd', encode(`root:x:0:0:operator:${HOME}:/bin/sh\n`)))
+        yield* step(`${HOME}/README could not be written`, sys.writeFile(`${HOME}/README`, encode(README)))
         system.seeded = disk.version
       }
-      yield* sys.mount('/bin', bin, 'rom')
-      yield* sys.mount('/usr', usr, 'rom')
-      yield* sys.mount('/tmp', tmp, 'tmpfs')
-      yield* sys.mount('/dev', dev, 'devfs')
-      yield* sys.mount('/proc', proc, 'proc')
-      yield* sys.mount('/sys', sysTree, 'sysfs')
+      const mounts: [string, Driver, string][] = [
+        ['/bin', bin, 'rom'], ['/usr', usr, 'rom'], ['/tmp', tmp, 'tmpfs'], ['/dev', dev, 'devfs'], ['/proc', proc, 'proc'], ['/sys', sysTree, 'sysfs'],
+      ]
+      for (const [path, driver, source] of mounts) yield* step(`${path} could not be mounted`, sys.mount(path, driver, source))
       // A disk that came back as it was saved needs no saving again; a new one does.
       if (!fresh) system.saved = disk.version
       for (;;) {
-        system.session = yield* sys.spawn(['-sh'], { program: sh, env, cwd: HOME, group: 'new' })
-        const status = yield* sys.wait(system.session)
-        sys.log(`the console's shell ended with status ${status}: starting another`)
+        try {
+          system.session = yield* sys.spawn(['-sh'], { program: sh, env, cwd: HOME, group: 'new' })
+          const status = yield* sys.wait(system.session)
+          sys.log(`the console's shell ended with status ${status}: starting another`)
+        } catch (e) {
+          // No room for another task just now (the table is full): try again in a moment rather than end task 1.
+          if (!(e instanceof OsError)) throw e
+          sys.log(`the console's shell could not be started: ${e.message}: trying again`)
+        }
         yield* sys.sleep(250)
       }
     }

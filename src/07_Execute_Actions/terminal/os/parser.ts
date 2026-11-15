@@ -180,15 +180,21 @@ function chunkAt(src: string, at: number, paren = false): Chunk | null {
 
 /**
  * Whether a typed line needs the shell. It does when any blank-delimited piece after the first is an operator standing
- * alone (`|`, `||`, `&&`, `;`, `&`, a redirection), or ends in a `;`. A line with an open quote does not (the console
- * reports it as it always has). The console asks this only of a line whose first word is one of the city's commands.
+ * alone (`|`, `||`, `&&`, `;`, `&`, a redirection), or ends in a `;`, or comes after a line end (the shell ends the
+ * command there, so what follows is another command). A line with an open quote does not (the console reports it as
+ * it always has). The console asks this only of a line whose first word is one of the city's commands.
  */
 export function hasOperator(line: string): boolean {
   let i = 0
   let first = true
   for (;;) {
-    while (i < line.length && (line[i] === ' ' || line[i] === '\t' || line[i] === '\n')) i++
+    let newline = false
+    while (i < line.length && (line[i] === ' ' || line[i] === '\t' || line[i] === '\n')) {
+      if (line[i] === '\n') newline = true
+      i++
+    }
     if (i >= line.length) return false
+    if (newline && !first) return true
     const chunk = chunkAt(line, i)
     if (chunk === null) return false
     i = chunk.end
@@ -225,13 +231,14 @@ class Parser {
     if (++this.depth > DEPTH_MAX) this.fail('nested too deep')
   }
 
-  /** Skips blanks, a backslash at a line end, and a comment. */
+  /** Skips blanks, a backslash at a line end, and a comment. A backslash that ends the text asks for the next line. */
   private blanks(): void {
     const s = this.src
     for (;;) {
       const c = s[this.i]
       if (c === ' ' || c === '\t') this.i++
       else if (c === '\\' && s[this.i + 1] === '\n') this.i += 2
+      else if (c === '\\' && this.i + 1 === s.length) this.fail('a line ends in a backslash', true)
       else if (c === '#') { while (this.i < s.length && s[this.i] !== '\n') this.i++ }
       else return
     }
@@ -254,7 +261,16 @@ class Parser {
       }
       if (!closed) this.fail(`heredoc '${w.marker}' has no end`, true)
       const text = lines.length === 0 ? '' : `${lines.join('\n')}\n`
-      w.redirect.here = w.quoted ? [{ t: 'lit', s: text, q: true }] : new Parser(text, NO_CITY).hereText()
+      if (w.quoted) { w.redirect.here = [{ t: 'lit', s: text, q: true }]; continue }
+      // The text is read as deep as the heredoc stands, and once its marker is found no later line can finish it.
+      const inner = new Parser(text, this.city)
+      inner.depth = this.depth
+      try {
+        w.redirect.here = inner.hereText()
+      } catch (e) {
+        if (e instanceof ShellSyntax) this.fail(e.message)
+        throw e
+      }
     }
     this.waiting = []
   }
@@ -317,7 +333,10 @@ class Parser {
     }
     if (c === '{') {
       this.i += 2
-      return this.braced(q)
+      this.deeper()
+      const seg = this.braced(q)
+      this.depth--
+      return seg
     }
     if (c !== undefined && NAME_START.test(c)) {
       let end = this.i + 2
@@ -364,28 +383,36 @@ class Parser {
     return segs
   }
 
-  /** `${...}`: the position is just past the `{`. */
-  private braced(q: boolean): Seg {
+  /** A name, or one special parameter, at the position (moved past it); '' when neither is there. */
+  private paramName(): string {
     const s = this.src
-    if (s[this.i] === '#' && s[this.i + 1] !== '}') {
-      const start = ++this.i
-      while (this.i < s.length && (NAME_CHAR.test(s[this.i]) || SPECIAL.includes(s[this.i])) && s[this.i] !== '}') this.i++
-      const name = s.slice(start, this.i)
-      if (s[this.i] !== '}' || name === '') this.fail('bad substitution', this.i >= s.length)
-      this.i++
-      return { t: 'var', name, op: 'len', arg: null, q }
-    }
     const start = this.i
     if (this.i < s.length && NAME_START.test(s[this.i])) { while (this.i < s.length && NAME_CHAR.test(s[this.i])) this.i++ }
     else if (this.i < s.length && SPECIAL.includes(s[this.i])) this.i++
-    const name = s.slice(start, this.i)
-    if (name === '') this.fail('bad substitution', this.i >= s.length)
+    return s.slice(start, this.i)
+  }
+
+  /**
+   * `${...}`: the position is just past the `{`. A refusal here is never incomplete: the name and the operator must
+   * stand on the line the `${` opened, so no later line can finish them.
+   */
+  private braced(q: boolean): Seg {
+    const s = this.src
+    if (s[this.i] === '#' && s[this.i + 1] !== '}') {
+      this.i++
+      const name = this.paramName()
+      if (s[this.i] !== '}' || name === '') this.fail('bad substitution')
+      this.i++
+      return { t: 'var', name, op: 'len', arg: null, q }
+    }
+    const name = this.paramName()
+    if (name === '') this.fail('bad substitution')
     if (s[this.i] === '}') { this.i++; return { t: 'var', name, op: '', arg: null, q } }
     let op = ''
     for (const candidate of [':-', ':=', ':+', ':?', '%%', '##', '-', '=', '+', '?', '%', '#']) {
       if (s.startsWith(candidate, this.i)) { op = candidate; break }
     }
-    if (op === '') this.fail('bad substitution', this.i >= s.length)
+    if (op === '') this.fail('bad substitution')
     this.i += op.length
     const arg = this.wordUntilBrace(q)
     return { t: 'var', name, op, arg, q }
@@ -532,7 +559,8 @@ class Parser {
     this.i = j
     this.blanks()
     const word = this.word()
-    if (word === null) this.fail(`'${op}' needs a name after it`, this.i >= s.length)
+    // The name must be on the same line (a line end ends the command), so a missing one is never incomplete.
+    if (word === null) this.fail(`'${op}' needs a name after it`)
     const redirect: Redirect = { fd: fd >= 0 ? fd : c === '<' ? 0 : 1, op, word, here: null }
     if (op === '<<') {
       // The marker is taken as typed with its quotes removed; any quoting means the text is not expanded.
@@ -669,7 +697,8 @@ class Parser {
       const start = this.i
       while (this.i < this.src.length && NAME_CHAR.test(this.src[this.i])) this.i++
       const name = this.src.slice(start, this.i)
-      if (name === '' || !NAME_START.test(name[0])) this.fail("'for' needs a variable name", this.i >= this.src.length)
+      // The name must follow `for` on its line: a missing one is never incomplete.
+      if (name === '' || !NAME_START.test(name[0])) this.fail("'for' needs a variable name")
       this.gaps()
       let words: Word[] | null = null
       if (this.reserved() === 'in') {
@@ -734,8 +763,9 @@ class Parser {
       words.push(w)
     }
     if (words.length === 0 && assigns.length === 0 && redirects.length === 0) {
+      // Only a `!` leaves a command missing at the end, and its command must follow on the same line.
       const c = s[this.i]
-      this.fail(this.i >= s.length ? 'a command is missing' : `unexpected '${c === '\n' ? 'line end' : c}'`, this.i >= s.length)
+      this.fail(this.i >= s.length ? 'a command is missing' : `unexpected '${c === '\n' ? 'line end' : c}'`)
     }
     return { t: 'simple', assigns, words, redirects }
   }

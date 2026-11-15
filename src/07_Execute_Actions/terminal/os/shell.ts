@@ -13,16 +13,15 @@
  * What breaks if it is removed? There are programs and files but no way to run one from the console.
  */
 import { sum, SumError } from './arith.ts'
-import { decode, encode } from './bytes.ts'
+import { concat, decode, encode } from './bytes.ts'
 import { evaluate } from './cond.ts'
 import { OsError, reasonOf } from './errno.ts'
-import { DEFAULT_PATH } from './kernel.ts'
+import { DEFAULT_PATH, READ_ALL_MAX } from './kernel.ts'
 import type { Program, Sys } from './kernel.ts'
 import { NO_CITY, ShellSyntax, parse } from './parser.ts'
 import type { AndOr, CityNames, Command, List, Pipeline, Redirect, Seg, Simple, Word } from './parser.ts'
 import { hasPattern, matches } from './path.ts'
 import { PIPE_MAX } from './pipe.ts'
-import { io } from './task.ts'
 import type { Later, Task } from './task.ts'
 import { O_APPEND, O_CREATE, O_READ, O_TRUNC, O_WRITE } from './vfs.ts'
 
@@ -53,8 +52,24 @@ const NO_HOST: CityHost = Object.freeze({ ...NO_CITY, run: (): CityResult => ({ 
 
 /** The most names a pattern may expand to. */
 const MATCHES_MAX = 16384
+/**
+ * The most characters one word may expand to (what one `$( )` may give), and all the words of one command together
+ * twice that. Without them `x="$x$x"` in a loop doubles a value until the host itself refuses to hold it.
+ */
+const WORD_MAX = READ_ALL_MAX
+/**
+ * The most fields the words of one command may expand to. A field costs far more memory than its text: a value of a
+ * few MiB split at every blank would hold the page up for seconds and take a GiB, one of 64 MiB more than there is.
+ */
+const FIELDS_MAX = 1 << 18
 /** The most turns of nested `source` and command substitution. */
 const NEST_MAX = 32
+/**
+ * The most lists one task runs inside one another (the body of a loop, a group, an `if`, a script read with source:
+ * each is one more). Every one deepens the host's own stack while it runs, and a script that reads itself through
+ * loops nested as deep as the parser allows would run that stack out long before NEST_MAX.
+ */
+const DEPTH_MAX = 256
 /** What the shell calls itself in a message. */
 const SELF = 'ash'
 
@@ -85,6 +100,8 @@ class State {
   readonly exported = new Set<string>()
   params: string[] = []
   name = 'sh'
+  /** What `$$` gives: the number of the shell itself, also in the tasks it starts for a pipe, a `$( )` or a job. */
+  pid = 0
   status = 0
   lastBg = 0
   /** Reads the terminal and gives each job its own group. */
@@ -95,6 +112,8 @@ class State {
   nextJob = 1
   loops = 0
   nest = 0
+  /** Lists running inside one another in this task, up to DEPTH_MAX. */
+  depth = 0
 
   clone(): State {
     const c = new State()
@@ -102,9 +121,11 @@ class State {
     for (const k of this.exported) c.exported.add(k)
     c.params = this.params.slice()
     c.name = this.name
+    c.pid = this.pid
     c.status = this.status
     c.lastBg = this.lastBg
-    c.nest = this.nest + 1
+    // A pipeline's stage or a job is no deeper than the line it came from: only a `$( )` counts one more.
+    c.nest = this.nest
     return c
   }
 }
@@ -148,7 +169,7 @@ class Shell {
     const st = this.st
     switch (name) {
       case '?': return String(st.status)
-      case '$': return String(this.sys.pid)
+      case '$': return String(st.pid)
       case '!': return st.lastBg === 0 ? undefined : String(st.lastBg)
       case '#': return String(st.params.length)
       case '0': return st.name
@@ -207,17 +228,23 @@ class Shell {
       case ':?': case '?': {
         if (base !== undefined && !(op === ':?' && base === '')) return text(base)
         const why = yield* this.one(seg.arg ?? [])
-        throw new Trouble(`${name}: ${why === '' ? 'parameter not set' : why}`)
+        throw new Trouble(`${name}: ${why !== '' ? why : base === undefined ? 'parameter not set' : 'parameter is empty'}`)
       }
       default: {
-        // % %% # ##: the value with the shortest or longest matching end or start removed.
+        // % %% # ##: the value with the shortest or longest matching end or start removed. Each end tried counts as a
+        // step, so a long value cannot hold the other tasks up, and Ctrl+C gives it up.
         const value = base ?? ''
         const pattern = yield* this.pattern(seg.arg ?? [])
         const n = value.length
-        if (op === '#') { for (let i = 0; i <= n; i++) if (matches(pattern, value.slice(0, i), true)) return text(value.slice(i)) }
-        else if (op === '##') { for (let i = n; i >= 0; i--) if (matches(pattern, value.slice(0, i), true)) return text(value.slice(i)) }
-        else if (op === '%') { for (let i = n; i >= 0; i--) if (matches(pattern, value.slice(i), true)) return text(value.slice(0, i)) }
-        else { for (let i = 0; i <= n; i++) if (matches(pattern, value.slice(i), true)) return text(value.slice(0, i)) }
+        const start = op === '#' || op === '##'
+        const upward = op === '#' || op === '%%'
+        for (let k = 0; k <= n; k++) {
+          yield* this.sys.step()
+          this.interruptCheck()
+          const i = upward ? k : n - k
+          const cut = start ? value.slice(0, i) : value.slice(i)
+          if (matches(pattern, cut, true)) return text(start ? value.slice(i) : value.slice(0, i))
+        }
         return text(value)
       }
     }
@@ -232,16 +259,27 @@ class Shell {
     const fields: Piece[][] = []
     let cur: Piece[] = []
     let has = false
+    let size = 0
+    const grow = (n: number): void => {
+      size += n
+      if (size > WORD_MAX) throw new Trouble(`a word may expand to at most ${WORD_MAX} characters`)
+    }
+    const push = (field: Piece[]): void => {
+      if (fields.length >= FIELDS_MAX) throw new Trouble(`a command may expand to at most ${FIELDS_MAX} words`)
+      fields.push(field)
+    }
     const end = (): void => {
-      if (has) fields.push(cur)
+      if (has) push(cur)
       cur = []
       has = false
     }
     const quoted = (s: string): void => {
+      grow(s.length)
       cur.push({ s, q: true })
       has = true
     }
     const loose = (s: string): void => {
+      grow(s.length)
       if (mode !== SPLIT) {
         if (s !== '') { cur.push({ s, q: mode === WHOLE }); has = true }
         return
@@ -264,7 +302,7 @@ class Shell {
       switch (seg.t) {
         case 'lit':
           if (seg.q) quoted(seg.s)
-          else if (seg.s !== '') { cur.push({ s: seg.s, q: false }); has = true }
+          else if (seg.s !== '') { grow(seg.s.length); cur.push({ s: seg.s, q: false }); has = true }
           break
         case 'home': {
           const home = seg.user === '' ? this.get('HOME') : seg.user === 'root' || seg.user === 'operator' ? '/home/operator' : undefined
@@ -276,7 +314,7 @@ class Shell {
           if (v.list !== null) {
             if (seg.q && seg.name === '@') {
               v.list.forEach((p, k) => {
-                if (k > 0) { fields.push(cur); cur = []; has = false }
+                if (k > 0) { push(cur); cur = []; has = false }
                 quoted(p)
               })
             } else if (seg.q) quoted(v.list.join(' '))
@@ -324,14 +362,21 @@ class Shell {
   /** The words of a command as the arguments it gets: expanded, split into fields, patterns matched against file names. */
   private *words(words: readonly Word[]): Task<string[]> {
     const out: string[] = []
+    let size = 0
+    const add = (text: string): void => {
+      if (out.length >= FIELDS_MAX) throw new Trouble(`a command may expand to at most ${FIELDS_MAX} words`)
+      size += text.length
+      if (size > 2 * WORD_MAX) throw new Trouble(`the words of a command may expand to at most ${2 * WORD_MAX} characters`)
+      out.push(text)
+    }
     for (const word of words) {
       for (const field of yield* this.pieces(word, SPLIT)) {
         const text = field.map((p) => p.s).join('')
-        if (!field.some((p) => !p.q && hasPattern(p.s))) { out.push(text); continue }
+        if (!field.some((p) => !p.q && hasPattern(p.s))) { add(text); continue }
         const pattern = field.map((p) => (p.q ? literal(p.s) : p.s.replace(/\\/g, '\\\\'))).join('')
         const found = yield* this.glob(pattern)
-        if (found.length === 0) out.push(text)
-        else for (const f of found) out.push(f)
+        if (found.length === 0) add(text)
+        else for (const f of found) add(f)
       }
     }
     return out
@@ -350,17 +395,19 @@ class Shell {
     }
     comps.push(cur)
     const absolute = comps[0] === '' && comps.length > 1
+    // A pattern that ends in a slash names directories only, and each name it gives keeps the slash.
+    const dirs = comps.length > 1 && comps[comps.length - 1] === ''
     let bases: string[] = [absolute ? '/' : '']
     const names = comps.filter((c) => c !== '')
     for (let n = 0; n < names.length; n++) {
       const comp = names[n]
-      const more = n + 1 < names.length
+      const more = n + 1 < names.length || dirs
       const next: string[] = []
       for (const base of bases) {
         const join = (name: string): string => (base === '' ? name : base.endsWith('/') ? base + name : `${base}/${name}`)
         if (!hasPattern(comp)) {
           const path = join(comp.replace(/\\(.)/g, '$1'))
-          if (yield* this.sys.access(path, 0)) next.push(path)
+          if (yield* this.sys.access(more ? `${path}/` : path, 0)) next.push(path)
           continue
         }
         let entries
@@ -379,6 +426,7 @@ class Shell {
       bases = next
       if (bases.length === 0) return []
     }
+    if (dirs) bases = bases.map((b) => (b.endsWith('/') ? b : `${b}/`))
     return bases.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
   }
 
@@ -402,6 +450,7 @@ class Shell {
       throw e
     }
     const sub = this.st.clone()
+    sub.nest++
     const city = this.city
     const fds = this.fdList()
     fds[1] = w
@@ -418,10 +467,14 @@ class Shell {
     let out: string
     try {
       out = decode(yield* sys.readAll(r))
-      this.lastSub = yield* sys.wait(pid)
     } finally {
       sys.close(r)
-      if (this.st.interactive) sys.foreground(sys.pgid)
+      // The task is collected even when what it wrote was too much to keep: with the pipe closed, it ends.
+      try {
+        this.lastSub = yield* sys.wait(pid)
+      } finally {
+        if (this.st.interactive) sys.foreground(sys.pgid)
+      }
     }
     this.interruptCheck()
     return out.replace(/\n+$/, '')
@@ -534,18 +587,27 @@ class Shell {
   }
 
   *list(list: List): Task<number> {
-    let status = this.st.status
-    for (const item of list.items) {
-      this.interruptCheck()
-      status = item.bg ? yield* this.background(item.cmd, item.text) : yield* this.andOr(item.cmd)
-      this.st.status = status
+    const st = this.st
+    if (st.depth >= DEPTH_MAX) throw new Trouble('commands nested too deep')
+    st.depth++
+    try {
+      let status = st.status
+      for (const item of list.items) {
+        this.interruptCheck()
+        status = item.bg ? yield* this.background(item.cmd, item.text) : yield* this.andOr(item.cmd)
+        st.status = status
+      }
+      return status
+    } finally {
+      st.depth--
     }
-    return status
   }
 
   private *andOr(a: AndOr): Task<number> {
     let status = yield* this.pipeline(a.first)
     for (const r of a.rest) {
+      // Ctrl+C gives the rest up even when what it cut short answered with a status of its own (`read x || ...`).
+      this.interruptCheck()
       if ((r.op === '&&') === (status === 0)) status = yield* this.pipeline(r.cmd)
     }
     return status
@@ -621,7 +683,15 @@ class Shell {
       if (prev >= 0) sys.close(prev)
       if (!(e instanceof OsError)) throw e
       yield* sys.eprint(`${SELF}: cannot start a pipeline: ${e.message}\n`)
-      // What did start ends by itself: its pipes are closed now.
+      // What did start is asked to end, then collected. Its pipes are closed now, but a first stage that reads the
+      // terminal would not end by itself: it would take the lines typed next, meant for the shell.
+      for (const pid of pids) {
+        try {
+          sys.stop(pid)
+        } catch (e2) {
+          if (!(e2 instanceof OsError)) throw e2
+        }
+      }
       if (pids.length > 0 && pgid !== undefined) yield* this.foreground(pids, pgid)
       return 1
     }
@@ -655,6 +725,9 @@ class Shell {
 
   private *background(cmd: AndOr, text: string): Task<number> {
     const sys = this.sys
+    // Jobs that ended are collected first, so a script or a line that starts many never fills the task table. At the
+    // terminal the shell says how each ended, as its prompt would; written anywhere else, that word could be refused.
+    yield* this.reap(this.st.interactive && sys.isatty(1))
     const sub = this.st.clone()
     const city = this.city
     let nul = -1
@@ -774,18 +847,22 @@ class Shell {
     const name = argv[0]
     const builtin = Object.hasOwn(BUILTINS, name) ? BUILTINS[name] : undefined
     if (builtin !== undefined) {
-      // NAME=value before a builtin holds for that command only.
+      // NAME=value before a builtin holds for that command only: afterwards (or when a later value cannot be
+      // expanded) each name is as it was, exported or not, the last one held first so that a name given twice ends
+      // with the value it had before both.
       const held: { name: string; value: string | undefined; exported: boolean }[] = []
-      for (const a of cmd.assigns) {
-        held.push({ name: a.name, value: this.st.vars.get(a.name), exported: this.st.exported.has(a.name) })
-        this.set(a.name, yield* this.one(a.value))
-      }
       try {
+        for (const a of cmd.assigns) {
+          held.push({ name: a.name, value: this.st.vars.get(a.name), exported: this.st.exported.has(a.name) })
+          this.set(a.name, yield* this.one(a.value))
+        }
         return yield* this.redirected(cmd.redirects, () => this.runBuiltin(builtin, argv), final)
       } finally {
-        for (const h of held) {
+        for (let i = held.length - 1; i >= 0; i--) {
+          const h = held[i]
           if (h.value === undefined) this.unset(h.name)
           else this.set(h.name, h.value)
+          if (h.exported) this.st.exported.add(h.name)
         }
       }
     }
@@ -871,7 +948,7 @@ class Shell {
       // The host shows this answer itself; what arrives later is waited for only to know how it went.
       sys.post(res.post)
       let status = res.status ?? 0
-      if (res.later !== null && (yield* this.answered(res.later)).some((l) => l.err)) status = 1
+      if (res.later !== null && (yield* this.answered(name, res.later)).some((l) => l.err)) status = 1
       return status
     }
     let failed = false
@@ -886,16 +963,23 @@ class Shell {
         else yield* sys.print(text)
       }
     }
-    yield* show(res.lines)
-    if (res.later !== null) yield* show(yield* this.answered(res.later))
+    try {
+      yield* show(res.lines)
+      if (res.later !== null) yield* show(yield* this.answered(name, res.later))
+    } catch (e) {
+      // A write that is refused (a full disk) is this command's failure, as a builtin's is: the line goes on.
+      if (!(e instanceof OsError) || e.errno === 'EPIPE') throw e
+      yield* sys.eprint(`${name}: ${e.message}\n`)
+      return 1
+    }
     return failed ? 1 : 0
   }
 
   /**
    * Waits for what a city command answers later. Ctrl+C at the console's own shell gives the wait up (the command
-   * itself goes on in the city: the shell only stops waiting for it).
+   * itself goes on in the city: the shell only stops waiting for it). A refusal is the command's own error line.
    */
-  private *answered(later: Later<readonly CityLine[]>): Task<readonly CityLine[]> {
+  private *answered(name: string, later: Later<readonly CityLine[]>): Task<readonly CityLine[]> {
     const sys = this.sys
     // Only the console's own shell takes a Ctrl+C, so only it may end the wait on one.
     const mine = this.st.session
@@ -903,7 +987,8 @@ class Shell {
       yield { why: 'city', ready: () => later.done || (mine && sys.interruptPending()) }
       this.interruptCheck()
     }
-    return yield* io(later)
+    if (later.error !== null) return [{ err: true, text: `${name}: ${later.error.message}` }]
+    return later.value ?? []
   }
 
   // Jobs.
@@ -943,6 +1028,7 @@ class Shell {
   *main(argv: readonly string[]): Task<number> {
     const sys = this.sys
     const st = this.st
+    st.pid = sys.pid
     for (const [k, v] of sys.env) {
       st.vars.set(k, v)
       st.exported.add(k)
@@ -978,7 +1064,15 @@ class Shell {
       st.session = true
       sys.takeTerminal()
       for (const profile of ['/etc/profile', `${this.get('HOME') ?? ''}/.profile`]) {
-        if (yield* sys.access(profile, 4)) yield* this.guarded(() => this.source(profile))
+        if (!(yield* sys.access(profile, 4))) continue
+        // A profile that cannot be read (a directory) or whose commands are refused is said and passed over: thrown
+        // from here it would end the console's shell, and the one started in its place would read it again.
+        try {
+          yield* this.guarded(() => this.source(profile))
+        } catch (e) {
+          if (!(e instanceof OsError)) throw e
+          yield* sys.eprint(`${SELF}: ${profile}: ${e.message}\n`)
+        }
       }
     }
     return yield* this.converse()
@@ -1030,11 +1124,17 @@ class Shell {
     return ps1.replace(/\\([hwu$\\])/g, (_m, c: string) => (c === 'h' ? this.sys.hostname : c === 'w' ? shown : c === 'u' ? (this.get('USER') ?? 'root') : c === '$' ? mark : '\\'))
   }
 
-  /** One typed line without its line end; null at an end of input. */
+  /** One typed line without its line end; null at an end of input. A line longer than one read is still one line. */
   private *typed(): Task<string | null> {
-    const bytes = yield* this.sys.read(0)
-    if (bytes.length === 0) return null
-    const text = decode(bytes)
+    const parts: Uint8Array[] = []
+    for (;;) {
+      const bytes = yield* this.sys.read(0)
+      if (bytes.length === 0) break
+      parts.push(bytes)
+      if (bytes[bytes.length - 1] === 10) break
+    }
+    if (parts.length === 0) return null
+    const text = decode(parts.length === 1 ? parts[0] : concat(parts))
     return text.endsWith('\n') ? text.slice(0, -1) : text
   }
 
@@ -1076,7 +1176,11 @@ class Shell {
         sys.prompt('')
         if (list !== null) yield* this.list(list)
       } catch (e) {
-        if (e instanceof Jump) continue
+        if (e instanceof Jump) {
+          // Only `return` gets this far (there is no loop around the line): the line is given up with its status.
+          this.st.status = e.status
+          continue
+        }
         if (e instanceof Interrupted) {
           this.st.status = 130
           continue
@@ -1209,8 +1313,14 @@ class Shell {
   *wait(argv: string[]): Task<number> {
     const sys = this.sys
     let status = 0
+    // Only the console's own shell takes a Ctrl+C, so only it may end the wait on one; the job goes on.
+    const mine = this.st.session
     const one = function* (this: Shell, pids: readonly number[]): Task<void> {
       for (const pid of pids) {
+        while (sys.poll(pid) === 'running') {
+          yield { why: 'wait', ready: () => sys.poll(pid) !== 'running' || (mine && sys.interruptPending()) }
+          this.interruptCheck()
+        }
         try {
           status = yield* sys.wait(pid)
         } catch (e) {
@@ -1252,7 +1362,8 @@ class Shell {
       try {
         if (j === null) { yield* sys.eprint(`stop: ${word}: no such job\n`); status = 1 }
         else if (typeof j === 'number') sys.stop(j)
-        else for (const pid of j.pids) { if (sys.poll(pid) === 'running') sys.stop(pid) }
+        // A job is its group: its shell and every program that shell started end together.
+        else sys.stopGroup(j.pgid)
       } catch (e) {
         if (!(e instanceof OsError)) throw e
         yield* sys.eprint(`stop: ${word}: ${e.message}\n`)
@@ -1288,17 +1399,26 @@ class Shell {
     const bytes: number[] = []
     let ended = true
     const whole = sys.isatty(0)
-    for (;;) {
-      const chunk = yield* sys.read(0, whole ? 65536 : 1)
-      if (chunk.length === 0) break
-      let done = false
-      for (const b of chunk) {
-        if (b === 10) { done = true; ended = false; break }
-        bytes.push(b)
+    // At the terminal the next typed line is this command's, whatever it says: the console must not take it for a new one.
+    if (whole) sys.prompt('', true)
+    try {
+      for (;;) {
+        const chunk = yield* sys.read(0, whole ? 65536 : 1)
+        if (chunk.length === 0) break
+        let done = false
+        for (const b of chunk) {
+          if (b === 10) { done = true; ended = false; break }
+          if (bytes.length <= 1 << 20) bytes.push(b)
+        }
+        if (done) break
+        // Past 1 MiB the rest of a typed line is read and dropped: left there, the shell would run it as a command.
+        if (!whole && bytes.length > 1 << 20) break
       }
-      if (done) break
-      if (bytes.length > 1 << 20) break
+    } finally {
+      if (whole) sys.prompt('')
     }
+    // Ctrl+C at the console ends the read with no input: the line is given up with 130, not answered with a status.
+    this.interruptCheck()
     let line = decode(Uint8Array.from(bytes))
     if (!raw) line = line.replace(/\\(.)/g, '$1')
     if (names.length === 0) this.set('REPLY', line)

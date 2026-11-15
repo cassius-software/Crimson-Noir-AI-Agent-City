@@ -30,13 +30,19 @@ type Stream = 'out' | 'err'
 
 export class Tty {
   private events: TtyEvent[] = []
+  /** Lines (not posts) in `events`, and how many of the oldest of them are dropped but not yet taken out. */
+  private lines = 0
+  private stale = 0
   /** The line being assembled, a character in each cell, and the column the next character goes to. */
   private cells: string[] = []
   private col = 0
   private open: Stream | null = null
   private readonly decoders = { out: new TextDecoder('utf-8'), err: new TextDecoder('utf-8') }
-  /** Where an escape sequence stands: 0 none, 1 after ESC, 2 inside CSI, 3 inside an OSC string, 4 OSC after ESC. */
-  private escape = 0
+  /**
+   * Where each stream's escape sequence stands: 0 none, 1 after ESC, 2 inside CSI, 3 inside an OSC string, 4 OSC
+   * after ESC. Each stream has its own, so one stream's half-written sequence never eats the other's characters.
+   */
+  private readonly escape = { out: 0, err: 0 }
   /** Lines dropped because nobody collected them. */
   dropped = 0
   /** Typed lines not yet read, each ending in a line feed; null marks an end of input (Ctrl+D). */
@@ -59,24 +65,32 @@ export class Tty {
 
   private put(stream: Stream, ch: string): void {
     const code = ch.codePointAt(0) ?? 0
-    if (this.escape !== 0) {
+    const at = this.escape[stream]
+    // A line feed ends any sequence and is still a line end, so a sequence left open never hides the lines after it.
+    if (at !== 0 && code !== 10) {
       // ESC [ ... final byte, or ESC ] ... BEL / ESC \, or ESC and one more character.
-      if (this.escape === 1) this.escape = ch === '[' ? 2 : ch === ']' ? 3 : 0
-      else if (this.escape === 2) { if (code >= 0x40 && code <= 0x7e) this.escape = 0 }
-      else if (this.escape === 3) { if (code === 7) this.escape = 0; else if (code === 27) this.escape = 4 }
-      else this.escape = 0
+      if (at === 1) this.escape[stream] = ch === '[' ? 2 : ch === ']' ? 3 : 0
+      else if (at === 2) { if (code >= 0x40 && code <= 0x7e) this.escape[stream] = 0 }
+      else if (at === 3) { if (code === 7) this.escape[stream] = 0; else if (code === 27) this.escape[stream] = 4 }
+      else this.escape[stream] = 0
       return
     }
+    this.escape[stream] = 0
     if (code === 10) { this.open = stream; this.flush(); return }
     if (code === 13) { this.col = 0; return }
-    if (code === 27) { this.escape = 1; return }
+    if (code === 27) { this.escape[stream] = 1; return }
     if (code === 8) { if (this.col > 0) this.col--; return }
     if (code === 9) {
-      const to = (Math.floor(this.col / 8) + 1) * 8
-      while (this.col < to) this.cell(stream, ' ')
+      // To the next eighth, never past the longest line (a tab at its end stays there), moving over what is there.
+      const to = Math.min((Math.floor(this.col / 8) + 1) * 8, LINE_MAX)
+      while (this.col < to) {
+        if (this.col < this.cells.length) this.col++
+        else this.cell(stream, ' ')
+      }
       return
     }
-    if (code < 32 || code === 127) return
+    // The other control characters, the second set (128 to 159) as well as the first, are dropped too.
+    if (code < 32 || (code >= 127 && code < 160)) return
     this.cell(stream, ch)
   }
 
@@ -104,26 +118,43 @@ export class Tty {
 
   private push(event: TtyEvent): void {
     this.events.push(event)
-    if (this.events.length > EVENTS_MAX) {
-      // Drop the oldest line; something posted for the host is never dropped.
-      const at = this.events.findIndex((e) => e.kind !== 'post')
-      if (at >= 0) {
-        this.events.splice(at, 1)
-        this.dropped++
-      }
+    if (event.kind !== 'post') this.lines++
+    if (this.events.length - this.stale > EVENTS_MAX && this.lines > this.stale) {
+      // Drop the oldest line; something posted for the host is never dropped. A dropped line is only counted here
+      // and taken out with the others in one pass now and then: one at a time, a flood of lines would cost the
+      // whole kept list for every line.
+      this.stale++
+      this.dropped++
+      if (this.stale >= EVENTS_MAX) this.prune()
     }
+  }
+
+  /** Takes the dropped lines (the oldest `stale` lines) out of the list. */
+  private prune(): void {
+    if (this.stale === 0) return
+    let skip = this.stale
+    const kept: TtyEvent[] = []
+    for (const e of this.events) {
+      if (skip > 0 && e.kind !== 'post') skip--
+      else kept.push(e)
+    }
+    this.events = kept
+    this.lines -= this.stale
+    this.stale = 0
   }
 
   /** Everything finished since the last call, oldest first. A line still being assembled stays. */
   drain(): TtyEvent[] {
+    this.prune()
     if (this.events.length === 0) return []
     const out = this.events
     this.events = []
+    this.lines = 0
     return out
   }
 
   /** Whether anything waits to be collected. */
-  get pending(): boolean { return this.events.length > 0 }
+  get pending(): boolean { return this.events.length > this.stale }
 
   /** What the person typed: one or more lines; a text that does not end in a line feed is given one. False when the queue is full. */
   feed(text: string): boolean {

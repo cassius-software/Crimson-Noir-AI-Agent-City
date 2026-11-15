@@ -19,7 +19,7 @@ import type { Program, Sys } from './kernel.ts'
 import { READ_ALL_MAX } from './kernel.ts'
 import { Lines, Out, complain, count, inputs, options, usage } from './lib.ts'
 import type { Parsed } from './lib.ts'
-import { sha256 } from './sha.ts'
+import { Sha256 } from './sha.ts'
 import type { Task } from './task.ts'
 import { O_APPEND, O_CREATE, O_READ, O_TRUNC, O_WRITE } from './vfs.ts'
 
@@ -1796,9 +1796,14 @@ const sha256sum = tool('sha256sum', function* (sys, argv, pen) {
   const o = options(argv, '')
   if (o.bad !== null) return yield* misuse(sys, 'sha256sum', o.bad, SHA256SUM_USAGE)
   return yield* feed(sys, 'sha256sum', o.rest, pen, function* (fd, path) {
-    // The digest is worked out over the whole input at once: it is read in pieces, and refused past what may be held.
-    const data = yield* sys.readAll(fd)
-    yield* pen.line(`${hex(sha256(data))}  ${path ?? '-'}`)
+    // The digest is worked out a piece at a time as the input is read, so only one piece is held, whatever the length.
+    const hasher = new Sha256()
+    for (;;) {
+      const chunk = yield* sys.read(fd, PIECE)
+      if (chunk.length === 0) break
+      hasher.update(chunk)
+    }
+    yield* pen.line(`${hex(hasher.digest())}  ${path ?? '-'}`)
   })
 })
 
@@ -2626,8 +2631,9 @@ WHAT IT DOES
     the same bytes, so the digest shows whether a file has changed.
 
 NOTES
-    There is no -c to check a list of digests. A file is held in memory
-    whole; one larger than 64 MiB is refused.
+    There is no -c to check a list of digests. The input is read and
+    digested a piece at a time, so a file of any length can be given; an
+    input that never ends (/dev/zero) runs until Ctrl+C.
 
 STATUS
     0; 1 when a file could not be read (the others still are) or the
