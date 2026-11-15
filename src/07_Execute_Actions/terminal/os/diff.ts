@@ -7,16 +7,18 @@
  * lines two sorted files share and the lines each has alone). diff finds its changes with a shortest-edit-script
  * search written here: the greedy walk along the diagonals of the edit graph, run from both ends of the files at
  * once so that it needs memory only in proportion to the files, and split at the meeting point until each piece is
- * plain. Its work is bounded by construction: each file may have at most LINES_MAX lines, and once the files differ
- * by more than EDITS_MAX lines (or the search has spent WORK_MAX steps) it stops looking and reports everything from
- * the first difference to the last as one change.
+ * plain; lines that only one of the files holds are set aside first, as changes for certain. Its work is bounded by
+ * construction: each file may have at most LINES_MAX lines, and once the lines left to search would need more than
+ * EDITS_MAX changes (or the search has spent WORK_MAX steps) it stops looking and reports everything from the first
+ * difference to the last as one change.
  * What breaks if it is removed? Nobody at the prompt can see what changed between two versions of a file, check
  * that a copy is exact, or find the lines two lists have in common.
  */
+import { decode } from './bytes.ts'
 import { OsError, refuse } from './errno.ts'
 import type { Program, Sys } from './kernel.ts'
 import { READ_ALL_MAX } from './kernel.ts'
-import { Lines, Out, complain, count, options, usage } from './lib.ts'
+import { LINE_BYTES_MAX, Lines, Out, complain, count, options, usage } from './lib.ts'
 import type { Task } from './task.ts'
 import { O_READ } from './vfs.ts'
 
@@ -24,7 +26,7 @@ import { O_READ } from './vfs.ts'
 const PIECE = 65536
 /** The most lines diff reads from each file: a longer file is refused. */
 const LINES_MAX = 100000
-/** The most lines added and removed in all that diff searches for: past this the middle is reported as one change. */
+/** The most lines added and removed in all that the search looks for: past this the middle is reported as one change. */
 const EDITS_MAX = 20000
 /** The most steps the search may take (diagonals tried plus equal lines walked) before it gives up the same way. */
 const WORK_MAX = 100_000_000
@@ -34,8 +36,8 @@ const PACE = 1023
 const BLANKS = /[ \t\r\f\v]+/g
 /** The text that follows a last line that has no line end, in both forms of diff's output. */
 const NO_END = '\\ No newline at end of file'
-/** UTF-8 that refuses ill-formed bytes (so diff can tell text from other bytes) and keeps a byte order mark as text. */
-const STRICT = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+/** The mark some editors put at the start of a UTF-8 file, as text: the shared decoder drops it, and diff puts it back. */
+const BOM = '\ufeff'
 
 // What the three programs share.
 
@@ -136,15 +138,45 @@ function* load(sys: Sys, path: string): Task<Uint8Array> {
   }
 }
 
-/** The lines of a file, or null when it is no text: it holds a zero byte or bytes that are not UTF-8. */
-function textOf(bytes: Uint8Array): Text | null {
-  if (bytes.indexOf(0) >= 0) return null
-  let text: string
-  try {
-    text = STRICT.decode(bytes)
-  } catch {
-    return null
+/**
+ * Whether bytes are well-formed UTF-8: each sequence of the right length for its first byte, no longer than needed,
+ * no half of a surrogate pair, nothing past U+10FFFF.
+ */
+function* wellFormed(sys: Sys, bytes: Uint8Array): Task<boolean> {
+  const n = bytes.length
+  let turns = 0
+  for (let i = 0; i < n;) {
+    const c = bytes[i]
+    if ((++turns & PACE) === 0) yield* sys.step()
+    if (c < 0x80) { i++; continue }
+    let follow = 0
+    let lo = 0x80
+    let hi = 0xbf
+    if (c >= 0xc2 && c <= 0xdf) follow = 1
+    else if (c >= 0xe0 && c <= 0xef) {
+      follow = 2
+      if (c === 0xe0) lo = 0xa0
+      else if (c === 0xed) hi = 0x9f
+    } else if (c >= 0xf0 && c <= 0xf4) {
+      follow = 3
+      if (c === 0xf0) lo = 0x90
+      else if (c === 0xf4) hi = 0x8f
+    } else return false
+    if (i + follow >= n) return false
+    for (let j = 1; j <= follow; j++) {
+      const d = bytes[i + j]
+      if (d < (j === 1 ? lo : 0x80) || d > (j === 1 ? hi : 0xbf)) return false
+    }
+    i += follow + 1
   }
+  return true
+}
+
+/** The lines of a file, or null when it is no text: it holds a zero byte or bytes that are not UTF-8. */
+function* textOf(sys: Sys, bytes: Uint8Array): Task<Text | null> {
+  if (bytes.indexOf(0) >= 0 || !(yield* wellFormed(sys, bytes))) return null
+  let text = decode(bytes)
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) text = BOM + text
   if (text === '') return { lines: [], open: false }
   const lines = text.split('\n')
   if (lines[lines.length - 1] === '') {
@@ -155,9 +187,12 @@ function textOf(bytes: Uint8Array): Text | null {
 }
 
 /** Whether two runs of bytes are the same. */
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+function* sameBytes(sys: Sys, a: Uint8Array, b: Uint8Array): Task<boolean> {
   if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+    if ((i & PACE) === PACE) yield* sys.step()
+  }
   return true
 }
 
@@ -216,8 +251,8 @@ interface Box {
 interface Budget { left: number }
 
 /**
- * The forward search one edit further, to `d` edits: for each diagonal it may reach, the furthest point, from a move
- * right off the diagonal below or a move down off the one above, then along any equal lines. Gives the last run of
+ * The forward search one edit further, to `d` edits: for each diagonal k it may reach, the furthest point, by a step
+ * right from diagonal k - 1 or a step down from diagonal k + 1, then along any equal lines. Gives the last run of
  * equal lines when it reaches past the backward search (which has made d - 1 edits) on some diagonal, else null.
  * A plain function, not a generator: it is the innermost loop of diff and runs as fast as the platform allows.
  */
@@ -594,10 +629,10 @@ const diff: Program = function* (sys, argv) {
   const out = new Out(sys)
   const differ = `Files ${names[0]} and ${names[1]} differ`
   return yield* writing(sys, 'diff', 2, function* () {
-    const one = textOf(rawOne)
-    const two = textOf(rawTwo)
+    const one = yield* textOf(sys, rawOne)
+    const two = yield* textOf(sys, rawTwo)
     if (one === null || two === null) {
-      if (sameBytes(rawOne, rawTwo)) return 0
+      if (yield* sameBytes(sys, rawOne, rawTwo)) return 0
       yield* out.line(differ)
       yield* out.flush()
       return 1
@@ -705,6 +740,7 @@ const cmp: Program = function* (sys, argv) {
         for (let i = 0; i < n; i++) {
           const c1 = x[one.at + i]
           const c2 = y[two.at + i]
+          if ((i & PACE) === PACE) yield* sys.step()
           if (c1 === c2) {
             if (c1 === 10) line++
             continue
@@ -754,9 +790,12 @@ const comm: Program = function* (sys, argv) {
     const files = [{ lines: new Lines(sys, fd1), path: p1, last: null as string | null, told: false }, { lines: new Lines(sys, fd2), path: p2, last: null as string | null, told: false }]
     const out = new Out(sys)
     let status = 0
+    /** Set at a line too long to compare: comm stops there, since what follows it would be compared wrongly. */
+    let stopped = false
     /** The next line of one file (null at its end); one that sorts before the line ahead of it is reported, once a file. */
     const next = function* (which: 0 | 1): Task<string | null> {
       const f = files[which]
+      if (stopped) return null
       let line: string | null
       try {
         line = yield* f.lines.next()
@@ -766,6 +805,14 @@ const comm: Program = function* (sys, argv) {
         yield* complain(sys, 'comm', f.path, e)
         status = 1
         line = null
+      }
+      // The line reader hands a line of LINE_BYTES_MAX characters or more back in pieces, each of which would be taken as a line.
+      if (line !== null && line.length >= LINE_BYTES_MAX) {
+        yield* out.flush()
+        yield* complain(sys, 'comm', f.path, `a line of ${LINE_BYTES_MAX} characters or more, too long to compare`)
+        status = 1
+        stopped = true
+        return null
       }
       if (line !== null && f.last !== null && line < f.last && !f.told) {
         f.told = true
@@ -779,7 +826,7 @@ const comm: Program = function* (sys, argv) {
     return yield* writing(sys, 'comm', 1, function* () {
       let one = yield* next(0)
       let two = yield* next(1)
-      while (one !== null || two !== null) {
+      while (!stopped && (one !== null || two !== null)) {
         if (two === null || (one !== null && one < two)) {
           if (show1) yield* out.line(one ?? '')
           one = yield* next(0)
@@ -842,14 +889,16 @@ NOTES
     A last line that has no line end is followed by the line
     "\\ No newline at end of file", and it counts as different from
     the same line with one. Both files are read whole, and each may
-    have at most 100000 lines. When the two differ in more than 20000
-    lines in all, or the search for the fewest changes runs too long,
-    everything from the first difference to the last is shown as one
-    change instead. A file that holds a zero byte, or bytes that are
-    not UTF-8 text, is compared byte for byte and reported only as
-    "Files a and b differ". A directory is refused: there is no
-    recursive mode. There is no context form (-c), no side-by-side
-    form, and no time after the names in the --- and +++ lines.
+    have at most 100000 lines. Finding the fewest changes takes longer
+    the more lines have moved or repeat: when more than 20000 of the
+    lines both files hold would have to change, or the search runs
+    too long, everything from the first difference to the last is
+    shown as one change instead. A file that holds a zero byte, or
+    bytes that are not UTF-8 text, is compared byte for byte and
+    reported only as "Files a and b differ". A directory is refused:
+    there is no recursive mode. There is no context form (-c), no
+    side-by-side form, and no time after the names in the --- and
+    +++ lines.
 
 STATUS
     0 when the files are the same, 1 when they differ, 2 when a file
@@ -874,7 +923,8 @@ WHAT IT DOES
     for the input.
 
 OPTIONS
-    -s      print nothing: only the status tells
+    -s      print nothing (a file that cannot be read is still
+            reported): only the status tells
     -l      list every byte that differs, one line each: its place
             (from 1) and its value in each file, in octal (base 8);
             -s and -l cannot be used together
@@ -908,10 +958,15 @@ NOTES
     Lines are compared by the code of each character, the order sort
     uses without options. A file found out of order is reported once
     and the status is then 1; its columns are of little use.
+    The files are read as UTF-8 text: bytes that are not UTF-8 are read
+    as the replacement character, so two lines that differ only in such
+    bytes count as the same, and a byte order mark at the start of a
+    file is dropped. A line of ${LINE_BYTES_MAX} characters or more is too long:
+    comm reports it and stops there, and the status is 1.
 
 STATUS
-    0, or 1 when a file could not be read or was out of order; 2 when
-    the command was wrong.
+    0, or 1 when a file could not be read, was out of order or held a
+    line too long; 2 when the command was wrong.
 
 EXAMPLE
     comm -12 guests.txt replies.txt

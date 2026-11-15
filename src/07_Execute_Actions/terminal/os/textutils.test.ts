@@ -335,6 +335,17 @@ test('head: the first lines, by count', () => {
   assert.deepEqual(k.sh('head -n 1 f /tmp twelve; echo $?'), ['==> f <==', 'a', '!head: /tmp: is a directory', '', '==> twelve <==', 'line 00001', '1'])
 })
 
+test('head: what it read past its last line is left in a shared file for the next command; a pipe cannot be', () => {
+  const k = fresh()
+  k.write('/tmp/f', 'a\nb\nc\n')
+  assert.deepEqual(k.sh('{ head -n 1; head -n 1; } < f'), ['a', 'b'])
+  assert.deepEqual(k.sh('{ head -n 1 > /dev/null; read x; echo "[$x]"; } < f'), ['[b]'])
+  assert.deepEqual(k.sh('{ head -n 2 > /dev/null; tail -n 9; } < f'), ['c'])
+  assert.deepEqual(k.sh('{ head -c 2; head -n 1; } < f'), ['a', 'b'])
+  assert.deepEqual(k.sh('{ head -n 9; head -n 1; echo $?; } < f'), ['a', 'b', 'c', '0'])
+  assert.deepEqual(k.sh('seq 3 | { head -n 1; head -n 1; echo $?; }'), ['1', '0'])
+})
+
 test('head: bytes with -c, input without a line end, no input, and bytes that are no text', () => {
   const k = fresh()
   k.write('/tmp/f', 'a\nb\nc')
@@ -951,9 +962,12 @@ test('seq: -w, -s, and what it refuses', () => {
   assert.deepEqual(k.sh('seq -; echo $?'), ["!seq: '-' is not a number", usage, '2'])
   assert.deepEqual(k.sh('seq -x 3; echo $?'), ["!seq: unknown option '-x'", usage, '2'])
   assert.deepEqual(k.sh('seq -s; echo $?'), ["!seq: option '-s' needs a value", usage, '2'])
-  assert.deepEqual(k.sh('seq 1 1000000000000000; echo $?'), ['!seq: a number has more than 15 digits', usage, '2'])
-  assert.deepEqual(k.sh('seq 0.0000000000000001 1; echo $?'), ['!seq: a number has more than 15 digits', usage, '2'])
-  assert.deepEqual(k.sh('seq 0.5 100000000000000; echo $?'), ['!seq: a number has more than 15 digits', usage, '2'])
+  // The limit counts the decimals every number is shown with: 15 digits as written are too many once one is added.
+  const digits = 'a number has more than 15 digits when given as many decimals as the one with the most'
+  assert.deepEqual(k.sh('seq 1 1000000000000000; echo $?'), [`!seq: ${digits}`, usage, '2'])
+  assert.deepEqual(k.sh('seq 0.0000000000000001 1; echo $?'), [`!seq: ${digits}`, usage, '2'])
+  assert.deepEqual(k.sh('seq 0.5 100000000000000; echo $?'), [`!seq: ${digits}`, usage, '2'])
+  assert.deepEqual(k.sh('seq 9999999999998.5 10000000000000'), ['9999999999998.5', '9999999999999.5'])
 })
 
 // yes
@@ -1117,15 +1131,19 @@ test('base64: letters back into bytes; what is not base64 is refused in words', 
   assert.equal(textOf(k, String.raw`printf 'Zm9vYg=\n=\n' | base64 -d`), 'foob')
   assert.equal(textOf(k, 'printf "" | base64 -d'), '')
   same(bytesOf(k, 'printf +//+ | base64 -d'), new Uint8Array([0xfb, 0xff, 0xfe]), 'the two marks')
-  // Each whole group of four before the bad place has been written when it is refused; nothing after it is.
+  // Each whole group of four before the bad place has been written when it is refused, one its = signs close too;
+  // nothing after it is.
   const refused: readonly (readonly [string, string, string])[] = [
     ['Zm9v!Zm9v', "unexpected character '!'", 'foo'],
     ['Zm9vYm!', "unexpected character '!'", 'foo'],
-    ['Zm9vYg==Zm9v', "text after the '=' signs that end it", 'foo'],
+    ['Zm9vYg==Zm9v', "text after the '=' signs that end it", 'foob'],
+    ['Zm9vYmE=\nZm9v', "text after the '=' signs that end it", 'fooba'],
+    ['Zm9vYg=Zm9v', "text after the '=' signs that end it", 'foo'],
     ['Zm9vY', 'it stops in the middle of a group of four', 'foo'],
     ['Zm9vYg=', "the '=' signs at the end do not fit", 'foo'],
+    ['Zm9vYmE==', "the '=' signs at the end do not fit", 'fooba'],
     ['Zm9v=', "the '=' signs at the end do not fit", 'foo'],
-    ['Zg===', "too many '=' signs at the end", ''],
+    ['Zg===', "too many '=' signs at the end", 'f'],
     [String.raw`Zm9v\0`, 'unexpected byte 0x00', 'foo'],
     ['Zm9v-_', "unexpected character '-'", 'foo'],
     ['Zm9v\u{e9}', 'unexpected byte 0xc3', 'foo'],
@@ -1325,6 +1343,9 @@ test('xargs: the status says what became of the runs; the command reads nothing 
     ['!head: 1: no such file or directory', '!head: 2: no such file or directory', '!head: 3: no such file or directory', '123'])
   // What xargs has not read yet is not the command's to read: it gets an input that is empty.
   assert.deepEqual(k.sh("seq 5 | xargs -n 2 sh -c 'read x; echo \"$# [$x]\"' sh"), ['2 []', '2 []', '1 []'])
+  // That empty input never takes the place of a closed one: xargs itself still finds nothing to read there.
+  assert.deepEqual(k.sh('xargs <&-; echo $?'), ['!xargs: bad file descriptor', '1'])
+  assert.deepEqual(k.sh('seq 2 | xargs -r >&-; echo $?'), ['!echo: write error: bad file descriptor', '123'])
   assert.deepEqual(k.sh('seq 3 | xargs -n 3 wc -c -'), ['!wc: 1: no such file or directory', '!wc: 2: no such file or directory',
     '!wc: 3: no such file or directory', '0 -', '0 total'])
   // A word too long to go with the command in one run is refused, and so is the run it would have been in.

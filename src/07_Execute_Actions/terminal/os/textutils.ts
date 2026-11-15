@@ -261,9 +261,23 @@ const head = tool('head', function* (sys, argv, pen) {
         from = end + 1
       }
       yield* pen.raw(from === chunk.length ? chunk : chunk.subarray(0, from))
+      if (from < chunk.length) yield* putBack(sys, fd, chunk.length - from)
     }
   })
 })
+
+/**
+ * Moves a descriptor back over `n` bytes it read but did not use, so that whoever reads the same open file next (the
+ * next command of `{ head -n 1; sort; } < file`) starts just after the last line used. A pipe or the terminal cannot
+ * go back: what was read from it is gone, as it is for every program.
+ */
+function* putBack(sys: Sys, fd: number, n: number): Task<void> {
+  try {
+    yield* sys.seek(fd, -n, 1)
+  } catch (e) {
+    if (!(e instanceof OsError)) throw e
+  }
+}
 
 // tail
 
@@ -1256,7 +1270,9 @@ const seq = tool('seq', function* (sys, argv, pen) {
   const a = scaled(first, fine)
   const s = scaled(step, fine)
   const z = scaled(last, fine)
-  if (a === null || s === null || z === null) return yield* misuse(sys, 'seq', 'a number has more than 15 digits', SEQ_USAGE)
+  if (a === null || s === null || z === null) {
+    return yield* misuse(sys, 'seq', 'a number has more than 15 digits when given as many decimals as the one with the most', SEQ_USAGE)
+  }
   if (s === 0) return yield* misuse(sys, 'seq', 'the step cannot be 0', SEQ_USAGE)
   const total = Math.floor((z - a) / s) + 1
   if (total < 1) return 0
@@ -1658,6 +1674,8 @@ function* decode64(sys: Sys, fd: number, pen: Pen): Task<void> {
   let pending = ''
   /** The `=` signs seen: once there is one, only more of them and white space may follow. */
   let pads = 0
+  /** Whether the characters left over and the `=` signs after them make a whole group of four (or more, with a sign too many). */
+  const closed = (): boolean => pads > 0 && pending.length >= 2 && pending.length + pads >= 4
   for (;;) {
     const chunk = yield* sys.read(fd, PIECE)
     if (chunk.length === 0) break
@@ -1682,11 +1700,18 @@ function* decode64(sys: Sys, fd: number, pen: Pen): Task<void> {
     const whole = text.length - (text.length % 4)
     pending = text.slice(whole)
     if (whole > 0) yield* pen.raw(fromBase64(text.slice(0, whole)))
-    if (fault !== null) refuse('EINVAL', `not base64: ${fault}`)
+    if (fault !== null) {
+      // A group its `=` signs close is whole too: its bytes go out before what follows it is refused.
+      if (closed()) yield* pen.raw(fromBase64(pending))
+      refuse('EINVAL', `not base64: ${fault}`)
+    }
   }
   // The end: two or three characters are one or two more bytes, with or without the `=` signs that fill the group.
   if (pending.length === 1) refuse('EINVAL', 'not base64: it stops in the middle of a group of four')
-  if (pads > 0 && pending.length + pads !== 4) refuse('EINVAL', "not base64: the '=' signs at the end do not fit")
+  if (pads > 0 && pending.length + pads !== 4) {
+    if (closed()) yield* pen.raw(fromBase64(pending))
+    refuse('EINVAL', "not base64: the '=' signs at the end do not fit")
+  }
   if (pending.length > 0) yield* pen.raw(fromBase64(pending))
 }
 
@@ -1917,6 +1942,16 @@ const xargs = tool('xargs', function* (sys, argv, pen) {
   let quiet = -1
   try {
     quiet = yield* sys.open('/dev/null', O_READ)
+    // Opened in the place of a closed input (or output), it would stand in for it: xargs would read it as its own input.
+    if (quiet < 3) {
+      const low = quiet
+      quiet = -1
+      try {
+        quiet = sys.dup(low, 3)
+      } finally {
+        sys.close(low)
+      }
+    }
   } catch (e) {
     if (!(e instanceof OsError)) throw e
   }
@@ -2421,8 +2456,10 @@ OPTIONS
             widest
 
 NOTES
-    A number is a whole number or a plain decimal such as -2.50, of at
-    most 15 digits: 1e3 is not understood. A step of 0 is refused.
+    A number is a whole number or a plain decimal such as -2.50: 1e3 is
+    not understood. Written with as many decimals as the one that has
+    the most, every number must fit in 15 digits, so seq 0.5 100000000000000
+    is refused. A step of 0 is refused.
 
 STATUS
     0; 1 when the output could not be written; 2 for a wrong option or
