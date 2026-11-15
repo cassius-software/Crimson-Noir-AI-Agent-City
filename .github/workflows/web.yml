@@ -15,6 +15,8 @@
 #   after the last one's ci passes.
 # - by hand: Actions > web > Run workflow, on main; it publishes main as it is, without waiting for ci. (A tag would
 #   also need a tag rule on the github-pages environment, which allows only the default branch by default.)
+# Before the upload, tools/verify/site_budget.mjs sums every file of dist-web/, the model included, and fails the run
+# when the copy is over 950 MB: GitHub Pages publishes no site over 1 GB.
 # What breaks if it is removed? Nothing else: dist-web/ can still be served from any https host by hand.
 
 name: web
@@ -133,6 +135,10 @@ jobs:
         run: node tools/web/speechPack.mjs fetch --to "$RUNNER_TEMP/speech-pack"
       - name: The speech pack beside the page (dist-web/speech/ only), checked against the pin
         run: node tools/web/speechPack.mjs place --from "$RUNNER_TEMP/speech-pack" --out dist-web
+      # Every file of the copy, the model and the speech pack included, summed: a copy over the budget fails the run before the upload, so
+      # the copy already published stays up.
+      - name: The web copy, the model included, is at most 950 MB (GitHub Pages publishes no site over 1 GB)
+        run: node tools/verify/site_budget.mjs site dist-web
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist-web
