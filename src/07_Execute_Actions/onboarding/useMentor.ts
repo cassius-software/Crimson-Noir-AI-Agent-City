@@ -63,7 +63,14 @@ export interface MentorProps {
  * Sloane's watch as React state: `nudge` is the line to show (null when none; a new one has a new id), `note` is for
  * the host to report what readings cannot show (a prompt sent to someone, a goal told to Sloane).
  */
-export function useMentor({ active, engine, hud, family, name, voice, now = () => performance.now(), timing }: MentorProps): { nudge: Nudge | null; note(e: Event): void } {
+/**
+ * The default clock, made once. A default written inline would be a new function on every render, and the watch
+ * restarts its listeners and its once-a-second tick whenever the clock changes: the page renders on every HUD snapshot
+ * (ten a second), so the tick never came round and Sloane's nudges waited for a slow frame.
+ */
+const PERF_NOW = (): number => performance.now()
+
+export function useMentor({ active, engine, hud, family, name, voice, now = PERF_NOW, timing }: MentorProps): { nudge: Nudge | null; note(e: Event): void } {
   const mentor = useRef<Mentor | null>(null)
   const [nudge, setNudge] = useState<Nudge | null>(null)
   // The newest of what the watch reads when it starts and while it runs, without restarting its listeners.

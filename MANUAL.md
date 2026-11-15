@@ -210,7 +210,7 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
 | `?announce=0` | No screen-reader lines of the district, vehicles, seats and toasts for this visit (see Accessibility) |
 | `?haptics=0` | Start with the controller's rumble and the phone's vibration off: the guardrails' feel and a check's tap (`haptics on` turns them on; the triggers' resistance stays; see The operator's progression) |
 | `?boot=tty` | Track B: the Ring-0 console alone, full screen, with no canvas, no engine, no WebGPU, no physics worker and no audio; `operator unlock`, then `ask <words>`, talks to Sloane through the page's own model router; `boot gui` reloads the city (see Ring-0 console) |
-| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in seven stages that only the console's exit program ends: `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
+| `?tutorial=1`, `?tutorial=0` | Sloane's first walk, the first-run tutorial in six stages that ends when the console opens on its last stage (or at the console's exit program, from any stage): `?tutorial=1` opens on it (again, after a pass), `?tutorial=0` keeps it away for this visit; `?onboarding=0` keeps it away too (see The first walk) |
 | `?profile` | GPU timestamps |
 | `?debug` | Exposes `window.__SIM__` test hooks; off by default |
 
@@ -1201,14 +1201,15 @@ reading order. The rects tile the canvas exactly, in whole pixels.
 
 ### The first walk (the first-run tutorial)
 
-Sloane's first walk is the first-run tutorial: seven stages that a brand-new visitor goes through before the city is
-theirs, each one a thing to do rather than a thing to read, and the only way out a three-line program typed at the
-Ring-0 console. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
+Sloane's first walk is the first-run tutorial: six stages that a brand-new visitor goes through before the city is
+theirs, each one a thing to do rather than a thing to read. It holds the visitor only until they reach the Ring-0
+console: the moment the console opens on the last stage, everything is open. A visitor who already knows the console
+can end it from any stage with a three-line program typed there. Sloane never calls it a lesson. It is built as a setting (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`
 `FIRST_WALK_DEFAULT`, one constant): **on by default**, so every first run of the city shell opens on the walk until it
 has been passed once, with `?tutorial=0` and the expert path (`?onboarding=0`) the only ways to keep it away, and
 `?tutorial=1` the way to walk it again. The pass is kept in this browser (`localStorage`, key
-`civic-simulation:first-walk:v1`), written only when the console's exam has unlocked the city; `?boot=tty` never
-shows it (there is no city to walk).
+`civic-simulation:first-walk:v1`), written only when the walk is passed (the console reached on the last stage, or
+the exit program run); `?boot=tty` never shows it (there is no city to walk).
 
 - **The card** (`FirstWalk.tsx`) stands in Sloane's own style under the readout on a wide screen, in the band above the
   stick and the buttons and under her chip on a phone held upright, between the stick and the buttons on a phone held
@@ -1224,7 +1225,7 @@ shows it (there is no city to walk).
   Sloane's line cut to as many lines as the band holds (two to six) over the stage's button, and **More** unfolds the
   whole line, what the stage is and the whys (Less folds them back). A finger dragged across the short card's words
   turns the view, as the first stage asks. Folding is not closing: the strip has no close either, and the walk still
-  ends only when the console's program has run. Open, it stands under Sloane's chip and above the captions and a
+  ends only at the console. Open, it stands under Sloane's chip and above the captions and a
   shop's chip; where that band is short of 7 rem it ends above the buttons, over those chips; and where even that is
   short (beside a car or at the wheel on a short phone) it stands above her chip, over the HUD's header, the strip and
   the minimap.
@@ -1232,14 +1233,18 @@ shows it (there is no city to walk).
   taking the room), her chip moves up to the top row and the card stands under it over the HUD's header and readout;
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
   lines) and comes back when you get out. It names the stage (1 of
-  7), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
+  6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed business-casual wardrobe; the four laws, the
-  fifteen checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
-  it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
+  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed
+  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
+  The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
+  its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
+  quality governor), with a bar from Lite to Peak; and Sloane, ready to plan. It asks nothing of the network or the
+  model. It has **no
+  close button, no skip and no key that puts it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
-- **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
+- **The six stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
   1. **Look and walk**: a turn of the head of about twenty degrees and three metres on foot.
   2. **Talk to Sloane**: a goal sent from the chip in your own words (opening the microphone with `recruit listen`
      or turning the captions counts too).
@@ -1257,22 +1262,41 @@ shows it (there is no city to walk).
      deed (the Micro-Loft's costs nothing to claim; the others need a level and credits), and put the card away
      (**Done**, ×, Escape, B or the console). Sloane names the homes only where there are some, and the walk's card
      steps aside while a doorstep card is open.
-  6. **Ring-0**: open the console and run `laws` (`kernel`, `act gate`, `act list` or `ring0` work too).
-  7. **The way out**: run the exit program; see below. Doing a later stage early counts (a car entered while still
-     learning to walk); Sloane says nothing of it until its turn would have come.
+  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button
+     on a pad). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
+     prints her line and where to go from here (Esc closes it, or its **Close** button on touch; `help` lists every
+     command), the card goes and the pass is kept. Arriving at this stage with the console already open counts as
+     reaching it. Opening the console on an earlier stage passes nothing; the walk goes on where it was. (On the look
+     stage the console puts an open wardrobe, shop or home card away, which finishes that stage; the console then
+     stands open on the last one, and the walk is passed.)
 
-  Sloane says each stage as it starts and, after forty-five seconds with no progress, one hint, more plainly (the
-  nearest workplace by name, distance and compass point, say), never two lines within forty-five seconds of each
-  other and never the same line twice.
+  Doing a later stage early counts (a car entered while still learning to walk); Sloane says nothing of it until its
+  turn would have come. Sloane says each stage as it starts and, after twenty seconds with no progress, one hint, more
+  plainly (the nearest workplace by name, distance and compass point, say): never within twenty seconds of her last
+  line, and never the same hint twice.
+- **A lent hand.** After eight seconds with nothing done on a stage (a turn of the head or a few steps count as
+  something on the first), the walk offers help without being asked: the stage's button is ringed in crimson, the
+  card offers to do it for you (with the stage's keys or buttons, where it has some), and where the control the stage
+  asks for is on screen it is ringed too: Sloane's chip on the second stage and **Look** on it on the fifth on every
+  device, and on touch the stick on the first, the **Enter car** button on the third and the **Menu** and its
+  **Console** on the last. The rings breathe unless the system asks for reduced motion; in high contrast they are
+  yellow, dashed and still, so they are never mistaken for the focus ring, and they step aside while the dwell click
+  marks a control. The hand is taken back the moment the stage is done.
+- **The marker.** From the start of the car and indoor stages a **marker** stands over the nearest parked car or the
+  nearest workplace's doorway, labelled *Parked car* or *Workplace door* with its distance (where no car is parked,
+  the nearest one in traffic, labelled *Car*), and a crimson double ring
+  marks it on the minimap (at the map's edge, on its side, when it is farther than the map shows). Its chip is drawn
+  only while the place is in front of you (in split screen, in player 1's view). The marker is drawn by the HUD alone:
+  it is no ping, nothing rallies to it and it never reaches the realm.
 - **The accessible path.** Every card has one button that has Sloane do the stage's action for a visitor who cannot
   (a switch, a screen reader, a phone with no keyboard): *Walk for me* turns the head and walks four metres; *Plan one
   for me* plans "make it night" as the chip would; *Take me to a car* puts you down at the nearest parked car's door
   and opens it; *Take me inside* puts you down just inside the nearest workplace's doorway; *Open the wardrobe* opens the
-  wardrobe card (the walk's card steps aside while it is open, and **Done** brings it back); *Open it for me* opens the
-  console on `laws`; on the last card three buttons type each line of the program into the console's prompt and
-  **Run** runs it, so the walk is completable with taps alone. Everything goes through the same controls the operator
+  wardrobe card (the walk's card steps aside while it is open, and **Done** brings it back); *Open the console* opens
+  the console, which ends the walk, so the walk is completable with taps alone. Everything goes through the same controls the operator
   tier has (`engine.simControls`), never past the realm: the car's door is the realm's to open, as always.
-- **The exit program**, typed one `noir` line at a time (the console's session keeps `seal` and `swarm` between lines):
+- **The exit program**, for a visitor who already knows the console: typed there one `noir` line at a time on any
+  stage (the console's session keeps `seal` and `swarm` between lines), it ends the walk at once:
 
   ```
   noir let seal = verify_ring0();
@@ -1300,9 +1324,13 @@ shows it (there is no city to walk).
   shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
   stage and the program; there is no `tutorial off`.
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
-  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke, whose `walk` scenario does the whole walk
-  on the accessible path in CI's Chrome (every button, the exit program, the pass kept). How the card stands on a real
-  phone, a pad or a screen reader is unverified.
+  `__SIM__.walkNote(event)` reports an event into it, for the browser smoke. Its `walk` scenario does the whole walk
+  on the accessible path in CI's Chrome (the machine rows, the console opened early passing nothing, every button,
+  the lent hand and its rings, both markers, the console ending the walk with Sloane's line printed, the pass kept, and
+  the exit program after it); `walkhome` ends it with the ~ key; `walkphone` waits for the hand lent on the touch
+  stick, opens the console from the touch Menu on an early stage (nothing passes) and ends the walk there with the exit
+  program, the ring and any marker gone after it. How the card and the rings stand on a
+  real phone, a pad or a screen reader is unverified.
 - **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
   and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is
   unverified.
