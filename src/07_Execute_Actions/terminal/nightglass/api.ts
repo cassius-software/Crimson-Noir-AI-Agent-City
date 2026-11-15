@@ -62,6 +62,11 @@ export interface Limits {
   readonly interStage: number
   /** Colour attachments of one pass. */
   readonly colorAttachments: number
+  /**
+   * Bytes one sample of all a pass's colour attachments (or a render pipeline's colour outputs) may take together,
+   * counted slot by slot by colorBytes() in formats.ts (WebGPU's per-format costs and alignments).
+   */
+  readonly colorBytes: number
   /** Bytes of inline constants. */
   readonly constants: number
   /** Invocations of one workgroup, its largest size along x, y and z, and workgroups along each axis of a dispatch. */

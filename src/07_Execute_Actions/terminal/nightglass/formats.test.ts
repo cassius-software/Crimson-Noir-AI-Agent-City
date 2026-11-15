@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { FORMATS, FORMAT_NAMES, decodeSrgb, decodeTexel, encodeSrgb, encodeTexel, fromHalf, fromUnorm, isFormat, sampleKind, saturate, toHalf, toUnorm } from './formats.ts'
+import { FORMATS, FORMAT_NAMES, colorBytes, decodeSrgb, decodeTexel, encodeSrgb, encodeTexel, fromHalf, fromUnorm, isFormat, sampleKind, saturate, toHalf, toUnorm } from './formats.ts'
 import type { Format } from './formats.ts'
 
 const word = new DataView(new ArrayBuffer(8))
@@ -78,6 +78,25 @@ test('the table: every format is frozen, its bytes are channels times channel by
   assert.equal(sampleKind('r32i'), 'sint')
   assert.equal(sampleKind('depth16'), 'depth')
   assert.equal(sampleKind('depth32f'), 'depth')
+})
+
+test('colour bytes per sample: WebGPU\'s cost and alignment for each format, counted slot by slot', () => {
+  const costs = Object.fromEntries(FORMAT_NAMES.map((name) => [name, [FORMATS[name].colorCost, FORMATS[name].colorAlign]]))
+  assert.deepEqual(costs, {
+    r8: [1, 1], rg8: [2, 1], rgba8: [8, 1], 'rgba8-srgb': [8, 1], bgra8: [8, 1], 'bgra8-srgb': [8, 1], r16f: [2, 2], rg16f: [4, 2], rgba16f: [8, 2],
+    r32f: [4, 4], rg32f: [8, 4], rgba32f: [16, 4], r32u: [4, 4], r32i: [4, 4], depth16: [0, 1], depth32f: [0, 1],
+  })
+  assert.equal(colorBytes([]), 0)
+  assert.equal(colorBytes([null, null]), 0)
+  assert.equal(colorBytes(['rgba32f', 'rgba32f', 'rgba32f']), 48)
+  assert.equal(colorBytes(new Array<'rgba8'>(8).fill('rgba8')), 64)
+  assert.equal(colorBytes(['rgba8', 'bgra8-srgb', 'rgba8-srgb', 'bgra8']), 32)
+  // Each format first rounds the count up to its alignment.
+  assert.equal(colorBytes(['r8', 'rgba32f']), 20)
+  assert.equal(colorBytes(['r8', null, 'r16f']), 4)
+  assert.equal(colorBytes(['r8', 'r8', 'r8', 'r32u']), 8)
+  assert.equal(colorBytes(['rgba16f', 'r8', 'rg16f']), 14)
+  assert.equal(colorBytes(['rgba32f', 'r8', 'rgba32f']), 36)
 })
 
 test('every one of the 65,536 half bit patterns that is not NaN survives fromHalf then toHalf exactly; NaNs stay NaN', () => {

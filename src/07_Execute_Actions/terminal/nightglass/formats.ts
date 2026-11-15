@@ -37,10 +37,17 @@ export interface FormatInfo {
   readonly storage: boolean
   /** May be a four-sample attachment (and, for a colour format, resolved): never a 32-bit float or integer format. */
   readonly multisample: boolean
+  /**
+   * Bytes one sample takes as a colour attachment, as colorBytes() counts them against `limits.colorBytes`, and the
+   * multiple the count is rounded up to before they are added: WebGPU's per-format cost and alignment (its texel
+   * bytes and channel bytes, except that the four-channel 8-bit formats cost 8). A depth format has 0 and 1.
+   */
+  readonly colorCost: number
+  readonly colorAlign: 1 | 2 | 4
 }
 
 const color = (bytes: number, channels: 1 | 2 | 3 | 4, channelBytes: 1 | 2 | 4, kind: FormatKind, o: Partial<FormatInfo> = {}): FormatInfo =>
-  Object.freeze({ bytes, channels, channelBytes, kind, srgb: false, order: 'rgba', color: true, depth: false, blend: kind === 'unorm' || kind === 'float', filter: kind === 'unorm' || kind === 'float', storage: false, multisample: channelBytes < 4 && (kind === 'unorm' || kind === 'float'), ...o })
+  Object.freeze({ bytes, channels, channelBytes, kind, srgb: false, order: 'rgba', color: true, depth: false, blend: kind === 'unorm' || kind === 'float', filter: kind === 'unorm' || kind === 'float', storage: false, multisample: channelBytes < 4 && (kind === 'unorm' || kind === 'float'), colorCost: bytes, colorAlign: channelBytes, ...o })
 
 /**
  * The formats. Names are Nightglass's own: channels, then bits per channel, then a suffix for what the bits mean
@@ -49,10 +56,10 @@ const color = (bytes: number, channels: 1 | 2 | 3 | 4, channelBytes: 1 | 2 | 4, 
 export const FORMATS = Object.freeze({
   r8: color(1, 1, 1, 'unorm'),
   rg8: color(2, 2, 1, 'unorm'),
-  rgba8: color(4, 4, 1, 'unorm', { storage: true }),
-  'rgba8-srgb': color(4, 4, 1, 'unorm', { srgb: true }),
-  bgra8: color(4, 4, 1, 'unorm', { order: 'bgra' }),
-  'bgra8-srgb': color(4, 4, 1, 'unorm', { order: 'bgra', srgb: true }),
+  rgba8: color(4, 4, 1, 'unorm', { storage: true, colorCost: 8 }),
+  'rgba8-srgb': color(4, 4, 1, 'unorm', { srgb: true, colorCost: 8 }),
+  bgra8: color(4, 4, 1, 'unorm', { order: 'bgra', colorCost: 8 }),
+  'bgra8-srgb': color(4, 4, 1, 'unorm', { order: 'bgra', srgb: true, colorCost: 8 }),
   r16f: color(2, 1, 2, 'float'),
   rg16f: color(4, 2, 2, 'float'),
   rgba16f: color(8, 4, 2, 'float', { storage: true }),
@@ -61,8 +68,8 @@ export const FORMATS = Object.freeze({
   rgba32f: color(16, 4, 4, 'float', { blend: false, filter: false, storage: true }),
   r32u: color(4, 1, 4, 'uint', { storage: true }),
   r32i: color(4, 1, 4, 'sint', { storage: true }),
-  depth16: Object.freeze({ bytes: 2, channels: 1, channelBytes: 2, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true }),
-  depth32f: Object.freeze({ bytes: 4, channels: 1, channelBytes: 4, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true }),
+  depth16: Object.freeze({ bytes: 2, channels: 1, channelBytes: 2, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true, colorCost: 0, colorAlign: 1 }),
+  depth32f: Object.freeze({ bytes: 4, channels: 1, channelBytes: 4, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true, colorCost: 0, colorAlign: 1 }),
 } satisfies Record<string, FormatInfo>)
 
 export type Format = keyof typeof FORMATS
@@ -73,6 +80,21 @@ export const FORMAT_NAMES: readonly Format[] = Object.freeze(Object.keys(FORMATS
 /** True when the string names a format. */
 export function isFormat(name: unknown): name is Format {
   return typeof name === 'string' && Object.hasOwn(FORMATS, name)
+}
+
+/**
+ * The bytes one sample of a pass's colour attachments, or of a render pipeline's colour outputs, takes, counted slot
+ * by slot as WebGPU counts them: for each format in order (an empty slot adds nothing), the count is rounded up to a
+ * multiple of the format's colorAlign and its colorCost is added. A device holds it to `limits.colorBytes`.
+ */
+export function colorBytes(formats: readonly (Format | null)[]): number {
+  let total = 0
+  for (const format of formats) {
+    if (format === null) continue
+    const f = FORMATS[format]
+    total = Math.ceil(total / f.colorAlign) * f.colorAlign + f.colorCost
+  }
+  return total
 }
 
 /** What a sampled image of this format hands a shader: floats, unsigned or signed integers, or depth. */

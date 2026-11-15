@@ -15,6 +15,7 @@ import { test } from 'node:test'
 import type { BindingEntry, BindingLayout, ColorOutput, Lens, PipelineLayout, RenderPipelineInfo, VertexBufferLayout } from './api.ts'
 import { encode } from './binary.ts'
 import { arrayOf, lens } from './builder.ts'
+import type { Format } from './formats.ts'
 import type { LensModule } from './lens.ts'
 import { ComputePipelineImpl, RenderPipelineImpl } from './pipelines.ts'
 import { computeLens, fragmentLens, refuses, rig, texturedLens, vertexLens } from './harness.test.ts'
@@ -180,6 +181,28 @@ test('colour outputs: count, format, mask, blend, and the fragment lens output e
   refuses(() => outputs([{ format: 'rgba8', blend: { color: { src: 'src-alpha', dst: 'one', op: 'max' }, alpha: { src: 'one', dst: 'one' } } }]), 'invalid', /a max colour blend takes the factor one on both sides, not src-alpha and one/)
   const p = outputs([{ format: 'rgba8', mask: 7, blend: { color: { src: 'src-alpha', dst: 'one-minus-src-alpha' }, alpha: { src: 'one', dst: 'one', op: 'min' } } }]) as RenderPipelineImpl
   assert.deepEqual(p.info.fragment?.outputs[0], { format: 'rgba8', mask: 7, blend: { color: { src: 'src-alpha', dst: 'one-minus-src-alpha', op: 'add' }, alpha: { src: 'one', dst: 'one', op: 'min' } } })
+})
+
+test('colour outputs take at most limits.colorBytes bytes per sample, counted slot by slot as WebGPU counts them, whatever their masks', () => {
+  const { r, base, fragment } = setup()
+  const outputs = (list: readonly (ColorOutput | null)[]): unknown => r.device.createRenderPipeline({ ...base, fragment: { lens: fragment, outputs: list } })
+  // A slot that writes nothing still holds an attachment, so it counts.
+  const quiet = (format: Format): ColorOutput => ({ format, mask: 0 })
+  const many = (n: number, format: Format): ColorOutput[] => Array.from({ length: n }, () => quiet(format))
+  refuses(() => outputs([{ format: 'rgba32f' }, ...many(2, 'rgba32f')]), 'limit', /^device \d+ createRenderPipeline: the colour outputs take 48 bytes per sample, more than the device allows, 32$/)
+  refuses(() => outputs([{ format: 'rgba8' }, ...many(4, 'rgba8')]), 'limit', /the colour outputs take 40 bytes per sample/)
+  refuses(() => outputs([{ format: 'bgra8' }, ...many(7, 'bgra8-srgb')]), 'limit', /the colour outputs take 64 bytes per sample/)
+  refuses(() => outputs([{ format: 'rgba16f' }, ...many(4, 'rgba16f')]), 'limit', /the colour outputs take 40 bytes per sample/)
+  refuses(() => outputs([{ format: 'r8' }, ...many(2, 'rgba32f')]), 'limit', /the colour outputs take 36 bytes per sample/)
+  refuses(() => outputs([{ format: 'rgba32f' }, quiet('rgba32f'), quiet('r8')]), 'limit', /the colour outputs take 33 bytes per sample/)
+  outputs([{ format: 'rgba32f' }, null, quiet('rgba32f')])
+  outputs([{ format: 'rgba8' }, quiet('rgba8-srgb'), quiet('bgra8'), quiet('bgra8-srgb')])
+  // 1, then 2 + 2, 4 + 4, 8 + 8, 16 + 4, 20 + 8, 28 + 2: thirty bytes.
+  outputs([{ format: 'r8' }, quiet('r16f'), quiet('rg16f'), quiet('rgba16f'), quiet('r32f'), quiet('rg32f'), quiet('rg8')])
+  const low = setup({ limits: { colorBytes: 16 } })
+  const lowOutputs = (list: readonly (ColorOutput | null)[]): unknown => low.r.device.createRenderPipeline({ ...low.base, fragment: { lens: low.fragment, outputs: list } })
+  refuses(() => lowOutputs([{ format: 'rgba8' }, quiet('rgba8'), quiet('r8')]), 'limit', /take 17 bytes per sample, more than the device allows, 16/)
+  lowOutputs([{ format: 'rgba8' }, quiet('rgba8')])
 })
 
 test('raster and depth state: known values, a depth format, and unclipped only with its feature', () => {

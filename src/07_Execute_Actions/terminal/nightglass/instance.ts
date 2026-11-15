@@ -42,8 +42,8 @@ const LIMIT_RULES: { readonly [K in keyof Limits]: 'most' | 'align' | 'axes' } =
   imageSize: 'most', imageLayers: 'most', sets: 'most', bindings: 'most', uniformRange: 'most', storageRange: 'most', offsetAlign: 'align',
   stageUniforms: 'most', stageStorage: 'most', stageImages: 'most', stageSamplers: 'most', stageStorageImages: 'most', dynamicUniforms: 'most',
   dynamicStorage: 'most', vertexBuffers: 'most', vertexAttributes: 'most', vertexStride: 'most', interStage: 'most', colorAttachments: 'most',
-  constants: 'most', groupInvocations: 'most', groupSize: 'axes', groups: 'most', bufferSize: 'most', allocationSize: 'most', allocations: 'most',
-  copyRowAlign: 'align', updateSize: 'most',
+  colorBytes: 'most', constants: 'most', groupInvocations: 'most', groupSize: 'axes', groups: 'most', bufferSize: 'most', allocationSize: 'most',
+  allocations: 'most', copyRowAlign: 'align', updateSize: 'most',
 })
 export const LIMIT_NAMES = Object.freeze(Object.keys(LIMIT_RULES) as (keyof Limits)[])
 
