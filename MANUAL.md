@@ -1260,8 +1260,8 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
      deed (the Micro-Loft's costs nothing to claim; the others need a level and credits), and put the card away
      (**Done**, ×, Escape, B or the console). Sloane names the homes only where there are some, and the walk's card
      steps aside while a doorstep card is open.
-  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button
-     on a pad). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
+  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button,
+     or the pad's menu and its Console, on a pad, which also raises the on-screen keys). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
      prints her line and where to go from here (Esc closes it, or its **Close** button on touch; `help` lists every
      command), the card goes and the pass is kept. Arriving at this stage with the console already open counts as
      reaching it. Opening the console on an earlier stage passes nothing; the walk goes on where it was. (On the look

@@ -115,6 +115,8 @@ export class KeysDesk {
   private scope: unknown = null
   private wanted = false
   private summonedFor: FieldLike | null = null
+  /** When a pad's button (or a headset's controller) last went down, on the env's clock; -Infinity before any. */
+  private padAt = -Infinity
   private summonAt = -Infinity
   private readonly yielded = new WeakSet<object>()
   private left: Left | null = null
@@ -179,8 +181,12 @@ export class KeysDesk {
     this.left = null
     const sticky = was !== null && now - was.at <= DESK.stickyMs && scope !== null && was.scope === scope
     const summoned = now - this.summonAt <= DESK.summonMs
+    // A pad's press that opened the console (the card's button, the pad's menu): the prompt is what the press was for,
+    // and a pad has nothing else to type on there. A card that focuses its own field is only offered (the chip).
+    const padOpened = (this.sense.last === 'gamepad' || this.sense.last === 'headset') && now - this.padAt <= DESK.summonMs
+      && isCodeField(field as { getAttribute?(n: string): string | null })
     // Asked for: a press on the page just before (a tap on the console), the keys summoned, a dwell resting on the field.
-    const asked = now - this.sense.pointerAt <= DESK.solicitMs || summoned || (this.hands.dwell && this.env.hovered(field))
+    const asked = now - this.sense.pointerAt <= DESK.solicitMs || summoned || padOpened || (this.hands.dwell && this.env.hovered(field))
     this.wanted = asked || (sticky && was.wanted)
     this.summonedFor = summoned || (sticky && was.summoned) ? field : null
     if (summoned) this.summonAt = -Infinity
@@ -226,6 +232,11 @@ export class KeysDesk {
     this.premarked = null
     p.stop()
     if (this.marked !== p.field) this.env.mark(p.field, false)
+  }
+
+  /** A pad's button went down (or a headset's controller acted): the press a field focused next may be asking for the keys. */
+  padPressed(): void {
+    this.padAt = this.env.now()
   }
 
   /**

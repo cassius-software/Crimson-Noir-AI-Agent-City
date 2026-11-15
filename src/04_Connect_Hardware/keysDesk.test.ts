@@ -170,6 +170,26 @@ test('a real key typed puts away keys a pad asked for; the pad asks again', () =
   assert.equal(r.desk.get().mode, 'open', 'select asks again')
 })
 
+test('a pad\'s press that opens the console opens the keys on its prompt; a card that focuses its own field is only offered', () => {
+  const r = rig()
+  r.sense.last = 'gamepad'
+  r.desk.padPressed()
+  r.clock.advance(400)
+  const p = prompt()
+  focusOn(r, p)
+  assert.equal(r.desk.get().mode, 'open', 'the card\'s button or the pad\'s menu opened the console for typing')
+  r.desk.padAsk({ control: 'close', repeat: false })
+  const f = new Field()
+  r.desk.padPressed()
+  r.clock.advance(400)
+  focusOn(r, f)
+  assert.equal(r.desk.get().mode, 'peek', 'a chat line a press brought up is offered, not thrown over the screen')
+  const q = prompt()
+  r.clock.advance(DESK.summonMs + 1)
+  focusOn(r, q)
+  assert.equal(r.desk.get().mode, 'peek', 'long after the press, a prompt that takes the focus is only offered')
+})
+
 function focusOn(r: Rig, f: Field, pointer = false): void {
   if (pointer) r.sense.pointerAt = r.clock.now
   r.focus.el = f

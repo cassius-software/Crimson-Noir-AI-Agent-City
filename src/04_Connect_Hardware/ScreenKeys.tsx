@@ -198,8 +198,13 @@ export function ScreenKeys(): JSX.Element {
         if (!p) continue
         let mask = 0
         for (let b = 0; b < Math.min(17, p.buttons.length); b++) if (p.buttons[b]?.pressed) mask |= 1 << b
-        const fresh_ = mask & ~(was.get(i) ?? 0)
-        was.set(i, mask)
+        // By the pad's own slot (the list can skip one), and a pad first seen only teaches what it holds: a button held
+        // into the page (the press that opened it) is no press here.
+        const slot = (p as { readonly index?: number }).index ?? i
+        const held = was.get(slot)
+        was.set(slot, mask)
+        if (held === undefined) continue
+        const fresh_ = mask & ~held
         if (fresh_ !== 0) {
           edge = true
           if (fresh_ & (1 << PAD.select)) select = true
@@ -207,7 +212,7 @@ export function ScreenKeys(): JSX.Element {
           if (fam !== seenFamily) { seenFamily = fam; setFamily(fam) }
         }
       }
-      if (edge) sense.note('gamepad')
+      if (edge) { d.padPressed(); sense.note('gamepad') }
       // A city that came up while the keys stood open lends its pads too.
       if (lentOn && keysHost.get() !== lentTo) { lentTo?.lend('keys', false); lentTo = keysHost.get(); lentTo?.lend('keys', true) }
       const v = d.get()
