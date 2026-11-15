@@ -32,7 +32,7 @@ import {
 } from 'three/tsl'
 import { CODE_DISSOLVE, applyCodeDissolve } from '../01_Initialize_World/codeDissolve.ts'
 import { applyMatrixMode } from '../01_Initialize_World/matrixMode.ts'
-import { bodyVertex, crowdHash } from './crowdBody.ts'
+import { bodyTalk, bodyVertex, crowdHash } from './crowdBody.ts'
 import { tattoo, tattooZones } from './crowdTattoo.ts'
 import { PLAYER_INDEX, VARIANTS, agentQuota } from './crowdCompute.ts'
 import { BODY_NAMES, BONE, FACE, GARMENT, HEIGHT_BASE, JACKET_HEM, LANDMARK, LOWER_PAINT, PIECE, RIG_REST, RIG_WEAR, SLOT, humanoidMesh, type HumanoidMesh } from './humanoid.ts'
@@ -606,11 +606,20 @@ export class CrowdView {
    */
   readonly frameSeconds: UniformNode<'float', number> = uniform(0)
   /**
-   * The operator's eye in the world (x, y, z) and 1 in w while someone is afoot to look at (0 from a car): the vertex
-   * stage turns the heads and chests near it (crowdBody.ts bodyGaze), one uniform for both passes so the shadow
-   * looks where the body does. The engine writes it every frame.
+   * The operator's eye in the world (x, y, z) and 1 in w once the engine has one: the vertex stage turns toward it the
+   * heads and chests of the people the operator is talking to, and theirs alone (`talkWho`, crowdBody.ts bodyGaze), one
+   * uniform for both passes so the shadow looks where the body does. The engine writes it every frame.
    */
   readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform(new Vector4(0, 0, 0, 0))
+  /**
+   * Who the operator is talking to (talkGaze.ts TalkGaze): eight slots in two vec4s each, a person's index (−1 for an
+   * empty slot) in `talkWho` and how far into the conversation they are (0..1, eased) in `talkWeight`. The vertex
+   * stage gives each person the weight of the slot that holds their index (crowdBody.ts bodyTalk); everyone else
+   * gets 0 and looks the way they go. Plain uniforms beside `gazeTarget`: no storage buffer (the vertex stage binds
+   * seven of the eight every device promises), no crowd kernel change, the same on every tier.
+   */
+  readonly talkWho: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(-1, -1, -1, -1)), uniform(new Vector4(-1, -1, -1, -1))]
+  readonly talkWeight: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(0, 0, 0, 0)), uniform(new Vector4(0, 0, 0, 0))]
   /**
    * The rigs of the fallen pedestrians (humanoid.ts RIG_WEAR): per rig slot, per shape in stream order, the shape's
    * world centre (x, y, z, 1) then its rotation (a quaternion), as `rigs` writes them from the realm's stream; an
@@ -620,6 +629,14 @@ export class CrowdView {
   readonly rigPoses = uniformArray(Array.from({ length: RIG_WEAR.slots * RIG_WEAR.shapes * 2 }, (_, i) => new Vector4(0, 0, 0, i % 2)), 'vec4')
   /** The rig shape each bone hangs from (humanoid.ts RIG_REST), by bone, as the vertex stage reads it. */
   readonly rigShape = uniformArray(RIG_REST.map(([shape]) => shape), 'float')
+
+  /** Writes the talk slots (talkGaze.ts TalkGaze who and weight, eight each) into the four uniforms. */
+  talk(who: ArrayLike<number>, weight: ArrayLike<number>): void {
+    this.talkWho[0].value.set(who[0], who[1], who[2], who[3])
+    this.talkWho[1].value.set(who[4], who[5], who[6], who[7])
+    this.talkWeight[0].value.set(weight[0], weight[1], weight[2], weight[3])
+    this.talkWeight[1].value.set(weight[4], weight[5], weight[6], weight[7])
+  }
 
   /**
    * Writes one step's rig stream (simProtocol.ts RIG_POSE: a slice per slot of agent, state, then thirteen poses of
@@ -887,7 +904,10 @@ export class CrowdView {
       const rigBase = select(quad.w.greaterThan(uint(0)), quad.w.sub(uint(1)), uint(0)).mul(uint(RIG_WEAR.shapes * 2))
       const rigAt = (bone: typeof rig.x) => uint((this.rigShape.element(uint(bone.add(0.5))) as unknown as typeof rig.x).add(0.5)).mul(uint(2)).add(rigBase)
       const rigA = rigAt(rig.x), rigB = rigAt(skin.x)
-      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this.gazeTarget, this.rigPoses.element(rigA), this.rigPoses.element(rigA.add(uint(1))), this.rigPoses.element(rigB), this.rigPoses.element(rigB.add(uint(1)))) as unknown as Mat3).toVar()
+      // The operator's eye, weighted by how far into a conversation with the operator this person is (0 for everyone
+      // the operator is not talking to: they look the way they go).
+      const gaze = vec4(this.gazeTarget.xyz, this.gazeTarget.w.mul(bodyTalk(seed, this.talkWho[0], this.talkWho[1], this.talkWeight[0], this.talkWeight[1]) as unknown as typeof seed))
+      const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, gaze, this.rigPoses.element(rigA), this.rigPoses.element(rigA.add(uint(1))), this.rigPoses.element(rigB), this.rigPoses.element(rigB.add(uint(1)))) as unknown as Mat3).toVar()
       normalLocal.assign(skinned.element(uint(1)))
       vSeed.assign(seed)
       vLookLo.assign(float(word.bitAnd(uint(0xffff))))
