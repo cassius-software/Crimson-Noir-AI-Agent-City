@@ -302,12 +302,14 @@ fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f {
   let chest = clamp(yaw * ${f(GAZE.chestShare)}, -${f(GAZE.chestYaw)}, ${f(GAZE.chestYaw)});
   return vec3f(chest, clamp(yaw - chest, -${f(GAZE.headYaw)}, ${f(GAZE.headYaw)}), pitch);
 }
-fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, weightA: vec4f, weightB: vec4f) -> f32 {
+fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, whoC: vec4f, weightA: vec4f, weightB: vec4f, weightC: vec4f) -> f32 {
   // How far into a conversation with the operator this person is (talkGaze.ts talkWeight): the weight of the slot
   // that holds their index, 0 when none does (an empty slot holds -1, which no index is).
   let zero = vec4f(0.0);
   let one = vec4f(1.0);
-  return min(1.0, dot(select(zero, weightA, whoA == vec4f(me)), one) + dot(select(zero, weightB, whoB == vec4f(me)), one));
+  let mine = vec4f(me);
+  let sum = dot(select(zero, weightA, whoA == mine), one) + dot(select(zero, weightB, whoB == mine), one) + dot(select(zero, weightC, whoC == mine), one);
+  return min(1.0, sum);
 }
 fn bodyRigCentre(bone: u32) -> vec3f {
   // The standing centre of the rig shape each bone hangs from (humanoid.ts RIG_REST), base body's metres.
@@ -541,7 +543,7 @@ const fn = (name: string): ReturnType<typeof wgslFn> => {
 
 /** The vertex stage's function, with every function it calls as its includes. */
 export const bodyVertex = fn('bodyVertex')
-/** How far into a conversation with the operator a person is, from their index and the four uniforms of crowd.ts CrowdView.talk. */
+/** How far into a conversation with the operator a person is, from their index and the six uniforms of crowd.ts CrowdView.talk. */
 export const bodyTalk = fn('bodyTalk')
 
 /**

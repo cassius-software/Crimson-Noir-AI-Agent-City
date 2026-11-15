@@ -5,10 +5,10 @@
  * Why does this file exist? It is who looks at the operator. A pedestrian looks the operator in the eye only while
  * the operator is talking to them: a recruit standing by at the operator's side (called over, the crowd kernel
  * reporting them `interviewing` and no rally sending them elsewhere), or the one person a conversation names
- * (engine.ts setTalkingTo: the proximity talk with whoever is nearest calls it). Everyone else looks the way they go
+ * (engine.ts setTalkingTo, which the proximity talk with whoever is nearest is to call; nothing calls it yet). Everyone else looks the way they go
  * (humanoid.ts gazeAt). The page keeps a few slots, each a person's index and how far into the conversation they
  * are, eased in and out over a fraction of a second so a head turns to the operator and back instead of snapping;
- * the vertex stage reads the slots from four uniforms (crowd.ts CrowdView.talk) and gives each person the weight of
+ * the vertex stage reads the slots from six uniforms (crowd.ts CrowdView.talk) and gives each person the weight of
  * the slot that names them (crowdBody.ts bodyTalk, talkWeight here its twin). No storage buffer, no crowd kernel
  * change: the same on every tier, the phone's Lite crowd among them. Pure: no DOM, no GPU, no clock, no randomness.
  * What breaks if it is removed? Nobody can look at the operator, not even someone they are talking to.
@@ -16,13 +16,14 @@
 import { GAZE } from './humanoid.ts'
 
 /**
- * Slots: how many people can be in a conversation (or easing out of one) at once, two vec4 uniforms' worth (the
- * recruits a summons can hold, skills.ts RECRUIT_SLOTS, at most eight). Seconds a head takes to turn to the operator
+ * Slots: how many people can be in a conversation (or easing out of one) at once, three vec4 uniforms' worth: every
+ * recruit a summons can hold standing by at once (skills.ts RECRUIT_SLOTS, eight), the one person a conversation names,
+ * and room for three more still turning back, so nobody the operator talks to waits for a slot. Seconds a head takes to turn to the operator
  * and to turn back. Metres: the leash past which a named conversation ends by itself (the gaze has let go by then,
  * GAZE.reach), and how far from a person's own eye height (`eyeHeight` over their feet) the operator's eye may be and
  * still be talking with them on the same floor (from a sky floor's window, nobody below is talked to).
  */
-export const TALK = Object.freeze({ slots: 8, easeIn: 0.4, easeOut: 0.6, leash: GAZE.reach, eyeHeight: 1.6, floor: 2.5 })
+export const TALK = Object.freeze({ slots: 12, easeIn: 0.4, easeOut: 0.6, leash: GAZE.reach, eyeHeight: 1.6, floor: 2.5 })
 
 /** Where the operator's eye is, in the world. */
 export interface Eye { readonly x: number; readonly y: number; readonly z: number }
@@ -58,7 +59,8 @@ const ease = (t: number): number => t * t * (3 - 2 * t)
  * The slots. Each animation frame, `step` is given the people the operator is talking to now: each one already in a
  * slot eases toward 1, each other slot's person toward 0, and a newcomer takes a free slot (one whose person has
  * eased all the way out). A newcomer who finds every slot taken waits for one rather than taking it from someone
- * mid-turn, so no head ever snaps. `who` and `weight` are what the uniforms take, eight floats each.
+ * mid-turn, so no head ever snaps (with TALK.slots that only happens past nine people talked to and three turning
+ * back at once). `who` and `weight` are what the uniforms take, twelve floats each.
  */
 export class TalkGaze {
   /** Per slot: the person's index, or −1 for an empty slot. */

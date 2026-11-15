@@ -1283,13 +1283,13 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   the spring-damper tilt, the stature, the heading and the place, with the normals carried through the same
   arithmetic, so a wide shoulder is lit as the round thing it is. Pedestrians do not stare: a person looks you in
   the eye only while you are talking to them, which on this build means a recruit standing by at your side (called
-  over, facing you, not sent to a rally point) and the person a conversation names (the engine's `setTalkingTo`,
-  which the proximity talk with whoever is nearest is to call). Their head and chest turn round to you over about
-  0.4 s and back over about 0.6 s once it ends; they hold your eye out to six and a half metres and let it go by eight
-  and a half, where a named conversation also ends by itself, as it does on another floor; from a car nobody looks,
-  and walking round behind someone you are talking to, you see their head swing back to the front. Everyone else
-  looks the way they are going, the head leading a turn and staying ahead when they step backwards. The CPU runs the same
-  arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
+  over, facing you, not sent to a rally point). The engine can also name the one person a conversation is with
+  (`setTalkingTo`), ready for the proximity talk with whoever is nearest; nothing on this build calls it yet. Their
+  head and chest turn round to you over about 0.4 s and back over about 0.6 s once it ends; they hold your eye out
+  to six and a half metres and let it go by eight and a half, where a named conversation also ends by itself, as it
+  does on another floor; from a car nobody looks, and walking round behind someone you are talking to, you see their
+  head swing back to the front. Everyone else looks the way they are going, the head leading a turn and staying
+  ahead when they step backwards. The CPU runs the same arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
   street draws, to the number.
 - **The face.** The skull is twelve-sided rings from the chin to the crown, each ring in a region (the chin, the
   jaw, the cheekbones, the brow line), and the features are small lofted pillows laid on the skull's own front: two

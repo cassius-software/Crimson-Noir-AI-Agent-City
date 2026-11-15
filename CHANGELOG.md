@@ -2164,10 +2164,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   their head and chest to your eye. Now a person looks at you only while you are talking to them: a recruit standing
   by at your side (the crowd kernel reports them interviewing and no rally sends them elsewhere), or the person a
   conversation names through the new `Engine.setTalkingTo(agent | null)` (a pedestrian's index, the crowd frame's row
-  that is theirs; nobody until a caller names someone; the proximity talk with whoever is nearest is to call it).
-  Everyone else looks the way they are going. The page keeps eight talk slots (`03_Spawn_Agents/talkGaze.ts`), each
-  eased in over 0.4 s and out over 0.6 s, and hands them to the vertex stage as four plain uniforms
-  (`CrowdView.talkWho`, `talkWeight`); `bodyTalk` gives each person the weight of the slot that holds their index and
+  that is theirs; nobody until a caller names someone; the proximity talk with whoever is nearest is to call it, and
+  nothing calls it yet). Everyone else looks the way they are going. The page keeps twelve talk slots
+  (`03_Spawn_Agents/talkGaze.ts`: all eight recruits a summons can hold, the person named, and three still turning
+  back), each eased in over 0.4 s and out over 0.6 s, the named person served first, and hands them to the vertex
+  stage as six plain uniforms (`CrowdView.talkWho`, `talkWeight`); `bodyTalk` gives each person the weight of the slot that holds their index and
   `bodyGaze` scales the eye by it, so the crowd kernel, its fingerprint and the storage buffers are unchanged (the
   crowd's shaders bind 4 uniform and 7 storage buffers per stage, as before) and every tier, Lite included, runs the
   same code. A conversation holds your eye out to 6.5 m and lets it go by 8.5 m, where a named conversation also ends
@@ -2177,9 +2178,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   ahead instead of flicking it from one shoulder to the other. Tests: `gazeAt` with and without a conversation, sweeps
   in which no step of 0.005 rad of bearing or 5 mm of distance turns a head more than 0.03 rad, and `bodyGaze` and
   `bodyTalk` compiled through `wgslHost.ts` and compared with `gazeAt` and `talkWeight` over 360 cases to f32, the
-  first test to run the gaze's WGSL (`humanoid.test.ts`); the slots' easing at 60 and at 5 frames a second, a ninth
-  person waiting for a free slot, the reach and the floor (`talkGaze.test.ts`); the engine's wiring
-  (`talkWiring.test.ts`). The page grows by 3,311 bytes (12,159,433 of the 14,817,000 budget). Before and after
+  first test to run the gaze's WGSL (`humanoid.test.ts`); the slots' easing at 60 and at 5 frames a second, eight
+  recruits and a named person looking at once, a newcomer waiting for a free slot, the reach and the floor
+  (`talkGaze.test.ts`); the engine's wiring
+  (`talkWiring.test.ts`). The page grows by 3,436 bytes (12,159,558 of the 14,817,000 budget). Before and after
   pictures were taken on the software WebGPU adapter only; how it looks on a real GPU and on a real phone is
   unverified.
 

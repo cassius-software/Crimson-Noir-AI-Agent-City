@@ -2403,7 +2403,8 @@ export class Engine {
   /**
    * Name the person the operator is talking to, by their index (the crowd frame's row that is theirs), or null when the
    * conversation ends: while it lasts they look the operator in the eye, their head easing round to them and back
-   * again after (talkGaze.ts). Nobody is named until a caller names them (the proximity talk with whoever is nearest).
+   * again after (talkGaze.ts). Nobody is named until a caller names them (the proximity talk with whoever is nearest is to call it; nothing calls it
+   * yet).
    * Anything that is not a pedestrian's index (the operator's own figure among them) names nobody. The engine ends a
    * conversation by itself once its person stands out of reach of the operator or on another floor (talkGaze.ts
    * withinTalk), so a conversation nobody closed cannot leave anyone looking; from a car nobody looks, and the person
@@ -2430,8 +2431,8 @@ export class Engine {
 
   /**
    * Who looks the operator in the eye this frame (talkGaze.ts): the recruits standing by and the person a conversation
-   * names (setTalkingTo), each within reach of the operator's eye and on its floor, and nobody while the operator
-   * drives; the slots eased `dt` toward them and handed to the crowd's uniforms with the eye (its last good place
+   * names (setTalkingTo, first, so it is never the one left waiting for a slot), each within reach of the operator's
+   * eye and on its floor, and nobody while the operator drives; the slots eased `dt` toward them and handed to the crowd's uniforms with the eye (its last good place
    * kept for a head still easing back). A named person out of reach ends their conversation here.
    */
   private lookAtOperator(driving: boolean, dt: number): void {
@@ -2439,12 +2440,12 @@ export class Engine {
     const seen = Number.isFinite(eye.x + eye.y + eye.z)
     talkers.length = 0
     if (!driving && seen) {
-      for (const a of this.standingBy) if (withinTalk(this.crowdPose, a, eye) === true) talkers.push(a)
       if (this.talkingTo > PLAYER_INDEX) {
         const near = withinTalk(this.crowdPose, this.talkingTo, eye)
         if (near === false) this.talkingTo = -1
-        else if (near === true && !talkers.includes(this.talkingTo)) talkers.push(this.talkingTo)
+        else if (near === true) talkers.push(this.talkingTo)
       }
+      for (const a of this.standingBy) if (a !== this.talkingTo && withinTalk(this.crowdPose, a, eye) === true) talkers.push(a)
     }
     this.talk.step(talkers, dt)
     if (seen) this.crowdGaze.value.set(eye.x, eye.y, eye.z, 1)

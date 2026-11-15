@@ -652,12 +652,13 @@ test('crowdBody.ts bodyGaze and bodyTalk, run through wgslHost.ts, are gazeAt an
     }
   }
   assert.equal(checked, 360)
-  const who = [5, -1, 812, 40, -1, -1, 9, -1], weight = [0.25, 0, 1, 0.6, 0, 0, 0.75, 0]
-  for (const me of [0, 5, 812, 40, 9, 11, 32767]) {
-    const got = host.call('bodyTalk', me, who.slice(0, 4), who.slice(4), weight.slice(0, 4), weight.slice(4)) as number
+  const who = [5, -1, 812, 40, -1, -1, 9, -1, 77, -1, -1, 32767], weight = [0.25, 0, 1, 0.6, 0, 0, 0.75, 0, 0.5, 0, 0, 0.125]
+  assert.equal(who.length, TALK.slots)
+  for (const me of [0, 5, 812, 40, 9, 77, 11, 32767, 32766]) {
+    const got = host.call('bodyTalk', me, who.slice(0, 4), who.slice(4, 8), who.slice(8), weight.slice(0, 4), weight.slice(4, 8), weight.slice(8)) as number
     near(got, talkWeight(me, who, weight), 1e-7, `the weight of person ${me}`)
   }
-  near(talkWeight(9, [9, 9, -1, -1, -1, -1, -1, -1], [0.75, 0.75, 0, 0, 0, 0, 0, 0]), 1, 0, 'never over 1')
+  near(talkWeight(9, [9, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1], [0.75, 0.75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 1, 0, 'never over 1')
 })
 
 test('RIG_REST: every bone hangs from the rig shape on its own side of the body, at that shape\'s standing centre (ragdollRig.ts SEGMENTS and FOOT, by the stream\'s order); the hands from the lower arms; RIG_WEAR is the realm\'s slots and shapes', () => {
@@ -1097,7 +1098,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.ok(BODY_WGSL.includes('fn bodyFoot(phase: f32, stride: f32, lift: f32, roll: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f'))
-  assert.ok(BODY_WGSL.includes('fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, weightA: vec4f, weightB: vec4f) -> f32'))
+  assert.ok(BODY_WGSL.includes('fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, whoC: vec4f, weightA: vec4f, weightB: vec4f, weightC: vec4f) -> f32'))
   assert.match(BODY_WGSL, /if \(eye\.w > 0\.0\) \{/, 'the eye is read only in a conversation: everyone else skips it')
   assert.match(BODY_WGSL, /let hold = min\(eye\.w, 1\.0\) \* inner \* front \* \(1\.0 - smoothstep\(/, 'by the conversation\'s weight, every edge a fade')
   assert.ok(BODY_WGSL.includes('fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f, headYaw: f32) -> mat3x3f'))
@@ -1260,10 +1261,13 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /readonly rigShape = uniformArray\(RIG_REST\.map\(\(\[shape\]\) => shape\), 'float'\)/, 'the shape per bone')
   assert.match(crowd, /readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform\(new Vector4\(0, 0, 0, 0\)\)/, 'the operator\'s eye, one uniform for both passes')
   assert.match(crowd, /import \{ bodyTalk, bodyVertex, crowdHash \} from '\.\/crowdBody\.ts'/)
-  assert.match(crowd, /readonly talkWho: readonly \[UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>\] = \[uniform\(new Vector4\(-1, -1, -1, -1\)\), uniform\(new Vector4\(-1, -1, -1, -1\)\)\]/, 'eight empty slots: nobody is talked to')
-  assert.match(crowd, /readonly talkWeight: readonly \[UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>\] = \[uniform\(new Vector4\(0, 0, 0, 0\)\), uniform\(new Vector4\(0, 0, 0, 0\)\)\]/)
-  assert.equal(TALK.slots, 8, 'two vec4s of slots')
-  assert.match(crowd, /const gaze = vec4\(this\.gazeTarget\.xyz, this\.gazeTarget\.w\.mul\(bodyTalk\(seed, this\.talkWho\[0\], this\.talkWho\[1\], this\.talkWeight\[0\], this\.talkWeight\[1\]\) as unknown as typeof seed\)\)/, 'the eye\'s weight is this person\'s own, by their index, for both passes')
+  const vec4s = (n: number, v: string) => Array.from({ length: n }, () => `uniform\\(new Vector4\\(${v}\\)\\)`).join(', ')
+  const tuple = Array.from({ length: 3 }, () => "UniformNode<'vec4', Vector4>").join(', ')
+  assert.match(crowd, new RegExp(`readonly talkWho: readonly \\[${tuple}\\] = \\[${vec4s(3, '-1, -1, -1, -1')}\\]`), 'twelve empty slots: nobody is talked to')
+  assert.match(crowd, new RegExp(`readonly talkWeight: readonly \\[${tuple}\\] = \\[${vec4s(3, '0, 0, 0, 0')}\\]`))
+  assert.equal(TALK.slots, 12, 'three vec4s of slots')
+  assert.match(crowd, /for \(let q = 0; q < 3; q\+\+\) \{\n\s+const k = 4 \* q\n\s+this\.talkWho\[q\]\.value\.set\(who\[k\], who\[k \+ 1\], who\[k \+ 2\], who\[k \+ 3\]\)\n\s+this\.talkWeight\[q\]\.value\.set\(weight\[k\], weight\[k \+ 1\], weight\[k \+ 2\], weight\[k \+ 3\]\)/, 'four slots to each uniform, in order')
+  assert.match(crowd, /const gaze = vec4\(this\.gazeTarget\.xyz, this\.gazeTarget\.w\.mul\(bodyTalk\(seed, this\.talkWho\[0\], this\.talkWho\[1\], this\.talkWho\[2\], this\.talkWeight\[0\], this\.talkWeight\[1\], this\.talkWeight\[2\]\) as unknown as typeof seed\)\)/, 'the eye\'s weight is this person\'s own, by their index, for both passes')
   assert.equal((crowd.match(/this\.gazeTarget\b/g) ?? []).length, 2, 'and the eye reaches the vertex stage there alone')
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)

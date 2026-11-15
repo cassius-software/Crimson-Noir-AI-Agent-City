@@ -612,14 +612,14 @@ export class CrowdView {
    */
   readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform(new Vector4(0, 0, 0, 0))
   /**
-   * Who the operator is talking to (talkGaze.ts TalkGaze): eight slots in two vec4s each, a person's index (−1 for an
+   * Who the operator is talking to (talkGaze.ts TalkGaze): twelve slots in three vec4s each, a person's index (−1 for an
    * empty slot) in `talkWho` and how far into the conversation they are (0..1, eased) in `talkWeight`. The vertex
    * stage gives each person the weight of the slot that holds their index (crowdBody.ts bodyTalk); everyone else
    * gets 0 and looks the way they go. Plain uniforms beside `gazeTarget`: no storage buffer (the vertex stage binds
    * seven of the eight every device promises), no crowd kernel change, the same on every tier.
    */
-  readonly talkWho: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(-1, -1, -1, -1)), uniform(new Vector4(-1, -1, -1, -1))]
-  readonly talkWeight: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(0, 0, 0, 0)), uniform(new Vector4(0, 0, 0, 0))]
+  readonly talkWho: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(-1, -1, -1, -1)), uniform(new Vector4(-1, -1, -1, -1)), uniform(new Vector4(-1, -1, -1, -1))]
+  readonly talkWeight: readonly [UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>, UniformNode<'vec4', Vector4>] = [uniform(new Vector4(0, 0, 0, 0)), uniform(new Vector4(0, 0, 0, 0)), uniform(new Vector4(0, 0, 0, 0))]
   /**
    * The rigs of the fallen pedestrians (humanoid.ts RIG_WEAR): per rig slot, per shape in stream order, the shape's
    * world centre (x, y, z, 1) then its rotation (a quaternion), as `rigs` writes them from the realm's stream; an
@@ -630,12 +630,13 @@ export class CrowdView {
   /** The rig shape each bone hangs from (humanoid.ts RIG_REST), by bone, as the vertex stage reads it. */
   readonly rigShape = uniformArray(RIG_REST.map(([shape]) => shape), 'float')
 
-  /** Writes the talk slots (talkGaze.ts TalkGaze who and weight, eight each) into the four uniforms. */
+  /** Writes the talk slots (talkGaze.ts TalkGaze who and weight, twelve each) into the six uniforms, four slots to each. */
   talk(who: ArrayLike<number>, weight: ArrayLike<number>): void {
-    this.talkWho[0].value.set(who[0], who[1], who[2], who[3])
-    this.talkWho[1].value.set(who[4], who[5], who[6], who[7])
-    this.talkWeight[0].value.set(weight[0], weight[1], weight[2], weight[3])
-    this.talkWeight[1].value.set(weight[4], weight[5], weight[6], weight[7])
+    for (let q = 0; q < 3; q++) {
+      const k = 4 * q
+      this.talkWho[q].value.set(who[k], who[k + 1], who[k + 2], who[k + 3])
+      this.talkWeight[q].value.set(weight[k], weight[k + 1], weight[k + 2], weight[k + 3])
+    }
   }
 
   /**
@@ -906,7 +907,7 @@ export class CrowdView {
       const rigA = rigAt(rig.x), rigB = rigAt(skin.x)
       // The operator's eye, weighted by how far into a conversation with the operator this person is (0 for everyone
       // the operator is not talking to: they look the way they go).
-      const gaze = vec4(this.gazeTarget.xyz, this.gazeTarget.w.mul(bodyTalk(seed, this.talkWho[0], this.talkWho[1], this.talkWeight[0], this.talkWeight[1]) as unknown as typeof seed))
+      const gaze = vec4(this.gazeTarget.xyz, this.gazeTarget.w.mul(bodyTalk(seed, this.talkWho[0], this.talkWho[1], this.talkWho[2], this.talkWeight[0], this.talkWeight[1], this.talkWeight[2]) as unknown as typeof seed))
       const skinned = (bodyVertex(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, gaze, this.rigPoses.element(rigA), this.rigPoses.element(rigA.add(uint(1))), this.rigPoses.element(rigB), this.rigPoses.element(rigB.add(uint(1)))) as unknown as Mat3).toVar()
       normalLocal.assign(skinned.element(uint(1)))
       vSeed.assign(seed)

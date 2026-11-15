@@ -37,8 +37,9 @@ test('engine: the eye reaches the crowd in lookAtOperator alone, with the slots;
   assert.match(look, /if \(seen\) this\.crowdGaze\.value\.set\(eye\.x, eye\.y, eye\.z, 1\)/, 'a broken eye keeps its last good place for a head easing back')
   assert.match(look, /this\.talk\.step\(talkers, dt\)\n\s+if \(seen\)[^\n]*\n\s+this\.crowdTalk\(this\.talk\.who, this\.talk\.weight\)/, 'the slots eased, then handed over with the eye')
   assert.match(look, /talkers\.length = 0\n\s+if \(!driving && seen\) \{/, 'nobody from a car, nobody without an eye')
-  assert.match(look, /for \(const a of this\.standingBy\) if \(withinTalk\(this\.crowdPose, a, eye\) === true\) talkers\.push\(a\)/, 'the recruits standing by, within reach and on the floor')
-  assert.match(look, /if \(this\.talkingTo > PLAYER_INDEX\) \{\n\s+const near = withinTalk\(this\.crowdPose, this\.talkingTo, eye\)\n\s+if \(near === false\) this\.talkingTo = -1\n\s+else if \(near === true && !talkers\.includes\(this\.talkingTo\)\) talkers\.push\(this\.talkingTo\)/, 'the named person while within reach; out of reach the conversation ends; with no reading yet it waits')
+  assert.match(look, /if \(this\.talkingTo > PLAYER_INDEX\) \{\n\s+const near = withinTalk\(this\.crowdPose, this\.talkingTo, eye\)\n\s+if \(near === false\) this\.talkingTo = -1\n\s+else if \(near === true\) talkers\.push\(this\.talkingTo\)\n\s+\}\n\s+for \(const a of this\.standingBy\) if \(a !== this\.talkingTo && withinTalk\(this\.crowdPose, a, eye\) === true\) talkers\.push\(a\)/, 'the named person first, while within reach (out of reach the conversation ends; with no reading yet it waits), then the recruits standing by, within reach and on the floor')
+  assert.equal((look.match(/talkers\.push\(/g) ?? []).length, 2, 'those two and nobody else: no passer-by is ever added')
+  assert.equal((ENGINE.match(/\btalkers\.push\(/g) ?? []).length, 2, 'nor anywhere else in the engine')
 })
 
 test('engine: frame() looks after the operator\'s head is posed and the furnishing has ended, before the other seats\' heads', () => {

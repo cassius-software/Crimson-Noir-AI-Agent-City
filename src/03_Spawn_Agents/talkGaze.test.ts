@@ -5,14 +5,15 @@
  * Why does this file exist? It holds who looks at the operator (talkGaze.ts) to its promises: nobody until the
  * operator talks to them; a head eased round to the operator and back, never snapped, at any frame rate the city
  * runs at (the phone's few frames a second among them); a slot freed only once its person has turned all the way
- * back; a newcomer who finds the slots full waiting rather than taking one mid-turn; and the reach and the floor a
- * conversation holds across.
+ * back; room for every recruit standing by and the person a conversation names at once; a newcomer who finds the
+ * slots full waiting rather than taking one mid-turn; and the reach and the floor a conversation holds across.
  * What breaks if it is removed? The slots could snap a head, leave someone looking after the conversation ended, or
  * let a person on the street below a sky floor's window be talked to, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { GAZE } from './humanoid.ts'
+import { RECRUIT_SLOTS } from './skills.ts'
 import { TALK, TalkGaze, talkWeight, withinTalk } from './talkGaze.ts'
 
 const weightOf = (g: TalkGaze, agent: number) => talkWeight(agent, g.who, g.weight)
@@ -75,23 +76,35 @@ test('TalkGaze: at the phone\'s five frames a second (the engine\'s step capped 
   assert.ok(worst <= 1.5 * 0.05 / TALK.easeIn + 1e-9, `the largest step ${worst.toFixed(3)}`)
 })
 
-test('TalkGaze: eight slots; a newcomer who finds them all taken waits until one has turned all the way back, and nobody already turning is cut short', () => {
+test('TalkGaze: every recruit a summons can hold standing by and the person a conversation names all look at once, whoever came first', () => {
+  assert.ok(TALK.slots >= RECRUIT_SLOTS + 1, 'a slot for each recruit and one for the person named')
+  const recruits = Array.from({ length: RECRUIT_SLOTS }, (_, i) => 10 + i)
   const g = new TalkGaze()
-  const eight = [10, 11, 12, 13, 14, 15, 16, 17]
-  for (let k = 0; k < 30; k++) g.step(eight, 0.05)
-  for (const a of eight) assert.equal(weightOf(g, a), 1, `${a} whole`)
-  g.step([...eight.slice(1), 99], 0.05)
-  assert.equal(weightOf(g, 99), 0, 'the ninth waits')
-  assert.ok(weightOf(g, 10) > 0.9, 'the one let go eases back, not cut')
+  for (let k = 0; k < 30; k++) g.step(recruits, 0.05)
+  for (let k = 0; k < 30; k++) g.step([99, ...recruits], 0.05)
+  for (const a of [99, ...recruits]) assert.equal(talkWeight(a, g.who, g.weight), 1, `${a} whole: the person named came last and still looks`)
+  // One recruit dismissed and another called while the named person stays: the slots still hold everyone.
+  for (let k = 0; k < 4; k++) g.step([99, ...recruits.slice(1), 50], 0.05)
+  assert.ok(weightOf(g, 50) > 0 && weightOf(g, 10) > 0, 'the newcomer turning round while the dismissed one turns back')
+})
+
+test('TalkGaze: a newcomer who finds every slot taken waits until one has turned all the way back, and nobody already turning is cut short', () => {
+  const g = new TalkGaze()
+  const full = Array.from({ length: TALK.slots }, (_, i) => 100 + i)
+  for (let k = 0; k < 30; k++) g.step(full, 0.05)
+  for (const a of full) assert.equal(weightOf(g, a), 1, `${a} whole`)
+  g.step([...full.slice(1), 999], 0.05)
+  assert.equal(weightOf(g, 999), 0, 'the newcomer waits')
+  assert.ok(weightOf(g, 100) > 0.9, 'the one let go eases back, not cut')
   let waited = 1
-  while (weightOf(g, 99) === 0 && waited < 100) { g.step([...eight.slice(1), 99], 0.05); waited++ }
-  assert.ok(Math.abs(waited * 0.05 - TALK.easeOut) <= 0.1, `the ninth took the slot once its person turned back (${(waited * 0.05).toFixed(2)} s)`)
-  assert.equal(weightOf(g, 10), 0)
-  assert.ok(g.who.includes(99) && !g.who.includes(10))
+  while (weightOf(g, 999) === 0 && waited < 100) { g.step([...full.slice(1), 999], 0.05); waited++ }
+  assert.ok(Math.abs(waited * 0.05 - TALK.easeOut) <= 0.1, `the newcomer took the slot once its person turned back (${(waited * 0.05).toFixed(2)} s)`)
+  assert.equal(weightOf(g, 100), 0)
+  assert.ok(g.who.includes(999) && !g.who.includes(100))
 })
 
 test('talkWeight: the weight of the slot that holds the person, 0 when none does, never over 1', () => {
-  const who = [4, -1, 9, -1, -1, -1, -1, -1], weight = [0.5, 0, 1, 0, 0, 0, 0, 0]
+  const who = [4, -1, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1], weight = [0.5, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   assert.equal(talkWeight(4, who, weight), 0.5)
   assert.equal(talkWeight(9, who, weight), 1)
   assert.equal(talkWeight(5, who, weight), 0)
