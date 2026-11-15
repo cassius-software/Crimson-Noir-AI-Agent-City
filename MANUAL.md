@@ -974,17 +974,20 @@ not been seen. Where the browser offers no immersive session the whole path is i
     car, and the right stick's click is the microphone's mute. On a right controller with no upper face button, its
     touchpad's click enters or leaves a car, and on foot its trigger does what is at hand.
   - **Alone** (any hand, or none). Its stick or touchpad walks forward and back. A stick pushed sideways snap-turns (a
-    push in between is one or the other, never a strafe); a touchpad turns only with a click to either side, so a
-    thumb resting at the edge is never a second turn. At the wheel it steers and drives, the trigger accelerates and
-    the squeeze brakes; the stick's click is the handbrake on a controller with an upper face button (that button is
-    its door), and on one without it the stick's click held for a second is its door. On foot the trigger, or a
-    touchpad's centre click, does what is at hand: a car's door in reach, else a ping where the head looks. Two
-    controllers of one hand (or of none) split by order: the first walks, the second turns.
-  - **Out of a car.** The upper face button, a touchpad's click, a pinch, or the left hand's (or a lone controller's)
-    stick or touchpad click held for a second while the car stays stopped steps out. Every one of them is refused
-    while the car is faster than 1.5 m/s: the controller that asked gives a short buzz where its browser can, and the
-    monitor shows a toast (`Stop the car to step out`); a hand gets no cue. A trigger still held from opening the
-    door gives no throttle until it is let go, so the car does not lurch on the way in.
+    push in between is one or the other, never a strafe); a touchpad with no thumbstick turns only with a click to
+    either side, so a thumb resting at the edge is never a second turn, and its centre click does what is at hand. A
+    touchpad beside a thumbstick is the door instead (what is at hand, on foot). At the wheel it steers and drives,
+    the trigger accelerates and the squeeze brakes; the stick's click is the handbrake on a controller with an upper
+    face button (that button is its door), and on one without it the stick's click held for a second is its door. On
+    foot the trigger does what is at hand: a car's door in reach, else a ping where the head looks. Two controllers of
+    one hand (or of none) split by order: the first walks, the second turns.
+  - **Out of a car.** The upper face button, a touchpad's click, a pinch, and the held click (the left hand's stick or
+    touchpad click, or the stick's click of a lone controller with no upper face button, held for a second while the
+    car stays stopped) step out. Each is refused while the car is faster than 1.5 m/s: the controller that asked
+    gives a short buzz where its browser can, and the monitor shows a toast (`Stop the car to step out`); a held click
+    is refused once it has been held a second at speed, then waits for the car to stop. A hand gets no cue. A trigger
+    still held from opening the door, or held as a lone controller takes on the throttle, gives no throttle until it
+    is let go, so the car does not lurch.
   - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
     or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
     lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
@@ -995,12 +998,14 @@ not been seen. Where the browser offers no immersive session the whole path is i
   is read through the session's select events. A quick, still pinch (under 0.4 s and 2.5 cm) is a tap: a car's door
   in reach, else a ping where the head looks, and out of a car only once it has slowed as above. Holding a pinch and
   drawing the hand away walks the way the hand moved: half speed from 6 cm, full from about 11.5 cm, a run past 21 cm.
-  The draw is judged against the way the head faces and measured from the neck, so a lean or a look around does not
-  walk: within 50° of the head's forward or back it walks, further round and past 8 cm sideways it snap-turns once. At
-  the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and when the first is let
-  go the second starts afresh. A hand that drops out of tracking stands still and starts again from where it comes
-  back. A pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is
-  dropped, with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller
+  The draw is measured from the neck (the eyes less their offset from it, turned with the head), so a lean, a nod or
+  a look around does not walk, and it is judged against the way the head faced when the drag began, so a glance aside
+  mid-drag changes nothing: within 50° of that forward or back it walks, further round and past 8 cm sideways it
+  snap-turns once. At the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and
+  when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
+  still: back within a quarter of a second it resumes where it was, gone longer the pinch is spent and walks no more
+  until it is pinched again. A pinch that is cancelled, whose source leaves, or that is held through the headset's
+  menu or a recentre is dropped, with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller
   has no mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head;
   hand microgestures are not read.
 - **The floor.** A session not granted a floor-level space runs in a plain local one, whose origin is where the head

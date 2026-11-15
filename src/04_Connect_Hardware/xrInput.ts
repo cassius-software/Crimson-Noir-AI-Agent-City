@@ -31,8 +31,9 @@
  * on the controller that asked, where its browser has an actuator. A trigger held into the wheel (the press that
  * opened the door) gives no throttle until it is let go.
  * Walking is head-relative on foot: the stick's forward is where the headset looks (headOffset), while the body turns
- * only in snaps, so the view never swings under a thumb. A pinch's drag moves the body the way the hand moved, judged
- * against the head's facing (walk or snap) and measured from the neck, so a lean or a look around does not walk.
+ * only in snaps, so the view never swings under a thumb. A pinch's drag moves the body the way the hand moved, measured
+ * from the neck (a lean, a nod or a look around does not walk) and judged, walk or snap, against the way the head faced
+ * when it began (a glance aside changes nothing). A blink of tracking stands it still; a longer loss spends it.
  * UNCONFIRMED on a physical headset: the layouts are the registry's and the module's, read here from fakes.
  * What breaks if it is removed? A headset's controllers move nothing; the hands pinch at a city that cannot hear.
  */
@@ -151,27 +152,38 @@ export const PINCH = Object.freeze({
   walkSector: (50 * Math.PI) / 180,
   /** The drag's direction is smoothed with this time constant. */
   smoothMs: 100,
-  /** A pinch whose pose was lost this recently is no tap (it may be a hand leaving view). */
+  /**
+   * A pinch whose pose was lost this recently is no tap (it may be a hand leaving view); one untracked this long is
+   * spent for walking (the hand may come back anywhere), while a shorter blink resumes against its anchor.
+   */
   lostMs: 250,
   /**
-   * How far behind the eyes the neck turns, m: the hand is measured against that point, not the eyes, which swing
-   * through centimetres as the head turns (a look around would otherwise walk).
+   * Where the eyes sit from the point the head turns about (the neck), in the head's own frame, m: above it and in front
+   * of it. The hand is measured against the neck, not the eyes, which swing through centimetres as the head turns or
+   * nods (a look around would otherwise walk).
    */
-  neckM: 0.09,
+  eyeUpM: 0.075,
+  eyeFwdM: 0.08,
 })
 
 /**
- * The point the head turns about (the neck), from the viewer's pose: `neckM` behind the eyes along the head's level
- * forward. The eyes alone when the pose carries no orientation, or the head looks straight up or down.
+ * The point the head turns about (the neck), from the viewer's pose: the eyes less their offset from it (eyeUpM up,
+ * eyeFwdM forward in the head's frame) turned by the head's orientation, so a turn, a nod or both leave it where it is.
+ * The eyes alone when the pose carries no orientation (or a broken one).
  */
 export function neckOf(pose: { readonly position: XrPoint; readonly orientation?: { readonly x: number; readonly y: number; readonly z: number; readonly w: number } }): XrPoint {
   const p = pose.position, q = pose.orientation
   if (!q) return p
-  // The head's forward (−z rotated by q), levelled.
-  const fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y))
-  const m = Math.hypot(fx, fz)
-  if (!(m > 1e-3)) return p
-  return { x: p.x - (PINCH.neckM * fx) / m, y: p.y, z: p.z - (PINCH.neckM * fz) / m }
+  const n = Math.hypot(q.x, q.y, q.z, q.w)
+  if (!(n > 1e-6)) return p
+  const x = q.x / n, y = q.y / n, z = q.z / n, w = q.w / n
+  // v = (0, up, −fwd) turned by q: v + 2w(u×v) + 2u×(u×v), u = (x, y, z).
+  const vx = 0, vy = PINCH.eyeUpM, vz = -PINCH.eyeFwdM
+  const cx = y * vz - z * vy, cy = z * vx - x * vz, cz = x * vy - y * vx
+  const rx = vx + 2 * (w * cx + y * cz - z * cy)
+  const ry = vy + 2 * (w * cy + z * cx - x * cz)
+  const rz = vz + 2 * (w * cz + x * cy - y * cx)
+  return { x: p.x - rx, y: p.y - ry, z: p.z - rz }
 }
 
 /** A position in the session's reference space, metres. */
@@ -190,8 +202,12 @@ interface Pinch {
   peak: number
   engaged: boolean
   lostAt: number
-  /** The hand or the head went untracked, or another pinch stopped walking: the drag's anchor is taken afresh next. */
+  /** Another pinch stopped walking while this one was held: its anchor is stale, taken afresh at its next sample. */
   reanchor: boolean
+  /** When the hand or the head went untracked (−1 while tracked); a blink keeps the anchor, a long loss spends it. */
+  blindSince: number
+  /** Untracked longer than lostMs: the hand may come back anywhere, so this pinch never walks again (pinch afresh). */
+  spent: boolean
 }
 
 /**
@@ -216,6 +232,8 @@ export class PinchDrag {
   /** Snap steps the drag has asked for and the mapper has not yet taken (rad, + to the right). */
   turn = 0
   private turnArmed = true
+  /** The head's facing (yaw less the body's) when this drag first read: it is judged against that, so a glance does not snap. */
+  private facing: number | null = null
 
   /** A drag is walking. */
   get dragging(): boolean {
@@ -229,7 +247,7 @@ export class PinchDrag {
 
   start(id: object, kind: PinchKind, transient: boolean, t: number, hand: XrPoint | null): void {
     this.dropped.delete(id)
-    this.held.set(id, { kind, transient, t0: t, start: hand, ax: null, az: null, peak: 0, engaged: false, lostAt: hand === null ? t : -Infinity, reanchor: false })
+    this.held.set(id, { kind, transient, t0: t, start: hand, ax: null, az: null, peak: 0, engaged: false, lostAt: hand === null ? t : -Infinity, reanchor: false, blindSince: -1, spent: false })
   }
 
   /** One headset frame: where the pinching hand and the head are (null where the hand is not tracked). */
@@ -238,25 +256,21 @@ export class PinchDrag {
     if (!p) return
     if (hand === null) {
       p.lostAt = t
-      p.reanchor = true
-      if (this.walker === id) this.still(t)
+      this.blind(id, p, t)
       return
     }
     if (p.start === null) p.start = hand
     else p.peak = Math.max(p.peak, Math.hypot(hand.x - p.start.x, hand.y - p.start.y, hand.z - p.start.z))
     if (p.kind === 'tap') return
-    if (head === null) {
-      p.reanchor = true
-      if (this.walker === id) this.still(t)
-      return
-    }
-    // The hand less the head, so a lean or a step does not walk: only the hand moving against the head does.
+    if (head === null) { this.blind(id, p, t); return }
+    p.blindSince = -1
+    if (p.spent) return
+    // The hand less the head, so a lean or a step does not walk: only the hand moving against the head does. The
+    // anchor is in the reference space, so it holds across a blink of tracking and the drag simply resumes.
     const rx = hand.x - head.x, rz = hand.z - head.z
-    // The first frame with both, or the first after either went untracked (the hand may come back anywhere): the anchor
-    // is taken here, and the drag stands still until the hand moves from it again.
+    // The first frame with both, or the first after another pinch stopped walking: the anchor is taken here.
     if (p.ax === null || p.az === null || p.reanchor) {
       p.ax = rx; p.az = rz; p.reanchor = false
-      if (this.walker === id) { this.dx = 0; this.dz = 0; this.step(t) }
       return
     }
     const dx = rx - p.ax, dz = rz - p.az
@@ -309,15 +323,31 @@ export class PinchDrag {
 
   private forget(id: object): void {
     this.held.delete(id)
-    if (this.walker !== id) return
+    if (this.walker === id) this.dropWalker()
+  }
+
+  /** The walker stops walking: the drag halts, and a pinch held meanwhile (it could not drag) starts afresh, never with a jump. */
+  private dropWalker(): void {
     this.walker = null
     this.halt()
-    // A pinch held while this one walked could not drag; its anchor is stale, so it starts afresh, never with a jump.
     for (const other of this.held.values()) other.reanchor = true
   }
 
+  /**
+   * A frame without the hand or the head: the walker stands still (never the last vector, which could go on blind). A
+   * blink keeps the anchor; untracked past lostMs the pinch is spent, since the hand may come back anywhere.
+   */
+  private blind(id: object, p: Pinch, t: number): void {
+    if (p.blindSince < 0) p.blindSince = t
+    if (this.walker === id) this.still(t)
+    if (!p.spent && t - p.blindSince >= PINCH.lostMs) {
+      p.spent = true
+      if (this.walker === id) this.dropWalker()
+    }
+  }
+
   private halt(): void {
-    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true
+    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true; this.facing = null
   }
 
   /** A frame with no pose for the walker: it stands still, on foot and at the wheel (never the last vector, which could go on blind). */
@@ -351,7 +381,7 @@ export class PinchDrag {
 
   /**
    * Writes the drag into `out` (zeroed by the caller) and takes any snap it earned. On foot the drag is judged as the
-   * head faces (`headOffset`, the head's yaw less the body's): within walkSector of the head's forward or back it walks,
+   * head faced when it began (`headOffset`, the head's yaw less the body's): within walkSector of that forward or back it walks,
    * in the direction the hand moved; further round and past turnM sideways it snap-turns once; drawn past runM it runs.
    * At the wheel x steers and z drives. False when it gives nothing.
    */
@@ -367,8 +397,10 @@ export class PinchDrag {
       out.moveY = live ? fwd : 0
       return live
     }
-    // Into the head's frame (x right, y forward), the inverse of XrMapper.toHead.
-    const o = Number.isFinite(headOffset) ? headOffset : 0
+    // Into the head's frame as it faced when the drag began (x right, y forward), the inverse of XrMapper.toHead: a
+    // glance aside mid-drag changes nothing, and a snap turns the body and the space together, so it holds after one.
+    if (this.facing === null) this.facing = Number.isFinite(headOffset) ? headOffset : 0
+    const o = this.facing
     const c = Math.cos(o), sn = Math.sin(o)
     const hx = dx * c - dz * sn, hy = -dz * c - dx * sn
     const ux = this.ux * c - this.uz * sn, uy = -this.uz * c - this.ux * sn
@@ -419,7 +451,10 @@ export class XrMapper {
   /** The run latch (the walking hand's stick or touchpad click toggles it). */
   private run = false
   private readonly bits = new WeakMap<object, number>()
-  private readonly heldSince = new WeakMap<object, number>()
+  /** The walking hand's click held at the wheel: since when, since when the car has stood, and whether it was refused. */
+  private readonly hold = new WeakMap<object, { at: number; still: number; refused: boolean }>()
+  /** Each source's duty last frame, for a trigger that takes on the throttle while held. */
+  private readonly lastRole = new WeakMap<object, XrRole>()
   /** Sources whose trigger was held into the wheel (the press that opened the door): no throttle until let go. */
   private readonly triggerHeld = new WeakSet<object>()
   private wasDriving = false
@@ -510,7 +545,10 @@ export class XrMapper {
       const holding = (b: number) => (bits & (1 << b)) !== 0
       // A trigger held into the wheel (the press that opened the door, or held as the controller woke there) gives no
       // throttle until it has been let go: the car never lurches on the way in.
-      if (this.driving && holding(XR_BUTTON.trigger) && (!this.wasDriving || !known)) this.triggerHeld.add(s)
+      const was = this.lastRole.get(s)
+      const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
+      this.lastRole.set(s, role)
+      if (this.driving && holding(XR_BUTTON.trigger) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
       else if (!holding(XR_BUTTON.trigger) && triggerValue(g.buttons[XR_BUTTON.trigger]) < 0.05) this.triggerHeld.delete(s)
       const throttle = this.triggerHeld.has(s) ? 0 : triggerValue(g.buttons[XR_BUTTON.trigger])
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
@@ -533,13 +571,20 @@ export class XrMapper {
       const clickBtn = shape.stick ? XR_BUTTON.thumbstick : shape.padWalks ? XR_BUTTON.touchpad : -1
       const holdOut = clickBtn >= 0 && (role === 'left' || (role === 'both' && shape.stick && shape.faces < 2))
       if (holdOut && holding(clickBtn) && this.driving) {
-        const since = this.heldSince.get(s)
-        if (since === undefined) this.heldSince.set(s, press(clickBtn) ? now : Infinity)
-        else if (Number.isFinite(since)) {
-          if (!this.stopped) this.heldSince.set(s, now)
-          else if (now - since >= XR_HOLD_OUT_MS) { edges |= PAD_EDGE.interact; this.heldSince.set(s, Infinity) }
+        let h = this.hold.get(s)
+        // A click held into the wheel (down before the car was) never counts: at Infinity.
+        if (!h) { h = { at: press(clickBtn) ? now : Infinity, still: -1, refused: false }; this.hold.set(s, h) }
+        if (Number.isFinite(h.at)) {
+          if (!this.stopped) {
+            h.still = -1
+            // Held a second while the car rolls: refused like any door (said, buzzed), once; it then waits for a stop.
+            if (!h.refused && now - h.at >= XR_HOLD_OUT_MS) { h.refused = true; this.refusedFlag = true; buzz(s) }
+          } else {
+            if (h.still < 0) h.still = now
+            if (now - h.still >= XR_HOLD_OUT_MS) { edges |= PAD_EDGE.interact; h.at = Infinity }
+          }
         }
-      } else this.heldSince.delete(s)
+      } else this.hold.delete(s)
       if (role === 'both') {
         // Alone: forward and back walk; sideways a stick snap-turns (by sectors, never both at once) while a touchpad
         // turns only on an edge click (a thumb resting at the edge before and after the click is no second turn); at

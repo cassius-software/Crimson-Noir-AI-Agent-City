@@ -705,31 +705,70 @@ test('a pinch is judged as the head faces: a player turned in the room walks whe
   assert.ok(close(m.analog.moveX, 1, 1e-6) && m.turn === 0, 'through the mapper too')
 })
 
-test('a hand that drops out of tracking mid-drag stands still on foot and at the wheel, and starts again from where it comes back', () => {
+test('a hand that drops out of tracking mid-drag stands still; after a blink it resumes against its first anchor, after a long loss it is spent', () => {
   const id = {}
   for (const driving of [false, true]) {
+    for (const frames of [1, 3]) {
+      const d = new PinchDrag()
+      d.start(id, 'grip', false, 0, P(0, -0.3))
+      d.sample(id, 10, P(0, -0.3), HEAD)
+      d.sample(id, 20, P(0, -0.45), HEAD)
+      assert.equal(d.read(createAnalog(), driving), true, 'drawn forward: going')
+      let t = 20
+      for (let k = 0; k < frames; k++) d.sample(id, (t += 11), k % 2 ? P(0, -0.45) : null, k % 2 ? null : HEAD)
+      const o = createAnalog()
+      assert.equal(d.read(o, driving), false, `${frames} frame(s) without the hand or the head: still`)
+      assert.ok(o.moveY === 0 && o.steer === 0)
+      d.sample(id, (t += 11), P(0, -0.45), HEAD)
+      const o2 = createAnalog()
+      assert.equal(d.read(o2, driving), true, 'back where it was: it resumes, against the first anchor')
+      assert.ok(close(o2.moveY, 1), `${o2.moveY}`)
+      // Eased back to where the pinch began: it stops. Never a walk (or a reverse) the other way.
+      let least = 1
+      for (const z of [-0.42, -0.38, -0.34, -0.31, -0.3]) {
+        d.sample(id, (t += 11), P(0, z), HEAD)
+        const o3 = createAnalog()
+        d.read(o3, driving)
+        least = Math.min(least, o3.moveY)
+      }
+      assert.ok(least >= 0, `${driving ? 'driving' : 'walking'}, ${frames} frame(s): eased back never goes backward (${least})`)
+    }
+    // Untracked longer than lostMs: spent. It comes back anywhere and never walks again until pinched afresh.
     const d = new PinchDrag()
     d.start(id, 'grip', false, 0, P(0, -0.3))
     d.sample(id, 10, P(0, -0.3), HEAD)
     d.sample(id, 20, P(-0.1, -0.43), HEAD)
-    assert.equal(d.read(createAnalog(), driving), true, `${driving ? 'driving' : 'walking'} before the loss`)
-    for (let t = 30; t < 1600; t += 16) d.sample(id, t, null, HEAD)
-    const o = createAnalog()
-    assert.equal(d.read(o, driving), false, 'the hand is gone: nothing')
-    assert.ok(o.steer === 0 && o.moveY === 0 && o.moveX === 0)
-    // It comes back 25 cm further on: the anchor is taken there, so no jump to a run.
-    d.sample(id, 1600, P(0, -0.55), HEAD)
-    const o2 = createAnalog()
-    assert.equal(d.read(o2, driving), false, 'back: still, from its new place')
-    assert.equal(o2.run, false)
-    d.sample(id, 1616, P(0, -0.55 - 0.07), HEAD)
-    const o3 = createAnalog()
-    assert.equal(d.read(o3, driving), true, 'moved from there: it drags again')
-    assert.ok(o3.moveY > 0 && o3.moveY < 1, `from the new anchor: ${o3.moveY}`)
-    // The head untracked is the same: still, then afresh.
-    d.sample(id, 1632, P(0, -0.7), null)
-    assert.equal(d.read(createAnalog(), driving), false, 'no head: still')
+    for (let t = 30; t < 30 + PINCH.lostMs + 20; t += 11) d.sample(id, t, null, HEAD)
+    assert.equal(d.read(createAnalog(), driving), false)
+    for (const z of [-0.55, -0.3, -0.1, -0.5]) {
+      d.sample(id, 600, P(0, z), HEAD)
+      assert.equal(d.read(createAnalog(), driving), false, 'spent: wherever it comes back, nothing')
+    }
+    assert.equal(d.takeTurn(), 0)
+    assert.equal(d.end(id, 900, P(0, -0.5)), 'none', 'and its release is no tap')
+    // A fresh pinch walks again.
+    d.start(id, 'grip', false, 1000, P(0, -0.3))
+    d.sample(id, 1010, P(0, -0.3), HEAD)
+    d.sample(id, 1020, P(0, -0.45), HEAD)
+    assert.equal(d.read(createAnalog(), driving), true, 'pinched afresh: it goes')
   }
+})
+
+test('a glance aside mid-drag changes nothing: the drag is judged against the way the head faced when it began', () => {
+  const id = {}
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  d.sample(id, 20, P(0, -0.42), HEAD)
+  const o = createAnalog()
+  assert.equal(d.read(o, false, 0), true)
+  for (const glance of [0.6, 1.05, -1.05, 0.96, 0]) {
+    d.sample(id, 30, P(0, -0.42), HEAD)
+    const g = createAnalog()
+    assert.equal(d.read(g, false, glance), true, `a glance of ${glance} rad: still walking`)
+    assert.ok(close(g.moveY, 1, 1e-6), `forward: ${g.moveY}`)
+  }
+  assert.equal(d.takeTurn(), 0, 'and never a snap')
 })
 
 test('when the walking pinch is let go, a second one held meanwhile starts afresh instead of jumping by how far it drifted', () => {
@@ -752,29 +791,85 @@ test('when the walking pinch is let go, a second one held meanwhile starts afres
   assert.equal(d.read(o, false), true, 'it walks once it is drawn itself')
 })
 
-test('neckOf: the point the head turns about, behind the eyes along the level forward', () => {
+test('neckOf: the point the head turns about, whatever the head does, from the eyes and the head\'s orientation', () => {
   const at = (yaw: number, pitch = 0) => {
-    // Yaw about y (+ to the left), then pitch about x: q = qy · qx.
+    // Yaw about y (+ to the left), then pitch about x (+ up): q = qy · qx.
     const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2), cx = Math.cos(pitch / 2), sx = Math.sin(pitch / 2)
     return { x: cy * sx, y: sy * cx, z: -sy * sx, w: cy * cx }
   }
+  /** v turned by q. */
+  const turn = (q: { x: number; y: number; z: number; w: number }, v: [number, number, number]) => {
+    const [vx, vy, vz] = v
+    const cx = q.y * vz - q.z * vy, cy = q.z * vx - q.x * vz, cz = q.x * vy - q.y * vx
+    return { x: vx + 2 * (q.w * cx + q.y * cz - q.z * cy), y: vy + 2 * (q.w * cy + q.z * cx - q.x * cz), z: vz + 2 * (q.w * cz + q.x * cy - q.y * cx) }
+  }
+  const neck = { x: 1, y: 1.5, z: 2 }
+  const eyesAt = (q: { x: number; y: number; z: number; w: number }) => { const e = turn(q, [0, PINCH.eyeUpM, -PINCH.eyeFwdM]); return { x: neck.x + e.x, y: neck.y + e.y, z: neck.z + e.z } }
+  for (const yaw of [0, 0.7, Math.PI / 2, -2.5, Math.PI]) {
+    for (const pitch of [0, 0.5, -0.6, Math.PI / 2, -Math.PI / 2]) {
+      const q = at(yaw, pitch)
+      const n = neckOf({ position: eyesAt(q), orientation: q })
+      assert.ok(close(n.x, neck.x, 1e-9) && close(n.y, neck.y, 1e-9) && close(n.z, neck.z, 1e-9), `yaw ${yaw}, pitch ${pitch}: ${JSON.stringify(n)}`)
+    }
+  }
   const eyes = { x: 1, y: 1.6, z: 2 }
-  const n0 = neckOf({ position: eyes, orientation: at(0) })
-  assert.ok(close(n0.x, 1) && close(n0.z, 2 + PINCH.neckM) && n0.y === 1.6, 'looking along −z: behind is +z')
-  const n1 = neckOf({ position: eyes, orientation: at(Math.PI / 2) })
-  assert.ok(close(n1.x, 1 + PINCH.neckM) && close(n1.z, 2), 'looking along −x: behind is +x')
-  const n2 = neckOf({ position: eyes, orientation: at(0, 0.6) })
-  assert.ok(close(n2.z, 2 + PINCH.neckM), 'a nod does not move it along')
   assert.deepEqual(neckOf({ position: eyes }), eyes, 'no orientation: the eyes')
-  assert.deepEqual(neckOf({ position: eyes, orientation: at(0, Math.PI / 2) }), eyes, 'straight up: the eyes')
-  // Turning the head with the hand still: the eyes swing about the neck, the neck stays, so nothing walks.
-  const id = {}
-  const d = new PinchDrag()
-  const neck = { x: 0, y: 1.6, z: 0 }
-  const headAt = (yaw: number) => neckOf({ position: { x: neck.x - PINCH.neckM * Math.sin(yaw), y: 1.6, z: neck.z - PINCH.neckM * Math.cos(yaw) }, orientation: at(yaw) })
-  d.start(id, 'grip', false, 0, P(0.2, -0.35))
-  let t = 0
-  for (let k = 0; k <= 30; k++) d.sample(id, (t += 11), P(0.2, -0.35), headAt((k / 30) * (Math.PI / 2)))
-  assert.equal(d.read(createAnalog(), false), false, 'a look a quarter round does not walk')
-  assert.equal(d.dragging, false)
+  assert.deepEqual(neckOf({ position: eyes, orientation: { x: 0, y: 0, z: 0, w: 0 } }), eyes, 'a broken one: the eyes')
+  const unnormalised = neckOf({ position: eyesAt(at(0.4, 0.2)), orientation: { x: at(0.4, 0.2).x * 2, y: at(0.4, 0.2).y * 2, z: at(0.4, 0.2).z * 2, w: at(0.4, 0.2).w * 2 } })
+  assert.ok(close(unnormalised.x, neck.x, 1e-9) && close(unnormalised.z, neck.z, 1e-9), 'an unnormalised one is normalised')
+  // Turning and nodding with the hand still, looking up as in a city of tall buildings: the neck stays, nothing walks.
+  for (const pitch of [0, 0.52, 0.7, -0.5]) {
+    const id = {}
+    const d = new PinchDrag()
+    d.start(id, 'grip', false, 0, P(0.2, -0.35))
+    let t = 0
+    for (let k = 0; k <= 30; k++) { const q = at((k / 30) * (Math.PI / 2), pitch); d.sample(id, (t += 11), P(0.2, -0.35), neckOf({ position: eyesAt(q), orientation: q })) }
+    assert.equal(d.read(createAnalog(), false), false, `pitched ${pitch}, a look a quarter round does not walk`)
+    assert.equal(d.dragging, false)
+    assert.equal(d.takeTurn(), 0)
+  }
+})
+
+test('the step-out hold at speed is refused like any door, once per hold, then waits for the car to stop', () => {
+  const c = ctl('none', 4, 4)
+  const pulses: number[] = []
+  Object.assign(c.gamepad as object, { hapticActuators: [{ pulse: (v: number) => { pulses.push(v) } }] })
+  const r = rig([c])
+  r.m.driving = true
+  r.m.stopped = false
+  down(c, XR_BUTTON.thumbstick)
+  r.m.read()
+  r.tick(XR_HOLD_OUT_MS - 10)
+  r.m.read()
+  assert.equal(r.m.takeRefused(), false, 'under a second: not yet')
+  r.tick(20)
+  assert.equal(r.m.read(), 0)
+  assert.equal(r.m.takeRefused(), true, 'a second held at speed: said')
+  assert.equal(pulses.length, 1, 'and buzzed')
+  r.tick(XR_HOLD_OUT_MS * 2)
+  r.m.read()
+  assert.equal(r.m.takeRefused(), false, 'once per hold')
+  assert.equal(pulses.length, 1)
+  r.m.stopped = true
+  r.m.read()
+  r.tick(XR_HOLD_OUT_MS + 5)
+  assert.equal(r.m.read(), PAD_EDGE.interact, 'held on through the stop: a second stopped, out')
+})
+
+test('a trigger held as it takes on the throttle (its partner left) gives none until let go', () => {
+  const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
+  const r = rig([left, right])
+  r.m.driving = true
+  r.m.read()
+  down(left, XR_BUTTON.trigger)
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 0, 'the left trigger is no throttle in a pair')
+  r.m.sources = [left]
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 0, 'alone now, the held trigger does not become the throttle')
+  down(left, XR_BUTTON.trigger, false)
+  r.m.read()
+  down(left, XR_BUTTON.trigger)
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 1, 'let go and pulled: the throttle')
 })

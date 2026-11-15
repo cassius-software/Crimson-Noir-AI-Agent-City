@@ -37,12 +37,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   pair or alone in either hand, so each can walk, turn, enter and leave a car, ping and drive: touchpads walk only
   while touched and turn on an edge click, a lone stick controller walks forward and back and snap-turns by a sideways
   push, and roles come from the whole source list (two of one hand split by order). Hands, gaze-and-pinch pointers
-  and styluses tap with a quick still pinch and walk by holding it and drawing the hand, judged against the head's
-  facing and measured from the neck (a lean or a look around does not walk; a sideways draw snap-turns); screens and
-  gaze buttons tap. A pinch is dropped when cancelled, when its source leaves, and through the headset's menu or a
-  recentre; a hand that drops out of tracking stands still (`07_Execute_Actions/xrSession.ts`). Every way out of a
-  car is refused above 1.5 m/s, with a buzz on the controller that asked; a trigger held from opening the door gives
-  no throttle until let go. A pad held inside a headset walks where the headset looks and snap-turns. A session
+  and styluses tap with a quick still pinch and walk by holding it and drawing the hand, measured from the neck and
+  judged against the way the head faced when the drag began (a lean, a nod, a look around or a glance does not walk; a
+  sideways draw snap-turns); screens and gaze buttons tap. A pinch is dropped when cancelled, when its source leaves,
+  and through the headset's menu or a recentre; a hand that blinks out of tracking stands still and resumes, one gone
+  longer than a quarter of a second is spent (`07_Execute_Actions/xrSession.ts`). Every way out of a car is refused
+  above 1.5 m/s, with a buzz on the controller that asked; a trigger held from opening the door, or as a lone
+  controller takes on the throttle, gives no throttle until let go. A pad held inside a headset walks where the headset looks and snap-turns. A session
   without a floor-level space runs in a local one with the floor lifted by the eye height instead of being refused.
   Checked by unit suites against fake sources of every registry shape and scripted select events; unverified on any
   real headset.

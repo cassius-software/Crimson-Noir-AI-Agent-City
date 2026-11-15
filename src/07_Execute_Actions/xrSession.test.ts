@@ -487,7 +487,7 @@ test('the drag is measured from the neck, so turning the head with the pinching 
   const t = await presenting([hand])
   const grip = hand.gripSpace
   const look = (yaw: number) => {
-    const p = { x: -0.09 * Math.sin(yaw), y: 1.6, z: -0.09 * Math.cos(yaw) }
+    const p = { x: -0.08 * Math.sin(yaw), y: 1.6, z: -0.08 * Math.cos(yaw) } // eyes 8 cm before the neck (xrInput.ts PINCH.eyeFwdM)
     return { getPose: (sp: unknown) => (sp === grip ? { transform: { position: { x: 0.2, y: 1.1, z: -0.35 } } } : null), getViewerPose: () => ({ transform: { position: p, orientation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } } }) }
   }
   t.session.fire('selectstart', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.35 }]]), 'throws') })
