@@ -7,11 +7,11 @@
  * desk per indoor workplace kind (01_Initialize_World/interiors.ts WORKPLACE_KINDS, the sixteen in slot order; the
  * six first rooms are found under their earlier kind names too) and, when a number is given ("a 24-agent drill"),
  * how many sub-agents to send; a goal that names no work and maps to no control gets two scouts (the twin studio
- * and the control tower), so no goal is ever a dead end. Each sub-agent is a lane (08_Swarm/lanes.ts): a Crimson Noir Script
- * program written here that reads a window of the city's columns around its desk each tick, under the lane limits,
- * with the capability word a sub-agent holds (move and a workplace task: never vehicle teleop, never spawning more
- * sub-agents). The plan is pure: no clock, no randomness, no I/O, and no model (a model may reword what Sloane says
- * about it; it never decides it). The runtime that opens the lanes, asks people over and reports the readings is
+ * and the control tower), so no goal is ever a dead end. Each sub-agent is a lane (08_Swarm/lanes.ts): a Crimson Noir
+ * Script program written here that reads a window of the city's columns around its desk each tick, under the lane
+ * limits, with the capability word a sub-agent holds (move and a workplace task: never vehicle teleop, never spawning
+ * more sub-agents). The plan is pure: no clock, no randomness, no I/O, and no model (a model may reword what Sloane
+ * says about it; it never decides it). The runtime that opens the lanes, asks people over and reports the readings is
  * 08_Swarm/team.ts.
  * What breaks if it is removed? Sloane can apply the knobs a goal names and nothing else: a goal about work has
  * nowhere to go, and a goal nothing maps to is a dead end again.

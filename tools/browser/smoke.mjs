@@ -110,8 +110,8 @@
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
- *   the way out through the three Crimson Noir Script lines, with Sloane's name question beside the walk's card at five desktop
- *   sizes and the walk's card stepping aside for it under 960 px;
+ *   the way out through the three Crimson Noir Script lines, with Sloane's name question beside the walk's card at
+ *   five desktop sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
  * - walkhome: the same stage through a home: Sloane names the homes in the keyboard's words, the home's chip is clear of

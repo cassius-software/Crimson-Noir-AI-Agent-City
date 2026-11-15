@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is Crimson Noir Script's bytecode VM: the opcode set, the arena the programs run in, and the
- * interpreter loop that runs one compiled line against the session's functions and globals and a snapshot of the
- * city's columns. There is no JIT and no dynamic code: the VM is a switch over an Int32Array, bounded in steps,
- * output, memory and call depth, and it never throws out of `execute`.
+ * Why does this file exist? It is Crimson Noir Script's bytecode VM: the opcode set, the arena the programs run in, and
+ * the interpreter loop that runs one compiled line against the session's functions and globals and a snapshot of the
+ * city's columns. There is no JIT and no dynamic code: the VM is a switch over an Int32Array, bounded in steps, output,
+ * memory and call depth, and it never throws out of `execute`.
  * What breaks if it is removed? Compiled Crimson Noir Script has nothing to run on.
  *
  * BYTECODE. A program is an Int32Array of instructions: an opcode, then its inline operands (OPERANDS says how

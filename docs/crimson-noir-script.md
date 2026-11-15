@@ -12,13 +12,13 @@ The language was called NoirScript until 14 November 2026. Only the name a perso
 the source folder and the type names in it (`NoirSession`, `NoirTables`) keep their spelling, and so does every rule
 below.
 
-Crimson Noir Script sits beside R0 (`repl.ts`, the Forth) as the console's second language: statically typed, compiled to
-bytecode, run on a bounded VM over one contiguous memory arena (structure-of-arrays, 64-byte-aligned columns), with
-128-bit and 256-bit lane types and branchless intrinsics, and read-only typed access to the city's SoA columns
-(crowd, cars, kernel, frame) handed in by the host at run time. It is Turing complete (unbounded loops, recursion,
-addressable arrays), deterministic (no clock, no randomness; f32 is true IEEE binary32 via Math.fround; i32/u32 wrap),
-and bounded (steps, output, memory, call depth), and it never throws out of `run`.
-There is no JIT and no dynamic code generation: the console forbids dynamic code; it is a bytecode VM.
+Crimson Noir Script sits beside R0 (`repl.ts`, the Forth) as the console's second language: statically typed, compiled
+to bytecode, run on a bounded VM over one contiguous memory arena (structure-of-arrays, 64-byte-aligned columns), with
+128-bit and 256-bit lane types and branchless intrinsics, and read-only typed access to the city's SoA columns (crowd,
+cars, kernel, frame) handed in by the host at run time. It is Turing complete (unbounded loops, recursion, addressable
+arrays), deterministic (no clock, no randomness; f32 is true IEEE binary32 via Math.fround; i32/u32 wrap), and bounded
+(steps, output, memory, call depth), and it never throws out of `run`. There is no JIT and no dynamic code generation:
+the console forbids dynamic code; it is a bytecode VM.
 
 ## Public API (`index.ts`)
 ```ts

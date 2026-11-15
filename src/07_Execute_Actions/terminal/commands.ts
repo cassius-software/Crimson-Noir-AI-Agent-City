@@ -28,10 +28,10 @@
  * readings of the city as one vector, read while locked, and each pedestrian's own (`person <n>`, `people`:
  * 09_Cognition/personFeatures.ts), read while locked too; `steer`, `clamp`, `release` and `reset` are the operator's.
  * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
- * Crimson Noir Script's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
- * `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a bounded
- * VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach the
- * city only through the elite tier's surface (`ring0`), failing while that tier is locked.
+ * Crimson Noir Script's writes for the session; its status and lock work while locked, unlock and set need the operator
+ * tier. `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a
+ * bounded VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach
+ * the city only through the elite tier's surface (`ring0`), failing while that tier is locked.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
@@ -1666,10 +1666,10 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines }
   },
 
-  // Raw: the rest of the line is Crimson Noir Script for the session's VM. The city's columns (the bridge's `soa`) are read
-  // once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
-  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open,
-  // the run has the tier's four writes and its raised limits.
+  // Raw: the rest of the line is Crimson Noir Script for the session's VM. The city's columns (the bridge's `soa`) are
+  // read once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
+  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open, the
+  // run has the tier's four writes and its raised limits.
   noir(args, b, _history, _line, session) {
     const rest = (args[0] ?? '').trim()
     if (!rest) return { lines: [out(usage('noir')), sys("Crimson Noir Script, the console's typed language: 'noir print(1 + 2);' prints 3; 'noir fn sq(x: i32) -> i32 { x * x }' defines sq for this console session; 'noir print(query cars where speed > 5.0);' counts the cars moving faster than 5 m/s")] }

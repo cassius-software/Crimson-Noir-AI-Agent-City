@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the page-side wiring of Crimson Noir Script's tables (terminal/noirscript), which Node
- * cannot run as a page: the engine's bridge hands the console one reader (`soa.tables`) that builds fresh copies of
- * the crowd's x and z, the cars' pose columns, the kernel's counters and the frame clock, and no writer of its own
- * (the writes a line may make are the elite tier's surface, operator.ts, handed to the VM only while that tier is
- * open, with the tier's own lock message otherwise); the offline stand-in has no columns at all (the console alone
- * runs Crimson Noir Script over empty tables); and the console reaches the VM only through its index module, which the bridge
- * names as a type alone.
+ * Why does this file exist? It pins the page-side wiring of Crimson Noir Script's tables (terminal/noirscript), which
+ * Node cannot run as a page: the engine's bridge hands the console one reader (`soa.tables`) that builds fresh copies
+ * of the crowd's x and z, the cars' pose columns, the kernel's counters and the frame clock, and no writer of its own
+ * (the writes a line may make are the elite tier's surface, operator.ts, handed to the VM only while that tier is open,
+ * with the tier's own lock message otherwise); the offline stand-in has no columns at all (the console alone runs
+ * Crimson Noir Script over empty tables); and the console reaches the VM only through its index module, which the
+ * bridge names as a type alone.
  * What breaks if it is removed? The engine could hand the VM a live view of the realm, or a write, and only the
  * browser would show it.
  */

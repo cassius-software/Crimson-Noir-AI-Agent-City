@@ -2012,10 +2012,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
-          // The first walk's exam, behind Crimson Noir Script's verify_ring0 / spawn_subagents / unlock_city: it reads the
-          // kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through the
-          // page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
-          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its own.
+          // The first walk's exam, behind Crimson Noir Script's verify_ring0 / spawn_subagents / unlock_city: it reads
+          // the kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through
+          // the page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
+          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its
+          // own.
           exam: createExam({
             contained: () => airgapInstalled(globalThis),
             standing: () => lockedRef.current === null,

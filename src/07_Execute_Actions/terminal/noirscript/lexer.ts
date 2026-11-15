@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It turns a line of Crimson Noir Script into tokens, each carrying its 1-based line and column
- * so every later error can point at its source. It knows the keywords, the type names, the two comment forms,
- * integer literals in decimal, hex and binary with `_` separators and the `u` suffix, float literals with an
- * exponent and the `f` suffix, and strings with four escapes. It refuses, by name and position, the characters
- * and literals the language has no meaning for; it never throws anything but a NoirError.
+ * Why does this file exist? It turns a line of Crimson Noir Script into tokens, each carrying its 1-based line and
+ * column so every later error can point at its source. It knows the keywords, the type names, the two comment forms,
+ * integer literals in decimal, hex and binary with `_` separators and the `u` suffix, float literals with an exponent
+ * and the `f` suffix, and strings with four escapes. It refuses, by name and position, the characters and literals the
+ * language has no meaning for; it never throws anything but a NoirError.
  * What breaks if it is removed? The parser has nothing to read, and no error could name a line and column.
  */
 

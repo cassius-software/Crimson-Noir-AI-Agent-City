@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is Crimson Noir Script's static checker: every expression gets exactly one type and every name
- * one declaration before anything compiles, so the VM never meets a value it did not expect. It owns the rules the
- * specification states: no implicit conversions except an unsuffixed integer literal adopting u32 or f32 from the
- * other operand, a declared type, a parameter or a return type; `as` only between the scalar numbers (and bool to
+ * Why does this file exist? It is Crimson Noir Script's static checker: every expression gets exactly one type and
+ * every name one declaration before anything compiles, so the VM never meets a value it did not expect. It owns the
+ * rules the specification states: no implicit conversions except an unsuffixed integer literal adopting u32 or f32 from
+ * the other operand, a declared type, a parameter or a return type; `as` only between the scalar numbers (and bool to
  * an integer, and lane-wise between the 4-lane vectors); immutability of `let`, parameters and loop variables;
- * shadowing only in inner blocks; declaration before use; functions at the top level with full signatures, checked
- * in two passes so they may recurse mutually; `query` scopes that put a table's columns in scope as the row's
- * scalars; a value left over at the end of a statement refused by name; and a non-void function that must return on
- * every path. Overloaded intrinsics resolve by argument type against the intrinsics table. Every refusal names a
- * line and column and both types when two are involved. The checker writes its findings onto the tree.
+ * shadowing only in inner blocks; declaration before use; functions at the top level with full signatures, checked in
+ * two passes so they may recurse mutually; `query` scopes that put a table's columns in scope as the row's scalars; a
+ * value left over at the end of a statement refused by name; and a non-void function that must return on every path.
+ * Overloaded intrinsics resolve by argument type against the intrinsics table. Every refusal names a line and column
+ * and both types when two are involved. The checker writes its findings onto the tree.
  * What breaks if it is removed? Ill-typed programs would reach the compiler and the VM would read cells as the
  * wrong type, or crash on a shape the bytecode has no instruction for.
  */

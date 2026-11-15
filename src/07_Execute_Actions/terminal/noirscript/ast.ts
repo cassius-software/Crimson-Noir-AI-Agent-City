@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the shared vocabulary of Crimson Noir Script's front end: the static types a value can
- * have (scalars, the 4- and 8-lane vectors, fixed arrays, host columns) with their names and their widths in
- * 32-bit cells, and the syntax tree the parser builds and the checker annotates. The checker writes the type of
- * every expression and the declaration every name refers to straight onto the nodes, so the compiler walks one
- * annotated tree and never guesses. Everything here is data: no behaviour, no imports, nothing of the host.
+ * Why does this file exist? It is the shared vocabulary of Crimson Noir Script's front end: the static types a value
+ * can have (scalars, the 4- and 8-lane vectors, fixed arrays, host columns) with their names and their widths in 32-bit
+ * cells, and the syntax tree the parser builds and the checker annotates. The checker writes the type of every
+ * expression and the declaration every name refers to straight onto the nodes, so the compiler walks one annotated tree
+ * and never guesses. Everything here is data: no behaviour, no imports, nothing of the host.
  * What breaks if it is removed? The lexer, parser, checker, compiler and printer have no common shape to agree on.
  */
 

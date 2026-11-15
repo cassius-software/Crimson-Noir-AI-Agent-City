@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the seeded fuzz suite of Crimson Noir Script: thousands of random lines, half token soup
- * (every keyword, type, operator, literal and stray character the lexer knows, in any order) and half grammar-shaped
- * programs (functions, globals, loops, queries, vectors, casts, host writes, with faults sprinkled in), run against
- * random hosts whose tables and writes may be odd or throw. The properties: `run` and `asm` never throw (every
- * failure is `error` text and never an internal one), a run never takes more than `limits.steps` steps, the session
- * answers `print(1)` afterwards, and a twin session fed the same lines gives the same results. Every case is
- * reproducible from its seed and index; the generator is a copy of the repository's mulberry32, kept inside the
- * folder because nothing here may import from outside it.
+ * Why does this file exist? It is the seeded fuzz suite of Crimson Noir Script: thousands of random lines, half token
+ * soup (every keyword, type, operator, literal and stray character the lexer knows, in any order) and half
+ * grammar-shaped programs (functions, globals, loops, queries, vectors, casts, host writes, with faults sprinkled in),
+ * run against random hosts whose tables and writes may be odd or throw. The properties: `run` and `asm` never throw
+ * (every failure is `error` text and never an internal one), a run never takes more than `limits.steps` steps, the
+ * session answers `print(1)` afterwards, and a twin session fed the same lines gives the same results. Every case is
+ * reproducible from its seed and index; the generator is a copy of the repository's mulberry32, kept inside the folder
+ * because nothing here may import from outside it.
  * What breaks if it is removed? A crash, a hang or a runaway line in the console could hide behind the hand-written
  * tests until a player found it.
  */

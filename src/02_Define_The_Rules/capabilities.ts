@@ -81,9 +81,9 @@ export interface Door { readonly name: string; readonly bit: number }
 /**
  * The doors no lane is let through, by the name a script would use. The network and a window are the page's
  * outbound primitives, which the air gap (airgap.ts installAirgap) guards or removes on the page's global for every
- * script alike; dynamic code and the host process are not reachable from a lane at all (a lane runs Crimson Noir Script,
- * whose folder names none of them, pinned by its own air-gap test). The list is what `doorOf` answers and what the
- * air gap's test checks itself against, so the two cannot part.
+ * script alike; dynamic code and the host process are not reachable from a lane at all (a lane runs Crimson Noir
+ * Script, whose folder names none of them, pinned by its own air-gap test). The list is what `doorOf` answers and what
+ * the air gap's test checks itself against, so the two cannot part.
  */
 export const FORBIDDEN_DOORS: readonly Door[] = Object.freeze([
   ...['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport', 'navigator.sendBeacon'].map((name) => Object.freeze({ name, bit: CAP_NET })),

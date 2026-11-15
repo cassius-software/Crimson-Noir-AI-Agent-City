@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the air gap of Crimson Noir Script, checked on the text of every file in this folder: no
- * import from outside the folder (the tests may use node's assert, test runner and file system, nothing else), no
+ * Why does this file exist? It is the air gap of Crimson Noir Script, checked on the text of every file in this folder:
+ * no import from outside the folder (the tests may use node's assert, test runner and file system, nothing else), no
  * door to the host (no dynamic code, no global object, no clock, no randomness, no timers, no network, no DOM, no
  * storage, nothing asynchronous), none of the words the repository bans from its console sources, and the licence
  * header with its two questions at the head of every file. The scan reads the files with node:fs, this one included,

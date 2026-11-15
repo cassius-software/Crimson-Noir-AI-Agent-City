@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the shape of Crimson Noir Script's syntax tree: operator precedence from the binding
- * table (`1 + 2 * 3`, `a << 1 + 2`, `-x as f32`, `a && b || c`), the structure of if/else-if chains and their
- * promotion to a block's value, for ranges, array literals, query, if-expressions, method calls, types, and every
- * parse error with its line and column.
+ * Why does this file exist? It pins the shape of Crimson Noir Script's syntax tree: operator precedence from the
+ * binding table (`1 + 2 * 3`, `a << 1 + 2`, `-x as f32`, `a && b || c`), the structure of if/else-if chains and their
+ * promotion to a block's value, for ranges, array literals, query, if-expressions, method calls, types, and every parse
+ * error with its line and column.
  * What breaks if it is removed? A precedence slip or a misparsed statement would compile to the wrong program.
  */
 import assert from 'node:assert/strict'
