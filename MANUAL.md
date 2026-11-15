@@ -1292,8 +1292,11 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
-  quality governor), with a bar from Lite to Peak; and Sloane, ready to plan. It asks nothing of the network or the
-  model. It has **no
+  quality governor), with a bar from Lite to Peak; and Sloane as the brain readout has her: *Thinking on this device*
+  (the model kept in this page, or the one the app carries), *Thinking with a model on this machine* (a model server
+  here), *Thinking off this machine* (the gateway), else her default model's progress while it comes, else *Ready to
+  plan*, which her scripted planner always is. The row's title is the readout's whole line, the same one `ask` prints
+  as its brain row. Reading it asks nothing of the network or the model. It has **no
   close button, no skip and no key that puts it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
 - **The six stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:

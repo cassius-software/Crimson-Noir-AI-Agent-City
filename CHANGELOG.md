@@ -2279,6 +2279,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
+  answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
+  is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
+  on this machine" for a model server here, "Thinking off this machine" for the gateway, else her default model's
+  progress while it comes ("Getting her model, 42%", "Keeping her model", "The app checks her model"), else "Ready to
+  plan", which her scripted planner always is. The readout's whole line, the one `ask` prints as its brain row, is the
+  words' title for a pointer, and a screen reader hears it once, after the words. A change in the readout renders that
+  row alone, not the page, and nothing on the card probes, asks or downloads (`useFirstWalk.ts` `sloaneOf`, `FirstWalk.tsx`). Pinned by
+  `firstWalkWiring.test.ts` over every brain and default state, and by the browser smoke's `walk`, which holds the
+  row's brain and line to `__SIM__.brain()`.
+
 - **The console's second language is now called Crimson Noir Script.** It was NoirScript. The name changed everywhere
   a person reads it: the console's `help` and `noir` lines, Sloane's first-walk lines, the progression's skill text,
   the manual, the README, and the language's own document, which moved to `docs/crimson-noir-script.md`. Nothing else
