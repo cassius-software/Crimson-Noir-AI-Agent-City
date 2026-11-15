@@ -7,9 +7,11 @@
  * files, and each is closed here. Two tabs of the site: every image is stored with a generation number, and a save
  * is one transaction that reads the stored generation first and writes only if it is the one this page loaded or
  * last saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk. A store that could
- * not be read (the browser refused it, the read failed, it never answered): saving is then refused for the visit,
- * because an image that may still be there must not be replaced by an empty disk. An image that fails the
- * system's own checks: it is copied under another key before anything is saved, so it can be looked at later.
+ * not be read (the browser refused it, the read failed, it never answered): the load is refused, so the console can
+ * say at once that its files are not kept, and saving is refused for the visit, because an image that may still be
+ * there must not be replaced by an empty disk. An image that fails the system's own checks: it is copied under
+ * another key before anything is saved, so it can be looked at later. A console made again in the same page (the
+ * terminal mounted anew) loads the disk afresh: it gets what was last saved, never the first read of it.
  * The image is the page's own data in the page's own storage: nothing here sends anything anywhere.
  * What breaks if it is removed? The console's files last only as long as the page: a reload starts an empty disk.
  */
@@ -88,25 +90,29 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
 
   const load = async (): Promise<Uint8Array | null> => {
     try {
-      db = await open()
+      db ??= await open()
       const row = rowOf(await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(IMAGE)))
       gen = row?.gen ?? 0
       known = true
       return row?.bytes ?? null
-    } catch {
-      // Unread is not the same as empty: nothing is written over what may still be there.
+    } catch (e) {
+      // Unread is not the same as empty: nothing is written over what may still be there, and the caller is told.
       known = false
-      return null
+      throw e instanceof Error ? e : new Error(String(e))
     }
   }
 
   return {
-    load: () => (loading ??= load()),
+    // Asked again while a read is on its way: that read. Asked again after it (a new session of the console): a new one,
+    // so a disk saved since is what comes back, with its generation.
+    load: () => (loading ??= load().finally(() => { loading = null })),
     async save(image) {
       if (!known || db === null) return 'failed'
       try {
         const t = db.transaction(STORE, 'readwrite')
         const done = finished(t)
+        // A read that fails aborts the transaction while nothing waits on it yet: the refusal is answered below, not left unhandled.
+        done.catch(() => {})
         const store = t.objectStore(STORE)
         const stored = rowOf(await request(store.get(IMAGE)))
         // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.

@@ -3107,6 +3107,16 @@ test('redactForHistory: a typed key or token is kept as dots, every other line a
   assert.equal(redactForHistory('say key sk_0123456789abcdef'), 'say key ••••', 'the speech provider\'s key likewise')
   assert.equal(redactForHistory('say key'), 'say key')
   assert.equal(redactForHistory('say voice Sarah'), 'say voice Sarah')
+  // The shell runs a console command anywhere in a line: the secret is dotted there too, with the rest of the line.
+  assert.equal(redactForHistory('echo x; ring0 unlock --elite open sesame'), 'echo x; ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('true && ask key sk-ant-x; echo done'), 'true && ask key ••••')
+  assert.equal(redactForHistory('echo "$(say key sk_0123)"'), 'echo "$(say key ••••')
+  assert.equal(redactForHistory('false||net join wss://room.example tok'), 'false||net join wss://room.example ••••')
+  assert.equal(redactForHistory('ls | ask connect openai sk-proj-SECRET'), 'ls | ask connect openai ••••')
+  assert.equal(redactForHistory('if true; then ring0 elite set new phrase; fi'), 'if true; then ring0 elite set ••••')
+  // A word that only ends in the command's name is not the command.
+  assert.equal(redactForHistory('task key value'), 'task key value')
+  assert.equal(redactForHistory('my-ask key value'), 'my-ask key value')
   assert.equal(redactForHistory('ask model m'), 'ask model m')
   assert.equal(redactForHistory('net join wss://room.example'), 'net join wss://room.example')
   assert.equal(redactForHistory('echo ask key x'), 'echo ask key x')

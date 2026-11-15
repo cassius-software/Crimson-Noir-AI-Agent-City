@@ -5,10 +5,12 @@
  * Why does this file exist? It holds the console to what the operating layer (os/) promised it: with no host the
  * console is its command table alone, to the letter; with one, a console command typed alone still runs exactly as
  * it did, everything else is the shell's, the shell runs a console command inside a pipe or a list through the same
- * handler, the city reads as files under /proc/city and its knobs take a write under /sys/city with the command's
- * own checks, a line typed while a program reads the terminal is that program's, and the disk comes back on the
- * next visit, is never written over by a page that fell behind, and is set aside rather than lost when it fails
- * its check.
+ * handler and tier locks (earning no check of its own: the line earns, once), the city reads as files under
+ * /proc/city and its knobs take a write under /sys/city with the command's own checks, a line typed while a program
+ * reads the terminal is that program's, Ctrl+C gives the prompt back, Tab gives back names the shell reads as typed,
+ * and the disk comes back on the next visit, is never written over by a page that fell behind, loses no change to a
+ * save that failed or was asked for during another, is said not to be kept as soon as that is so, and is set aside
+ * rather than lost when it fails its check.
  * What breaks if it is removed? Any of those could change without a test noticing, and the first to notice would be
  * someone whose files were gone.
  */
@@ -66,7 +68,11 @@ function city(): City {
     },
     progress: {
       status: () => [], table: () => [], train: () => '', reroll: () => [], reset: () => '',
-      command: (name, args) => { c.earned.push(`${name} ${args.join(' ')}`); return name === 'sh' && c.paying ? ['check: Computers'] : [] },
+      command: (name, args) => {
+        c.earned.push(`${name} ${args.join(' ')}`)
+        if (!c.paying) return []
+        return name === 'sh' ? ['check: Computers'] : name === 'rain' || name === 'time' ? ['check: Optics'] : []
+      },
     },
   }
   return c
@@ -207,12 +213,38 @@ test('a knob under /sys/city takes a write through the same command, checks and 
   assert.deepEqual(b.calls.slice(-1), ['tune physics.gravity 3.7'], 'locked again: the write reached nothing')
 })
 
+test('the operator tier\'s lock holds inside the shell: a console command in a pipe or a list, and a knob a job writes after the lock', () => {
+  const b = city()
+  const h = host()
+  const s = replSession(h)
+  const os = osOf(s)
+  assert.deepEqual(all('set physics.gravity 1 | cat', b, s), ["!set: locked; type 'operator unlock' first"])
+  assert.deepEqual(all('get physics; echo $?', b, s), ["!get: locked; type 'operator unlock' first", '1'])
+  b.unlocked = true
+  // A job started while the tier is open writes the knob only after it has locked again: refused, nothing tuned.
+  all('{ sleep 1; echo 2 > /sys/city/physics/gravity; echo $?; } &', b, s)
+  b.unlocked = false
+  h.t += 1000
+  os.pump(LINE_MS)
+  const later: string[] = []
+  for (let r = os.next(); r !== null; r = os.next()) later.push(...texts(r))
+  assert.match(later.join('\n'), /^!ash: .*gravity/m)
+  assert.equal(later[later.length - 1], '1')
+  assert.deepEqual(b.calls.filter((c) => c.startsWith('tune')), [], 'nothing reached the tuning tables')
+  // Nor can a file name a key the tier does not list, open or not.
+  b.unlocked = true
+  assert.match(all('echo 1 > /sys/city/physics/nosuchkey', b, s)[0], /^!ash: /)
+  assert.deepEqual(b.calls.filter((c) => c.startsWith('tune')), [])
+})
+
 test('a line typed while a program reads the terminal is that program\'s, even when it names a console command', () => {
   const b = city()
   const s = replSession(host())
   const os = osOf(s)
+  assert.equal(os.system.feeding, false, 'a command line is not a program\'s input')
   assert.deepEqual(all('cat > /tmp/typed', b, s), [])
   assert.equal(os.system.capturing, true)
+  assert.equal(os.system.feeding, true, 'the console keeps it out of its history')
   assert.equal(os.prompt, '')
   assert.deepEqual(all('time 03:00', b, s), [])
   assert.deepEqual(all('rain on', b, s), [])
@@ -224,7 +256,14 @@ test('a line typed while a program reads the terminal is that program\'s, even w
   // A command the shell is still reading the rest of takes the next line too.
   assert.deepEqual(all('for w in a b; do', b, s), [])
   assert.equal(os.prompt, '> ')
+  assert.equal(os.system.feeding, false, 'the rest of a command is the shell\'s, not a program\'s input')
   assert.deepEqual(all('echo $w; done', b, s), ['a', 'b'])
+  // A program's input keeps its blanks, as typed.
+  assert.deepEqual(all('cat > /tmp/indent', b, s), [])
+  assert.deepEqual(all('    four in', b, s), [])
+  os.system.end()
+  os.pump(LINE_MS)
+  assert.deepEqual(all("grep -c '^    four in$' /tmp/indent", b, s), ['1'])
 })
 
 test('a job that does not read leaves the console its own commands; Ctrl+C ends the job', () => {
@@ -251,6 +290,78 @@ test('a job that does not read leaves the console its own commands; Ctrl+C ends 
   h.t += 5000
   os.pump(LINE_MS)
   assert.deepEqual(texts(os.next() ?? { lines: [] }), ['woke'])
+})
+
+test('the gate: blanks before a console command and an operator inside its quotes leave it the console\'s; a second line makes it the shell\'s', () => {
+  const b = city()
+  const s = replSession(host())
+  const bare = replSession()
+  for (const line of ['  time', 'time "18:30 | x"', "rain 'on;'", 'time 18:30 # a note', 'rain on&']) {
+    assert.deepEqual(run(line, b, [], s), run(line, b, [], bare), line)
+  }
+  assert.equal(osOf(s).next(), null, 'nothing went to the shell')
+  // A line after it is a second command: the shell runs both, the console command through its handler.
+  assert.deepEqual(all('time\necho done', b, s), ['12:00', 'done'])
+  // Without a waiting proposal `y` is no word of the console's, so the shell says it is not found.
+  assert.deepEqual(all('y', b, s), ['!ash: y: not found'])
+})
+
+test('Ctrl+C gives up the wait on a console command that answers later, at the prompt and inside a pipe', () => {
+  const b = city()
+  b.xr = () => new Promise<string>(() => {})
+  const s = replSession(host())
+  const os = osOf(s)
+  assert.deepEqual(all('echo x; xr vr', b, s), ['x', 'headset: asking the browser...'])
+  assert.equal(os.prompt, '', 'the shell waits for the answer')
+  assert.equal(os.system.capturing, false)
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  assert.equal(os.prompt, 'testhost:~# ')
+  assert.deepEqual(all('echo $?', b, s), ['130'])
+  assert.deepEqual(all('xr vr | cat', b, s), ['headset: asking the browser...'])
+  assert.equal(os.prompt, '')
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  assert.equal(os.prompt, 'testhost:~# ')
+  assert.deepEqual(all('echo $?', b, s), ['130'])
+})
+
+test('a console command the shell runs earns no check of its own: only its lines go down a pipe or into a file, and the line earns once', () => {
+  const b = city()
+  b.paying = true
+  const s = replSession(host())
+  // Typed alone it is the console's, and earns as it always has.
+  assert.deepEqual(all('rain on', b, s), ['rain on', 'check: Optics'])
+  assert.deepEqual(all('rain off > /tmp/r; cat /tmp/r', b, s), ['rain off', 'check: Computers'])
+  assert.deepEqual(all('rain on | wc -l', b, s), ['1', 'check: Computers'])
+  // A loop runs the command three times and is still one line typed.
+  assert.deepEqual(all('for h in 1 2 3; do time 10:00; done', b, s), ['10:00', '10:00', '10:00', 'check: Computers'])
+  // Straight to the screen, its result is its own and the line's check comes after everything it printed.
+  assert.deepEqual(all('echo x; rain off', b, s), ['x', 'rain off', 'check: Computers'])
+  // A failed console command in the line: nothing is earned.
+  assert.deepEqual(all('time 99; echo y', b, s), ["!time: invalid time '99'", '!usage: time [HH[:MM]]', 'y'])
+  assert.deepEqual(b.earned, [
+    'rain on', 'sh rain off > /tmp/r; cat /tmp/r', 'sh rain on | wc -l', 'sh for h in 1 2 3; do time 10:00; done', 'sh echo x; rain off',
+  ])
+})
+
+test('Tab escapes what the shell would read otherwise, so a completed line names that one file; a word just after an operator is a command', () => {
+  const b = city()
+  const s = replSession(host())
+  all('mkdir "/tmp/my dir"; echo inside > "/tmp/my dir/a;b"; echo tilde > /tmp/~t', b, s)
+  assert.deepEqual(completeLine('cat /tmp/my', s), ['cat /tmp/my\\ dir/'])
+  assert.deepEqual(completeLine('cat /tmp/my\\ dir/', s), ['cat /tmp/my\\ dir/a\\;b'])
+  // A word begun in quotes is completed and given back escaped.
+  assert.deepEqual(completeLine('cat "/tmp/my dir/a', s), ['cat /tmp/my\\ dir/a\\;b'])
+  // Entered as completed, the line reads that file and runs nothing else.
+  assert.deepEqual(all(completeLine('cat /tmp/my\\ dir/a', s)[0], b, s), ['inside'])
+  assert.deepEqual(all(completeLine('cat /tmp/~', s)[0], b, s), ['tilde'])
+  // The home directory is still `~/`.
+  assert.deepEqual(completeLine('cat ~/RE', s), ['cat ~/README'])
+  assert.deepEqual(completeLine('ls|wc', s), ['ls|wc'])
+  assert.deepEqual(completeLine('cd /tmp;pw', s), ['cd /tmp;pwd'])
+  assert.deepEqual(completeLine('echo $(pw', s), ['echo $(pwd'])
+  assert.deepEqual(completeLine('ls 2>/tmp/my', s), ['ls 2>/tmp/my\\ dir/'])
 })
 
 test('Tab: console commands, the shell\'s own and programs where a command goes; the console\'s own arguments; then files', () => {
@@ -374,6 +485,8 @@ test('a store that keeps failing is given up on after three tries, with the reas
 test('with nowhere to keep a disk the console says so when the first file is written, not before', async () => {
   const b = city()
   const s = replSession(host(null))
+  // A new disk with nothing of the person's on it has nothing to save: a host's save timer is not kept going for it.
+  assert.equal(osOf(s).unsavedChanges, false)
   assert.deepEqual(all('echo hello', b, s), ['hello'])
   await osOf(s).save()
   assert.deepEqual(await settle(s), [], 'the disk only holds what every disk starts with: nothing to lose yet')
@@ -407,6 +520,90 @@ test('a saved disk that fails its check is set aside before anything is saved, a
   await osOf(t).save()
   assert.deepEqual([...(stuck.image ?? [])], [9, 9], 'the stored image is untouched')
   assert.equal(stuck.gen, 3)
+})
+
+/** A store whose saves answer only when the test says, and whose load gives what was last kept. */
+function slowDisk(): DiskStore & { stored: Uint8Array | null; asked: Uint8Array[]; answer(how: 'kept' | 'failed'): void } {
+  const waiting: ((how: 'kept' | 'failed') => void)[] = []
+  const d = {
+    stored: null as Uint8Array | null,
+    asked: [] as Uint8Array[],
+    answer(how: 'kept' | 'failed') { waiting.shift()?.(how) },
+    load: async () => d.stored,
+    save: (image: Uint8Array) => new Promise<'kept' | 'stale' | 'failed'>((resolve) => {
+      d.asked.push(image)
+      waiting.push((how) => {
+        if (how === 'kept') d.stored = image.slice()
+        resolve(how)
+      })
+    }),
+    setAside: async () => true,
+  }
+  return d
+}
+
+/** Lets promises settle without giving the layer a turn. */
+async function ticks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve()
+}
+
+test('a save asked for while one is on its way (the page hidden just then) is made once that one answers, with the disk as it is then', async () => {
+  const b = city()
+  const disk = slowDisk()
+  const s = replSession(host(disk))
+  await settle(s)
+  all('echo one > a', b, s)
+  const first = osOf(s).save()
+  all('echo two > b', b, s)
+  const second = osOf(s).save()
+  assert.equal(disk.asked.length, 1)
+  disk.answer('kept')
+  await first
+  await ticks()
+  assert.equal(disk.asked.length, 2, 'the second save went out when the first answered')
+  disk.answer('kept')
+  await second
+  assert.equal(osOf(s).unsavedChanges, false)
+  const next = replSession(host(disk))
+  await settle(next)
+  assert.deepEqual(all('cat a b', b, next), ['one', 'two'])
+})
+
+test('after a failed save the next one keeps the disk as it is now, not the image that failed', async () => {
+  const b = city()
+  const disk = slowDisk()
+  const s = replSession(host(disk))
+  await settle(s)
+  all('echo one > a', b, s)
+  const first = osOf(s).save()
+  disk.answer('failed')
+  await first
+  assert.equal(osOf(s).unsavedChanges, true)
+  all('echo two > b', b, s)
+  const second = osOf(s).save()
+  disk.answer('kept')
+  await second
+  assert.equal(osOf(s).unsavedChanges, false, 'nothing is owed: what was kept holds both files')
+  const next = replSession(host(disk))
+  await settle(next)
+  assert.deepEqual(all('cat a b', b, next), ['one', 'two'])
+})
+
+test('a store that cannot be read: the console says at once that its files are not kept, and writes nothing over it', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  disk.image = Uint8Array.of(5, 5)
+  disk.gen = 4
+  const store: DiskStore = { ...disk.open(), load: () => Promise.reject(new Error('read refused')) }
+  const s = replSession(host(store))
+  const said = [...(await settle(s)), ...(await settle(s))]
+  assert.equal(osOf(s).system.state, 'new')
+  assert.match(said.join('\n'), /^disk: files are not kept between visits from here on: the storage could not be read/m)
+  all('echo x > f', b, s)
+  assert.equal(osOf(s).unsavedChanges, false)
+  await osOf(s).save()
+  assert.equal(disk.gen, 4)
+  assert.deepEqual([...(disk.image ?? [])], [5, 5])
 })
 
 test('a long job answers with what it has after a moment and goes on as the host gives it turns', () => {

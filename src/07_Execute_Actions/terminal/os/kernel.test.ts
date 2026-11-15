@@ -19,7 +19,7 @@ import { test } from 'node:test'
 import { decode, encode } from './bytes.ts'
 import { OsError } from './errno.ts'
 import { ROOT_CRED } from './fs.ts'
-import { ARGS_MAX, Exit, FDS_MAX, Kernel, PROCS_MAX, SLICE } from './kernel.ts'
+import { ARGS_MAX, Exit, FDS_MAX, Kernel, LOOK, PROCS_MAX, SLICE } from './kernel.ts'
 import type { Proc, Program, SpawnOptions } from './kernel.ts'
 import { FILE_PROGRAMS } from './fileutils.ts'
 import { boot } from './kit.test.ts'
@@ -257,10 +257,12 @@ test('run returns on the deadline, on a clock that moves, even when every turn r
   for (let i = 0; i < 10; i++) {
     const before = counts[0] + counts[1]
     assert.equal(m.kernel.run(Number.POSITIVE_INFINITY, m.now() + 4), true)
-    // An endless budget, yet each call ends after one turn: the deadline was passed.
-    assert.equal(counts[0] + counts[1] - before, SLICE)
+    // An endless budget, yet each call ends inside one turn: the turn looks at the clock every LOOK calls and stops
+    // at the first look past the deadline, long before its SLICE calls are spent.
+    assert.equal(counts[0] + counts[1] - before, LOOK)
   }
-  assert.deepEqual(counts, [SLICE * 5, SLICE * 5])
+  // The tasks still take turns.
+  assert.deepEqual(counts, [LOOK * 5, LOOK * 5])
 })
 
 test('run returns on the budget on a clock that does not move, and after one turn when the deadline has passed', () => {
@@ -277,10 +279,11 @@ test('run returns on the budget on a clock that does not move, and after one tur
   // The clock never moves, so only the budget ends the call.
   assert.equal(m.kernel.run(1000, m.now() + 10), true)
   assert.ok(count >= 1000 - SLICE && count <= 1000 + SLICE, `${count}`)
-  // A deadline already reached still gives one turn: the host always sees progress.
+  // A deadline already reached still gives one short turn (up to the first look at the clock): the host always sees
+  // progress.
   count = 0
   assert.equal(m.kernel.run(1_000_000, m.now()), true)
-  assert.equal(count, SLICE)
+  assert.equal(count, LOOK)
   // A task that only lets the others run (breathe) costs one call a turn and is bounded the same way.
   const m2 = machine()
   let breaths = 0

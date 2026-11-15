@@ -492,7 +492,12 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   }
 
   const submit = (raw: string) => {
-    const line = raw.trim()
+    // A line typed to something already running (a program's input, the rest of a here-document) is kept as typed,
+    // since its blanks are part of it; a command loses the blanks at its ends.
+    const system = session.current?.os?.system
+    const line = system?.capturing === true ? raw : raw.trim()
+    // A program's input is the program's (a name, a note, maybe a secret): it never enters the history.
+    const feeding = system?.feeding === true
     if (!line && liveFrame.current) return // a blank Enter does not end a live view
     stopLive()
     // The row this line leaves keeps the prompt it was typed at: the shell's changes with the directory.
@@ -501,7 +506,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     const r = run(line, bridge ?? OFFLINE, history.current, sessionOf())
     const h = history.current
     // A key or a token typed on the line is kept as dots, never as typed.
-    const kept = redactForHistory(line)
+    const kept = feeding ? '' : redactForHistory(line)
     if (kept && h[h.length - 1] !== kept) {
       h.push(kept)
       if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)

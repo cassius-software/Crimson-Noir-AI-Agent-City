@@ -195,7 +195,8 @@ export function replSession(host: OsHost | null = null): ReplSession {
 
 /**
  * Where the console's disk is kept between visits (the host's own storage). `load` gives the saved image, or null
- * when there is none or it cannot be read. `save` puts an image over the one this page last loaded or saved:
+ * when there is none; it is refused when the storage cannot be read (the console then says at once that its files are
+ * not kept, and saves nothing over what may still be there). `save` puts an image over the one this page last loaded or saved:
  * 'kept'; 'stale' when another page saved since (nothing is written, so the newer disk is not lost); 'failed'.
  * `setAside` keeps an image that failed its checks under another name, so it is never written over unseen; false
  * when the copy could not be kept (the console then leaves the stored image alone for the visit).
@@ -247,7 +248,8 @@ export class OsSession {
   private readonly own = new Set<CommandResult>()
   /** Why the disk is no longer saved (another page saved a newer one, the store keeps failing), once that is so. */
   private volatile: string | null = null
-  private saving = false
+  /** The save on its way to the store, if one is. */
+  private saving: Promise<void> | null = null
   private failures = 0
   /** An image whose save failed, to try again before a newer one is made. */
   private unsaved: Uint8Array | null = null
@@ -267,12 +269,24 @@ export class OsSession {
     this.bridge = offlineBridge(host.brand)
     const failed = (lines: readonly Line[]): boolean => lines.some((l) => l.kind === 'err')
     const cityLine = (l: Line): CityLine => ({ err: l.kind === 'err', text: l.text })
+    /**
+     * One of the console's commands run for the layer (by the shell, or for a file under /proc/city or /sys/city): the
+     * same handler, checks and tier locks, but no check of its own. The line typed earns, once, when it has finished
+     * (shellLine): a loop does not earn once a turn, and a check's lines never go down a pipe or into a file.
+     */
+    const handled = (name: string, args: string[], line: string): CommandResult => {
+      try {
+        return HANDLERS[name as Name](args, this.bridge, this.history, line, session)
+      } catch (e) {
+        return fail(`${name}: ${message(e)}`)
+      }
+    }
     const city: CityHost = {
       has: (name) => Object.hasOwn(HANDLERS, name),
       whole: (name) => RAW.has(name),
       run: (name, args, line, direct): CityResult => {
         const a = RAW.has(name) ? (args.length ? [args.join(' ')] : []) : [...args]
-        const r = dispatch(name as Name, a, this.bridge, this.history, line, session)
+        const r = handled(name, a, line)
         let later: Later<readonly CityLine[]> | null = null
         if (r.pending) {
           const settle = new Later<readonly CityLine[]>()
@@ -287,14 +301,7 @@ export class OsSession {
     }
     const files = cityFiles({
       bridge: () => this.bridge,
-      command: (name, args) => {
-        if (!Object.hasOwn(HANDLERS, name)) return [err(`${name}: not found`)]
-        try {
-          return HANDLERS[name as Name]([...args], this.bridge, this.history, [name, ...args].join(' '), session).lines
-        } catch (e) {
-          return [err(`${name}: ${message(e)}`)]
-        }
-      },
+      command: (name, args) => (Object.hasOwn(HANDLERS, name) ? handled(name, [...args], [name, ...args].join(' ')).lines : [err(`${name}: not found`)]),
       tuning: () => {
         try {
           const op = this.bridge.operator
@@ -308,7 +315,11 @@ export class OsSession {
     let image: Later<Uint8Array | null> | null = null
     if (store !== null) {
       const arriving = new Later<Uint8Array | null>()
-      store.load().then((bytes) => arriving.resolve(bytes), () => arriving.resolve(null)).then(() => this.wake?.())
+      store.load().then((bytes) => arriving.resolve(bytes), () => {
+        // Unread is not empty: the disk starts new, nothing is saved over what the storage may hold, and the console says so now.
+        this.lose('the storage could not be read, so nothing is written over what it may hold')
+        arriving.resolve(null)
+      }).then(() => this.wake?.())
       image = arriving
     }
     this.system = new System({
@@ -381,35 +392,49 @@ export class OsSession {
   /** Whether a call to `pump` would move anything: a task can run, or something printed waits to be shown. */
   get busy(): boolean { return this.queue.length > 0 || !this.system.idle }
 
+  /** Whether `first` and everything still queued behind it are lines alone, none of them an error (a line that may earn its check printed so). */
+  clean(first: CommandResult): boolean {
+    return [first, ...this.queue].every((r) => plainResult(r) && !r.lines.some((l) => l.kind === 'err'))
+  }
+
+  /** Lines of the console's own, after everything queued (the check a shell line earned). */
+  tell(lines: readonly Line[]): void {
+    for (const l of lines) this.say(l)
+  }
+
   /** What the console shows before the next typed line: the shell's prompt, its continuation mark, or nothing while a job has the terminal. */
   get prompt(): string { return this.system.prompt }
 
   /**
-   * Saves the disk if it changed since it was last saved. Resolves when the store has answered; never rejects. Once
-   * another page has saved a newer disk, or the store has failed three times running, nothing more is saved from
-   * this page and the console says so once (the files then last as long as the page).
+   * Saves the disk if it changed since it was last saved. Resolves when the store has answered; never rejects. Asked
+   * while a save is on its way (the page hidden just after a change), it saves again once that one has answered, so
+   * the newest change is not left out. Once another page has saved a newer disk, or the store has failed three times
+   * running, nothing more is saved from this page and the console says so once (the files then last as long as the page).
    */
   save(): Promise<void> {
     const store = this.store
-    if (this.saving || this.holding || this.volatile !== null) return Promise.resolve()
+    if (this.saving !== null) return this.saving.then(() => this.save())
+    if (this.holding || this.volatile !== null) return Promise.resolve()
     // With nowhere to keep a disk, a new one that holds only what every disk starts with has nothing to lose yet.
     if (store === null && this.unsaved === null && this.system.pristine) return Promise.resolve()
-    const image = this.unsaved ?? this.system.snapshot()
+    // The disk as it is now when it changed since; else the image whose save failed.
+    const image = this.system.snapshot() ?? this.unsaved
     if (image === null) return Promise.resolve()
     if (store === null) {
       this.lose('this page has nowhere to keep them')
       return Promise.resolve()
     }
-    this.saving = true
     this.unsaved = null
-    return store.save(image).catch((): 'failed' => 'failed').then((how) => {
-      this.saving = false
+    const saving = store.save(image).catch((): 'failed' => 'failed').then((how) => {
+      this.saving = null
       if (how === 'kept') { this.failures = 0; return }
       if (how === 'stale') { this.lose('another page of this site saved a newer disk (reload this one to open it)'); return }
       // A newer image will hold everything this one does: keep this one only while nothing newer was made.
-      this.unsaved = image
+      if (!this.system.dirty) this.unsaved = image
       if (++this.failures >= 3) this.lose('the browser refused to store them')
     })
+    this.saving = saving
+    return saving
   }
 
   private lose(why: string): void {
@@ -419,8 +444,10 @@ export class OsSession {
     this.note(`disk: files are not kept between visits from here on: ${why}`)
   }
 
-  /** Whether the disk has changes that were not saved (and saving is still worth trying). */
-  get unsavedChanges(): boolean { return this.volatile === null && (this.unsaved !== null || this.system.dirty) }
+  /** Whether the disk has changes that were not saved (and saving is still worth trying: not a new disk with nowhere to keep it). */
+  get unsavedChanges(): boolean {
+    return this.volatile === null && (this.unsaved !== null || (this.system.dirty && (this.store !== null || !this.system.pristine)))
+  }
 }
 
 
@@ -2534,34 +2561,55 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 /**
  * Hands a typed line to the operating layer's shell, gives it a moment, and answers with the first of what it
  * printed (the rest, and what arrives later, waits in `os.next()` for a host that follows the layer). With `earn`,
- * a line that finished without an error and combined programs earns the check a shell line earns (progress.ts).
+ * a line that finished without an error and combined programs earns the check a shell line earns (progress.ts),
+ * once, after everything the line printed; the console commands it ran earn none of their own.
  */
 function shellLine(os: OsSession, input: string, earn: TerminalBridge | null): CommandResult {
   if (!os.system.type(input)) return fail('ash: too many lines are waiting to be read: wait for the running command, or press Ctrl+C')
   os.pump(LINE_MS)
   const r = os.next() ?? { lines: [] }
   const p = earn?.progress
-  if (!p || !os.system.atPrompt || os.busy || !plainResult(r) || r.lines.some((l) => l.kind === 'err')) return r
+  // Finished: the shell is back at its prompt with nothing left to run, and what it printed holds no error.
+  if (!p || !os.system.atPrompt || !os.system.idle || !os.clean(r)) return r
   let check: Line[] = []
   try { check = p.command('sh', [input]).map(out) } catch { /* a progression that throws costs the line nothing */ }
-  return check.length ? { ...r, lines: [...r.lines, ...check] } : r
+  if (!check.length) return r
+  if (os.busy) {
+    os.tell(check)
+    return r
+  }
+  return { ...r, lines: [...r.lines, ...check] }
 }
+
+/**
+ * Where a console command may start inside a line, since the shell runs one anywhere a command goes
+ * (`true && ask key <key>`): at the line's start, after `;`, `|`, `&`, `(`, a line end or a backquote, or after a word
+ * such as `then` or `do`, with any blanks between. `echo ask key x` holds no command there and is kept as typed.
+ */
+const COMMAND_START = String.raw`((?:^|[;&|(\n\x60]|(?:^|\s)(?:if|then|elif|else|do|while|until|!|\{)\s)\s*)`
+
+/** The forms that carry a secret, each as (where the command starts, what is kept), the secret and the rest after it. */
+const SECRET_FORMS: readonly RegExp[] = [
+  String.raw`(ring0\s+unlock\s+--elite\s+)\S[\s\S]*$`,
+  String.raw`(ring0\s+elite\s+set\s+)\S[\s\S]*$`,
+  String.raw`((?:ask|say)\s+key\s+)\S[\s\S]*$`,
+  String.raw`(ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$`,
+  String.raw`(ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$`,
+  String.raw`(net\s+join\s+\S+\s+)\S[\s\S]*$`,
+].map((form, i) => new RegExp(COMMAND_START + form, i === 3 ? 'i' : ''))
 
 /**
  * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, a token given to
  * `net join`, and the elite tier's passphrase given to `ring0 unlock --elite` or `ring0 elite set`, are replaced by
- * dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect <provider>` only a leading
- * http(s) address is kept; anything else there (a key typed where the url goes) is dotted with everything after it.
- * Every other line is kept as typed.
+ * dots with everything after them on the line, wherever in the line the command stands, so `history` and the Up
+ * arrow never show a secret typed earlier. After `ask connect <provider>` only a leading http(s) address is kept;
+ * anything else there (a key typed where the url goes) is dotted with everything after it. Every other line is kept
+ * as typed.
  */
 export function redactForHistory(line: string): string {
-  return line
-    .replace(/^(\s*ring0\s+unlock\s+--elite\s+)\S[\s\S]*$/, '$1••••')
-    .replace(/^(\s*ring0\s+elite\s+set\s+)\S[\s\S]*$/, '$1••••')
-    .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
-    .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
-    .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')
-    .replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  let kept = line
+  for (const form of SECRET_FORMS) kept = kept.replace(form, '$1$2••••')
+  return kept
 }
 
 /**
@@ -2578,26 +2626,98 @@ export function complete(prefix: string): string[] {
 }
 
 /** The words after which a command name is expected, so Tab offers programs there, not files. */
-const COMMAND_AFTER: ReadonlySet<string> = new Set(['|', '||', '&&', ';', '&', '!', '{', 'if', 'then', 'elif', 'else', 'while', 'until', 'do'])
+const COMMAND_AFTER: ReadonlySet<string> = new Set(['|', '||', '&&', ';', '&', '!', '{', '(', 'if', 'then', 'elif', 'else', 'while', 'until', 'do'])
+
+/** What ends a word for the shell outside quotes: a blank, or the first character of an operator. */
+const WORD_ENDS = ' \t\n|&;()<>'
+
+/** Characters the shell reads as something other than themselves outside quotes. */
+const SHELL_SPECIAL = /[\s|&;<>()$`\\"'*?[\]{}#~!=]/g
+
+/**
+ * A name as it must be typed for the shell to read it back as one word that names exactly it: each special character
+ * after a backslash; a name with a control character in single quotes (a backslash before a line end joins two lines).
+ */
+function shellWord(name: string): string {
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i)
+    if (code < 32 || code === 127) return `'${name.replace(/'/g, "'\\''")}'`
+  }
+  return name.replace(SHELL_SPECIAL, (c) => `\\${c}`)
+}
+
+/**
+ * The last word of a line as the shell would read it: where it starts, what it says with its quotes and backslashes
+ * taken out, whether it held a quote, and whether a command goes there (first on the line, or after an operator or a
+ * word such as `do`). A blank or an operator inside quotes or after a backslash is part of the word.
+ */
+function lastWord(line: string): { start: number; text: string; quoted: boolean; command: boolean } {
+  let prev: string | null = null
+  let start = -1
+  let text = ''
+  let quoted = false
+  let quote = ''
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (quote !== '') {
+      if (c === quote) quote = ''
+      else if (c === '\\' && quote === '"' && i + 1 < line.length && '$`"\\'.includes(line[i + 1])) text += line[++i]
+      else text += c
+      continue
+    }
+    if (WORD_ENDS.includes(c)) {
+      if (start >= 0) prev = line.slice(start, i)
+      start = -1
+      text = ''
+      quoted = false
+      if (c !== ' ' && c !== '\t' && c !== '\n') {
+        // `||`, `&&` and `>>` are one operator each.
+        const two = line[i + 1] === c && (c === '|' || c === '&' || c === '>')
+        prev = two ? c + c : c
+        if (two) i++
+      }
+      continue
+    }
+    if (start < 0) start = i
+    if (c === '\\') {
+      if (i + 1 < line.length) text += line[++i]
+    } else if (c === "'" || c === '"') {
+      quote = c
+      quoted = true
+    } else text += c
+  }
+  return { start: start < 0 ? line.length : start, text, quoted, command: prev === null || COMMAND_AFTER.has(prev) }
+}
 
 /**
  * Tab completion with the operating layer: where a command is expected, the console's commands, the shell's own and
  * every program along its path; elsewhere the console's own candidates for that command, and when it has none, the
- * files the word could name (a directory ends in `/`). Without the layer it is `complete`.
+ * files the word could name (a directory ends in `/`). A name is given back as the shell must read it: a blank, an
+ * operator or a quote in it is escaped, so the completed line names that one file and runs nothing else. Without the
+ * layer it is `complete`.
  */
 export function completeLine(prefix: string, session: ReplSession | null = null): string[] {
   const os = session?.os ?? null
   if (!os) return complete(prefix)
-  const words = prefix.trimStart().split(/[ \t]+/)
-  const last = words[words.length - 1]
-  const head = prefix.slice(0, prefix.length - last.length)
-  if ((words.length === 1 || COMMAND_AFTER.has(words[words.length - 2])) && !last.includes('/')) {
+  const word = lastWord(prefix)
+  const head = prefix.slice(0, word.start)
+  if (word.command && !word.text.includes('/')) {
     const names = new Set<string>()
-    for (const n of [...NAMES, ...BUILTIN_NAMES, ...os.system.commands()]) if (n.startsWith(last) && /^[a-z]/.test(n)) names.add(n)
-    return [...names].sort().map((o) => head + o)
+    for (const n of [...NAMES, ...BUILTIN_NAMES, ...os.system.commands()]) if (n.startsWith(word.text) && /^[a-z]/.test(n)) names.add(n)
+    return [...names].sort().map((o) => head + shellWord(o))
   }
   const own = complete(prefix)
-  return own.length ? own : os.system.complete(last).map((o) => head + o)
+  if (own.length) return own
+  // The directory part stays as typed (so `~/` is still the home directory); a word begun in quotes is given back
+  // escaped instead. What the file system adds is escaped, a directory's slash after it.
+  const cut = word.text.lastIndexOf('/') + 1
+  const raw = prefix.slice(word.start)
+  const typed = word.text.slice(0, cut)
+  const kept = !word.quoted ? raw.slice(0, raw.lastIndexOf('/') + 1) : typed.startsWith('~/') ? `~/${shellWord(typed.slice(2))}` : shellWord(typed)
+  return os.system.complete(word.text).map((o) => {
+    const name = o.slice(cut)
+    return name.endsWith('/') ? `${head}${kept}${shellWord(name.slice(0, -1))}/` : `${head}${kept}${shellWord(name)}`
+  })
 }
 
 /** Longest string every word starts with. */

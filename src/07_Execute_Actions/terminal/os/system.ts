@@ -88,7 +88,8 @@ function mountable(disk: MemFs): void {
   }
 }
 
-const README = `This is your home directory. What you keep here stays between visits.
+const README = `This is your home directory. What you keep here stays between visits
+while the browser lets this page keep it (the console says so when it cannot).
 
   ls /bin          every program
   man ls           what one of them does
@@ -267,6 +268,12 @@ export class System {
     if (tty.readers.size === 0) return false
     return !this.shellReads || tty.continuing || tty.readers.size > 1
   }
+
+  /**
+   * Whether the next typed line is a program's input (`cat > notes`, `read name`), not a command nor the rest of one
+   * the shell is reading. The console keeps such a line as typed and out of its history.
+   */
+  get feeding(): boolean { return this.capturing && !(this.shellReads && this.kernel.tty.readers.size === 1) }
 
   /** What the console shows before the next typed line: the shell's prompt, a continuation mark, or nothing while a job runs. */
   get prompt(): string { return this.kernel.tty.readers.size > 0 ? this.kernel.tty.prompt : '' }

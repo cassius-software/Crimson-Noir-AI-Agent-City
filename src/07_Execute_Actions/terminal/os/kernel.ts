@@ -8,8 +8,9 @@
  * that can go on a turn, in order of number; a task that cannot (an empty pipe, a child not finished, a clock not
  * yet reached) hands back the question that says when it can, and the loop asks it again on a later pass. Nothing
  * here starts a timer or reads a clock of its own: the host calls `run` with a budget of steps and a deadline on
- * the clock it supplied, and the kernel returns when the budget is spent or nothing can move. A program that never
- * waits is still interrupted, because every call it makes into the kernel counts against its turn. A task ends by
+ * the clock it supplied, and the kernel returns when the budget is spent, the deadline is reached or nothing can move.
+ * A program that never waits is still interrupted, because every call it makes into the kernel counts against its
+ * turn, and every LOOK calls also look at the clock (a turn of calls that each move a lot of bytes ends on time). A task ends by
  * returning, by an error nobody caught (reported on its own error output, and never thrown at the host), or by
  * being stopped; its descriptors are closed, its children pass to task 1, and its parent may collect its status.
  * What breaks if it is removed? Nothing runs: there are files, but no programs, no pipes and no shell.
@@ -34,6 +35,8 @@ export const FDS_MAX = 32
 export const ARGS_MAX = 131072
 /** Calls into the kernel a task makes before it must let the others run. */
 export const SLICE = 256
+/** Every how many calls a turn looks at the clock, to end on the host's deadline. */
+export const LOOK = 8
 /** How many ended tasks' statuses are remembered for a `wait` that comes late. */
 const EXITED_MAX = 256
 /** Lines the kernel's own log keeps. */
@@ -254,6 +257,8 @@ export class Kernel {
   private nextPipe = 1
   /** What is left of the running task's turn. */
   slice = 0
+  /** The clock time the current call to `run` must hand back by. */
+  deadline = Infinity
   /** The task whose turn it is, while it runs. */
   current: Proc | null = null
   /** The task whose turn ended the last call to `run`: the next call starts after it. */
@@ -434,6 +439,7 @@ export class Kernel {
   /** Runs tasks until `steps` calls are spent, the clock reaches `deadline`, or none can go on. True when some still could. */
   run(steps: number, deadline: number): boolean {
     let left = steps
+    this.deadline = deadline
     // The first pass picks up after the task whose turn ended the last call, so a turn that spends a whole call
     // never keeps the tasks after it from theirs.
     let after = this.last
@@ -764,10 +770,14 @@ export class Sys {
     this.p = proc
   }
 
-  /** Counts a call against the task's turn; the task lets the others run when its turn is spent. */
+  /**
+   * Counts a call against the task's turn; the task lets the others run when its turn is spent, or when the host's
+   * deadline has come (looked at every LOOK calls, so a cheap loop pays little for it).
+   */
   private *tick(): Task<void> {
     this.p.steps++
-    if (--this.k.slice <= 0) yield BREATH
+    const k = this.k
+    if (--k.slice <= 0 || (k.slice % LOOK === 0 && k.clock() >= k.deadline)) yield BREATH
   }
 
   get pid(): number { return this.p.pid }

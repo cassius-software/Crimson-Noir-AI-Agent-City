@@ -5,7 +5,9 @@
  * Why does this file exist? It holds the console's disk store (consoleDisk.ts) to the three promises its header
  * makes, over a stand-in for the browser's IndexedDB small enough to read (requests answer a moment later, a
  * transaction's writes land together when it completes or not at all): a page that fell behind is told 'stale' and
- * writes nothing; a store that could not be read is never written over; an image set aside lands under its own key.
+ * writes nothing; a store that could not be read refuses the load and is never written over; a read that fails inside
+ * a save leaves nothing unhandled; a console made again in the same page loads what was last saved; an image set
+ * aside lands under its own key.
  * The real IndexedDB is exercised by the browser smoke run, not here.
  * What breaks if it is removed? The generation check could be dropped or reordered and two tabs would quietly lose
  * one tab's files.
@@ -162,6 +164,7 @@ test('two pages: the one that fell behind is told stale and writes nothing over 
 })
 
 test('a store that cannot be read is never written over: refused, thrown, silent, or a read that fails', async () => {
+  // Unread is not empty: the load is refused (so the console can say at once that its files are not kept), never null.
   for (const opening of ['refuse', 'throw', 'silent'] as const) {
     const idb = fakeIdb()
     const t = timers()
@@ -170,13 +173,13 @@ test('a store that cannot be read is never written over: refused, thrown, silent
     const loading = d.load()
     // A browser that never answers is given up on when the timer fires.
     if (opening === 'silent') { await Promise.resolve(); t.fire() }
-    assert.equal(await loading, null, opening)
+    await assert.rejects(loading, Error, opening)
     assert.equal(await d.save(bytes(1)), 'failed', opening)
     assert.equal(await d.setAside(bytes(1)), false, opening)
     assert.equal(idb.rows.size, 0, opening)
   }
   const none = consoleDisk(null, timers().wait)
-  assert.equal(await none.load(), null)
+  await assert.rejects(none.load(), /no storage/)
   assert.equal(await none.save(bytes(1)), 'failed')
 
   const idb = fakeIdb()
@@ -186,11 +189,50 @@ test('a store that cannot be read is never written over: refused, thrown, silent
   assert.equal(await first.save(bytes(7, 7)), 'kept')
   idb.unreadable = true
   const second = consoleDisk(idb.factory, t.wait)
-  assert.equal(await second.load(), null, 'unread, not empty')
+  await assert.rejects(second.load(), /read refused/, 'unread, not empty')
   idb.unreadable = false
   assert.equal(await second.save(bytes(0)), 'failed')
   const third = consoleDisk(idb.factory, t.wait)
   assert.deepEqual([...(await third.load() ?? [])], [7, 7], 'what was there is still there')
+})
+
+test('a read that fails inside a save answers failed and leaves no refusal unhandled; the next save can still be kept', async () => {
+  const unhandled: unknown[] = []
+  const seen = (e: unknown): void => { unhandled.push(e) }
+  process.on('unhandledRejection', seen)
+  try {
+    const idb = fakeIdb()
+    const d = consoleDisk(idb.factory, timers().wait)
+    await d.load()
+    assert.equal(await d.save(bytes(1)), 'kept')
+    idb.unreadable = true
+    assert.equal(await d.save(bytes(2)), 'failed')
+    idb.unreadable = false
+    // Give a refusal nobody caught the turns it takes to be reported.
+    for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual(unhandled, [], 'the aborted transaction was waited on')
+    assert.equal(await d.save(bytes(3)), 'kept')
+    const e = consoleDisk(idb.factory, timers().wait)
+    assert.deepEqual([...(await e.load() ?? [])], [3])
+  } finally {
+    process.off('unhandledRejection', seen)
+  }
+})
+
+test('a console made again in the same page (the terminal mounted anew) loads the disk as last saved, never the first read of it', async () => {
+  const idb = fakeIdb()
+  const d = consoleDisk(idb.factory, timers().wait)
+  // The first console: nothing stored, then two saves.
+  assert.equal(await d.load(), null)
+  assert.equal(await d.save(bytes(1)), 'kept')
+  assert.equal(await d.save(bytes(1, 2)), 'kept')
+  // The terminal is mounted again and its new session asks the one store of the page for the disk: it must get what
+  // was saved, or its first save would put the first visit's disk back over the newer one.
+  assert.deepEqual([...(await d.load() ?? [])], [1, 2])
+  assert.equal(await d.save(bytes(1, 2, 3)), 'kept')
+  const other = consoleDisk(idb.factory, timers().wait)
+  assert.deepEqual([...(await other.load() ?? [])], [1, 2, 3])
+  assert.equal(idb.opens, 2, 'one connection for each store: a second load does not open the database again')
 })
 
 test('a full disk fails the save and leaves the stored image as it was; the next save can still be kept', async () => {
