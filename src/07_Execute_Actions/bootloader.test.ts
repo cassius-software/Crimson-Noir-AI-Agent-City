@@ -112,7 +112,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the console brid
   assert.match(app, /const \[options\] = useState\(readOptions\)/, 'read once')
   // The console shell mounts before the onboarding or the city is even considered: nothing of either reaches it.
   assert.match(app, /if \(options\.boot === 'tty'\) return <TtyShell vram=\{options\.vram\} \/>/)
-  assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: outcome\?\.pack \?\? null, zone \}\} mentored=\{watched\} restarted=\{resumed !== null\} walk=\{walk\} voice=\{voice\} speaker=\{speaker\} link=\{link\} access=\{access\} prefersMore=\{prefersMore\} onAccess=\{onAccess\} adapterHint=\{probe\?\.ok \? probe\.info : ''\} \/>/)
+  assert.match(app, /<GuiShell options=\{shellOptions\} plan=\{\{ choice, pack: onboardingPackFor\(outcome\?\.pack, zone\), zone \}\} mentored=\{watched\} restarted=\{resumed !== null\} walk=\{walk\} voice=\{voice\} speaker=\{speaker\} link=\{link\} access=\{access\} prefersMore=\{prefersMore\} onAccess=\{onAccess\} adapterHint=\{probe\?\.ok \? probe\.info : ''\} \/>/)
   const tty = between(app, 'function TtyShell({ vram }: { vram: string | null }) {', 'function App() {')
   // One bridge for the shell's life (terminal/consoleBridge.ts), made as it mounts: nothing is loaded until an ask.
   assert.match(tty, /const \[bridge\] = useState\(\(\) => ttyBridge\(vram\)\)/)
