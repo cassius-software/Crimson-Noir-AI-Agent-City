@@ -133,7 +133,7 @@ const CORE = [
   { name: 'rooms', usage: 'rooms', summary: 'the indoor workplaces of this map: slot, kind, lot, doorway, stations and name (the city has sixteen; the metropolis the lots its window gave)' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
-  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line NoirScript program that ends it from any stage" },
+  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line Crimson Noir Script program that ends it from any stage" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 

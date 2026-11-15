@@ -111,7 +111,7 @@
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path: the machine rows, the console opened early
  *   passing nothing, the lent hand and its rings, the markers, the look stage through the wardrobe card, the console
- *   ending the walk with Sloane's line printed, then the three NoirScript lines finding the city open; with Sloane's
+ *   ending the walk with Sloane's line printed, then the three Crimson Noir Script lines finding the city open; with Sloane's
  *   name question beside the walk's card at five desktop sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;

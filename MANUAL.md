@@ -1195,7 +1195,7 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
   180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed
-  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded NoirScript VM).
+  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
   quality governor), with a bar from Lite to Peak; and Sloane, ready to plan. It asks nothing of the network or the

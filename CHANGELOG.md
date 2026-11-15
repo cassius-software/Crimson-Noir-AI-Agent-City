@@ -2168,7 +2168,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   it, or its Close button on touch; `help` lists every command; `TerminalHandle.print`). Opening the console on an
   earlier stage passes nothing (on the look stage it puts an open wardrobe, shop or home card away, which finishes
   that stage, and the walk is then passed at the console).
-  The NoirScript exit program (`verify_ring0`, `spawn_subagents`, `unlock_city`) now ends the walk from any stage, for
+  The Crimson Noir Script exit program (`verify_ring0`, `spawn_subagents`, `unlock_city`) now ends the walk from any stage, for
   a visitor who already knows the console; the card no longer carries its three line buttons and Run. After eight
   seconds with nothing done on a stage the walk lends a hand: the stage's button is ringed, the card offers to do it
   (with the stage's keys where it has some), and the control the stage asks for is ringed on the page where it is on

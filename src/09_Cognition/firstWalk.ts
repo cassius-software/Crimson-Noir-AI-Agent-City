@@ -11,7 +11,7 @@
  * reaches the console: the moment it opens on the last stage the city is theirs and the pass is kept. A visitor who
  * stalls is never left alone: after a few seconds with nothing done the walk lends a hand (`assisting`: the card shows
  * the keys and offers its one-tap button, the page lights the control to use), and later Sloane says the how again.
- * The console's NoirScript exit program (terminal/noirscript: verify_ring0, spawn_subagents, unlock_city) ends the
+ * The console's Crimson Noir Script exit program (terminal/noirscript: verify_ring0, spawn_subagents, unlock_city) ends the
  * walk from any stage, for the visitor who already knows the way. Sloane calls it "your first walk"; the words
  * "tutorial", "lesson" and "step" never appear in a spoken line. Like the quiet watch beside it (tutorial.ts Mentor)
  * this reads the simulation and never writes to it, and every moment comes from the clock values it is given, never
@@ -371,7 +371,7 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
       'Why does help list so many words? Because the console reads the city the way the HUD does, and further: the clock, the crowd, the traffic, the frame rate and the lanes your sub-agents run in are each one word away.',
       'Why can nothing you type turn the laws off? Because underneath the city is a kernel called Ring-0 that holds four laws in rank order; every car, every agent and every command passes through them, and the console has no word that sets them aside.',
       'Why does the city open here? Because from now on the console is where you meet the city as it is, and the city should meet you there too.',
-      'Why is there more to find in here? Because the console has its own typed language, NoirScript, that runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens; type noir and a line to try it.',
+      'Why is there more to find in here? Because the console has its own typed language, Crimson Noir Script, that runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens; type noir and a line to try it.',
     ])
   }
 }
