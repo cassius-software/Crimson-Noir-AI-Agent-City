@@ -23,7 +23,7 @@ import { fail } from './fault.ts'
 import { FORMATS } from './formats.ts'
 import { hostRead } from './order.ts'
 import { Bindable, BufferImpl, ImageImpl } from './resources.ts'
-import { Base, guard, labelOf, mine, own, record, whole } from './sync.ts'
+import { Base, guard, isGenuine, labelOf, mine, own, record, whole } from './sync.ts'
 import type { Core } from './sync.ts'
 import { say } from './verify.ts'
 
@@ -127,9 +127,9 @@ function kindsNamed(core: Core, name: MemoryKind['name']): number[] {
   return core.adapter.kinds.filter((k) => k.name === name).map((k) => k.index)
 }
 
-/** A buffer or an image, made by this device and alive. */
+/** A buffer or an image, made by this device and alive. The brand comes first, so a Proxy's traps never run (sync.ts). */
 function resourceOf(core: Core, x: unknown, where: string): BufferImpl | ImageImpl {
-  if (!(x instanceof BufferImpl) && !(x instanceof ImageImpl)) fail('invalid', `${where}: the resource is a Buffer or an Image, not ${say(x)}`)
+  if (!isGenuine(x) || (!(x instanceof BufferImpl) && !(x instanceof ImageImpl))) fail('invalid', `${where}: the resource is a Buffer or an Image, not ${say(x)}`)
   mine(core, x, where)
   return x
 }

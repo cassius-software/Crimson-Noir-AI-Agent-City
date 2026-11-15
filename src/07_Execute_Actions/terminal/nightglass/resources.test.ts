@@ -170,3 +170,48 @@ test('resources of a destroyed device, or of another device, are refused', () =>
   r.device.bind(mine, mem, 0)
   assert.equal(r.device.createView(mine).image, mine)
 })
+
+test('a view of a four-sample image is 2d: a 2d-array view of one is refused', () => {
+  const r = rig()
+  const ms = image(r, { format: 'rgba8', width: 4, height: 4, samples: 4, use: ['color'], label: 'ms' })
+  refuses(() => r.device.createView(ms, { dims: '2d-array' }), 'invalid', /^device 1 createView: a view of a four-sample image is 2d, not 2d-array$/)
+  assert.equal(r.device.createView(ms).dims, '2d')
+  assert.equal(r.device.createView(ms, { dims: '2d' }).dims, '2d')
+  assert.deepEqual(r.fake.named('createView').map((c) => c.args[1]), ['2d', '2d'])
+})
+
+test('createView runs as one call: a getter of its info cannot destroy the image or its memory', () => {
+  const r = rig()
+  const img = r.device.createImage({ format: 'rgba8', width: 4, height: 4, use: ['color', 'copy-src'], label: 'img' })
+  const mem = r.device.allocate({ size: r.device.needs(img).size, kind: KIND.images })
+  r.device.bind(img, mem, 0)
+  const views = r.fake.named('createView').length
+  const info = {
+    get levels() {
+      img.destroy()
+      mem.destroy()
+      return undefined
+    },
+  }
+  refuses(() => r.device.createView(img, info), 'state', /^image "img" destroy: called from inside another Nightglass call \(device 1 createView\)/)
+  assert.deepEqual([img.destroyed, mem.destroyed], [false, false])
+  assert.equal(r.fake.named('createView').length, views)
+  // No view was made, so the image goes as soon as it is asked to.
+  img.destroy()
+  mem.destroy()
+})
+
+test('createSampler reads the wrap once: the checked modes are the ones kept', () => {
+  const r = rig()
+  let reads = 0
+  const info = {
+    get wrap() {
+      reads++
+      return reads < 5 ? ['clamp', 'mirror', 'repeat'] : ['clamp']
+    },
+  }
+  const s = r.device.createSampler(info as never)
+  assert.equal(reads, 1)
+  assert.deepEqual(s.wrap, ['clamp', 'mirror', 'repeat'])
+  assert.deepEqual((r.fake.last('createSampler').args[0] as { readonly wrap: unknown }).wrap, ['clamp', 'mirror', 'repeat'])
+})

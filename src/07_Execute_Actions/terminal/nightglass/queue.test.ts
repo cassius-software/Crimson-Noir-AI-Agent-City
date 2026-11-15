@@ -6,7 +6,9 @@
  * checked whole and changes nothing when refused; semaphores are signalled before they are waited on and taken once;
  * a fence waits on one submit and is signalled when it is done, calling back in order outside any refusal handling;
  * while work is in flight nothing it uses may be destroyed, written, reset or read back (unless checks are off); a
- * back end that refuses a submit gets it undone. It ends with the whole path, from an instance to a signalled fence.
+ * back end that refuses a submit gets it undone; a submit runs as one call, so its getters cannot change what it
+ * checked, and only lists, fences and semaphores the core made reach it. It ends with the whole path, from an
+ * instance to a signalled fence.
  * What breaks if it is removed? An app could free a buffer the device is still reading, read memory before the work
  * that writes it is done, or wait on a semaphore nothing signals, with no test to say so.
  */
@@ -422,4 +424,101 @@ test('the whole path: an instance, a device, memory, resources, a pipeline, a re
   assert.equal(new Set(freed).size, made)
   assert.deepEqual(faults.map((f) => f.code), ['hazard'])
   assert.ok(isFault(faults[0], 'hazard'))
+})
+
+test('a submit runs as one call: a getter of its submissions cannot destroy, reset, submit again or take a signal', () => {
+  const { r, list, queue, fence, out, readback } = work()
+  const submits = (): number => r.fake.named('submit').length
+  const before = submits()
+  const n = r.faults.length
+  // A getter read after the lists were checked destroys what a checked list uses: refused, and nothing is handed over.
+  const destroying = { lists: [list], get signal() { out.destroy(); readback.destroy(); return undefined } }
+  refuses(() => queue.submit([destroying as never], fence), 'state', /^buffer \d+ destroy: called from inside another Nightglass call \(queue 0\.0 submit\)/)
+  assert.equal(r.faults.length, n + 1)
+  assert.deepEqual([out.destroyed, readback.destroyed, list.state, waiting(fence), fence.signalled, submits()], [false, false, 'ready', false, false, before])
+  // A later submission's getter resets and records into a list an earlier one handed over.
+  const recording = { get lists() { list.reset(); list.begin(); return [] } }
+  refuses(() => queue.submit([{ lists: [list] }, recording as never]), 'state', /command list "l" reset: called from inside another Nightglass call/)
+  assert.deepEqual([list.state, submits()], ['ready', before])
+  // A `once` list checked and then reset by a getter of the same submission.
+  const once = copyList(r, 0, 'once')
+  once.reset()
+  once.begin({ once: true })
+  once.end()
+  refuses(() => queue.submit([{ lists: [once], get signal() { once.reset(); return undefined } } as never]), 'state', /command list "once" reset: called from inside/)
+  assert.equal(once.state, 'ready')
+  // A getter that submits the `once` list itself, and swallows the refusal: the outer submit runs it, once.
+  let inner: unknown = null
+  const resubmitting = { get lists() { try { queue.submit([{ lists: [once] }]) } catch (e) { inner = e } return [] } }
+  queue.submit([{ lists: [once] }, resubmitting as never])
+  assert.ok(isFault(inner, 'state'))
+  assert.deepEqual([once.state, submits()], ['invalid', before + 1])
+  // A getter that takes the signal the outer submission waits on: the inner wait is refused, the signal taken once.
+  const s = r.device.createSemaphore({ label: 's' })
+  queue.submit([{ lists: [], signal: [s] }])
+  inner = null
+  const taking = { lists: [], wait: [{ semaphore: s, stages: ['all'] }], get signal() { try { queue.submit([{ lists: [], wait: [{ semaphore: s, stages: ['all'] }] }]) } catch (e) { inner = e } return [] } }
+  queue.submit([taking as never])
+  assert.ok(isFault(inner, 'state'))
+  assert.equal((s as SemaphoreImpl).armed, false)
+  refuses(() => queue.submit([{ lists: [], wait: [{ semaphore: s, stages: ['all'] }] }]), 'state', /no earlier submission signals semaphore "s"/)
+  // A getter that submits on the outer fence, or destroys it.
+  const g = r.device.createFence({ label: 'g' })
+  refuses(() => queue.submit([{ get lists() { queue.submit([], g); return [] } } as never], g), 'state', /called from inside another Nightglass call \(queue 0\.0 submit\)/)
+  refuses(() => queue.submit([{ get lists() { g.destroy(); return [] } } as never], g), 'state', /fence "g" destroy: called from inside/)
+  assert.deepEqual([g.destroyed, g.signalled, waiting(g)], [false, false, false])
+  queue.submit([{ lists: [list] }], g)
+  assert.equal(g.signalled, true)
+})
+
+test('only lists, fences, semaphores and resources the core made reach a submit: a copy of one is refused', () => {
+  const r = rig()
+  r.fake.auto = false
+  const queue = r.device.queue(0, 0)
+  const b = buffer(r, 256, ['copy-src', 'copy-dst'])
+  const list = r.device.createCommandArena().allocate('l')
+  list.begin()
+  refuses(() => list.zeroBuffer(Object.create(b), 0, 256), 'invalid', /the destination is not a Buffer, but an object/)
+  refuses(() => list.copyBuffer(Object.create(b), b, [{ from: 0, to: 0, size: 4 }]), 'invalid', /the source is not a Buffer, but an object/)
+  list.zeroBuffer(b, 0, 256)
+  list.end()
+  const fence = r.device.createFence()
+  const s = r.device.createSemaphore()
+  refuses(() => queue.submit([{ lists: [Object.create(list)] }]), 'invalid', /lists\[0\]: the list is not a CommandList, but an object/)
+  refuses(() => queue.submit([{ lists: [list] }], Object.create(fence)), 'invalid', /the fence is not a Fence, but an object/)
+  refuses(() => queue.submit([{ lists: [list], signal: [Object.create(s)] }]), 'invalid', /signal\[0\]: the semaphore is not a Semaphore/)
+  refuses(() => Object.create(list).reset(), 'invalid', /the object is a copy or wrapper of one Nightglass made/)
+  assert.equal(list.state, 'ready')
+  // The real list, fence and buffer are what the work holds.
+  queue.submit([{ lists: [list] }], fence)
+  assert.deepEqual([list.state, waiting(fence), (b as BufferImpl).pending], ['pending', true, 1])
+  refuses(() => b.destroy(), 'lifetime', /queued work still uses it/)
+  refuses(() => list.reset(), 'state', /the list is pending/)
+  r.fake.finish()
+  assert.deepEqual([list.state, fence.signalled], ['ready', true])
+})
+
+test('fence callbacks of work a back end finishes while another call runs wait until it lets go, and may submit again', () => {
+  const { r, list, queue, fence } = work()
+  r.fake.auto = false
+  queue.submit([{ lists: [list] }], fence)
+  const seen: string[] = []
+  fence.onSignal(() => {
+    // The call during which the back end finished has let go, so this submit is taken.
+    queue.submit([{ lists: [list] }])
+    seen.push(list.state)
+  })
+  // The back end says `done` from inside the next call that reaches it.
+  const fake = r.fake
+  const lost = fake.lost
+  fake.lost = () => {
+    fake.lost = lost
+    fake.finish()
+    return null
+  }
+  r.device.allocate({ size: 256, kind: KIND.device })
+  assert.deepEqual(seen, ['pending'])
+  assert.equal(fence.signalled, true)
+  fake.finish()
+  assert.equal(list.state, 'ready')
 })

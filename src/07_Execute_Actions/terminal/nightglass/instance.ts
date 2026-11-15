@@ -61,7 +61,8 @@ function adapterOf(report: unknown, backend: string, position: number, index: nu
   const where = `back end ${JSON.stringify(backend)} adapter ${position}`
   const read = (): Adapter => {
     const o = record(report, ['name', 'kind', 'limits', 'features', 'heaps', 'kinds', 'groups'], where, 'the report')
-    if (typeof o.name !== 'string') fail('invalid', `${where}: the name is a string, not ${say(o.name)}`)
+    const name = o.name
+    if (typeof name !== 'string') fail('invalid', `${where}: the name is a string, not ${say(name)}`)
     const kind = choice(ADAPTER_KINDS, o.kind, where, 'the kind')
     const l = record(o.limits, LIMIT_NAMES, where, 'the limits')
     const limits = {} as Mutable<Limits>
@@ -70,30 +71,30 @@ function adapterOf(report: unknown, backend: string, position: number, index: nu
       else limits[k] = whole(l[k], where, `the limit ${k}`, 1)
     }
     const features = names(FEATURES, o.features, where, 'the features', true)
-    const numbered = <T>(x: unknown, what: string, parse: (e: Obj, at: string) => T): readonly T[] => Object.freeze(listOf(x, where, what).map((e, i) => {
+    const numbered = <T>(x: unknown, what: string, parse: (e: Obj, index: number, at: string) => T): readonly T[] => Object.freeze(listOf(x, where, what).map((e, i) => {
       const at = `${where}: ${what} ${i}`
       if (!isObj(e) || e.index !== i) fail('invalid', `${at}: an entry is an object whose index is its position, ${i}`)
-      return Object.freeze(parse(e, at))
+      return Object.freeze(parse(e, i, at))
     }))
-    const heaps = numbered(o.heaps, 'heap', (e, at) => {
+    const heaps = numbered(o.heaps, 'heap', (e, index, at) => {
       record(e, ['index', 'size', 'local'], at, 'the heap')
-      return { index: e.index as number, size: whole(e.size, at, 'the size', 1), local: flag(e.local, at, 'local', false) }
+      return { index, size: whole(e.size, at, 'the size', 1), local: flag(e.local, at, 'local', false) }
     })
-    const kinds = numbered(o.kinds, 'memory kind', (e, at) => {
+    const kinds = numbered(o.kinds, 'memory kind', (e, index, at) => {
       record(e, ['index', 'name', 'heap', 'host'], at, 'the memory kind')
       const name = choice(MEMORY_KIND_NAMES, e.name, at, 'the name')
       const heap = whole(e.heap, at, 'the heap')
       if (heap >= heaps.length) fail('invalid', `${at}: there is no heap ${heap}`)
       const host = flag(e.host, at, 'host', false)
       if (host !== (name === 'upload' || name === 'readback')) fail('invalid', `${at}: ${name} memory is ${host ? 'not ' : ''}seen by the host`)
-      return { index: e.index as number, name, heap, host }
+      return { index, name, heap, host }
     })
-    const groups = numbered(o.groups, 'queue group', (e, at) => {
+    const groups = numbered(o.groups, 'queue group', (e, index, at) => {
       record(e, ['index', 'graphics', 'compute', 'copy', 'count'], at, 'the queue group')
-      return { index: e.index as number, graphics: flag(e.graphics, at, 'graphics', false), compute: flag(e.compute, at, 'compute', false), copy: flag(e.copy, at, 'copy', false), count: whole(e.count, at, 'the count', 1) }
+      return { index, graphics: flag(e.graphics, at, 'graphics', false), compute: flag(e.compute, at, 'compute', false), copy: flag(e.copy, at, 'copy', false), count: whole(e.count, at, 'the count', 1) }
     })
     if (groups.length === 0) fail('invalid', `${where}: an adapter has at least one queue group`)
-    return Object.freeze({ name: o.name, kind, limits: Object.freeze(limits), features, heaps, kinds, groups, index, backend })
+    return Object.freeze({ name, kind, limits: Object.freeze(limits), features, heaps, kinds, groups, index, backend })
   }
   try {
     return read()
@@ -207,15 +208,20 @@ export function createInstance(info: InstanceInfo): Instance {
   return guard(report, 'createInstance', () => {
     const where = 'createInstance'
     const o = record(info, ['app', 'backends', 'checks', 'report'], where, 'the instance info')
-    if (o.app !== undefined && typeof o.app !== 'string') fail('invalid', `${where}: app is a string, not ${say(o.app)}`)
-    const backends = listOf(o.backends, where, 'the back ends').map((b, i) => {
+    // Read once: a getter could hand the check one value and the instance another.
+    const app = o.app
+    if (app !== undefined && typeof app !== 'string') fail('invalid', `${where}: app is a string, not ${say(app)}`)
+    const backends = listOf(o.backends, where, 'the back ends').map((b, i): Backend => {
       const at = `${where}: backends[${i}]`
-      if (!isObj(b) || typeof b.name !== 'string' || typeof b.adapters !== 'function' || typeof b.open !== 'function') fail('invalid', `${at}: a back end has a name, adapters() and open()`)
-      return b as unknown as Backend
+      const name = isObj(b) ? b.name : undefined
+      if (!isObj(b) || typeof name !== 'string' || typeof b.adapters !== 'function' || typeof b.open !== 'function') fail('invalid', `${at}: a back end has a name, adapters() and open()`)
+      // The name is read once and kept, so the one checked is the one every adapter and refusal carries.
+      const backend = b as unknown as Backend
+      return Object.freeze({ name, adapters: () => backend.adapters(), open: (adapter: number, features: readonly Feature[], limits: Limits) => backend.open(adapter, features, limits) })
     })
     backends.forEach((b, i) => {
       if (backends.findIndex((c) => c.name === b.name) !== i) fail('invalid', `${where}: two back ends are named ${JSON.stringify(b.name)}`)
     })
-    return new InstanceImpl((o.app ?? '') as string, flag(o.checks, where, 'checks', true), report, backends)
+    return new InstanceImpl(app ?? '', flag(o.checks, where, 'checks', true), report, backends)
   })
 }

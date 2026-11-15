@@ -17,6 +17,7 @@
  * - An image's use asks the format for the matching ability: `color` needs a colour format, `depth` a depth format,
  *   `storage` a format a storage image may have. Every format may be sampled and copied.
  * - A view needs its image bound to memory (the back end's view is of the back end's image). A `2d` view has one layer.
+ *   A view of a four-sample image is `2d` (WebGPU gives a multisampled texture only 2d views).
  * - An image is destroyed only once its views are; a view of a destroyed image could never be used.
  */
 import type { Buffer, BufferUse, Filter, Handle, Image, ImageUse, Range, Sampler, View, Wrap } from './api.ts'
@@ -246,6 +247,7 @@ export function createView(core: Core, image: unknown, info: unknown, where: str
   const layers = span(o.layers, img.layers, where, 'the layers')
   const dims = choice(IMAGE_DIMS, o.dims, where, 'the shape', layers.count === 1 ? '2d' : '2d-array')
   if (dims === '2d' && layers.count !== 1) fail('invalid', `${where}: a 2d view has one layer, not ${layers.count}`)
+  if (img.samples === 4 && dims !== '2d') fail('invalid', `${where}: a view of a four-sample image is 2d, not ${dims}`)
   const label = labelOf(o.label, where)
   core.enter(where)
   const handle = core.call(where, () => core.backend.createView(handleOfImage, dims, levels, layers))
@@ -257,13 +259,15 @@ export function createSampler(core: Core, info: unknown, where: string): Sampler
   const mag = choice(FILTERS, o.mag, where, 'the mag filter', 'nearest')
   const min = choice(FILTERS, o.min, where, 'the min filter', 'nearest')
   const mip = choice(FILTERS, o.mip, where, 'the mip filter', 'nearest')
+  // Read once: a getter could hand the checks one value and the copy another.
+  const wrapIn = o.wrap
   let wrap: readonly [Wrap, Wrap, Wrap]
-  if (o.wrap === undefined || typeof o.wrap === 'string') {
-    const w = choice(WRAPS, o.wrap, where, 'the wrap mode', 'clamp')
+  if (wrapIn === undefined || typeof wrapIn === 'string') {
+    const w = choice(WRAPS, wrapIn, where, 'the wrap mode', 'clamp')
     wrap = Object.freeze([w, w, w] as const)
   } else {
-    if (!Array.isArray(o.wrap) || o.wrap.length !== 3) fail('invalid', `${where}: the wrap is one mode or a list of three, not ${say(o.wrap)}`)
-    const [u, v, w] = (o.wrap as unknown[]).map((m, i) => choice(WRAPS, m, where, `wrap mode ${i}`))
+    if (!Array.isArray(wrapIn) || wrapIn.length !== 3) fail('invalid', `${where}: the wrap is one mode or a list of three, not ${say(wrapIn)}`)
+    const [u, v, w] = [wrapIn[0], wrapIn[1], wrapIn[2]].map((m: unknown, i) => choice(WRAPS, m, where, `wrap mode ${i}`))
     wrap = Object.freeze([u, v, w] as const)
   }
   const lodMin = o.lodMin === undefined ? 0 : finite(o.lodMin, where, 'lodMin')

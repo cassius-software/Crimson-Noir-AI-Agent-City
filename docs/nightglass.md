@@ -62,9 +62,16 @@ were used. The product claims no conformance to, or compatibility with, any othe
 The device and every object it creates have a `label`, `destroyed` and `destroy()`; destroying an object that queued
 work still uses is refused while the instance checks.
 
+Calls run one at a time (**pinned**): a Nightglass call made while another is still running, from a getter, a Proxy
+trap or a `toString` of that call's arguments, is refused with code `state`, so nothing a caller's code does lands
+between a call's checks and what it changes. The report callback, and the callbacks of a fence, run once the call
+has let go, and may call Nightglass themselves. Only objects Nightglass made are taken: an `Object.create()` copy or
+a Proxy of one is refused with code `invalid` before any of its code runs. Whatever a caller's argument raises
+reaches the caller as a `Fault`, however it was made.
+
 An image has one or four samples. A four-sample image is only an attachment (color or depth use, one level, one
-layer), of a format whose `multisample` column is true: never a 32-bit float or integer format, so no resolve ever
-averages integers. A depth image is copied only into a buffer, at a buffer offset that is a multiple of 4.
+layer, and `2d` views), of a format whose `multisample` column is true: never a 32-bit float or integer format, so no
+resolve ever averages integers. A depth image is copied only into a buffer, at a buffer offset that is a multiple of 4.
 
 ### Memory
 

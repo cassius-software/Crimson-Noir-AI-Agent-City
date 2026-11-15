@@ -14,6 +14,18 @@
  * What breaks if it is removed? Every object would track its own lifetime, refusals would reach the report callback
  * from some calls and not others, a TypeError could escape a public call, and the queue would have nothing to signal.
  *
+ * Genuine objects and one call at a time (both pinned by core.test.ts and queue.test.ts):
+ * - Base's constructor brands each object it makes. own() and alive() refuse anything without the brand (code
+ *   `invalid`), before any other test of it, so an Object.create() copy or a Proxy wrapper of a real object never
+ *   stands in for it: hold counts, fences and the ordering checker's books only ever land on objects the core made.
+ * - One public call runs at a time. A public call made while another runs (from a getter, a Proxy trap or a toString
+ *   of that call's arguments) is refused with code `state`, so nothing an argument runs can destroy, reset, submit or
+ *   bind between a call's checks and what it changes. The latch is let go before the report callback runs, and fence
+ *   callbacks and the reports of refusals made inside a call run once it has let go (outside()), so app code they
+ *   call may call Nightglass again.
+ * - The guard describes whatever an argument raised without letting that value raise again: a revoked Proxy, or an
+ *   Error whose name getter throws, becomes a Fault of code `invalid` like any other.
+ *
  * Lifetime, as every object keeps it:
  * - `destroy()` refuses an object already destroyed, and (when the instance checks) one that a submission in flight
  *   still holds (`pending` above zero). An object's own rules on what must go first (an image's views, a memory's
@@ -33,22 +45,87 @@ export type Report = ((fault: Fault) => void) | null
 /** Faults already handed to a report callback, so a refusal that passes through two guards is reported once. */
 const reported = new WeakSet<Fault>()
 
+/** Every object the core made: Base's constructor adds it (see the head of the file). */
+const genuine = new WeakSet<object>()
+
+/** True for an object the core made. WeakSet.has runs no Proxy trap, and is false for a copy or wrapper of one. */
+export function isGenuine(x: unknown): boolean {
+  return genuine.has(x as object)
+}
+
+/** The public call running now, by its name in refusals, or null (see guard). */
+let running: string | null = null
+
+/** Work held until the running call lets go: reports of calls refused inside it, and fence callbacks. */
+let held: (() => void)[] = []
+
+/**
+ * Runs `f` now when no public call is running, else as soon as the running one lets go, so the app code it calls
+ * may call Nightglass again. The queue hands it the callbacks of a fence signalled while some call runs.
+ */
+export function outside(f: () => void): void {
+  if (running === null) f()
+  else held.push(f)
+}
+
+/** Runs the work held for the call that just let go, in order; the first error raised is thrown once all have run. */
+function release(): void {
+  const due = held
+  held = []
+  let raised: { readonly e: unknown } | null = null
+  for (const g of due) {
+    try {
+      g()
+    } catch (e) {
+      if (raised === null) raised = { e }
+    }
+  }
+  if (raised !== null) throw raised.e
+}
+
+/** The Fault a caught value becomes. Describing it cannot raise: a value that will not be described gets a plain one. */
+function faultOf(e: unknown, where: string): Fault {
+  try {
+    if (isFault(e)) return e
+    return new Fault('invalid', `${where}: reading the arguments raised ${e instanceof Error ? `a ${e.name}` : say(e)}`)
+  } catch {
+    return new Fault('invalid', `${where}: reading the arguments raised a value that cannot be described`)
+  }
+}
+
 /**
  * Runs one public call. A Fault it raises goes to `report` (once) and is thrown on; anything else it raises (a
  * getter that throws, a Proxy, a value read as an object that is not one) becomes a Fault of code `invalid` first.
- * A report callback that throws replaces the Fault with its own error: the callback is the app's code.
+ * A call made while another runs is refused with code `state` (see the head of the file); its report waits until
+ * the running call lets go. A report callback that throws replaces the Fault with its own error: the callback is the
+ * app's code.
  */
 export function guard<T>(report: Report, where: string, f: () => T): T {
-  try {
-    return f()
-  } catch (e) {
-    const fault = isFault(e) ? e : new Fault('invalid', `${where}: reading the arguments raised ${e instanceof Error ? `a ${e.name}` : say(e)}`)
-    if (report !== null && !reported.has(fault)) {
+  if (running !== null) {
+    const fault = new Fault('state', `${where}: called from inside another Nightglass call (${running}); calls run one at a time, so a getter, Proxy trap or callback of a call's arguments cannot make one`)
+    if (report !== null) {
       reported.add(fault)
-      report(fault)
+      held.push(() => report(fault))
     }
     throw fault
   }
+  running = where
+  let out: T
+  try {
+    out = f()
+  } catch (e) {
+    const fault = faultOf(e, where)
+    running = null
+    if (report !== null && !reported.has(fault)) {
+      reported.add(fault)
+      held.push(() => report(fault))
+    }
+    release()
+    throw fault
+  }
+  running = null
+  release()
+  return out
 }
 
 /** Runs a back end call. A Fault it raises passes through; anything else becomes a Fault of code `device`. */
@@ -127,6 +204,7 @@ export abstract class Base implements Thing {
     this.label = label
     this.name = label === '' ? `${kind} ${core.next()}` : `${kind} ${JSON.stringify(label)}`
     core.live.add(this)
+    genuine.add(this)
   }
 
   get destroyed(): boolean {
@@ -144,8 +222,9 @@ export abstract class Base implements Thing {
     })
   }
 
-  /** Refuses the use of a destroyed object. */
+  /** Refuses the use of a destroyed object, and of a copy or wrapper of one (see the head of the file). */
   alive(where: string): void {
+    if (!genuine.has(this)) fail('invalid', `${where}: the object is a copy or wrapper of one Nightglass made, not one it made`)
     if (this.gone) fail('lifetime', `${where}: ${this.name} is destroyed`)
   }
 
@@ -335,9 +414,12 @@ export function mine(core: Core, x: Base, where: string): void {
   x.alive(where)
 }
 
-/** An object of one of the core's classes, made by this device and not destroyed. `kind` names the class in a refusal. */
+/**
+ * An object of one of the core's classes, made by this device and not destroyed. `kind` names the class in a
+ * refusal. The brand is tested first, so a Proxy's traps never run and a copy of a real object is refused.
+ */
 export function own<T extends Base>(core: Core, cls: abstract new (...args: never[]) => T, x: unknown, where: string, what: string, kind: string): T {
-  if (!(x instanceof cls)) fail('invalid', `${where}: ${what} is not ${an(kind)}, but ${say(x)}`)
+  if (!isGenuine(x) || !(x instanceof cls)) fail('invalid', `${where}: ${what} is not ${an(kind)}, but ${say(x)}`)
   mine(core, x, where)
   return x
 }

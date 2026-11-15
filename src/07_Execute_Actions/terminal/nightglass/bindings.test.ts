@@ -50,6 +50,16 @@ test('binding layout entries: binding numbers, kinds, stages, and fields that be
   refuses(() => r.device.createBindingLayout({} as never), 'invalid', /the entries is a list/)
 })
 
+test('a storage-image entry\'s format is read once for its checks and its entry: a getter cannot swap it after', () => {
+  const r = rig()
+  let reads = 0
+  const entry = { binding: 0, kind: 'storage-image', stages: ['compute'], get format() { return ++reads < 5 ? 'rgba8' : 'not-a-format' } }
+  const layout = r.device.createBindingLayout({ entries: [entry as never] }) as BindingLayoutImpl
+  assert.equal(layout.entries[0].format, 'rgba8')
+  const sent = r.fake.last('createBindingLayout').args[0] as { readonly entries: readonly BindingEntry[] }
+  assert.deepEqual(sent.entries.map((e) => e.format), ['rgba8'])
+})
+
 test('binding layout entries are sorted by binding with the defaults of their kind filled in', () => {
   const r = rig()
   const l = layout(r, [

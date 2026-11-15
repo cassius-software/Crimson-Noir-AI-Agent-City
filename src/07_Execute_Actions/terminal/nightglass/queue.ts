@@ -22,7 +22,12 @@
  *   again (a `once` list invalid), every object they held is let go, and the fence is signalled. `done` called a
  *   second time does nothing.
  * - Callbacks waiting on the fence run after the back end's submit returns when it finishes the work at once (as the
- *   reference renderer does), outside any refusal handling, so whatever an app's callback raises is its own.
+ *   reference renderer does), outside any refusal handling, so whatever an app's callback raises is its own. A back
+ *   end that says `done` while some other Nightglass call runs has the callbacks wait until that call lets go
+ *   (outside() in sync.ts), so a callback may submit again.
+ * - A submit runs as one call: a getter or Proxy trap of its submissions that calls Nightglass (to destroy or reset
+ *   what a checked list uses, take a semaphore's signal, or submit again) is refused (sync.ts), so what the checks
+ *   passed is what the back end is handed.
  * - A back end that refuses a submit (it raises) gets the submit undone: lists ready, objects let go, semaphores and
  *   fence as they were. A back end that stopped part way has lost the device (see BackendDevice), so every later
  *   call that reaches it is refused with `device`; the undo then only lets the objects go so they can be destroyed.
@@ -36,7 +41,7 @@ import { fail } from './fault.ts'
 import { CommandListImpl, PIPE_STAGES } from './commands.ts'
 import { checkOrder } from './order.ts'
 import type { Step } from './order.ts'
-import { FenceImpl, SemaphoreImpl, guard, listOf, names, own, record } from './sync.ts'
+import { FenceImpl, SemaphoreImpl, guard, listOf, names, outside, own, record } from './sync.ts'
 import type { Core } from './sync.ts'
 
 export class QueueImpl implements Queue {
@@ -137,7 +142,9 @@ export class QueueImpl implements Queue {
       if (f === null) return
       const callbacks = f.signal()
       if (calling) due = callbacks
-      else for (const callback of callbacks) callback()
+      else outside(() => {
+        for (const callback of callbacks) callback()
+      })
     }
     try {
       core.call(where, () => core.backend.submit(lists.map((l) => l.commands), done))
