@@ -35,14 +35,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`04_Connect_Hardware/xrInput.ts`) now reads the three kinds of controller the WebXR input profiles registry
   describes (thumbstick with up to two face buttons, touchpad wands, single pointing controllers with a touchpad), as a
   pair or alone in either hand, so each can walk, turn, enter and leave a car, ping and drive: touchpads walk only
-  while touched and turn on an edge click, a controller alone walks forward and back and snap-turns by a sideways
-  push, and roles come from the whole source list (two of one hand split by order). Hands, gaze-and-pinch pointers,
-  styluses and screens tap with a quick still pinch and walk by holding it and drawing the hand (against the head, so
-  a lean does not walk; a sideways draw snap-turns); a pinch is dropped when cancelled, when its hand leaves view, and
-  through the headset's menu or a recentre (`07_Execute_Actions/xrSession.ts`). Out of a moving car is refused with a
-  toast. A pad held inside a headset walks where the headset looks and snap-turns. A session without a floor-level
-  space runs in a local one with the floor lifted by the eye height instead of being refused. Checked by unit suites
-  against fake sources of every registry shape and scripted select events; unverified on any real headset.
+  while touched and turn on an edge click, a lone stick controller walks forward and back and snap-turns by a sideways
+  push, and roles come from the whole source list (two of one hand split by order). Hands, gaze-and-pinch pointers
+  and styluses tap with a quick still pinch and walk by holding it and drawing the hand, judged against the head's
+  facing and measured from the neck (a lean or a look around does not walk; a sideways draw snap-turns); screens and
+  gaze buttons tap. A pinch is dropped when cancelled, when its source leaves, and through the headset's menu or a
+  recentre; a hand that drops out of tracking stands still (`07_Execute_Actions/xrSession.ts`). Every way out of a
+  car is refused above 1.5 m/s, with a buzz on the controller that asked; a trigger held from opening the door gives
+  no throttle until let go. A pad held inside a headset walks where the headset looks and snap-turns. A session
+  without a floor-level space runs in a local one with the floor lifted by the eye height instead of being refused.
+  Checked by unit suites against fake sources of every registry shape and scripted select events; unverified on any
+  real headset.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

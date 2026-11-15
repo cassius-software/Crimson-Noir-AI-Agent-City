@@ -74,7 +74,7 @@ test('under a headset: the canvas resize waits, the post chain and the ghost are
   assert.match(host, /ended: \(\) => \{\n\s+this\.rig\.setHeadset\(null\)\n\s+if \(this\.pacer\) this\.pacer\.passthrough = false\n\s+this\.applyTier\(\)\n\s+if \(!this\.disposed\) \{ this\.resize\(\); this\.toast\('Headset', 'off'\) \}/)
   assert.match(host, /sources: \(list\) => this\.input\.hal\.setHeadset\(list\)/)
   assert.match(host, /this\.input\.press\(near \? 'interact' : 'ping'\)/, 'a pinch is the interaction at hand, else a ping')
-  assert.match(host, /if \(st\.driving >= 0 && Math\.abs\(st\.poses\[st\.driving \* POSE\.stride \+ POSE\.speed\]\) >= XR_STEP_OUT_SPEED\) \{\n\s+this\.toast\('Headset', 'Stop the car to step out'\)\n\s+return\n\s+\}/, 'never out of a moving car on a tap')
+  assert.match(host, /if \(st\.driving >= 0 && Math\.abs\(st\.poses\[st\.driving \* POSE\.stride \+ POSE\.speed\]\) >= XR_STEP_OUT_SPEED\) \{\n\s+buzz\(src\)\n\s+this\.toast\('Headset', 'Stop the car to step out'\)\n\s+return\n\s+\}/, 'never out of a moving car on a tap')
   assert.match(CINEMA, /if \(this\.passthrough\) return this\.present\(nowMs\)/)
 })
 

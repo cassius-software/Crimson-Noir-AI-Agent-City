@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createAnalog, PAD_EDGE } from './gamepad.ts'
 import {
-  isController, isPointerOnly, PINCH, PinchDrag, pinchKindOf, roleOf, shapeOf, XR_AXIS, XR_BUTTON, XR_DEADZONE, XR_HOLD_OUT_MS,
+  isController, isPointerOnly, neckOf, PINCH, PinchDrag, pinchKindOf, roleOf, shapeOf, XR_AXIS, XR_BUTTON, XR_DEADZONE, XR_HOLD_OUT_MS,
   XR_PAD_DEADZONE, XR_SECTOR, XR_TURN, XrMapper, type XrPoint,
 } from './xrInput.ts'
 import type { XrInputSourceLike } from './web-hardware.d.ts'
@@ -215,7 +215,7 @@ test('the turning hand snap-turns once per flick, re-armed under the off thresho
   assert.equal(m.turn, 0, 'at the wheel the body faces the car\'s way: no snap')
 })
 
-test('a pair drives: right trigger throttles, squeeze brakes, A pings, B enters; left squeeze is the handbrake, left trigger pings, left Y resets a car', () => {
+test('a pair drives: right trigger throttles, squeeze brakes, the lower face button pings, the upper enters; left squeeze is the handbrake, left trigger pings, the left upper face button resets a car', () => {
   const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
   const r = rig([left, right])
   const { m } = r
@@ -233,12 +233,12 @@ test('a pair drives: right trigger throttles, squeeze brakes, A pings, B enters;
   assert.equal(m.analog.handbrake, true)
   assert.equal(m.analog.brake, 0, 'the left squeeze never brakes')
   down(left, XR_BUTTON.squeeze, false)
-  assert.equal(r.tap(right, XR_BUTTON.primary), PAD_EDGE.ping, 'A pings')
-  assert.equal(r.tap(right, XR_BUTTON.secondary), PAD_EDGE.interact, 'B enters or leaves')
+  assert.equal(r.tap(right, XR_BUTTON.primary), PAD_EDGE.ping, 'the lower face button pings')
+  assert.equal(r.tap(right, XR_BUTTON.secondary), PAD_EDGE.interact, 'the upper one enters or leaves')
   assert.equal(r.tap(left, XR_BUTTON.trigger), PAD_EDGE.ping, 'the left trigger pings')
-  assert.equal(r.tap(left, XR_BUTTON.secondary), 0, 'Y on foot: nothing')
+  assert.equal(r.tap(left, XR_BUTTON.secondary), 0, 'the left upper face button on foot: nothing')
   m.driving = true
-  assert.equal(r.tap(left, XR_BUTTON.secondary), PAD_EDGE.reset, 'Y at the wheel rights the car')
+  assert.equal(r.tap(left, XR_BUTTON.secondary), PAD_EDGE.reset, 'at the wheel it rights the car')
   assert.equal(r.tap(right, XR_BUTTON.thumbstick), PAD_EDGE.mute, 'the right stick\'s click is the microphone\'s mute, as a pad\'s')
   assert.equal(r.tap(right, XR_BUTTON.trigger), 0, 'the trigger at the wheel is the throttle alone')
 })
@@ -296,23 +296,34 @@ test('a controller alone, of any hand: forward and back walk, sideways snaps, ne
   }
 })
 
-test('at the wheel the walking hand\'s click held a second steps out of a stopped car; a moving car is refused for a touchpad click', () => {
-  const c = ctl('none', 6, 4)
+test('out of a car: the hold counts only while stopped, a lone controller with an upper face button keeps its click for the handbrake, and every door is refused at speed with a buzz', () => {
+  // A lone stick controller with no upper face button: its stick's click held while the car stays stopped is its door.
+  const c = ctl('none', 4, 4)
   const r = rig([c])
   r.m.driving = true
   r.m.stopped = false
   down(c, XR_BUTTON.thumbstick)
   assert.equal(r.m.read(), 0)
-  r.tick(XR_HOLD_OUT_MS + 10)
+  r.tick(XR_HOLD_OUT_MS + 200)
   assert.equal(r.m.read(), 0, 'moving: held on, nothing')
   r.m.stopped = true
-  assert.equal(r.m.read(), PAD_EDGE.interact, 'stopped and held past a second: out')
+  assert.equal(r.m.read(), 0, 'the car has only now stopped: the second starts here, no exit while it was still rolling')
+  assert.equal(r.m.analog.handbrake, false, 'and the click is no handbrake on a controller whose click is its door')
+  r.tick(XR_HOLD_OUT_MS / 2)
+  assert.equal(r.m.read(), 0)
+  r.m.stopped = false
+  r.m.read()
+  r.m.stopped = true
+  r.tick(XR_HOLD_OUT_MS / 2 + 10)
+  assert.equal(r.m.read(), 0, 'rolling again restarts the second')
+  r.tick(XR_HOLD_OUT_MS + 10)
+  assert.equal(r.m.read(), PAD_EDGE.interact, 'a full second stopped: out')
   r.tick(XR_HOLD_OUT_MS + 10)
   assert.equal(r.m.read(), 0, 'once per hold')
   down(c, XR_BUTTON.thumbstick, false)
   r.m.read()
   // A click held into the wheel (it was down before the car was) never counts.
-  const k = ctl('none', 6, 4)
+  const k = ctl('none', 4, 4)
   const q = rig([k])
   down(k, XR_BUTTON.thumbstick)
   q.m.read()
@@ -320,17 +331,79 @@ test('at the wheel the walking hand\'s click held a second steps out of a stoppe
   q.m.read()
   q.tick(XR_HOLD_OUT_MS + 10)
   assert.equal(q.m.read(), 0, 'held from before the wheel: no step out')
-  // A touchpad controller alone: its click steps out at once when stopped, and is refused while moving.
-  const p = ctl('none', 3, 2)
-  const s = rig([p])
-  s.m.driving = true
-  s.m.stopped = false
-  touch(p, 0, 0)
-  assert.equal(s.tap(p, XR_BUTTON.touchpad), 0)
-  assert.equal(s.m.takeRefused(), true, 'said, not done')
-  assert.equal(s.m.takeRefused(), false, 'said once')
-  s.m.stopped = true
-  assert.equal(s.tap(p, XR_BUTTON.touchpad), PAD_EDGE.interact)
+  // A lone controller with an upper face button: the click is the handbrake, held as long as you like; the button is the door.
+  const h = ctl('right', 6, 4)
+  const w = rig([h])
+  w.m.driving = true
+  down(h, XR_BUTTON.thumbstick)
+  w.m.read()
+  w.tick(XR_HOLD_OUT_MS * 3)
+  assert.equal(w.m.read(), 0, 'a handbrake held through a stop is no exit')
+  assert.equal(w.m.analog.handbrake, true)
+  down(h, XR_BUTTON.thumbstick, false)
+  w.m.read()
+  // Every door at speed is refused, said once and buzzed on the controller that asked; stopped, it opens.
+  const pulses: number[] = []
+  const buzzing = (c: Fake) => Object.assign(c.gamepad as object, { hapticActuators: [{ pulse: (v: number) => { pulses.push(v); return Promise.resolve(true) } }] })
+  const cases: [string, Fake[], (cs: Fake[]) => [Fake, number]][] = [
+    ['the upper face button, alone', [ctl('none', 6, 4)], (cs) => [cs[0], XR_BUTTON.secondary]],
+    ['the right upper face button of a pair', [ctl('left', 6, 4), ctl('right', 6, 4)], (cs) => [cs[1], XR_BUTTON.secondary]],
+    ['a touchpad alone', [ctl('none', 3, 2)], (cs) => [cs[0], XR_BUTTON.touchpad]],
+    ['the right touchpad of a wand pair', [ctl('left', 3, 2), ctl('right', 3, 2)], (cs) => [cs[1], XR_BUTTON.touchpad]],
+    ['the touchpad beside a lone stick', [ctl('none', 4, 4)], (cs) => [cs[0], XR_BUTTON.touchpad]],
+  ]
+  for (const [what, cs, pick] of cases) {
+    const t = rig(cs)
+    const [src, button] = pick(cs)
+    buzzing(src)
+    if (button === XR_BUTTON.touchpad) touch(src, 0, 0)
+    t.m.driving = true
+    t.m.stopped = false
+    pulses.length = 0
+    assert.equal(t.tap(src, button), 0, `${what}: not at speed`)
+    assert.equal(t.m.takeRefused(), true, `${what}: said`)
+    assert.equal(t.m.takeRefused(), false, `${what}: said once`)
+    assert.equal(pulses.length, 1, `${what}: buzzed once`)
+    t.m.stopped = true
+    assert.equal(t.tap(src, button), PAD_EDGE.interact, `${what}: stopped, out`)
+  }
+  // A controller with no actuator is refused just the same, without a throw.
+  const bare = ctl('none', 6, 4)
+  const u = rig([bare])
+  u.m.driving = true
+  u.m.stopped = false
+  assert.equal(u.tap(bare, XR_BUTTON.secondary), 0)
+  assert.equal(u.m.takeRefused(), true)
+})
+
+test('the trigger that opened the door gives no throttle until it is let go; one held as a controller wakes at the wheel neither', () => {
+  for (const [hands, b, a] of [[['none'], 6, 4], [['left', 'right'], 4, 4], [['none'], 3, 2]] as const) {
+    const cs = hands.map((h) => ctl(h, b, a))
+    const r = rig(cs)
+    const src = cs[cs.length - 1]
+    r.m.nearCar = true
+    down(src, XR_BUTTON.trigger)
+    assert.equal(r.m.read(), PAD_EDGE.interact, `${hands.join('+')} ${b}/${a}: the trigger opens the door`)
+    r.m.nearCar = false
+    r.m.driving = true
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, 'seated with the trigger still held: no lurch')
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, 'nor on the frames after, while it is held')
+    down(src, XR_BUTTON.trigger, false)
+    r.m.read()
+    down(src, XR_BUTTON.trigger)
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 1, 'let go and pulled again: the throttle')
+  }
+  const c = ctl('none', 6, 4)
+  const r = rig([])
+  r.m.driving = true
+  r.m.read()
+  down(c, XR_BUTTON.trigger)
+  r.m.sources = [c]
+  r.m.read()
+  assert.equal(r.m.analog.throttle, 0, 'woke at the wheel with the trigger held: nothing until let go')
 })
 
 test('touchpads walk only while touched, past their own dead zone, snap only on an edge click, and run at the rim', () => {
@@ -545,4 +618,163 @@ test('one pinch walks at a time; a second can still tap; the mapper merges the d
   assert.equal(m.pinches.size, 0, 'reset drops every pinch')
   m.read()
   assert.equal(m.analog.moveY, 0)
+})
+
+test('a lone touchpad: a thumb resting at the edge before and after its click turns once, never three times', () => {
+  const c = ctl('none', 3, 2)
+  const r = rig([c])
+  let total = 0
+  touch(c, 0.9, 0)
+  r.m.read(); total += r.m.turn
+  assert.equal(r.m.turn, 0, 'a thumb at the edge alone never turns')
+  down(c, XR_BUTTON.touchpad)
+  r.m.read(); total += r.m.turn
+  down(c, XR_BUTTON.touchpad, false)
+  r.m.read(); total += r.m.turn
+  r.m.read(); total += r.m.turn
+  untouch(c)
+  r.m.read(); total += r.m.turn
+  assert.ok(close(total, XR_TURN.step), `one click, one step: ${total}`)
+  assert.equal(r.m.analog.moveX, 0, 'and never a strafe')
+})
+
+test('a run latched by a wand pair goes when the partner leaves, since a lone touchpad cannot unlatch it', () => {
+  const left = ctl('left', 3, 2), right = ctl('right', 3, 2)
+  const r = rig([left, right])
+  touch(left, 0, 0)
+  r.tap(left, XR_BUTTON.touchpad)
+  r.m.read()
+  assert.equal(r.m.analog.run, true, 'latched')
+  r.m.sources = [left]
+  r.m.read()
+  assert.equal(r.m.analog.run, false, 'alone it could never be unlatched: it goes')
+  // A lone stick controller can unlatch, so its latch stays.
+  const a = ctl('left', 6, 4), b = ctl('right', 6, 4)
+  const q = rig([a, b])
+  q.tap(a, XR_BUTTON.thumbstick)
+  q.m.sources = [a]
+  q.m.read()
+  assert.equal(q.m.analog.run, true, 'a lone stick keeps it: its click toggles it')
+  q.tap(a, XR_BUTTON.thumbstick)
+  q.m.read()
+  assert.equal(q.m.analog.run, false)
+})
+
+test('a pinch is judged as the head faces: a player turned in the room walks where they look by pinch, and a sideways draw snaps', () => {
+  const id = {}
+  // The head looks along the body's right (+x of the space): headOffset −π/2.
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  d.sample(id, 20, P(0.15, -0.3), HEAD)
+  const o = createAnalog()
+  assert.equal(d.read(o, false, -Math.PI / 2), true)
+  assert.ok(close(o.moveX, 1, 1e-6) && close(o.moveY, 0, 1e-6), `walks to the body's right, where the head looks: ${o.moveX}, ${o.moveY}`)
+  assert.equal(d.takeTurn(), 0, 'and no snap')
+  // The same draw with the head straight ahead is sideways: a snap to the right, no walk.
+  const e = new PinchDrag()
+  e.start(id, 'grip', false, 0, P(0, -0.3))
+  e.sample(id, 10, P(0, -0.3), HEAD)
+  e.sample(id, 20, P(0.15, -0.3), HEAD)
+  const o2 = createAnalog()
+  assert.equal(e.read(o2, false, 0), false)
+  assert.ok(close(e.takeTurn(), XR_TURN.step))
+  // Turned: a draw along the body's forward is the head's left: a snap to the left.
+  const f = new PinchDrag()
+  f.start(id, 'grip', false, 0, P(0, -0.3))
+  f.sample(id, 10, P(0, -0.3), HEAD)
+  f.sample(id, 20, P(0, -0.45), HEAD)
+  f.read(createAnalog(), false, -Math.PI / 2)
+  assert.ok(close(f.takeTurn(), -XR_TURN.step))
+  // No dead band: a draw 58° round from forward (past the walk sector) and far enough sideways snaps.
+  const g = new PinchDrag()
+  const ang = (58 * Math.PI) / 180
+  g.start(id, 'grip', false, 0, P(0, -0.3))
+  g.sample(id, 10, P(0, -0.3), HEAD)
+  g.sample(id, 20, P(0.15 * Math.sin(ang), -0.3 - 0.15 * Math.cos(ang)), HEAD)
+  assert.equal(g.read(createAnalog(), false, 0), false, 'outside the walk sector: no walk')
+  assert.ok(close(g.takeTurn(), XR_TURN.step), 'the rest of the circle is the turn\'s')
+  // The mapper hands the drag its head offset on foot, none at the wheel.
+  const m = new XrMapper()
+  m.sources = []
+  m.headOffset = -Math.PI / 2
+  m.pinches.start(id, 'grip', false, 0, P(0, -0.3))
+  m.pinches.sample(id, 10, P(0, -0.3), HEAD)
+  m.pinches.sample(id, 20, P(0.15, -0.3), HEAD)
+  m.read()
+  assert.ok(close(m.analog.moveX, 1, 1e-6) && m.turn === 0, 'through the mapper too')
+})
+
+test('a hand that drops out of tracking mid-drag stands still on foot and at the wheel, and starts again from where it comes back', () => {
+  const id = {}
+  for (const driving of [false, true]) {
+    const d = new PinchDrag()
+    d.start(id, 'grip', false, 0, P(0, -0.3))
+    d.sample(id, 10, P(0, -0.3), HEAD)
+    d.sample(id, 20, P(-0.1, -0.43), HEAD)
+    assert.equal(d.read(createAnalog(), driving), true, `${driving ? 'driving' : 'walking'} before the loss`)
+    for (let t = 30; t < 1600; t += 16) d.sample(id, t, null, HEAD)
+    const o = createAnalog()
+    assert.equal(d.read(o, driving), false, 'the hand is gone: nothing')
+    assert.ok(o.steer === 0 && o.moveY === 0 && o.moveX === 0)
+    // It comes back 25 cm further on: the anchor is taken there, so no jump to a run.
+    d.sample(id, 1600, P(0, -0.55), HEAD)
+    const o2 = createAnalog()
+    assert.equal(d.read(o2, driving), false, 'back: still, from its new place')
+    assert.equal(o2.run, false)
+    d.sample(id, 1616, P(0, -0.55 - 0.07), HEAD)
+    const o3 = createAnalog()
+    assert.equal(d.read(o3, driving), true, 'moved from there: it drags again')
+    assert.ok(o3.moveY > 0 && o3.moveY < 1, `from the new anchor: ${o3.moveY}`)
+    // The head untracked is the same: still, then afresh.
+    d.sample(id, 1632, P(0, -0.7), null)
+    assert.equal(d.read(createAnalog(), driving), false, 'no head: still')
+  }
+})
+
+test('when the walking pinch is let go, a second one held meanwhile starts afresh instead of jumping by how far it drifted', () => {
+  const a = {}, b = {}
+  const d = new PinchDrag()
+  d.start(a, 'grip', false, 0, P(0, -0.3))
+  d.start(b, 'grip', false, 0, P(0.3, -0.3))
+  d.sample(a, 10, P(0, -0.3), HEAD)
+  d.sample(b, 10, P(0.3, -0.3), HEAD)
+  d.sample(a, 20, P(0, -0.45), HEAD)
+  d.sample(b, 20, P(0.47, -0.3), HEAD) // drifted 17 cm while the other walked
+  d.read(createAnalog(), false)
+  d.takeTurn()
+  d.end(a, 500, P(0, -0.45))
+  d.sample(b, 520, P(0.47, -0.3), HEAD)
+  const o = createAnalog()
+  assert.equal(d.read(o, false), false, 'no walk')
+  assert.equal(d.takeTurn(), 0, 'and no snap the frame after')
+  d.sample(b, 540, P(0.47, -0.45), HEAD)
+  assert.equal(d.read(o, false), true, 'it walks once it is drawn itself')
+})
+
+test('neckOf: the point the head turns about, behind the eyes along the level forward', () => {
+  const at = (yaw: number, pitch = 0) => {
+    // Yaw about y (+ to the left), then pitch about x: q = qy · qx.
+    const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2), cx = Math.cos(pitch / 2), sx = Math.sin(pitch / 2)
+    return { x: cy * sx, y: sy * cx, z: -sy * sx, w: cy * cx }
+  }
+  const eyes = { x: 1, y: 1.6, z: 2 }
+  const n0 = neckOf({ position: eyes, orientation: at(0) })
+  assert.ok(close(n0.x, 1) && close(n0.z, 2 + PINCH.neckM) && n0.y === 1.6, 'looking along −z: behind is +z')
+  const n1 = neckOf({ position: eyes, orientation: at(Math.PI / 2) })
+  assert.ok(close(n1.x, 1 + PINCH.neckM) && close(n1.z, 2), 'looking along −x: behind is +x')
+  const n2 = neckOf({ position: eyes, orientation: at(0, 0.6) })
+  assert.ok(close(n2.z, 2 + PINCH.neckM), 'a nod does not move it along')
+  assert.deepEqual(neckOf({ position: eyes }), eyes, 'no orientation: the eyes')
+  assert.deepEqual(neckOf({ position: eyes, orientation: at(0, Math.PI / 2) }), eyes, 'straight up: the eyes')
+  // Turning the head with the hand still: the eyes swing about the neck, the neck stays, so nothing walks.
+  const id = {}
+  const d = new PinchDrag()
+  const neck = { x: 0, y: 1.6, z: 0 }
+  const headAt = (yaw: number) => neckOf({ position: { x: neck.x - PINCH.neckM * Math.sin(yaw), y: 1.6, z: neck.z - PINCH.neckM * Math.cos(yaw) }, orientation: at(yaw) })
+  d.start(id, 'grip', false, 0, P(0.2, -0.35))
+  let t = 0
+  for (let k = 0; k <= 30; k++) d.sample(id, (t += 11), P(0.2, -0.35), headAt((k / 30) * (Math.PI / 2)))
+  assert.equal(d.read(createAnalog(), false), false, 'a look a quarter round does not walk')
+  assert.equal(d.dragging, false)
 })

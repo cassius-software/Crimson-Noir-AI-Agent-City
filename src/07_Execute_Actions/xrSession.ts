@@ -20,7 +20,7 @@
 
 import { Matrix4, WebGPUCoordinateSystem, type PerspectiveCamera } from 'three/webgpu'
 import type { XrFrameLike, XrInputSourceEventLike, XrInputSourceLike, XrReferenceSpaceLike, XrSessionLike, XrSessionMode, XrSystemLike } from '../04_Connect_Hardware/web-hardware.d.ts'
-import { isController, isPointerOnly, pinchKindOf, type XrMapper, type XrPoint } from '../04_Connect_Hardware/xrInput.ts'
+import { isPointerOnly, neckOf, pinchKindOf, type XrMapper, type XrPoint } from '../04_Connect_Hardware/xrInput.ts'
 import { hasWebGpuBinding, sessionModes, type XrState } from '../04_Connect_Hardware/xrSystem.ts'
 import type { HeadCompose } from './head.ts'
 
@@ -252,7 +252,8 @@ export class XrPresence {
     if (pinches.size === 0 || !frame) return
     const ref = this.reference()
     let head: XrPoint | null = null
-    if (ref) { try { head = frame.getViewerPose?.(ref)?.transform.position ?? null } catch { head = null } }
+    // The neck, not the eyes: the eyes swing through centimetres as the head turns, and a look around must not walk.
+    if (ref) { try { const v = frame.getViewerPose?.(ref); head = v ? neckOf(v.transform) : null } catch { head = null } }
     for (const id of pinches.ids()) {
       const src = id as XrInputSourceLike
       pinches.sample(id, time, pinchKindOf(src) === 'tap' ? null : this.handIn(frame, src), head)
@@ -409,9 +410,10 @@ export class XrPresence {
     const list = s.inputSources
     for (let i = 0; i < list.length; i++) {
       const src = list[i]
-      // A tracked pointer that is no hand is a controller, read by its gamepad or (with no axes) by its pinch.
-      if (src.hand) hands++
-      else if (isController(src) || src.targetRayMode === 'tracked-pointer') controllers++
+      // A hand is one with joints, or one the browser names a hand without them (hand tracking not granted); any other
+      // tracked pointer is a controller, read by its gamepad or (with no axes) by its pinch.
+      if (src.hand || src.profiles.some((p) => p.startsWith('generic-hand'))) hands++
+      else if (src.targetRayMode === 'tracked-pointer') controllers++
       else pointers++
     }
     const parts: string[] = []

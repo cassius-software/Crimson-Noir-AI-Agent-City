@@ -482,6 +482,26 @@ test('a quick still pinch of a hand taps once, in the event\'s own frame; a drag
   assert.equal(REF.listeners.size, 0, 'the recentre listener goes with the session')
 })
 
+test('the drag is measured from the neck, so turning the head with the pinching hand still never walks', async () => {
+  const hand = handSource('right')
+  const t = await presenting([hand])
+  const grip = hand.gripSpace
+  const look = (yaw: number) => {
+    const p = { x: -0.09 * Math.sin(yaw), y: 1.6, z: -0.09 * Math.cos(yaw) }
+    return { getPose: (sp: unknown) => (sp === grip ? { transform: { position: { x: 0.2, y: 1.1, z: -0.35 } } } : null), getViewerPose: () => ({ transform: { position: p, orientation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } } }) }
+  }
+  t.session.fire('selectstart', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.35 }]]), 'throws') })
+  for (let k = 0; k <= 30; k++) t.s.tick(11 * (k + 1), look((k / 30) * (Math.PI / 2)))
+  t.m.sources = t.session.inputSources
+  t.m.read()
+  assert.equal(t.m.analog.moveX, 0)
+  assert.equal(t.m.analog.moveY, 0)
+  assert.equal(t.m.turn, 0, 'a look a quarter round: no walk, no snap')
+  t.session.fire('selectend', { inputSource: hand })
+  await t.p.exit()
+  await settle()
+})
+
 test('a pinch cancelled (selectend with no select), one whose hand left, one held through the menu or a recentre: no tap, no walk on', async () => {
   const hand = handSource('left'), pinch = transient()
   const t = await presenting([hand, pinch])
@@ -556,6 +576,11 @@ test('a phone screen and a gaze button tap on any press; the floor: local-floor 
   await u.p.exit()
   await settle()
   assert.equal(u.p.floorless, false)
+  // Hands without hand tracking granted: no joints, but the browser names them hands; never counted as controllers.
+  const bareHand = (h: 'left' | 'right'): XrInputSourceLike => ({ handedness: h, targetRayMode: 'tracked-pointer', profiles: ['generic-hand-select', 'generic-hand'], gamepad: { mapping: 'xr-standard', axes: [], buttons: [{ pressed: false, value: 0 }] }, gripSpace: {} })
+  const w = await presenting([bareHand('left'), bareHand('right')])
+  assert.equal(w.p.describe(), 'vr: 2 hands')
+  await w.p.exit()
   const v = await presenting([], undefined)
   assert.deepEqual(v.s.types, ['local-floor'], 'a browser that lists no features: three\'s own floor')
   assert.equal(v.p.describe(), 'vr: no input yet')

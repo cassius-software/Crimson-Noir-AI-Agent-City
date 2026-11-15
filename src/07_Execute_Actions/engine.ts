@@ -99,7 +99,7 @@ import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
 import { STAFF_VIEW, StaffView } from './staffView.ts'
 import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
-import { XR_STEP_OUT_SPEED, XrMapper } from '../04_Connect_Hardware/xrInput.ts'
+import { buzz, XR_STEP_OUT_SPEED, XrMapper } from '../04_Connect_Hardware/xrInput.ts'
 import { xrSystemOf } from '../04_Connect_Hardware/xrSystem.ts'
 import { composerFor, XrPresence, type XrHost, type XrRendererLike } from './xrSession.ts'
 import { SimClient } from './simClient.ts'
@@ -2721,7 +2721,8 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
-    // A headset's tap or touchpad click that would have stepped out of a moving car: said, not done.
+    // A headset's door (a button, a click) that would have stepped out of a moving car: not done, and said on the
+    // monitor (the controller that asked was buzzed; the page's panels do not show inside the headset).
     if (xi.takeRefused()) this.toast('Headset', 'Stop the car to step out')
     // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
     // unless this poll was drained, or a headset is on (neither the menu nor the keys would show inside it).
@@ -3916,11 +3917,13 @@ export class Engine {
     return {
       frame: (nowMs) => this.frame(nowMs),
       sources: (list) => this.input.hal.setHeadset(list),
-      select: () => {
+      select: (src) => {
         // A tap with no controller (a quick pinch, a screen's tap): the interaction at hand, else a ping where the head
-        // looks; out of a car only once it has stopped, since a corrective pinch at speed is easily made by mistake.
+        // looks; out of a car only once it has stopped, since a corrective pinch at speed is easily made by mistake
+        // (buzzed on a pointer that has an actuator, a stylus or a trigger; told on the monitor).
         const st = this.sim.state
         if (st.driving >= 0 && Math.abs(st.poses[st.driving * POSE.stride + POSE.speed]) >= XR_STEP_OUT_SPEED) {
+          buzz(src)
           this.toast('Headset', 'Stop the car to step out')
           return
         }

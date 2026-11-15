@@ -18,17 +18,21 @@
  * With two controllers the left walks and the right turns and drives:
  *   left:  thumbstick, or the touchpad while touched, walks (head-relative on foot) and steers; squeeze = handbrake;
  *          the stick's or the touchpad's click latches a run; the trigger pings; the upper face button resets a car.
- *   right: thumbstick snap-turns on foot (the touchpad snaps on a click to either side); trigger = throttle; squeeze =
- *          brake; the lower face button pings, the upper one enters or leaves a car (without one, a touchpad click,
- *          and the trigger on foot does what is at hand); the stick's click is the microphone's mute.
- * A controller alone, of whatever hand, does both: its stick or touchpad walks forward and back and snap-turns by
- * sectors on foot (never both at once), and at the wheel steers and drives; its trigger is the throttle at the wheel and
- * on foot does what is at hand; its squeeze brakes; its stick's click latches a run on foot and is the handbrake at the
- * wheel; a touchpad's centre click does what is at hand and an edge click snap-turns. At the wheel, holding the walking
- * hand's stick or touchpad click for a second with the car stopped steps out, for any controller; a touchpad click or a
- * pinch that would step out of a moving car is refused (`refused`) and the engine says why.
+ *   right: thumbstick snap-turns on foot (a touchpad with no thumbstick snaps on a click to either side); trigger =
+ *          throttle; squeeze = brake; the lower face button pings, the upper one is the car's door (without one, the
+ *          touchpad's click is, and the trigger on foot does what is at hand); the stick's click is the microphone's mute.
+ * A controller alone, of whatever hand, does both: its stick or touchpad walks forward and back, a stick snap-turns by
+ * sectors on foot (never both at once) and a touchpad by an edge click; at the wheel it steers and drives. Its trigger
+ * is the throttle at the wheel and on foot does what is at hand; its squeeze brakes; its stick's click latches a run on
+ * foot, and at the wheel is the handbrake where it has an upper face button (its door) or, where it has none, the door
+ * itself held for a second; a touchpad's centre click does what is at hand. The left hand's click held a second steps
+ * out too. That second counts only while the car stays stopped, and every door (a button, a click, a pinch) is refused
+ * while the car is faster than XR_STEP_OUT_SPEED: said (`takeRefused`, the engine's toast for the monitor) and buzzed
+ * on the controller that asked, where its browser has an actuator. A trigger held into the wheel (the press that
+ * opened the door) gives no throttle until it is let go.
  * Walking is head-relative on foot: the stick's forward is where the headset looks (headOffset), while the body turns
- * only in snaps, so the view never swings under a thumb. A pinch's drag is already in the body's frame.
+ * only in snaps, so the view never swings under a thumb. A pinch's drag moves the body the way the hand moved, judged
+ * against the head's facing (walk or snap) and measured from the neck, so a lean or a look around does not walk.
  * UNCONFIRMED on a physical headset: the layouts are the registry's and the module's, read here from fakes.
  * What breaks if it is removed? A headset's controllers move nothing; the hands pinch at a city that cannot hear.
  */
@@ -47,15 +51,15 @@ export const XR_TURN = Object.freeze({ step: Math.PI / 6, on: 0.6, off: 0.3 })
 export const XR_DEADZONE = 0.15
 /** A touchpad's: its axes are the finger's place, not a spring's, and a resting thumb lies anywhere on it. */
 export const XR_PAD_DEADZONE = 0.3
-/** A touchpad clicked further than this from its centre, sideways, snap-turns on foot instead of acting. */
+/** A touchpad with no thumbstick clicked further than this from its centre, sideways, snap-turns on foot instead of acting. */
 export const XR_PAD_EDGE = 0.5
 /** A thumb this far out on a touchpad that walks runs. */
 export const XR_PAD_RUN = 0.9
 /** A controller alone splits its stick by sectors: a snap within `snap` of sideways, a walk within `walk` of forward or back. */
 export const XR_SECTOR = Object.freeze({ snap: (35 * Math.PI) / 180, walk: (55 * Math.PI) / 180 })
-/** At the wheel, the walking hand's click held this long with the car stopped steps out. */
+/** At the wheel, the walking hand's click held this long while the car stays stopped steps out (the second restarts while it rolls). */
 export const XR_HOLD_OUT_MS = 1000
-/** A car slower than this, m/s, has stopped enough to step out of from a tap or a touchpad click (engine.ts). */
+/** A car slower than this, m/s, has stopped enough to step out of, by any door (engine.ts tells the mapper). */
 export const XR_STEP_OUT_SPEED = 1.5
 
 /** Which duties a controller takes: the walking hand's, the turning and driving hand's, or both (a controller alone). */
@@ -116,6 +120,10 @@ const padTouched = (s: XrInputSourceLike): boolean => {
   if (!b) return true
   return b.touched === undefined ? true : b.touched || b.pressed
 }
+/** A short pulse on a controller's first actuator, where its browser has one; nothing otherwise, never a throw. */
+export const buzz = (s: XrInputSourceLike | undefined): void => {
+  try { void s?.gamepad?.hapticActuators?.[0]?.pulse?.(0.6, 60)?.catch?.(() => {}) } catch { /* no actuator */ }
+}
 const axis = (s: XrInputSourceLike, i: number): number => {
   const v = s.gamepad?.axes[i]
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
@@ -133,16 +141,38 @@ export const PINCH = Object.freeze({
   fullM: 0.13,
   /** Drawn this far, it runs. */
   runM: 0.21,
-  /** A drag mostly sideways past turnM snap-turns once, again only after it has come back inside turnOffM. */
+  /**
+   * A drag outside the walk sector (as the head faces) and past turnM sideways snap-turns once, again only after it has
+   * come back inside turnOffM.
+   */
   turnM: 0.08,
   turnOffM: 0.04,
-  /** On foot it walks within this angle of forward or back; the rest of the circle is the turn's. */
+  /** On foot it walks within this angle of forward or back, as the head faces; the rest of the circle is the turn's. */
   walkSector: (50 * Math.PI) / 180,
   /** The drag's direction is smoothed with this time constant. */
   smoothMs: 100,
   /** A pinch whose pose was lost this recently is no tap (it may be a hand leaving view). */
   lostMs: 250,
+  /**
+   * How far behind the eyes the neck turns, m: the hand is measured against that point, not the eyes, which swing
+   * through centimetres as the head turns (a look around would otherwise walk).
+   */
+  neckM: 0.09,
 })
+
+/**
+ * The point the head turns about (the neck), from the viewer's pose: `neckM` behind the eyes along the head's level
+ * forward. The eyes alone when the pose carries no orientation, or the head looks straight up or down.
+ */
+export function neckOf(pose: { readonly position: XrPoint; readonly orientation?: { readonly x: number; readonly y: number; readonly z: number; readonly w: number } }): XrPoint {
+  const p = pose.position, q = pose.orientation
+  if (!q) return p
+  // The head's forward (−z rotated by q), levelled.
+  const fx = -2 * (q.x * q.z + q.w * q.y), fz = -(1 - 2 * (q.x * q.x + q.y * q.y))
+  const m = Math.hypot(fx, fz)
+  if (!(m > 1e-3)) return p
+  return { x: p.x - (PINCH.neckM * fx) / m, y: p.y, z: p.z - (PINCH.neckM * fz) / m }
+}
 
 /** A position in the session's reference space, metres. */
 export interface XrPoint { readonly x: number; readonly y: number; readonly z: number }
@@ -160,6 +190,8 @@ interface Pinch {
   peak: number
   engaged: boolean
   lostAt: number
+  /** The hand or the head went untracked, or another pinch stopped walking: the drag's anchor is taken afresh next. */
+  reanchor: boolean
 }
 
 /**
@@ -197,7 +229,7 @@ export class PinchDrag {
 
   start(id: object, kind: PinchKind, transient: boolean, t: number, hand: XrPoint | null): void {
     this.dropped.delete(id)
-    this.held.set(id, { kind, transient, t0: t, start: hand, ax: null, az: null, peak: 0, engaged: false, lostAt: hand === null ? t : -Infinity })
+    this.held.set(id, { kind, transient, t0: t, start: hand, ax: null, az: null, peak: 0, engaged: false, lostAt: hand === null ? t : -Infinity, reanchor: false })
   }
 
   /** One headset frame: where the pinching hand and the head are (null where the hand is not tracked). */
@@ -206,15 +238,27 @@ export class PinchDrag {
     if (!p) return
     if (hand === null) {
       p.lostAt = t
+      p.reanchor = true
       if (this.walker === id) this.still(t)
       return
     }
     if (p.start === null) p.start = hand
     else p.peak = Math.max(p.peak, Math.hypot(hand.x - p.start.x, hand.y - p.start.y, hand.z - p.start.z))
-    if (p.kind === 'tap' || head === null) return
+    if (p.kind === 'tap') return
+    if (head === null) {
+      p.reanchor = true
+      if (this.walker === id) this.still(t)
+      return
+    }
     // The hand less the head, so a lean or a step does not walk: only the hand moving against the head does.
     const rx = hand.x - head.x, rz = hand.z - head.z
-    if (p.ax === null || p.az === null) { p.ax = rx; p.az = rz; return }
+    // The first frame with both, or the first after either went untracked (the hand may come back anywhere): the anchor
+    // is taken here, and the drag stands still until the hand moves from it again.
+    if (p.ax === null || p.az === null || p.reanchor) {
+      p.ax = rx; p.az = rz; p.reanchor = false
+      if (this.walker === id) { this.dx = 0; this.dz = 0; this.step(t) }
+      return
+    }
     const dx = rx - p.ax, dz = rz - p.az
     if (!p.engaged && Math.hypot(dx, dz) > PINCH.engageM && (this.walker === null || this.walker === id)) {
       p.engaged = true
@@ -265,15 +309,21 @@ export class PinchDrag {
 
   private forget(id: object): void {
     this.held.delete(id)
-    if (this.walker === id) { this.walker = null; this.halt() }
+    if (this.walker !== id) return
+    this.walker = null
+    this.halt()
+    // A pinch held while this one walked could not drag; its anchor is stale, so it starts afresh, never with a jump.
+    for (const other of this.held.values()) other.reanchor = true
   }
 
   private halt(): void {
     this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true
   }
 
-  /** A frame with no pose for the walker: it stands still (never the last vector, which could walk on blind). */
+  /** A frame with no pose for the walker: it stands still, on foot and at the wheel (never the last vector, which could go on blind). */
   private still(t: number): void {
+    this.dx = 0
+    this.dz = 0
     this.level = 0
     this.lastT = t
   }
@@ -300,10 +350,12 @@ export class PinchDrag {
   }
 
   /**
-   * Writes the drag into `out` (zeroed by the caller) and takes any snap it earned: on foot a walk within the walk sector
-   * and a snap for a sideways drag, a run past runM; at the wheel x steers and z drives. False when it gives nothing.
+   * Writes the drag into `out` (zeroed by the caller) and takes any snap it earned. On foot the drag is judged as the
+   * head faces (`headOffset`, the head's yaw less the body's): within walkSector of the head's forward or back it walks,
+   * in the direction the hand moved; further round and past turnM sideways it snap-turns once; drawn past runM it runs.
+   * At the wheel x steers and z drives. False when it gives nothing.
    */
-  read(out: Analog, driving: boolean): boolean {
+  read(out: Analog, driving: boolean, headOffset = 0): boolean {
     if (this.walker === null) return false
     const dx = this.dx, dz = this.dz
     if (driving) {
@@ -315,12 +367,15 @@ export class PinchDrag {
       out.moveY = live ? fwd : 0
       return live
     }
-    // Sideways past the turn's reach: one snap, re-armed once the hand comes back near the middle.
-    const side = Math.abs(dx)
-    if (this.turnArmed && side > PINCH.turnM && side > 2 * Math.abs(dz)) { this.turn += dx > 0 ? XR_TURN.step : -XR_TURN.step; this.turnArmed = false }
+    // Into the head's frame (x right, y forward), the inverse of XrMapper.toHead.
+    const o = Number.isFinite(headOffset) ? headOffset : 0
+    const c = Math.cos(o), sn = Math.sin(o)
+    const hx = dx * c - dz * sn, hy = -dz * c - dx * sn
+    const ux = this.ux * c - this.uz * sn, uy = -this.uz * c - this.ux * sn
+    const side = Math.abs(hx)
+    if (this.turnArmed && side > PINCH.turnM && Math.atan2(side, Math.abs(hy)) > PINCH.walkSector) { this.turn += hx > 0 ? XR_TURN.step : -XR_TURN.step; this.turnArmed = false }
     else if (!this.turnArmed && side < PINCH.turnOffM) this.turnArmed = true
-    const ang = Math.atan2(Math.abs(this.ux), Math.abs(this.uz))
-    if (this.level === 0 || ang > PINCH.walkSector) return false
+    if (this.level === 0 || Math.atan2(Math.abs(ux), Math.abs(uy)) > PINCH.walkSector) return false
     out.moveX = this.ux * this.level
     out.moveY = -this.uz * this.level || 0
     out.run = Math.hypot(dx, dz) > PINCH.runM
@@ -365,6 +420,9 @@ export class XrMapper {
   private run = false
   private readonly bits = new WeakMap<object, number>()
   private readonly heldSince = new WeakMap<object, number>()
+  /** Sources whose trigger was held into the wheel (the press that opened the door): no throttle until let go. */
+  private readonly triggerHeld = new WeakSet<object>()
+  private wasDriving = false
   private readonly stick = { x: 0, y: 0 }
   private readonly pinchOut: Analog = createAnalog()
   private readonly headVec = { moveX: 0, moveY: 0 }
@@ -402,13 +460,21 @@ export class XrMapper {
   }
 
   /** What is at hand: the car's door (in or out, out only once it has stopped), else a ping where the head looks. */
-  use(): number {
-    if (this.driving) {
-      if (this.stopped) return PAD_EDGE.interact
-      this.refusedFlag = true
-      return 0
-    }
+  use(s?: XrInputSourceLike): number {
+    if (this.driving) return this.leave(s)
     return this.nearCar ? PAD_EDGE.interact : PAD_EDGE.ping
+  }
+
+  /**
+   * The car's door, the button for it: on foot the interaction (a door in reach, a shop's or a home's card); at the wheel
+   * out only once the car has stopped, since a corrective press at speed is easily made by mistake and a step out of a
+   * moving car is hard on a headset's wearer. A refusal is said (`takeRefused`) and buzzed on the controller that asked.
+   */
+  leave(s?: XrInputSourceLike): number {
+    if (!this.driving || this.stopped) return PAD_EDGE.interact
+    this.refusedFlag = true
+    buzz(s)
+    return 0
   }
 
   /**
@@ -420,7 +486,7 @@ export class XrMapper {
     const list = this.sources
     zeroAnalog(out)
     this.active = false
-    if (!list) { this.turn = 0; out.run = this.run; return 0 }
+    if (!list) { this.turn = 0; out.run = this.run; this.wasDriving = this.driving; return 0 }
     let edges = 0
     let mx = 0, my = 0, steer = 0, turn = 0, latchable = 0
     const roles = this.rolesOf(list)
@@ -431,7 +497,8 @@ export class XrMapper {
       if (role === null) continue
       const g = s.gamepad!
       const shape = shapeOf(s)
-      if (shape.stick || shape.padWalks) latchable++
+      // A controller that can toggle the run latch in its present duty (the walking hand's click, a lone stick's).
+      if ((role === 'left' && (shape.stick || shape.padWalks)) || (role === 'both' && shape.stick)) latchable++
       // Edges: a source first seen only teaches what it holds (a button held as it woke, or came back, is no press).
       const known = this.bits.has(s)
       const prev = this.bits.get(s) ?? 0
@@ -441,6 +508,11 @@ export class XrMapper {
       const rising = known ? bits & ~prev : 0
       const press = (b: number) => (rising & (1 << b)) !== 0
       const holding = (b: number) => (bits & (1 << b)) !== 0
+      // A trigger held into the wheel (the press that opened the door, or held as the controller woke there) gives no
+      // throttle until it has been let go: the car never lurches on the way in.
+      if (this.driving && holding(XR_BUTTON.trigger) && (!this.wasDriving || !known)) this.triggerHeld.add(s)
+      else if (!holding(XR_BUTTON.trigger) && triggerValue(g.buttons[XR_BUTTON.trigger]) < 0.05) this.triggerHeld.delete(s)
+      const throttle = this.triggerHeld.has(s) ? 0 : triggerValue(g.buttons[XR_BUTTON.trigger])
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
       const d = this.stick
       let sx = 0, sy = 0, rim = false
@@ -455,39 +527,46 @@ export class XrMapper {
       }
       const padX = axis(s, XR_AXIS.touchpadX)
       // The walking hand's click (the stick's, else the touchpad's on a pad that walks): the run latch on foot; at the
-      // wheel, held for XR_HOLD_OUT_MS with the car stopped, it steps out.
+      // wheel, held for XR_HOLD_OUT_MS while the car stays stopped, it steps out (the left hand's, and a lone stick
+      // controller's with no upper face button, which has no other door; a lone one with that button keeps the click for
+      // the handbrake). The second counts only while stopped, so a click held through a stop is no exit.
       const clickBtn = shape.stick ? XR_BUTTON.thumbstick : shape.padWalks ? XR_BUTTON.touchpad : -1
-      if (role !== 'right' && clickBtn >= 0) {
-        if (holding(clickBtn) && this.driving) {
-          const since = this.heldSince.get(s)
-          if (since === undefined) this.heldSince.set(s, press(clickBtn) ? now : Infinity)
-          else if (Number.isFinite(since) && now - since >= XR_HOLD_OUT_MS && this.stopped) { edges |= PAD_EDGE.interact; this.heldSince.set(s, Infinity) }
-        } else this.heldSince.delete(s)
-      }
+      const holdOut = clickBtn >= 0 && (role === 'left' || (role === 'both' && shape.stick && shape.faces < 2))
+      if (holdOut && holding(clickBtn) && this.driving) {
+        const since = this.heldSince.get(s)
+        if (since === undefined) this.heldSince.set(s, press(clickBtn) ? now : Infinity)
+        else if (Number.isFinite(since)) {
+          if (!this.stopped) this.heldSince.set(s, now)
+          else if (now - since >= XR_HOLD_OUT_MS) { edges |= PAD_EDGE.interact; this.heldSince.set(s, Infinity) }
+        }
+      } else this.heldSince.delete(s)
       if (role === 'both') {
-        // Alone: forward and back walk, sideways snaps (by sectors, never both); at the wheel it steers and drives.
+        // Alone: forward and back walk; sideways a stick snap-turns (by sectors, never both at once) while a touchpad
+        // turns only on an edge click (a thumb resting at the edge before and after the click is no second turn); at
+        // the wheel it steers and drives.
         if (this.driving) {
           steer = -sx || 0; mx = sx; my = -sy || 0
-          if (shape.stick && holding(XR_BUTTON.thumbstick)) out.handbrake = true
+          if (shape.stick && shape.faces >= 2 && holding(XR_BUTTON.thumbstick)) out.handbrake = true
         } else {
           const m = Math.hypot(sx, sy)
           if (m > 0) {
             const fromSide = Math.atan2(Math.abs(sy), Math.abs(sx))
-            if (fromSide <= XR_SECTOR.snap) turn = sx
+            if (fromSide <= XR_SECTOR.snap) { if (shape.stick) turn = sx }
             else if (Math.PI / 2 - fromSide <= XR_SECTOR.walk) my = -sy || 0
           }
           if (shape.padWalks && rim) out.run = true
           if (clickBtn === XR_BUTTON.thumbstick && press(XR_BUTTON.thumbstick)) this.run = !this.run
         }
-        out.throttle = Math.max(out.throttle, triggerValue(g.buttons[XR_BUTTON.trigger]))
+        out.throttle = Math.max(out.throttle, throttle)
         out.brake = Math.max(out.brake, triggerValue(g.buttons[XR_BUTTON.squeeze]))
-        if (!this.driving && press(XR_BUTTON.trigger)) edges |= this.use()
+        if (!this.driving && press(XR_BUTTON.trigger)) edges |= this.use(s)
         if (shape.faces >= 1 && press(XR_BUTTON.primary)) edges |= PAD_EDGE.ping
-        if (shape.faces >= 2 && press(XR_BUTTON.secondary)) edges |= PAD_EDGE.interact
-        if (shape.padWalks && press(XR_BUTTON.touchpad)) {
-          // A centre click is what is at hand; an edge click snap-turns on foot (at the wheel any click steps out).
-          if (!this.driving && Math.abs(padX) > XR_PAD_EDGE) this.padSnapStep(padX)
-          else edges |= this.use()
+        if (shape.faces >= 2 && press(XR_BUTTON.secondary)) edges |= this.leave(s)
+        if (shape.pad && press(XR_BUTTON.touchpad)) {
+          // A touchpad that walks: a centre click is what is at hand, an edge click snap-turns on foot. One beside a
+          // stick (no upper face button to leave by) is the door, what is at hand on foot.
+          if (shape.padWalks && !this.driving && Math.abs(padX) > XR_PAD_EDGE) this.padSnapStep(padX)
+          else if (shape.padWalks || shape.faces < 2) edges |= this.use(s)
         }
       }
       if (role === 'left') {
@@ -500,24 +579,25 @@ export class XrMapper {
       }
       if (role === 'right') {
         if (shape.stick) turn = axis(s, XR_AXIS.thumbX)
-        out.throttle = Math.max(out.throttle, triggerValue(g.buttons[XR_BUTTON.trigger]))
+        out.throttle = Math.max(out.throttle, throttle)
         out.brake = Math.max(out.brake, triggerValue(g.buttons[XR_BUTTON.squeeze]))
         if (shape.faces >= 1 && press(XR_BUTTON.primary)) edges |= PAD_EDGE.ping
-        if (shape.faces >= 2 && press(XR_BUTTON.secondary)) edges |= PAD_EDGE.interact
+        if (shape.faces >= 2 && press(XR_BUTTON.secondary)) edges |= this.leave(s)
         if (shape.stick && press(XR_BUTTON.thumbstick)) edges |= PAD_EDGE.mute
         if (shape.faces < 2 && shape.pad && press(XR_BUTTON.touchpad)) {
-          // No upper face button: the touchpad's click enters and leaves; a pad that turns snaps on an edge click on foot.
+          // No upper face button: the touchpad's click is the door; a pad that turns snaps on an edge click on foot.
           if (shape.padWalks && !this.driving && Math.abs(padX) > XR_PAD_EDGE) this.padSnapStep(padX)
-          else edges |= PAD_EDGE.interact
+          else edges |= this.leave(s)
         } else if (shape.padWalks && press(XR_BUTTON.touchpad) && !this.driving && Math.abs(padX) > XR_PAD_EDGE) this.padSnapStep(padX)
         // No upper face button: the trigger on foot does what is at hand too (a stick controller's button 2 may be a
         // placeholder that never presses, and nothing tells it from a real touchpad's).
-        if (shape.faces < 2 && !this.driving && press(XR_BUTTON.trigger)) edges |= this.use()
+        if (shape.faces < 2 && !this.driving && press(XR_BUTTON.trigger)) edges |= this.use(s)
       }
       if (bits !== 0 || sx !== 0 || sy !== 0 || Math.abs(turn) > XR_DEADZONE) { this.used = true; this.active = true }
     }
-    // No controller that can latch a run is left (put down for hands): the latch goes with it.
+    // No controller that can toggle the run latch is left (put down for hands, or a lone touchpad): the latch goes.
     if (latchable === 0) this.run = false
+    this.wasDriving = this.driving
     out.run = out.run || this.run
     // On foot, the stick in the head's frame: forward is where the headset looks, not where the body stands.
     const v = this.headVec
@@ -527,7 +607,7 @@ export class XrMapper {
     // A pinch's drag, already in the body's frame: the larger of it and the sticks moves.
     const p = this.pinchOut
     zeroAnalog(p)
-    if (this.pinches.read(p, this.driving)) {
+    if (this.pinches.read(p, this.driving, this.driving ? 0 : this.headOffset)) {
       if (p.moveX * p.moveX + p.moveY * p.moveY > mx * mx + my * my) { mx = p.moveX; my = p.moveY; steer = p.steer }
       if (p.run) out.run = true
       this.active = true
@@ -598,6 +678,7 @@ export class XrMapper {
     this.pendingPad = 0
     this.active = false
     this.refusedFlag = false
+    this.wasDriving = false
     this.pinches.clear()
   }
 }
