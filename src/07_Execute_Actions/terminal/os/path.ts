@@ -7,13 +7,13 @@
  * names, and matches one name against a shell pattern (`*`, `?`, `[a-z]`). The file system has no links, so
  * resolving `.` and `..` on the text alone is exact: no path can step out of a mounted folder by its spelling,
  * because every path is made canonical here before any driver sees a name. Limits are refused by name: a name is at
- * most NAME_MAX bytes, a path PATH_MAX, and at most DEPTH_MAX names deep.
+ * most NAME_MAX characters (UTF-16 units), a path PATH_MAX, and at most DEPTH_MAX names deep.
  * What breaks if it is removed? Every caller would resolve paths its own way, and `..` or a doubled slash would
  * mean different things to the shell, the kernel and a mounted drive.
  */
 import { refuse } from './errno.ts'
 
-/** The longest single name, in UTF-16 units (a name is checked again in bytes by a driver that stores it). */
+/** The longest single name, in UTF-16 units (a driver that stores it may check it again). */
 export const NAME_MAX = 255
 /** The longest path, in UTF-16 units. */
 export const PATH_MAX = 4096

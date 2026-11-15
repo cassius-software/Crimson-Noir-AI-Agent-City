@@ -414,7 +414,10 @@ class Parser {
     }
     if (op === '') this.fail('bad substitution')
     this.i += op.length
-    const arg = this.wordUntilBrace(q)
+    // The word after % %% # ## is a pattern even inside "...": the outer quotes keep the result whole, but only
+    // quotes inside the braces make a pattern character plain ("${f%.*}" cuts the last dot and what follows).
+    const pattern = op === '%' || op === '%%' || op === '#' || op === '##'
+    const arg = this.wordUntilBrace(pattern ? false : q)
     return { t: 'var', name, op, arg, q }
   }
 

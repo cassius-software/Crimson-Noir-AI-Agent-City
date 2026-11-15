@@ -806,10 +806,10 @@ const comm: Program = function* (sys, argv) {
         status = 1
         line = null
       }
-      // The line reader hands a line of LINE_BYTES_MAX characters or more back in pieces, each of which would be taken as a line.
-      if (line !== null && line.length >= LINE_BYTES_MAX) {
+      // The line reader hands a line longer than LINE_BYTES_MAX back in pieces (it says so), each of which would be taken as a line.
+      if (line !== null && f.lines.cut) {
         yield* out.flush()
-        yield* complain(sys, 'comm', f.path, `a line of ${LINE_BYTES_MAX} characters or more, too long to compare`)
+        yield* complain(sys, 'comm', f.path, `a line longer than ${LINE_BYTES_MAX} characters, too long to compare`)
         status = 1
         stopped = true
         return null
@@ -961,7 +961,7 @@ NOTES
     The files are read as UTF-8 text: bytes that are not UTF-8 are read
     as the replacement character, so two lines that differ only in such
     bytes count as the same, and a byte order mark at the start of a
-    file is dropped. A line of ${LINE_BYTES_MAX} characters or more is too long:
+    file is dropped. A line longer than ${LINE_BYTES_MAX} characters is too long:
     comm reports it and stops there, and the status is 1.
 
 STATUS

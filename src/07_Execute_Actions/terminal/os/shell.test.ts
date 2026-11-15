@@ -27,6 +27,7 @@ import type { Kit } from './kit.test.ts'
 import { PIPE_MAX } from './pipe.ts'
 import type { CityHost, CityLine } from './shell.ts'
 import { SYS_MANUAL, SYS_PROGRAMS } from './sysutils.ts'
+import { System } from './system.ts'
 import { Later, now } from './task.ts'
 import { TEXT_PROGRAMS } from './textutils.ts'
 
@@ -135,6 +136,14 @@ test('the trims cut the shortest or longest match from either end, and a quoted 
   assert.deepEqual(k.sh('v=foo.tar.gz; echo ${v%.*} ${v%%.*} ${v#*.} ${v##*.} ${v%.zip} ${v#} ${none%x}.'), ['foo.tar foo tar.gz gz foo.tar.gz foo.tar.gz .'])
   assert.deepEqual(k.sh('p=/home/operator/notes.txt; echo ${p##*/} ${p%/*} ${p#/home/}'), ['notes.txt /home/operator operator/notes.txt'])
   assert.deepEqual(k.sh('w=\'a*b\'; echo ${w#"a*"} ${w#a*} "${w%"*b"}" ${w%\\*b} ${w%[b]}'), ['b *b a a a*'])
+  // Inside "..." the word after the operator is still a pattern: the outer quotes keep the result one word, and only
+  // quotes or a backslash inside the braces make a pattern character plain.
+  const words = (line: string): string[] => k.sh(`printf '[%s]' ${line}; echo`)
+  assert.deepEqual(words('"${v%.*}" "${v%%.*}" "${v#*.}" "${v##*.}" "${v##x*}" "${v##f*}"'), ['[foo.tar][foo][tar.gz][gz][foo.tar.gz][]'])
+  assert.deepEqual(k.sh('w=\'a*b c\'; p=\'*\'; echo "${w#a$p}." ${w#a$p}.'), ['*b c. *b c.'])
+  assert.deepEqual(words('"${w#a$p}" ${w#a$p} "${w#a"$p"}" "${w#"a*"}" "${w#\'a*\'}" "${w#a\\*}" "${w%% *}"'), ['[*b c][*b][c][b c][b c][b c][b c][a*b]'])
+  // The other operators keep the quotes they stand in: their word is text, not a pattern.
+  assert.deepEqual(words('"${none:-a  *}" ${none:-a  b}'), ['[a  *][a][b]'])
 })
 
 test('a trim of a long value counts its steps: the others keep their turns, and Ctrl+C gives it up', () => {
@@ -1025,4 +1034,18 @@ test('test: a ! before a two-sided operator, and a ( alone, are texts like any o
   k.sh("p='('")
   assert.deepEqual(asks('[ "$p" ]; [ ! "$p" ]; [ -n "$p" ]; [ "$p" = "(" ]; /bin/test "("'), ['0', '1', '0', '0', '0'])
   assert.deepEqual(k.sh('test \\( a; echo $?'), ["!test: '(' needs ')'", '2'])
+})
+
+test('a pipeline has the terminal from its first stage on, wherever the turn ends while the rest are started', () => {
+  // The line is typed after a run of commands that moves where the shell's turn ends while it starts the stages; at
+  // one of these lengths the first stage ran before the second was started and found the terminal still the shell's.
+  const failed: number[] = []
+  for (let n = 120; n < 400; n++) {
+    const system = new System({ hostname: 'h', version: 'v', clock: () => 0, wall: () => 0, programs })
+    for (let i = 0; i < 100 && !system.idle; i++) system.run(100000, Number.POSITIVE_INFINITY)
+    system.type(`${'cd /; '.repeat(n)}cat | cat`)
+    for (let i = 0; i < 200000 && !system.idle; i++) system.run(1, Number.POSITIVE_INFINITY)
+    if (!system.capturing) failed.push(n)
+  }
+  assert.deepEqual(failed, [], 'the pipeline ended at once instead of waiting for what is typed')
 })

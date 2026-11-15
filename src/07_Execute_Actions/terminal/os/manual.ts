@@ -211,9 +211,10 @@ PERMISSIONS
     for programs that run as someone else.
 
 LIMITS
-    A name is at most 255 bytes and a path 4096. There are no links.
-    Times are in UTC. A file under /proc or /sys is made when it is
-    read, so its size shows as 0 until then.
+    A name is at most 255 characters and a path 4096 (a character past
+    U+FFFF counts as two). There are no links. Times are in UTC. A file
+    under /proc or /sys is made afresh each time it is read, so its size
+    always shows as 0.
 
 SEE ALSO
     man intro, man sh, man city, man df, man ls, man chmod

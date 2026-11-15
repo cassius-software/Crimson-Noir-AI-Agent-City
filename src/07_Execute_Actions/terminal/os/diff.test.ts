@@ -586,17 +586,25 @@ test('comm: the input as one file, files out of order, and refusals', () => {
 
 test('comm: a line too long to compare whole is reported, and comm stops there', () => {
   const k = fresh()
-  // The shared line reader gives a line of 1048576 characters or more back in pieces; comm must not take them as lines.
+  // The shared line reader gives a line longer than 1048576 characters back in pieces; comm must not take them as lines.
   const huge = 'm'.repeat(1 << 21)
   const odd = 'm'.repeat(1500000)
   k.write('/tmp/h1', `a\n${huge}\nz\n`)
   k.write('/tmp/h2', `b\n${huge}\n`)
   k.write('/tmp/o1', `a\n${odd}\n`)
-  assert.deepEqual(k.sh('comm h1 h2 > out; echo $?'), ['!comm: h1: a line of 1048576 characters or more, too long to compare', '1'])
+  assert.deepEqual(k.sh('comm h1 h2 > out; echo $?'), ['!comm: h1: a line longer than 1048576 characters, too long to compare', '1'])
   assert.equal(k.read('/tmp/out'), 'a\n')
-  assert.deepEqual(k.sh('comm o1 o1 > out; echo $?'), ['!comm: o1: a line of 1048576 characters or more, too long to compare', '1'])
+  assert.deepEqual(k.sh('comm o1 o1 > out; echo $?'), ['!comm: o1: a line longer than 1048576 characters, too long to compare', '1'])
   assert.equal(k.read('/tmp/out'), '\t\ta\n')
-  // One character short of that is still one line.
+  // A line of exactly that many is still one line, and so is one with a pair of halves at the limit.
+  const exact = 'm'.repeat(1 << 20)
+  k.write('/tmp/e1', `${exact}\n`)
+  assert.deepEqual(k.sh('comm e1 e1 > out; echo $?'), ['0'])
+  assert.equal(k.read('/tmp/out'), `\t\t${exact}\n`)
+  const paired = `${'m'.repeat((1 << 20) - 1)}\u{1F600}m`
+  k.write('/tmp/p1', `${paired}\n`)
+  assert.deepEqual(k.sh('comm p1 p1 > out; echo $?'), ['!comm: p1: a line longer than 1048576 characters, too long to compare', '1'])
+  // One character short of the limit is still one line.
   const most = 'm'.repeat((1 << 20) - 1)
   k.write('/tmp/m1', `a\n${most}\n`)
   k.write('/tmp/m2', `${most}\nz\n`)

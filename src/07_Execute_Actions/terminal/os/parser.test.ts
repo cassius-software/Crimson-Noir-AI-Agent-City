@@ -224,13 +224,16 @@ test('$ forms: names, the special parameters, and a $ that stands for itself', (
 test('${ } forms: every operator, the length, and a word inside that keeps its own quoting', () => {
   for (const op of [':-', '-', ':=', '=', ':+', '+', ':?', '?', '%', '%%', '#', '##']) {
     assert.equal(show(`echo \${x${op}w}`), `echo \${x${op}w}`, op)
-    assert.equal(show(`echo "\${x${op}w}"`), `echo "\${x${op}'w'}"`, op)
+    // Inside "...", the word of a trim stays a pattern (plain text); the word of the others is quoted text.
+    const pattern = ['%', '%%', '#', '##'].includes(op)
+    assert.equal(show(`echo "\${x${op}w*}"`), pattern ? `echo "\${x${op}w*}"` : `echo "\${x${op}'w*'}"`, op)
   }
   assert.equal(show('echo ${#x} ${#} ${#?} ${#1} ${?} ${1}'), 'echo ${#x} $# ${#?} ${#1} $? $1')
   assert.equal(show('echo ${x:-a b} ${x:-} ${x#*.} ${x##*/} ${x%.*}'), 'echo ${x:-a b} ${x:-} ${x#*.} ${x##*/} ${x%.*}')
   assert.equal(show("echo ${x:-'a b'} ${x%\"a\"}"), "echo ${x:-'a b'} ${x%'a'}")
-  // Inside "...", a single quote in the word is a character.
+  // Inside "...", a single quote in the word is a character, but in the pattern of a trim it still quotes.
   assert.equal(show(`echo "\${x:-'a'}"`), `echo "\${x:-''a''}"`)
+  assert.equal(show(`echo "\${x#'a*'b*}"`), `echo "\${x#'a*'+b*}"`)
   assert.equal(show('echo ${x:-"a $y"} ${x:-\\}}'), `echo \${x:-'a '+"$y"} \${x:-'}'}`)
   assert.equal(show('echo ${x:-${y:-$(echo z)}}'), 'echo ${x:-${y:-$(echo z)}}')
   for (const src of ['echo ${}', 'echo ${x!}', 'echo ${ x}', 'echo ${-x}', 'echo ${x:}', 'echo ${#x!}', 'echo ${&}']) {

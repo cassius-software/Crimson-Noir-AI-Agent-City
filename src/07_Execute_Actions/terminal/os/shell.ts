@@ -667,7 +667,12 @@ class Shell {
         const city = this.city
         try {
           const pid = yield* sys.spawn([this.st.name], { program: (s2) => new Shell(s2, city, sub).stage(cmd), fds, group: this.st.interactive ? (pgid ?? 'new') : undefined })
-          pgid ??= pid
+          if (pgid === undefined) {
+            pgid = pid
+            // The job takes the terminal as soon as its first stage exists: a first stage that runs before the rest
+            // are started must find the terminal its own, and a Ctrl+C typed meanwhile must reach the job.
+            if (this.st.interactive) sys.foreground(pgid)
+          }
           pids.push(pid)
         } catch (e) {
           if (r >= 0) sys.close(r)
