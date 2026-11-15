@@ -62,6 +62,7 @@ on:
       - src/09_Cognition/kvPager.wasm.ts
       - src/09_Cognition/localCompute.ts
       - src/09_Cognition/modelFit.ts
+      - src/09_Cognition/modelPart.ts
       - src/09_Cognition/modelStore.ts
       - src/09_Cognition/nativeMind.ts
       - src/09_Cognition/pageMind.ts
@@ -111,6 +112,7 @@ on:
       - src/09_Cognition/kvPager.wasm.ts
       - src/09_Cognition/localCompute.ts
       - src/09_Cognition/modelFit.ts
+      - src/09_Cognition/modelPart.ts
       - src/09_Cognition/modelStore.ts
       - src/09_Cognition/nativeMind.ts
       - src/09_Cognition/pageMind.ts

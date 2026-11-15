@@ -4,7 +4,9 @@
 /**
  * Why does this file exist? It proves the integrity law (integrity.ts) against the published vectors: SHA-256 over
  * the empty string, "abc", the two-block message and a million "a"s (FIPS 180-4), the same digest fed piece by piece
- * however the input is split (sha256Stream, which hashes a model file as it arrives), HMAC-SHA256 over the RFC 4231
+ * however the input is split (sha256Stream, which hashes a model file as it arrives), and the same again when the hash
+ * is saved as plain data at any point, passed through JSON and taken up again (a model download that stopped picks up
+ * its hash with its bytes), while a saved state that is not one this file wrote is refused; HMAC-SHA256 over the RFC 4231
  * cases (short, block-sized and over-block keys, the truncated case); and, since the Node host signs with node:crypto
  * while the page can only use this file, that the two agree bit for bit over many seeded inputs of every length
  * class. The canonical form is proven order-independent and strict about what is plain data; a seal verifies, and
@@ -15,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { createHash, createHmac } from 'node:crypto'
 import { test } from 'node:test'
-import { canonical, DIGEST_HEX, hex, hmacSha256, isDigest, opened, sameDigest, seal, sha256, sha256Bytes, sha256Stream, verify } from './integrity.ts'
+import { canonical, DIGEST_HEX, hex, hmacSha256, isDigest, isSha256Saved, opened, sameDigest, seal, sha256, sha256Bytes, sha256Stream, verify, type Sha256Saved } from './integrity.ts'
 
 const bytes = (n: number, fill: number): Uint8Array => new Uint8Array(n).fill(fill)
 
@@ -67,6 +69,54 @@ test('SHA-256 piece by piece (a model file hashed as it arrives): the same diges
   s.digest()
   assert.throws(() => s.update(bytes(1, 1)), /update after digest/)
   assert.throws(() => s.digest(), /digest twice/)
+})
+
+test('a hash saved at any point, through JSON, goes on to the same digest; a saved state this file could not have written is refused', () => {
+  let seed = 11
+  const next = (): number => (seed = (seed * 1103515245 + 12345) >>> 0)
+  for (const n of [0, 1, 55, 56, 63, 64, 65, 127, 128, 129, 1000, 4099]) {
+    const m = Uint8Array.from({ length: n }, () => next() & 0xff)
+    const want = createHash('sha256').update(m).digest('hex')
+    // Cut at every boundary that matters (and a few others): saved there, written as JSON, read back, fed the rest.
+    for (const cut of new Set([0, 1, 63, 64, 65, n >> 1, n - 1, n].filter((k) => k >= 0 && k <= n))) {
+      const a = sha256Stream()
+      a.update(m.subarray(0, cut))
+      const saved = JSON.parse(JSON.stringify(a.save())) as Sha256Saved
+      assert.ok(isSha256Saved(saved), `${n} bytes cut at ${cut}: a saved state`)
+      assert.equal(saved.total, cut)
+      assert.equal(saved.tail.length, (cut % 64) * 2, 'the tail is what is held short of a block')
+      const b = sha256Stream(saved)
+      b.update(m.subarray(cut))
+      assert.equal(hex(b.digest()), want, `${n} bytes cut at ${cut}`)
+      // The first goes on as if never saved: save is a look, not an end.
+      a.update(m.subarray(cut))
+      assert.equal(hex(a.digest()), want)
+    }
+  }
+  // Saved twice along the way (stop, resume, stop, resume).
+  const m = Uint8Array.from({ length: 10_000 }, (_, i) => (i * 31) & 0xff)
+  const one = sha256Stream()
+  one.update(m.subarray(0, 3333))
+  const two = sha256Stream(one.save())
+  two.update(m.subarray(3333, 7001))
+  const three = sha256Stream(JSON.parse(JSON.stringify(two.save())) as Sha256Saved)
+  three.update(m.subarray(7001))
+  assert.equal(hex(three.digest()), createHash('sha256').update(m).digest('hex'))
+  // Not a saved state: refused, never taken up as a fresh hash.
+  const good = sha256Stream()
+  good.update(bytes(70, 0xab))
+  const g = good.save()
+  const bad: unknown[] = [
+    null, 'x', {}, { ...g, h: g.h.slice(0, 7) }, { ...g, h: [...g.h.slice(0, 7), 2 ** 32] }, { ...g, h: [...g.h.slice(0, 7), -1] },
+    { ...g, h: [...g.h.slice(0, 7), 1.5] }, { ...g, total: 71 }, { ...g, total: -6 }, { ...g, total: 70.5 }, { ...g, total: 2 ** 53 },
+    { ...g, tail: g.tail.toUpperCase() }, { ...g, tail: `${g.tail}00` }, { ...g, tail: 'zz'.repeat(6) }, { h: g.h, total: 70 },
+  ]
+  for (const b of bad) {
+    assert.equal(isSha256Saved(b), false, JSON.stringify(b))
+    assert.throws(() => sha256Stream(b as Sha256Saved), /not a saved hash state/)
+  }
+  good.digest()
+  assert.throws(() => good.save(), /save after digest/)
 })
 
 test('HMAC-SHA256: the RFC 4231 cases', () => {

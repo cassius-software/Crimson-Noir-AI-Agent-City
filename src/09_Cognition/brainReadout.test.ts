@@ -671,8 +671,10 @@ test('after a look that found nothing, a look stopped part way or ask model auto
 test('App.tsx tells the readout of a keep, a forget and the app model\'s check, and hands it what the page keeps', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
   const code = app.replace(/\{?\/\*[\s\S]*?\*\/\}?/g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-  // The site's model kept by the job is noted before the job says done (a forget reads it again).
-  assert.match(code, /return keepPicked\(\[file\], \(done, total\) => onProgress\(\{ step: 'keep', done, total \}\), how === 'tap'\)\.then\(\(line\) => \{\s+siteKept = true\s+return line\s+\}\)\n/)
+  // The site's model kept by the job (its part committed, or the file it downloaded where there is no part) is noted
+  // before the job says done (a forget reads it again).
+  assert.match(code, /const keeps = \(done: number, total: number\): void => onProgress\(\{ step: 'keep', done, total \}\)\n/)
+  assert.match(code, /const kept = part !== null\s+\? keepWith\(\(progress\) => inPage\.adopt\(\(\) => PAGE_MODELS\(\)\.commitPart\(part as PartSession, pin, progress\)\), keeps, how === 'tap'\)\.finally\(\(\) => part\?\.release\(\)\)\s+: keepPicked\(\[file as File\], keeps, how === 'tap'\)\s+return kept\.then\(\(line\) => \{\s+siteKept = true\s+return line\s+\}\)\n/)
   // The city's console: a forget is told to the readout, and whether the site's model is kept is read again.
   assert.match(code, /forget: \(name\?: string\) => inPage\.forget\(name\)\.finally\(\(\) => \{\s+brainHeard\(\)\s+void keptSite\(\)\.catch\(\(\) => null\)\s+\}\),/)
   // The console alone: the same forget refreshes its readout, which is told whether the page keeps no file.

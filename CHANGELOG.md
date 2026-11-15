@@ -15,6 +15,59 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The web copy's model download resumes where it stopped.** Where a worker of the page can open a synchronous handle
+  onto the page's storage (Chromium browsers), the site's model no longer downloads into memory first: the page
+  fetches, and the worker that copies a picked file writes what arrives into `agent-city-models/<id>/<file>.part` with
+  a note beside it, `part.json` (the pin, the bytes written, the server's validator and the SHA-256 so far,
+  `integrity.ts` now saves and resumes a running hash). It writes 8 MiB at a time and flushes the part before each
+  note, so a dropped connection, the Stop, a halt of the city or the page's end leaves a part the next try picks up,
+  and a killed tab loses what was not yet noted: up to 8 MiB in the worker's buffer and about 16 MiB more that the
+  page had sent on to it (`AHEAD_BYTES`). The next try asks only for the rest, with `Range` and `If-Range` (the strong
+  ETag, else `Last-Modified` when there is no ETag; never a weak ETag or a compressed body), and goes on only on a 206
+  whose `Content-Range` starts where the part ends and totals the pin's size; a 200 starts over from the first byte,
+  and a 416 or a range that does not fit is asked once more whole. The size and SHA-256 of the whole file are still
+  the only gate before `meta.json`; a part that fails is deleted, and one that passes is renamed into place (or named
+  by `meta.json` where the browser cannot rename). A note is trusted only when the pin, a validator, an age under 7
+  days and the part's length agree, and the part's bytes, read back and hashed again from the first, come to exactly
+  the hash state the note saved: a byte changed on disk anywhere since starts the download over (a part of this model
+  near its end is about 398 MB read and hashed once before the rest is asked for). Bytes written in a visit are hashed
+  as they arrive, not read back. A download holds a Web Lock for its pin as well as its directory's, so another tab of
+  the city that asks for the same model meanwhile is told another tab is downloading it, and once that tab has kept
+  it, that it is kept (the next try chooses it); a kept model's directory is never written as a part (it is looked at
+  again under the lock, and the worker opens no part beside a `meta.json`). The store keeps one part per pin the page
+  is built with and sweeps the rest; a part is never a kept model; the room check counts only the rest;
+  `ask file forget <file>` removes that file's parts. The card says when the next try asks only for the rest, and the
+  brain readout says held, and why, with its count starting where the part ends. Where no such handle opens, or the
+  page has no storage it may write, the download is the one before, into memory first (its `App.tsx` wiring now shares
+  the progress and the stop with the new path). The app's and the launcher's copies take the new path but give no
+  validator, so they start over. The page still fetches only its own origin; the worker fetches nothing. After a
+  deploy, `web.yml` asks the model's first byte, and its second under `If-Range`, and warns (never fails) when either
+  is not a 206, the ETag is weak or missing, or the deploy changed the ETag of an unchanged model (the ETag it had is
+  read just before the deploy). The look at the ETag before the deploy and the range look after it have a time limit
+  each (2 and 3 minutes), and every call to the site in the deploy job has one, the older look after it at the
+  manifest and the size now among them (20 s a call, the manifest asked six times at most; that look has no limit of
+  its own), so a slow site holds the deploy 2 minutes at most and cannot hold the job after it without end.
+  `native-e2e.yml` also runs on a change to `modelPart.ts`, now among the modules the console's router imports. Tests:
+  `modelPart.test.ts` (8, new: the write and note order, hold and kill, every refused note, a byte changed on disk
+  anywhere in a part, at the real 8 MiB write too), `siteModel.test.ts` (23, 6 new: a server on this machine that
+  answers 206, ignores the range, changes its ETag, gives only `Last-Modified`, a weak ETag or gzip, answers 416 or
+  another range, or cuts off mid-write; a flipped byte after a resume is refused and the part deleted; a whole part
+  with a byte changed on disk is asked again whole), `modelStore.test.ts` (32, 11 new: the worker's writes, hold and
+  pick-up, the sweep, forget, the commit with and without a rename, the old path where no handle opens, the rest's
+  room check; two tabs that start the same download at once, a model kept by one tab as the other opens its part, and
+  the worker refusing a kept model's directory), `integrity.test.ts` (7, 1 new), `inPage.test.ts` (forgetting a part
+  by name) and `webApp.test.ts` (1 new: the time limits of the workflow's looks at the site). The browser smoke's
+  `sitemodel` scenario, in Chromium, stops the page's own download at a fifth and finds the part and the readout's
+  held, picks it up on the next visit with a 206 from that byte, has the server drop the connection two fifths in,
+  finishes on the next click with each missing byte sent once, and still refuses a flipped byte. Not verified: the new
+  `web.yml` steps, and the older look's new limits, on CI until CI runs them (they ran only against a fake site and a
+  fake `gh`; the test reads only their time limits), whether GitHub Pages answers ranges with a 206 or keeps an ETag
+  across deploys (the workflow only warns), the part path in Firefox, Safari, WebView2 and Chrome on Android, a
+  full-size (397,808,192-byte) download and resume and how long its read-back hash takes in a browser, the rename
+  fallback and handles whose calls return promises outside the Node fakes, storage running out partway and two tabs
+  contending for a part in a real browser, and a tab killed mid-write in a real browser; the download where no handle
+  opens (the one before) is now run only by the Node tests, no longer by the browser smoke.
+
 - **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
   commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
   `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages

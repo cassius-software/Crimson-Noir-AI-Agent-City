@@ -13,9 +13,10 @@
  * leaves other origins, other methods and the site's model folder (models/) to the network, and drops only its own
  * older caches. The site's model goes beside that page and nowhere else (tools/web/siteModel.mjs placeModel: checked
  * against its pin while copied, nothing left behind on a mismatch, a folder that is not the web copy refused), and the
- * web workflow places it after the build and before the upload, on every publish. The browser smoke test
- * (tools/browser/smoke.mjs `pwa`) runs the real thing in Chrome as an iPhone, with a second build published and with
- * the host taken away.
+ * web workflow places it after the build and before the upload, on every publish; its notes on the model's ranges,
+ * before and after the deploy, cannot fail the run or hold it (a time limit on each step and on each call). The
+ * browser smoke test (tools/browser/smoke.mjs `pwa`) runs the real thing in Chrome as an iPhone, with a second build
+ * published and with the host taken away.
  * What breaks if it is removed? A change to the builder could publish a page whose policy refuses its own manifest, a
  * worker that serves a stale or unisolated page, or one that deletes another app's cache, with nothing to say so
  * before a phone finds out.
@@ -1054,6 +1055,46 @@ test('the web workflow places the checked speech pack after the model and before
   // After the deploy the site is only looked at: the pack's manifest, never its 41 MB.
   const note = yml.slice(at('${PAGE}speech/manifest.json'))
   assert.doesNotMatch(note, /\.onnx|\.wasm/, 'the note downloads no file of the pack')
+})
+
+test('the web workflow\'s looks at the site around the deploy give each call a time limit, and its notes on the model\'s ranges have their own and cannot fail the run', () => {
+  const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
+  /** The lines of `s` that are not comments. */
+  const code = (s: string): string => s.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+  /** The step whose line `head` is, up to the next step of its job (or the file's end), without its comment lines. */
+  const step = (head: string): string => {
+    const i = yml.indexOf(head)
+    assert.ok(i >= 0, head)
+    const next = yml.indexOf('\n      - ', i)
+    return code(yml.slice(yml.lastIndexOf('\n      - ', i) + 1, next < 0 ? undefined : next))
+  }
+  /** Each call bounded by itself, so a site that stalls ends the look, not the job (whose limit the deploy shares). */
+  const bounded = (what: string, s: string): void => {
+    const curls = s.match(/\bcurl\b[^\n]*/g) ?? []
+    assert.ok(curls.length > 0, `${what}: it asks the site`)
+    for (const c of curls) assert.match(c, /--max-time \d+/, `${what}: ${c.slice(0, 80)}`)
+  }
+  const before = yml.indexOf('- id: before')
+  const deploy = yml.indexOf('uses: actions/deploy-pages@')
+  const after = yml.indexOf('name: The site hands out part of the model')
+  assert.ok(before >= 0 && before < deploy && deploy < after, 'one note before the deploy, one after it')
+  for (const [what, s, most] of [['before', step('- id: before'), 2], ['after', step('name: The site hands out part of the model'), 3]] as const) {
+    assert.match(s, /\n {8}continue-on-error: true\n/, `${what}: a note only`)
+    const minutes = Number(/\n {8}timeout-minutes: (\d+)\n/.exec(s)?.[1])
+    assert.ok(minutes > 0 && minutes <= most, `${what}: a time limit of its own, ${most} minutes at most`)
+    bounded(what, s)
+    for (const g of s.match(/[^\n]*\bgh api\b[^\n]*/g) ?? []) assert.match(g, /\btimeout \d+ gh api\b/, `${what}: ${g.trim().slice(0, 80)}`)
+  }
+  // The older look after the deploy, at the manifest and the size, has no limit of its own (and is no note only), but
+  // each of its calls has one and it asks for the manifest six times at most.
+  const sizes = step('name: The site serves the model (its manifest and its size')
+  assert.doesNotMatch(sizes, /timeout-minutes|continue-on-error/, 'sizes: no limit of its own, as CHANGELOG.md and MANUAL.md say')
+  bounded('sizes', sizes)
+  assert.match(sizes, /\n\s*for i in 1 2 3 4 5 6; do\n/, 'sizes: six tries at most')
+  // And so every call to the site anywhere in the deploy job.
+  const job = yml.indexOf('\n  deploy:\n')
+  assert.ok(job >= 0 && job < before, 'the deploy job')
+  bounded('deploy job', code(yml.slice(job)))
 })
 
 test('the app\'s pin is the page\'s too: its own cache key, its own licence, fetched at its pinned revision', () => {

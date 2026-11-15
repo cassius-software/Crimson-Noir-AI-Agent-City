@@ -40,8 +40,8 @@ import type { InPageMind } from './09_Cognition/inPage.ts'
 import type { PageDevice } from './09_Cognition/pageMind.ts'
 import { runtimeMode } from './09_Cognition/inPageCaps.ts'
 import { fits, placement, type GpuMode, type PlanEnv } from './09_Cognition/inPagePlan.ts'
-import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_Cognition/modelStore.ts'
-import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
+import { createModelStore, roomRefusal, workerCopy, workerPart, type KeptModel, type PartSession } from './09_Cognition/modelStore.ts'
+import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, downloadSiteModel, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
 import { bindBrain, createBrainReadout, readBrain, subscribeBrain, type SiteFacts } from './09_Cognition/brainReadout.ts'
@@ -280,7 +280,7 @@ function once<T>(make: () => T): () => T {
 
 /**
  * One copy worker (modelStore.worker.ts, bundled into this file like the physics worker), counted among the page's
- * live workers (longTasks.ts) until workerCopy ends it.
+ * live workers (longTasks.ts) until workerCopy (or workerPart, for a download straight into the page) ends it.
  */
 function copyWorker(): Worker {
   const worker = new CopyWorker({ name: 'model-copy' })
@@ -304,8 +304,12 @@ const PAGE_MODEL_REFUSAL = once((): string | null => {
   const mode = runtimeMode(PAGE_RUNTIME().caps())
   return mode.ok ? null : mode.reason
 })
-/** Where the page keeps model files (its own storage, 09_Cognition/modelStore.ts), one per page, each file copied by a worker of its own. */
-const PAGE_MODELS = once(() => createModelStore({ copy: workerCopy(copyWorker) }))
+/**
+ * Where the page keeps model files (its own storage, 09_Cognition/modelStore.ts), one per page, each file copied by a
+ * worker of its own, and the site's model (or the app's, or the launcher's) downloaded straight into it by another
+ * (workerPart). The parts it leaves to be picked up are this build's two pins'; any other part is swept.
+ */
+const PAGE_MODELS = once(() => createModelStore({ copy: workerCopy(copyWorker), part: workerPart(copyWorker), parts: [SITE_MODEL, APP_MODEL] }))
 
 /** The speech recogniser's worker (speech.worker.ts, bundled into this file like the physics worker), counted among the page's live workers until it is ended. */
 function speechWorker(): SpeechWorkerLike {
@@ -1847,14 +1851,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         let fetching = false
         // `provider` false: the page got the file by itself, so the provider is left as the visitor had it (auto by
         // default, where a model server on this machine still answers first); the mind has chosen the file all the same.
-        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {
+        const keepPicked = (files: readonly File[], onCopy?: (done: number, total: number) => void, provider = true): Promise<string> =>
+          keepWith((progress) => inPage.keep(files, progress), onCopy, provider)
+        // The keep itself (`keep`: a picked file's copy, or the site's model's commit from its part) with everything
+        // around it: one at a time, the HUD's line, the provider chosen, the hint, the desktop's warm load, the line.
+        const keepWith = async (keep: (progress: (done: number, total: number) => void) => Promise<KeptModel>, onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {
           if (keeping) throw new Error('a model file is being kept in this page already: wait for it to finish')
           if (fetching) throw new Error(`${source.coming}: wait for it to finish, or stop it on Sloane's card`)
           keeping = true
           keepLine = 'keeping the model file in this page'
           let kept: KeptModel
           try {
-            kept = await inPage.keep(files, (done, total) => {
+            kept = await keep((done, total) => {
               keepLine = `keeping the model file in this page ${total > 0 ? Math.min(100, Math.max(0, Math.floor((done / total) * 100))) : 0}%`
               onCopy?.(done, total)
             })
@@ -1916,13 +1924,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           brainHeard()
           return had
         }
-        /** Why this device or its storage cannot take the model now, or null (the same checks a tap meets). */
+        /**
+         * Why this device or its storage cannot take the model now, or null (the same checks a tap meets). A part to
+         * pick up counts only what is still to come: its bytes are in the storage's use already.
+         */
         const siteRefusal = async (): Promise<string | null> => {
           const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
           const fit = fits([{ name: pin.file, bytes: pin.bytes }], env, placement(env))
           if (!fit.ok) return fit.reason
           const room = await PAGE_MODELS().usage()
-          return room ? roomRefusal(pin.bytes, room) : null
+          if (!room) return null
+          const part = await PAGE_MODELS().part(pin)
+          return part ? roomRefusal(pin.bytes - part.at, room, true) : roomRefusal(pin.bytes, room)
         }
         const autoRecord = createAutoRecord(autoStore(), autoLocks())
         /** What the page's own start decides by (siteAuto.ts AutoFacts), read now, with no request. */
@@ -1985,12 +1998,33 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         })
         const unbindBrain = bindBrain(brain)
         brainHeard = () => brain.refresh()
-        /** The job's work (siteJob above): the checks, the download, the hand-off to keepPicked. */
+        /**
+         * The job's work (siteJob above): the checks, then the download, straight into a part in the page's storage
+         * where a worker can write it (modelStore.ts openPart: picked up where an earlier one stopped, with Range and
+         * If-Range, siteModel.ts downloadSiteModel) and then kept from there (commitPart, through keepWith); where it
+         * cannot (no synchronous handle in a worker, no storage the page may write), downloaded whole and handed to
+         * keepPicked, as before. A Stop, the connection turning costly or the city's end leaves the part to be picked
+         * up; what is not the pinned model is deleted.
+         */
         const siteWork = async (how: SiteJobHow, onProgress: (p: SiteModelProgress) => void, signal: AbortSignal): Promise<string> => {
           if (keeping || fetching) throw new Error('a model file is being kept in this page already: wait for it to finish')
           // Busy from here, before the first wait, so a second tap, a pick or a drop cannot start beside it.
           fetching = true
-          let file: File
+          let file: File | null = null
+          let part: PartSession | null = null
+          let shown = -1
+          let shownPct = -1
+          const told = (done: number, total: number): void => {
+            // Told once a megabyte or a percent, not once a piece: the card and the HUD redraw for what a person can
+            // see change (a percent, for a model of a few megabytes).
+            const mb = Math.floor(done / 1024 ** 2)
+            const pct = Math.floor((done / Math.max(1, total)) * 100)
+            if (mb === shown && pct === shownPct && done < total) return
+            shown = mb
+            shownPct = pct
+            keepLine = source.line(pct)
+            onProgress({ step: 'download', done, total })
+          }
           try {
             const had = await keptSite().catch(() => null)
             if (had) {
@@ -2003,23 +2037,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             }
             const refused = await siteRefusal()
             if (refused !== null) throw new Error(refused)
-            let shown = -1
-            let shownPct = -1
             keepLine = source.line(0)
-            file = await fetchSiteModel(source.fetch, pin, (done, total) => {
-              // Told once a megabyte or a percent, not once a piece: the card and the HUD redraw for what a person can
-              // see change (a percent, for a model of a few megabytes).
-              const mb = Math.floor(done / 1024 ** 2)
-              const pct = Math.floor((done / Math.max(1, total)) * 100)
-              if (mb === shown && pct === shownPct && done < total) return
-              shown = mb
-              shownPct = pct
-              keepLine = source.line(pct)
-              onProgress({ step: 'download', done, total })
-            }, AbortSignal.any([signal, siteEnd.signal]), source.from)
-            // A Stop, or the city's end, that came as the last bytes did: nothing is kept or chosen.
+            const stop = AbortSignal.any([signal, siteEnd.signal])
+            part = await PAGE_MODELS().openPart(pin)
+            if (part !== null) await downloadSiteModel(source.fetch, pin, part, told, stop, source.from)
+            else file = await fetchSiteModel(source.fetch, pin, told, stop, source.from)
+            // A Stop, or the city's end, that came as the last bytes did: nothing is kept or chosen (a whole part
+            // waits: the next try reads it back and hashes it again, and keeps it with nothing more asked).
             signal.throwIfAborted()
             siteEnd.signal.throwIfAborted()
+          } catch (e) {
+            part?.release()
+            throw e
           } finally {
             fetching = false
             keepLine = null
@@ -2027,11 +2056,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // The page's own download is not kept over a choice the visitor made while it came (a provider, a model of
           // their own): it ends stopped, not short, and the next visit decides again.
           const other = how === 'auto' ? autoChoice() : null
-          if (other !== null) throw new SiteJobHeld('choice', other)
-          // Handed to the copy from here, in the same turn as the checks above, so no Stop lands between them: the
+          if (other !== null) {
+            part?.release()
+            throw new SiteJobHeld('choice', other)
+          }
+          // Handed to the keep from here, in the same turn as the checks above, so no Stop lands between them: the
           // card drops its Stop now (step 'keep'), not at the copy's first progress after the header check.
-          onProgress({ step: 'keep', done: 0, total: file.size })
-          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap').then((line) => {
+          onProgress({ step: 'keep', done: 0, total: pin.bytes })
+          const keeps = (done: number, total: number): void => onProgress({ step: 'keep', done, total })
+          const kept = part !== null
+            ? keepWith((progress) => inPage.adopt(() => PAGE_MODELS().commitPart(part as PartSession, pin, progress)), keeps, how === 'tap').finally(() => part?.release())
+            : keepPicked([file as File], keeps, how === 'tap')
+          return kept.then((line) => {
             // Kept, as the brain readout knows before the job says done (a forget reads it again: modelBridge below).
             siteKept = true
             return line

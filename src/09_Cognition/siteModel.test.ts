@@ -11,14 +11,23 @@
  * manifest offers only exactly the pin, and fetchSiteModel turns into a File only what arrived whole, with the pinned
  * size and SHA-256 (a short body, a long one, a wrong hash, an HTTP error and a stop each end with no File and a plain
  * sentence), counting as it goes. The fetch is a fake serving the tiny model (tools/browser/tinyGguf.mjs) under a pin
- * made from its bytes. What breaks if it is removed? A pin that drifted from its record, a fetch that strayed off the
- * page's folder, or a model kept before its hash was checked would pass in silence.
+ * made from its bytes. downloadSiteModel is driven against a real HTTP server on this machine (node:http, through
+ * Node's own fetch) that honours Range with If-Range, ignores it, changes its ETag, gives a weak ETag or only
+ * Last-Modified, answers 416 or a range that does not fit, encodes its body, or cuts the connection off in the middle
+ * of a hash block, writing into a part (modelPart.ts) over in-memory files that last across tries as the page's
+ * storage does: a cut-off keeps what arrived and the next try asks only for the rest and ends with the pin's SHA-256;
+ * anything the part cannot trust starts from the first byte (a whole part with a byte changed on disk among it); a
+ * flipped byte after a resume is still refused and the part deleted. What breaks if it is removed? A pin that drifted
+ * from its record, a fetch that strayed off the page's folder, a model kept before its hash was checked, or a resume
+ * that stitched the wrong bytes together would pass in silence.
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, manifestText, parseManifest, siteUrl, type SiteFetch, type SiteModelPin } from './siteModel.ts'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, contentRange, downloadSiteModel, fetchSiteModel, launcherServes, manifestText, parseManifest, restFits, siteUrl, validatorOf, type SiteFetch, type SiteModelPin, type SiteSink } from './siteModel.ts'
+import { openPart, parseNote, type PartNote, type SyncFile } from './modelPart.ts'
 import { APP_READ_BYTES } from '../07_Execute_Actions/desktopShell.ts'
 import { localText } from './localCompute.ts'
 
@@ -372,5 +381,365 @@ test('a stop that comes after the last byte, while the browser still makes the f
     await assert.rejects(fetchSiteModel(s.fetchFn, s.pin, () => {}, late.signal), /stopped at the very end/)
   } finally {
     Response.prototype.blob = real
+  }
+})
+
+
+/** A file of the page's storage in memory (the part, or its note), kept across tries as the storage keeps it. */
+class MemFile implements SyncFile {
+  data = new Uint8Array(0)
+  read(buf: Uint8Array, o: { at: number }): number {
+    const n = Math.max(0, Math.min(buf.length, this.data.length - o.at))
+    buf.set(this.data.subarray(o.at, o.at + n))
+    return n
+  }
+  write(buf: Uint8Array, o: { at: number }): number {
+    if (o.at + buf.length > this.data.length) {
+      const grown = new Uint8Array(o.at + buf.length)
+      grown.set(this.data)
+      this.data = grown
+    }
+    this.data.set(buf, o.at)
+    return buf.length
+  }
+  truncate(n: number): void { this.data = this.data.slice(0, n) }
+  getSize(): number { return this.data.length }
+  flush(): void {}
+  close(): void {}
+}
+
+/** One directory of the page's storage: the part and its note, and whether the part was deleted. */
+interface Shelf { part: MemFile; note: MemFile; discarded: number }
+const shelf = (): Shelf => ({ part: new MemFile(), note: new MemFile(), discarded: 0 })
+const noteOn = (sh: Shelf): PartNote | null => parseNote(new TextDecoder().decode(sh.note.data))
+
+/** A sink over the part on `sh` (modelPart.ts openPart, writes of `buffer` bytes), its calls run in order as the worker runs them. */
+async function sinkOn(sh: Shelf, pin: SiteModelPin, buffer = 4096): Promise<SiteSink> {
+  const w = await openPart(sh.part, sh.note, pin, Date.now, buffer)
+  let q: Promise<unknown> = Promise.resolve()
+  const then = <T>(f: () => Promise<T>): Promise<T> => {
+    const p = q.then(f)
+    q = p.catch(() => undefined)
+    return p
+  }
+  return {
+    at: w.found.at,
+    validator: w.found.validator,
+    begin: (at, v) => { void then(() => w.begin(at, v)) },
+    put: (b) => then(() => w.put(b.slice())).then(() => undefined),
+    hold: () => then(() => w.hold()),
+    end: () => then(() => w.end()),
+    discard: () => then(async () => {
+      await w.close().catch(() => undefined)
+      sh.part.data = new Uint8Array(0)
+      sh.note.data = new Uint8Array(0)
+      sh.discarded++
+    }),
+  }
+}
+
+/** How the fake server answers a request for the model. */
+interface Serve {
+  /** The ETag it sends (null: none); a function of the request's number to change it between requests. */
+  etag?: string | null | ((n: number) => string | null)
+  lastModified?: string | null
+  /** Ranges: honoured with If-Range (the default), ignored (always 200), 416, or a 206 whose range starts elsewhere. */
+  range?: 'honour' | 'ignore' | '416' | 'elsewhere'
+  /** The body of request n (the model by default). */
+  body?: (n: number) => Uint8Array
+  /** Request n's connection is cut after this many bytes of its body. */
+  cutAt?: (n: number) => number | null
+  encoding?: string
+  status?: number
+}
+
+/** A server on this machine serving one model under models/, and what it was asked: each request's Range, If-Range, status and bytes sent. */
+async function serve(model: Uint8Array, o: Serve = {}) {
+  const asked: { range: string | null; ifRange: string | null; status: number; sent: number }[] = []
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const n = asked.length
+    const body = o.body?.(n) ?? model
+    const etag = typeof o.etag === 'function' ? o.etag(n) : o.etag === undefined ? '"m-1"' : o.etag
+    const head: Record<string, string> = { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes' }
+    if (etag !== null) head.ETag = etag
+    if (o.lastModified) head['Last-Modified'] = o.lastModified
+    if (o.encoding) head['Content-Encoding'] = o.encoding
+    const range = typeof req.headers.range === 'string' ? req.headers.range : null
+    const ifRange = typeof req.headers['if-range'] === 'string' ? req.headers['if-range'] : null
+    const entry = { range, ifRange, status: 200, sent: 0 }
+    asked.push(entry)
+    if (o.status) {
+      entry.status = o.status
+      res.writeHead(o.status, head).end('not now')
+      return
+    }
+    let from = 0
+    const m = range ? /^bytes=(\d+)-$/.exec(range) : null
+    const matches = ifRange === null || ifRange === etag || (etag === null && ifRange === o.lastModified)
+    if (m && o.range !== 'ignore' && matches) {
+      if (o.range === '416' || Number(m[1]) >= body.length) {
+        entry.status = 416
+        res.writeHead(416, { ...head, 'Content-Range': `bytes */${body.length}` }).end()
+        return
+      }
+      from = Number(m[1])
+      const said = o.range === 'elsewhere' ? from + 1 : from
+      entry.status = 206
+      res.writeHead(206, { ...head, 'Content-Range': `bytes ${said}-${body.length - 1}/${body.length}`, 'Content-Length': String(body.length - from) })
+    } else {
+      res.writeHead(200, { ...head, 'Content-Length': String(body.length) })
+    }
+    const rest = body.subarray(from)
+    const cut = o.cutAt?.(n) ?? null
+    if (cut !== null && cut < rest.length) {
+      entry.sent = cut
+      res.write(rest.subarray(0, cut), () => setTimeout(() => res.socket?.destroy(), 10))
+      return
+    }
+    entry.sent = rest.length
+    res.end(rest)
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/city/`
+  const fetchFn: SiteFetch = (path, init) => fetch(siteUrl(path, base), init)
+  return { asked, fetchFn, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()) }) }
+}
+
+/** The tiny model and its pin. */
+function tinyPinned(): { model: Uint8Array; pin: SiteModelPin } {
+  const model = tinyGguf({ letter: 'a' })
+  return { model, pin: { ...SITE_MODEL, file: 'tiny-a.gguf', bytes: model.length, sha256: sha(model) } }
+}
+
+/** Where the first try is cut: about 40% in, and not on a hash block's edge (the saved hash holds a tail). */
+const cutOf = (model: Uint8Array): number => Math.floor(model.length * 0.4) + 13
+
+test('downloadSiteModel: cut off mid-hash, it keeps what arrived; the next try asks only for the rest (Range, If-Range), takes the 206 and ends with the pin\'s SHA-256', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  const srv = await serve(model, { cutAt: (n) => (n === 0 ? cut : null) })
+  try {
+    const sh = shelf()
+    const first: number[] = []
+    await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), (d) => first.push(d)), /the download stopped at [\d,]+ of [\d,]+ bytes: try again, and the next try asks this site only for the rest$/)
+    assert.equal(first[0], 0, 'a first try counts from 0')
+    const kept = noteOn(sh)
+    assert.equal(kept?.at, cut, 'every byte that arrived is written and noted, not only whole writes')
+    assert.equal(kept?.validator, '"m-1"')
+    assert.equal(cut % 64 !== 0 && (kept?.hash.tail.length ?? 0) > 0, true, 'the hash was saved in the middle of a block')
+    const again: [number, number][] = []
+    const sink = await sinkOn(sh, pin)
+    assert.equal(sink.at, cut)
+    await downloadSiteModel(srv.fetchFn, pin, sink, (d, t) => again.push([d, t]))
+    assert.deepEqual(again[0], [cut, pin.bytes], 'a resumed download\'s first count is where it stopped')
+    assert.deepEqual(again.at(-1), [pin.bytes, pin.bytes])
+    assert.deepEqual(sh.part.data, model)
+    assert.deepEqual(srv.asked.map((a) => [a.range, a.ifRange, a.status]), [[null, null, 200], [`bytes=${cut}-`, '"m-1"', 206]])
+    assert.equal(srv.asked.reduce((n, a) => n + a.sent, 0), model.length, 'every byte was sent once')
+  } finally {
+    await srv.close()
+  }
+})
+
+test('downloadSiteModel starts over from the first byte when the server ignores Range (200), or its ETag changed (If-Range fails: 200 with the new file)', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  for (const o of [{ range: 'ignore' as const }, { etag: (n: number) => `"m-${n}"` }]) {
+    const srv = await serve(model, { ...o, cutAt: (n) => (n === 0 ? cut : null) })
+    try {
+      const sh = shelf()
+      await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), () => {}), /stopped at/)
+      const counts: number[] = []
+      await downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), (d) => counts.push(d))
+      assert.equal(counts[0], 0, `${JSON.stringify(o)}: counted from 0 again`)
+      assert.deepEqual(sh.part.data, model, 'the part was emptied first, not written over')
+      assert.equal(srv.asked[1].range, `bytes=${cut}-`)
+      assert.equal(srv.asked[1].status, 200)
+      // The second answer's ETag ("m-1": the first was "m-0" where it changes) is the one the part now holds.
+      assert.equal(noteOn(sh)?.validator, '"m-1"', 'the note takes the validator of the answer it holds')
+    } finally {
+      await srv.close()
+    }
+  }
+})
+
+test('downloadSiteModel picks up with Last-Modified where there is no ETag, and never with a weak ETag, an encoded body or Accept-Ranges: none', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  const date = 'Wed, 11 Nov 2026 10:00:00 GMT'
+  const lm = await serve(model, { etag: null, lastModified: date, cutAt: (n) => (n === 0 ? cut : null) })
+  try {
+    const sh = shelf()
+    await assert.rejects(downloadSiteModel(lm.fetchFn, pin, await sinkOn(sh, pin), () => {}), /only for the rest/)
+    await downloadSiteModel(lm.fetchFn, pin, await sinkOn(sh, pin), () => {})
+    assert.deepEqual(lm.asked.map((a) => [a.range, a.ifRange, a.status]), [[null, null, 200], [`bytes=${cut}-`, date, 206]])
+    assert.deepEqual(sh.part.data, model)
+  } finally {
+    await lm.close()
+  }
+  for (const o of [{ etag: 'W/"m-1"' }, { encoding: 'gzip' }]) {
+    const srv = await serve(model, { ...o, cutAt: (n) => (n === 0 ? cut : null) })
+    try {
+      const sh = shelf()
+      // The body is not really gzip, so Node's fetch fails it as it decodes: only what the header does to the note is looked at.
+      await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), () => {}), (e: Error) => /stopped at/.test(e.message) && !/the rest/.test(e.message))
+      assert.equal(noteOn(sh)?.validator, null, `${JSON.stringify(o)}: nothing to ask with`)
+      const sink = await sinkOn(sh, pin)
+      assert.equal(sink.at, 0)
+      if (!o.encoding) {
+        await downloadSiteModel(srv.fetchFn, pin, sink, () => {})
+        assert.equal(srv.asked[1].range, null, 'no Range is sent without a validator')
+        assert.deepEqual(sh.part.data, model)
+      }
+    } finally {
+      await srv.close()
+    }
+  }
+  const h = (o: Record<string, string>): Headers => new Headers(o)
+  assert.equal(validatorOf(h({ etag: '"a"' })), '"a"')
+  assert.equal(validatorOf(h({ etag: 'W/"a"', 'last-modified': date })), null, 'a weak ETag: no fallback to the date')
+  assert.equal(validatorOf(h({ 'last-modified': date })), date)
+  assert.equal(validatorOf(h({ 'last-modified': 'yesterday-ish' })), null)
+  assert.equal(validatorOf(h({ etag: '"a"', 'accept-ranges': 'none' })), null)
+  assert.equal(validatorOf(h({ etag: '"a"', 'content-encoding': 'br' })), null)
+  assert.equal(validatorOf(h({ etag: '"a"', 'content-encoding': 'identity' })), '"a"')
+  assert.equal(validatorOf(h({ etag: 'a' })), null, 'an ETag without its quotes is not one')
+  assert.equal(validatorOf(h({})), null)
+})
+
+test('downloadSiteModel asks once more from the first byte when the rest cannot be sent (416) or the 206 does not fit the part', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  for (const range of ['416', 'elsewhere'] as const) {
+    const srv = await serve(model, { cutAt: (n) => (n === 0 ? cut : null) })
+    try {
+      const sh = shelf()
+      await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), () => {}), /stopped at/)
+      const again = await serve(model, { range })
+      try {
+        await downloadSiteModel(again.fetchFn, pin, await sinkOn(sh, pin), () => {})
+        assert.deepEqual(again.asked.map((a) => [a.range, a.status]), [[`bytes=${cut}-`, range === '416' ? 416 : 206], [null, 200]], range)
+        assert.deepEqual(sh.part.data, model)
+      } finally {
+        await again.close()
+      }
+    } finally {
+      await srv.close()
+    }
+  }
+  const res = (status: number, h: Record<string, string>): Response => new Response(status === 206 ? 'x' : null, { status, headers: h })
+  const rest = `bytes 100-${pin.bytes - 1}/${pin.bytes}`
+  assert.ok(restFits(res(206, { 'content-range': rest, etag: '"v"' }), 100, pin, '"v"'))
+  assert.ok(restFits(res(206, { 'content-range': rest }), 100, pin, '"v"'), 'a 206 that does not repeat the ETag')
+  assert.ok(!restFits(res(206, { 'content-range': rest, etag: '"w"' }), 100, pin, '"v"'), 'another ETag')
+  assert.ok(!restFits(res(206, { 'content-range': `bytes 100-200/${pin.bytes}` }), 100, pin, '"v"'), 'not to the end')
+  assert.ok(!restFits(res(206, { 'content-range': `bytes 100-${pin.bytes}/${pin.bytes + 1}` }), 100, pin, '"v"'), 'another total')
+  assert.ok(!restFits(res(206, { 'content-range': rest, 'content-length': '5' }), 100, pin, '"v"'), 'a length that is not the rest')
+  assert.ok(!restFits(res(206, { 'content-range': rest, 'content-encoding': 'gzip' }), 100, pin, '"v"'), 'encoded')
+  assert.ok(!restFits(res(200, { 'content-range': rest }), 100, pin, '"v"'), 'not a 206')
+  assert.deepEqual(contentRange('bytes 0-0/10'), { first: 0, last: 0, total: 10 })
+  for (const bad of ['bytes */10', 'bytes 5-4/10', 'bytes 0-10/10', 'items 0-1/2', '', null]) assert.equal(contentRange(bad), null, String(bad))
+})
+
+test('a flipped byte in what came after a resume is still refused, and the part is deleted; so is a body that runs long', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  const bad = model.slice()
+  bad[bad.length - 100] ^= 0xff
+  const srv = await serve(model, { cutAt: (n) => (n === 0 ? cut : null), body: (n) => (n === 0 ? model : bad) })
+  try {
+    const sh = shelf()
+    await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), () => {}), /stopped at/)
+    await assert.rejects(downloadSiteModel(srv.fetchFn, pin, await sinkOn(sh, pin), () => {}), /^Error: what this site sent is not the model this page was built for \(its SHA-256 differs\), so nothing was kept$/)
+    assert.equal(srv.asked[1].status, 206, 'it was the resumed rest that carried the flipped byte')
+    assert.equal(sh.discarded, 1)
+    assert.equal(sh.part.data.length, 0)
+    assert.equal(noteOn(sh), null)
+  } finally {
+    await srv.close()
+  }
+  const more = new Uint8Array(model.length + 9)
+  more.set(model)
+  const long = await serve(model, { body: () => more })
+  try {
+    const sh = shelf()
+    await assert.rejects(downloadSiteModel(long.fetchFn, pin, await sinkOn(sh, pin), () => {}), /larger than the model this page was built for/)
+    assert.equal(sh.discarded, 1)
+  } finally {
+    await long.close()
+  }
+})
+
+test('downloadSiteModel stopped keeps what arrived and rejects with the stop\'s reason; an HTTP error leaves the part as it was; a whole part is checked with nothing asked, or asked again whole once a byte of it changed on disk', async () => {
+  const { model, pin } = tinyPinned()
+  const cut = cutOf(model)
+  // The server stalls after `cut` bytes (the connection left open); the stop comes then.
+  const stalled = new Set<ServerResponse>()
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { ETag: '"m-1"', 'Content-Length': String(model.length) })
+    res.write(model.subarray(0, cut))
+    stalled.add(res)
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/`
+  try {
+    const sh = shelf()
+    const stop = new AbortController()
+    let seen = 0
+    const going = downloadSiteModel((path, init) => fetch(siteUrl(path, base), init), pin, await sinkOn(sh, pin), (d) => {
+      seen = d
+      if (d >= cut) stop.abort(new DOMException('stopped (person)', 'AbortError'))
+    }, stop.signal)
+    await assert.rejects(going, /stopped \(person\)/)
+    assert.equal(seen, cut)
+    assert.equal(noteOn(sh)?.at, cut, 'what arrived before the stop is kept to be picked up')
+    // Already stopped: nothing is asked, and the part stays as it is.
+    await assert.rejects(downloadSiteModel(() => assert.fail('nothing asked'), pin, await sinkOn(sh, pin), () => {}, stop.signal), /stopped \(person\)/)
+    assert.equal(noteOn(sh)?.at, cut)
+  } finally {
+    for (const r of stalled) r.destroy()
+    server.closeAllConnections()
+    server.close()
+  }
+  const down = await serve(model, { status: 503 })
+  try {
+    const sh = shelf()
+    const w = await sinkOn(sh, pin)
+    w.begin(0, '"m-1"')
+    await w.put(model.subarray(0, cut))
+    await w.hold()
+    await assert.rejects(downloadSiteModel(down.fetchFn, pin, await sinkOn(sh, pin), () => {}), /this site did not send the model \(HTTP 503\): try again later/)
+    assert.equal(down.asked[0].range, `bytes=${cut}-`)
+    assert.equal(noteOn(sh)?.at, cut, 'the part is left as it was')
+    // The rest written by hand: a part that holds the whole file is checked and passes, with no request.
+    const all = await sinkOn(sh, pin)
+    all.begin(cut, '"m-1"')
+    await all.put(model.subarray(cut))
+    await all.hold()
+    const whole = await sinkOn(sh, pin)
+    assert.equal(whole.at, pin.bytes)
+    const counts: number[] = []
+    await downloadSiteModel(() => assert.fail('nothing asked'), pin, whole, (d) => counts.push(d))
+    assert.deepEqual(counts, [pin.bytes])
+  } finally {
+    await down.close()
+  }
+  // A whole part whose bytes changed on disk since its note (byte 10, far from its end) is not kept as it is: read back
+  // and hashed again at the open, it starts over from the first byte, and what is kept is the pin's.
+  const fine = await serve(model)
+  try {
+    const sh = shelf()
+    const w = await sinkOn(sh, pin)
+    w.begin(0, '"m-1"')
+    await w.put(model)
+    await w.hold()
+    sh.part.data[10] ^= 1
+    const again = await sinkOn(sh, pin)
+    assert.deepEqual([again.at, again.validator], [0, null], 'not picked up')
+    await downloadSiteModel(fine.fetchFn, pin, again, () => {})
+    assert.deepEqual(fine.asked.map((a) => [a.range, a.status]), [[null, 200]], 'asked whole, once')
+    assert.deepEqual(sh.part.data, model)
+  } finally {
+    await fine.close()
   }
 })

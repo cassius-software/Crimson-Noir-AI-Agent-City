@@ -96,18 +96,23 @@
  *   siteModel.ts, siteAuto.ts, siteJob.ts, App.tsx's siteHost and siteAuto, Concierge.tsx): the web copy built from
  *   dist/index.html with the page's pin (SITE_MODEL's file name, size and SHA-256) swapped for the tiny model's and the
  *   tiny model placed beside it by tools/web/siteModel.mjs, as the web workflow places the real one, served as a static
- *   host serves it, to a desktop. A fresh visit with the model's answer held halfway: once the city is on screen the
- *   page asks for the manifest and the model with no click, Sloane's card shows its progress and its Stop, and the Stop
- *   keeps nothing and is remembered. On the next visit "how's it going" typed into Sloane's goal field finds no model,
- *   and the card offers Get the model with its size, the page having asked this site for the manifest alone (the Stop
- *   held it back); one click downloads it with its progress on the card, keeps it in the page's storage and asks the
- *   turn again by itself, and the model answers it (CHAT_MAX a's); the toast says it is loaded, `ask` says the inpage
- *   provider answers with it, kept and chosen, and the service worker's cache holds nothing under models/. The visit is
- *   audited as inpage's is: every request stays in blob:, data: or the page's own origin (but for Sloane's look for a
- *   model server on this machine), no socket is opened and no security message logged. Then a fresh browser gets it by
- *   itself whole: kept, said in a toast, loaded, and answering Sloane with the provider left at auto. Then, in a fresh
- *   browser, the model with one byte flipped: the page's own try says in a toast that its SHA-256 differs and keeps
- *   nothing, the card says why and offers the button, and with the right file back the same button keeps it;
+ *   host serves it (a strong ETag, Range honoured with If-Range), to a desktop. A fresh visit with the model's answer
+ *   held a fifth of the way: once the city is on screen the page asks for the manifest and the model with no click,
+ *   Sloane's card shows its progress and its Stop, and the Stop keeps no model, only the part that arrived (part.json
+ *   beside it), says held in the brain readout, and is remembered. On the next visit "how's it going" typed into
+ *   Sloane's goal field finds no model, and the card offers Get the model with its size, the page having asked this
+ *   site for the manifest alone (the Stop held it back); a click picks the part up (Range from where it stopped,
+ *   If-Range its ETag, a 206, the readout's first count there) and this site drops the connection two fifths of the
+ *   way in: the card says the download stopped and the part holds what arrived; the next click asks for the rest only,
+ *   keeps it in the page's storage under its own name and asks the turn again by itself, and the model answers it
+ *   (CHAT_MAX a's); after the Stop this site sent each byte the part lacked once; the toast says it is loaded, `ask`
+ *   says the inpage provider answers with it, kept and chosen, and the service worker's cache holds nothing under
+ *   models/. The visit is audited as inpage's is: every request stays in blob:, data: or the page's own origin (but for
+ *   Sloane's look for a model server on this machine), no socket is opened and no security message logged. Then a fresh
+ *   browser gets it by itself whole: kept, said in a toast, loaded, and answering Sloane with the provider left at
+ *   auto. Then, in a fresh browser, the model with one byte flipped: the page's own try says in a toast that its
+ *   SHA-256 differs and keeps nothing (no model, and no part), the card says why and offers the button, and with the
+ *   right file back the same button keeps it;
  * - launcher: the model the NixOS package's launcher serves beside its page (tools/web/launch.mjs, tools/nix/model.nix,
  *   App.tsx launcherSource): the launcher's own server, a model folder laid out as the package lays it, the page with
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
@@ -201,6 +206,7 @@ import { eligible, onRoad, skillsOf } from '../../src/03_Spawn_Agents/skills.ts'
 import { CHAT_MAX } from '../../src/07_Execute_Actions/onboarding/voice.ts'
 import { GUARD_KEY } from '../../src/09_Cognition/inPage.ts'
 import { MODELS_DIR } from '../../src/09_Cognition/modelStore.ts'
+import { PART_NOTE, partName } from '../../src/09_Cognition/modelPart.ts'
 import { APP_MODEL, LAUNCHER_WORD, SITE_DIR, SITE_MANIFEST, SITE_MODEL, manifestText } from '../../src/09_Cognition/siteModel.ts'
 import { AUTO_KEY, STOPPED } from '../../src/09_Cognition/siteAuto.ts'
 
@@ -625,8 +631,11 @@ const SITE_TEXT = new Set([`${SITE_DIR}LICENSE`, `${SITE_DIR}NOTICE`])
 /**
  * Serves a folder the way a static host such as GitHub Pages does: its files by name, the folder's index, and no
  * isolation headers. A file in its models/ folder (the site's model, its manifest and its licence: sitemodel) is
- * served too, by a plain name only and read when it is asked for, so a scenario can change it between visits.
- * `served` lists every path asked for, in order.
+ * served too, by a plain name only and read when it is asked for, so a scenario can change it between visits, with a
+ * strong ETag of its bytes and a Range (bytes=N-) honoured as such a host honours one: a 206 of the rest while
+ * If-Range is absent or still the ETag, the whole file (200) when it is not. `served` lists every path asked for, in
+ * order; `ranges` each answer for a models/ file: its Range and If-Range, its status, and where its bytes began and
+ * how many were sent.
  */
 async function serveStatic(dir) {
   const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.json': 'application/json', '.gguf': 'application/octet-stream' }
@@ -642,22 +651,48 @@ async function serveStatic(dir) {
   // a download), until flow() lets the host answer whole again and drops the answers it left hanging.
   let stalled = null
   const hanging = new Set()
+  // A file whose next answer stops once the file's first so many bytes are sent, and whose connection is then cut (a
+  // dropped connection, the body short of its Content-Length): once.
+  let dropping = null
+  /** Each answer for a models/ file: { name, range, ifRange, status, from, sent }. */
+  const ranges = []
   const server = createServer((req, res) => {
     const name = new URL(req.url ?? '/', 'http://x').pathname.slice(1) || 'index.html'
     served.push(name)
     if (!files.has(name) && !(SITE_FILE.test(name) && isFile(join(dir, name)))) { res.writeHead(404).end(); return }
     sent.set(name, (sent.get(name) ?? 0) + 1)
-    asked.push(`${req.url}${stalled && stalled.name === name ? ' (stalled)' : ''} at ${((Date.now() - began) / 1000).toFixed(1)} s`)
+    asked.push(`${req.url}${stalled && stalled.name === name ? ' (stalled)' : ''}${req.headers.range ? ` (${req.headers.range})` : ''} at ${((Date.now() - began) / 1000).toFixed(1)} s`)
     const type = SITE_TEXT.has(name) ? 'text/plain; charset=utf-8' : TYPES[extname(name)] ?? 'application/octet-stream'
     const head = { 'Content-Type': type, 'Cache-Control': 'no-store' }
+    const body = readFileSync(join(dir, name))
+    if (!name.startsWith(SITE_DIR)) { res.writeHead(200, head).end(body); return }
+    // A models/ file: its ETag, and the rest from a Range while If-Range (if sent) is still that ETag.
+    const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`
+    const range = typeof req.headers.range === 'string' ? req.headers.range : null
+    const ifRange = typeof req.headers['if-range'] === 'string' ? req.headers['if-range'] : null
+    const m = range ? /^bytes=(\d+)-$/.exec(range) : null
+    const from = m && (ifRange === null || ifRange === etag) && Number(m[1]) < body.length ? Number(m[1]) : 0
+    const entry = { name, range, ifRange, status: from > 0 ? 206 : 200, from, sent: 0 }
+    ranges.push(entry)
+    const answer = { ...head, ETag: etag, 'Accept-Ranges': 'bytes', 'Content-Length': String(body.length - from), ...(from > 0 && { 'Content-Range': `bytes ${from}-${body.length - 1}/${body.length}` }) }
     if (stalled && stalled.name === name) {
-      res.writeHead(200, head)
-      res.write(readFileSync(join(dir, name)).subarray(0, stalled.bytes))
+      res.writeHead(entry.status, answer)
+      entry.sent = Math.max(0, stalled.bytes - from)
+      res.write(body.subarray(from, Math.max(from, stalled.bytes)))
       hanging.add(res)
       res.on('close', () => hanging.delete(res))
       return
     }
-    res.writeHead(200, head).end(readFileSync(join(dir, name)))
+    if (dropping && dropping.name === name && dropping.bytes > from) {
+      const cut = dropping.bytes
+      dropping = null
+      res.writeHead(entry.status, answer)
+      entry.sent = cut - from
+      res.write(body.subarray(from, cut), () => setTimeout(() => res.socket?.destroy(), 50))
+      return
+    }
+    entry.sent = body.length - from
+    res.writeHead(entry.status, answer).end(body.subarray(from))
   })
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   return {
@@ -665,7 +700,9 @@ async function serveStatic(dir) {
     served,
     sent: (name) => sent.get(name) ?? 0,
     asked: () => [...asked],
+    ranges,
     stall: (name, bytes) => { stalled = { name, bytes } },
+    drop: (name, bytes) => { dropping = { name, bytes } },
     flow: () => { stalled = null; for (const res of hanging) res.destroy(); hanging.clear() },
     close: () => { server.closeAllConnections(); server.close() },
   }
@@ -1054,6 +1091,15 @@ const BRAIN_WATCH = `(() => { let sim; const seen = window.__smokeBrain = []
 const KEPT_IN_STORE = `(async () => { try { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(${JSON.stringify(MODELS_DIR)}); const out = []
   for await (const [, h] of d.entries()) { if (h.kind !== 'directory') continue; const names = []; for await (const [n] of h.entries()) names.push(n); out.push(names.sort().join(' + ')) }
   return out } catch (e) { return e?.name === 'NotFoundError' ? [] : ['the store could not be read: ' + e?.message] } })()`
+
+/**
+ * A page expression: the part the page's model store holds for a download that stopped (modelPart.ts, a directory with
+ * part.json and no meta.json), as its note's count and validator, or null when there is none.
+ */
+const PART_IN_STORE = `(async () => { try { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(${JSON.stringify(MODELS_DIR)})
+  for await (const [, h] of d.entries()) { if (h.kind !== 'directory') continue; try { await h.getFileHandle('meta.json'); continue } catch {}
+    try { const n = JSON.parse(await (await (await h.getFileHandle(${JSON.stringify(PART_NOTE)})).getFile()).text()); return { at: n.at, validator: n.validator } } catch {} }
+  return null } catch { return null } })()`
 
 /** A page expression: every address the page's caches hold (the service worker's offline copy, pwa.mjs). */
 const CACHED_URLS = `(async () => { const out = []; for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) out.push(r.url); return out })()`
@@ -2283,12 +2329,15 @@ const SCENARIOS = {
       /** What was asked for under models/ since `from` (an index into served). */
       const models = (from = 0) => served.slice(from).filter((f) => f.startsWith(SITE_DIR))
 
-      // A first visit from a desktop, the model's answer held halfway: the page gets it by itself, its progress and its
-      // Stop on Sloane's card; the Stop keeps nothing and is remembered.
+      // A first visit from a desktop, the model's answer held a fifth of the way: the page gets it by itself, its
+      // progress and its Stop on Sloane's card; the Stop keeps no model, only the part of it that arrived (to be picked
+      // up), and is remembered. The brain readout is watched from the first moment of every visit of this browser.
       const p = await open(chrome)
       const watch = await watchTargets(p.b)
+      await p.b.send('Page.addScriptToEvaluateOnNewDocument', { source: BRAIN_WATCH })
       try {
-        site.stall(path, pin.bytes >> 1)
+        const fifth = Math.floor(pin.bytes * 0.2)
+        site.stall(path, fifth)
         await p.goto(url)
         await p.booted()
         const strip = await p.waitFor(`(() => { const s = ${SITE_STRIP}; return s && s.step === 'download' && Number(s.value) > 0 && s })()`, 90_000).catch(() => p.eval(SITE_STRIP))
@@ -2296,9 +2345,13 @@ const SCENARIOS = {
         check(JSON.stringify(models()) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: with no click the page asked this site for the manifest, then the model, once each', models().join(', ') || 'nothing under models/')
         const stop = await clickOn(p, '[data-site-strip] [data-action="stop-model"]', 10_000)
         const stopped = await p.waitFor(`(() => { const r = ${AUTO_RECORD}; return !(${SITE_STRIP}) && r && r.off && r })()`, 30_000).catch(() => p.eval(AUTO_RECORD))
+        const held = await p.waitFor(`(async () => { const n = await ${PART_IN_STORE}; return n && n })()`, 10_000).catch(() => null)
         const none = await p.eval(KEPT_IN_STORE)
-        check(!!stop && stopped?.off === STOPPED && !stopped.mark && none.length === 0, 'sitemodel: its Stop takes the strip away, keeps nothing, and is remembered',
-          `${stop ? 'clicked' : 'no Stop to click'}; record ${JSON.stringify(stopped)}; ${none.join('; ') || 'the store is empty'}`)
+        const heldNow = await p.eval('window.__SIM__.brain().default')
+        check(!!stop && stopped?.off === STOPPED && !stopped.mark && none.length === 1 && none[0] === `${PART_NOTE} + ${partName(TINY)}` && held?.at > 0 && held.at <= fifth && !!held.validator
+          && heldNow?.state === 'held' && /stopped/.test(heldNow.why ?? ''),
+        'sitemodel: its Stop takes the strip away, keeps no model (only the part that arrived, to be picked up), is remembered, and the brain readout says held, and why',
+          `${stop ? 'clicked' : 'no Stop to click'}; record ${JSON.stringify(stopped)}; ${none.join('; ') || 'the store is empty'}; part ${JSON.stringify(held)} of ${fifth} sent; readout ${heldNow?.state}: ${heldNow?.why}`)
         site.flow()
 
         // The next visit, after the Stop: the page gets nothing by itself (it would have asked for the model long before
@@ -2316,17 +2369,43 @@ const SCENARIOS = {
         check(JSON.stringify(models(talkAt)) === JSON.stringify([SITE_MANIFEST]) && stripAfter === null, 'sitemodel: after the Stop the next visit gets nothing by itself: before the click the page has asked this site for the manifest alone, once, and for no byte of the model',
           `${models(talkAt).join(', ') || 'nothing under models/'}${stripAfter ? `; a strip shows: ${JSON.stringify(stripAfter)}` : ''}`)
 
-        // The click: the model downloaded with its progress on the card, kept, and the last turn asked again.
+        // The click picks up the part the Stop left, asking only for the rest (Range from where it stopped, If-Range
+        // its ETag), and this site cuts the connection two fifths of the way in: the card says the download stopped,
+        // and what arrived is kept again.
         const servedAt = served.length
+        const rangedAt = site.ranges.length
+        const brainAt = (await p.eval('(window.__smokeBrain ?? []).length')) ?? 0
+        const twoFifths = Math.floor(pin.bytes * 0.4)
+        site.drop(path, twoFifths)
         await p.eval(SITE_WATCH)
+        const cutClick = await clickOn(p, 'aside[data-concierge] [data-action="site-model"]', 10_000)
+        const cutEnd = await p.waitFor(`(() => { const t = ${SLOANE_TALK}; return t.why && t.offer !== null && t })()`, 120_000).catch(() => p.eval(SLOANE_TALK))
+        const dropped = await p.eval(PART_IN_STORE)
+        const resumed = site.ranges.slice(rangedAt)
+        const firstCount = ((await p.eval('window.__smokeBrain ?? []')) ?? []).slice(brainAt).find((n) => n.state === 'getting' && n.step === 'download' && n.total > 0)
+        check(!!cutClick && resumed.length === 1 && resumed[0].range === `bytes=${held?.at}-` && resumed[0].ifRange === held?.validator && resumed[0].status === 206 && resumed[0].from === held?.at
+          && firstCount?.done === held?.at,
+        'sitemodel: the next visit\'s click picks up the part where the Stop left it: Range from there with If-Range, a 206 of the rest, and the brain readout\'s first count is where it stopped',
+          `${cutClick ? 'clicked' : 'no button to click'}; ${JSON.stringify(resumed)}; first count ${JSON.stringify(firstCount)}`)
+        check(/^the download stopped at [\d,]+ of [\d,]+ bytes: try again, and the next try asks this site only for the rest$/.test(cutEnd?.why ?? '') && dropped?.at === twoFifths,
+          'sitemodel: this site drops the connection two fifths of the way in: the card says the download stopped, and what arrived is kept for the next try',
+          `${cutEnd?.why || 'no reason on the card'}; part ${JSON.stringify(dropped)} of ${twoFifths} sent`)
+
+        // The next click picks up from there and gets the rest: kept, and the last turn asked again.
+        const restAt = site.ranges.length
         const button = await clickOn(p, 'aside[data-concierge] [data-action="site-model"]', 10_000)
         const t0 = Date.now()
-        const end = await p.waitFor(`(() => { const t = ${SLOANE_TALK}, s = window.__smokeSite; return (t.state === 'said' || t.why || (s.states.includes('waiting') && t.state !== 'waiting')) && t })()`, 300_000).catch(() => p.eval(SLOANE_TALK))
+        const end = await p.waitFor(`(() => { const t = ${SLOANE_TALK}, s = window.__smokeSite; return (t.state === 'said' || (t.why && !/stopped at/.test(t.why)) || (s.states.includes('waiting') && t.state !== 'waiting')) && t })()`, 300_000).catch(() => p.eval(SLOANE_TALK))
         const ms = Date.now() - t0
         const seen = await p.eval('window.__smokeSite')
-        check(!!button && seen.steps[0] === 'download' && seen.bars.length > 0 && !end?.why, 'sitemodel: one click downloads the model with its progress on the card (the step, its line and the bar), and keeps it',
+        check(!!button && seen.steps[0] === 'download' && seen.bars.length > 0 && !end?.why, 'sitemodel: the next click downloads the rest with its progress on the card (the step, its line and the bar), and keeps it',
           `${button ? 'clicked' : 'no button to click'}; steps ${seen.steps.join(' > ') || 'none'}; lines ${seen.lines.join(' | ') || 'none'}; bar ${seen.bars.join(', ') || 'none'}${end?.why ? `; ${end.why}` : ''}`)
-        check(JSON.stringify(models(servedAt)) === JSON.stringify([path]), `sitemodel: the click fetched ${path} beside the page, once`, models(servedAt).join(', ') || 'nothing under models/')
+        const rest = site.ranges.slice(restAt)
+        // From the Stop on, this site sent each byte the part did not hold once: the rest, in two answers.
+        const afterStop = site.ranges.slice(rangedAt).reduce((n, r) => n + r.sent, 0)
+        check(JSON.stringify(models(servedAt)) === JSON.stringify([path, path]) && rest.length === 1 && rest[0].range === `bytes=${twoFifths}-` && rest[0].status === 206 && afterStop === pin.bytes - (held?.at ?? 0),
+          `sitemodel: the two clicks fetched ${path} beside the page twice, the second the rest from two fifths in, and after the Stop this site sent each byte the part lacked once`,
+          `${models(servedAt).join(', ') || 'nothing under models/'}; ${JSON.stringify(rest)}; ${afterStop} bytes sent after the Stop, ${pin.bytes - (held?.at ?? 0)} lacking`)
         const said = `${'a'.repeat(CHAT_MAX)}…`
         check(end?.state === 'said' && end.line === said && seen.states.includes('waiting') && seen.starting,
           `sitemodel: the card asks the turn again by itself ("Starting the model…") and the model answers it: ${CHAT_MAX} a's, cut at Sloane's limit`,
@@ -2344,7 +2423,7 @@ const SCENARIOS = {
         check(new RegExp(`brain\\s+Sloane answers with the model kept in this page \\(${literal(TINY)}\\), run on this device`).test(status ?? ''), 'sitemodel: ask\'s brain row says what the brain readout says: the model kept in this page, the pinned file',
           (status ?? '').split('\n').filter((l) => /^brain/.test(l.trim())).join(' | ').slice(0, 300) || 'no brain row')
         const kept = await p.eval(KEPT_IN_STORE)
-        check(kept.length === 1 && kept[0] === `meta.json + ${TINY}`, 'sitemodel: the page\'s model store holds it, committed', kept.join('; '))
+        check(kept.length === 1 && kept[0] === `meta.json + ${TINY}`, 'sitemodel: the page\'s model store holds it, committed under its own name, the part and its note gone', kept.join('; '))
         // The service worker leaves models/ to the network: its offline copy holds the page, and nothing of the model.
         await p.waitFor(`Promise.race([navigator.serviceWorker.ready.then((r) => r.active?.state === 'activated'), new Promise((r) => setTimeout(() => r(false), 2000))])`, 60_000).catch(() => {})
         const cached = await p.eval(CACHED_URLS)

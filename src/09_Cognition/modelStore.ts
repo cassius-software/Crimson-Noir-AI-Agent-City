@@ -19,16 +19,32 @@
  *   held for this visit only, and the storage row says why.
  * open() hands the kept files back in load order, each named as it was kept (wllama's own shard sort reads the
  * names); a file the browser has since cleared is an 'offline' failure, so the router looks elsewhere and the
- * console says to choose it again. Everything the browser provides is injected (StoreDeps), so the Node tests drive
- * it with an in-memory directory; this file never imports the worker (a bundler-only import).
+ * console says to choose it again.
+ * The site's model is not copied: it downloads straight into a directory of its own here (openPart), into a part file
+ * the worker writes and notes as it goes (modelPart.ts), so nothing holds the whole file in memory first and a download
+ * that stopped goes on from where it stopped. A download holds the pin's own Web Lock beside its directory's, so
+ * another tab of the city neither downloads the same model beside it nor, once it is kept, downloads it again or writes
+ * into it (openPart looks for it again under the directory's lock). A part is never a kept model: list() leaves alone
+ * only the one part per pin the page may still pick up (resumable: one of `parts`, with a validator, saved within
+ * PART_DAYS, its file at least as long as its note says) and sweeps every other; part() tells the room check how far
+ * one has come; forget() with no name removes parts too, and forgetParts() a model file's parts by its name (a download
+ * under way holds its lock and is left alone). commitPart keeps a part only after its download's end matched the pin's
+ * size and SHA-256 (siteModel.ts downloadSiteModel): its header read as a picked file's is, renamed to the model's name
+ * where the browser can (else meta.json says which file holds it), and meta.json written last, the same commit as a
+ * copy's. Everything the browser provides is injected (StoreDeps), so the Node tests drive it with an in-memory
+ * directory; this file never imports the worker (a bundler-only import).
  * What breaks if it is removed? The in-page model must be picked again on every visit, a multi-gigabyte copy has no
  * progress, no room check and no commit, and a file that is not a model is found out only when llama.cpp fails on it.
  */
 import { GgufError, blobReader, readGgufHeader, shardOrder, textModel, type GgufHeader } from './gguf.ts'
 import { CognitionError, sentence } from './localCompute.ts'
+import { PART_NOTE, forPin, parseNote, partName, resumable, type PartEnd, type PartNote, type PartPin } from './modelPart.ts'
 
-/** One file of a kept model: its name as kept and its size. */
-export interface KeptFile { readonly name: string; readonly bytes: number }
+/**
+ * One file of a kept model: its name as kept and its size; `stored`, the name it is stored under when that differs
+ * (a downloaded model in a browser that cannot rename a file of its storage stays in its part file).
+ */
+export interface KeptFile { readonly name: string; readonly bytes: number; readonly stored?: string }
 
 /** A model kept in this page (or, when the browser keeps no files for it, held for this visit). */
 export interface KeptModel {
@@ -48,9 +64,48 @@ export interface ModelStore {
   /** The files to load, in order, each a File named as kept (so wllama's own shard sort also works). Throws
    *  CognitionError('offline', …) when the kept files have gone (evicted). */
   open(id: string): Promise<readonly File[]>
-  forget(id?: string): Promise<number>   // how many models removed
+  forget(id?: string): Promise<number>   // how many models removed (parts go too, uncounted, when no id is given)
+  /** Removes the parts of downloads of the model file `file` (any pin), but one a download holds just now; how many. */
+  forgetParts?(file: string): Promise<number>
   usage(): Promise<{ used: number; quota: number } | null>
-  storageLine(): string                  // "kept in this page" | "copying 42%" | "this visit only: <reason>"
+  storageLine(): string                  // "kept in this page" | "copying 42%" | "downloading 42%" | "this visit only: <reason>"
+}
+
+/**
+ * The page's side of one download into a part (openPart): what was found to pick up (`at` bytes under `validator`,
+ * 0 and null for a fresh start), and the calls siteModel.ts downloadSiteModel makes (its SiteSink). `begin` starts at
+ * 0 or `at`; `put` hands on the next bytes (they are the worker's from then on) and resolves once the worker is no
+ * more than AHEAD_BYTES behind; `hold` leaves the part to be picked up and ends the download; `end` says the size
+ * and, when whole, the SHA-256 (the caller compares them to the pin, then commits or discards); `discard` removes the
+ * part; `release` lets go of the directory and the worker, leaving the part as it is. Every call after the end does
+ * nothing, or rejects.
+ */
+export interface PartSession {
+  readonly id: string
+  readonly at: number
+  readonly validator: string | null
+  begin(at: number, validator: string | null): void
+  put(bytes: Uint8Array): Promise<void>
+  hold(): Promise<number>
+  end(): Promise<PartEnd>
+  discard(): Promise<void>
+  release(): void
+}
+
+/** What a store adds for downloads straight into the page (createModelStore gives both). */
+export interface PartStore {
+  /** The part this page may pick up for `pin` and how far it has come, or null: for the room check (roomRefusal's rest). */
+  part(pin: PartPin): Promise<{ readonly id: string; readonly at: number } | null>
+  /**
+   * Opens a download of `pin` into its part (the one to pick up, else a new directory), holding the pin's own lock and
+   * the directory's until the download ends (another tab's openPart of the same pin meanwhile is refused, ANOTHER_TAB;
+   * one that finds the model kept since it looked is refused too, KEPT_ELSEWHERE); null where this browser writes no
+   * part (no storage the page may write, no synchronous handle in a worker, or a store built without `part`): the page
+   * then downloads as it did before.
+   */
+  openPart(pin: PartPin): Promise<PartSession | null>
+  /** Keeps the part of a download whose end matched `pin` as a model (see the file's comment); removes it on failure. */
+  commitPart(session: PartSession, pin: PartPin, onProgress?: (done: number, total: number) => void): Promise<KeptModel>
 }
 
 /**
@@ -71,6 +126,8 @@ export interface LockManagerLike {
 export interface StoreDeps {
   directory?: () => Promise<FileSystemDirectoryHandle>   // navigator.storage.getDirectory
   copy?: CopyFile                                         // the worker in the product (workerCopy)
+  part?: OpenPartLink                                     // the download's worker in the product (workerPart); none: no parts
+  parts?: readonly PartPin[]                              // the pins whose parts list() leaves to be picked up
   estimate?: () => Promise<{ usage?: number; quota?: number }>
   persist?: () => Promise<boolean>
   locks?: LockManagerLike                                 // navigator.locks
@@ -95,6 +152,48 @@ const NO_STORAGE = 'this browser gives the page no storage for files'
 export interface CopyRequest { readonly dirPath: readonly string[]; readonly name: string; readonly file: Blob }
 /** What the copy worker posts back: how many bytes are written after each write, the end, or why it stopped. */
 export type CopyReply = { t: 'bytes'; n: number } | { t: 'done'; n: number } | { t: 'error'; name: string; message: string }
+
+/**
+ * What the page posts to the worker for a download (modelStore.worker.ts): open the part of `pin` in the directory
+ * named from the storage's root, begin at 0 or at what was found, the next bytes (transferred), hold, or end.
+ */
+export type PartRequest =
+  | { t: 'part'; dirPath: readonly string[]; pin: PartPin }
+  | { t: 'begin'; at: number; validator: string | null }
+  | { t: 'chunk'; bytes: Uint8Array }
+  | { t: 'hold' }
+  | { t: 'end' }
+/**
+ * What the download's worker posts back: what it found to pick up, that no synchronous handle opens here, how many
+ * bytes it has taken after each message, what it noted on a hold, the end, or why it stopped.
+ */
+export type PartReply =
+  | { t: 'ready'; at: number; validator: string | null }
+  | { t: 'unsupported'; why: string }
+  | { t: 'taken'; n: number }
+  | { t: 'held'; n: number }
+  | { t: 'ended'; n: number; sha256: string | null }
+  | { t: 'error'; name: string; message: string }
+
+/** The page's end of one download's worker (workerPart): what it found, and the messages it sends. */
+export interface PartLink {
+  readonly at: number
+  readonly validator: string | null
+  begin(at: number, validator: string | null): void
+  put(bytes: Uint8Array): Promise<void>
+  hold(): Promise<number>
+  end(): Promise<PartEnd>
+  /** Ends the worker at once (its files close as it ends). */
+  stop(): void
+}
+
+/** Opens a download's worker on the part of `pin` in `dirPath`; null where no synchronous handle opens there. */
+export type OpenPartLink = (dirPath: readonly string[], pin: PartPin) => Promise<PartLink | null>
+
+/** How far the page may post bytes ahead of what the download's worker has taken: two of its writes. */
+export const AHEAD_BYTES = 16 * 1024 * 1024
+/** How long a hold or an end may take before the worker is taken to have hung, ms (one write, a flush, a note). */
+export const PART_ANSWER_MS = 30_000
 
 /** Whether `e` is an error (a DOMException as often as not) of the given name. */
 const named = (e: unknown, name: string): boolean => (e as { name?: unknown } | null)?.name === name
@@ -170,6 +269,111 @@ export const writableCopy: CopyFile = async (dir, name, file, onBytes, signal) =
   await file.stream().pipeThrough(count).pipeTo(out, signal ? { signal } : {})
 }
 
+/**
+ * The product's download writer: one worker per download (`makeWorker`, the same modelStore.worker.ts the copy uses),
+ * told where the part is under the storage's root. Resolves with the link once the worker says what it found, or null
+ * once it says no synchronous handle opens here; rejects with the worker's own error (its name kept). Bytes are
+ * posted as they come, each transferred, and `put` waits while more than `ahead` bytes are with the worker untaken.
+ * Any failure ends the worker and rejects every call waiting on it.
+ */
+export function workerPart(makeWorker: () => Worker, ahead = AHEAD_BYTES, answerMs = PART_ANSWER_MS): OpenPartLink {
+  return (dirPath, pin) => new Promise<PartLink | null>((resolve, reject) => {
+    let worker: Worker
+    try {
+      worker = makeWorker()
+    } catch (e) {
+      reject(e)
+      return
+    }
+    let alive = true
+    let opened = false
+    let failure: unknown = null
+    let posted = 0
+    let taken = 0
+    const room: { go: () => void; no: (e: unknown) => void }[] = []
+    let waiting: { want: 'held' | 'ended'; go: (m: PartReply) => void; no: (e: unknown) => void; timer: ReturnType<typeof setTimeout> } | null = null
+    const stop = (): void => {
+      if (!alive) return
+      alive = false
+      worker.onmessage = null
+      worker.onerror = null
+      worker.terminate()
+    }
+    const fail = (e: unknown): void => {
+      failure ??= e
+      stop()
+      for (const r of room.splice(0)) r.no(failure)
+      if (waiting) {
+        clearTimeout(waiting.timer)
+        waiting.no(failure)
+        waiting = null
+      }
+      if (!opened) reject(failure)
+    }
+    const ended = (): unknown => failure ?? new Error("the download's worker has ended")
+    const finish = (t: 'hold' | 'end', want: 'held' | 'ended'): Promise<PartReply> => {
+      if (!alive || waiting) return Promise.reject(ended())
+      return new Promise<PartReply>((go, no) => {
+        const timer = setTimeout(() => fail(new Error(`the download's worker did not answer in ${Math.round(answerMs / 1000)} s`)), answerMs)
+        waiting = { want, go, no, timer }
+        worker.postMessage({ t } satisfies PartRequest)
+      })
+    }
+    worker.onmessage = (e: MessageEvent<PartReply>) => {
+      const m = e.data
+      if (m.t === 'error') fail(new DOMException(m.message, m.name))
+      else if (m.t === 'unsupported') {
+        stop()
+        opened = true
+        resolve(null)
+      } else if (m.t === 'ready') {
+        opened = true
+        resolve(link(m.at, m.validator))
+      } else if (m.t === 'taken') {
+        taken = Math.max(taken, m.n)
+        while (room.length > 0 && posted - taken <= ahead) room.shift()?.go()
+      } else if (waiting && m.t === waiting.want) {
+        const w = waiting
+        waiting = null
+        clearTimeout(w.timer)
+        stop()
+        w.go(m)
+      }
+    }
+    worker.onerror = (e) => {
+      e.preventDefault()
+      fail(new Error(`the download's worker stopped: ${e.message || 'worker error'}`))
+    }
+    const link = (at: number, validator: string | null): PartLink => ({
+      at,
+      validator,
+      begin(start, v) {
+        if (!alive) throw ended()
+        posted = start
+        taken = start
+        worker.postMessage({ t: 'begin', at: start, validator: v } satisfies PartRequest)
+      },
+      put(bytes) {
+        if (!alive) return Promise.reject(ended())
+        // Handed over, not copied: a piece that is a view into a larger buffer is copied out first.
+        const own = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength && bytes.buffer instanceof ArrayBuffer ? bytes : bytes.slice()
+        posted += own.byteLength
+        worker.postMessage({ t: 'chunk', bytes: own } satisfies PartRequest, [own.buffer as ArrayBuffer])
+        if (posted - taken <= ahead) return Promise.resolve()
+        return new Promise<void>((go, no) => room.push({ go, no }))
+      },
+      hold: () => finish('hold', 'held').then((m) => (m.t === 'held' ? m.n : 0)),
+      end: () => finish('end', 'ended').then((m) => (m.t === 'ended' ? { bytes: m.n, sha256: m.sha256 } : { bytes: 0, sha256: null })),
+      stop,
+    })
+    try {
+      worker.postMessage({ t: 'part', dirPath: [...dirPath], pin: { file: pin.file, bytes: pin.bytes, sha256: pin.sha256 } } satisfies PartRequest)
+    } catch (e) {
+      fail(e)
+    }
+  })
+}
+
 /** The part of navigator.storage the store reads; any of it may be missing. */
 interface StorageLike {
   getDirectory?: () => Promise<FileSystemDirectoryHandle>
@@ -193,10 +397,11 @@ function size(bytes: number, up: boolean): string {
  * well), as the sentence the store refuses with; null when it fits. The store asks it before every copy, and the page
  * before it downloads the site's model (App.tsx), so neither starts what the storage cannot hold.
  */
-export function roomRefusal(bytes: number, room: { used: number; quota: number }): string | null {
+export function roomRefusal(bytes: number, room: { used: number; quota: number }, rest = false): string | null {
   const free = Math.max(0, room.quota - room.used)
   if (free >= bytes + SPARE_BYTES) return null
-  return `this model needs ${size(bytes, true)} and this page's storage has ${size(free, false)} free (64 MB is kept spare as well): free some space in this browser, or choose a smaller model`
+  // `rest`: a download that goes on from a part counts only what is still to come (the part's bytes are in `used`).
+  return `${rest ? 'the rest of this model' : 'this model'} needs ${size(bytes, true)} and this page's storage has ${size(free, false)} free (64 MB is kept spare as well): free some space in this browser, or choose a smaller model`
 }
 
 /** The model's name to show: the first file's name without the shard number. */
@@ -230,6 +435,21 @@ function copyFailure(e: unknown): CognitionError {
   return new CognitionError('model', `the model could not be copied into this page's storage (${said(e)})`)
 }
 
+/** Why a download cannot open its part: another tab of the city is writing it now. */
+export const ANOTHER_TAB = 'another tab of the city is downloading this model into the page just now: wait for it to finish there'
+/** Why a download does not start: another tab of the city kept the model since this one looked (the next try chooses it). */
+export const KEPT_ELSEWHERE = 'another tab of the city has just kept this model in the page: try again to choose it'
+
+/** A download's storage failure as the card says it (the part keeps what was noted last, to be picked up). */
+function partFailure(e: unknown): CognitionError {
+  if (e instanceof CognitionError) return e
+  if (named(e, 'QuotaExceededError')) return new CognitionError('model', "this page's storage ran out of room while the model downloaded into it: free some space in this browser, and try again")
+  if (named(e, 'NoModificationAllowedError')) return new CognitionError('model', ANOTHER_TAB)
+  // The worker found a meta.json where it was to open the part (modelStore.worker.ts openFor): a kept model's directory.
+  if (named(e, 'InvalidModificationError')) return new CognitionError('model', KEPT_ELSEWHERE)
+  return new CognitionError('model', `the model could not be written into this page's storage (${said(e)})`)
+}
+
 /** A file refused before any copy. */
 const refused = (f: File, reason: string): CognitionError => new CognitionError('model', `${f.name} was not kept: ${reason}`)
 
@@ -249,9 +469,10 @@ function parseMeta(id: string, text: string): KeptModel | null {
   if (m.v !== 1 || typeof m.name !== 'string' || typeof m.keptAt !== 'number' || !Array.isArray(m.files) || m.files.length === 0) return null
   const files: KeptFile[] = []
   for (const f of m.files as unknown[]) {
-    const { name, bytes } = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>
+    const { name, bytes, stored } = (typeof f === 'object' && f !== null ? f : {}) as Record<string, unknown>
     if (typeof name !== 'string' || name === '' || name === META || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) return null
-    files.push({ name, bytes })
+    if (stored !== undefined && (typeof stored !== 'string' || stored === '' || stored === META || stored === PART_NOTE)) return null
+    files.push(stored === undefined ? { name, bytes } : { name, bytes, stored })
   }
   const bytes = files.reduce((n, f) => n + f.bytes, 0)
   if (m.bytes !== bytes) return null
@@ -271,6 +492,24 @@ async function readMeta(id: string, dir: FileSystemDirectoryHandle): Promise<Kep
     throw e
   }
   return parseMeta(id, text)
+}
+
+/** The part note directory `dir` holds, or null (none, unreadable, or not one this page wrote). */
+async function readNote(dir: FileSystemDirectoryHandle): Promise<PartNote | null> {
+  try {
+    return parseNote(await (await (await dir.getFileHandle(PART_NOTE)).getFile()).text())
+  } catch {
+    return null
+  }
+}
+
+/** The size of file `name` in `dir`, or -1 when it is not there or cannot be read. */
+async function sizeOf(dir: FileSystemDirectoryHandle, name: string): Promise<number> {
+  try {
+    return (await (await dir.getFileHandle(name)).getFile()).size
+  } catch {
+    return -1
+  }
 }
 
 /**
@@ -316,7 +555,7 @@ async function names(dir: FileSystemDirectoryHandle): Promise<Set<string>> {
  * The model store over the page's storage (navigator.storage unless `d` hands it another). The copy defaults to the
  * page's own writable stream; the product passes workerCopy.
  */
-export function createModelStore(d: StoreDeps = {}): ModelStore {
+export function createModelStore(d: StoreDeps = {}): ModelStore & PartStore {
   const nav = (globalThis as { navigator?: { storage?: StorageLike; locks?: LockManagerLike } }).navigator
   const storage = nav?.storage
   const directory = d.directory ?? (() => {
@@ -328,14 +567,16 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
   const copy = d.copy ?? writableCopy
   const locks = d.locks ?? (typeof nav?.locks?.request === 'function' ? nav.locks : undefined)
   const now = d.now ?? Date.now
+  const partLink = d.part
+  const wanted = d.parts ?? []
 
   /** The models held for this visit only (the browser kept no files for the page), by id. */
   const visit = new Map<string, { model: KeptModel; files: readonly File[] }>()
   /** Why the page's storage could not be used, while that is what the storage row says; null when it keeps files. */
   let reason: string | null = null
-  /** The copy in progress: its directory (never swept or forgotten meanwhile) and how far it has got. */
-  let copying: { id: string; done: number; total: number } | null = null
-  /** A keep is running (one at a time). */
+  /** The copy or download in progress: its directory (never swept or forgotten meanwhile) and how far it has got. */
+  let copying: { id: string; done: number; total: number; download?: boolean } | null = null
+  /** A keep or a download is running (one at a time). */
   let busy = false
 
   /** The lock a copy holds on its directory from before it is made until the commit (Web Locks name it per origin). */
@@ -344,6 +585,23 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
   /** Runs `fn` holding the lock on directory `id`; as it is where the browser has no Web Locks. */
   function holding<T>(id: string, fn: () => Promise<T>): Promise<T> {
     return locks ? locks.request(lockName(id), {}, fn) : fn()
+  }
+
+  /**
+   * Takes the lock on directory `id` if it is free, for as long as a download writes there: resolves with the call
+   * that lets it go, or null when another tab holds it. Where the browser has no Web Locks, there is nothing to take.
+   */
+  function lockIfFree(id: string): Promise<(() => void) | null> {
+    if (!locks) return Promise.resolve(() => undefined)
+    return new Promise((granted, failed) => {
+      locks.request(lockName(id), { ifAvailable: true }, (lock) => {
+        if (lock === null) {
+          granted(null)
+          return Promise.resolve()
+        }
+        return new Promise<void>((letGo) => granted(letGo))
+      }).catch(failed)
+    })
   }
 
   /**
@@ -369,11 +627,24 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
     }
   }
 
-  /** The kept models in the page's storage; sweeps each entry that is not one (a copy cut short, a stray file). */
+  /**
+   * The part directory `dir` holds that the page may pick up for one of `pins` now, or null: a resumable note
+   * (modelPart.ts) whose part file is at least as long as the note says.
+   */
+  async function partIn(dir: FileSystemDirectoryHandle, pins: readonly PartPin[]): Promise<PartNote | null> {
+    const note = await readNote(dir)
+    const pin = note === null ? undefined : pins.find((p) => forPin(note, p))
+    if (note === null || pin === undefined || !resumable(note, pin, now())) return null
+    return (await sizeOf(dir, partName(pin.file))) >= note.at ? note : null
+  }
+
+  /** The kept models in the page's storage; sweeps each entry that is not one (a copy cut short, a stray file, a part
+   *  the page will not pick up), leaving one part per pin to be picked up: the one that has come furthest. */
   async function durableModels(): Promise<KeptModel[]> {
     const models = await modelsDir()
     const found: KeptModel[] = []
     const cut: [string, FileSystemDirectoryHandle | FileSystemFileHandle][] = []
+    const parts = new Map<string, { name: string; h: FileSystemDirectoryHandle; at: number }>()
     for await (const [name, h] of models.entries()) {
       if (name === copying?.id) continue
       if (h.kind !== 'directory') {
@@ -382,8 +653,21 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
       }
       try {
         const m = await readMeta(name, h)
-        if (m) found.push(m)
-        else cut.push([name, h])
+        if (m) {
+          found.push(m)
+          continue
+        }
+        const note = await partIn(h, wanted)
+        if (note === null) {
+          cut.push([name, h])
+          continue
+        }
+        const key = `${note.file}\n${note.sha256}`
+        const best = parts.get(key)
+        if (best === undefined || note.at > best.at) {
+          if (best) cut.push([best.name, best.h])
+          parts.set(key, { name, h, at: note.at })
+        } else cut.push([name, h])
       } catch {
         // There but not readable now: left for a later look.
       }
@@ -531,7 +815,7 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
     for (const k of meta.files) {
       let f: File
       try {
-        f = await (await dir.getFileHandle(k.name)).getFile()
+        f = await (await dir.getFileHandle(k.stored ?? k.name)).getFile()
       } catch {
         throw new CognitionError('offline', GONE)
       }
@@ -597,7 +881,240 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
     return n
   }
 
+  async function forgetParts(file: string): Promise<number> {
+    let models: FileSystemDirectoryHandle
+    try {
+      models = await modelsDir()
+    } catch {
+      return 0
+    }
+    const entries: [string, FileSystemDirectoryHandle][] = []
+    for await (const [name, h] of models.entries()) if (h.kind === 'directory' && name !== copying?.id) entries.push([name, h])
+    let n = 0
+    for (const [name, h] of entries) {
+      // Under its lock, as forget() removes: a download another tab is making is left to it.
+      // One the browser will not let go of yet stays (it is picked up, or swept once it is stale).
+      await unlessCopying(name, async () => {
+        if ((await isModel(name, h)) || (await readNote(h))?.file !== file) return
+        if (await remove(models, name)) n++
+      }).catch(() => undefined)
+    }
+    return n
+  }
+
+  /**
+   * The directory under `models` holding the part to pick up for `pin` (the one that has come furthest), or null; and
+   * whether a model of the pin's name and size is kept there already (as the page looks for it: App.tsx keptSite).
+   */
+  async function findPart(models: FileSystemDirectoryHandle, pin: PartPin): Promise<{ part: { id: string; at: number } | null; kept: boolean }> {
+    let best: { id: string; at: number } | null = null
+    let kept = false
+    for await (const [name, h] of models.entries()) {
+      if (h.kind !== 'directory' || name === copying?.id) continue
+      try {
+        const m = await readMeta(name, h)
+        if (m !== null) {
+          kept ||= m.name === displayName(pin.file) && m.bytes === pin.bytes
+          continue
+        }
+      } catch {
+        continue
+      }
+      const note = await partIn(h, [pin])
+      if (note !== null && (best === null || note.at > best.at)) best = { id: name, at: note.at }
+    }
+    return { part: best, kept }
+  }
+
+  /** Removes directory `id`, trying again briefly while a worker that has just ended still holds a file of it. */
+  async function removeSoon(models: FileSystemDirectoryHandle, id: string): Promise<void> {
+    for (let k = 0; ; k++) {
+      try {
+        await models.removeEntry(id, { recursive: true })
+        return
+      } catch (e) {
+        if (named(e, 'NotFoundError')) return
+        if (k >= 4) throw e
+        await new Promise((r) => setTimeout(r, 50 * (k + 1)))
+      }
+    }
+  }
+
+  async function openPart(pin: PartPin): Promise<PartSession | null> {
+    if (!partLink) return null
+    if (busy) throw new CognitionError('model', 'another model file is being copied into this page: wait for it to finish')
+    let models: FileSystemDirectoryHandle
+    try {
+      models = await modelsDir()
+    } catch {
+      // The browser keeps no files for this page: the page downloads as it did before (and keeps it for this visit).
+      return null
+    }
+    busy = true
+    let letGo: () => void = () => undefined
+    let id: string | null = null
+    let made = false
+    let ended = false
+    const finish = (): void => {
+      if (ended) return
+      ended = true
+      if (copying?.id === id) copying = null
+      busy = false
+      letGo()
+    }
+    try {
+      // The pin's own lock first, held as long as the directory's: a fresh download in another tab has no note until
+      // its first bytes come (and none it may pick up without a validator), so its directory alone would not say that
+      // a download of this model is under way, and both tabs would download it and keep it twice.
+      const pinLock = await lockIfFree(`part:${pin.sha256}`)
+      if (pinLock === null) throw new CognitionError('model', ANOTHER_TAB)
+      letGo = pinLock
+      const look = await findPart(models, pin)
+      // Kept by another tab since this one looked (its download held the pin's lock until its meta.json was in).
+      if (look.kept) throw new CognitionError('model', KEPT_ELSEWHERE)
+      const found = look.part
+      id = found?.id ?? newId(displayName(pin.file), now(), new Set([...(await names(models)), ...visit.keys()]))
+      const lock = await lockIfFree(id)
+      if (lock === null) throw new CognitionError('model', ANOTHER_TAB)
+      letGo = () => {
+        lock()
+        pinLock()
+      }
+      made = found === null
+      if (found !== null) {
+        // Looked at again under the directory's lock, which findPart did not hold: a tab that took no pin's lock (a
+        // build before it) may have kept this part as a model since, and a kept model's file is never written as a
+        // part. One swept since is made afresh here, and the worker finds nothing in it to pick up.
+        const h = await models.getDirectoryHandle(id).catch(() => null)
+        if (h !== null && (await isModel(id, h))) throw new CognitionError('model', KEPT_ELSEWHERE)
+        made = h === null
+      }
+      await models.getDirectoryHandle(id, { create: true })
+      const state = { id, done: found?.at ?? 0, total: pin.bytes, download: true }
+      copying = state
+      const link = await partLink([MODELS_DIR, id], pin)
+      if (link === null) {
+        if (made) await removeSoon(models, id).catch(() => undefined)
+        finish()
+        return null
+      }
+      state.done = link.at
+      const dir = id
+      return Object.freeze<PartSession>({
+        id: dir,
+        at: link.at,
+        validator: link.validator,
+        begin(at, validator) {
+          link.begin(at, validator)
+          state.done = at
+        },
+        async put(bytes) {
+          const n = bytes.byteLength
+          try {
+            await link.put(bytes)
+          } catch (e) {
+            finish()
+            throw partFailure(e)
+          }
+          state.done += n
+        },
+        async hold() {
+          try {
+            return await link.hold()
+          } catch (e) {
+            throw partFailure(e)
+          } finally {
+            finish()
+          }
+        },
+        async end() {
+          try {
+            return await link.end()
+          } catch (e) {
+            finish()
+            throw partFailure(e)
+          }
+        },
+        async discard() {
+          // The worker closes its files first (a hold), so the directory can go at once.
+          if (!ended) await link.hold().catch(() => 0)
+          link.stop()
+          try {
+            await removeSoon(models, dir)
+          } finally {
+            finish()
+          }
+        },
+        release() {
+          link.stop()
+          finish()
+        },
+      })
+    } catch (e) {
+      if (made && id !== null) await removeSoon(models, id).catch(() => undefined)
+      finish()
+      throw partFailure(e)
+    }
+  }
+
+  async function commitPart(session: PartSession, pin: PartPin, onProgress?: (done: number, total: number) => void): Promise<KeptModel> {
+    let models: FileSystemDirectoryHandle | null = null
+    try {
+      models = await modelsDir()
+      const dir = await models.getDirectoryHandle(session.id)
+      onProgress?.(0, pin.bytes)
+      const part = await dir.getFileHandle(partName(pin.file))
+      const file = await part.getFile()
+      if (file.size !== pin.bytes) throw new CognitionError('model', `the downloaded ${pin.file} holds ${file.size} of its ${pin.bytes} bytes, so it was not kept`)
+      // The header read as a picked file's is: the pin's hash says which file it is, this says the page can use it.
+      await checked([new File([file], pin.file, { type: 'application/octet-stream' })])
+      // Renamed to the model's own name where the browser can (FileSystemHandle.move); else meta.json says where it is.
+      const movable = part as FileSystemFileHandle & { move?: (name: string) => Promise<void> }
+      let stored: string | undefined = partName(pin.file)
+      if (typeof movable.move === 'function') {
+        await movable.move(pin.file)
+        stored = undefined
+      }
+      const model: KeptModel = {
+        id: session.id,
+        name: displayName(pin.file),
+        files: [stored === undefined ? { name: pin.file, bytes: pin.bytes } : { name: pin.file, bytes: pin.bytes, stored }],
+        bytes: pin.bytes,
+        keptAt: now(),
+        durable: true,
+      }
+      // The commit: meta.json last, as a copy's; the note goes after it (a model's directory with a stray note is a model).
+      await copy(dir, META, new File([metaOf(model)], META, { type: 'application/json' }), () => undefined)
+      await dir.removeEntry(PART_NOTE).catch(() => undefined)
+      onProgress?.(pin.bytes, pin.bytes)
+      reason = null
+      try {
+        void persist?.().catch(() => false)
+      } catch {
+        // Refused at once: the model stands.
+      }
+      return model
+    } catch (e) {
+      // Not kept: the part goes with it, so nothing half-checked is picked up later.
+      if (models !== null) await removeSoon(models, session.id).catch(() => undefined)
+      throw copyFailure(e)
+    } finally {
+      session.release()
+    }
+  }
+
+  async function part(pin: PartPin): Promise<{ id: string; at: number } | null> {
+    try {
+      return (await findPart(await modelsDir(), pin)).part
+    } catch {
+      return null
+    }
+  }
+
   return {
+    part,
+    openPart,
+    commitPart,
     async keep(files, onProgress, signal) {
       if (busy) throw new CognitionError('model', 'another model file is being copied into this page: wait for it to finish')
       busy = true
@@ -611,6 +1128,7 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
     list,
     open,
     forget,
+    forgetParts,
     async usage() {
       if (!estimate) return null
       try {
@@ -622,7 +1140,7 @@ export function createModelStore(d: StoreDeps = {}): ModelStore {
       }
     },
     storageLine() {
-      if (copying) return `copying ${Math.floor((copying.done / Math.max(1, copying.total)) * 100)}%`
+      if (copying) return `${copying.download ? 'downloading' : 'copying'} ${Math.floor((copying.done / Math.max(1, copying.total)) * 100)}%`
       if (reason !== null) return `this visit only: ${reason}`
       return 'kept in this page'
     },

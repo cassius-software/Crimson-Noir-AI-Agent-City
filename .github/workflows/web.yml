@@ -16,7 +16,10 @@
 # - by hand: Actions > web > Run workflow, on main; it publishes main as it is, without waiting for ci. (A tag would
 #   also need a tag rule on the github-pages environment, which allows only the default branch by default.)
 # Before the upload, tools/verify/site_budget.mjs sums every file of dist-web/, the model included, and fails the run
-# when the copy is over 950 MB: GitHub Pages publishes no site over 1 GB.
+# when the copy is over 950 MB: GitHub Pages publishes no site over 1 GB. After the deploy, a look at the site notes
+# whether it hands out part of the model (a 206 to bytes=0-0, and to a range under If-Range with its ETag) and whether
+# the deploy kept the model's ETag: the page picks a stopped download up only so (src/09_Cognition/siteModel.ts
+# downloadSiteModel). It warns, never fails: a site that answers 200 still serves the model, whole.
 # What breaks if it is removed? Nothing else: dist-web/ can still be served from any https host by hand.
 
 name: web
@@ -173,19 +176,39 @@ jobs:
           else
             echo "::notice::built $PICKED, but main is at $tip now; only main's tip is published."
           fi
+      # The model's ETag as the site serves it before this deploy, so the look after it can say whether a deploy keeps
+      # it (a download that stopped is picked up only under the same ETag). A note only: nothing here can fail the run,
+      # and every call has its own time limit (a slow site gives no note, after 70 s at most), so it cannot hold the
+      # deploy past the job's limit either.
+      - id: before
+        if: steps.tip.outputs.deploy == 'true'
+        name: The model's ETag before this deploy (a note only)
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          page=$(timeout 30 gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null) || page=''
+          [ -n "$page" ] || exit 0
+          manifest=$(curl -sSf --max-time 20 "${page%/}/models/manifest.json" 2>/dev/null) || exit 0
+          file=$(printf '%s' "$manifest" | sed -n 's/.*"file":"\([^"]*\)".*/\1/p')
+          sha=$(printf '%s' "$manifest" | sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p')
+          etag=$(curl -sSfI --max-time 20 -H 'Accept-Encoding: identity' "${page%/}/models/${file}" 2>/dev/null | tr -d '\r' | sed -n 's/^[Ee][Tt][Aa][Gg]: *//p' | tail -n 1) || true
+          { echo "sha=$sha"; echo "etag=$etag"; } >> "$GITHUB_OUTPUT"
       - id: deployment
         if: steps.tip.outputs.deploy == 'true'
         uses: actions/deploy-pages@v4
       # A look at what the site now serves, without downloading the model (a full download would count against the
       # site's monthly bandwidth on every publish): the manifest, and the model's size as the site reports it. It only
-      # notes what it finds; the publish has already happened.
+      # notes what it finds; the publish has already happened. It has no time limit of its own, but each call has one
+      # (20 s, the manifest asked six times at most), so a site that stalls ends it after 260 s at most.
       - name: The site serves the model (its manifest and its size; a note only)
         if: steps.tip.outputs.deploy == 'true'
         env:
           PAGE: ${{ steps.deployment.outputs.page_url }}
         run: |
           for i in 1 2 3 4 5 6; do
-            manifest=$(curl -sSf "${PAGE}models/manifest.json" 2>/dev/null) && break
+            manifest=$(curl -sSf --max-time 20 "${PAGE}models/manifest.json" 2>/dev/null) && break
             sleep 20
           done
           if [ -z "$manifest" ]; then
@@ -194,15 +217,61 @@ jobs:
           fi
           file=$(printf '%s' "$manifest" | sed -n 's/.*"file":"\([^"]*\)".*/\1/p')
           bytes=$(printf '%s' "$manifest" | sed -n 's/.*"bytes":\([0-9]*\).*/\1/p')
-          head=$(curl -sSfI -H 'Accept-Encoding: identity' "${PAGE}models/${file}" 2>/dev/null | tr -d '\r') || true
+          head=$(curl -sSfI --max-time 20 -H 'Accept-Encoding: identity' "${PAGE}models/${file}" 2>/dev/null | tr -d '\r') || true
           length=$(printf '%s\n' "$head" | sed -n 's/^[Cc]ontent-[Ll]ength: *//p' | tail -n 1)
           if [ "$length" = "$bytes" ]; then
             echo "::notice::${file} is served, ${length} bytes, as the manifest says"
           else
             echo "::warning::${file}: the site reports ${length:-no} Content-Length; the manifest says ${bytes}"
           fi
-          if speech=$(curl -sSf "${PAGE}speech/manifest.json" 2>/dev/null) && [ -n "$speech" ]; then
+          if speech=$(curl -sSf --max-time 20 "${PAGE}speech/manifest.json" 2>/dev/null) && [ -n "$speech" ]; then
             echo "::notice::the speech pack's manifest is served: $(printf '%s' "$speech" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
           else
             echo "::warning::${PAGE}speech/manifest.json is not served"
+          fi
+      # Whether the site hands out only part of the model, as the page asks when it picks up a download that stopped
+      # (Range from where it stopped, If-Range its ETag): its first byte must come as a 206 of bytes 0-0, and its second,
+      # asked under If-Range with the ETag it gave, as a 206 too; and whether this deploy kept the ETag the model had
+      # before it. Two bytes, not the model. A warning only: a site that answers 200 serves the model whole, and the
+      # page then starts such a download over.
+      - name: The site hands out part of the model, under a strong ETag that the deploy kept (a note only)
+        if: steps.tip.outputs.deploy == 'true'
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          PAGE: ${{ steps.deployment.outputs.page_url }}
+          BEFORE_SHA: ${{ steps.before.outputs.sha }}
+          BEFORE_ETAG: ${{ steps.before.outputs.etag }}
+        run: |
+          manifest=$(curl -sSf --max-time 20 "${PAGE}models/manifest.json" 2>/dev/null) || { echo "::warning::${PAGE}models/manifest.json is not served, so no range was asked"; exit 0; }
+          file=$(printf '%s' "$manifest" | sed -n 's/.*"file":"\([^"]*\)".*/\1/p')
+          bytes=$(printf '%s' "$manifest" | sed -n 's/.*"bytes":\([0-9]*\).*/\1/p')
+          sha=$(printf '%s' "$manifest" | sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p')
+          # --max-filesize: a site that ignores the range answers with the whole model, which curl then refuses at once.
+          head=$(curl -sS -o /dev/null -D - --max-filesize 4096 --max-time 60 -r 0-0 -H 'Accept-Encoding: identity' "${PAGE}models/${file}" 2>/dev/null | tr -d '\r') || true
+          status=$(printf '%s\n' "$head" | sed -n 's/^HTTP\/[0-9.]* \([0-9]*\).*/\1/p' | tail -n 1)
+          range=$(printf '%s\n' "$head" | sed -n 's/^[Cc]ontent-[Rr]ange: *//p' | tail -n 1)
+          etag=$(printf '%s\n' "$head" | sed -n 's/^[Ee][Tt][Aa][Gg]: *//p' | tail -n 1)
+          if [ "$status" = 206 ] && [ "$range" = "bytes 0-0/${bytes}" ]; then
+            echo "::notice::${file}: bytes=0-0 is answered 206 (${range}), ETag ${etag:-none}"
+          else
+            echo "::warning::${file}: bytes=0-0 is answered ${status:-nothing} (Content-Range ${range:-none}), not 206 of bytes 0-0/${bytes}: a download of it that stops starts over"
+          fi
+          case "$etag" in
+            ''|W/*)
+              echo "::warning::${file}: the site gives ${etag:-no} ETag; the page picks a stopped download up only under a strong one (or Last-Modified when there is no ETag at all)" ;;
+            *)
+              again=$(curl -sS -o /dev/null -w '%{http_code}' --max-filesize 4096 --max-time 60 -r 1-1 -H "If-Range: ${etag}" -H 'Accept-Encoding: identity' "${PAGE}models/${file}" 2>/dev/null) || true
+              if [ "$again" = 206 ]; then
+                echo "::notice::${file}: a range under If-Range ${etag} is answered 206"
+              else
+                echo "::warning::${file}: a range under If-Range ${etag} is answered ${again:-nothing}, not 206: a download of it that stops starts over"
+              fi ;;
+          esac
+          if [ -n "$BEFORE_ETAG" ] && [ "$BEFORE_SHA" = "$sha" ]; then
+            if [ "$BEFORE_ETAG" = "$etag" ]; then
+              echo "::notice::${file}: this deploy kept its ETag (${etag}), so a download of it stopped before the deploy is picked up after it"
+            else
+              echo "::warning::${file}: this deploy changed its ETag (${BEFORE_ETAG} to ${etag:-none}) though the model is the same: a download of it stopped before the deploy starts over after it"
+            fi
           fi

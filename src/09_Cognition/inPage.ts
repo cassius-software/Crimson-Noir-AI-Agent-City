@@ -100,6 +100,12 @@ export interface InPageDeps {
 
 export interface InPageMind extends Mind {
   keep(files: readonly File[], onProgress?: (done: number, total: number) => void): Promise<KeptModel>
+  /**
+   * Keeps a model the page put into its storage some other way (the site's model, downloaded straight into its part:
+   * modelStore.ts commitPart, which `kept` runs) exactly as keep() keeps a picked one: refused before `kept` runs where
+   * this page cannot run a model, then known, chosen, and any failed load or crash mark cleared.
+   */
+  adopt(kept: () => Promise<KeptModel>): Promise<KeptModel>
   forget(name?: string): Promise<string>  // a console line
   load(): Promise<string>                 // clears the crash guard and the failed mark, loads now; a console line
   /**
@@ -854,12 +860,14 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       }
     },
 
-    keep: async (files, onProgress) => {
+    keep: (files, onProgress) => mind.adopt(() => store.keep(files, onProgress)),
+
+    adopt: async (kept) => {
       // Where the runtime cannot run, nothing is copied and nothing is chosen: the file would only take the room, and
       // the provider would switch to a model the script must stand in for.
       const cannot = unrunnable()
       if (cannot) throw cannot
-      const m = await store.keep(files, onProgress)
+      const m = await kept()
       known = [m, ...(known ?? []).filter((k) => k.id !== m.id)]
       failed = null
       await clearCrash()
@@ -871,6 +879,8 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       const n = typeof name === 'string' ? name.trim() : ''
       const list = await listKept()
       const hit = n ? list.filter((m) => m.name === n) : list
+      // A download of it that stopped (a part, never a kept model) goes too, so a later one starts from the first byte.
+      const parts = n && store.forgetParts ? await store.forgetParts(n) : 0
       if (n && !hit.length) {
         // The chosen file has gone already: forgetting it is choosing none.
         if (model === n) {
@@ -878,6 +888,7 @@ export function createInPageMind(d: InPageDeps): InPageMind {
           save()
           return `${n} was no longer kept in this page; no model file is chosen now`
         }
+        if (parts > 0) return `forgot the part of ${n} that had downloaded: none of it is kept in this page now`
         throw notKept(n)
       }
       const ids = new Set(hit.map((m) => m.id))
