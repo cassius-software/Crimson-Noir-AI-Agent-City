@@ -15,6 +15,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
+  `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
+  names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
+  chosen limits and features; memory of four kinds (device, images, upload, readback, the host kinds not coherent,
+  so `flush` and `invalidate` are explicit) backs buffers and images bound into it by hand; views, samplers, binding
+  layouts, pools and sets, pipeline layouts with 128 bytes of inline constants, render and compute pipelines; command
+  arenas and lists recorded between `begin` and `end`, with passes begun and ended inside them, barriers with
+  explicit stages, accesses and image layouts, copies, updates and indirect draws and dispatches; queues, fences and
+  semaphores. Shaders are **Lens**, its own binary form (typed SSA with structured control flow), with a builder,
+  a checker that refuses anything ill-formed or ill-typed, an exact encoder and decoder, and a disassembler. With
+  checks on, every submit is simulated first: a missing barrier (`hazard`) or an image in the wrong layout
+  (`layout`) refuses the whole submit before anything runs. A usage-scope rule refuses, as it is recorded, a pass or
+  dispatch that both writes and reads one resource. The first back end is a deterministic CPU reference renderer
+  (`soft.ts`): 1/256-pixel snapping, the top-left rule, clipping, four-sample coverage and resolve, quads with fine
+  derivatives, perspective-correct interpolation, mip-mapped sampling, depth, blending, and a Lens interpreter whose
+  per-submit step budget stops a runaway shader (and loses the device, as a GPU watchdog would). 294 tests in the
+  folder pin it, among them seeded fuzzing of the binary form; an air-gap test keeps the folder free of other
+  interfaces' names. Nothing in the page uses it yet: slice 2 adds the WebGPU back end and a browser check that
+  compares its pictures with the reference renderer's, slice 3 the surfaces and the interface kit every console app
+  is to draw with.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

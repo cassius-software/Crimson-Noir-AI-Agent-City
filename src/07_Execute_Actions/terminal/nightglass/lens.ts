@@ -179,7 +179,10 @@ export function layoutBlock(block: Block, space: Space): BlockLayout {
   block.fields.forEach((f, i) => {
     const p = place(f.type, space)
     if (space === 'uniform' && typeof f.type !== 'string') {
-      if ('array' in f.type && strideOf(f.type.array, space) % 16 !== 0) fail('lens', `field ${f.name}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
+      // Every array, at every depth, steps 16 bytes or a multiple (a nested block checks its own fields).
+      for (let t: DataType = f.type, name = f.name; typeof t !== 'string' && 'array' in t; t = t.array, name += '[]') {
+        if (strideOf(t.array, space) % 16 !== 0) fail('lens', `field ${name}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
+      }
       if ('array' in f.type && f.type.len === 0) fail('lens', `field ${f.name}: a uniform block cannot end in an array without a length`)
     }
     if (typeof f.type !== 'string' && 'array' in f.type && f.type.len === 0 && i !== block.fields.length - 1) fail('lens', `field ${f.name}: only the last field may be an array without a length`)
@@ -263,8 +266,10 @@ export type Builtin = keyof typeof BUILTINS
 
 /** What a sampled image hands a shader. */
 export type SampleKind = 'float' | 'uint' | 'sint' | 'depth'
+export const SAMPLE_KINDS: readonly SampleKind[] = Object.freeze(['float', 'uint', 'sint', 'depth'])
 /** The shapes of a sampled image view. */
 export type ImageDims = '2d' | '2d-array'
+export const IMAGE_DIMS: readonly ImageDims[] = Object.freeze(['2d', '2d-array'])
 
 /** A resource a shader declares, bound at a set and a binding (inline constants have neither). */
 export type Resource =
@@ -276,6 +281,8 @@ export type Resource =
   | { readonly kind: 'storage-image'; readonly set: number; readonly binding: number; readonly format: Format }
 
 export type ResourceKind = Resource['kind']
+/** The kinds of resource, in the order of their binary codes (append only). */
+export const RESOURCE_KINDS: readonly ResourceKind[] = Object.freeze(['uniform', 'storage', 'constants', 'image', 'sampler', 'storage-image'])
 
 // ---------------------------------------------------------------------------------------------------
 // Instructions
@@ -379,4 +386,9 @@ export const LENS_LIMITS = Object.freeze({
   groupZ: 64,
   /** Words of one binary module. */
   words: 1_048_576,
+  /**
+   * Fields of all of a module's blocks, each counted every time it is reached: one block shared under many fields
+   * counts once for each, so plain data that shares blocks cannot stand for a tree larger than this.
+   */
+  blockFields: 1_048_576,
 })

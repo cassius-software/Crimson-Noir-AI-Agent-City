@@ -35,10 +35,12 @@ export interface FormatInfo {
   readonly filter: boolean
   /** May be bound as a storage image (written by a shader). */
   readonly storage: boolean
+  /** May be a four-sample attachment (and, for a colour format, resolved): never a 32-bit float or integer format. */
+  readonly multisample: boolean
 }
 
 const color = (bytes: number, channels: 1 | 2 | 3 | 4, channelBytes: 1 | 2 | 4, kind: FormatKind, o: Partial<FormatInfo> = {}): FormatInfo =>
-  Object.freeze({ bytes, channels, channelBytes, kind, srgb: false, order: 'rgba', color: true, depth: false, blend: kind === 'unorm' || kind === 'float', filter: kind === 'unorm' || kind === 'float', storage: false, ...o })
+  Object.freeze({ bytes, channels, channelBytes, kind, srgb: false, order: 'rgba', color: true, depth: false, blend: kind === 'unorm' || kind === 'float', filter: kind === 'unorm' || kind === 'float', storage: false, multisample: channelBytes < 4 && (kind === 'unorm' || kind === 'float'), ...o })
 
 /**
  * The formats. Names are Nightglass's own: channels, then bits per channel, then a suffix for what the bits mean
@@ -59,8 +61,8 @@ export const FORMATS = Object.freeze({
   rgba32f: color(16, 4, 4, 'float', { blend: false, filter: false, storage: true }),
   r32u: color(4, 1, 4, 'uint', { storage: true }),
   r32i: color(4, 1, 4, 'sint', { storage: true }),
-  depth16: Object.freeze({ bytes: 2, channels: 1, channelBytes: 2, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false }),
-  depth32f: Object.freeze({ bytes: 4, channels: 1, channelBytes: 4, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false }),
+  depth16: Object.freeze({ bytes: 2, channels: 1, channelBytes: 2, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true }),
+  depth32f: Object.freeze({ bytes: 4, channels: 1, channelBytes: 4, kind: 'depth', srgb: false, order: 'rgba', color: false, depth: true, blend: false, filter: false, storage: false, multisample: true }),
 } satisfies Record<string, FormatInfo>)
 
 export type Format = keyof typeof FORMATS
@@ -115,7 +117,10 @@ export function decodeSrgb(x: number): number {
 
 const scratch = new DataView(new ArrayBuffer(4))
 
-/** A number as the bits of an IEEE half float, rounded to nearest even; overflow becomes infinity, NaN stays NaN. */
+/**
+ * The bits of the IEEE half float nearest an f32: a double that is not an f32 is first rounded to one, then to half,
+ * ties to even (the two roundings can move a near tie); overflow becomes infinity, NaN stays NaN.
+ */
 export function toHalf(value: number): number {
   scratch.setFloat32(0, value, true)
   const x = scratch.getUint32(0, true)

@@ -747,7 +747,9 @@ export interface Backend {
 
 /**
  * A device as the core drives it. Every call has passed the core's checks, so a back end trusts its arguments; what
- * it may still refuse (the GPU lost, memory exhausted) it refuses with a Fault of code `device` or `memory`.
+ * it may still refuse (the GPU lost, memory exhausted) it refuses with a Fault of code `device` or `memory`. A
+ * submit either refuses before any of its work runs (nothing changed, and the device goes on) or, if it stops part
+ * way, reports the device lost from then on through lost() before it raises: the core cannot undo work that ran.
  */
 export interface BackendDevice {
   allocate(kind: MemoryKindName, size: number): Handle
@@ -762,7 +764,7 @@ export interface BackendDevice {
   createBindingLayout(info: BindingLayoutInfo): Handle
   createPipelineLayout(sets: readonly Handle[], constants: { readonly size: number; readonly stages: readonly Stage[] } | null): Handle
   createBindingSet(layout: Handle): Handle
-  /** Replaces a set's bindings (called with every binding once the set is complete, and again after each write). */
+  /** Replaces a set's bindings: called with every binding once the set is complete, again after each write, and with none at once for a set whose layout has no entries. */
   writeBindingSet(set: Handle, entries: readonly BoundEntry[]): void
   createLens(module: LensModule): Handle
   createRenderPipeline(info: RenderPipelineInfo, layout: Handle, vertex: Handle, fragment: Handle | null): Handle
