@@ -2608,6 +2608,13 @@ const SECRET_FORMS: readonly RegExp[] = [
  */
 export function redactForHistory(line: string): string {
   let kept = line
+    .replace(/^(\s*ring0\s+unlock\s+--elite\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ring0\s+elite\s+set\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
+    .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+    .replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  // The same forms where the shell runs a command later in the line (a form already dotted stays as it is).
   for (const form of SECRET_FORMS) kept = kept.replace(form, '$1$2••••')
   return kept
 }
