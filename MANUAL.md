@@ -651,13 +651,14 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   within two lots of the shop, and the rest are spread at least two lots from every other place, never on neighbouring
   lots, a ravine's floor, the landmark's lot or in the lake. The lots do not depend on where the visitor starts, so a
   place is on the same corner whichever region was chosen. **The visitor starts in the region they chose**
-  (`regionWorld.ts` `regionStart`): on the sidewalk across the street from that region's shop, facing along the
-  street toward its heart (the metropolis's visitor stands about 200 m from The Spire). `?place=<slug>` chooses the
+  (`regionWorld.ts` `regionStart`): on the sidewalk across the street from that region's shop, five metres along it
+  so no street tree or lamp stands at your shoulder, facing along the street toward the region's heart (the
+  metropolis's visitor stands within 200 m of The Spire). `?place=<slug>` chooses the
   region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
   ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
   outside it stands on an empty street, is dark inside at night beyond the window's painted light and has nobody at
-  work in it, and nobody from the crowd can be walked out to it; a start's window holds two to four of the
+  work in it, and nobody from the crowd can be walked out to it; a start's window holds one to four of the
   workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
   The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck

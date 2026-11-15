@@ -2172,23 +2172,26 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   region's heart the middle of its tallest cluster, its shop within three lots of the heart and two more places within
   two lots of the shop; the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
   lake; the same lots whichever region the visitor starts in. The visitor stands on the sidewalk across the street from
-  their region's shop, facing along the street toward its heart (`regionWorld.ts` `regionStart`, `RegionPlaces.spawnAt`;
-  the metropolis's visitor about 200 m from The Spire), `?place=<slug>` chooses the region for one visit
+  their region's shop, five metres along it (`START_LEAD`, clear of the street's trees and lamps), facing along the
+  street toward its heart (`regionWorld.ts` `regionStart`, `RegionPlaces.spawnAt`; the metropolis's visitor within
+  200 m of The Spire on three seeds), `?place=<slug>` chooses the region for one visit
   (`onboarding/script.ts` `placeWanted`), and the HUD's street line leads with the region you stand in
   (`RegionPlaces.label`). The physics worker takes a place on any lot of the region, not only on the window's; the
   crowd works only in the rooms on the window's lots (`interiors.ts` `packRooms` takes a presence rule and
   `workplaces.ts` `packRoutes` gives a room off the window an empty table, both by `streets.ts` `lotInWindow`; no WGSL
   text changed, so no device's crowd kernel memory resets). `region/shops.ts` and `region/homes.ts` are removed;
   `workplaces.ts` keeps the lot rules the placement reads (`lotCandidates`, `lotTier`). New tests: `placement.test.ts`
-  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (8, three seeds by
+  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (9, three seeds by
   five regions: the start in its own region, on a sidewalk's middle, a metre clear of every wall and out of the water,
-  facing toward the heart, the five starts over 300 m apart, the fallbacks and the HUD line) and `hollowPlaces.test.ts`
+  every street pole a metre past the visitor's body, facing toward the heart, the five starts over 300 m apart, the
+  fallbacks and the HUD line) and `hollowPlaces.test.ts`
   (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
   (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
   `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
-  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. PAGE_SIZE_LINE Not there yet: the
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,293 bytes, from 12,156,122 to 12,167,415; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
-  it stands on an empty street, dark inside at night, with nobody at work in it; a start's window holds two to four
+  it stands on an empty street, dark inside at night, with nobody at work in it; a start's window holds one to four
   workplaces, one or two shops and up to two homes. Unverified on a real phone or GPU (the pictures are software
   WebGPU).
 

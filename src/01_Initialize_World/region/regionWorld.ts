@@ -408,12 +408,13 @@ export class RegionPlaces {
 
   /**
    * A place to stand at `hint`, a sidewalk's middle (placement.ts PlacedStart: across the street from a quarter's
-   * shop): the hint itself where it is clear of every building by a metre and of the water, else the nearest such
-   * point along its street, a few metres at a time, to either hand; facing along the street, the way that looks more
-   * toward `toward` (a quarter's heart, placement.ts anchors) when it is given. Where no street passes within a block
-   * of the hint, or the whole stretch is built on, the old rule answers (spawn: the nearest arterial's sidewalk).
+   * shop): the point `lead` metres on from the hint along its street (the way the visitor faces) where it is clear of
+   * every building by a metre and of the water, else the nearest such point to it along the street, a few metres at a
+   * time, to either hand; facing along the street, the way that looks more toward `toward` (a quarter's heart,
+   * placement.ts anchors) when it is given. Where no street passes within a block of the hint, or the whole stretch is
+   * built on, the old rule answers (spawn: the nearest arterial's sidewalk).
    */
-  spawnAt(hint: { x: number; z: number }, toward?: { x: number; z: number }): { x: number; z: number; heading: number } {
+  spawnAt(hint: { x: number; z: number }, toward?: { x: number; z: number }, lead = 0): { x: number; z: number; heading: number } {
     let near: { ux: number; uz: number; d: number } | null = null
     for (const i of this.roads.near(hint.x, hint.z, 40)) {
       const pts = this.roadPts[i]
@@ -428,7 +429,7 @@ export class RegionPlaces {
     let { ux, uz } = near
     if (toward ? (toward.x - hint.x) * ux + (toward.z - hint.z) * uz < 0 : ux + uz < 0) { ux = -ux; uz = -uz }
     for (const step of [0, 3, -3, 6, -6, 9, -9, 12, -12]) {
-      const x = hint.x + ux * step, z = hint.z + uz * step
+      const x = hint.x + ux * (lead + step), z = hint.z + uz * (lead + step)
       if (!this.inBuilding(x, z, 1) && !this.inWater(x, z)) return { x, z, heading: Math.atan2(ux, uz) }
     }
     return this.spawn(hint)
@@ -446,16 +447,26 @@ export class RegionPlaces {
 /**
  * Where the visitor of a region first stands, and which way they face. In a generated region (one with a placement,
  * placement.ts): the sidewalk across the street from the shop of the quarter they chose (pack.quarters.home; the
- * first quarter in a pack without the layer), facing along the street the way that looks toward that quarter's heart.
- * In a surveyed region (no placement): a sidewalk of the arterial nearest the region's origin, its downtown.
+ * first quarter in a pack without the layer), START_LEAD metres on toward that quarter's heart, facing along the
+ * street that way. In a surveyed region (no placement): a sidewalk of the arterial nearest the region's origin, its
+ * downtown.
  */
 export function regionStart(pack: RegionPack, l: RegionLayout, places: RegionPlaces, placement: RegionPlacement | null): { x: number; z: number; heading: number } {
   const quarter = pack.quarters ? pack.quarters.home : 0
   const hint = placement?.starts.find((s) => s.quarter === quarter) ?? placement?.starts[0]
   if (!placement || !hint) return places.spawn({ x: l.offset.x, z: l.offset.z })
   const heart = placement.anchors.find((a) => a.quarter === hint.quarter)
-  return places.spawnAt(hint, heart && { x: (heart.k + 0.5) * CITY.pitch, z: (heart.m + 0.5) * CITY.pitch })
+  return places.spawnAt(hint, heart && { x: (heart.k + 0.5) * CITY.pitch, z: (heart.m + 0.5) * CITY.pitch }, START_LEAD)
 }
+
+/**
+ * How far along the street from the placement's hint (the middle of the shop's lot, across the street) the visitor
+ * stands, m. A street's trees stand at its blocks' middles and its lamps a quarter of a block either side, all on the
+ * furniture line half a metre from the sidewalk's middle (streets.ts windowFurniture), so the hint itself has a trunk
+ * at the visitor's shoulder; an eighth of a block on, the nearest pole is five metres away and the shop still across
+ * the street.
+ */
+export const START_LEAD = CITY.pitch / 8
 
 // ---------------------------------------------------------------- meshes
 

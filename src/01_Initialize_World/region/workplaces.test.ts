@@ -212,9 +212,11 @@ test('the placement\'s own rooms: one on the window\'s lots is routed, from ever
       }
       if (cornerComponent(g, dest).has(cornerKey(cornerNear(g, w.start)))) fromStart++
     })
-    // A window's streets are cut where it ends and at a ravine, so a room across one may be out of the start's reach
-    // inside the window (its workers on the far side walk as anyone does); never every room.
-    assert.ok(here >= 2 && fromStart >= 1, `${at}: ${here} rooms on the window, ${fromStart} the start's corner walks to inside it`)
+    // The programme stands one workplace by every region's shop (placement.ts starters), so every start's window
+    // has one at least (seed 1337's north ridge has just that one; most have two to four). A window's streets are cut
+    // where it ends and at a ravine, so a room across one may be out of the start's reach inside the window (its
+    // workers on the far side walk as anyone does); never every room.
+    assert.ok(here >= 1 && fromStart >= 1, `${at}: ${here} rooms on the window, ${fromStart} the start's corner walks to inside it`)
     onWindow += here
   }
   assert.ok(onWindow >= 30 && walks > 10000, `${onWindow} rooms on their windows, ${walks} walks`)

@@ -24,14 +24,15 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { CITY } from '../city.ts'
+import { CITY, POLES } from '../city.ts'
 import { doorDir } from '../interiors.ts'
 import { ZONE, generateLakefront } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
 import { polygonAt, polygonCount, type RegionPack } from './pack.ts'
 import { regionPlacement, type RegionPlacement } from './placement.ts'
 import { quarterAt } from './quarters.ts'
-import { SEG, SIDEWALK, hSeg, mapStreetGrid, vSeg, type StreetGrid } from './streets.ts'
+import { SEG, SIDEWALK, hSeg, mapStreetGrid, streetGridOf, vSeg, windowFurniture, type StreetGrid } from './streets.ts'
+import { PERSON } from '../../07_Execute_Actions/simProtocol.ts'
 
 // Vite's `?raw` import, for Node: regionWorld.ts imports a module that takes WGSL that way (workplaces.test.ts's hook).
 registerHooks({
@@ -41,7 +42,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { RegionPlaces, layoutOf, regionStart } = await import('./regionWorld.ts')
+const { RegionPlaces, START_LEAD, layoutOf, regionStart } = await import('./regionWorld.ts')
 
 const P = CITY.pitch
 const ZONES = ['metropolis', 'westSprawl', 'eastBluffs', 'northRidge', 'grandRavine'] as const
@@ -109,7 +110,23 @@ test('on a sidewalk: beside a street with one, half a sidewalk past the kerb, cl
     assert.ok(clearance(s, s.at) >= 1, `${name(s)}: ${clearance(s, s.at).toFixed(2)} m from the nearest wall`)
     assert.ok(!s.places.inWater(s.at.x, s.at.z), `${name(s)}: dry`)
     const hint = s.placed.starts.find((h) => h.quarter === s.id)!
-    assert.ok(Math.hypot(hint.x - s.at.x, hint.z - s.at.z) <= 12 + 1e-9, `${name(s)}: within twelve metres of the placement's hint`)
+    const off = Math.hypot(hint.x - s.at.x, hint.z - s.at.z)
+    assert.ok(off <= START_LEAD + 12 + 1e-9, `${name(s)}: ${off.toFixed(1)} m from the placement's hint`)
+  }
+})
+
+test('clear of the street\'s poles: every lamp, tree and signal of the start\'s window stands a metre past the visitor\'s reach', () => {
+  // The hint is a block's middle, where the street's tree stands half a metre off the sidewalk's middle
+  // (streets.ts windowFurniture); START_LEAD moves the visitor an eighth of a block on, five metres from every pole.
+  assert.equal(START_LEAD, 5)
+  for (const s of STARTS) {
+    const g = streetGridOf(s.pack, s.layout.offset, s.at)!
+    const f = windowFurniture(g, s.seed)
+    let nearest = Infinity
+    for (const [list, r] of [[f.lamps, POLES.lamp.radius], [f.trees, POLES.tree.radius], [f.signals, POLES.signal.radius]] as const) {
+      for (const p of list) nearest = Math.min(nearest, Math.hypot(p[0] - s.at.x, p[1] - s.at.z) - r - PERSON.radius)
+    }
+    assert.ok(nearest >= 1, `${name(s)}: a pole ${nearest.toFixed(2)} m past the visitor's body`)
   }
 })
 
@@ -120,9 +137,13 @@ test('facing along the street, the way that looks toward the region\'s heart', (
     // Along the street beside it: the grid's streets run along x or along z.
     assert.ok(Math.abs(beside.along === 'x' ? Math.abs(ux) - 1 : Math.abs(uz) - 1) < 1e-9, `${name(s)}: along the street (${ux.toFixed(2)}, ${uz.toFixed(2)})`)
     const heart = s.placed.anchors.find((a) => a.quarter === s.id)!
-    const toward = ((heart.k + 0.5) * P - s.at.x) * ux + ((heart.m + 0.5) * P - s.at.z) * uz
-    // A heart square across the street is neither ahead nor behind (seed 1337's ravine: the cosine's last bit).
-    assert.ok(toward > -1e-6, `${name(s)}: the heart is ahead, not behind (${toward.toFixed(0)} m along the view)`)
+    // Seen from the hint, where the facing is chosen (the start is START_LEAD on from it, so a heart level with the
+    // hint is that much behind the start: seed 1337's west sprawl). A heart square across the street is neither ahead
+    // nor behind (seed 1337's ravine: the cosine's last bit).
+    const hint = s.placed.starts.find((h) => h.quarter === s.id)!
+    const toward = ((heart.k + 0.5) * P - hint.x) * ux + ((heart.m + 0.5) * P - hint.z) * uz
+    assert.ok(toward > -1e-6, `${name(s)}: the heart is ahead of the hint, not behind (${toward.toFixed(0)} m along the view)`)
+    assert.ok(Math.abs((s.at.x - hint.x) * ux + (s.at.z - hint.z) * uz) <= START_LEAD + 12 + 1e-9, `${name(s)}: the start is along the view from the hint`)
   }
 })
 
@@ -172,11 +193,14 @@ test('the fallbacks: no placement, a placement without the chosen region\'s star
   const lake = { x: s.layout.offset.x + s.pack.bounds.x1 - 20, z: s.layout.offset.z + s.pack.bounds.z1 - 20 }
   assert.ok(s.places.inWater(lake.x, lake.z), 'the map\'s south-east corner is the lake')
   assert.deepEqual(s.places.spawnAt(lake), s.places.spawn(lake))
-  // Without a heart to look toward, the heading is the street's own, the way that points south or east.
+  // Without a heart to look toward, the heading is the street's own, the way that points south or east; with no lead
+  // the visitor stands on the hint itself (it is clear here), on the same sidewalk as the start, START_LEAD behind it.
   const hint = s.placed.starts.find((h) => h.quarter === s.id)!
   const plain = s.places.spawnAt(hint)
   assert.ok(Math.sin(plain.heading) + Math.cos(plain.heading) > 0)
-  assert.deepEqual({ x: plain.x, z: plain.z }, { x: s.at.x, z: s.at.z }, 'the same point either way: only the facing differs')
+  assert.deepEqual({ x: plain.x, z: plain.z }, { x: hint.x, z: hint.z })
+  assert.ok(Math.abs(Math.hypot(plain.x - s.at.x, plain.z - s.at.z) - START_LEAD) < 1e-9)
+  assert.equal(streetBeside(s.g, plain).d, streetBeside(s.g, s.at).d)
 })
 
 test('label(): the HUD\'s line leads with the region the point stands in, the map\'s name where it stands in none', () => {
