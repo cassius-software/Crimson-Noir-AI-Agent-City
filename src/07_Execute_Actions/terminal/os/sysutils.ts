@@ -100,7 +100,14 @@ function* alone(sys: Sys, argv: readonly string[], name: string): Task<number | 
 const nameOf = (id: number): string => (id === 0 ? 'root' : String(id))
 
 /** A text as a listing shows it on one line: a control character would break the line, so each becomes `?`. */
-const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007f]/g, '?')
+function plain(text: string): string {
+  let out = ''
+  for (const ch of text) {
+    const code = ch.charCodeAt(0)
+    out += code < 0x20 || code === 0x7f ? '?' : ch
+  }
+  return out
+}
 
 /** The columns a text takes on a line: its characters, not its code units. */
 function wide(text: string): number {
