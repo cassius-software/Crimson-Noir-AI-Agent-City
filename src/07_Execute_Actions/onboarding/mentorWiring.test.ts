@@ -36,6 +36,12 @@ test('the hook listens and never writes: readings from the snapshot, events from
   assert.match(src, /addEventListener\('keydown'/)
   assert.match(src, /addEventListener\('pointermove'/)
   assert.match(src, /mustKeep\(s, n\.keep\)/, 'a rewording that drops the key or name is not shown')
+  // The clock is made once: an inline default is a new function each render, which restarted the listeners and the
+  // once-a-second tick on every HUD snapshot (ten a second), so on a fast machine the tick never came round.
+  assert.match(src, /^const PERF_NOW = \(\): number => performance\.now\(\)$/m)
+  assert.match(src, /, now = PERF_NOW, timing \}: MentorProps\)/)
+  assert.doesNotMatch(src, /now = \(\) =>/, 'no clock made inline in the parameters')
+  assert.match(src, /\}, \[ready, engine, now\]\)/)
 })
 
 test('the Concierge takes a nudge as its own view: opened only from the chip, a greeting or the help, settled like a greeting, never shown twice', () => {

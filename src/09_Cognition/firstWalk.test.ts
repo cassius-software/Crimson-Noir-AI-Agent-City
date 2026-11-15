@@ -2,19 +2,22 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the evidence for the first walk: seven stages in a fixed order, each finished by the
+ * Why does this file exist? It is the evidence for the first walk: six stages in a fixed order, each finished by the
  * reading or event that means it was done (a turn of the head and three metres; a goal, the microphone or the
  * captions; a car entered; a room entered; the wardrobe, a shop's card or a home's doorstep card put away after it was
- * open; a law line run at the console; the city unlocked), the shops and the homes named only on a map that has them and
- * in the device's own words, a stage done early kept without a word, a stage the map or the page cannot offer passed over, Sloane's line at every start, one hint per stage
- * after a quiet spell and never before the cooldown, the exit finished by nothing but `unlock`, and every spoken
- * line plain, true to the city, admissible under the conduct screen and never calling the walk a lesson.
- * What breaks if it is removed? A walk that skips a stage, nags, or can be passed without the program would ship unnoticed.
+ * open; the console open on the last stage, which passes the walk), the exit program's unlock passing it from any
+ * stage, the console opened early passing nothing, the shops and the homes named only on a map that has them and in
+ * the device's own words, a stage done early kept without a word, a stage the map or the page cannot offer passed over,
+ * Sloane's line at every start, a hand lent after assistMs with nothing done on a stage (and withdrawn when the stage
+ * moves on), one hint per stage after a quiet spell and never before the cooldown, and every spoken line plain, true to
+ * the city, admissible under the conduct screen and never calling the walk a lesson.
+ * What breaks if it is removed? A walk that skips a stage, nags, leaves a stalled visitor alone, or ends before the
+ * console would ship unnoticed.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
-import { FirstWalk, PROGRAM, STAGES, SWARM_ROLE, SWARM_SIZE, WALK, askFor, available, cardFor, eli8Of, hintFor, inWords, lawLine, passedLine, whysOf, type FirstWalkOptions, type Stage, type WalkReading } from './firstWalk.ts'
+import { FirstWalk, PROGRAM, STAGES, SWARM_ROLE, SWARM_SIZE, WALK, askFor, assistControlsOf, assistLine, assistTargetOf, available, cardFor, eli8Of, hintFor, inWords, passedBanner, passedLine, whysOf, type FirstWalkOptions, type Stage, type WalkReading } from './firstWalk.ts'
 
 const S = 1000
 const KEYS: FirstWalkOptions = { family: 'keyboard', words: { move: 'W A S D', look: 'Mouse', interact: 'E', console: '~' }, city: { fleet: true, rooms: true } }
@@ -35,7 +38,7 @@ function begun(o: FirstWalkOptions = KEYS): FirstWalk {
   return w
 }
 
-test('the seven stages in order, each finished by its reading or event; the exit only by unlock; Sloane speaks at every start and at the end', () => {
+test('the six stages in order, each finished by its reading or event; the console open on the last one passes the walk; Sloane speaks at every start and at the end', () => {
   const w = begun()
   assert.equal(w.stage, 'move')
   const first = w.tick(0)
@@ -60,38 +63,81 @@ test('the seven stages in order, each finished by its reading or event; the exit
   assert.ok(style && style.kind === 'ask' && style.stage === 'style')
   assert.match(style.text, /Look/)
   w.note('wardrobe', 6.5 * S)
-  assert.equal(w.stage, 'ring0')
-  assert.equal(w.tick(6.5 * S)?.stage, 'ring0')
-  w.note('console', 7 * S)
-  assert.equal(w.stage, 'ring0', 'opening the console is not reading the laws')
-  w.note('law', 8 * S)
-  assert.equal(w.stage, 'exam')
-  const exam = w.tick(8 * S)
-  assert.ok(exam && exam.kind === 'ask' && exam.stage === 'exam')
-  assert.match(exam.text, /verify_ring0/)
-  // The exit: the seal and the swarm are the doors; only unlock passes.
-  w.note('seal', 9 * S)
-  w.note('swarm', 10 * S)
-  assert.deepEqual(w.exam, { seal: true, swarm: true })
+  assert.equal(w.stage, 'console')
+  const last = w.tick(6.5 * S)
+  assert.ok(last && last.kind === 'ask' && last.stage === 'console')
+  assert.match(last.text, /~ key/)
   assert.equal(w.passed, false)
-  w.read(still({ yaw: 3, travelled: 500, driving: true, inside: true, consoleOpen: true }), 11 * S)
-  assert.equal(w.passed, false, 'no reading passes the exit')
-  w.note('unlock', 12 * S)
+  // The console opens: the walk is passed at once.
+  w.read(still({ yaw: 0.5, travelled: 40, consoleOpen: true }), 7 * S)
   assert.equal(w.passed, true)
-  const last = w.tick(12 * S)
-  assert.ok(last && last.kind === 'passed')
-  assert.equal(w.tick(13 * S), null)
+  const end = w.tick(7 * S)
+  assert.ok(end && end.kind === 'passed' && end.stage === 'console')
+  assert.equal(end.text, passedLine())
+  assert.equal(w.tick(8 * S), null)
   assert.equal(w.tick(1000 * S), null, 'nothing more, ever')
-  assert.deepEqual([...w.done], STAGES)
+  assert.equal(w.done.size, STAGES.length)
+  for (const s of STAGES) assert.ok(w.done.has(s), `${s} counts as done once passed`)
 })
 
-test('unlock before the exit is reached does nothing; the seal and swarm doors are remembered whenever they are reported', () => {
-  const w = begun()
-  w.note('unlock', 1 * S)
+test('the console reported open (the event, not the reading) on the last stage passes too; opened on any earlier stage it passes nothing', () => {
+  const w = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet', 'work', 'style'] })
+  w.start(0)
+  w.read(still(), 0)
+  assert.equal(w.stage, 'console')
+  w.note('console', 1 * S)
+  assert.equal(w.passed, true)
+  // Early: the console opens and closes on the first stage, and the walk carries on where it was.
+  const v = begun()
+  v.tick(0)
+  v.note('console', 1 * S)
+  v.read(still({ consoleOpen: true }), 1 * S)
+  assert.equal(v.passed, false)
+  assert.equal(v.stage, 'move')
+  v.read(still(), 2 * S)
+  assert.equal(v.tick(2 * S), null, 'and Sloane says nothing of it')
+})
+
+test('arriving at the last stage with the console already open is reaching it: passed at once, by a reading or by the event that finished the stage before', () => {
+  // The console open while the look stage is finished (its opening put the wardrobe away): the walk passes on the spot.
+  const w = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet', 'work'] })
+  w.start(0)
+  w.read(still(), 0)
+  w.tick(0)
+  w.read(still({ consoleOpen: true }), 1 * S)
+  assert.equal(w.stage, 'style')
   assert.equal(w.passed, false)
-  assert.equal(w.stage, 'move')
-  w.note('seal', 2 * S)
+  w.note('wardrobe', 1.1 * S)
+  assert.equal(w.passed, true)
+  assert.equal(w.tick(1.1 * S)?.kind, 'passed', 'no ask for a stage already reached')
+  // The other order: the stage finished first, then the reading with the console open.
+  const v = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet', 'work'] })
+  v.start(0)
+  v.read(still(), 0)
+  v.note('wardrobe', 1 * S)
+  assert.equal(v.stage, 'console')
+  v.read(still({ consoleOpen: true }), 1.1 * S)
+  assert.equal(v.passed, true)
+  // A first reading with the console open on the last stage passes too (a reload with the console open).
+  const u = new FirstWalk({ ...KEYS, done: ['move', 'voice', 'fleet', 'work', 'style'] })
+  u.start(0)
+  u.read(still({ consoleOpen: true }), 0)
+  assert.equal(u.passed, true)
+})
+
+test('the exit program\'s unlock passes the walk from any stage; the seal and swarm doors are remembered whenever they are reported', () => {
+  const w = begun()
+  w.tick(0)
+  w.note('seal', 1 * S)
   assert.equal(w.exam.seal, true)
+  w.note('swarm', 2 * S)
+  assert.deepEqual(w.exam, { seal: true, swarm: true })
+  assert.equal(w.passed, false, 'the doors alone pass nothing')
+  w.note('unlock', 3 * S)
+  assert.equal(w.passed, true)
+  assert.equal(w.tick(3 * S)?.kind, 'passed')
+  w.note('unlock', 4 * S)
+  assert.equal(w.tick(4 * S), null, 'passed once')
 })
 
 test('a later stage done early is kept, and said nothing of until its turn', () => {
@@ -102,8 +148,6 @@ test('a later stage done early is kept, and said nothing of until its turn', () 
   assert.equal(w.stage, 'move')
   assert.equal(w.tick(1 * S), null)
   assert.ok(w.done.has('fleet'))
-  w.note('law', 2 * S)
-  assert.ok(w.done.has('ring0'))
   // The first stage done: the next undone is voice.
   w.read(still({ driving: true, yaw: 1, travelled: 5 }), 3 * S)
   assert.equal(w.stage, 'voice')
@@ -113,7 +157,7 @@ test('a later stage done early is kept, and said nothing of until its turn', () 
   w.note('inside', 5 * S)
   assert.equal(w.stage, 'style')
   w.note('wardrobe', 6 * S)
-  assert.equal(w.stage, 'exam', 'ring0 was done early')
+  assert.equal(w.stage, 'console')
   // The wardrobe put away during an earlier stage counts the same way.
   const v = begun()
   v.note('wardrobe', 1 * S)
@@ -128,8 +172,8 @@ test('a shop\'s card put away finishes the look stage as the wardrobe does, at i
   assert.equal(w.stage, 'style')
   assert.match(w.tick(0)?.text ?? '', /shops on the street/)
   w.note('store', 1 * S)
-  assert.equal(w.stage, 'ring0')
-  assert.equal(w.tick(1 * S)?.stage, 'ring0')
+  assert.equal(w.stage, 'console')
+  assert.equal(w.tick(1 * S)?.stage, 'console')
   // Out shopping on the first stage: the look stage is done, and Sloane says nothing of it until its turn would have come.
   const v = begun(shopping(KEYS))
   v.tick(0)
@@ -148,8 +192,8 @@ test('a home\'s doorstep card put away finishes the look stage as a shop\'s card
   assert.match(said, /shops on the street/)
   assert.match(said, /a home for sale/)
   w.note('home', 1 * S)
-  assert.equal(w.stage, 'ring0')
-  assert.equal(w.tick(1 * S)?.stage, 'ring0')
+  assert.equal(w.stage, 'console')
+  assert.equal(w.tick(1 * S)?.stage, 'console')
   // Into a home on the first stage: the look stage is done, and Sloane says nothing of it until its turn would have come.
   const v = begun(homing(KEYS))
   v.tick(0)
@@ -157,24 +201,24 @@ test('a home\'s doorstep card put away finishes the look stage as a shop\'s card
   assert.ok(v.done.has('style'))
   assert.equal(v.stage, 'move')
   assert.equal(v.tick(1 * S), null)
-  // Nothing else of the walk hears it: the exit stays the exam's.
-  const x = new FirstWalk({ ...homing(KEYS), done: ['move', 'voice', 'fleet', 'work', 'style', 'ring0'] })
+  // Nothing else of the walk hears it: the last stage stays the console's.
+  const x = new FirstWalk({ ...homing(KEYS), done: ['move', 'voice', 'fleet', 'work', 'style'] })
   x.start(0)
   x.read(still(), 0)
   x.note('home', 1 * S)
-  assert.equal(x.stage, 'exam')
+  assert.equal(x.stage, 'console')
   assert.equal(x.passed, false)
 })
 
-test('a stage the map or the page cannot offer is passed over: no cars, no rooms, no wardrobe; the exit never is', () => {
-  const w = new FirstWalk({ ...KEYS, city: { fleet: false, rooms: false, wardrobe: false }, done: ['exam'] })
+test('a stage the map or the page cannot offer is passed over: no cars, no rooms, no wardrobe; the console never is', () => {
+  const w = new FirstWalk({ ...KEYS, city: { fleet: false, rooms: false, wardrobe: false }, done: ['console'] })
   assert.ok(w.done.has('fleet') && w.done.has('work') && w.done.has('style'))
-  assert.equal(w.done.has('exam'), false, 'done may not name the exit')
+  assert.equal(w.done.has('console'), false, 'done may not name the console')
   w.start(0)
   w.read(still(), 0)
   w.read(still({ yaw: 1, travelled: 4 }), 1 * S)
   w.note('goal', 2 * S)
-  assert.equal(w.stage, 'ring0')
+  assert.equal(w.stage, 'console')
   assert.equal(available('fleet', { fleet: false, rooms: true }), false)
   assert.equal(available('work', { fleet: true, rooms: false }), false)
   assert.equal(available('style', { fleet: true, rooms: true, wardrobe: false }), false)
@@ -192,18 +236,18 @@ test('a stage the map or the page cannot offer is passed over: no cars, no rooms
 test('one hint per stage, after hintMs with no progress and not before the cooldown since the last line; progress restarts the wait', () => {
   const w = begun()
   w.tick(0)
-  for (let t = 1; t < 45; t++) assert.equal(w.tick(t * S), null, `patient at ${t}s`)
-  const hint = w.tick(45 * S)
+  for (let t = 1; t < 20; t++) assert.equal(w.tick(t * S), null, `patient at ${t}s`)
+  const hint = w.tick(20 * S)
   assert.ok(hint && hint.kind === 'hint' && hint.stage === 'move')
   assert.match(hint.text, /drag/)
   assert.equal(w.tick(100 * S), null, 'one hint per stage')
   // The next stage: the ask comes at once (it is pending, not timed), and its hint waits for the cooldown too.
   w.read(still({ yaw: 1, travelled: 4 }), 101 * S)
   assert.equal(w.tick(101 * S)?.kind, 'ask')
-  w.note('look', 120 * S) // activity: the quiet spell restarts
-  assert.equal(w.tick(150 * S), null)
-  assert.equal(w.tick(164 * S), null)
-  assert.equal(w.tick(165 * S)?.kind, 'hint')
+  w.read(still({ yaw: 1, travelled: 4, driving: true }), 110 * S) // a car entered early (fleet done, kept): progress, the quiet spell restarts
+  assert.equal(w.stage, 'voice')
+  assert.equal(w.tick(129 * S), null)
+  assert.equal(w.tick(130 * S)?.kind, 'hint')
   // Shorter timings for the hook's tests.
   const q = new FirstWalk({ ...KEYS, hintMs: 1000, cooldownMs: 500 })
   q.start(0)
@@ -211,8 +255,85 @@ test('one hint per stage, after hintMs with no progress and not before the coold
   q.tick(0)
   assert.equal(q.tick(999), null)
   assert.equal(q.tick(1000)?.kind, 'hint')
-  assert.equal(WALK.hintMs, 45_000)
-  assert.equal(WALK.cooldownMs, 45_000)
+  // The cooldown is what holds a hint back when the quiet spell is long enough but her last line is recent.
+  const c = new FirstWalk({ ...KEYS, hintMs: 1000, cooldownMs: 5000 })
+  c.start(0)
+  c.read(still(), 0)
+  assert.equal(c.tick(0)?.kind, 'ask')
+  assert.equal(c.tick(1500), null, 'quiet for longer than hintMs, but the ask was said 1.5 s ago')
+  assert.equal(c.tick(4999), null)
+  assert.equal(c.tick(5000)?.kind, 'hint', 'said once the cooldown is over')
+  assert.equal(WALK.hintMs, 20_000)
+  assert.equal(WALK.cooldownMs, 20_000)
+})
+
+test('a hand is lent after assistMs with nothing done on the stage, withdrawn when the stage moves on, and never before start or after the pass', () => {
+  const w = begun()
+  assert.equal(w.assisting, false)
+  w.tick(0)
+  w.tick(7.9 * S)
+  assert.equal(w.assisting, false, 'patient for eight seconds')
+  w.tick(8 * S)
+  assert.equal(w.assisting, true)
+  // Looking around is progress on the first stage: the hand is withdrawn at the next tick, and lent again after another quiet spell.
+  w.read(still({ yaw: 1 }), 9 * S)
+  w.tick(9 * S)
+  assert.equal(w.assisting, false)
+  w.tick(16.9 * S)
+  assert.equal(w.assisting, false)
+  w.tick(17 * S)
+  assert.equal(w.assisting, true)
+  // The stage done: withdrawn at once, and the next stage gets its own eight seconds.
+  w.read(still({ yaw: 1, travelled: 4 }), 18 * S)
+  assert.equal(w.stage, 'voice')
+  assert.equal(w.assisting, false)
+  w.tick(18 * S)
+  w.tick(25.9 * S)
+  assert.equal(w.assisting, false)
+  w.tick(26 * S)
+  assert.equal(w.assisting, true)
+  // On a later stage, walking about is no progress on it (the car is still to be found): the hand stays.
+  w.note('goal', 27 * S)
+  w.tick(27 * S)
+  w.read(still({ yaw: 1, travelled: 30 }), 36 * S)
+  w.tick(36 * S)
+  assert.equal(w.stage, 'fleet')
+  assert.equal(w.assisting, true)
+  // Passed: no hand.
+  w.note('unlock', 37 * S)
+  assert.equal(w.assisting, false)
+  w.tick(100 * S)
+  assert.equal(w.assisting, false)
+  // Not before start; shorter timing for the hook's tests.
+  const v = new FirstWalk({ ...KEYS, assistMs: 500 })
+  v.tick(10 * S)
+  assert.equal(v.assisting, false)
+  v.start(0)
+  v.tick(499)
+  assert.equal(v.assisting, false)
+  v.tick(500)
+  assert.equal(v.assisting, true)
+  assert.equal(WALK.assistMs, 8_000)
+  assert.ok(WALK.assistMs < WALK.hintMs, 'the hand comes before the spoken hint')
+})
+
+test('the lent hand: the control lit, the keys shown and the offer, per stage and device', () => {
+  assert.deepEqual(STAGES.map((s) => assistTargetOf(s, 'touch')), ['stick', 'chip', 'enter', null, 'look', 'menu'])
+  assert.deepEqual(STAGES.map((s) => assistTargetOf(s, 'keyboard')), [null, 'chip', null, null, 'look', null])
+  assert.deepEqual(STAGES.map((s) => assistTargetOf(s, 'pad')), [null, 'chip', null, null, 'look', null])
+  assert.deepEqual(STAGES.map((s) => [...assistControlsOf(s)]), [['look', 'move'], [], ['interact'], [], [], ['console']])
+  for (const family of ['keyboard', 'pad', 'touch'] as const) {
+    for (const s of STAGES) {
+      const line = assistLine(s, { family })
+      assert.match(line, /^Want a hand\? /, `${family} ${s}`)
+      assert.match(line, family === 'touch' ? /tap the button below/i : /use the button below/i, `${family} ${s}`)
+      assert.doesNotMatch(line, /tutorial|lesson|step \d/i)
+      assert.equal(screen(line).admissible, true, line)
+    }
+  }
+  assert.match(assistLine('fleet', { family: 'keyboard' }), /Follow the marker to a parked car/)
+  assert.match(assistLine('work', { family: 'touch' }), /Follow the marker to a doorway/)
+  assert.match(assistLine('move', { family: 'touch' }), /^Want a hand\? Tap the button below and I’ll do it for you\.$/)
 })
 
 test('nothing before start, nothing after the pass, and the first reading only anchors the head and the odometer', () => {
@@ -238,9 +359,12 @@ test('the exit program is the three lines, in order, with the role and the swarm
   assert.equal(inWords(99), '99')
 })
 
-test('the law lines: laws, kernel, act gate, act list, ring0 and ring0 status; nothing else', () => {
-  for (const l of ['laws', ' laws ', 'LAWS', 'kernel', 'act gate', 'act  gate', 'act list', 'ring0', 'ring0 status']) assert.ok(lawLine(l), l)
-  for (const l of ['law', 'help laws', 'act ok', 'ring0 unlock --elite x', 'stats', 'noir print(1);', '']) assert.equal(lawLine(l), false, l)
+test('the banner the console prints when the walk is passed: Sloane\'s line, then where to go from here', () => {
+  assert.deepEqual([...passedBanner()], [`Sloane: ${passedLine()}`, 'The city is open: nothing is held back any more. Esc closes the console; help lists every command.'])
+  assert.match(passedBanner('Dana')[0]!, /The city is yours, Dana\./)
+  assert.equal(passedBanner('', 'touch')[1], 'The city is open: nothing is held back any more. Close puts the console away; help lists every command.', 'touch has the console\'s Close button, no Esc')
+  assert.equal(passedBanner('', 'pad')[1], passedBanner()[1])
+  for (const l of [...passedBanner('Dana'), ...passedBanner('Dana', 'touch')]) { assert.doesNotMatch(l, /tutorial|lesson|step \d/i); assert.equal(screen(l).admissible, true, l) }
 })
 
 test('every spoken line is plain words, admissible, true to the device, and never calls the walk a lesson', () => {
@@ -263,17 +387,10 @@ test('every spoken line is plain words, admissible, true to the device, and neve
       for (const w of whys) { check(w, `${s} why`); assert.match(w, /^Why .*\? Because /, w) }
       const card = cardFor(s, o)
       assert.equal(card.index, STAGES.indexOf(s) + 1)
-      assert.equal(card.count, 7)
+      assert.equal(card.count, 6)
       assert.ok(card.title && card.show && card.ask === ask.text)
     }
   }
-  // The swarm's why names the workplaces' desks only where the map has rooms (a surveyed region has none: its lanes read
-  // around where the player started, and nobody is asked over for a desk).
-  const roomless = whysOf('exam', { fleet: true, rooms: false })
-  check(roomless[2]!, 'exam why without rooms')
-  assert.doesNotMatch(roomless.join(' '), /sixteen workplaces|desk|asked over/, 'no desk promised on a map without rooms')
-  assert.match(roomless[2]!, /this map has no workplaces, so they read the city around where you started/)
-  assert.match(whysOf('exam', KEYS.city)[2]!, /one of the sixteen workplaces/)
   check(passedLine(), 'passed')
   check(passedLine('Dana'), 'passed named')
   assert.match(passedLine('Dana'), /Dana/)
@@ -283,8 +400,12 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('move', TOUCH).text, /stick in the corner/)
   assert.match(askFor('fleet', TOUCH).text, /tap Enter car/)
   assert.match(askFor('fleet', PAD).text, /press A/)
-  assert.match(askFor('ring0', TOUCH).text, /Menu/)
-  assert.match(askFor('ring0', KEYS).text, /~ key/)
+  assert.match(askFor('console', TOUCH).text, /Open the Menu in the corner and tap Console/)
+  assert.match(askFor('console', KEYS).text, /Press the ~ key to open the console/)
+  assert.match(askFor('console', PAD).text, /the button on this card, or the ~ key on a keyboard/)
+  assert.match(askFor('console', { ...KEYS, name: 'Dana' }).text, /^Last one, Dana, and then the city is yours\./)
+  assert.match(hintFor('console', KEYS).text, /the one left of 1, under Esc/)
+  assert.deepEqual([...askFor('console', TOUCH).keep], ['Menu', 'Console'])
   assert.match(askFor('style', TOUCH).text, /Tap Look/)
   assert.match(askFor('style', KEYS).text, /Click Look/)
   assert.deepEqual([...askFor('style', PAD).keep], ['Look', 'Done'])
@@ -328,10 +449,9 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('move', { ...KEYS, name: 'Dana' }).text, /Welcome in, Dana/)
   assert.match(hintFor('work', { ...KEYS, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }).text, /the clinic, about 120 metres to the north/)
   assert.match(hintFor('work', KEYS).text, /wide open doorway/)
-  // The exam's words name the three doors.
-  const e = askFor('exam', KEYS)
-  assert.deepEqual([...e.keep], ['verify_ring0', 'spawn_subagents', 'unlock_city'])
-  assert.match(e.text, /twenty-four sub-agents/)
-  const stages: Stage[] = ['move', 'voice', 'fleet', 'work', 'style', 'ring0', 'exam']
+  // The last stage's whys say what the console is, and where its language lives.
+  assert.match(whysOf('console').join(' '), /four laws in rank order/)
+  assert.match(whysOf('console').join(' '), /type noir and a line to try it/)
+  const stages: Stage[] = ['move', 'voice', 'fleet', 'work', 'style', 'console']
   assert.deepEqual([...STAGES], stages)
 })

@@ -3,7 +3,8 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the first walk's exam: the three doors the exit program opens, built over what the
- * page already has and nothing more. `verify_ring0` is a seal: a 32-bit FNV-1a hash of what holds right now (the four
+ * page already has and nothing more. The walk itself ends the moment the visitor reaches the console on its last
+ * stage; the exit program is the way out from any stage, for a visitor who already knows the console. `verify_ring0` is a seal: a 32-bit FNV-1a hash of what holds right now (the four
  * laws by rank and title, the gate's fifteen checks by name, the host's vouch that the page is contained, the Ring-0
  * audit standing) salted with a number drawn once per page load, so the seal is 0 when any of it fails and a number
  * typed from memory never matches. `spawn_subagents` sets n sub-agents to work for a role through Sloane's team runner
@@ -11,11 +12,11 @@
  * the player stands, under the lane limits and the Ring-0 gate, with anyone within earshot who has a desk's skill
  * asked over as the runner finds them. It answers with how many lanes are running after their first tick, never with
  * the number wished for, and opens nothing while the page is not contained or the realm is halted. `unlock_city`
- * opens the city for a seal that matches the live one and a swarm of one or more, by telling the walk, which keeps the
- * pass; it writes to nothing else. Every door leaves one plain line the console prints after the run, so the visitor
+ * opens the city, on whatever stage the walk is, for a seal that matches the live one and a swarm of one or more, by
+ * telling the walk, which keeps the pass; it writes to nothing else. Every door leaves one plain line the console prints after the run, so the visitor
  * reads why the city stayed shut. Nothing here bypasses the Ring-0 gate or the elite tier: the exam has no write
  * surface, and NoirScript reaches it only through the host the console hands it.
- * What breaks if it is removed? The exit program's three words have nothing behind them: the walk cannot end.
+ * What breaks if it is removed? The exit program's three words have nothing behind them: the walk ends only at the console.
  */
 import { PROGRAM, STAGES, type Stage } from '../../09_Cognition/firstWalk.ts'
 import type { ExamBridge } from '../terminal/bridge.ts'
@@ -204,7 +205,7 @@ export function createExam(host: ExamHost): ExamBridge {
       if (!host.on()) return 'tutorial: the first walk is off this visit (?tutorial=1 starts it)'
       const s = host.stage()
       if (s === null) return 'tutorial: the first walk is passed: the city is yours'
-      return `tutorial: the first walk, stage ${STAGES.indexOf(s) + 1} of ${STAGES.length} (${s}); the exit program ends it (tutorial program)`
+      return `tutorial: the first walk, stage ${STAGES.indexOf(s) + 1} of ${STAGES.length} (${s}); it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)`
     },
     program: () => PROGRAM,
   })

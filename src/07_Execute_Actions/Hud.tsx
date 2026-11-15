@@ -41,6 +41,10 @@ import { holdWalkSlot } from './walkSlot.ts'
 const LIGHT_COLOR: Record<Light, string> = { green: 'bg-emerald-400', amber: 'bg-amber-400', red: 'bg-rose-500' }
 /** A ping's colour by what it asks, on the minimap and the chip. */
 const PING_COLOR: Record<HudPing['kind'], string> = { go: '#f59e0b', look: '#0ea5e9', gather: '#a855f7', wait: '#94a3b8' }
+/** The first walk's marker (snapshot.output.beacon), in the brand's crimson. */
+const BEACON_COLOR = '#e8203a'
+/** The minimap shows about 95 m each way; a marker farther off is drawn at this radius, on the side it lies. */
+const BEACON_EDGE_M = 86
 const PING_WORD: Record<HudPing['kind'], string> = { go: 'go there', look: 'look there', gather: 'gather there', wait: 'wait there' }
 const LIMIT_KMH = Math.round(TRAFFIC.speedLimit * 3.6)
 
@@ -378,6 +382,23 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
     </div>
   )
 
+  // The first walk's marker, over the world where the stage sends the visitor (the nearest parked car, the nearest
+  // workplace's doorway): what it is and how far. Off screen it is on the minimap alone, at its edge when far.
+  const beacon = s.output.beacon
+  const beaconChip = beacon && Number.isFinite(beacon.sx) && Number.isFinite(beacon.sy) && (
+    <div
+      className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center"
+      style={{ left: `${(beacon.sx * 100).toFixed(2)}%`, top: `${(beacon.sy * 100).toFixed(2)}%` }}
+      data-hint="beacon"
+    >
+      <div className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-semibold tabular-nums whitespace-nowrap ${panel}`}>
+        <span className="h-2 w-2 shrink-0 animate-pulse rounded-full motion-reduce:animate-none" style={{ background: BEACON_COLOR }} />
+        <span>{beacon.label} · {beacon.distance.toFixed(0)} m</span>
+      </div>
+      <span className="h-4 w-0.5" style={{ background: BEACON_COLOR }} />
+    </div>
+  )
+
   // Ghost view: the altered picture always says what it is (and how to leave it).
   const ghostChip = s.output.ghost && (
     <div className={`flex max-w-full items-center gap-2 px-3 py-1.5 text-[11px] font-semibold ${panel}`} data-hint="ghost">
@@ -657,6 +678,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       )}
 
       {visible && pingChip}
+      {visible && beaconChip}
 
       {!visible && (recChip || micPill || rc?.listening || captionStrip) && (
         <div className={compact ? FRAME_COMPACT : FRAME_WIDE}>
@@ -989,6 +1011,23 @@ function Minimap({ s, dark, ui, className, layer = null, homes = null }: { s: Si
       ctx.fillStyle = car.player ? '#2563eb' : car.parked ? '#16a34a' : dark ? '#94a3b8' : '#64748b'
       ctx.beginPath()
       ctx.roundRect(-0.95, -2.3, 1.9, 4.6, 0.6)
+      ctx.fill()
+      ctx.restore()
+    }
+    // The first walk's marker: a double ring, drawn at the map's edge on the side it lies when it is farther than the map shows.
+    const beacon = s.output.beacon
+    if (beacon) {
+      const dx = beacon.x - x, dz = beacon.z - z, far = Math.hypot(dx, dz)
+      const k = far > BEACON_EDGE_M ? BEACON_EDGE_M / far : 1
+      ctx.save()
+      ctx.strokeStyle = BEACON_COLOR
+      ctx.fillStyle = BEACON_COLOR
+      ctx.lineWidth = 1.4
+      ctx.beginPath()
+      ctx.arc(x + dx * k, z + dz * k, 5, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(x + dx * k, z + dz * k, 1.8, 0, Math.PI * 2)
       ctx.fill()
       ctx.restore()
     }
