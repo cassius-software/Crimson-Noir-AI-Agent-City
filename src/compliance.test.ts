@@ -16,7 +16,7 @@ import { test } from 'node:test'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { bundledPackageDirs, missingNotices, noticesComment, packageRoot, OPERATOR_NOTES, type PackageNotice } from '../vite.config.ts'
+import { bundledPackageDirs, missingNotices, noticesComment, packageRoot, readPackageNotice, NO_LICENCE_TEXT, OPERATOR_NOTES, RECORDED_LICENCES, type PackageNotice } from '../vite.config.ts'
 import { glyph, type ControlAction, type GlyphFamily } from './07_Execute_Actions/glyphs.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -59,16 +59,40 @@ test('missingNotices: every runtime dependency must have its notice (the build t
     'the page\'s chunks alone miss the worker\'s Rapier')
   assert.deepEqual(missingNotices(deps, ['@dimforge/rapier3d-simd-compat', 'react', 'react-dom', 'three'].map(notice)), [])
   assert.deepEqual(missingNotices({}, []), [])
+  // A notice with no licence text is no notice: a package that ships none, and has none recorded, fails the build.
+  assert.deepEqual(missingNotices({ three: '^0.186' }, [{ ...notice('three'), text: NO_LICENCE_TEXT }]), ['three'])
 })
 
 test('the real runtime dependencies all have a licence file the build can embed', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
   for (const name of Object.keys(pkg.dependencies)) {
     const dir = join(ROOT, 'node_modules', name)
-    assert.ok(readdirSync(dir).some((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f)), `${name} ships no licence file`)
+    const version = (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { version: string }).version
+    // In the package itself, or recorded in third_party/ for exactly the installed version (vite.config.ts RECORDED_LICENCES).
+    const shipped = readdirSync(dir).some((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f))
+    assert.ok(shipped || `${name}@${version}` in RECORDED_LICENCES, `${name} ${version} ships no licence file and none is recorded for that version`)
+    const notice = readPackageNotice(dir)
+    assert.ok(notice && notice.text !== NO_LICENCE_TEXT && notice.text.length > 500, `${name}: the build would embed no licence text`)
   }
   const rapier = readFileSync(join(ROOT, 'node_modules/@dimforge/rapier3d-simd-compat/LICENSE'), 'utf8')
   assert.match(rapier, /Apache License/)
+  // The one recorded licence: the speech runtime's package says MIT and ships no text. The record is the project's
+  // own LICENSE at that tag, then the licence of the Emscripten support code its script carries; nothing is recorded
+  // for a package that does ship its own (the package's text always wins).
+  assert.deepEqual(Object.keys(RECORDED_LICENCES), ['onnxruntime-web@1.31.1'])
+  for (const [id, file] of Object.entries(RECORDED_LICENCES)) {
+    const name = id.slice(0, id.lastIndexOf('@'))
+    assert.ok(!readdirSync(join(ROOT, 'node_modules', name)).some((f) => /^(licen[cs]e|copying)(\.|$)/i.test(f)), `${name} ships its own licence file now: drop the record`)
+    assert.ok(statSync(join(ROOT, file)).isFile(), `${file} is there`)
+  }
+  const ort = readPackageNotice(join(ROOT, 'node_modules/onnxruntime-web'))
+  assert.deepEqual([ort?.name, ort?.version, ort?.license], ['onnxruntime-web', '1.31.1', 'MIT'])
+  const recorded = readFileSync(join(ROOT, 'third_party/onnxruntime-web/1.31.1/SCRIPT-LICENCE'), 'utf8')
+  assert.equal(ort?.text, recorded.trim())
+  assert.ok(recorded.startsWith(readFileSync(join(ROOT, 'third_party/onnxruntime-web/1.31.1/LICENSE'), 'utf8').trimEnd()), 'it opens with the project\'s own LICENSE, unchanged')
+  assert.match(recorded, /^MIT License\n\nCopyright \(c\) Microsoft Corporation\n/)
+  // Emscripten offers two licences (MIT, and the University of Illinois/NCSA one that opens "All rights reserved"): both texts.
+  assert.ok(/Copyright \(c\) 2010-2014 Emscripten authors, see AUTHORS file\.\n\nPermission is hereby granted, free of charge[\s\S]*Copyright \(c\) 2010-2014 Emscripten authors, see AUTHORS file\.\nAll rights reserved\.\n/.test(recorded), 'and carries Emscripten\'s, both of the licences it offers')
 })
 
 test('noticesComment: the shipped part of NOTICE.md and each package\'s full text, nothing of the operator notes', () => {
@@ -179,11 +203,20 @@ test('the npm tree: every licence on a permissive allow-list (so no GPL, AGPL, L
     assert.match(path, /lightningcss/, `${path}: a weak-copyleft package the audit (docs/ip-audit.md) does not know`)
   }
   assert.ok(weak.length > 0, 'lightningcss (MPL-2.0, Tailwind\'s CSS compiler, dev only) is in the tree: update the audit if it leaves')
-  // The five runtime dependencies are permissive, and only they are bundled (the notice test above holds that):
-  // Rapier (Apache-2.0), React, three.js and wllama (MIT; its pinned WebAssembly module's own components are listed
-  // in third_party/wllama/<version>/NOTICE and in the audit). A sixth is a decision for the audit, not a default.
-  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@dimforge/rapier3d-simd-compat', '@wllama/wllama', 'react', 'react-dom', 'three'])
+  // The six runtime dependencies are permissive, and only they are bundled (the notice test above holds that):
+  // Rapier (Apache-2.0), React, three.js, wllama (MIT; its pinned WebAssembly module's own components are listed
+  // in third_party/wllama/<version>/NOTICE and in the audit) and ONNX Runtime Web (MIT; the speech recogniser's
+  // runtime: its script is bundled, its WebAssembly module is served beside the web copy, and what that module is
+  // built from is in third_party/onnxruntime-web/<version>/ and in the audit). A seventh is a decision for the audit,
+  // not a default.
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@dimforge/rapier3d-simd-compat', '@wllama/wllama', 'onnxruntime-web', 'react', 'react-dom', 'three'])
   assert.equal(lock.packages['node_modules/@wllama/wllama']?.license, 'MIT')
+  assert.equal(lock.packages['node_modules/onnxruntime-web']?.license, 'MIT')
+  // The speech runtime's script is one self-contained file: it imports none of the packages its package.json lists
+  // (they serve builds of the runtime this page does not use), so none of them is bundled or needs a notice here.
+  const ortScript = readFileSync(join(ROOT, 'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs'), 'utf8')
+  assert.ok(!/\bimport\s*(?:[\w*{}\s,$]+\s*from\s*)?["'][^"']+["']|\bexport\s*(?:\*|\{[^}]*\})\s*from\s*["']|\brequire\(\s*["']/.test(ortScript), 'the script imports another module')
+  assert.ok(!/flatbuffers|protobuf|guid-typescript/i.test(ortScript), 'the script carries one of the packages its package.json lists')
   for (const name of Object.keys(pkg.dependencies)) {
     const lic = lock.packages[`node_modules/${name}`]?.license ?? ''
     assert.ok(PERMISSIVE.has(lic), `${name}: ${lic}`)

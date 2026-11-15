@@ -17,9 +17,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   LEVELS, MIC_CONSTRAINTS, MIC_KEY, MIC_OPEN_BY_DEFAULT, Microphone, VOICE_DEFAULTS, isOpen, loadVoiceSettings, micEnv, opensAtBoot, phaseWord,
-  pillLabel, pillWord, refusal, saveVoiceSettings, tapMeans, voiceStatus, type AnalyserLike, type ContextLike, type KeyStore, type MicEnv, type MicState,
+  SILENT_DETAIL, SILENT_MS, SILENT_WORD, pillLabel, pillWord, refusal, saveVoiceSettings, tapMeans, voiceStatus, type AnalyserLike, type MicUtterance, type ContextLike, type KeyStore, type MicEnv, type MicState,
   type NodeLike, type StreamLike, type TrackLike, type WorkletNodeLike,
 } from './microphone.ts'
+import { UTTERANCE, utteranceOptions } from './utterance.ts'
 import { VAD, VAD_PROCESSOR, VadCore, type VadMessage } from './vad.ts'
 
 function memoryStore(): KeyStore & { map: Map<string, string> } {
@@ -30,11 +31,14 @@ function memoryStore(): KeyStore & { map: Map<string, string> } {
 class FakeTrack implements TrackLike {
   enabled = true
   readyState = 'live'
+  muted = false
   stopped = 0
-  private onEnded: (() => void) | null = null
+  private on: Record<string, (() => void) | undefined> = {}
   stop(): void { this.stopped++; this.readyState = 'ended' }
-  addEventListener(_type: 'ended', fn: () => void): void { this.onEnded = fn }
-  unplug(): void { this.readyState = 'ended'; this.onEnded?.() }
+  addEventListener(type: 'ended' | 'mute' | 'unmute', fn: () => void): void { this.on[type] = fn }
+  unplug(): void { this.readyState = 'ended'; this.on.ended?.() }
+  /** The system holds the source silent, or gives it back. */
+  hold(muted: boolean): void { this.muted = muted; this.on[muted ? 'mute' : 'unmute']?.() }
 }
 class FakeStream implements StreamLike {
   readonly track = new FakeTrack()
@@ -169,6 +173,12 @@ test('the words: a word per phase, Speaking over an open microphone while the pa
   assert.equal(pillLabel('off', false), 'Microphone: off. Press to listen. Key V.')
   assert.equal(pillLabel('blocked', false, 'permission refused'), 'Microphone: blocked (permission refused). Press to listen. Key V.')
   assert.equal(pillLabel('listening', true), 'Microphone: speaking. Press to mute. Key V.')
+  // An open device that sends nothing: its own word, never over speech it does hear, never over a closed device.
+  assert.equal(pillWord('listening', false, true), SILENT_WORD)
+  assert.equal(pillWord('speech', false, true), 'Hearing you')
+  assert.equal(pillWord('listening', true, true), 'Speaking')
+  assert.equal(pillWord('muted', false, true), 'Muted')
+  assert.equal(pillLabel('listening', false, SILENT_DETAIL, 'V', true), `Microphone: silent (${SILENT_DETAIL}). Press to mute. Key V.`)
 })
 
 test('micEnv reads the browser\'s objects, or nulls, and makes blob: URLs only where it can', () => {
@@ -214,7 +224,7 @@ test('a first visit: opened at boot (the line); listen() opens the device with e
   const node = FakeWorklet.made.at(-1)!
   assert.equal(ctx.source.connected[0], node, 'the stream feeds the detector')
   assert.equal(node.connected.length, 0, 'and nothing reaches the speakers')
-  assert.deepEqual(node.options, VAD)
+  assert.deepEqual(node.options, { ...VAD, tap: utteranceOptions(48_000) }, 'the detector\'s tuning, and the tap\'s for this context\'s rate')
   assert.deepEqual(node.port.sent, [{ speaking: false }])
   assert.deepEqual(loadVoiceSettings(store), { on: true, kept: true })
   assert.equal(m.opensAtBoot(), true, 'the next visit opens it')
@@ -476,4 +486,130 @@ test('resume wakes a context the browser started asleep; the console lines say t
   assert.match(voiceStatus(m, true, '')[1], /^pill {6}Muted/)
   assert.match(voiceStatus(m, true, '')[3], /off until pressed {2}\(kept switch muted; the default open\)/)
   assert.match(voiceStatus(new Microphone(fake().env, memoryStore()), false, '')[3], /^boot {6}opens at boot {2}\(kept switch none; the default open\)/, 'a first visit')
+})
+
+test('hear: no utterance leaves until the page asks; the worklet is told, a sentence it posts is handed on once at 16 kHz, and nothing after a mute or a hear(false)', async () => {
+  FakeWorklet.made.length = 0
+  const f = fake()
+  const m = new Microphone(f.env, memoryStore())
+  const got: MicUtterance[] = []
+  m.addEventListener('utterance', (e) => got.push((e as CustomEvent<MicUtterance>).detail))
+  await m.listen()
+  const node = FakeWorklet.made.at(-1)!
+  assert.equal(m.hearing, false)
+  assert.ok(!node.port.sent.some((x) => 'hear' in (x as object)), 'opened without asking: the worklet keeps nothing')
+  const samples = new Float32Array(16_000).fill(0.1)
+  node.say({ rms: 0.1, t: 1, utterance: samples, cut: false })
+  assert.equal(got.length, 0, 'not asked: an utterance that came anyway is dropped')
+  m.hear(true)
+  m.hear(true)
+  assert.deepEqual(node.port.sent.filter((x) => 'hear' in (x as object)), [{ hear: true }], 'told once')
+  const head = m.head
+  node.say({ rms: 0.1, t: 2, utterance: samples, cut: true })
+  assert.deepEqual([got.length, got[0].samples, got[0].rate, got[0].cut], [1, samples, UTTERANCE.rate, true])
+  assert.equal(m.head, head, 'an utterance is not a level reading')
+  node.say({ rms: 0.1, t: 2, utterance: new Float32Array(0) })
+  assert.equal(got.length, 1, 'an empty one is nothing')
+  m.hear(false)
+  assert.deepEqual(node.port.sent.at(-1), { hear: false })
+  node.say({ rms: 0.1, t: 3, utterance: samples })
+  assert.equal(got.length, 1)
+  // Asked before the device opened: the next worklet is told as it starts.
+  m.hear(true)
+  m.mute()
+  node.say({ rms: 0.1, t: 4, utterance: samples })
+  assert.equal(got.length, 1, 'muted: nothing is handed on')
+  await m.listen()
+  const next = FakeWorklet.made.at(-1)!
+  assert.notEqual(next, node)
+  assert.deepEqual(next.port.sent.filter((x) => 'hear' in (x as object)), [{ hear: true }])
+  next.say({ rms: 0.1, t: 5, utterance: samples })
+  assert.equal(got.length, 2)
+})
+
+test('hear on the page path: the polled samples go through the tap with the detector\'s word, and a spoken sentence comes out once, 16 kHz, with its lead', async () => {
+  const f = fake({ worklet: 'none' })
+  const m = new Microphone(f.env, memoryStore())
+  const got: MicUtterance[] = []
+  m.addEventListener('utterance', (e) => got.push((e as CustomEvent<MicUtterance>).detail))
+  await m.listen()
+  assert.equal(m.path, 'page')
+  const rate = 48_000
+  const room = (n: number, seed: number): Float32Array => { const out = new Float32Array(n); let s = seed; for (let i = 0; i < n; i++) { s = (s * 1664525 + 1013904223) >>> 0; out[i] = (s / 0xffffffff - 0.5) * 0.006 } return out }
+  const voice = (n: number): Float32Array => { const out = room(n, 5); for (let i = 0; i < n; i++) { let v = 0; for (let h = 1; h <= 8; h++) v += Math.sin((2 * Math.PI * 140 * h * i) / rate + h) / h; out[i] += v * 0.05 } return out }
+  const play = (x: Float32Array): void => { for (let i = 0; i + VAD.frame <= x.length; i += VAD.frame) m.feed(x.subarray(i, i + VAD.frame)) }
+  play(room(rate, 1))
+  play(voice(rate))
+  play(room(rate * 2, 2))
+  assert.equal(got.length, 0, 'not asked: nothing kept')
+  m.hear(true)
+  play(room(rate, 3))
+  play(voice(rate))
+  play(room(rate * 2, 4))
+  assert.equal(got.length, 1)
+  const secs = got[0].samples.length / UTTERANCE.rate
+  assert.ok(secs > 1.2 && secs < 2.4, `${secs.toFixed(2)} s`)
+  assert.equal(got[0].cut, false)
+  m.hear(false)
+  play(voice(rate))
+  play(room(rate * 2, 6))
+  assert.equal(got.length, 1, 'told to stop')
+})
+
+test('Mic silent: an open device that has sent nothing since it opened, sends no level at all, or whose track the system holds muted, says so; one sound clears it for good (zeros after it are a noise gate); a graph that could not be built is said, not a healthy Listening', async () => {
+  FakeWorklet.made.length = 0
+  let now = 1_000
+  const f = fake()
+  const m = new Microphone(f.env, memoryStore(), () => now)
+  assert.equal(m.silent, false, 'closed: not silent')
+  await m.listen()
+  const node = FakeWorklet.made.at(-1)!
+  assert.equal(m.silent, false, 'just opened')
+  now += SILENT_MS - 1
+  node.say({ rms: 0, t: 1 })
+  assert.equal(m.silent, false)
+  now += 1
+  node.say({ rms: 0, t: 1 })
+  assert.equal(m.silent, true, 'four seconds of nothing at all since it opened')
+  assert.equal(m.word(), SILENT_WORD)
+  assert.equal(m.label(), `Microphone: silent (${SILENT_DETAIL}). Press to mute. Key V.`)
+  assert.match(voiceStatus(m, false, 'x').join('\n'), /Mic silent · no sound is arriving/)
+  node.say({ rms: 0.0004, t: 2 })
+  assert.equal(m.silent, false, 'a real microphone\'s own noise is sound')
+  assert.equal(m.word(), 'Listening')
+  // It has sounded: exact zeros between words are a noise gate, not a dead device, however long they last.
+  for (let i = 0; i < 20; i++) { now += 1_000; node.say({ rms: 0, t: 3 + i }) }
+  assert.equal(m.silent, false, 'a gate\'s zeros after a sound never read silent')
+  // No level at all (a context the system put to sleep sends none): silent after SILENT_MS, cleared by the next level.
+  now += SILENT_MS
+  assert.equal(m.silent, true, 'nothing arriving at all')
+  node.say({ rms: 0, t: 30 })
+  assert.equal(m.silent, false, 'levels arriving again')
+  // The system's own mute: at once, and gone when it lets go (the count starts again from there).
+  const track = f.streams[0].track
+  track.hold(true)
+  assert.equal(m.silent, true)
+  now += SILENT_MS * 2
+  track.hold(false)
+  assert.equal(m.silent, false, 'the count starts again when the sound comes back')
+  now += SILENT_MS
+  node.say({ rms: 0, t: 40 })
+  assert.equal(m.silent, true, 'given back, and still nothing')
+  m.mute()
+  assert.equal(m.silent, false, 'muted by the visitor is Muted, not silent')
+  // No Web Audio at all: nothing to judge by.
+  const g = fake({ context: false })
+  const n = new Microphone(g.env, memoryStore(), () => now)
+  await n.listen()
+  now += SILENT_MS * 3
+  assert.equal(n.silent, false)
+  // Web Audio that refuses this device (Firefox does, for a context at another rate than the capture's).
+  const h = fake()
+  h.env.Context = class extends FakeContext { constructor() { super('ok') } override createMediaStreamSource(): NodeLike { throw new Error('different sample-rate') } }
+  const o = new Microphone(h.env, memoryStore(), () => now)
+  const s = await o.listen()
+  assert.deepEqual([s.phase, o.path, o.silent], ['listening', 'none', true])
+  assert.match(s.detail, /could not read the microphone \(different sample-rate\)/)
+  assert.equal(o.word(), SILENT_WORD)
+  assert.match(o.label(), /: silent \(the page could not read the microphone/)
 })

@@ -990,7 +990,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   Pings and the rally). The chip goes with `H`; the caption strip and the microphone pill do not (see Spatial audio).
 - **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
   reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
-  **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
+  **Speaking** (Sloane talking over an open microphone), **Muted**, **Mic silent** (the device is open and no sound at
+  all arrives: the system may hold it muted, or the browser may be using another input than yours), or why it could
+  not open. It is a button: a press,
   `V`, the right stick's click or the touch Menu's Microphone item mutes the microphone or opens it again, even while an action card waits for your OK or a home's doorstep card holds you still. Mute releases the device, so the browser's own microphone indicator goes
   out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone (and in
   any compact window) the pill is a round badge on the minimap's lower-left corner instead (a microphone, struck
@@ -1018,13 +1020,39 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   it runs at 8, 16 or 32 kHz, as it can while a Bluetooth headset is in call mode, or at 64 or 128 kHz, they are three
   quarters as long.) With headphones, talking over her works after
   that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
-  to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
-  microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
-  Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
-  open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
-  so her own line never becomes yours; when you cut her off, what you say is kept. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
-  level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
-  with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
+  to keep talking. A line whose loudness swings widely can still cut itself. A screen reader hears the microphone's state change wherever it was switched.
+- **Words** (`09_Cognition/speechEngine.ts`, `speechPack.ts`, `speech.worker.ts`). The page turns what you say into
+  words with a recogniser of its own, on your device, so it does not depend on the browser having one (a few
+  browsers do, and most have none). On the published web copy, when the microphone opens the page gets the **speech
+  pack** served beside it in `speech/`: Moonshine Tiny, a small English speech-to-text model, and the WebAssembly
+  module of ONNX Runtime, which runs it; four files, 41 MB, downloaded once a browser. It checks every file against
+  the SHA-256 the page was built with before it runs any, keeps the pack in the browser (Cache Storage,
+  `speech-pack:<id>`; a later visit downloads nothing and understands words offline), and reads each sentence the
+  detector marks out in a worker of the page that has no network (one thread, so it needs no cross-origin isolation).
+  While the pack is on its way the pill reads **words soon**, **words 40%**, **words starting**; then **words
+  on-device**, and each sentence it understood shows on the pill in quotes for a few seconds, so you can see what it
+  took you to say. On mobile data, a 2G link or with the browser's data saver on, the page does not download 41 MB
+  unasked: the pill reads **words waiting**, a toast says why once, and muting and unmuting the microphone (or `mic
+  on`) gets it. If it cannot be had, the pill reads **no words** with the reason in its tooltip, and speech starting
+  tries again a while later.
+  - What is done with the words: a skill asked for is the recruiter's (Recruitment), and a line that names Sloane
+    first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt open on
+    the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken, so her
+    own line never becomes yours; when you cut her off, what you say is kept.
+  - Where there is no pack (`dist/index.html` opened from a file or served by `npm run preview`, and the Windows,
+    Linux, macOS, Android, iOS, NixOS and OS builds, none of which carries one yet), the browser's own on-device
+    recognition stands in where the browser promises one (see Recruitment); otherwise the pill shows the level and
+    speech only.
+  - Its limits. The model is small and English only: it mishears, more so with an accent, noise or a far microphone,
+    and it understands no other language. A sentence is at most 12 s; a longer one is read in parts.
+  - No audio leaves the device: nothing is recorded and nothing is sent. A sentence is held in memory until it is
+    read, then dropped; only its text goes on, to the recruiter or to Sloane, inside the page.
+  - What was checked: CI's `speech` job (`.github/workflows/ci.yml`) reads a synthetic spoken sentence with the pinned
+    pack under Node, and then in a desktop Chromium through a fake microphone, on a first visit and on a second that
+    must download nothing (`tools/browser/speech.mjs`). A real microphone, a phone, Safari and Firefox were not tried
+    by anyone.
+  - `mic` in the console prints the microphone's state and the recogniser's; `mic on` and `mic off` are the switch,
+    and `mic on` also asks for the pack again, past a data saver's wait or an earlier failure.
 - **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
   `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
   another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
@@ -2393,11 +2421,13 @@ tethered to you, part of your swarm, until the tether breaks.
   nobody, nor does a request turned down ("I don't need a Rust developer", "we aren't hiring"), and a bare
   "go" is a verb. A later request in the same breath still counts ("never mind, recruit a designer").
   `recruit listen` reports what happened: listening, or why not (permission refused, no model, no
-  microphone), and a failure also shows on the HUD. The recogniser runs whenever the microphone pill is open
-  (see The microphone pill under Onboarding and the spatial HUD), and `recruit listen` opens the pill's
-  microphone too: the pill reads **Listening · words on-device** whenever the recogniser is open, even with the
-  HUD hidden, and muting the pill (`V`) stops the recogniser. `recruit install` is refused while the microphone
-  is open.
+  microphone), and a failure also shows on the HUD. `recruit listen` asks for the browser's own on-device
+  recogniser by name. Where the page's own recogniser is ready (the speech pack, see Words under Onboarding and the
+  spatial HUD) the same requests are heard without it, whenever the microphone pill is open: the page's own reads
+  every sentence, and the browser's stands in only where the page's is not to be had; the two never read the same
+  speech. `recruit listen` opens the pill's microphone too: the pill reads **Listening · words on-device** whenever
+  either recogniser is open, even with the HUD hidden, and muting the pill (`V`) stops both. `recruit install` is
+  refused while the microphone is open.
 - **Without a microphone.** `recruit rust` in the console, or `recruit("Rust")` in the browser's
   developer console, makes the same request. The call returns a promise with the outcome.
 - **Who can hear you.** Only people within 5 m (`AUDIBLE_RADIUS`), standing on the sidewalk, on your
@@ -4620,7 +4650,9 @@ by `tools/web/pwa.mjs`:
 - a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit, except anything
   under `models/` (the site's model, its manifest and its licence, which the web workflow adds beside the page and
   which it leaves to the network: the page keeps a model it downloads in its own storage, so the cache holds no
-  second 0.4 GB copy, and a load of `models/LICENSE` is the licence, not the city). From then on the city starts with
+  second 0.4 GB copy, and a load of `models/LICENSE` is the licence, not the city) or under `speech/` (the speech
+  pack, the same way: the page keeps it in a cache of its own name, `speech-pack:<id>`, which no new build's worker
+  clears, so the 41 MB are downloaded once a browser and not once a publish). From then on the city starts with
   no network at all, airplane mode included. **The host decides which build runs, and the copy delivers
   it.** On each launch the worker asks the host for one small file (`build.txt`, the published build's name, some
   forty bytes; never kept, and never taken from the browser's cache) and waits two seconds at most. The same name as
@@ -4677,6 +4709,11 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
   After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
   only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
+  Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the model's two files
+  from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin, the runtime's
+  module from the installed dependency and the vocabulary from the repository, each checked against the pin's size
+  and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and notices of both
+  beside them; a file that fails the check fails the publish.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
@@ -4686,7 +4723,11 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
 What the phone copy keeps, and what it cannot have yet:
 - **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
   host (which only serves these files, the site's model in `models/` among them, fetched by the page once the city is
-  on screen or when you tap for it on Sloane's card) and to the phone's own `localhost`, nowhere else.
+  on screen or when you tap for it on Sloane's card, and the speech pack in `speech/`, fetched while the microphone
+  is open) and to the phone's own `localhost`, nowhere else.
+- **Words.** The page asks for the speech pack on an iPhone as anywhere else (on mobile data only after you open the
+  microphone yourself). Whether Safari runs it, and how well it hears through an iPhone's microphone, nobody has
+  tried: CI checks it in a desktop Chromium only.
 - **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
   model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
   `ask`'s runtime row names what is missing, Sloane speaks from their script with the phone's own voices, and `ask`
@@ -4712,7 +4753,7 @@ load runs (isolated, then kept by its own worker, the older copy dropped), and w
 from the phone's copy of that build with its touch controls. `src/webApp.test.ts` holds the policy change, the icons,
 the registration at the page's load and the service worker's answers against a scripted host and a clock the test
 turns (every deadline, refusal, pace and query string, a newer worker's install waiting for a launch's page, and
-`models/` left to the network), and the placing of the site's model beside the web copy only; `src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
+`models/` and `speech/` left to the network, the page's keep of the speech pack never cleared), and the placing of the site's model and the speech pack beside the web copy only; `src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
 iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a service worker in
 Safari on the copy and on a page streamed from the host, Safari ending a page whose download was given up so that it
 loads again, Safari's own look for a newer worker a second into a launch and its locks between two workers, and heat
@@ -5127,18 +5168,20 @@ reset and a real pad.
   (`02_Define_The_Rules/airgap.ts`). The gate: `loopbackOnly` is the one definition of "this machine" (http, https, ws
   or wss to `localhost`, `127.0.0.0/8` or `[::1]`, with no credentials), and every client (the model providers,
   speech, the room client) asks it, or an alias of it, before anything is sent. The guard: `main.tsx` calls
-  `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
+  `installAirgap(globalThis)` before anything else, and `physics.worker.ts` and `speech.worker.ts` each on its own
+  global; it replaces
   `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
   in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
   `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, holds `window.open` to the same places, and freezes those properties, so an
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
-  allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry
-  point does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
+  allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if any of the three
+  entry points does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
   only requests off this machine go to its own site, for the model served beside the page, once the city is on screen
-  or when Sloane's card needs it (`App.tsx siteFetch`, held by `09_Cognition/siteModel.ts siteUrl` to a `models/` file
+  or when Sloane's card needs it, and for the speech pack, while the microphone is open (`App.tsx siteFetch`, held by
+  `09_Cognition/siteModel.ts siteUrl` to a `models/` or `speech/` file
   beside the page: the manifest once a visit, the model once by the page itself unless it holds back (The site's model)
-  or on a tap; the airgap test allowlists that one call site); the Claude provider
+  or on a tap, the speech pack once a browser; the airgap test allowlists that one call site); the Claude provider
   needs a gateway on this machine (`http://localhost:8089`); `net join` reaches a host on this machine. What the guard
   cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm from an
   iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`. Most of it
@@ -5265,6 +5308,26 @@ the production page finds no physics object in the page and has every crafted me
   (the Lite tier on a Mali-G52 phone, keeping a 1 GB file, the unloading in the background, the crash guard after a
   real kill, the picker and the Menu tap), a real GPU (WebGPU's speed, the frame rate under the hold, a device
   reset), the Windows app's WebView2, the NixOS launcher, a file over 2 GB, and what an iPhone's runtime row says.
+
+**The page's own speech recogniser (unreleased).** What is proved, and where:
+- **In Node, on every CI run:** the utterance tap and its resampler (`utterance.test.ts`), the microphone handing
+  sentences over only when asked (`microphone.test.ts`), the pin and the manifest (`speechPack.test.ts`), the
+  decoding loop over a fake runtime and the hash check of every file (`speechCore.test.ts`), the engine over a fake
+  worker, site and keep, from the data saver's wait to a damaged kept file, a crash and a stop (`speechEngine.test.ts`),
+  the fitting to ONNX Runtime's interface (`speechOrt.test.ts`), the build's transform of the runtime's script
+  (`speechRuntimeLean.test.ts`), the tool that fetches, checks and places the pack and the browser check's own
+  arithmetic (`speechTool.test.ts`), the air gap's structural checks on the worker (`airgap.test.ts`), the service
+  worker leaving `speech/` and the keep alone (`webApp.test.ts`), and the licences (`compliance.test.ts`).
+- **With the real pack, on every CI run (the `speech` job):** `tools/web/speechPack.mjs read` runs the pinned model
+  on the pinned runtime under Node over a sentence spoken by a speech synthesiser (espeak-ng) and must read its
+  words; then `tools/browser/speech.mjs` serves the built web copy with the pack beside it, opens it in a desktop
+  Chromium whose microphone is that recording in a quiet room, and must see the sentence on the pill, the site asked
+  for the manifest and each of the four files exactly once, and, on a second visit, the sentence again with nothing
+  under `speech/` asked for.
+- **Not verified, and needing the device or a person:** a real voice through a real microphone (accents, noise,
+  distance, a headset), every browser but that desktop Chromium (Safari and an iPhone, Firefox, Android Chrome and
+  its memory on a small phone), how long the first sentence takes on a slow phone, and the pack's 41 MB on a real
+  mobile connection.
 
 **City actions (unreleased).** What is proved, and where:
 - **In Node, on every CI run:** the catalogue and its parser (`actions.test.ts`: the eleven answers of the protocol,

@@ -17,7 +17,7 @@ import { CITY } from '../01_Initialize_World/city.ts'
 import { AUDIBLE_RADIUS, RALLY_RANGE, skillsOf, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { RecruitHost } from '../07_Execute_Actions/engine.ts'
 import type { RecruitView, SimCommand, SimEvent, StepState } from '../07_Execute_Actions/simProtocol.ts'
-import { hudLine, recruitBridge, Recruiter, SPEECH_LANG, type Clock, type RecruitOutcome, type SpeechEnv } from './recruitment.ts'
+import { hudLine, recruitBridge, Recruiter, SPEECH_LANG, type Clock, type RecruitOutcome, type SpeechEnv, AVAILABLE_WAIT_MS, INSTALL_WAIT_MS } from './recruitment.ts'
 
 const N = 64
 /** The operator on a sidewalk mid-block, 5.8 m east of a north-south street. */
@@ -697,4 +697,47 @@ test('tryAsk answers at once: who was asked and the worker\'s request sent, or w
   assert.equal(foot.sent, false)
   assert.match(foot.message, /on foot|not running|driving|seat/i)
   assert.equal(host.sent.length, 2, 'a refusal sends nothing')
+})
+
+test('a browser that never answers about its model, or never finishes installing it, does not leave the microphone starting or installing for ever', async () => {
+  // available() that never settles (seen in a browser with the model's download switched off): an error after the wait.
+  const m = micRig()
+  const R = m.env.Recognition as unknown as { available: (o: unknown) => Promise<string>; install: (o: unknown) => Promise<boolean> }
+  R.available = () => new Promise<string>(() => undefined)
+  const p = m.r.listen()
+  await flush()
+  assert.equal(m.r.mic.state, 'starting')
+  m.clock.advance(AVAILABLE_WAIT_MS - 1)
+  await flush()
+  assert.equal(m.r.mic.state, 'starting', 'still waiting inside the limit')
+  m.clock.advance(1)
+  const said = await p
+  assert.equal(said.state, 'error')
+  assert.match(said.detail, /did not say whether its on-device .* speech model is installed/)
+  assert.equal(m.made.length, 0, 'no session was started')
+  // An answer inside the limit leaves no timer behind.
+  const quick = micRig({ available: 'downloadable' })
+  await quick.r.listen()
+  assert.equal(quick.clock.timers.size, 0)
+  // install() that never settles: after the wait the state says so, and listen() is no longer held off.
+  const n = micRig({ available: 'downloadable' })
+  const N = n.env.Recognition as unknown as { install: (o: unknown) => Promise<boolean> }
+  N.install = () => new Promise<boolean>(() => undefined)
+  const q = n.r.install()
+  await flush()
+  assert.equal(n.r.mic.state, 'installing')
+  assert.equal((await n.r.listen()).state, 'installing', 'held off while the install is awaited')
+  n.clock.advance(INSTALL_WAIT_MS)
+  const done = await q
+  assert.equal(done.state, 'needs-model')
+  assert.match(done.detail, /has not finished installing its speech model after 5 minutes/)
+  assert.equal((await n.r.listen()).state, 'needs-model', 'listen() runs again: the browser says the model is still to download')
+  // A rejection inside the limit is reported as before.
+  const bad = micRig()
+  const B = bad.env.Recognition as unknown as { available: (o: unknown) => Promise<string> }
+  B.available = () => Promise.reject(new Error('boom'))
+  const b = await bad.r.listen()
+  assert.equal(b.state, 'error')
+  assert.match(b.detail, /boom/)
+  assert.equal(bad.clock.timers.size, 0)
 })

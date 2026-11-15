@@ -1,0 +1,43 @@
+Moonshine Tiny (English, quantized ONNX): the speech model the page's own recogniser reads
+==========================================================================================
+
+This directory records the speech-to-text model Crimson Noir: Agent City uses to understand what is said into the
+microphone, on the visitor's own device, in every browser (src/09_Cognition/speechPack.ts SPEECH_PACK). The model's
+weights are NOT in this repository and NOT in the page file (dist/index.html): tools/web/speechPack.mjs fetches the
+package below from the npm registry, refuses it unless every file's size and SHA-256 are exactly these, and puts the
+two model files in the web copy's published folder as speech/encoder_model.onnx and speech/decoder_model_merged.onnx,
+with tokens.json, this NOTICE and LICENSE beside them. The page fetches them from its own site when the microphone is
+open, checks the same sizes and SHA-256, and runs them in a worker that has no network. No audio leaves the device.
+
+  encoder_model.onnx           7937661 bytes, sha256 c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a
+  decoder_model_merged.onnx   20243286 bytes, sha256 eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367
+  tokens.json                   307261 bytes, sha256 23a600089d29502c8966c95cb1b6318e015bbaf23e130fab6f4bb078402c9420
+  (SHA256SUMS beside this file has the same lines)
+
+Where it comes from
+-------------------
+
+- The model: Moonshine Tiny, the English speech-to-text model by Useful Sensors, Inc. (Moonshine AI). Licence: MIT.
+  Copyright (c) 2025 Useful Sensors, Inc. The licence text is LICENSE beside this file: section 1 of the LICENSE file
+  of the package named below, whose opening lines say that "the code in this repo and the English-language Moonshine
+  speech to text model it uses are released under the MIT license".
+- The two model files: dist/model/tiny/quantized/encoder_model.onnx and decoder_model_merged.onnx of the npm package
+  @moonshine-ai/moonshine-js, version 0.1.29 (the registry tarball moonshine-js-0.1.29.tgz, 21514347 bytes, sha256
+  864e17a00ed494857c71693e835306fa038e0f82002c76e3056d67d574e1c2d8). Only those two files of the package are used:
+  none of its code is, and it is not a dependency of this project. Crimson Noir: Agent City serves them exactly as
+  published and changes nothing in them.
+- tokens.json (committed here, 32000 entries): the model's vocabulary, id by id, taken from the "vocab" table of
+  moonshine_onnx/assets/tokenizer.json in the PyPI package useful-moonshine-onnx 20251121 (MIT, Copyright (c) 2024
+  Useful Sensors; that file's sha256 is b68b995a58b3373db6c4f46864a9db50cd1333d086150ffa2c1096581ede9c10), written
+  as one JSON array by `node tools/web/speechPack.mjs tokens <tokenizer.json>`. The merge rules of that file are not
+  needed to turn the model's output into text and are not kept.
+
+What is NOT used
+----------------
+
+The same package and vendor also publish a Spanish model under the Moonshine AI Community License, which limits
+commercial use. It is not fetched, not shipped and not referenced by any code here; only the MIT-licensed English
+model is.
+
+The model remains under its own licence, not under the product's licence. "Moonshine" is a name of Useful Sensors,
+Inc. (Moonshine AI), used here only to say which model this is.

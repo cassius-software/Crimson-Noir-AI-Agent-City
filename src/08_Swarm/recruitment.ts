@@ -34,6 +34,12 @@ const COPY_INTERVAL_MS = 250
 const ANSWER_STATES = 30
 /** How long `listen` waits for the microphone to open (the browser's permission prompt included) before it reports, ms. */
 const LISTEN_WAIT_MS = 8000
+/** How long `listen` waits for the browser to say whether its on-device model is installed, ms. */
+export const AVAILABLE_WAIT_MS = 8000
+/** How long `install` waits for the browser's download of its model before it stops holding `listen` off, ms. */
+export const INSTALL_WAIT_MS = 5 * 60_000
+/** What a browser that never answered is taken to have said. */
+const NO_ANSWER = 'no-answer'
 /** Restarts of a recogniser that keeps ending allowed per minute before the page gives up on it. */
 const MAX_RESTARTS_PER_MINUTE = 20
 
@@ -322,12 +328,15 @@ export class Recruiter extends EventTarget {
     if (typeof R.available === 'function') {
       let availability = ''
       try {
-        availability = await R.available(LOCAL)
+        availability = await this.#within(R.available(LOCAL), AVAILABLE_WAIT_MS, NO_ANSWER)
       } catch (e) {
         this.#wantListening = false
         return this.#setMic('error', `speech recognition failed: ${e instanceof Error ? e.message : String(e)}`)
       }
       if (generation !== this.#generation || !this.#wantListening || this.#disposed) return this.mic
+      // A browser whose answer never comes (seen where the model's download is switched off) must not leave the
+      // microphone reading "starting" for ever.
+      if (availability === NO_ANSWER) { this.#wantListening = false; return this.#setMic('error', `this browser did not say whether its on-device ${SPEECH_LANG} speech model is installed: ${USE_THE_COMMAND}`) }
       if (availability === 'downloadable') { this.#wantListening = false; return this.#setMic('needs-model', `the on-device ${SPEECH_LANG} speech model is not installed: run 'recruit install' (the browser downloads it once)`) }
       if (availability === 'downloading') { this.#wantListening = false; return this.#setMic('installing', `the on-device ${SPEECH_LANG} speech model is still downloading; try 'recruit listen' again shortly`) }
       if (availability !== 'available') { this.#wantListening = false; return this.#setMic('unavailable', `on-device ${SPEECH_LANG} recognition is not supported here: ${USE_THE_COMMAND}`) }
@@ -372,18 +381,31 @@ export class Recruiter extends EventTarget {
     const R = this.#speech.Recognition
     if (!R || typeof R.install !== 'function') return this.#setMic('unavailable', `this browser cannot install an on-device speech model: ${USE_THE_COMMAND}`)
     this.#setMic('installing', `downloading the on-device ${SPEECH_LANG} speech model`)
-    let ok = false
+    let ok: boolean | typeof NO_ANSWER = false
     this.#installing = true
     try {
-      ok = await R.install(LOCAL)
+      ok = await this.#within<boolean | typeof NO_ANSWER>(R.install(LOCAL), INSTALL_WAIT_MS, NO_ANSWER)
     } catch (e) {
       return this.#setMic('error', `the speech model did not install: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       this.#installing = false
     }
+    // A download the browser never finishes (or never starts and never refuses) must not hold listen() off for ever.
+    if (ok === NO_ANSWER) return this.#setMic('needs-model', `the browser has not finished installing its speech model after ${Math.round(INSTALL_WAIT_MS / 60_000)} minutes: try 'recruit listen', or 'recruit install' again`)
     return ok
       ? this.#setMic('off', `on-device ${SPEECH_LANG} speech model installed: run 'recruit listen'`)
       : this.#setMic('needs-model', 'the browser did not install the speech model (it needs a click or key press to allow it)')
+  }
+
+  /** `p`, or `late` when it has not settled within `ms` (the browser's promise is then left to end by itself). */
+  #within<T>(p: Promise<T>, ms: number, late: T): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = this.#clock.setTimeout(() => resolve(late), ms)
+      p.then(
+        (v) => { this.#clock.clearTimeout(timer); resolve(v) },
+        (e: unknown) => { this.#clock.clearTimeout(timer); reject(e instanceof Error ? e : new Error(String(e))) },
+      )
+    })
   }
 
   /** Closes the microphone, lets everyone go, and stops listening to the city. */

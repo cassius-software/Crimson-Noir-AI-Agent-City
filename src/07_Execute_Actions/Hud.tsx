@@ -683,7 +683,11 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
  * of the room while the device is open, and an accessible name that says the state, what a press does and the key.
  * The meter is drawn at frame rate from the microphone's own ring of levels, outside React; the word comes with the
  * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), not of
- * every onset of speech nor of Sloane speaking: those are the meter's news.
+ * every onset of speech nor of Sloane speaking: those are the meter's news. An open device that sends nothing reads
+ * Mic silent in the failure's colour (the system holds it muted, or the browser took another input). After the
+ * meter: the sentence last understood, for a few seconds, so the visitor sees their words arrive; else "words
+ * on-device" while a recogniser is reading; else where the page's own recogniser stands while it is not reading yet
+ * ("words 40%", "no words"), with the whole reason in the tooltip.
  */
 function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
   voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; contrast: boolean; panel: string; muted: string; dark: boolean
@@ -712,22 +716,28 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
     return () => cancelAnimationFrame(raf)
   }, [mic, open, dark, contrast])
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
-  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
+  // Open, and nothing at all arrives (microphone.ts silent): the pill says so in the failure's colour, with the reason.
+  const quiet = voice.silent === true && voice.phase === 'listening' && !voice.speaking
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : quiet ? 'bg-rose-500' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
   return (
     <button
       type="button"
       onClick={onMic}
-      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed || quiet ? voice.detail : '', 'V', quiet)}
       aria-pressed={open}
-      title={voice.detail || undefined}
+      title={[voice.detail, voice.speech].filter(Boolean).join(' · ') || undefined}
       className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
       data-hint="voice"
       data-mic={voice.phase}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
-      <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
+      <span className="truncate">{pillWord(voice.phase, voice.speaking, quiet)}</span>
       {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
-      {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
+      {open && voice.said
+        ? <span className={`min-w-0 max-w-48 truncate font-medium italic ${muted}`} data-mic-said>{`\u201c${voice.said}\u201d`}</span>
+        : open && voice.words
+          ? <span className={`truncate font-medium ${muted}`}>words on-device</span>
+          : open && voice.note && <span className={`truncate font-medium ${muted}`} data-mic-note>{voice.note}</span>}
     </button>
   )
 }
@@ -736,21 +746,23 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
  * The microphone's pill on a phone (and in any compact window): a round badge, 28 px, on the minimap's lower-left
  * corner, so it takes no row of the panels' column. A microphone glyph, struck through when the device could not open,
  * and the pill's coloured dot at its shoulder (green while it hears speech, amber while Sloane speaks, blue while it
- * listens, red when it could not open); no meter. A tap does what the pill's does, and its accessible name is the pill's.
+ * listens, red when it could not open or sends nothing); no meter. A device that is open and sends nothing has a
+ * dashed stroke the other way. A tap does what the pill's does, and its accessible name is the pill's.
  */
 function MicBadge({ voice, onMic, panel }: {
   voice: NonNullable<SipocSnapshot['supplier']['voice']>; onMic?: () => void; panel: string
 }) {
   const open = isOpen(voice.phase)
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
-  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : 'bg-slate-400'
+  const quiet = voice.silent === true && voice.phase === 'listening' && !voice.speaking
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : quiet ? 'bg-rose-500' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : 'bg-slate-400'
   return (
     <button
       type="button"
       onClick={onMic}
-      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed || quiet ? voice.detail : '', 'V', quiet)}
       aria-pressed={open}
-      title={voice.detail || undefined}
+      title={[voice.detail, voice.speech].filter(Boolean).join(' · ') || undefined}
       className={`pointer-events-auto relative flex h-7 w-7 cursor-pointer items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
       data-hint="voice"
       data-mic={voice.phase}
@@ -759,6 +771,7 @@ function MicBadge({ voice, onMic, panel }: {
         <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" />
         <path d="M3 8a5 5 0 0 0 10 0M8 13v1.75" />
         {failed && <path d="M2.5 2.5l11 11" />}
+        {quiet && <path d="M2.5 13.5l11-11" strokeDasharray="2 2" />}
       </svg>
       <span className={`absolute top-0 right-0 h-2 w-2 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
     </button>
