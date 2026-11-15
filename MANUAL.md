@@ -2144,6 +2144,62 @@ cinema camera, the HUD. Track B is this console on its own.
 - **Not a headless engine.** Track B is "no engine" plus `render off`; a page-side simulation without a renderer
   is not attempted.
 
+### Files, programs and the shell
+
+The prompt is also a small operating system of its own: a tree of directories, 67 programs in `/bin` and a shell
+that joins them. Nothing in it reaches your computer's own files or the network: a program sees only what the
+console hands it. The design, every limit and what is not there yet are in `docs/console-operating-layer.md`.
+
+- **Two kinds of line, one prompt.** A console command typed alone (`stats`, `time 18:30`, `rain on`) runs exactly
+  as before. Every other line goes to the shell: a program (`ls`, `cat`, `grep`), and any line with `|`, `>`, `>>`,
+  `<`, `;`, `&&`, `||` or `&` standing alone between blanks. A console command can stand in such a line:
+  `stats --once | grep fps`, `laws > laws.txt`, `time 18:30 && time`, `echo "it is $(time)"`. Its arguments are read
+  the console's way (nothing in them is expanded). Inside a pipe or a file it gives its lines only; clearing the
+  screen, closing the console and live views happen when it reaches the screen. `run`, `ask`, `say`, `noir`, `r0`,
+  `ring0`, `goal`, `agent`, `sloane` and `swarm` at the start of a line still take the whole line. `echo` is the
+  shell's. Where a console command and a program share a name (`time`, `uname`, `whoami`), the console's command
+  answers and `/bin/time sleep 1` runs the program; `type <name>` says which runs. The shell's messages start `ash:`,
+  and `help` ends with a line that points at `man intro`.
+- **First steps.** `man intro`, `ls /bin`, `man ls`, `cat README`, `pwd`, `cd /tmp`, `echo hi > note`, `cat note`,
+  `ls /bin | wc -l`, `for f in *.txt; do wc -l < "$f"; done`.
+- **The shell** (`man sh`): quotes, `NAME=value`, `$NAME` and the `${NAME:-word}` forms, `export`, `$(command)`,
+  whole-number sums `$((2 + 3 * 4))`, patterns `*`, `?`, `[a-z]`, pipes, `>`, `>>`, `<`, `2>`, `2>&1`, `<< WORD`, `;`,
+  `&&`, `||`, `&`, `{ a; b; }`, `if`, `while`, `until`, `for`, `test` and `[ ]`, and `jobs`, `fg`, `wait` and
+  `stop %1` for jobs left in the background. A text file that starts `#!/bin/sh` and is made runnable (`chmod +x`)
+  is a script; one in `~/bin` runs by its name. Not there: functions, `case`, `( )` subshells, `set`, arrays,
+  aliases, and backquotes (that key opens and closes the console: use `$( )`).
+- **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
+  forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
+  what you type. On a touch screen, **Stop** and **End input** do the same while a program has the terminal. A line
+  typed while a program reads (`cat > notes`) is that program's, even one that names a console command. The prompt
+  shows the directory (`host:~# `), and `> ` while a command needs more lines.
+- **The tree** (`man files`): `~` is `/home/operator` (with a `README`); `/etc` and `/mnt`; `/tmp`, scratch space;
+  `/bin` and `/usr/share/man`, read-only; `/dev/null`, `zero`, `full`, `random`, `urandom` and `tty`; `/proc`, a
+  directory per running task (`ps -f` lists them); `/proc/city` and `/sys/city`, below. You are root at the prompt.
+- **What is kept.** Everything outside `/tmp`, `/bin`, `/usr`, `/dev`, `/proc` and `/sys` is one disk of 8 MiB, saved in
+  this browser's own storage for the site a moment after it changes (1.5 s) and when the page is hidden, and back the
+  next time the page opens in the same browser; the city's console and the console alone (`?boot=tty`) share it. It is
+  sent nowhere, and another browser or device has its own. `/tmp` (4 MiB) is emptied when the page closes. When the
+  storage cannot be read, a second tab of the site saved a newer disk, or the browser gives the page no storage, the
+  console says once `disk: files are not kept between visits from here on:` with the reason, and files then last until
+  the page closes. A saved disk that fails its check is set aside under another name, never written over, and a new one
+  starts. Clearing the site's data erases the disk. `df` shows how full each part is. A name is at most 255 characters,
+  a path 4,096 characters and 64 names deep.
+- **The city as files** (`man city`). Readings, each the console command's own lines: `cat /proc/city/stats`, `laws`,
+  `kernel`, `hardware`, `rooms`, `lanes`, `version`; rows of numbers in `crowd`, `cars` and `frame`
+  (`sort -n /proc/city/crowd | head -n 5`); and `topics/`, the namespace as a tree of files. Knobs:
+  `echo 18:30 > /sys/city/time`, `echo off > /sys/city/rain`, and `quality`, `audio`, `ghost`, `render`,
+  `captions`, `haptics`; `physics/` and `shaders/`, a file per tuning key, once `operator unlock` has opened the
+  tier. A write runs the command with that value and is refused exactly when the command would be. On the console
+  alone most readings say the city is not there.
+- **Progression.** A shell line that holds `|`, `;`, `&`, `<` or `>`, or starts with `for`, `while`, `until` or `if`,
+  earns a computers check when it is back at the prompt within its first 30 ms without an error; any other line earns
+  nothing. The console commands inside a shell line (`rain on | wc -l`, `time 10:00` in a loop), and reading or
+  writing a file under `/proc/city` or `/sys/city`, earn none of the console commands' own checks.
+- **The full list.** `ls /bin` shows every program (files, text, system, `diff`, `cmp`, `comm`, `grep`, `sed`, `sh`),
+  `man` alone lists all 70 pages, `man -k <word>` searches their names and summaries, and `man <name>` says what one
+  does and, where its page has NOTES, what it does not.
+
 ### The operator tier
 
 `operator unlock` opens the operator tier for systems engineers; `operator lock` closes it again (and the

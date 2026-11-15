@@ -15,6 +15,40 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The console has files, programs and a shell of its own.** The Ring-0 console (`~`, and full screen at `?boot=tty`)
+  now carries a small operating system of its own behind the same prompt (`src/07_Execute_Actions/terminal/os/`). A
+  console command typed alone runs exactly as before (`oslayer.test.ts` compares twelve of them with a console that has
+  no layer) and every other line goes to the shell, whose messages start `ash:` as the console's did; a console command
+  can stand in a shell line and runs through the same handler (`stats --once | grep fps`, `laws > laws.txt`,
+  `time 18:30 && time`). The shell reads quotes, variables and their `${}` forms, `$( )`, whole-number `$(( ))`,
+  file-name patterns, pipes, redirections, here-documents, `;`, `&&`, `||`, `&`, `if`, `while`, `until` and `for`, runs
+  scripts (a runnable file in `~/bin` runs by its name) and has 24 commands of its own; `man sh` says what it lacks
+  (functions, `case`, subshells, `set`, arrays, backquotes, aliases). `/bin` holds 67 programs (the file, text and
+  system tools, `diff`, `cmp`, `comm`, `grep`, `sed` and `sh`) and the manual 70 pages in one checked shape, the pages
+  saying under NOTES what a program does not do. Under them: a kernel of generator tasks run in turns of at most 256
+  calls, inside a budget of calls and a deadline the page hands it (30 ms for a typed line, then 4 ms every 16 ms while
+  it has work, the clock read every 8 calls), so a program that never waits still hands the page back at the deadline;
+  descriptors, 64 KiB pipes, a terminal, a group per job, and Ctrl+C for the foreground job alone; a file system of
+  drivers with an 8 MiB disk at `/`, read-only `/bin` and `/usr`, a 4 MiB `/tmp` and generated `/proc`, `/sys` and
+  `/dev`, a write past a cap refused by name with nothing changed; and a regular-expression engine of its own that keeps
+  every path alive at once, so a search costs at most 2 x instructions x (characters + 1) steps (`(a+)+$` on thirty `a`s
+  and a `b` gives up within 5,000 steps), can pause mid-search for the other tasks and for Ctrl+C, and refuses
+  back-references. The city reads as files (`terminal/cityfs.ts`): `/proc/city` holds what `stats`, `laws`, `kernel` and
+  the rest print, the crowd and the cars as rows of numbers, and the namespace as a tree; a write under `/sys/city`
+  (`echo 18:30 > /sys/city/time`) runs the same command with the same checks and tier locks, and neither earns a
+  command's check. The disk is kept between visits in the page's own IndexedDB (`consoleDisk.ts`), one store for both
+  consoles: an image sealed with SHA-256 and refused whole when any check fails, stored with a generation so a tab that
+  fell behind writes nothing over a newer disk, never written over when it could not be read, and copied to a row of its
+  own before anything replaces an image that failed its check; when files can no longer be kept, the console says so
+  once. A shell line that holds `|`, `;`, `&`, `<` or `>`, or starts with a loop or `if`, earns a computers check when
+  it is back at the prompt within 30 ms without an error; the console commands inside it earn none of their own. The
+  folder imports nothing from outside itself and names no host clock, timer, storage or network (`os/airgap.test.ts`).
+  Tests: 544 in 20 files under `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 26 in
+  `terminal/oslayer.test.ts` and 7 in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB; the browser's real one
+  is not exercised by them. Not yet: attaching a folder of the computer, full-screen programs and app windows,
+  networking, programs written in Crimson Noir Script. `docs/console-operating-layer.md` is the design and `MANUAL.md`,
+  "Files, programs and the shell", the use.
+
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
