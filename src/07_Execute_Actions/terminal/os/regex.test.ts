@@ -552,6 +552,32 @@ test('ignoreCase: letters match in either case, one code point folded to one', (
   table([['abc', 'ABC', 'none']], { ignoreCase: false })
 })
 
+test('ignoreCase: a shorthand and its capital never both match, inside a set or outside', () => {
+  const o: RegexOptions = { ignoreCase: true }
+  // The dotless i, the long s and the Kelvin sign fold into ASCII letters, so with case ignored they are word
+  // characters: `[\W]` once took them as well, beside `\w`.
+  table([
+    ['\\w', 'ſ', '0,1'],
+    ['\\W', 'ſ', 'none'],
+    ['[\\W]', 'ſ', 'none'],
+    ['[\\W]', 'K', 'none'],
+    ['[\\W]', 'ı', 'none'],
+    ['[^\\W]', 'ſ', '0,1'],
+    ['[\\W]+', `-éı ${GRIN}`, '0,2'],
+    ['[\\Wa]+', '-aſ', '0,2'],
+    ['[\\D]', 'ſ', '0,1'],
+    ['[\\S]', 'ſ', '0,1'],
+  ], o)
+  table([['[\\W]+', '-ſKıa', '0,4']])
+  const [w, notW, notNotW] = ['\\w', '[\\W]', '[^\\W]'].map((p) => compile(p, o))
+  for (let c = 0; c <= 0xffff; c++) {
+    if (c >= 0xd800 && c <= 0xdfff) continue
+    const ch = String.fromCharCode(c)
+    const word = w.test(ch)
+    if (notW.test(ch) === word || notNotW.test(ch) !== word) assert.fail(`u+${c.toString(16)}: \\w ${word}, [\\W] ${notW.test(ch)}, [^\\W] ${notNotW.test(ch)}`)
+  }
+})
+
 test('literal: the pattern is plain text', () => {
   table([
     ['a.c', 'abc', 'none'],

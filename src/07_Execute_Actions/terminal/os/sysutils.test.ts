@@ -51,6 +51,13 @@ const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\
 /** Builds, in the shell, an exported variable BIG of 81920 letters. */
 const BIG = 'x=aaaaaaaaaa; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do x=$x$x; done; export BIG=$x'
 
+/** The STATUS section of a page, as one line of text. */
+function statusOf(name: string): string {
+  const lines = SYS_MANUAL[name].split('\n')
+  const at = lines.indexOf('STATUS')
+  return lines.slice(at + 1, lines.indexOf('', at)).map((l) => l.trim()).join(' ')
+}
+
 const NAMES = [
   '[', 'cal', 'date', 'dmesg', 'env', 'false', 'hostname', 'id', 'man', 'printenv', 'ps', 'pwd', 'sleep', 'test', 'time', 'timeout', 'true', 'uname',
   'uptime', 'which', 'whoami',
@@ -118,6 +125,8 @@ test('a refused write to the ordinary output is said once, as a write error, wit
   for (const cmd of cmds) {
     const name = cmd.split(' ')[0].replace('/bin/', '')
     assert.deepEqual(k.sh(`${cmd} > /dev/full; echo $?`), [`!${name}: write error: no space left on device`, '1'], cmd)
+    // The page says so, among the statuses.
+    assert.match(statusOf(name), /\b1 when [^.]*could not be written/, name)
   }
   // A command env runs answers for itself.
   assert.deepEqual(k.sh('env date > /dev/full; echo $?'), ['!date: write error: no space left on device', '1'])
@@ -313,6 +322,7 @@ test('date and cal: a clock outside the years 1 to 9999', () => {
   const late = boot(SYS_PROGRAMS, { wall: () => 253_402_300_800_000 })
   assert.deepEqual(late.sh('date; date +%Y%y%j'), ['Sat Jan  1 00:00:00 UTC 10000', '1000000001'])
   assert.deepEqual(late.sh('cal; echo $?'), ['!cal: the clock says the year 10000, and a calendar is drawn for the years 1 to 9999 only', '1'])
+  assert.match(statusOf('cal'), /\b1 when the clock is outside the years 1 to 9999/)
   assert.deepEqual(late.sh('cal 1 9999 > /dev/null; echo $?'), ['0'])
   const early = boot(SYS_PROGRAMS, { wall: () => -62_167_219_200_000 })
   assert.deepEqual(early.sh('date; date +%s'), ['Sat Jan  1 00:00:00 UTC 0000', '-62167219200'])
@@ -463,6 +473,9 @@ test('dmesg: the kernel\'s log, a line each, oldest first', () => {
   assert.equal(out.length, 200)
   assert.equal(out[0], '[     1.500] line 50')
   assert.equal(out[199], '[     1.500] line 249')
+  // An entry whose text holds a line end (a program's name, a host's reason) is still one line.
+  k.system.kernel.log('two\nlines\r')
+  assert.deepEqual(k.sh('dmesg').slice(-1), ['[     1.500] two?lines?'])
   assert.deepEqual(k.sh('dmesg x; echo $?'), ['!usage: dmesg', '2'])
 })
 

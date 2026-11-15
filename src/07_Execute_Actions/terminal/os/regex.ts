@@ -24,7 +24,8 @@
  * `\b \B` are a word edge and its absence; `\< \>` are the start and the end of a word.
  *
  * What was chosen where that list leaves a gap:
- * - The named classes, `\w \d \s` and the word edges know the ASCII letters and digits only.
+ * - The named classes, `\w \d \s` and the word edges know the ASCII letters and digits only. With ignoreCase a
+ *   class, like a letter, also matches what folds into it (the long s is an `s`), but a word edge does not.
  * - A backslash works inside a set as it does outside (`[\]\t\d]`), so a backslash in a set is written `\\`.
  * - A `{` that does not begin a well-formed count, and a lone `]` or `}`, stand for themselves.
  * - An alternative, a group or the whole pattern may be empty: it matches no characters, wherever it is tried.
@@ -126,6 +127,8 @@ const WORD_END = 5
 const DIGITS: readonly number[] = [48, 57]
 const WORDS: readonly number[] = [48, 57, 65, 90, 95, 95, 97, 122]
 const SPACES: readonly number[] = [9, 13, 32, 32]
+/** The letters past ASCII whose case fold is an ASCII letter (the dotless i, the long s, the Kelvin sign), as pairs. */
+const FOLDS_TO_ASCII: readonly number[] = [0x131, 0x131, 0x17f, 0x17f, 0x212a, 0x212a]
 
 /** The named classes, each as pairs of first and last code point. */
 const CLASSES: ReadonlyMap<string, readonly number[]> = new Map<string, readonly number[]>([
@@ -591,7 +594,10 @@ class Reader {
       this.at += 2
       const ranges = shorthand(e)
       if (ranges === null) return this.plain(e)
-      pairs.push(...(e < 97 ? others(ranges) : ranges))
+      // `[\W]` is what `\w` is not. When case is ignored, a letter that folds into `\w` matches `\w` and not `\W`, so
+      // it is left out here as well (no character folds to a digit or a space).
+      const not = this.fold && ranges === WORDS ? [...ranges, ...FOLDS_TO_ASCII] : ranges
+      pairs.push(...(e < 97 ? others(not) : ranges))
       return -1
     }
     this.at++

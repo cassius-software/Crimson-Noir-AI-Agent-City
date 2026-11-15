@@ -458,8 +458,20 @@ test('rmdir: removes empty directories only; -p goes on up', () => {
   assert.deepEqual(k.sh('mkdir -p /tmp/q/w; rmdir -p /tmp/q/w; echo $?'), ['!rmdir: /tmp: a mount point', '1'])
   assert.ok(!k.exists('/tmp/q'))
   // A dot or a doubled slash in the path names nothing more to remove.
-  assert.deepEqual(k.sh('rm -r a; mkdir -p m/n/o p/q/r s/t; rmdir -p m/./n//o ./p/q/r/ s/t/.; echo $?; ls'), ['0', 'file'])
-  assert.deepEqual(k.sh('rmdir -p .; rmdir -x d; echo $?'), ['!rmdir: .: a mount point', "!rmdir: unknown option '-x'", '!usage: rmdir [-p] dir ...', '2'])
+  assert.deepEqual(k.sh('rm -r a; mkdir -p m/n/o p/q/r; rmdir -p m/./n//o ./p/q/r/; echo $?; ls'), ['0', 'file'])
+  assert.deepEqual(k.sh('rmdir -p .; rmdir -x d; echo $?'), ["!rmdir: .: refusing to remove '.' or '..'", "!rmdir: unknown option '-x'", '!usage: rmdir [-p] dir ...', '2'])
+})
+
+test('rmdir: a path that ends in . or .. is refused, so the directory you are in is never removed by it', () => {
+  const k = fresh()
+  k.sh('mkdir -p w/b s/t')
+  // Each of these once removed the directory the shell was in (-p climbed through the `..` it was given).
+  assert.deepEqual(k.sh('cd w/b; rmdir .; echo $?; cd /tmp/w; rmdir -p nosuch/../b; echo $?; cd /tmp'), [
+    "!rmdir: .: refusing to remove '.' or '..'", '1', "!rmdir: nosuch/..: refusing to remove '.' or '..'", '1',
+  ])
+  assert.ok(k.exists('/tmp/w') && !k.exists('/tmp/w/b'))
+  assert.deepEqual(k.sh('rmdir s/t/. w/..; echo $?; ls'), ["!rmdir: s/t/.: refusing to remove '.' or '..'", "!rmdir: w/..: refusing to remove '.' or '..'", '1', 's  w'])
+  assert.deepEqual(k.sh('rmdir -p s/t w; echo $?; ls -a'), ['0', '.  ..'])
 })
 
 // rm
@@ -478,6 +490,12 @@ test('rm: removes files; a directory only with -r, and then everything in it', (
   k.sh('mkdir -p d/sub; echo x > d/f')
   assert.deepEqual(k.sh('rm -r d/f d/sub/; echo $?; ls d'), ['0'])
   assert.deepEqual(k.sh('rm d/f/x; echo $?'), ['!rm: d/f/x: no such file or directory', '1'])
+  // A name that ends in a slash is a directory's: the file system finds the file by it, but rm does not remove it.
+  k.write('/tmp/notes', 'kept')
+  assert.deepEqual(k.sh('rm notes/; rm -f notes/; rm -rf notes//; echo $?'), [
+    '!rm: notes/: not a directory', '!rm: notes/: not a directory', '!rm: notes//: not a directory', '1',
+  ])
+  assert.equal(k.read('/tmp/notes'), 'kept')
 })
 
 test('rm -f: quiet about what is not there, and never a failure for it', () => {
@@ -811,6 +829,13 @@ test('mv: when the copy to another file system fails, the source stays', () => {
   k.write('/tmp/fill', noise(60_000))
   assert.deepEqual(k.sh('mv mid /tmp; echo $?; ls /tmp'), ['!mv: /tmp/mid: no space left on device', '1', 'fill'])
   assert.equal(k.bytes('/home/operator/mid').length, 80_000)
+  // A file that was there already is written over as the copy goes: the page says it is lost even when the move fails.
+  k.write('/tmp/old', 'precious\n')
+  assert.deepEqual(k.sh('mv mid /tmp/old; echo $?'), ['!mv: /tmp/old: no space left on device', '1'])
+  assert.equal(k.bytes('/home/operator/mid').length, 80_000)
+  assert.equal(k.read('/tmp/old'), '')
+  assert.match(FILE_MANUAL.mv, /already at\n {4}the destination, though, is written over as the copy goes, so it is\n {4}lost even when the move fails/)
+  k.sh('rm /tmp/old')
   // A directory: the source stays whole, and what was copied of it stays where it went.
   assert.deepEqual(k.sh('mv tree /tmp; echo $?; find tree /tmp/tree'), [
     '!mv: /tmp/tree/b: no space left on device', '1', 'tree', 'tree/a', 'tree/b', '/tmp/tree', '/tmp/tree/a', '/tmp/tree/b',

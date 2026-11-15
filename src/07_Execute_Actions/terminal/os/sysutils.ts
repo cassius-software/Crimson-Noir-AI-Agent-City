@@ -588,7 +588,8 @@ const dmesg: Program = function* (sys, argv) {
   const wrong = yield* alone(sys, argv, 'dmesg')
   if (wrong !== null) return wrong
   let text = ''
-  for (const line of sys.dmesg()) text += `${line}\n`
+  // One line each, whatever the logged text held: a line end in it would read as a second entry.
+  for (const line of sys.dmesg()) text += `${plain(line)}\n`
   yield* say(sys, text)
   return 0
 }
@@ -857,7 +858,7 @@ NOTES
     ${SHELL_ALSO('pwd', 'env pwd')}
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     pwd
@@ -981,9 +982,9 @@ NOTES
     cd, and not a command of the city.
 
 STATUS
-    With no command: 0. With one: the command's own status, 126 when it
-    was found but could not be started, 127 when it was not found. 2
-    for a wrong call.
+    With no command: 0, or 1 when the list could not be written. With
+    one: the command's own status, 126 when it was found but could not
+    be started, 127 when it was not found. 2 for a wrong call.
 
 EXAMPLE
     env GREETING=hello printenv GREETING
@@ -1006,8 +1007,8 @@ NOTES
     but not exported is not in the environment: export it first.
 
 STATUS
-    0, or 1 when a name is not set (nothing is printed for it), or 2
-    for a wrong call.
+    0, or 1 when a name is not set (nothing is printed for it) or the
+    output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     printenv HOME
@@ -1044,7 +1045,8 @@ NOTES
     printed wrongly, and there are no full names of days or months.
 
 STATUS
-    0, or 2 for a wrong call or a format it cannot print.
+    0, or 1 when the output could not be written, or 2 for a wrong call
+    or a format it cannot print.
 
 EXAMPLE
     date +%F
@@ -1069,7 +1071,8 @@ NOTES
     the calendar people kept then. The month is a number, not a name.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the clock is outside the years 1 to 9999 (with no
+    argument) or the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     cal 11 2026
@@ -1095,7 +1098,8 @@ NOTES
 
 STATUS
     0 when every name was found, 1 when one was not (it is named on the
-    error output), 2 for a wrong call.
+    error output) or the output could not be written, 2 for a wrong
+    call.
 
 EXAMPLE
     which man
@@ -1125,7 +1129,7 @@ NOTES
     about the task that runs it, not about any other user.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     id -un
@@ -1144,7 +1148,7 @@ NOTES
     Only user 0 has a name. For anyone else the number is printed.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     whoami
@@ -1163,7 +1167,7 @@ NOTES
     given as an argument is refused.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     hostname
@@ -1192,7 +1196,8 @@ NOTES
     kind of machine.
 
 STATUS
-    0, or 1 when the version could not be read, or 2 for a wrong call.
+    0, or 1 when the version could not be read or the output could not
+    be written, or 2 for a wrong call.
 
 EXAMPLE
     uname -a
@@ -1215,7 +1220,7 @@ NOTES
     how busy the system is.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     uptime
@@ -1238,7 +1243,7 @@ NOTES
     The log cannot be cleared from here.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     dmesg
@@ -1278,7 +1283,7 @@ NOTES
     memory or for time.
 
 STATUS
-    0, or 2 for a wrong call.
+    0, or 1 when the output could not be written, or 2 for a wrong call.
 
 EXAMPLE
     ps -f
@@ -1305,8 +1310,9 @@ NOTES
     the pages. The pages are the files in /usr/share/man.
 
 STATUS
-    0, or 1 when there is no such page or nothing holds the word (this
-    is said on the error output), or 2 for a wrong call.
+    0, or 1 when there is no such page, nothing holds the word (this is
+    said on the error output) or the output could not be written, or 2
+    for a wrong call.
 
 EXAMPLE
     man -k calendar

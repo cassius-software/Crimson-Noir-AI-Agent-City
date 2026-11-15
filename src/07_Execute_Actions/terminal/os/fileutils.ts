@@ -541,16 +541,23 @@ const rmdir: Program = function* (sys, argv) {
   const run = new Run(sys, 'rmdir')
   const o = options(argv, 'p')
   if (o.bad !== null || o.rest.length === 0) return yield* run.misuse(o.bad, 'rmdir [-p] dir ...')
+  // A path whose last name is . or .. names a directory by where the task stands, not by its own name: refused, as rm
+  // refuses it, so neither the directory you are in nor one above it is removed that way (-p would climb through `..`).
+  const take = function* (at: string): Task<void> {
+    const last = lastName(at)
+    if (last === '.' || last === '..') throw new OsError('EINVAL', "refusing to remove '.' or '..'")
+    yield* sys.rmdir(at)
+  }
   for (const path of o.rest) {
     let at = path
     try {
-      yield* sys.rmdir(at)
+      yield* take(at)
       if (!o.flags.has('p')) continue
       // Then each directory above it in the path as typed, nearest first (a `.` in the path names nothing new).
       const names = path.split('/').filter((name) => name !== '' && name !== '.')
       for (let n = names.length - 1; n > 0; n--) {
         at = (path.startsWith('/') ? '/' : '') + names.slice(0, n).join('/')
-        yield* sys.rmdir(at)
+        yield* take(at)
       }
     } catch (e) {
       yield* run.fail(at, e)
@@ -617,7 +624,9 @@ const rm: Program = function* (sys, argv) {
         continue
       }
       const st = yield* sys.stat(path)
-      if (st.kind !== 'dir') yield* sys.unlink(path)
+      // A name that ends in a slash is a directory's name: the file system would find a file by it, but rm does not remove one.
+      if (st.kind !== 'dir' && path.endsWith('/')) yield* run.fail(path, 'not a directory')
+      else if (st.kind !== 'dir') yield* sys.unlink(path)
       else if (recursive) yield* removeTree(run, path, 0)
       else yield* run.fail(path, 'is a directory')
     } catch (e) {
@@ -1732,6 +1741,10 @@ OPTIONS
     -p      after removing a/b/c, remove a/b and then a as well, stopping
             at the first that cannot be removed
 
+NOTES
+    A path that ends in . or .. is refused (rm refuses it too), so the
+    directory you are in is never removed by that name.
+
 STATUS
     0, or 1 when a directory could not be removed.
 
@@ -1757,10 +1770,12 @@ OPTIONS
 
 NOTES
     The root directory / is never removed, and neither is a path that
-    ends in . or .. A place where another file system is attached (a
-    mount point, such as /tmp) cannot be removed either: with -r what is
-    inside it is removed first, and then the refusal is reported.
-    Read-only places such as /bin refuse every removal.
+    ends in . or .. A name that ends in a slash is a directory's name:
+    rm notes/ refuses when notes is a file. A place where another file
+    system is attached (a mount point, such as /tmp) cannot be removed
+    either: with -r what is inside it is removed first, and then the
+    refusal is reported. Read-only places such as /bin refuse every
+    removal.
 
 STATUS
     0, or 1 when something could not be removed (the rest still is).
@@ -1818,12 +1833,14 @@ WHAT IT DOES
 NOTES
     A directory cannot be moved into itself, and a mount point (a place
     where another file system is attached) cannot be moved at all.
-    Moving something onto itself changes nothing and is no failure.
+    Moving a file onto itself changes nothing and is no failure.
     There are no options: mv never asks before it replaces a file.
 
     Between two file systems, a file that cannot be moved (no room for
     the copy, or the source cannot be removed) stays where it was and
-    nothing new is left at the destination. A directory that cannot be
+    nothing new is left at the destination. A file that was already at
+    the destination, though, is written over as the copy goes, so it is
+    lost even when the move fails. A directory that cannot be
     moved whole may be left partly in both places: what was copied of
     it stays, and so does what could not be removed, each reported.
 
