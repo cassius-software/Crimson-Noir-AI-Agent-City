@@ -147,7 +147,7 @@ test('a file is taken whole and at the pinned size, counting as it goes; anythin
   const got = await fetchSpeechFile(site(() => new Response(body(data[f.file]))), f, (n) => counted.push(n))
   assert.deepEqual(new Uint8Array(got), data[f.file])
   assert.deepEqual(counted, [128, 128, 128, 116], 'each chunk as it arrived')
-  assert.deepEqual(asked[0], { path: 'speech/dec.onnx', cache: 'force-cache' }, 'the browser\'s kept copy is preferred: the file never changes under its pin')
+  assert.deepEqual(asked[0], { path: 'speech/dec.onnx', cache: 'no-cache' }, 'the browser\'s copy is taken once the site says it is current: the path is the same under every pin')
   await fetchSpeechFile(site(() => new Response(body(data[f.file]))), f, () => undefined, undefined, true)
   assert.equal(asked[1].cache, 'reload', 'fresh goes past the cache')
   const none = (): void => undefined

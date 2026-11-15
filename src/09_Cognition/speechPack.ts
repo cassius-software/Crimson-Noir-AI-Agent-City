@@ -5,7 +5,7 @@
  * Why does this file exist? It names the speech pack: the four files the page's own speech recogniser needs (the
  * runtime's WebAssembly module, the model's encoder and decoder, and its vocabulary), each by its name, its size and
  * its SHA-256, and it fetches them from beside the page. The pack is what lets the microphone understand words in
- * every browser: a browser's own on-device recogniser exists in a few desktop browsers and nowhere on a phone, so
+ * any browser that can run it: a browser's own on-device recogniser exists in a few desktop browsers and nowhere on a phone, so
  * without the pack an open microphone hears a voice and reads nothing. The files are not in the page (they are 41 MB;
  * tools/verify/page_dist.mjs holds the page to its budget): the web copy serves them beside it, in speech/, where
  * tools/web/speechPack.mjs puts them with a manifest that names exactly this pin, and the page asks for them only
@@ -46,7 +46,8 @@ export interface SpeechPackPin {
  * The pack this page was built for. Moonshine Tiny (English), quantized ONNX: 27 million parameters, reads a short
  * sentence in a fraction of a second on one thread of a phone, and its encoder takes audio of any length (a sentence
  * costs what it lasts, not a fixed half minute). ONNX Runtime's plain WebAssembly build runs it: one thread, no
- * shared memory, so it runs in every browser whether or not the page is cross-origin isolated. Where each file comes
+ * shared memory, so it needs no cross-origin isolation (whether a given browser runs it was tried in desktop Chromium
+ * only). Where each file comes
  * from (the packages, their versions, the registry tarball) is the tool's to know, not the page's: the page names no
  * address but its own (tools/web/speechPack.mjs SOURCES; third_party/moonshine-tiny-en/NOTICE).
  */
@@ -104,21 +105,25 @@ export function parseSpeechManifest(text: string, pin: SpeechPackPin = SPEECH_PA
 
 /**
  * Whether the site serves this pack beside the page: its manifest names exactly `pin`. False where the site says it
- * has none (a 404, a 410, or anything that is not this pin's manifest: the page file opened alone has nothing beside
- * it). Throws where the site could not say just now (unreachable, a 429, a 5xx), so the caller asks again later.
+ * has none (a 404, a 410, a 403 or any other refusal, or anything that is not this pin's manifest: the page file
+ * opened alone has nothing beside it). Throws where the site could not say just now (unreachable, a 408, a 429, a
+ * 5xx), so the caller asks again later.
  */
 export async function speechOffered(siteFetch: SiteFetch, pin: SpeechPackPin = SPEECH_PACK, signal?: AbortSignal): Promise<boolean> {
   const r = await siteFetch(SPEECH_MANIFEST, { cache: 'no-cache', signal })
   if (r.ok) return parseSpeechManifest(await r.text(), pin)
   void r.body?.cancel().catch(() => undefined)
-  if (r.status === 404 || r.status === 410) return false
-  throw new Error(`the site answered ${r.status} for the speech pack's manifest`)
+  // Busy or failing just now (a timeout, too many requests, a server error): asked again later. Any other refusal
+  // (missing, forbidden: a host that answers 403 for what it does not have) is a site with no pack.
+  if (r.status === 408 || r.status === 429 || r.status >= 500) throw new Error(`the site answered ${r.status} for the speech pack's manifest`)
+  return false
 }
 
 /**
- * One file of the pack from beside the page, whole, as an ArrayBuffer of exactly the pin's size. `fresh` false
- * prefers the browser's kept copy (the file never changes under its pin; a kept copy also works offline); `fresh`
- * true goes past the cache (asked once, when the kept copy's hash was wrong). `onBytes(n)` is told each chunk's
+ * One file of the pack from beside the page, whole, as an ArrayBuffer of exactly the pin's size. `fresh` false lets
+ * the browser's HTTP cache answer once the site says its copy is still current (the file's path is the same under
+ * every pin, so a copy from an older pin must not be taken unasked); `fresh` true goes past the cache (asked once,
+ * when the kept copy's hash was wrong). `onBytes(n)` is told each chunk's
  * size as it arrives. The hash is the worker's to check (it has the bytes off the page's thread); the size is
  * checked here, since a short or long body is known without hashing. Rejects with a plain sentence.
  */
@@ -126,7 +131,7 @@ export async function fetchSpeechFile(siteFetch: SiteFetch, f: SpeechFile, onByt
   signal?.throwIfAborted()
   let res: Response
   try {
-    res = await siteFetch(`${SPEECH_DIR}${f.file}`, { cache: fresh ? 'reload' : 'force-cache', signal })
+    res = await siteFetch(`${SPEECH_DIR}${f.file}`, { cache: fresh ? 'reload' : 'no-cache', signal })
   } catch (e) {
     signal?.throwIfAborted()
     throw new Error(`this site could not be reached for the speech pack (${e instanceof Error ? e.message : String(e)})`)
@@ -211,11 +216,12 @@ export function speechStore(caches: CachesLike | null | undefined, pin: SpeechPa
     async put(f, bytes) {
       if (!caches) return
       try {
-        await (await caches.open(name)).put(key(f), respond(bytes))
+        // An older pin's pack goes first: it is what would leave no room for this one.
         if (!swept) {
           swept = true
           for (const other of await caches.keys()) if (other.startsWith(SPEECH_CACHE) && other !== name) await caches.delete(other)
         }
+        await (await caches.open(name)).put(key(f), respond(bytes))
       } catch {
         // No room, or storage refused: the pack is fetched again next visit.
       }

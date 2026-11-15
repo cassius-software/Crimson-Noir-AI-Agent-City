@@ -7,9 +7,11 @@
  * (speechPack.ts). The model is an encoder that reads the audio once and a decoder that writes one token at a time,
  * each from the one before; this file runs that loop (greedy: the likeliest token each step), keeps the decoder's
  * memory between steps so each costs the same, stops it at the end mark or at a length no sentence of that duration
- * reaches, and turns the tokens into text with the model's vocabulary. It also decides what is not worth reading or
- * repeating: an utterance too quiet or too short to be a word, and the two ways a small model fails on a noise (it
- * writes the same thing over and over, or it writes a sentence it is not sure of at all).
+ * reaches, and turns the tokens into text with the model's vocabulary. Before reading, it cuts an utterance to the part
+ * that holds the words (the microphone keeps room around them, which this model reads as the end of a sentence). It
+ * also decides what is not worth reading or repeating: an utterance too quiet or too short to be a word, and the two
+ * ways a small model fails on a noise (it writes the same thing until it runs out of length, or it writes a sentence it
+ * is not sure of at all).
  * It names no runtime: the sessions and tensors are passed in (SpeechRuntime), which the worker fills with ONNX
  * Runtime (speech.worker.ts) and a Node test with its own, so everything here runs under `node --test`.
  * What breaks if it is removed? The worker has a model and no way to read it: the microphone understands no words
@@ -67,8 +69,19 @@ export const SPEECH_LIMITS = Object.freeze({
   /** The decoder's mean certainty (the probability it gave each token it chose, geometric mean) under which what it
    *  wrote is a guess at a noise, not a reading of words. */
   sure: 0.35,
-  /** The same run of tokens this many times in a row ends the reading there, and only one copy is kept. */
+  /** A reading that ran into the length limit and ends in the same run of tokens this many times in a row is a decoder
+   *  that lost the audio: the repeats are taken off and one copy is kept. Below the limit a repeat is never cut, since
+   *  people repeat themselves on purpose ("no, no, no") and numbers repeat digits ("555"). */
   repeats: 3,
+  /** The voiced part of an utterance: 20 ms frames whose loudness is over this share of the loud frames' (the third
+   *  loudest, so one click does not set it) and over `quiet` are speech; the model reads from `margin` seconds before
+   *  the first to `margin` after the last. 0.1 and 0.15 s read the most short commands of the shares and margins tried
+   *  (57 of 60 recorded and synthesised commands, against 52 with a twentieth or a quarter-second margin). The
+   *  microphone's tap keeps some 0.4 s of room before the words and 0.6 s after them (its lead, the detector's
+   *  release and the hang), and with that much room around them this model often writes nothing at all for a short
+   *  command: cut to the words, it reads them. */
+  voicedShare: 0.1,
+  margin: 0.15,
 })
 
 /** One reading: the text ('' when nothing worth saying was heard), why it was dropped if it was, and its numbers. */
@@ -122,9 +135,66 @@ export function repeatCut(ids: readonly number[], times: number = SPEECH_LIMITS.
 }
 
 /**
- * Reads one utterance: the encoder once, then the decoder a token at a time from the start mark until the end mark,
- * the length limit, or a repeat. Returns the tokens and the certainty; `speechText` makes them words. Throws only
- * what the runtime throws.
+ * Where a reading that ran out of length should end: after the first copy of the run its tail repeats `times` times or
+ * more, every copy after the first taken off, and the last copy allowed to be cut short by the limit (up to `ragged`
+ * tokens of it); the earliest such end. -1 when the tail is not a loop.
+ */
+export function loopCut(ids: readonly number[], times: number = SPEECH_LIMITS.repeats, ragged = 8): number {
+  let best = -1
+  for (let d = 0; d <= ragged && d < ids.length; d++) {
+    const m = ids.length - d
+    for (let len = 1; len * times <= m; len++) {
+      // Copies of the last `len` tokens before m, counted back while they match.
+      let copies = 1
+      for (;;) {
+        const from = m - (copies + 1) * len
+        if (from < 0) break
+        let same = true
+        for (let i = 0; i < len; i++) if (ids[m - 1 - i] !== ids[m - 1 - i - copies * len]) { same = false; break }
+        if (!same) break
+        copies++
+      }
+      if (copies < times) continue
+      const end = m - (copies - 1) * len
+      if (best < 0 || end < best) best = end
+      break
+    }
+  }
+  return best
+}
+
+/**
+ * The part of an utterance that holds the words: from `margin` seconds before the first 20 ms frame whose loudness
+ * (RMS) is over `voicedShare` of the third loudest frame's (and over `quiet`) to `margin` after the last, as a view of
+ * the same samples. The whole utterance when no frame is that loud.
+ */
+export function voicedSpan(samples: Float32Array, rate: number = SPEECH_SHAPE.rate, share: number = SPEECH_LIMITS.voicedShare, margin: number = SPEECH_LIMITS.margin): Float32Array {
+  const frame = Math.max(1, Math.round(rate * 0.02))
+  const frames = Math.floor(samples.length / frame)
+  if (frames < 1) return samples
+  const loud = new Float32Array(frames)
+  for (let f = 0; f < frames; f++) {
+    let sum = 0
+    for (let i = f * frame, end = i + frame; i < end; i++) sum += samples[i] * samples[i]
+    loud[f] = Math.sqrt(sum / frame)
+  }
+  // The third loudest frame (60 ms of sound), not the loudest: a click or a knock is one or two frames.
+  const top = Float32Array.from(loud).sort()[Math.max(0, frames - 3)]
+  const bar = Math.max(SPEECH_LIMITS.quiet, top * share)
+  let first = -1, last = -1
+  for (let f = 0; f < frames; f++) if (loud[f] > bar) { if (first < 0) first = f; last = f }
+  if (first < 0) return samples
+  const pad = Math.round(margin * rate)
+  const from = Math.max(0, first * frame - pad)
+  const to = Math.min(samples.length, (last + 1) * frame + pad)
+  return from === 0 && to === samples.length ? samples : samples.subarray(from, to)
+}
+
+/**
+ * Reads one utterance: the encoder once, then the decoder a token at a time from the start mark until the end mark or
+ * the length limit (where a repeating tail is taken off: repeatCut). Returns the tokens and the certainty (the
+ * geometric mean of the probabilities of the tokens kept); `tokensText` makes them words. Throws only what the
+ * runtime throws.
  */
 export async function readTokens(rt: SpeechRuntime, samples: Float32Array, shape: SpeechShape = SPEECH_SHAPE): Promise<{ tokens: number[]; sure: number; cut: boolean }> {
   const enc = await rt.encoder.run({ input_values: rt.float(samples, [1, samples.length]) })
@@ -138,11 +208,17 @@ export async function readTokens(rt: SpeechRuntime, samples: Float32Array, shape
   }
   const limit = Math.max(SPEECH_LIMITS.floor, Math.trunc((samples.length / shape.rate) * SPEECH_LIMITS.tokensPerSecond))
   const tokens: number[] = []
+  const logs: number[] = []
   let next = shape.start
-  let logSure = 0
   let cut = false
   for (let step = 0; ; step++) {
-    if (step >= limit) { cut = true; break }
+    if (step >= limit) {
+      cut = true
+      // Out of length: a decoder that lost the audio writes the same run again and again; one copy is kept.
+      const keep = loopCut(tokens)
+      if (keep >= 0) { tokens.length = keep; logs.length = keep }
+      break
+    }
     const out = await rt.decoder.run({ input_ids: rt.token(next), encoder_hidden_states: hidden, use_cache_branch: rt.flag(step > 0), ...past })
     const logits = out.logits
     // The scores of the last position: one row of the vocabulary.
@@ -151,7 +227,7 @@ export async function readTokens(rt: SpeechRuntime, samples: Float32Array, shape
     const { id, p } = likeliest(data, data.length - vocab, data.length)
     if (id === shape.end) break
     tokens.push(id)
-    logSure += Math.log(Math.max(p, 1e-9))
+    logs.push(Math.log(Math.max(p, 1e-9)))
     next = id
     // What the decoder remembers of its own tokens grows each step; what it remembers of the audio is the same after
     // the first, so it is taken once (the model's merged graph passes it through thereafter).
@@ -160,10 +236,10 @@ export async function readTokens(rt: SpeechRuntime, samples: Float32Array, shape
       const key = name.replace('present', 'past_key_values')
       if (step === 0 || key.includes('.decoder.')) past[key] = out[name]
     }
-    const keep = repeatCut(tokens)
-    if (keep >= 0) { tokens.length = keep; cut = true; break }
   }
-  return { tokens, sure: tokens.length ? Math.exp(logSure / tokens.length) : 0, cut }
+  let sum = 0
+  for (const l of logs) sum += l
+  return { tokens, sure: tokens.length ? Math.exp(sum / tokens.length) : 0, cut }
 }
 
 /** The vocabulary: each token's piece of text by its id (third_party/moonshine-tiny-en/tokens.json). */
@@ -219,15 +295,17 @@ export function peak(samples: Float32Array): number {
 }
 
 /**
- * One utterance as a Reading: too short or too quiet is not read; what the decoder wrote without being sure, or
- * that says nothing, is dropped with the reason; else the text. An utterance over `maxSeconds` is read up to there.
+ * One utterance as a Reading: too short or too quiet is not read; the rest is cut to its voiced part (voicedSpan) and
+ * read; what the decoder wrote without being sure, or that says nothing, is dropped with the reason; else the text.
+ * An utterance over `maxSeconds` is read up to there.
  */
 export async function readUtterance(rt: SpeechRuntime, samples: Float32Array, vocab: Vocabulary, shape: SpeechShape = SPEECH_SHAPE): Promise<Reading> {
   const seconds = samples.length / shape.rate
   if (!(seconds >= SPEECH_LIMITS.minSeconds)) return none('short', seconds)
   if (!(peak(samples) >= SPEECH_LIMITS.quiet)) return none('quiet', seconds)
   const most = Math.round(SPEECH_LIMITS.maxSeconds * shape.rate)
-  const heard = samples.length > most ? samples.subarray(0, most) : samples
+  const voiced = voicedSpan(samples, shape.rate)
+  const heard = voiced.length > most ? voiced.subarray(0, most) : voiced
   const { tokens, sure, cut } = await readTokens(rt, heard, shape)
   const text = tokensText(tokens, vocab)
   if (!saysSomething(text)) return { text: '', dropped: 'empty', tokens, sure, cut, seconds }

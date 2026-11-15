@@ -17,7 +17,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   LEVELS, MIC_CONSTRAINTS, MIC_KEY, MIC_OPEN_BY_DEFAULT, Microphone, VOICE_DEFAULTS, isOpen, loadVoiceSettings, micEnv, opensAtBoot, phaseWord,
-  SILENT_DETAIL, SILENT_MS, SILENT_WORD, pillLabel, pillWord, refusal, saveVoiceSettings, tapMeans, voiceStatus, type AnalyserLike, type MicUtterance, type ContextLike, type KeyStore, type MicEnv, type MicState,
+  HUSHED_DETAIL, HUSHED_WORD, SILENT_DETAIL, SILENT_MS, SILENT_WORD, pillLabel, pillWord, refusal, saveVoiceSettings, tapMeans, voiceStatus, type AnalyserLike, type MicUtterance, type ContextLike, type KeyStore, type MicEnv, type MicState,
   type NodeLike, type StreamLike, type TrackLike, type WorkletNodeLike,
 } from './microphone.ts'
 import { UTTERANCE, utteranceOptions } from './utterance.ts'
@@ -556,7 +556,7 @@ test('hear on the page path: the polled samples go through the tap with the dete
   assert.equal(got.length, 1, 'told to stop')
 })
 
-test('Mic silent: an open device that has sent nothing since it opened, sends no level at all, or whose track the system holds muted, says so; one sound clears it for good (zeros after it are a noise gate); a graph that could not be built is said, not a healthy Listening', async () => {
+test('Mic silent and No sound yet: an open device that sends no level at all, or whose track the system holds muted, is silent; one that has sent only zeros since it opened is a hint, No sound yet; one sound clears that for good (zeros after it are a noise gate); a graph that could not be built is said, not a healthy Listening', async () => {
   FakeWorklet.made.length = 0
   let now = 1_000
   const f = fake()
@@ -570,19 +570,25 @@ test('Mic silent: an open device that has sent nothing since it opened, sends no
   assert.equal(m.silent, false)
   now += 1
   node.say({ rms: 0, t: 1 })
-  assert.equal(m.silent, true, 'four seconds of nothing at all since it opened')
-  assert.equal(m.word(), SILENT_WORD)
-  assert.equal(m.label(), `Microphone: silent (${SILENT_DETAIL}). Press to mute. Key V.`)
-  assert.match(voiceStatus(m, false, 'x').join('\n'), /Mic silent · no sound is arriving/)
+  // Four seconds of exact zeros since it opened: the wrong input, or a gate that opens at the first word. A hint.
+  assert.equal(m.silent, false, 'zeros arriving are levels: not the failure')
+  assert.equal(m.hushed, true, 'four seconds of nothing at all since it opened')
+  assert.equal(m.word(), HUSHED_WORD)
+  assert.equal(m.label(), `Microphone: no sound yet (${HUSHED_DETAIL}). Press to mute. Key V.`)
+  assert.match(voiceStatus(m, false, 'x').join('\n'), /No sound yet · nothing has arrived since the microphone opened/)
   node.say({ rms: 0.0004, t: 2 })
-  assert.equal(m.silent, false, 'a real microphone\'s own noise is sound')
+  assert.equal(m.hushed, false, 'a real microphone\'s own noise is sound')
   assert.equal(m.word(), 'Listening')
   // It has sounded: exact zeros between words are a noise gate, not a dead device, however long they last.
   for (let i = 0; i < 20; i++) { now += 1_000; node.say({ rms: 0, t: 3 + i }) }
-  assert.equal(m.silent, false, 'a gate\'s zeros after a sound never read silent')
+  assert.equal(m.silent || m.hushed, false, 'a gate\'s zeros after a sound never read silent')
   // No level at all (a context the system put to sleep sends none): silent after SILENT_MS, cleared by the next level.
   now += SILENT_MS
   assert.equal(m.silent, true, 'nothing arriving at all')
+  assert.equal(m.word(), SILENT_WORD)
+  assert.equal(m.label(), `Microphone: silent (${SILENT_DETAIL}). Press to mute. Key V.`)
+  assert.match(voiceStatus(m, false, 'x').join('\n'), /Mic silent · no sound is arriving/)
+  assert.equal(m.hushed, false, 'silent wins over the hint')
   node.say({ rms: 0, t: 30 })
   assert.equal(m.silent, false, 'levels arriving again')
   // The system's own mute: at once, and gone when it lets go (the count starts again from there).
@@ -594,7 +600,7 @@ test('Mic silent: an open device that has sent nothing since it opened, sends no
   assert.equal(m.silent, false, 'the count starts again when the sound comes back')
   now += SILENT_MS
   node.say({ rms: 0, t: 40 })
-  assert.equal(m.silent, true, 'given back, and still nothing')
+  assert.equal(m.hushed, true, 'given back, and still nothing: the hint again')
   m.mute()
   assert.equal(m.silent, false, 'muted by the visitor is Muted, not silent')
   // No Web Audio at all: nothing to judge by.

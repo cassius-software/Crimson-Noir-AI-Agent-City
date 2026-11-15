@@ -38,24 +38,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     that keep, so the pack is downloaded once a browser, not once a publish), and hands them to a worker that
     installs the air gap first, hashes every file against the pin before it runs any, and runs the model on one
     thread from bytes, so it fetches nothing, starts no worker and needs no cross-origin isolation. A sentence is
-    read, its text goes where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane),
-    and the samples are dropped: no audio leaves the device.
+    cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
+    for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
+    where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
+    dropped: no audio leaves the device. A repeat the person said ("no, no, no", "five five five") is kept; only a
+    model that writes the same thing until its length runs out is cut back. A site that does not answer in 20 s or a
+    download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started
+    again for ever; a mute stops a download under way; a page with no pack is never said to be waiting for one.
   - **What you see.** The microphone pill reads **words soon**, **words 40%**, **words starting**, then **words
-    on-device**, and shows each sentence it understood in quotes for a few seconds. On mobile data, 2G or a data
-    saver the 41 MB are not downloaded unasked: the pill reads **words waiting**, a toast says why, and opening the
-    microphone yourself (or `mic on`) gets it. A microphone that delivers only silence now reads **Mic silent** with
-    what to check, instead of **Listening** for ever.
+    on-device**, and shows each sentence it understood in quotes for a few seconds; on a phone, where the microphone
+    is a badge, the same words stand in a chip under the minimap, and a screen reader is told them. While the pack is
+    on its way a browser with its own recogniser reads in the meantime. On mobile data, 2G or a data saver, and on a
+    phone or tablet whose browser does not say what it is connected to (an iPhone's Safari never does), the 41 MB are
+    not downloaded unasked: the pill reads **words waiting**, a toast says why, and pressing the microphone yourself
+    (or `mic on`) gets it. A microphone whose audio stops arriving, or that the system holds muted, reads **Mic
+    silent**; one that has sent only exact silence since it opened reads **No sound yet**, a hint in the usual colour
+    (an input behind a noise gate does that until the first word).
   - **Licences.** `NOTICE.md` (shipped part, trademarks, operator note 15), `LICENSE` section 4, `docs/ip-audit.md`
     and `docs/zero-trust-audit.md` record the model, the runtime and what its WebAssembly module is built from
     (`third_party/onnxruntime-web/1.31.1/`: ONNX Runtime's licence and third-party notices at the same tag, and the
     licences of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt). The npm package of the runtime ships
     no licence file, so the build embeds a text recorded for that exact version, and still fails for any other
     bundled package without one. The same vendor's Spanish model, whose licence limits commercial use, is not used.
-  - **What CI showed.** The new `speech` job reads a sentence spoken by a speech synthesiser with the pinned pack
-    under Node, then serves the built web copy with the pack, opens it in a desktop Chromium whose microphone is that
-    recording, and sees the sentence on the pill on a first visit (the site asked for the manifest and each file
-    exactly once) and again on a second visit that asks for nothing under `speech/` (`tools/browser/speech.mjs`).
-    Unit suites cover the tap, the engine, the pack, the worker's checks, the tool and the licences.
+  - **What CI showed** (on the pull request). The new `speech` job reads a sentence spoken by a speech synthesiser
+    with the pinned pack under Node, then serves the built web copy with the pack, opens it in a desktop Chromium
+    whose microphone is that recording, and sees the sentence on the pill on a first visit (the site asked for the
+    manifest and each file exactly once) and again on a second visit that asks for nothing under `speech/`
+    (`tools/browser/speech.mjs`). Unit suites cover the tap, the engine, the pack, the worker's checks, the tool and
+    the licences. The short-command figure above is from the real pack under Node on public-domain and synthesised
+    recordings, not from CI.
   - **Not verified.** A real voice through a real microphone; Safari and an iPhone, Firefox, Android Chrome and any
     phone; the time to the first sentence on a slow device. The model is small and English only, and it mishears:
     in testing here it read the synthesiser's "Take me to the tailor." wrongly in several ways while reading other

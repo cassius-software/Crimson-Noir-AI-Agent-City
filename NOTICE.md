@@ -138,21 +138,25 @@ the runtime also carries the full text of each of these licenses at the end of `
 `third_party/wllama/3.8.1/NOTICE`.
 
 **The speech recogniser's runtime.** The page carries the JavaScript of ONNX Runtime Web 1.31.1 inside its speech
-worker (one self-contained script of the package; none of the packages it lists as dependencies is bundled), and that
-script carries Emscripten's JavaScript support code (MIT or the University of Illinois/NCSA license, the Emscripten
+worker (one self-contained script of the package, which has its sibling package `onnxruntime-common`, MIT, Microsoft
+Corporation, compiled into it; none of the other packages it lists as dependencies is bundled), and that script
+carries Emscripten's JavaScript support code (MIT or the University of Illinois/NCSA license, the Emscripten
 authors). The npm package ships no licence file of its own, so the build embeds the text recorded for that exact
 version in `third_party/onnxruntime-web/1.31.1/SCRIPT-LICENCE`: ONNX Runtime's own LICENSE at the same tag, then
 Emscripten's. The runtime's WebAssembly module and the speech model are not in the page file.
 
 **The speech pack the web copy serves.** The page file, the Windows app, the Linux packages, the NixOS package and
 the OS media carry no speech model. The published web copy of the page serves a speech pack beside it, in `speech/`,
-so that the microphone understands what is said in every browser, on the visitor's own device: ONNX Runtime's
+so that the microphone understands what is said in the browsers that can run it, on the visitor's own device: ONNX Runtime's
 WebAssembly module (`ort-wasm-simd-threaded.wasm`, from the same package, unchanged) and Moonshine Tiny, the English
 speech-to-text model by Useful Sensors, Inc. (`encoder_model.onnx`, `decoder_model_merged.onnx` and its vocabulary,
-`tokens.json`), 41 MB in all. The page downloads the pack from its own site while the microphone is open (by itself,
-but on mobile data, a data saver or a 2G link only once the visitor has opened the microphone themselves), checks
-every file's SHA-256 before it runs any, keeps the pack in that visitor's browser, and runs it there in a worker that
-has no network: speech is turned into words on the device, and no audio and no text of it leaves the device.
+`tokens.json`), 41 MB in all. The page downloads the pack from its own site while the microphone is open (a mute
+stops a download under way). It does so by itself where the browser describes a connection that is not mobile data,
+a data saver or a 2G link, and on a computer whose browser describes none; on mobile data, a data saver or a 2G link,
+and on a phone or tablet whose browser does not say (Safari, Firefox), only once the visitor has pressed the
+microphone themselves. It checks every file's SHA-256 before it runs any, keeps the pack in that visitor's browser,
+and runs it there in a worker that fetches nothing (its network is held to the page's own site and this machine):
+speech is turned into words on the device, and no audio and no text of it leaves the device.
 Moonshine Tiny is licensed under the MIT License, Copyright (c) 2025 Useful Sensors, Inc.; ONNX Runtime under the MIT
 License, Copyright (c) Microsoft Corporation, with the third-party components compiled into its WebAssembly module
 each under its own licence (among them Emscripten's runtime, musl libc and LLVM's libc++, libc++abi and compiler-rt).
@@ -373,8 +377,9 @@ release; each one is something the release engineering could not confirm.
 15. **The speech pack the web copy serves.** The web copy serves Moonshine Tiny (English) and ONNX Runtime's
     WebAssembly module beside its page (`src/09_Cognition/speechPack.ts` pins the four files;
     `third_party/moonshine-tiny-en/`, `third_party/onnxruntime-web/1.31.1/` and `docs/ip-audit.md` section 1 record
-    them). Nothing of the model is in this repository, in `dist/index.html` or in any app or release build. Before a
-    public release:
+    them). The model's weights are not in this repository, in `dist/index.html` or in any app or release build; its
+    vocabulary (`third_party/moonshine-tiny-en/tokens.json`) is committed, since the page reads words with it.
+    Before a public release:
     - **The model's licence.** The LICENSE file of the vendor's npm package (`@moonshine-ai/moonshine-js` 0.1.29)
       says the code and the English-language model are under the MIT License; `third_party/moonshine-tiny-en/LICENSE`
       is that section of it. It was not compared with the model card in the vendor's Hugging Face repository
@@ -382,9 +387,11 @@ release; each one is something the release engineering could not confirm.
     - **Where the files come from.** The two model files are taken from the vendor's npm package, not from its
       Hugging Face repository; whether they are byte for byte the files there was not checked. The vocabulary
       (`tokens.json`) is the word-piece table of the vendor's tokenizer file, from its PyPI package, written as a
-      plain list. It appears to be the 32,000-piece vocabulary of the LLaMA model family (the same size, special
-      pieces and byte pieces); the vendor publishes it inside its MIT-licensed packages, and its first source was not
-      traced. A list of word pieces is unlikely to be protected expression, but ask counsel if that matters.
+      plain list. It is, as far as could be checked without Meta's own file, the 32,000-piece SentencePiece vocabulary
+      of the LLaMA model family (the same size, the same special and byte pieces, and the same pieces at every id
+      looked at); the vendor publishes it inside its MIT-licensed packages, and its first source was not traced. A
+      list of word pieces is unlikely to be protected expression, and the product ships none of Meta's code or
+      weights; ask counsel whether it counts among the materials of a Llama licence and needs that licence's notice.
     - **What the model was trained on** is the vendor's statement, not something this project verified. As with every
       model: its licence covers the weights, and says nothing about its training data.
     - **The runtime's notices.** `RUNTIME-ThirdPartyNotices.txt` is ONNX Runtime's own list for the project as a
@@ -393,7 +400,9 @@ release; each one is something the release engineering could not confirm.
       and compiler-rt, with texts taken from the Emscripten version ONNX Runtime's build script names by default at
       that tag (4.0.23); that Microsoft's release was built with exactly that version was not verified.
     - **Privacy and bandwidth.** The microphone opens when the city starts (the owner's decision) and the pack is
-      then downloaded (41 MB, once a browser; not unasked on mobile data or data saver). Speech is turned into words
+      then downloaded (41 MB, once a browser; not unasked on mobile data, a data saver or a 2G link, nor on a phone or
+      tablet whose browser does not say what it is on; Safari may clear a site's storage after seven days without a
+      visit, and the pack is then downloaded again). Speech is turned into words
       on the visitor's device and nothing of it is sent anywhere; say so in a privacy notice if the web copy gets one,
       and say that the microphone is used. Each new visitor's pack counts against GitHub Pages' soft limit of 100 GB
       a month, with the 0.4 GB model of item 14.

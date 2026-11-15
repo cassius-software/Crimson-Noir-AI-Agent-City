@@ -21,7 +21,7 @@ import type { Link } from './siteAuto.ts'
 import type { SiteFetch } from './siteModel.ts'
 import { holdChecked, type Reading } from './speechCore.ts'
 import {
-  JOIN_MS, LOAD_MS, READ_MS, RETRY_MS, SpeechEngine, TRIES, WAITING_MAX, speechNote, speechWord,
+  ASK_MS, JOIN_MS, LOAD_MS, READ_MS, RETRY_MS, STALL_MS, SpeechEngine, TRIES, WAITING_MAX, speechNote, speechWord,
   type Heard, type SpeechPhase, type SpeechReply, type SpeechRequest, type SpeechState, type SpeechWorkerLike,
 } from './speechEngine.ts'
 import { SPEECH_MANIFEST, SPEECH_PACK, speechManifestText, type SpeechFile, type SpeechPackPin, type SpeechRole, type SpeechStore } from './speechPack.ts'
@@ -117,6 +117,8 @@ interface Rig {
   dropped: { why: string; seconds: number }[]
   time: ReturnType<typeof clock>
   link: { value: Link | null }
+  /** What the page says when the browser says nothing of its connection (App.tsx: a phone or a tablet may be on mobile data). */
+  unknown: { value: string | null }
   opts: { served: boolean; makeWorker: (() => FakeWorker) | null }
 }
 
@@ -128,8 +130,15 @@ function rig(o: { store?: boolean; kept?: SpeechRole[] } = {}): Rig {
   const fetch: SiteFetch = async (path, init) => {
     const fresh = init.cache === 'reload'
     asked.push(`${path}${fresh ? ' (fresh)' : ''}`)
-    if (init.signal?.aborted) throw init.signal.reason
-    return path === SPEECH_MANIFEST ? serve.manifest() : serve.file(path.slice('speech/'.length), fresh)
+    const signal = init.signal
+    if (signal?.aborted) throw signal.reason
+    const answer = Promise.resolve(path === SPEECH_MANIFEST ? serve.manifest() : serve.file(path.slice('speech/'.length), fresh))
+    if (!signal) return answer
+    // As a browser's fetch does: an abort rejects a request still waiting, and errors a body still arriving.
+    return new Promise<Response>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      answer.then((r) => resolve(tied(r, signal)), reject)
+    })
   }
   const kept = new Map<SpeechRole, Uint8Array>()
   for (const role of o.kept ?? []) kept.set(role, data[pin.files.find((f) => f.role === role)!.file].slice())
@@ -141,6 +150,7 @@ function rig(o: { store?: boolean; kept?: SpeechRole[] } = {}): Rig {
   }
   const workers: FakeWorker[] = []
   const link: Rig['link'] = { value: null }
+  const unknown: Rig['unknown'] = { value: null }
   const opts: Rig['opts'] = { served: true, makeWorker: null }
   const engine = new SpeechEngine({
     fetch,
@@ -148,6 +158,7 @@ function rig(o: { store?: boolean; kept?: SpeechRole[] } = {}): Rig {
     served: () => opts.served,
     store: o.store === false ? undefined : store,
     link: () => link.value,
+    unknown: () => unknown.value,
     pin,
     now: time.now,
     setTimeout: time.setTimeout,
@@ -159,7 +170,28 @@ function rig(o: { store?: boolean; kept?: SpeechRole[] } = {}): Rig {
   engine.addEventListener('change', (e) => { const p = (e as CustomEvent<SpeechState>).detail.phase; if (phases.at(-1) !== p) phases.push(p) })
   engine.addEventListener('heard', (e) => heard.push((e as CustomEvent<Heard>).detail))
   engine.addEventListener('dropped', (e) => dropped.push((e as CustomEvent<{ why: string; seconds: number }>).detail))
-  return { engine, pin, data, asked, serve, workers, kept, ops, phases, heard, dropped, time, link, opts }
+  return { engine, pin, data, asked, serve, workers, kept, ops, phases, heard, dropped, time, link, unknown, opts }
+}
+
+/** `r` with its body errored (and its source cancelled) when `signal` aborts. */
+function tied(r: Response, signal: AbortSignal): Response {
+  if (!r.body) return r
+  const src = r.body.getReader()
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      signal.addEventListener('abort', () => {
+        try { c.error(signal.reason) } catch { /* already closed */ }
+        void src.cancel(signal.reason).catch(() => undefined)
+      }, { once: true })
+    },
+    async pull(c) {
+      const { done, value } = await src.read()
+      if (done) c.close()
+      else c.enqueue(value)
+    },
+    cancel: (why) => src.cancel(why),
+  })
+  return new Response(body, { status: r.status })
 }
 
 /** A response whose body is these bytes. */
@@ -193,7 +225,7 @@ test('a first visit: the manifest, then the four files once each, kept, handed t
   assert.equal(r.workers.length, 1)
 })
 
-test('the percent counts what is still to come, and moves as the bytes arrive', async () => {
+test('the percent is of the whole pack, what was kept counting as arrived, and moves as the bytes arrive', async () => {
   const r = rig({ kept: ['runtime', 'tokens'] })
   // The two missing files arrive in halves, each half let through by hand.
   const gates: (() => void)[] = []
@@ -215,11 +247,13 @@ test('the percent counts what is still to come, and moves as the bytes arrive', 
   await settle()
   assert.equal(r.engine.phase, 'getting')
   assert.deepEqual(r.asked.sort(), ['speech/dec.onnx', 'speech/enc.onnx', 'speech/manifest.json'], 'only what is not kept is asked for')
-  assert.equal(speechNote(r.engine.state), 'words 0%')
+  const total = r.pin.files.reduce((n, f) => n + f.bytes, 0)
+  const keptPct = Math.floor(((r.data['rt.wasm'].length + r.data['tokens.json'].length) / total) * 100)
+  assert.equal(speechNote(r.engine.state), `words ${keptPct}%`, 'the kept files count: the tooltip says a share of the whole pack')
   while (r.engine.phase === 'getting') { gates.shift()?.(); await settle() }
   await done
-  // 800 bytes to come (300 + 500), in halves: every step is a whole percent of those, and it ends at 100.
-  assert.equal(pcts[0], 0)
+  // 800 bytes to come (300 + 500), in halves: every step a whole percent of the pack, ending at 100.
+  assert.equal(pcts[0], keptPct)
   assert.equal(pcts.at(-1), 100)
   assert.ok(pcts.length >= 4 && pcts.every((p, i) => i === 0 || p > pcts[i - 1]), `rising: ${pcts.join(',')}`)
   assert.ok(r.engine.ready)
@@ -256,7 +290,7 @@ test('mobile data, a data saver or a 2G link hold an unasked start; the visitor\
     const s = await r.engine.start()
     assert.deepEqual([s.phase, s.detail], ['waiting', why])
     assert.ok(r.engine.held && !r.engine.claims)
-    assert.deepEqual(r.asked, [], 'not even the manifest')
+    assert.deepEqual(r.asked, ['speech/manifest.json'], 'the manifest only (a few hundred bytes): a page with no pack is never said to be waiting')
     assert.equal(r.engine.word(), `words: waiting (${why})`)
     assert.equal(speechNote(r.engine.state), 'words waiting')
     // Asked again unasked (every speech onset does): nothing is read, asked or said again.
@@ -267,7 +301,7 @@ test('mobile data, a data saver or a 2G link hold an unasked start; the visitor\
     // The visitor's own ask gets it.
     assert.equal((await r.engine.start(true)).phase, 'ready')
     assert.ok(!r.engine.held)
-    assert.equal(r.asked.length, 5)
+    assert.equal(r.asked.length, 6)
   }
   // The link clears by itself (home Wi-Fi): the next unasked start goes.
   const r = rig()
@@ -275,6 +309,29 @@ test('mobile data, a data saver or a 2G link hold an unasked start; the visitor\
   await r.engine.start()
   r.link.value = { type: 'wifi', saveData: false, effectiveType: '4g' }
   assert.equal((await r.engine.start()).phase, 'ready')
+})
+
+test('where the browser says nothing of its connection, the page\'s own word decides (a phone may be on mobile data); a page with no pack is absent, never held', async () => {
+  const phone = rig()
+  phone.unknown.value = 'this browser does not say whether this device is on mobile data'
+  const s = await phone.engine.start()
+  assert.deepEqual([s.phase, s.detail], ['waiting', 'this browser does not say whether this device is on mobile data'])
+  assert.ok(phone.engine.held)
+  assert.equal((await phone.engine.start(true)).phase, 'ready', 'a press gets it')
+  // The browser does describe its link: that decides, not the guess.
+  const wifi = rig()
+  wifi.unknown.value = 'a guess'
+  wifi.link.value = { type: 'wifi', saveData: false, effectiveType: '4g' }
+  assert.equal((await wifi.engine.start()).phase, 'ready')
+  // On mobile data, on a site that serves no pack: absent, so nothing tells the visitor to unmute for a pack there is not.
+  for (const [link, guess] of [[CELLULAR, null], [null, 'a guess']] as const) {
+    const none = rig()
+    none.link.value = link
+    none.unknown.value = guess
+    none.serve.manifest = () => new Response('nope', { status: 404 })
+    const a = await none.engine.start()
+    assert.deepEqual([a.phase, none.engine.held], ['absent', false])
+  }
 })
 
 test('no pack on this site is final for the visit: the page opened as a file, a 404, or another pack\'s manifest', async () => {
@@ -314,7 +371,7 @@ test('a site that could not say just now is asked again later, no sooner than af
   assert.equal((await r.engine.start()).phase, 'ready')
 })
 
-test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the visitor\'s ask tries; a success starts the count again', async () => {
+test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the visitor\'s ask tries; a reading starts the count again', async () => {
   const r = rig()
   r.serve.file = (name) => (name === 'enc.onnx' ? new Response('gone', { status: 500 }) : res(r.data[name]))
   const tries = (): number => r.asked.filter((a) => a === 'speech/manifest.json').length
@@ -345,7 +402,15 @@ test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the 
   const last = r.asked.slice(before)
   assert.ok(last.includes('speech/enc.onnx') && last.length <= 5)
   for (const f of r.pin.files) assert.deepEqual(r.kept.get(f.role), r.data[f.file])
-  // The count began again: one crash later, the hold-off is the first one.
+  // Ready is not yet working: a worker that dies before it reads anything leaves the count where it was.
+  r.workers.at(-1)!.onerror?.({ message: 'out of memory' })
+  r.time.advance(24 * 3_600_000)
+  assert.equal((await r.engine.start()).phase, 'failed', 'still spent: a worker that loads and dies is not restarted forever')
+  assert.equal((await r.engine.start(true)).phase, 'ready')
+  // It reads something: the count begins again, and one crash later the hold-off is the first one.
+  const w = r.workers.at(-1)!
+  r.engine.read(samples())
+  w.answer(w.reads[0].id, 'hello')
   r.workers.at(-1)!.onerror?.({ message: 'out of memory' })
   assert.deepEqual([r.engine.phase, r.engine.state.detail], ['failed', 'the recogniser stopped (out of memory)'])
   r.time.advance(RETRY_MS[0] - 1)
@@ -390,6 +455,95 @@ test('a file that is not the pin\'s is forgotten and fetched once more past the 
   assert.ok(bad.workers[0].terminated)
   assert.equal(bad.asked.filter((a) => a === 'speech/rt.wasm (fresh)').length, 1, 'asked past the cache once, not for ever')
   assert.equal(bad.time.pending(), 0)
+  assert.ok(!bad.kept.has('runtime'), 'the second wrong copy is forgotten too, not left in the keep')
+})
+
+test('a site that never answers, or a download that stalls, gives the try up instead of holding the recogniser on its way', async () => {
+  // The manifest never answers: after ASK_MS the try is given up, as a site that could not say just now.
+  const ask = rig()
+  ask.serve.manifest = () => new Promise<Response>(() => undefined) as unknown as Response
+  const f = ask.engine.start()
+  await settle()
+  assert.equal(ask.engine.phase, 'checking')
+  ask.time.advance(ASK_MS)
+  const a = await f
+  assert.equal(a.phase, 'waiting')
+  assert.match(a.detail, /could not be asked for it just now \(it did not answer in 20 s\)/)
+  assert.ok(!ask.engine.claims && !ask.engine.held, 'not held: tried again later by itself')
+  // A file that sends half and then nothing: after STALL_MS without a byte, the try fails with that reason.
+  const r = rig()
+  r.serve.file = (name) => {
+    const b = r.data[name]
+    let sent = false
+    return new Response(new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (name !== 'dec.onnx') { c.enqueue(b); c.close(); return }
+        if (!sent) { sent = true; c.enqueue(b.slice(0, 100)); return }
+        await new Promise<void>(() => undefined)
+      },
+    }))
+  }
+  const p = r.engine.start()
+  await settle()
+  assert.equal(r.engine.phase, 'getting')
+  r.time.advance(STALL_MS - 1)
+  await settle()
+  assert.equal(r.engine.phase, 'getting', 'not yet')
+  r.time.advance(1)
+  const s = await p
+  assert.deepEqual([s.phase, s.detail], ['failed', `the download stalled: nothing arrived for ${STALL_MS / 1000} s`])
+  assert.ok(r.engine.fetching === false)
+  assert.equal(r.time.pending(), 0, 'no timer left behind')
+})
+
+test('a file fetched again for the worker does not run down the load\'s timer, and a load that fails ends that download', async () => {
+  const r = rig()
+  const corrupt = r.data['dec.onnx'].map((b, i) => (i === 1 ? b ^ 1 : b))
+  let release: (() => void) | null = null
+  r.serve.file = (name, fresh) => {
+    if (name !== 'dec.onnx') return res(r.data[name])
+    if (!fresh) return res(corrupt)
+    // The second download is slow: it trickles for longer than LOAD_MS, a byte at a time well inside STALL_MS.
+    const b = r.data['dec.onnx']
+    let at = 0
+    return new Response(new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (at >= b.length) { c.close(); return }
+        await new Promise<void>((go) => { release = go })
+        c.enqueue(b.slice(at, at + 50))
+        at += 50
+      },
+    }))
+  }
+  const p = r.engine.start()
+  let waited = 0
+  for (let i = 0; i < 20 && r.engine.phase !== 'ready' && r.engine.phase !== 'failed'; i++) {
+    await settle()
+    r.time.advance(STALL_MS * 2 / 3)
+    waited += STALL_MS * 2 / 3
+    const go = release as (() => void) | null
+    release = null
+    go?.()
+  }
+  const s = await p
+  assert.ok(waited > LOAD_MS, `${waited} ms of download`)
+  assert.deepEqual([s.phase, s.detail], ['ready', 'Tiny'], 'longer than LOAD_MS of download, and still ready: the timer waited')
+  // A load that fails while a file is being fetched again: that download is stopped with it.
+  const q = rig()
+  let stopped = false
+  q.serve.file = (name, fresh) => {
+    if (name !== 'enc.onnx') return res(q.data[name])
+    if (!fresh) return res(q.data[name].map((b) => b ^ 4))
+    return new Response(new ReadableStream<Uint8Array>({ pull: () => new Promise<void>(() => undefined), cancel: () => { stopped = true } }))
+  }
+  q.opts.makeWorker = () => new FakeWorker()
+  const t = q.engine.start()
+  await settle()
+  q.workers[0].say({ t: 'failed', why: 'out of memory' })
+  const u = await t
+  assert.deepEqual([u.phase, u.detail], ['failed', 'out of memory'])
+  await settle()
+  assert.ok(stopped, 'the second download was cancelled with the load')
 })
 
 test('a corrupt kept file on mobile data is forgotten and waited for, not fetched unasked', async () => {
@@ -490,6 +644,24 @@ test('readings with no words are counted by reason and say nothing; a runtime er
   assert.deepEqual(r.heard, [])
   assert.deepEqual(r.engine.counts, { heard: 0, short: 1, quiet: 1, unsure: 1, empty: 1, error: 1 })
   assert.ok(r.engine.ready, 'one bad reading does not end the recogniser')
+})
+
+test('a sentence end dropped as late does not glue the next sentence onto the cut part held before it', async () => {
+  const r = rig()
+  await r.engine.start()
+  const w = r.workers[0]
+  // A: the first part of a long sentence (cut); B: its end; then C, D, E, three new sentences, while A is read.
+  r.engine.read(samples(12), true)
+  r.engine.read(samples(1), false)
+  r.engine.read(samples(1), false)
+  r.engine.read(samples(1), false)
+  r.engine.read(samples(1), false)
+  assert.deepEqual(r.dropped.map((d) => d.why), ['late'], 'B, the oldest waiting, is dropped')
+  w.answer(w.reads[0].id, 'listen carefully')
+  await settle()
+  assert.deepEqual(r.heard.map((h) => h.text), ['listen carefully'], 'A goes on alone before C is read')
+  w.answer(w.reads[1].id, 'hello sloane')
+  assert.deepEqual(r.heard.map((h) => h.text), ['listen carefully', 'hello sloane'])
 })
 
 test('speech that outruns the device: at most three wait, and the oldest waiting is the one dropped', async () => {

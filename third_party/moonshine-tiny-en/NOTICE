@@ -2,12 +2,13 @@ Moonshine Tiny (English, quantized ONNX): the speech model the page's own recogn
 ==========================================================================================
 
 This directory records the speech-to-text model Crimson Noir: Agent City uses to understand what is said into the
-microphone, on the visitor's own device, in every browser (src/09_Cognition/speechPack.ts SPEECH_PACK). The model's
+microphone, on the visitor's own device, in the browsers that can run it (src/09_Cognition/speechPack.ts SPEECH_PACK). The model's
 weights are NOT in this repository and NOT in the page file (dist/index.html): tools/web/speechPack.mjs fetches the
 package below from the npm registry, refuses it unless every file's size and SHA-256 are exactly these, and puts the
 two model files in the web copy's published folder as speech/encoder_model.onnx and speech/decoder_model_merged.onnx,
 with tokens.json, this NOTICE and LICENSE beside them. The page fetches them from its own site when the microphone is
-open, checks the same sizes and SHA-256, and runs them in a worker that has no network. No audio leaves the device.
+open, checks the same sizes and SHA-256, and runs them in a worker that fetches nothing (its network is held to the
+page's own site and this machine). No audio leaves the device.
 
   encoder_model.onnx           7937661 bytes, sha256 c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a
   decoder_model_merged.onnx   20243286 bytes, sha256 eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367

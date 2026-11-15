@@ -305,8 +305,11 @@ through this audit.
 `onnxruntime-web` brings sixteen packages into the lockfile (14 November 2026): itself and `onnxruntime-common`
 (MIT), `platform` (MIT), `flatbuffers` and `long` (Apache-2.0), `guid-typescript` (ISC), `protobufjs` and nine
 `@protobufjs/*` packages (BSD-3-Clause). The page bundles one file of `onnxruntime-web` only, a script that imports
-nothing (`compliance.test.ts` reads it for an import in the npm tree test), so none of the other fifteen is in
-`dist/index.html` or served; they are installed because the package lists them for its other builds.
+nothing (`compliance.test.ts` reads it for an import in the npm tree test). That script has `onnxruntime-common`
+(MIT, Microsoft Corporation, the same project and the same licence) compiled into it by Microsoft's own build, so
+that package's code is in `dist/index.html`, under the licence text the build embeds for the script; none of the
+other fourteen is in `dist/index.html` or served: they are installed because the package lists them for its other
+builds.
 
 ## 3. The Rust dependency trees (unverified from the cloud)
 

@@ -990,9 +990,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   Pings and the rally). The chip goes with `H`; the caption strip and the microphone pill do not (see Spatial audio).
 - **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
   reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
-  **Speaking** (Sloane talking over an open microphone), **Muted**, **Mic silent** (the device is open and no sound at
-  all arrives: the system may hold it muted, or the browser may be using another input than yours), or why it could
-  not open. It is a button: a press,
+  **Speaking** (Sloane talking over an open microphone), **Muted**, **Mic silent** (in the failure's colour: the
+  system holds the device muted, or its audio stopped arriving at all), **No sound yet** (in the usual colour: since it
+  opened, every sample has been exact silence; that is how an input behind a noise gate or a voice-isolation filter
+  waits for the first word, and it is also what the wrong input or a system mute looks like, so if you have spoken
+  and it stays, check those), or why it could not open. It is a button: a press,
   `V`, the right stick's click or the touch Menu's Microphone item mutes the microphone or opens it again, even while an action card waits for your OK or a home's doorstep card holds you still. Mute releases the device, so the browser's own microphone indicator goes
   out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone (and in
   any compact window) the pill is a round badge on the minimap's lower-left corner instead (a microphone, struck
@@ -1028,13 +1030,21 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   module of ONNX Runtime, which runs it; four files, 41 MB, downloaded once a browser. It checks every file against
   the SHA-256 the page was built with before it runs any, keeps the pack in the browser (Cache Storage,
   `speech-pack:<id>`; a later visit downloads nothing and understands words offline), and reads each sentence the
-  detector marks out in a worker of the page that has no network (one thread, so it needs no cross-origin isolation).
-  While the pack is on its way the pill reads **words soon**, **words 40%**, **words starting**; then **words
-  on-device**, and each sentence it understood shows on the pill in quotes for a few seconds, so you can see what it
-  took you to say. On mobile data, a 2G link or with the browser's data saver on, the page does not download 41 MB
-  unasked: the pill reads **words waiting**, a toast says why once, and muting and unmuting the microphone (or `mic
-  on`) gets it. If it cannot be had, the pill reads **no words** with the reason in its tooltip, and speech starting
-  tries again a while later.
+  detector marks out in a worker of the page that fetches nothing (its network is held to the page's own site and
+  this machine; one thread, so it needs no cross-origin isolation). Before reading it cuts the sentence to the part
+  that holds your words: the microphone keeps some room around them, which this model can take for the end of a
+  sentence and write nothing. While the pack is on its way the pill reads **words soon**, **words 40%** (of the whole
+  pack), **words starting**; then **words on-device**, and each sentence it understood shows on the pill in quotes
+  for a few seconds, so you can see what it took you to say. On a phone or any compact window the microphone is a
+  badge on the minimap, so the same words stand in a small chip under the minimap; a screen reader is told them too.
+  While the pack is on its way, a browser with its own on-device recogniser reads in the meantime, and stops once the
+  page's is ready. The page does not download 41 MB unasked on mobile data, a 2G link or with the browser's data
+  saver on, nor on a phone or tablet whose browser does not say what it is connected to (Safari and Firefox say
+  nothing, so on an iPhone this is every time until you press): the pill reads **words waiting**, a toast says why
+  once, and muting and unmuting the microphone (or `mic on`) gets it. A mute stops a download under way, and the next
+  open fetches only what is not kept yet. A site that does not answer in 20 s, or a download that stalls for 30 s,
+  counts as a failed try. If it cannot be had, the pill reads **no words** with the reason in its tooltip, and speech
+  starting tries again a while later (a few times, further apart; the count starts again once it has read something).
   - What is done with the words: a skill asked for is the recruiter's (Recruitment), and a line that names Sloane
     first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt open on
     the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken, so her
@@ -1044,7 +1054,10 @@ reading order. The rects tile the canvas exactly, in whole pixels.
     recognition stands in where the browser promises one (see Recruitment); otherwise the pill shows the level and
     speech only.
   - Its limits. The model is small and English only: it mishears, more so with an accent, noise or a far microphone,
-    and it understands no other language. A sentence is at most 12 s; a longer one is read in parts.
+    and it understands no other language. A sentence is at most 12 s; a longer one is read in parts and passed on as
+    one. A word said over and over ("no, no, no") and a number's repeated digits are kept; a model that loses the
+    audio and writes the same thing until its length runs out is cut back to one copy.
+  - Safari may clear a site's storage after seven days without a visit; the pack is then downloaded again.
   - No audio leaves the device: nothing is recorded and nothing is sent. A sentence is held in memory until it is
     read, then dropped; only its text goes on, to the recruiter or to Sloane, inside the page.
   - What was checked: CI's `speech` job (`.github/workflows/ci.yml`) reads a synthetic spoken sentence with the pinned
@@ -1052,7 +1065,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
     must download nothing (`tools/browser/speech.mjs`). A real microphone, a phone, Safari and Firefox were not tried
     by anyone.
   - `mic` in the console prints the microphone's state and the recogniser's; `mic on` and `mic off` are the switch,
-    and `mic on` also asks for the pack again, past a data saver's wait or an earlier failure.
+    and `mic on`, once the microphone is open, also asks for the pack again, past a data saver's wait or an earlier
+    failure.
 - **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
   `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
   another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
@@ -4725,9 +4739,10 @@ What the phone copy keeps, and what it cannot have yet:
   host (which only serves these files, the site's model in `models/` among them, fetched by the page once the city is
   on screen or when you tap for it on Sloane's card, and the speech pack in `speech/`, fetched while the microphone
   is open) and to the phone's own `localhost`, nowhere else.
-- **Words.** The page asks for the speech pack on an iPhone as anywhere else (on mobile data only after you open the
-  microphone yourself). Whether Safari runs it, and how well it hears through an iPhone's microphone, nobody has
-  tried: CI checks it in a desktop Chromium only.
+- **Words.** Safari does not say whether an iPhone is on Wi-Fi or mobile data, so the page does not download the 41 MB
+  speech pack by itself there: the pill reads **words waiting** until you press the microphone (mute and unmute it
+  once). Safari may clear the kept pack after seven days without a visit. Whether Safari runs it, and how well it
+  hears through an iPhone's microphone, nobody has tried: CI checks it in a desktop Chromium only.
 - **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
   model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
   `ask`'s runtime row names what is missing, Sloane speaks from their script with the phone's own voices, and `ask`

@@ -3,22 +3,24 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the page's side of its own speech recogniser: the thing that makes an open
- * microphone understand words in every browser, not only where the browser brings a recogniser of its own. It takes
+ * microphone understand words in any browser that can run it, not only where the browser brings a recogniser of its
+ * own. It takes
  * the speech pack from where the page kept it on an earlier visit (speechPack.ts speechStore: nothing is asked of the
  * network then, so it works offline), or asks the site whether the pack is served beside the page, gets its files and
- * keeps them; hands them to a worker that checks every byte and runs the model (speech.worker.ts: it has no
- * network), and then reads each utterance the microphone hands over (04_Connect_Hardware/microphone.ts `utterance`),
+ * keeps them; hands them to a worker that checks every byte and runs the model (speech.worker.ts: it fetches
+ * nothing, and its network is held to the page's own site and this machine), and then reads each utterance the microphone hands over (04_Connect_Hardware/microphone.ts `utterance`),
  * one at a time, in order, and says what was said (`heard`). Everything that can go wrong has a state and a sentence:
- * no pack on this site (`absent`: the page file opened alone), the site unreachable just now (asked again later, a
- * few times, further apart), a file that is not the pin's (fetched once more past the cache, then refused), a
- * recogniser that would not start or stopped answering (`failed`, with the reason; started again on the next ask, a
- * few times). A reading the model was not sure of is dropped, not passed on as words.
+ * no pack on this site (`absent`: the page file opened alone), the site unreachable just now or a download that
+ * stalls (asked again later, a few times, further apart), a file that is not the pin's (fetched once more past the
+ * cache, then refused), a recogniser that would not start or stopped answering (`failed`, with the reason; started
+ * again on the next ask, a few times, and the count only starts again once it has read something). A reading the
+ * model was not sure of is dropped, not passed on as words.
  * It is a state machine over things passed in (the fetch, the worker, the clock, the timers), so every path runs in a
  * Node test with fakes; App.tsx makes the one instance and wires it to the microphone and to what a heard sentence
  * does. No audio is kept: an utterance goes to the worker and is dropped there once read.
  * What breaks if it is removed? Words are understood only where the browser has an on-device recogniser (desktop
- * Chrome after an install, the newest desktop Firefox): on a phone, in Safari and in the apps the pill says Listening
- * and nothing that is said does anything.
+ * Chrome after an install, the newest desktop Firefox): on a phone and in Safari the pill says Listening and nothing
+ * that is said does anything. (The apps serve no pack yet, so there the browser's own recogniser is all there is.)
  */
 import { linkHold, type Link } from './siteAuto.ts'
 import type { SiteFetch } from './siteModel.ts'
@@ -98,6 +100,9 @@ export interface SpeechDeps {
   store?: SpeechStore
   /** The connection as the browser describes it (siteAuto.ts readLink), or null where it does not say. */
   link?: () => Link | null
+  /** Why to hold an unasked download where the browser says nothing of its connection (a phone or a tablet may well be
+   *  on mobile data), or null: asked only when `link` gives null. */
+  unknown?: () => string | null
   pin?: SpeechPackPin
   now?: () => number
   setTimeout?: (fn: () => void, ms: number) => unknown
@@ -116,6 +121,10 @@ export const RETRY_MS: readonly number[] = Object.freeze([15_000, 60_000, 300_00
 export const TRIES = 4
 /** A sentence cut at the microphone's cap waits this long for its rest before it is passed on alone. */
 export const JOIN_MS = 15_000
+/** How long the site may take to answer for the manifest, and how long a download may go without a byte, before the
+ *  try is given up (a link that stalls without closing would otherwise hold the recogniser on its way for good). */
+export const ASK_MS = 20_000
+export const STALL_MS = 30_000
 
 /** The words for each phase, for the pill's tooltip and the console. */
 export function speechWord(s: SpeechState, pin: SpeechPackPin = SPEECH_PACK): string {
@@ -168,8 +177,9 @@ export class SpeechEngine extends EventTarget {
   /** Failed tries this visit, and when the last one ended. */
   #fails = 0
   #failedAt = -Infinity
-  /** Utterances waiting to be read, and the one being read (its id, its length, its watchdog). */
-  #waiting: { samples: Float32Array; cut: boolean }[] = []
+  /** Utterances waiting to be read (`after`: the one before it, which ended a sentence, was dropped as late, so what is
+   *  held of a cut sentence goes on alone first), and the one being read (its id, its length, its watchdog). */
+  #waiting: { samples: Float32Array; cut: boolean; after?: boolean }[] = []
   #current: { id: number; seconds: number; cut: boolean; timer: unknown } | null = null
   #nextId = 1
   /** The text of a sentence cut at the cap, waiting for its rest (and the timer that passes it on alone). */
@@ -197,14 +207,23 @@ export class SpeechEngine extends EventTarget {
   get claims(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || this.#phase === 'starting' || this.#phase === 'ready' }
   /** Waiting only because the connection says not to download unasked (mobile data, a data saver): a forced start() gets it. */
   get held(): boolean { return this.#phase === 'waiting' && this.#linkHeld }
+  /** Asking the site or downloading the pack: what a mute stops (stop()), since the visitor's microphone is no longer open. */
+  get fetching(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' }
+  /** Why the connection says not to download unasked, or null. */
+  #hold(): string | null {
+    const link = this.#d.link?.() ?? null
+    return link === null ? this.#d.unknown?.() ?? null : linkHold(link)
+  }
   /** One line for the pill's tooltip and the console. */
   word(): string { return speechWord(this.state, this.#pin) }
 
   /**
    * Starts the recogniser if it is not started: asks the site for the pack, gets it, loads it. Safe to call often
    * (every time the microphone opens, every time speech starts): it does nothing while it is on its way or ready, on
-   * a site that has no pack, or within the hold-off after a failed try. `force` (the visitor's own ask) skips the
-   * hold-off, the data saver's wait and the count of tries. Resolves with the state it reached; never rejects.
+   * a site that has no pack, or within the hold-off after a failed try. The site is asked whether it serves a pack
+   * (a few hundred bytes) before the connection is: a page with no pack is `absent`, never held. `force` (the
+   * visitor's own ask) skips the hold-off, the connection's wait and the count of tries. Resolves with the state it
+   * reached; never rejects.
    */
   async start(force = false): Promise<SpeechState> {
     if (this.#disposed || this.claims) return this.state
@@ -214,7 +233,7 @@ export class SpeechEngine extends EventTarget {
       if (this.#fails > 0 && this.#now() - this.#failedAt < RETRY_MS[Math.min(this.#fails, RETRY_MS.length) - 1]) return this.state
     }
     // Still held by the connection, and not the visitor's own ask: nothing has changed, so nothing is read or said again.
-    if (!force && this.held && linkHold(this.#d.link?.() ?? null) !== null) return this.state
+    if (!force && this.held && this.#hold() !== null) return this.state
     if (!this.#d.served()) return this.#set('absent', 'it was opened as a file, not served by a site')
     const generation = ++this.#generation
     const abort = new AbortController()
@@ -233,29 +252,43 @@ export class SpeechEngine extends EventTarget {
     }
     const missing = this.#pin.files.filter((f) => !kept.has(f.role))
     if (missing.length > 0) {
-      const hold = force ? null : linkHold(this.#d.link?.() ?? null)
-      this.#linkHeld = hold !== null
-      if (hold !== null) return this.#set('waiting', hold)
       let offered: boolean
+      // A site that does not answer at all is given up on after ASK_MS, like one that refused.
+      const asking = this.#setTimeout(() => abort.abort(new Error(`it did not answer in ${ASK_MS / 1000} s`)), ASK_MS)
       try {
         offered = await speechOffered(this.#d.fetch, this.#pin, abort.signal)
       } catch (e) {
+        this.#clearTimeout(asking)
         if (!mine()) return this.state
         // The site could not say just now: not a failure of the recogniser, but asked again no sooner than a failure.
         this.#failed()
-        return this.#set('waiting', `this site could not be asked for it just now (${say(e)})`)
+        return this.#set('waiting', `this site could not be asked for it just now (${say(abort.signal.aborted ? abort.signal.reason : e)})`)
       }
+      this.#clearTimeout(asking)
       if (!mine()) return this.state
       if (!offered) return this.#set('absent', 'this site serves none')
-      this.#pct = 0
+      // The site serves one: now the connection decides whether the files may be downloaded unasked.
+      const hold = force ? null : this.#hold()
+      this.#linkHeld = hold !== null
+      if (hold !== null) return this.#set('waiting', hold)
+      // The share of the whole pack here: what was kept already counts as arrived.
+      const total = this.#pin.files.reduce((n, f) => n + f.bytes, 0)
+      let got = this.#pin.files.reduce((n, f) => n + (kept.has(f.role) ? f.bytes : 0), 0)
+      this.#pct = Math.min(100, Math.floor((got / total) * 100))
       this.#set('getting')
-      const total = missing.reduce((n, f) => n + f.bytes, 0)
-      let got = 0
+      let stalled = false
+      let quiet: unknown = null
+      const watch = (): void => {
+        if (quiet !== null) this.#clearTimeout(quiet)
+        quiet = this.#setTimeout(() => { stalled = true; abort.abort() }, STALL_MS)
+      }
       const onBytes = (n: number): void => {
         got += n
+        watch()
         const pct = Math.min(100, Math.floor((got / total) * 100))
         if (pct !== this.#pct && mine()) { this.#pct = pct; this.#emit('change', this.state) }
       }
+      watch()
       try {
         await Promise.all(missing.map(async (f) => {
           const bytes = await fetchSpeechFile(this.#d.fetch, f, onBytes, abort.signal)
@@ -265,17 +298,21 @@ export class SpeechEngine extends EventTarget {
         }))
       } catch (e) {
         abort.abort()
+        if (quiet !== null) this.#clearTimeout(quiet)
         if (!mine()) return this.state
         this.#failed()
-        return this.#set('failed', say(e))
+        return this.#set('failed', stalled ? `the download stalled: nothing arrived for ${STALL_MS / 1000} s` : say(e))
       }
+      if (quiet !== null) this.#clearTimeout(quiet)
     }
     const files = this.#pin.files.map((f) => ({ f, bytes: kept.get(f.role)! }))
     if (!mine()) return this.state
     this.#set('starting')
     try {
-      await this.#load(files, abort.signal, mine, () => (force ? null : linkHold(this.#d.link?.() ?? null)))
+      await this.#load(files, abort.signal, mine, () => (force ? null : this.#hold()))
     } catch (e) {
+      // A file being fetched again for it is not wanted any more.
+      if (mine()) abort.abort()
       if (!mine()) return this.state
       this.#drop()
       if (e instanceof LinkHeld) {
@@ -286,13 +323,16 @@ export class SpeechEngine extends EventTarget {
       return this.#set('failed', say(e))
     }
     if (!mine()) return this.state
-    this.#fails = 0
+    // The count of tries starts again only once it has read something (#reply): a worker that loads and then dies at
+    // every reading is not restarted forever.
     return this.#set('ready', this.#pin.name)
   }
 
   /**
    * The worker checks and loads the files; a file whose hash is wrong is forgotten and fetched once more past the
-   * cache (unless `hold` says the connection is not to be used unasked: then it is forgotten and waited for).
+   * cache (unless `hold` says the connection is not to be used unasked: then it is forgotten and waited for), with the
+   * load's timer paused while it downloads and the download given up if it stalls; wrong a second time, it is
+   * forgotten and refused.
    */
   #load(files: { f: SpeechFile; bytes: ArrayBuffer }[], signal: AbortSignal, mine: () => boolean, hold: () => string | null): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -305,7 +345,8 @@ export class SpeechEngine extends EventTarget {
       }
       this.#worker = worker
       const again = new Set<SpeechRole>()
-      const timer = this.#setTimeout(() => reject(new Error('the recogniser took too long to start')), LOAD_MS)
+      const late = (): unknown => this.#setTimeout(() => reject(new Error('the recogniser took too long to start')), LOAD_MS)
+      let timer: unknown = late()
       const done = (fn: () => void): void => { this.#clearTimeout(timer); fn() }
       // Stopped while it was loading: the wait ends now, not when the timer would have.
       signal.addEventListener('abort', () => done(() => reject(new Error('the recogniser was stopped'))), { once: true })
@@ -324,7 +365,10 @@ export class SpeechEngine extends EventTarget {
         } else if (m.t === 'bad') {
           const f = this.#pin.files.find((x) => x.role === m.role)
           if (!f || again.has(m.role)) {
-            done(() => reject(new Error(`what this site sent as ${f?.file ?? m.role} is not the speech pack this page was built for (its SHA-256 differs), so it was not run`)))
+            const refuse = (): void => done(() => reject(new Error(`what this site sent as ${f?.file ?? m.role} is not the speech pack this page was built for (its SHA-256 differs), so it was not run`)))
+            // Wrong twice: the copy kept from the second download is forgotten too.
+            if (f) void (this.#d.store?.drop(f) ?? Promise.resolve()).then(refuse, refuse)
+            else refuse()
             return
           }
           again.add(m.role)
@@ -335,14 +379,33 @@ export class SpeechEngine extends EventTarget {
             void (store?.drop(f) ?? Promise.resolve()).then(() => done(() => reject(new LinkHeld(held))))
             return
           }
+          // The load's timer waits while the file comes again (a download is not a load); a stall gives it up.
+          this.#clearTimeout(timer)
+          const again2 = new AbortController()
+          const onStop = (): void => again2.abort()
+          signal.addEventListener('abort', onStop, { once: true })
+          let stalled = false
+          let quiet: unknown = null
+          const watch = (): void => {
+            if (quiet !== null) this.#clearTimeout(quiet)
+            quiet = this.#setTimeout(() => { stalled = true; again2.abort() }, STALL_MS)
+          }
+          watch()
           void (async () => {
             await store?.drop(f)
-            const bytes = await fetchSpeechFile(this.#d.fetch, f, () => undefined, signal, true)
+            const bytes = await fetchSpeechFile(this.#d.fetch, f, watch, again2.signal, true)
             await store?.put(f, bytes)
             return bytes
-          })().then(
-            (bytes) => { if (mine() && this.#worker === worker) worker.postMessage({ t: 'load', files: [{ role: f.role, bytes, sha256: f.sha256 }] }, [bytes]) },
-            (err: unknown) => done(() => reject(err instanceof Error ? err : new Error(String(err)))),
+          })().finally(() => {
+            if (quiet !== null) this.#clearTimeout(quiet)
+            signal.removeEventListener('abort', onStop)
+          }).then(
+            (bytes) => {
+              if (!mine() || this.#worker !== worker) return
+              timer = late()
+              worker.postMessage({ t: 'load', files: [{ role: f.role, bytes, sha256: f.sha256 }] }, [bytes])
+            },
+            (err: unknown) => done(() => reject(stalled ? new Error(`the download of ${f.file} stalled: nothing arrived for ${STALL_MS / 1000} s`) : err instanceof Error ? err : new Error(String(err)))),
           )
         }
       }
@@ -360,6 +423,8 @@ export class SpeechEngine extends EventTarget {
     while (this.#waiting.length > WAITING_MAX) {
       const old = this.#waiting.shift()!
       this.#count('late', old.samples.length / 16_000)
+      // It ended a sentence (or followed one that did): what is held of that sentence must not be joined to the next.
+      if (!old.cut || old.after) this.#waiting[0].after = true
     }
     this.#pump()
     return true
@@ -370,6 +435,8 @@ export class SpeechEngine extends EventTarget {
     if (this.#current !== null || worker === null || this.#phase !== 'ready') return
     const next = this.#waiting.shift()
     if (!next) return
+    // The sentence before this one lost its end to the queue: what was read of it goes on alone.
+    if (next.after) this.flush()
     const id = this.#nextId++
     const seconds = next.samples.length / 16_000
     const timer = this.#setTimeout(() => this.#crashed(worker, 'it stopped answering'), READ_MS + seconds * 4_000)
@@ -390,6 +457,8 @@ export class SpeechEngine extends EventTarget {
     const cur = this.#current
     this.#clearTimeout(cur.timer)
     this.#current = null
+    // It read something: the recogniser works here, and its count of failed tries starts again.
+    if (m.t === 'read') this.#fails = 0
     if (m.t === 'error') {
       this.#count('error', cur.seconds)
       if (!cur.cut) this.flush()

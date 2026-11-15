@@ -181,21 +181,24 @@ test('the manifest the tool writes is the page\'s own text for its own pin', () 
   assert.match(src, /renameSync\(`\$\{tarball\}\.part`, tarball\)/)
 })
 
-test('a WAV clip is read as its first channel at its own rate: 16-bit, 8-bit, 32-bit and float, mono or stereo', (t) => {
+test('a WAV clip is read as its first channel at its own rate: 16-bit, 8-bit, 24-bit, 32-bit and float, plain or extensible, mono or stereo; any other is refused plainly', (t) => {
   const dir = scratch(t)
-  const wav = (name: string, o: { rate: number; channels: number; bits: number; format?: number; frames: number[][]; streamed?: boolean; junk?: boolean }): string => {
+  const wav = (name: string, o: { rate: number; channels: number; bits: number; format?: number; extensible?: boolean; frames: number[][]; streamed?: boolean; junk?: boolean }): string => {
     const width = o.bits / 8
     const data = Buffer.alloc(o.frames.length * o.channels * width)
     o.frames.forEach((frame, i) => frame.forEach((v, c) => {
       const at = (i * o.channels + c) * width
-      if (o.format === 3) data.writeFloatLE(v, at)
+      if (o.format === 3) { if (o.bits === 64) data.writeDoubleLE(v, at); else data.writeFloatLE(v, at) }
       else if (o.bits === 16) data.writeInt16LE(Math.round(v * 32767), at)
       else if (o.bits === 8) data.writeUInt8(Math.round(v * 127) + 128, at)
+      else if (o.bits === 24) data.writeIntLE(Math.round(v * 8388607), at, 3)
       else data.writeInt32LE(Math.round(v * 2147483647), at)
     }))
-    const fmt = Buffer.alloc(24)
-    fmt.write('fmt ', 0, 'latin1'); fmt.writeUInt32LE(16, 4); fmt.writeUInt16LE(o.format ?? 1, 8); fmt.writeUInt16LE(o.channels, 10)
+    // WAVE_FORMAT_EXTENSIBLE: a 40-byte fmt body, the tag 0xFFFE, the real format in the sub-format GUID's first two bytes.
+    const fmt = Buffer.alloc(o.extensible ? 48 : 24)
+    fmt.write('fmt ', 0, 'latin1'); fmt.writeUInt32LE(o.extensible ? 40 : 16, 4); fmt.writeUInt16LE(o.extensible ? 0xfffe : o.format ?? 1, 8); fmt.writeUInt16LE(o.channels, 10)
     fmt.writeUInt32LE(o.rate, 12); fmt.writeUInt32LE(o.rate * o.channels * width, 16); fmt.writeUInt16LE(o.channels * width, 20); fmt.writeUInt16LE(o.bits, 22)
+    if (o.extensible) { fmt.writeUInt16LE(22, 24); fmt.writeUInt16LE(o.bits, 26); fmt.writeUInt16LE(o.format ?? 1, 32) }
     const junk = o.junk ? Buffer.concat([Buffer.from('LIST'), Buffer.from([3, 0, 0, 0]), Buffer.from('abc\0')]) : Buffer.alloc(0)
     const head = Buffer.alloc(8)
     head.write('data', 0, 'latin1'); head.writeUInt32LE(o.streamed ? 0xffffffff : data.length, 4)
@@ -213,6 +216,11 @@ test('a WAV clip is read as its first channel at its own rate: 16-bit, 8-bit, 32
   near(tool.readWav(wav('float.wav', { rate: 16_000, channels: 1, bits: 32, format: 3, frames: [[0.125], [-0.75]] })).samples, [0.125, -0.75], 1e-7)
   near(tool.readWav(wav('eight.wav', { rate: 8_000, channels: 1, bits: 8, frames: [[0], [0.5]] })).samples, [0, 0.5], 0.02)
   near(tool.readWav(wav('wide.wav', { rate: 16_000, channels: 1, bits: 32, frames: [[0.5], [-0.5]] })).samples, [0.5, -0.5], 1e-6)
+  near(tool.readWav(wav('studio.wav', { rate: 48_000, channels: 2, bits: 24, frames: [[0.5, 0], [-0.25, 0], [1, 0]] })).samples, [0.5, -0.25, 1], 1e-6)
+  near(tool.readWav(wav('double.wav', { rate: 16_000, channels: 1, bits: 64, format: 3, frames: [[0.125], [-0.75]] })).samples, [0.125, -0.75], 1e-12)
+  near(tool.readWav(wav('ext-float.wav', { rate: 48_000, channels: 2, bits: 32, format: 3, extensible: true, frames: [[0.125, 1], [-0.75, 1]] })).samples, [0.125, -0.75], 1e-7)
+  near(tool.readWav(wav('ext-24.wav', { rate: 44_100, channels: 1, bits: 24, extensible: true, frames: [[0.5], [-0.5]] })).samples, [0.5, -0.5], 1e-6)
+  assert.throws(() => tool.readWav(wav('alaw.wav', { rate: 8_000, channels: 1, bits: 8, format: 6, frames: [[0]] })), /a WAV this tool does not read \(format 6, 8-bit, 1 channels\)/)
   // A writer that streamed the file left the data's size unset (espeak-ng to a pipe does): the rest of the file is the data.
   near(tool.readWav(wav('streamed.wav', { rate: 22_050, channels: 1, bits: 16, frames: [[0.5], [0.25], [0]], streamed: true })).samples, [0.5, 0.25, 0], 1e-3)
   const bad = join(dir, 'bad.wav')

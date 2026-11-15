@@ -4,8 +4,9 @@
 /**
  * Why does this file exist? It tests the speech recogniser's reading loop (speechCore.ts) against a scripted model: the
  * decoder is fed the start mark and an empty memory, then each token it chose with the memory it handed back (its
- * own grows, the audio's is taken once); the loop stops at the end mark, at the length a sentence of that duration
- * cannot pass, and at a repeat; tokens become text by the model's vocabulary (the committed file, whose hash is the
+ * own grows, the audio's is taken once); the loop stops at the end mark and at the length a sentence of that duration
+ * cannot pass (where a repeating tail is cut to one copy, and only there: a person's "no, no, no" and a number's
+ * digits are kept); an utterance is cut to its voiced part before it is read; tokens become text by the model's vocabulary (the committed file, whose hash is the
  * pack's pin), byte tokens together as UTF-8; and an utterance too short, too quiet, unsure or wordless gives no text
  * and says why.
  * What breaks if it is removed? A change to the loop could feed the decoder the wrong memory (it then writes
@@ -16,7 +17,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { sha256 } from '../02_Define_The_Rules/integrity.ts'
 import {
-  SPEECH_LIMITS, SPEECH_SHAPE, holdChecked, likeliest, parseVocabulary, peak, readTokens, readUtterance, repeatCut, saysSomething, tokensText,
+  SPEECH_LIMITS, SPEECH_SHAPE, holdChecked, likeliest, loopCut, parseVocabulary, peak, readTokens, readUtterance, repeatCut, saysSomething, tokensText, voicedSpan,
   type SessionLike, type SpeechRuntime, type TensorOut,
 } from './speechCore.ts'
 import { speechFile } from './speechPack.ts'
@@ -94,6 +95,17 @@ test('repeatCut: a tail that is the same run three times over is cut to one copy
   assert.equal(repeatCut([]), -1)
 })
 
+test('loopCut: a tail looping until the limit comes back to one copy, even with its last copy cut short; anything else is left', () => {
+  assert.equal(loopCut([4, 9, 9, 9, 9, 9, 9, 9]), 2)
+  assert.equal(loopCut([7, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2]), 4, 'the last copy cut short by the limit')
+  assert.equal(loopCut([7, 1, 2, 1, 2, 1, 2, 1, 2, 1]), 3)
+  assert.equal(loopCut([4, 9, 9, 9, 9], 3, 0), 2, 'four copies are three too many')
+  assert.equal(loopCut([4, 9, 9, 6], 3, 0), -1, 'two copies are a stutter')
+  assert.equal(loopCut([1, 2, 3, 4, 5, 6]), -1)
+  assert.equal(loopCut([5, 5]), -1)
+  assert.equal(loopCut([]), -1)
+})
+
 test('the loop: the start mark and an empty memory first, then each chosen token with the memory handed back (its own every step, the audio\'s once), until the end mark', async () => {
   const f = fake([4, 5, 6])
   const samples = seconds(2)
@@ -123,7 +135,7 @@ test('the loop: the start mark and an empty memory first, then each chosen token
   assert.deepEqual((third['past_key_values.3.encoder.value'] as unknown as TensorOut).data, new Float32Array([1]), 'taken once')
 })
 
-test('the loop stops at the length a sentence of that duration cannot pass, and at a repeat; an end mark at once is nothing said', async () => {
+test('the loop stops at the length a sentence of that duration cannot pass, a repeating tail there is cut to one copy, a repeat before it is kept; an end mark at once is nothing said', async () => {
   // Two seconds: 13 tokens at most. A decoder that never ends is cut there.
   const endless = fake(Array.from({ length: 100 }, (_, i) => 3 + (i % 7)))
   const long = await readTokens(endless.rt, seconds(2))
@@ -133,12 +145,18 @@ test('the loop stops at the length a sentence of that duration cannot pass, and 
   // A very short utterance still gets the floor.
   const short = await readTokens(fake(Array.from({ length: 100 }, (_, i) => 3 + (i % 7))).rt, seconds(0.4))
   assert.equal(short.tokens.length, SPEECH_LIMITS.floor)
-  // The same token over and over: stopped at the third, one copy kept.
-  const loop = fake([4, 9, 9, 9, 9, 9, 9])
-  const r = await readTokens(loop.rt, seconds(5))
+  // A decoder that lost the audio writes the same token until the limit: one copy is kept, and the certainty is that
+  // of what was kept.
+  const loop = fake([4, ...Array.from({ length: 100 }, () => 9)], (s) => (s === 0 ? 0.9 : 0.5))
+  const r = await readTokens(loop.rt, seconds(2))
   assert.deepEqual(r.tokens, [4, 9])
   assert.equal(r.cut, true)
-  assert.equal(loop.steps(), 4, 'stopped the moment the tail repeated')
+  assert.equal(loop.steps(), Math.trunc(2 * SPEECH_LIMITS.tokensPerSecond), 'read to the limit, no further')
+  assert.ok(Math.abs(r.sure - Math.sqrt(0.9 * 0.5)) < 1e-6, `the kept tokens' certainty, not the cut ones': ${r.sure}`)
+  // A repeat the person said ("no, no, no", "five five five", a number's zeros) ends where the decoder ends it.
+  const said = fake([4, 9, 9, 9, 9, 6])
+  const kept = await readTokens(said.rt, seconds(5))
+  assert.deepEqual([kept.tokens, kept.cut], [[4, 9, 9, 9, 9, 6], false])
   const nothing = await readTokens(fake([]).rt, seconds(1))
   assert.deepEqual([nothing.tokens, nothing.sure, nothing.cut], [[], 0, false])
 })
@@ -186,7 +204,42 @@ test('an utterance: too short or too quiet is not read; unsure or wordless gives
   assert.deepEqual([dots.r.text, dots.r.dropped], ['', 'empty'], 'punctuation alone says nothing')
   const long = await run([3], seconds(SPEECH_LIMITS.maxSeconds + 5))
   assert.equal(long.f.encoded[0].dims[1], SPEECH_LIMITS.maxSeconds * SPEECH_SHAPE.rate, 'read up to the limit')
+  // The microphone's room around the words is not read: a word in two seconds of near silence reaches the model as the
+  // word and a little either side.
+  const room = new Float32Array(2 * SPEECH_SHAPE.rate).fill(0.0005)
+  room.fill(0.2, 0.8 * SPEECH_SHAPE.rate, 1.2 * SPEECH_SHAPE.rate)
+  const word = await run([3], room)
+  const fed = word.f.encoded[0].data as Float32Array
+  assert.equal(fed.length, Math.round((0.4 + 2 * SPEECH_LIMITS.margin) * SPEECH_SHAPE.rate), 'the word and the margin either side')
+  assert.equal(fed[Math.round(SPEECH_LIMITS.margin * SPEECH_SHAPE.rate)], Math.fround(0.2), 'the word starts after the margin')
+  assert.ok(Math.abs(word.r.seconds - 2) < 1e-9, 'the utterance\'s own length is reported')
   assert.ok(Math.abs(long.r.seconds - (SPEECH_LIMITS.maxSeconds + 5)) < 1e-9, 'and its true length reported')
+})
+
+test('voicedSpan: from a margin before the first loud frame to a margin after the last, as a view; the whole when nothing is loud', () => {
+  const rate = SPEECH_SHAPE.rate
+  const a = new Float32Array(3 * rate).fill(0.001)
+  a.fill(0.3, rate, Math.round(1.5 * rate))
+  a.fill(0.05, Math.round(1.7 * rate), 2 * rate) // a quiet last syllable: a sixth of the peak, still words
+  const v = voicedSpan(a, rate, 0.05, 0.15)
+  assert.equal(v.buffer, a.buffer, 'a view, not a copy')
+  assert.equal(v.byteOffset / 4, Math.round(0.85 * rate))
+  assert.equal(v.length, Math.round((2.15 - 0.85) * rate))
+  // Speech at the very start or end: the margin stops at the edge.
+  const edge = new Float32Array(rate).fill(0.2)
+  assert.equal(voicedSpan(edge, rate), edge, 'all of it voiced: the same array')
+  // Nothing over the floor (all quieter than SPEECH_LIMITS.quiet): left whole for the quiet check to judge.
+  const hush = new Float32Array(rate).fill(SPEECH_LIMITS.quiet / 2)
+  assert.equal(voicedSpan(hush, rate), hush)
+  // Under one frame: left whole.
+  const tiny = new Float32Array(10).fill(0.5)
+  assert.equal(voicedSpan(tiny, rate), tiny)
+  // One loud click among speech-level sound does not hide the speech: the bar is set by the third loudest frame.
+  const click = new Float32Array(2 * rate).fill(0.0001)
+  click.fill(0.06, Math.round(0.5 * rate), Math.round(1.5 * rate))
+  click.fill(0.9, Math.round(1.0 * rate), Math.round(1.0 * rate) + 320)
+  const c = voicedSpan(click, rate)
+  assert.equal(c.byteOffset / 4, Math.round(0.35 * rate))
 })
 
 test('saysSomething and peak', () => {

@@ -130,8 +130,27 @@ test('speech that returns inside the hang stays in the same utterance; past it, 
   assert.ok(Math.abs(utteranceSeconds(joined.out[0]) - (0.4 + 0.8 + 0.3 + 0.8 + 0.35)) < 0.03)
   const apart = run([[0.5, false], [0.8, true], [0.6, false], [0.8, true], [1, false]])
   assert.equal(apart.out.length, 2, 'a 0.6 s pause ends it')
-  // The second starts with what came since the first ended: 0.25 s of the room, not the full lead.
-  assert.ok(Math.abs(utteranceSeconds(apart.out[1]) - (0.25 + 0.8 + 0.35)) < 0.03, `${utteranceSeconds(apart.out[1])} s`)
+  // The second starts with the full lead too: the lead is kept while an utterance is open, so it holds the end of the
+  // first's hang and the room since.
+  assert.ok(Math.abs(utteranceSeconds(apart.out[1]) - (0.4 + 0.8 + 0.35)) < 0.03, `${utteranceSeconds(apart.out[1])} s`)
+})
+
+test('a word that starts in the last utterance\'s hang keeps its first sound: the lead runs while an utterance is open', () => {
+  // Speech, then 0.5 s of quiet (the first ends 0.35 s in), then a quiet onset the detector misses for 0.1 s, then speech.
+  const tap = new UtteranceTap({ ...UTTERANCE, inRate: 48_000 })
+  const out: Float32Array[] = []
+  const feed = (x: Float32Array, speech: boolean) => { for (let i = 0; i < x.length; i += 128) { const u = tap.push(x, i, Math.min(128, x.length - i), speech); if (u) out.push(u) } }
+  feed(new Float32Array(24_000), false)
+  feed(tone(300, 0.8, 48_000), true)
+  feed(new Float32Array(Math.round(0.3 * 48_000)), false)
+  const onset = tone(300, 0.1, 48_000).map((v) => v * 0.2)
+  feed(onset, false) // still in the first one's hang: the detector has not said speech again yet
+  feed(new Float32Array(Math.round(0.1 * 48_000)), false) // the hang runs out: the first ends here
+  feed(tone(300, 0.8, 48_000), true)
+  feed(new Float32Array(48_000), false)
+  assert.equal(out.length, 2)
+  // The second's lead (its first 0.4 s) holds the quiet onset, which came while the first was still open.
+  assert.ok(rms(out[1], Math.round(0.2 * 16_000), Math.round(0.28 * 16_000)) > 0.05, 'the onset is in the lead')
 })
 
 test('a click is dropped: under the least the detector must have said speech, nothing comes out', () => {
@@ -149,6 +168,25 @@ test('speech past the cap is cut there and goes on in the next utterance, nothin
   const total = out.reduce((n, u) => n + u.length, 0)
   assert.ok(Math.abs(total / 16_000 - (0.4 + 5 + 0.35)) < 0.02, `${total / 16_000} s in all`)
   for (const u of out) assert.ok(rms(u, 7_000, 9_000) > 0.3)
+})
+
+test('full while the detector already says the room, an utterance ends as usual, not cut', () => {
+  // Lead 0.4 s + cap 2 s = 2.4 s; 1.8 s of speech and the hang reach it 0.2 s into the hang.
+  const { out, cut } = run([[0.5, false], [1.8, true], [1, false]], { max: 2 })
+  assert.equal(out.length, 1)
+  assert.deepEqual(cut, [false], 'the sentence was over: nothing waits for a rest that will not come')
+  assert.equal(out[0].length, Math.round(0.4 * 16_000) + 2 * 16_000)
+})
+
+test('a cut sentence always gets its closing piece, however little of it is speech', () => {
+  // 2.1 s of speech past a 2 s cap: the rest is 0.1 s of speech and the hang, under `min`, and still returned.
+  const { out, cut } = run([[0.5, false], [2.1, true], [1, false]], { max: 2 })
+  assert.equal(out.length, 2)
+  assert.deepEqual(cut, [true, false])
+  assert.ok(Math.abs(utteranceSeconds(out[1]) - (0.1 + 0.35)) < 0.02, `${utteranceSeconds(out[1])} s`)
+  // And the next sentence is judged by `min` again: a click after it is dropped.
+  const after = run([[0.5, false], [2.1, true], [1, false], [0.3, true], [1, false]], { max: 2 })
+  assert.equal(after.out.length, 2)
 })
 
 test('a reset forgets what was held, and nothing is kept at all while nothing is pushed', () => {

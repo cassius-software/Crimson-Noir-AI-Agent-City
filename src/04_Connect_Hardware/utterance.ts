@@ -32,8 +32,9 @@ export const UTTERANCE = Object.freeze({
    *  after the last sound): speech that returns within them (a breath, a pause between two clauses) goes on in the
    *  same utterance, so a sentence is one utterance and not three. */
   hang: 0.35,
-  /** Seconds at which an utterance is cut and handed over while the person still speaks (the rest starts the next):
-   *  the recogniser reads short sentences best, and the page never holds more than this. */
+  /** Seconds of speech after which an utterance is cut and handed over while the person still speaks (the rest starts
+   *  the next): the recogniser reads short sentences best. A piece is at most the lead and this (12.4 s), and the page
+   *  never holds more. Full while the detector already says the room, an utterance ends as usual rather than cut. */
   max: 12,
   /** Seconds the detector must have said speech, under which what was caught is dropped. The detector holds speech for
    *  about a quarter of a second after the last sound, so this asks for some 0.15 s of sound itself: a click or a chair
@@ -70,7 +71,8 @@ export class UtteranceTap {
   /** The next output instant: the whole input sample it stands on, and the row of the table for its fraction. */
   at = 0
   row = 0
-  /** The lead: the newest output samples while no utterance is open, a ring. */
+  /** The lead: the newest output samples, a ring (written all the time, so a word that starts in the last utterance's
+   *  hang still gets its quiet first sound). */
   readonly lead: Float32Array
   leadAt = 0
   leadFill = 0
@@ -86,6 +88,9 @@ export class UtteranceTap {
   readonly minSamples: number
   /** Whether the utterance last returned was cut at `max` (the person was still speaking). */
   cut = false
+  /** Whether the open utterance goes on from one that was cut: it is returned however little of it was voiced, so the
+   *  recogniser always gets the piece that ends a cut sentence (and does not wait for it). */
+  follows = false
 
   constructor(o: Partial<UtteranceOptions> = {}) {
     const rate = Number(o.rate) > 0 ? Math.round(Number(o.rate)) : 16_000
@@ -147,7 +152,6 @@ export class UtteranceTap {
       this.open = true
       this.quiet = 0
       this.voiced = 0
-      this.leadFill = 0
     }
     let end = offset + length
     if (!(end <= x.length)) end = x.length
@@ -186,27 +190,28 @@ export class UtteranceTap {
     this.row = phase * (2 * this.half + 1)
   }
 
-  /** One output sample: into the open utterance (ending it at `max`, or once the hang ran out), else into the lead. */
+  /** One output sample: into the lead always, and into the open utterance (ending it once the hang ran out, or at `max`:
+   *  cut while the person speaks, ended as usual if the detector already says the room). */
   sample(v: number, speech: boolean): Float32Array | null {
-    if (!this.open) {
-      const lead = this.lead
-      lead[this.leadAt] = v
-      this.leadAt = (this.leadAt + 1) % lead.length
-      if (this.leadFill < lead.length) this.leadFill++
-      return null
-    }
+    const lead = this.lead
+    lead[this.leadAt] = v
+    this.leadAt = (this.leadAt + 1) % lead.length
+    if (this.leadFill < lead.length) this.leadFill++
+    if (!this.open) return null
     this.kept[this.fill++] = v
     if (speech) { this.quiet = 0; this.voiced++ } else this.quiet++
-    if (this.fill >= this.kept.length) return this.finish(true)
+    if (this.fill >= this.kept.length) return this.finish(speech)
     if (this.quiet >= this.hangSamples) return this.finish(false)
     return null
   }
 
-  /** Ends the open utterance: a copy of it when enough of it was voiced, else null. A cut goes straight on in the next. */
+  /** Ends the open utterance: a copy of it when enough of it was voiced (or it goes on from a cut), else null. A cut goes
+   *  straight on in the next. */
   finish(cut: boolean): Float32Array | null {
-    const enough = this.voiced >= this.minSamples
+    const enough = this.voiced >= this.minSamples || this.follows
     const out = enough ? this.kept.slice(0, this.fill) : null
     if (out !== null) this.cut = cut
+    this.follows = cut && out !== null
     this.fill = 0
     this.quiet = 0
     this.voiced = 0
@@ -227,6 +232,7 @@ export class UtteranceTap {
     this.quiet = 0
     this.voiced = 0
     this.cut = false
+    this.follows = false
     this.ring.fill(0)
     this.lead.fill(0)
     this.kept.fill(0)

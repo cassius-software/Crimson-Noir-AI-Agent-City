@@ -213,7 +213,9 @@ test('the npm tree: every licence on a permissive allow-list (so no GPL, AGPL, L
   assert.equal(lock.packages['node_modules/@wllama/wllama']?.license, 'MIT')
   assert.equal(lock.packages['node_modules/onnxruntime-web']?.license, 'MIT')
   // The speech runtime's script is one self-contained file: it imports none of the packages its package.json lists
-  // (they serve builds of the runtime this page does not use), so none of them is bundled or needs a notice here.
+  // (they serve builds of the runtime this page does not use), so none of them is bundled as a package or needs a
+  // notice here. Its sibling onnxruntime-common (MIT, Microsoft, the same project) is compiled into the script by
+  // Microsoft's own build and is covered by the script's recorded licence text (NOTICE.md, docs/ip-audit.md §2).
   const ortScript = readFileSync(join(ROOT, 'node_modules/onnxruntime-web/dist/ort.wasm.bundle.min.mjs'), 'utf8')
   assert.ok(!/\bimport\s*(?:[\w*{}\s,$]+\s*from\s*)?["'][^"']+["']|\bexport\s*(?:\*|\{[^}]*\})\s*from\s*["']|\brequire\(\s*["']/.test(ortScript), 'the script imports another module')
   assert.ok(!/flatbuffers|protobuf|guid-typescript/i.test(ortScript), 'the script carries one of the packages its package.json lists')

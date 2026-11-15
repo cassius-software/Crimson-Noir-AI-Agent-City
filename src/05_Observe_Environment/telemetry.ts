@@ -234,7 +234,7 @@ export interface SipocSnapshot {
      * 40%", "no words"; '' otherwise) with the whole sentence for the tooltip (`speech`), and the sentence it last understood,
      * for a few seconds (`said`).
      */
-    voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean; silent?: boolean; note?: string; speech?: string; said?: string }
+    voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean; silent?: boolean; hushed?: boolean; note?: string; speech?: string; said?: string }
     /**
      * The team at work (08_Swarm/team.ts; Sloane's for a goal, or the first walk's swarm), added by the host: one row a lane, with its tag, its
      * desk, whether it runs or was isolated, and its latest reading.

@@ -25,7 +25,7 @@ export const ortSession = (): Record<string, unknown> => ({ executionProviders: 
 
 /**
  * Sets the runtime up to run inside one thread from bytes it is handed: one thread (no shared memory is needed, so
- * it runs in every browser, cross-origin isolated or not), no proxy worker (the caller is the worker), and the
+ * it needs no cross-origin isolation), no proxy worker (the caller is the worker), and the
  * WebAssembly module's own bytes, so the runtime fetches nothing.
  */
 export function ortConfigure(ort: OrtLike, wasm: ArrayBuffer): void {

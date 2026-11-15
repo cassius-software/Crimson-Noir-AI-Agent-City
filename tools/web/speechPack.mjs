@@ -6,8 +6,8 @@
  * Why does this file exist? It puts the speech pack beside the web copy (dist-web/speech/): the four files the page's
  * own speech recogniser runs (src/09_Cognition/speechPack.ts SPEECH_PACK: the runtime's WebAssembly module, the
  * model's encoder and decoder, its vocabulary), with a manifest that names exactly the page's pin and the licences of
- * the model and the runtime beside them. The pack is what lets the microphone understand words in every browser, on
- * the visitor's own device. The pin is the page's own, so the page and the folder can never disagree about what is
+ * the model and the runtime beside them. The pack is what lets the microphone understand words in any browser that
+ * can run it, on the visitor's own device. The pin is the page's own, so the page and the folder can never disagree about what is
  * served. Each file comes from one place, written down here (SOURCES) and in third_party/:
  *   - the runtime's module: the installed npm package onnxruntime-web (this project's dependency, pinned exactly);
  *   - the model's two files: the npm registry tarball of @moonshine-ai/moonshine-js 0.1.29 (MIT; only the two model
@@ -209,25 +209,33 @@ export function placePack({ from, out, root = ROOT }) {
   return written.map((f) => `${SPEECH_DIR}${f}`)
 }
 
-/** A 16-bit PCM or 32-bit float WAV file's first channel and its rate. */
+/** A WAV file's first channel and its rate: 8, 16, 24 or 32-bit integer or 32 or 64-bit float samples, plain or
+ *  extensible (WAVE_FORMAT_EXTENSIBLE); anything else is refused with a plain sentence. */
 export function readWav(path) {
   const b = readFileSync(path)
   if (b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WAVE') throw new Error(`${path} is not a WAV file`)
   let at = 12, rate = 0, channels = 1, bits = 16, format = 1, data = null
   while (at + 8 <= b.length) {
     const id = b.toString('latin1', at, at + 4), n = b.readUInt32LE(at + 4)
-    if (id === 'fmt ') { format = b.readUInt16LE(at + 8); channels = b.readUInt16LE(at + 10); rate = b.readUInt32LE(at + 12); bits = b.readUInt16LE(at + 22) }
+    if (id === 'fmt ') {
+      format = b.readUInt16LE(at + 8); channels = b.readUInt16LE(at + 10); rate = b.readUInt32LE(at + 12); bits = b.readUInt16LE(at + 22)
+      // WAVE_FORMAT_EXTENSIBLE: the real format is the first two bytes of its sub-format GUID (1 integer, 3 float).
+      if (format === 0xfffe && n >= 40) format = b.readUInt16LE(at + 8 + 24)
+    }
     // A writer that streamed the file leaves the data's size unset: the rest of the file is the data.
     if (id === 'data') { data = b.subarray(at + 8, n === 0xffffffff || at + 8 + n > b.length ? b.length : at + 8 + n); break }
     at += 8 + n + (n & 1)
   }
   if (!data || !rate) throw new Error(`${path} has no audio`)
+  const ok = format === 1 ? [8, 16, 24, 32].includes(bits) : format === 3 ? bits === 32 || bits === 64 : false
+  if (!ok || channels < 1) throw new Error(`${path} is a WAV this tool does not read (format ${format}, ${bits}-bit, ${channels} channels): use 8, 16, 24 or 32-bit integer or 32 or 64-bit float samples`)
   const width = bits / 8
   const n = Math.floor(data.length / width / channels)
   const samples = new Float32Array(n)
   for (let i = 0; i < n; i++) {
     const o = i * width * channels
-    samples[i] = format === 3 ? data.readFloatLE(o) : bits === 16 ? data.readInt16LE(o) / 32768 : bits === 8 ? (data[o] - 128) / 128 : data.readInt32LE(o) / 2147483648
+    samples[i] = format === 3 ? (bits === 64 ? data.readDoubleLE(o) : data.readFloatLE(o))
+      : bits === 16 ? data.readInt16LE(o) / 32768 : bits === 8 ? (data[o] - 128) / 128 : bits === 24 ? data.readIntLE(o, 3) / 8388608 : data.readInt32LE(o) / 2147483648
   }
   return { rate, samples }
 }

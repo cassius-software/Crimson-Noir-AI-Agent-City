@@ -99,14 +99,21 @@ export function phaseWord(phase: MicPhase): string {
 export const SILENT_WORD = 'Mic silent'
 /** Why, for the pill's accessible name, its tooltip and the console. */
 export const SILENT_DETAIL = 'no sound is arriving: the system may hold the microphone muted, or the browser may be using another input than yours'
+/** The pill's word for an open device that has sent only exact silence since it opened (see SILENT_MS): a hint, not a
+ *  failure, since some inputs (a noise gate, a voice-isolation filter) send exact zeros until the visitor speaks. */
+export const HUSHED_WORD = 'No sound yet'
+/** Why, for the pill's accessible name, its tooltip and the console. */
+export const HUSHED_DETAIL = 'nothing has arrived since the microphone opened: if you have spoken, the system may hold it muted or the browser may be using another input than yours'
 
 /**
  * The pill's word: the page speaking (Sloane) over an open microphone reads Speaking; an open microphone that sends
- * nothing reads Mic silent (never while it hears speech); else the phase's word.
+ * nothing reads Mic silent, and one that has sent only exact silence since it opened No sound yet (never while it
+ * hears speech); else the phase's word.
  */
-export function pillWord(phase: MicPhase, speaking: boolean, silent = false): string {
+export function pillWord(phase: MicPhase, speaking: boolean, silent = false, hushed = false): string {
   if (speaking && (phase === 'listening' || phase === 'speech')) return 'Speaking'
   if (silent && phase === 'listening') return SILENT_WORD
+  if (hushed && phase === 'listening') return HUSHED_WORD
   return phaseWord(phase)
 }
 
@@ -124,8 +131,8 @@ export function tapMeans(phase: MicPhase): 'open' | 'mute' {
  * The accessible name of the pill: the state, what a press does, and the key, in one sentence a screen reader says
  * ("Microphone: listening. Press to mute. Key V."). `detail` (why it failed) follows the state when there is one.
  */
-export function pillLabel(phase: MicPhase, speaking: boolean, detail = '', key = 'V', silent = false): string {
-  const word = pillWord(phase, speaking, silent).toLowerCase()
+export function pillLabel(phase: MicPhase, speaking: boolean, detail = '', key = 'V', silent = false, hushed = false): string {
+  const word = pillWord(phase, speaking, silent, hushed).toLowerCase()
   const state = word.startsWith('mic ') ? word.slice(4) : word
   const does = tapMeans(phase) === 'mute' ? 'mute' : 'listen'
   return `Microphone: ${state}${detail ? ` (${detail})` : ''}. Press to ${does}. Key ${key}.`
@@ -213,10 +220,11 @@ const POLL_MS = 16
 /** A tap on the pill that lands within this many ms of the last is the same tap (a double-fire on touch). */
 const DEBOUNCE_MS = 150
 /**
- * An open device whose every sample has been zero for this long since it opened, or that has sent no level at all
- * for this long, reads Mic silent. A working microphone is not exactly silent from the start (its own noise is some
- * tens of decibels above nothing), so four seconds of nothing at all from the moment it opened is a device that is not
- * delivering: muted by the system, or not the input the visitor speaks into.
+ * An open device that has sent no level at all for this long reads Mic silent; one whose every sample has been zero
+ * for this long since it opened reads No sound yet. A plain microphone is not exactly silent from the start (its own
+ * noise is some tens of decibels above nothing), so four seconds of nothing at all is most often a device that is not
+ * delivering (muted by the system, or not the input the visitor speaks into); but an input behind a noise gate or a
+ * voice-isolation filter sends exact zeros until the first word, so that case is a hint and not a failure.
  */
 export const SILENT_MS = 4_000
 /** The level under which a reading counts as nothing at all (about −140 dBFS: far under any real microphone's noise). */
@@ -299,20 +307,25 @@ export class Microphone extends EventTarget {
   get open(): boolean { return isOpen(this.#phase) }
   /**
    * Whether the open device sends nothing at all: the system says it holds it muted (the track's word), the page
-   * could not build its graph over it, no level above nothing has come in the SILENT_MS since it opened (the wrong
-   * input: every sample zero), or no level has come at all for SILENT_MS (a context the system put to sleep: a call
-   * on a phone). A device that has sounded once is delivering: zeros after that are a noise gate between words (a
-   * headset's, a voice-isolation filter's), not a dead microphone, and never read silent. Worked out when read, on
-   * the microphone's clock, so the HUD's own tick shows it and no timer runs for it. A browser with no Web Audio at
-   * all has no level to judge by: not silent.
+   * could not build its graph over it, or no level has come at all for SILENT_MS (a context the system put to sleep: a
+   * call on a phone). Worked out when read, on the microphone's clock, so the HUD's own tick shows it and no timer runs
+   * for it. A browser with no Web Audio at all has no level to judge by: not silent.
    */
   get silent(): boolean {
     if (!this.open) return false
     if (this.#fault !== '') return true
     if (this.#tracks.length > 0 && this.#tracks.every((t) => t.muted === true)) return true
     if (this.path === 'none') return false
-    const now = this.#now()
-    return (!this.#sounded && now - this.#openedAt >= SILENT_MS) || now - this.#levelAt >= SILENT_MS
+    return this.#now() - this.#levelAt >= SILENT_MS
+  }
+  /**
+   * Whether the open device has sent only exact zeros in the SILENT_MS since it opened (or since the system gave it
+   * back): the wrong input, or an input behind a gate that opens at the first word, so a hint and never the failure's
+   * word. A device that has sounded once is delivering: zeros after that are a gate between words and never count.
+   */
+  get hushed(): boolean {
+    if (!this.open || this.path === 'none' || this.silent) return false
+    return !this.#sounded && this.#now() - this.#openedAt >= SILENT_MS
   }
   /** Why it is silent, in words for the pill's name, its tooltip and the console. */
   get silentDetail(): string { return this.#fault !== '' ? this.#fault : SILENT_DETAIL }
@@ -325,13 +338,14 @@ export class Microphone extends EventTarget {
   }
 
   /** The pill's word now. */
-  word(): string { return pillWord(this.#phase, this.#speaking, this.silent) }
+  word(): string { return pillWord(this.#phase, this.#speaking, this.silent, this.hushed) }
 
   /** The pill's accessible name now. */
   label(key = 'V'): string {
     const quiet = this.#phase === 'listening' && this.silent
-    const detail = quiet ? this.silentDetail : this.#phase === 'listening' || this.#phase === 'speech' || this.#phase === 'off' || this.#phase === 'muted' ? '' : this.#detail
-    return pillLabel(this.#phase, this.#speaking, detail, key, quiet)
+    const hushed = this.#phase === 'listening' && this.hushed
+    const detail = quiet ? this.silentDetail : hushed ? HUSHED_DETAIL : this.#phase === 'listening' || this.#phase === 'speech' || this.#phase === 'off' || this.#phase === 'muted' ? '' : this.#detail
+    return pillLabel(this.#phase, this.#speaking, detail, key, quiet, hushed)
   }
 
   /**
@@ -648,7 +662,7 @@ export function voiceStatus(m: Microphone, speaking: boolean, recognition: strin
   const s = m.state
   return [
     `mic       ${s.phase}${s.detail ? ` · ${s.detail}` : ''}`,
-    `pill      ${pillWord(s.phase, speaking, m.silent)}${m.silent && s.phase === 'listening' ? ` · ${m.silentDetail}` : ''}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
+    `pill      ${pillWord(s.phase, speaking, m.silent, m.hushed)}${s.phase !== 'listening' ? '' : m.silent ? ` · ${m.silentDetail}` : m.hushed ? ` · ${HUSHED_DETAIL}` : ''}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
     `detector  ${m.path === 'worklet' ? 'audio worklet' : m.path === 'page' ? 'on the page' : 'none'}${m.open ? m.speech ? ' · hearing you' : ' · the room' : ''}`,
     `boot      ${m.opensAtBoot() ? 'opens at boot' : 'off until pressed'}  (kept switch ${m.settings().kept ? m.settings().on ? 'on' : 'muted' : 'none'}; the default ${MIC_OPEN_BY_DEFAULT ? 'open' : 'off'})`,
     `words     ${recognition}`,
