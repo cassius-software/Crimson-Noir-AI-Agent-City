@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It builds NoirScript's syntax tree: a Pratt parser for expressions (one binding power
+ * Why does this file exist? It builds Crimson Noir Script's syntax tree: a Pratt parser for expressions (one binding power
  * per operator level, `as` and the postfix forms binding tightest) and recursive descent for statements, items and
  * types. A block's last `if … else …` chain becomes the block's value when the block has no other trailing
  * expression, which is how a fn body or an if-expression arm yields a value without a `return`; the checker

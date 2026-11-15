@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It lists a compiled NoirScript function one instruction per line, the way `noir asm`
+ * Why does this file exist? It lists a compiled Crimson Noir Script function one instruction per line, the way `noir asm`
  * shows it: a header naming the function, its signature and its frame, then `0012  ADD_F32X4`, `0013  CALL fib 1`,
  * `0007  JMP_IF_NOT 0021`. Lane counts become the X4/X8 suffix, jump destinations are printed as addresses, calls
  * name their callee and its parameter count, and `print` names the types it formats. It reads the same opcode

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the seeded fuzz suite of NoirScript: thousands of random lines, half token soup
+ * Why does this file exist? It is the seeded fuzz suite of Crimson Noir Script: thousands of random lines, half token soup
  * (every keyword, type, operator, literal and stray character the lexer knows, in any order) and half grammar-shaped
  * programs (functions, globals, loops, queries, vectors, casts, host writes, with faults sprinkled in), run against
  * random hosts whose tables and writes may be odd or throw. The properties: `run` and `asm` never throw (every

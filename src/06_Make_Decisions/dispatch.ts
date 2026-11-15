@@ -7,7 +7,7 @@
  * desk per indoor workplace kind (01_Initialize_World/interiors.ts WORKPLACE_KINDS, the sixteen in slot order; the
  * six first rooms are found under their earlier kind names too) and, when a number is given ("a 24-agent drill"),
  * how many sub-agents to send; a goal that names no work and maps to no control gets two scouts (the twin studio
- * and the control tower), so no goal is ever a dead end. Each sub-agent is a lane (08_Swarm/lanes.ts): a NoirScript
+ * and the control tower), so no goal is ever a dead end. Each sub-agent is a lane (08_Swarm/lanes.ts): a Crimson Noir Script
  * program written here that reads a window of the city's columns around its desk each tick, under the lane limits,
  * with the capability word a sub-agent holds (move and a workplace task: never vehicle teleop, never spawning more
  * sub-agents). The plan is pure: no clock, no randomness, no I/O, and no model (a model may reword what Sloane says
@@ -250,7 +250,7 @@ export function teamRows(team: Team): string[] {
   return rows
 }
 
-/** A number as NoirScript writes an f32 literal. */
+/** A number as Crimson Noir Script writes an f32 literal. */
 const f32 = (x: number): string => {
   const v = Number.isFinite(x) ? Math.fround(x) : 0
   const t = v.toFixed(3)

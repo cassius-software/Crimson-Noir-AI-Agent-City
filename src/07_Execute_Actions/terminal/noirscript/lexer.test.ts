@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins NoirScript's tokens: every kind with its line and column, the separators and
+ * Why does this file exist? It pins Crimson Noir Script's tokens: every kind with its line and column, the separators and
  * both comment forms, decimal, hex and binary integers with `_` and the `u` suffix, floats with exponents and the
  * `f` suffix, strings with their escapes, the longest-match operators, and every lexical error with its position.
  * What breaks if it is removed? A token could move a column, a literal could change value, and no error would say so.

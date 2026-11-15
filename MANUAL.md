@@ -1081,7 +1081,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
   Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
   now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
-  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  Crimson Noir Script lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
   control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
   goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
@@ -1194,7 +1194,7 @@ shows it (there is no city to walk).
   controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
   time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
   180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed business-casual wardrobe; the four laws, the
-  fifteen checks and the air gap; the bounded NoirScript VM). It has **no close button, no skip and no key that puts
+  fifteen checks and the air gap; the bounded Crimson Noir Script VM). It has **no close button, no skip and no key that puts
   it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
 - **The seven stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
@@ -1238,13 +1238,13 @@ shows it (there is no city to walk).
   noir unlock_city(seal, swarm);
   ```
 
-  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
+  The three words are ordinary Crimson Noir Script intrinsics (`docs/crimson-noir-script.md`) behind an exam the city wires into the
   console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
   the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
   by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
   standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
   memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for the role through
-  the same team runner Sloane's goals use: one lane each, a small NoirScript program at one of the sixteen workplaces,
+  the same team runner Sloane's goals use: one lane each, a small Crimson Noir Script program at one of the sixteen workplaces,
   dealt round the desks in order (twenty-four are two at each of the first eight and one at each of the rest), under
   the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
   anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
@@ -1731,7 +1731,7 @@ anywhere in the product.
   `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
   (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
   `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
-  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
+  without a branch. A lane runs one Crimson Noir Script program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
   own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
   tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
   own arena each tick, however many rows the city has), 32 frames of stack. The gate
@@ -1745,7 +1745,7 @@ anywhere in the product.
   isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
   the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
   the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
-  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
+  reachable from a lane at all, since a lane runs Crimson Noir Script, whose folder names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -2080,7 +2080,7 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
-- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
+- **`noir`** is Crimson Noir Script, the console's second language (`terminal/noirscript/`): statically typed, compiled to
   bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
   operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
   `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
@@ -2104,7 +2104,7 @@ cinema camera, the HUD. Track B is this console on its own.
     compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
     at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
     operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
-    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/crimson-noir-script.md`.
   - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
     three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
     characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
@@ -2445,8 +2445,8 @@ A short two-note cue sounds where the person you asked stands, so you hear who i
 ### The Ring-0 elite tier (`ring0`)
 
 Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
-<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
-`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
+<passphrase>`. It exists for the owner's own hand on the city: it opens Crimson Noir Script's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises Crimson Noir Script's limits for the console session, so a Crimson Noir Script program can
 set a tuning knob, send a parked car a player-style intent (a car with a driver is refused, as the realm's door
 refuses it: park it first with `setMode parked`), set the crowd's density or lean a feature of the inspector.
 

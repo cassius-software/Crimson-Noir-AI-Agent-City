@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins NoirScript's static rules with exact messages: literal adoption and its limits,
+ * Why does this file exist? It pins Crimson Noir Script's static rules with exact messages: literal adoption and its limits,
  * every operator mismatch, immutability of let, params and loop variables, shadowing and redeclaration, missing
  * returns, arity and argument types, unknown names, the reserved table and intrinsic names, query scope, col
  * parameters, vector lanes and fields, the `as` rules, values left unused, strings out of place, and overload

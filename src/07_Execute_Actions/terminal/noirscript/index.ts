@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is NoirScript's public face and its session: the console's second language, beside
+ * Why does this file exist? It is Crimson Noir Script's public face and its session: the console's second language, beside
  * R0, is statically typed, compiled to bytecode and run on a bounded VM over one memory arena, with 128- and
  * 256-bit lane types, branchless intrinsics and read-only typed access to the city's structure-of-arrays columns.
  * A session keeps the functions and globals every line declares and the arena they live in; `run` lexes, parses,
@@ -51,7 +51,7 @@ const failed = (e: unknown, defined: readonly string[]): NoirResult => {
 }
 
 /**
- * A NoirScript session: the functions and globals its lines have declared, and the arena they live in. Deterministic
+ * A Crimson Noir Script session: the functions and globals its lines have declared, and the arena they live in. Deterministic
  * (the same lines in the same order always give the same output) and bounded by its limits, which a `run` may
  * override for one line (the elite tier's larger ones, say).
  */

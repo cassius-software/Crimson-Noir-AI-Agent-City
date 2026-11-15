@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is NoirScript's static checker: every expression gets exactly one type and every name
+ * Why does this file exist? It is Crimson Noir Script's static checker: every expression gets exactly one type and every name
  * one declaration before anything compiles, so the VM never meets a value it did not expect. It owns the rules the
  * specification states: no implicit conversions except an unsuffixed integer literal adopting u32 or f32 from the
  * other operand, a declared type, a parameter or a return type; `as` only between the scalar numbers (and bool to

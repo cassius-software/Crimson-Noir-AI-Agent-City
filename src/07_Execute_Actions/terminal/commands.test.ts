@@ -441,7 +441,7 @@ function fakeTopics(calls: string[]): FakeTopics {
   return t
 }
 
-/** The city's columns as NoirScript reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
+/** The city's columns as Crimson Noir Script reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
 function fakeTables(): NoirTables {
   return {
     crowd: { n: 4, x: Float32Array.of(1, -2, 3, -4), z: Float32Array.of(1, 2, -3, 4) },
@@ -1223,7 +1223,7 @@ test('air gap: while locked, across every command and completion, the only knobs
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'people', 'person', 'prompt'])
-  // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
+  // Crimson Noir Script reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
   assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
   // (a leave), and the cells' kinds (`robot cell` alone lists the stations: a read of a table); no body enters the
@@ -2481,7 +2481,7 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
   assert.deepEqual(run('r0 10 3 mod .', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '1' }])
 })
 
-test('noir: NoirScript runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
+test('noir: Crimson Noir Script runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
   const b = fake()
   const session = replSession()
   assert.deepEqual(run('noir let mut s = 0; for i in 0..10 { s += i * i; } print(s);', b, [], session).lines, [{ kind: 'out', text: '285' }])

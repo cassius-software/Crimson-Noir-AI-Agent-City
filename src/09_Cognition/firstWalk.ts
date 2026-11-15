@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? It is the first-run tutorial as pure data and timing: the seven things a brand-new visitor
  * does before the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; step inside a
- * workplace; choose a look in the wardrobe or a shop, or read a home's deed; read the four laws at the Ring-0 console; run the three-line NoirScript
+ * workplace; choose a look in the wardrobe or a shop, or read a home's deed; read the four laws at the Ring-0 console; run the three-line Crimson Noir Script
  * program that is the only way out), what counts as having done each one (a reading of the page, or an event the page reports), and what Sloane
  * says at each: the thing to do in the visitor's own device's words, one plain line of what it is (for an
  * eight-year-old), and five whys that go one deeper each time, every one of them true of the city as it runs today.
@@ -39,7 +39,7 @@ export const WALK = Object.freeze({
   walkMetres: 3,
 } as const)
 
-/** The role the exit program names and the swarm it asks for (docs/noirscript.md, "The first walk's exit"). */
+/** The role the exit program names and the swarm it asks for (docs/crimson-noir-script.md, "The first walk's exit"). */
 export const SWARM_ROLE = 'sim2real_workplaces'
 export const SWARM_SIZE = 24
 
@@ -285,7 +285,7 @@ export function eli8Of(s: Stage, city?: FirstWalkOptions['city']): string {
     case 'work': return 'Inside, the people of the city work: they type, inspect and talk at their stations, and what an agent does there is real agent work, prompts and answers, not a cartoon of it. A robot, real or simulated, can take a body in this city too, over the joint bridge.'
     case 'style': return `You choose how you look: your clothes and their colours, your hair, your skin, your face and your build. Everyone on the street is dressed from the same wardrobe you are, the city’s own business-casual one.${city?.stores === true ? ' The shops on the street sell lines from it too, and trying them on costs nothing.' : ''}${city?.homes === true ? ' A home can be yours as well: the homes on the street are for sale, and the smallest costs nothing to claim.' : ''}`
     case 'ring0': return 'Underneath the city is a kernel called Ring-0. It holds four laws in rank order, and every car, every agent and every command passes through them. Nothing in the city, and nothing you type, can turn them off.'
-    case 'exam': return 'This is a tiny program in NoirScript, the console’s own typed language. It runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens. The three words are doors.'
+    case 'exam': return 'This is a tiny program in Crimson Noir Script, the console’s own typed language. It runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens. The three words are doors.'
   }
 }
 
@@ -343,7 +343,7 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
       rooms
         ? `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program at one of the sixteen workplaces, held by the same walls as yours and opened from wherever you stand; anyone near with a desk’s skill is asked over too, and the console tells you how many are running.`
         : `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program held by the same walls as yours and opened from wherever you stand; this map has no workplaces, so they read the city around where you started, and the console tells you how many are running.`,
-      'Why can the program not simply set a flag? Because NoirScript writes to nothing it is not handed; unlock_city is handed one door, this walk’s own, and only the kernel’s seal opens it.',
+      'Why can the program not simply set a flag? Because Crimson Noir Script writes to nothing it is not handed; unlock_city is handed one door, this walk’s own, and only the kernel’s seal opens it.',
       'Why does the walk end in the console? Because from here on the console is where you meet the city as it is, and the city should meet you there too.',
     ])
   }

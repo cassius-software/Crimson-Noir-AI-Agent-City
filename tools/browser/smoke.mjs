@@ -110,7 +110,7 @@
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path, the look stage through the wardrobe card and
- *   the way out through the three NoirScript lines, with Sloane's name question beside the walk's card at five desktop
+ *   the way out through the three Crimson Noir Script lines, with Sloane's name question beside the walk's card at five desktop
  *   sizes and the walk's card stepping aside for it under 960 px;
  * - walkshop: the first walk's look stage through a shop instead: Sloane names the shops, the Browse chip is clear of
  *   the walk's card, a try-on costs nothing, and the shop's card put away passes the stage;
@@ -2527,7 +2527,7 @@ const SCENARIOS = {
    * The first walk (09_Cognition/firstWalk.ts, onboarding/FirstWalk.tsx and exam.ts) end to end on its accessible
    * path: `?tutorial=1` opens on it; no button or key puts the card away; each stage's one button has Sloane do the
    * stage's action (walk, plan a goal, a car's door, a workplace's doorway, the wardrobe card, `laws`) and the page's
-   * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's NoirScript session,
+   * own readings pass it (the wardrobe's stage when its Done puts the card away); on the last card the three line buttons and Run run the exit program through the console's Crimson Noir Script session,
    * where the exam seals the live kernel, sets twenty-four sub-agents to work through the team runner from where the
    * workplace stage left the visitor (inside a room, where nobody within earshot can be asked over) and unlocks the
    * city; the card goes and the pass is kept.

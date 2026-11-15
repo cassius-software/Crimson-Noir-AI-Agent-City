@@ -15,7 +15,7 @@
   <a href="https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/"><strong>Launch the live build</strong></a> ·
   <a href="https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current"><strong>Current downloads</strong></a> ·
   <a href="MANUAL.md"><strong>Operator Manual</strong></a> ·
-  <a href="docs/noirscript.md"><strong>NoirScript</strong></a> ·
+  <a href="docs/crimson-noir-script.md"><strong>Crimson Noir Script</strong></a> ·
   <a href="docs/zero-trust-audit.md"><strong>Containment audit</strong></a> ·
   <a href="crimson_noir_os/README.md"><strong>Crimson Noir OS (UEFI)</strong></a>
 </p>
@@ -30,7 +30,7 @@
 
 **Crimson Noir: AI Agent City** is a first-person city that runs in the browser on WebGPU. Thousands of pedestrians are simulated on the GPU as structure-of-arrays lanes, a fleet of cars drives Rapier physics in a worker, trains, drones, planes, VTOLs and ferries run to timetables, and sixteen indoor workplaces sit at ground level downtown. The page reaches nothing beyond this machine but its own site (on the web copy, for the one small model it serves beside the page, which it gets by itself once the city is on screen unless it can't run or keep it, another model is chosen, the browser saves data or is on mobile data, or the visitor stopped it): every outbound primitive is replaced or removed so that only loopback and same-origin addresses can be addressed, and a Ring-0 audit halts the realm the moment an invariant breaks.
 
-**Sloane** (they/them), the city's concierge, greets you, guides a seven-stage first walk and turns a plain-language goal into a plan of city settings. The **Crimson Terminal** carries two Turing-complete, bounded languages (the R0 stack machine and **NoirScript**) and a cognition router that hands `ask` to a local model server, a model file kept in the page, or Claude through a loopback gateway. A separate bare-metal **Crimson Noir OS** boots a 4,096-agent swarm self-test from UEFI into a Forth terminal.
+**Sloane** (they/them), the city's concierge, greets you, guides a seven-stage first walk and turns a plain-language goal into a plan of city settings. The **Crimson Terminal** carries two Turing-complete, bounded languages (the R0 stack machine and **Crimson Noir Script**) and a cognition router that hands `ask` to a local model server, a model file kept in the page, or Claude through a loopback gateway. A separate bare-metal **Crimson Noir OS** boots a 4,096-agent swarm self-test from UEFI into a Forth terminal.
 
 Everything below is what the code on `main` does and what CI has shown. Where something has not been seen on real hardware, it says so.
 
@@ -42,7 +42,7 @@ Everything below is what the code on `main` does and what CI has shown. Where so
 
 * **The air gap.** `fetch`, `WebSocket`, `XMLHttpRequest`, `EventSource` and `importScripts` are replaced in the page and in the physics worker with versions that refuse any address that is not loopback, same-origin or a page-made `blob:`/`data:` URL; `RTCPeerConnection`, `WebTransport` and `sendBeacon` are removed and the properties frozen; the content security policy admits the page's own origin, `localhost` and `127.0.0.1` only. Local model and speech servers are reached at loopback, and no prompt leaves the machine; the web copy's one download, the small model it serves beside the page, comes from its own site, by itself once the city is on screen or on a tap.
 * **The Ring-0 audit.** An auditor in the physics worker halts the realm on a non-finite state, a vehicle outside the world slab, a runaway velocity or a car closing on a person; a panic severs the hardware bridge and locks the page. The Ring-0 action gate's twelve checks under four laws vet every action a model proposes, and a model's only effect on the city is one catalogued action (time, rain, light, quality, cars, crowd, sound) after the operator allows it.
-* **Bounded languages.** The R0 stack machine and NoirScript are Turing complete and end every run at a step budget (1,000,000 steps), an output cap, a memory cap and a call-depth cap; NoirScript checks every array, vector and column index. Its writes (`tune`, `intent`, `cull`, `steer`) open only on the `ring0` elite tier.
+* **Bounded languages.** The R0 stack machine and Crimson Noir Script are Turing complete and end every run at a step budget (1,000,000 steps), an output cap, a memory cap and a call-depth cap; Crimson Noir Script checks every array, vector and column index. Its writes (`tune`, `intent`, `cull`, `steer`) open only on the `ring0` elite tier.
 * **Hardware gate.** Setpoints to a robot are clamped to the URDF's position, velocity and effort limits and go out only through a default-deny gate (operator tier, lease, arming handshake, heartbeat, 250 ms time-to-live, 20 commands a second); a device declaring the drone class is held to a geofence, a 30 m ceiling, 5 m/s and a 50 m range.
 * **Proofs.** `npm run verify` runs the Z3 theorems, the WebAssembly air-gap check over the committed modules, the LLVM-IR call scan of the routing core and sixteen Kani harnesses.
 
@@ -82,7 +82,7 @@ Sixteen downtown lots have their ground floor hollowed into a walk-in room, one 
 ### 6. Sloane, the console, captions and the first walk
 
 * **Sloane** speaks every line aloud when the sound is on (the browser's offline voice, or a local speech server at loopback; `sloane on|off`) and turns a plain-language goal into a plan of city settings with a deterministic 5-Whys engine, no model needed.
-* **The first walk** is on by default for every first run: seven stages (look and walk, talk to Sloane, the parked fleet, inside a workplace, your look, Ring-0, the way out), each with one plain line for an eight-year-old and five whys, finished by what the page sees rather than by a button. The card has no close, skip or key; the only way out is running the three-line NoirScript program in the console (`verify_ring0` seals the live kernel with a per-page-load nonce, `spawn_subagents` sets twenty-four sub-agents to work at the sixteen workplaces from wherever you stand, `unlock_city` opens the city). `?tutorial=0` keeps it away; `tutorial status` prints the stage.
+* **The first walk** is on by default for every first run: seven stages (look and walk, talk to Sloane, the parked fleet, inside a workplace, your look, Ring-0, the way out), each with one plain line for an eight-year-old and five whys, finished by what the page sees rather than by a button. The card has no close, skip or key; the only way out is running the three-line Crimson Noir Script program in the console (`verify_ring0` seals the live kernel with a per-page-load nonce, `spawn_subagents` sets twenty-four sub-agents to work at the sixteen workplaces from wherever you stand, `unlock_city` opens the city). `?tutorial=0` keeps it away; `tutorial status` prints the stage.
 * **Captions and live regions.** Closed captions for every spatial sound, on by default, each line with the sound's bearing and distance; the caption strip, Sloane's lines and the first-walk card are ARIA live regions, and each stage has a button that lets Sloane do the action for a visitor who cannot.
 * **Voice recruiting.** `recruit listen` opens the browser's on-device-only speech recogniser and `recruit stop` closes it; it is off until asked. Up to eight recruits follow the operator at once, lending their skills to operator tasks under a lease.
 * **The cognition router.** `ask` goes to `auto`, `claude` (through a loopback gateway, default model `claude-opus-5-5`), `ollama`, `llamacpp`, an OpenAI-compatible server on this machine (LM Studio, vLLM, SGLang), `inpage` (a GGUF file kept in the page, run by wllama, sized by the device's memory; on the web copy the page gets a small one by itself once the city is on screen, Qwen2.5 0.5B Instruct, served beside the page and downloaded once (or in a tap on Sloane's card, where it holds back), checked against its pinned SHA-256 and kept in the browser; the Windows installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves the same file beside its page, which the page copies in the same way; `dist/index.html`, the bare .exe and the other builds but the Linux packages carry no model), `native` (the model an app carries, run by the app itself in its own process with llama.cpp, `native/llm`: the Linux app's .deb, .rpm and AppImage carry the same Qwen2.5 1.5B Instruct and run it so) or `scripted` (no backend at all). `swarm run` splits a goal over up to five role prompts, one after another.
@@ -120,12 +120,12 @@ src/
 ├── 04_Connect_Hardware/   URDF reader, actuator fitting and domain randomization, robot links, DualSense, WebXR, touch, gamepad
 ├── 05_Observe_Environment/ Quality governor and hardware classes, ISA-95 namespace, telemetry, the .agv recorder
 ├── 06_Make_Decisions/     5-Whys intent engine, GPU flow field, street and track AI drivers, the track network, the action catalogue
-├── 07_Execute_Actions/    Engine, physics worker, cars and craft, collision layers, post chain, Crimson Terminal with the NoirScript VM, onboarding
+├── 07_Execute_Actions/    Engine, physics worker, cars and craft, collision layers, post chain, Crimson Terminal with the Crimson Noir Script VM, onboarding
 ├── 08_Swarm/              Swarm orchestrator, recruitment, capability gateway, each pedestrian's episodic memory
 ├── 09_Cognition/          Cognition router (Claude gateway, Ollama, llama.cpp, in-page GGUF), prefix cache, speech, first-walk data
 └── 10_Network/            Opt-in loopback room, headless Ring-0 mirror, Sparkplug B robot relay, OS ledger door
 tools/                  Build matrix, browser checks, proofs (npm run verify), licence headers, self-heal agent (MIT)
-docs/                   Architecture blueprint, NoirScript, joint bridge and HAL specs, zero-trust audits, IP audit (MIT)
+docs/                   Architecture blueprint, Crimson Noir Script, joint bridge and HAL specs, zero-trust audits, IP audit (MIT)
 ```
 
 ---

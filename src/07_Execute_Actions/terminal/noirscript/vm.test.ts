@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins NoirScript's bytecode VM against the specification, value by value: i32 and u32
+ * Why does this file exist? It pins Crimson Noir Script's bytecode VM against the specification, value by value: i32 and u32
  * wrap, f32 is binary32 rounded after every operation (checked against Math.fround arithmetic in the test), integer
  * division by zero is a named error, casts saturate and reinterpret, shift counts are masked, vectors work lane-wise
  * with masks, select, compare and horizontals, morton2 round-trips, the bit intrinsics match reference formulas over

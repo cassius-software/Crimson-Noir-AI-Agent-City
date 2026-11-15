@@ -17,7 +17,7 @@ import type { KeyStore } from './script.ts'
 /**
  * Whether a first run opens on the walk at all. True: the walk is mandatory on a first run, as the brief asks, and
  * the only way out is the console's exit program (its three words, verify_ring0, spawn_subagents and unlock_city, are
- * NoirScript's: terminal/noirscript, wired through onboarding/exam.ts). False: the walk shows only with `?tutorial=1`.
+ * Crimson Noir Script's: terminal/noirscript, wired through onboarding/exam.ts). False: the walk shows only with `?tutorial=1`.
  * Flip this one constant to change the default; nothing else reads a setting.
  */
 export const FIRST_WALK_DEFAULT = true

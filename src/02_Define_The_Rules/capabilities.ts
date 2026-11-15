@@ -28,7 +28,7 @@ export const CAP_NONE = 0
 export const CAP_MOVE = 1 << 0
 /** Work: a station in an indoor workplace, and the bounded program run there each tick. */
 export const CAP_WORKPLACE_TASK = 1 << 1
-/** A car's intent (the elite tier's NoirScript write): the only way a lane reaches a vehicle. */
+/** A car's intent (the elite tier's Crimson Noir Script write): the only way a lane reaches a vehicle. */
 export const CAP_VEHICLE_TELEOP = 1 << 2
 /** Open a lane under one's own: the root orchestrator's bit, never a sub-agent's. */
 export const CAP_SUBAGENT_SPAWN = 1 << 3
@@ -81,7 +81,7 @@ export interface Door { readonly name: string; readonly bit: number }
 /**
  * The doors no lane is let through, by the name a script would use. The network and a window are the page's
  * outbound primitives, which the air gap (airgap.ts installAirgap) guards or removes on the page's global for every
- * script alike; dynamic code and the host process are not reachable from a lane at all (a lane runs NoirScript,
+ * script alike; dynamic code and the host process are not reachable from a lane at all (a lane runs Crimson Noir Script,
  * whose folder names none of them, pinned by its own air-gap test). The list is what `doorOf` answers and what the
  * air gap's test checks itself against, so the two cannot part.
  */

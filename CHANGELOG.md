@@ -644,7 +644,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
   goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
   intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
-  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  one isolated Crimson Noir Script lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
   move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
   over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
   rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
@@ -668,7 +668,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
   each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
   `commands.test.ts`).
-- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+- **Gas metering in the Crimson Noir Script VM, and the lane runner.** A bound that ends a Crimson Noir Script run is now named in
   the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
   by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
   limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
@@ -842,7 +842,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
   the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
-  `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
+  `laws` at the Ring-0 console; run the three-line Crimson Noir Script exit program), as a pure stage engine with Sloane's
   lines (`src/09_Cognition/firstWalk.ts`: the thing to do in the device's own words, one line for an eight-year-old,
   five whys one deeper each, one hint per stage after forty-five quiet seconds), a switch and a pass record
   (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`: `?tutorial=1|0`, `?onboarding=0` and `?boot=tty` keep it away,
@@ -854,7 +854,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   constant); the exit program is the next entry's. The quiet five-minute watch waits until the walk is passed. Pinned
   by node tests (the stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand
   scrub); how the card stands on a real phone, a pad or a screen reader is unverified.
-- **The first walk's way out: three NoirScript words and the exam behind them.** `verify_ring0() -> u32`,
+- **The first walk's way out: three Crimson Noir Script words and the exam behind them.** `verify_ring0() -> u32`,
   `spawn_subagents(n: i32, role: str) -> i32` and `unlock_city(seal: u32, swarm: i32) -> bool` are intrinsics of the
   console's language (`src/07_Execute_Actions/terminal/noirscript`: a new `NoirHost.exam` surface with `noExam` as its
   refusal, three zero-operand opcodes, the folder's air gap unchanged), behind an exam the city composes into the
@@ -1729,13 +1729,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   or the Ring-0 auditor.
 - **The Ring-0 elite tier (`ring0`).** Above the operator tier, opened by a passphrase: `ring0 elite set <passphrase>`
   keeps a salted SHA-256 record in the page (never the words); `ring0 unlock --elite <passphrase>` opens, for the
-  console session, NoirScript's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
+  console session, Crimson Noir Script's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
   through the operator's own frozen facade (the same paths as `set`, a scripted intent, `crowd.cull` and the feature
   inspector); `ring0 lock` closes it, `operator lock` closes both, five wrong passphrases in a row refuse until the
   operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
   Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
   tier calls those four things and nothing else.
-- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+- **Crimson Noir Script (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
   to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
   arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
   `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
@@ -2159,6 +2159,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   conversation quality and speed, and any real phone or GPU.
 
 ### Changed
+
+- **The console's second language is now called Crimson Noir Script.** It was NoirScript. The name changed everywhere
+  a person reads it: the console's `help` and `noir` lines, Sloane's first-walk lines, the progression's skill text,
+  the manual, the README, and the language's own document, which moved to `docs/crimson-noir-script.md`. Nothing else
+  changed: the `noir` command, the syntax, the bytecode and every limit are as they were, and the source folder
+  (`terminal/noirscript/`) and its type names keep their spelling. The new name leads with the product's own, so the
+  language is not taken for another, unrelated programming language named Noir. The entries of this section that
+  describe the language use the new name as well.
 
 - **The KV page table evicts the cached page least likely to be reused, not the one left longest ago.** Each cached
   page carries the log-odds that it will be read again: a prior from where it came from (a pinned prefix 0.95, a
