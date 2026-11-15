@@ -52,16 +52,25 @@ class Reader {
   }
 
   private *not(): Task<boolean> {
-    if (this.a[this.i] === '!' && this.i + 1 < this.a.length) {
+    // A run of `!` is counted, not recursed into: a line can hold thousands of them.
+    let flips = 0
+    while (this.a[this.i] === '!' && this.i + 1 < this.a.length) {
       this.i++
-      return !(yield* this.not())
+      flips++
     }
-    return yield* this.primary()
+    const v = yield* this.primary()
+    return flips % 2 === 1 ? !v : v
   }
 
+  /**
+   * A whole number, exactly. Past 2^53 a number cannot be held exactly, and two long numbers would round equal, so
+   * such a number is refused, as the shell's own sums refuse it.
+   */
   private number(text: string): number {
     if (!/^[ \t]*[+-]?[0-9]+[ \t]*$/.test(text)) throw new Bad(`'${text}' is not a whole number`)
-    return Number(text)
+    const n = Number(text)
+    if (!Number.isSafeInteger(n)) throw new Bad(`'${text.trim()}' is too large to be exact`)
+    return n
   }
 
   private *primary(): Task<boolean> {

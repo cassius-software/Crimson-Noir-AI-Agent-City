@@ -166,7 +166,9 @@ export function* usage(sys: Sys, text: string): Task<number> {
 /**
  * Runs `body` over each named file, opened to read, or over the ordinary input when no file is named or the name is
  * `-`. A file that cannot be opened is reported and skipped. The status: 0, or 1 when any file was skipped; a
- * refusal inside `body` (other than a closed pipe, which ends the program quietly) is reported and counts too.
+ * refusal inside `body` (other than a closed pipe, which ends the program quietly) is reported and counts too, named
+ * after the file being read: so `body` must throw a refused write to the output as something other than an OsError
+ * (the programs here wrap it), or the reader's file would take the blame for the writer's trouble.
  */
 export function* inputs(sys: Sys, name: string, paths: readonly string[], body: (fd: number, label: string) => Task<void>): Task<number> {
   let status = 0

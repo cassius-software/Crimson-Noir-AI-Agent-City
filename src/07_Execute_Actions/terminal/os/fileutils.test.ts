@@ -490,11 +490,10 @@ test('rm: removes files; a directory only with -r, and then everything in it', (
   k.sh('mkdir -p d/sub; echo x > d/f')
   assert.deepEqual(k.sh('rm -r d/f d/sub/; echo $?; ls d'), ['0'])
   assert.deepEqual(k.sh('rm d/f/x; echo $?'), ['!rm: d/f/x: no such file or directory', '1'])
-  // A name that ends in a slash is a directory's: the file system finds the file by it, but rm does not remove it.
+  // A name that ends in a slash is a directory's: the file system refuses it for a file, and the file stays. With
+  // -f that refusal is as quiet as a missing path.
   k.write('/tmp/notes', 'kept')
-  assert.deepEqual(k.sh('rm notes/; rm -f notes/; rm -rf notes//; echo $?'), [
-    '!rm: notes/: not a directory', '!rm: notes/: not a directory', '!rm: notes//: not a directory', '1',
-  ])
+  assert.deepEqual(k.sh('rm notes/; echo $?; rm -f notes/; rm -rf notes//; echo $?'), ['!rm: notes/: not a directory', '1', '0'])
   assert.equal(k.read('/tmp/notes'), 'kept')
 })
 
@@ -590,8 +589,8 @@ test('cp: a full file system is reported, and so is every other refusal, with st
   // A device that never ends is copied until there is no room.
   assert.deepEqual(k.sh('rm part; cp /dev/zero z; echo $?'), ['!cp: z: no space left on device', '1'])
   assert.deepEqual(k.bytes('/tmp/z'), new Uint8Array(65536))
-  // A file longer than any file there may be.
-  assert.deepEqual(k.sh('rm z half; cp /home/operator/huge toolarge; echo $?; rm toolarge'), ['!cp: toolarge: file too large', '1'])
+  // A file longer than the whole file system is out of space too, not a different refusal.
+  assert.deepEqual(k.sh('rm z half; cp /home/operator/huge toolarge; echo $?; rm toolarge'), ['!cp: toolarge: no space left on device', '1'])
   k.write('/tmp/a', 'alpha\n')
   k.sh('mkdir d')
   assert.deepEqual(k.sh('cp nosuch a d; echo $?; ls d'), ['!cp: nosuch: no such file or directory', '1', 'a'])
@@ -824,7 +823,7 @@ test('mv: when the copy to another file system fails, the source stays', () => {
   k.write('/home/operator/mid', noise(80_000))
   k.sh('mkdir tree; echo small > tree/a; cp big tree/b')
   // A file: nothing new is left where it was to go.
-  assert.deepEqual(k.sh('mv big /tmp/big; echo $?; ls -a /tmp'), ['!mv: /tmp/big: file too large', '1', '.  ..'])
+  assert.deepEqual(k.sh('mv big /tmp/big; echo $?; ls -a /tmp'), ['!mv: /tmp/big: no space left on device', '1', '.  ..'])
   assert.deepEqual(k.bytes('/home/operator/big'), big)
   k.write('/tmp/fill', noise(60_000))
   assert.deepEqual(k.sh('mv mid /tmp; echo $?; ls /tmp'), ['!mv: /tmp/mid: no space left on device', '1', 'fill'])
@@ -1426,7 +1425,7 @@ test('a refused write to the output is said once, and ends the program with stat
   assert.deepEqual(k.sh('rm made/f > /dev/full; rmdir nosuch > /dev/full; echo $?; ls made'), ['!rmdir: nosuch: no such file or directory', '1', 'h'])
   // A disk with no room left is the same refusal, from a real file.
   const small = boot(FILE_PROGRAMS, { tmpBytes: 1000 })
-  assert.deepEqual(small.sh('ls -lR / > /tmp/all; echo $?'), ['!ls: write error: file too large', '1'])
+  assert.deepEqual(small.sh('ls -lR / > /tmp/all; echo $?'), ['!ls: write error: no space left on device', '1'])
   small.write('/tmp/fill', new Uint8Array(700))
   assert.deepEqual(small.sh('find /bin /dev /etc > /tmp/some; echo $?'), ['!find: write error: no space left on device', '1'])
 })

@@ -16,7 +16,7 @@ import { EMPTY, concat } from './bytes.ts'
 import { OsError, refuse } from './errno.ts'
 import type { Cred, Driver, Entry, Kind, Stat, Usage } from './fs.ts'
 import { R, W, X, permits } from './fs.ts'
-import { fromParts, parts } from './path.ts'
+import { DEPTH_MAX, fromParts, parts } from './path.ts'
 import { io } from './task.ts'
 import type { Task } from './task.ts'
 
@@ -37,6 +37,14 @@ export const STICKY = 0o1000
 
 /** The most mounts at once. */
 export const MOUNTS_MAX = 32
+
+/**
+ * Whether a path asks for a directory by its last name: one that ends in `/`, `/.` or `/..`. Such a path never
+ * names a file, so `rm notes/` cannot remove the file `notes`, and `touch g/` cannot make one.
+ */
+function dirOnly(path: string): boolean {
+  return path.length > 1 && (path.endsWith('/') || path.endsWith('/.') || path.endsWith('/..'))
+}
 
 /** The most bytes `readFile` reads: a larger file is refused rather than held whole. */
 export const READ_FILE_MAX = 64 << 20
@@ -181,9 +189,11 @@ export class Vfs {
     return at
   }
 
-  /** The node a path names. */
+  /** The node a path names. A path that ends in `/` (or `/.`, `/..`) names a directory, or nothing. */
   *locate(path: string, cwd: string, cred: Cred): Task<Loc> {
-    return yield* this.walk(parts(path, cwd), cred)
+    const loc = yield* this.walk(parts(path, cwd), cred)
+    if (dirOnly(path) && (yield* io(loc.mount.driver.stat(loc.ino))).kind !== 'dir') refuse('ENOTDIR')
+    return loc
   }
 
   /** The directory that holds a path's last name, and that name; the root has no such thing. */
@@ -252,6 +262,8 @@ export class Vfs {
       if ((flags & O_CREATE) !== 0 && (flags & O_EXCL) !== 0) refuse('EEXIST')
     } catch (e) {
       if (!(e instanceof OsError) || e.errno !== 'ENOENT' || (flags & O_CREATE) === 0) throw e
+      // `name/` asks for a directory, and open never makes one.
+      if (dirOnly(path)) refuse('EISDIR')
       yield* this.changeable(dir, cred)
       ino = yield* io(d.create(dir.ino, name, 'file', mode & 0o777, cred))
       created = true
@@ -259,6 +271,7 @@ export class Vfs {
     const loc = this.cross(dir.mount, ino)
     const st = yield* io(loc.mount.driver.stat(loc.ino))
     if (st.kind === 'dir') refuse('EISDIR')
+    if (dirOnly(path)) refuse('ENOTDIR')
     const writes = (flags & O_WRITE) !== 0
     if (!created) {
       const want = ((flags & O_READ) !== 0 ? R : 0) | (writes ? W : 0)
@@ -309,7 +322,7 @@ export class Vfs {
     const ino = yield* this.step(dir, name, cred)
     if (this.covering.has(`${dir.mount.id}:${ino}`)) refuse('EBUSY', 'a mount point')
     const st = yield* io(d.stat(ino))
-    if (wantDir && st.kind !== 'dir') refuse('ENOTDIR')
+    if ((wantDir || dirOnly(path)) && st.kind !== 'dir') refuse('ENOTDIR')
     if (!wantDir && st.kind === 'dir') refuse('EISDIR')
     const dirStat = yield* this.changeable(dir, cred)
     yield* this.unstuck(dir, dirStat, ino, cred)
@@ -327,6 +340,7 @@ export class Vfs {
     const d = a.dir.mount.driver
     const ino = yield* this.step(a.dir, a.name, cred)
     if (this.covering.has(`${a.dir.mount.id}:${ino}`)) refuse('EBUSY', 'a mount point')
+    if ((dirOnly(from) || dirOnly(to)) && (yield* io(d.stat(ino))).kind !== 'dir') refuse('ENOTDIR')
     // A directory cannot move under itself: with no links, the two paths' own names tell.
     if (b.names.length > a.names.length && a.names.every((n, i) => b.names[i] === n)) refuse('EINVAL', 'a directory cannot move into itself')
     const fromPath = fromParts(a.names)
@@ -344,7 +358,28 @@ export class Vfs {
       if (this.covering.has(`${b.dir.mount.id}:${there}`)) refuse('EBUSY', 'a mount point')
       yield* this.unstuck(b.dir, toStat, there, cred)
     }
+    // Moving a tree deeper must not leave a path past the depth limit: nothing could reach it, or remove it, after.
+    if (b.names.length > a.names.length && (yield* this.deeper(d, ino, DEPTH_MAX - b.names.length))) {
+      refuse('ENAMETOOLONG', `a path is at most ${DEPTH_MAX} names deep`)
+    }
     yield* io(d.rename(a.dir.ino, a.name, b.dir.ino, b.name))
+  }
+
+  /** Whether the tree under node `ino` reaches more than `room` names below it. Stops looking past `room`. */
+  private *deeper(d: Driver, ino: number, room: number): Task<boolean> {
+    let level = [ino]
+    for (let depth = 0; level.length > 0; depth++) {
+      const next: number[] = []
+      for (const n of level) {
+        if ((yield* io(d.stat(n))).kind !== 'dir') continue
+        for (const e of yield* io(d.list(n))) {
+          if (depth + 1 > room) return true
+          next.push(e.ino)
+        }
+      }
+      level = next
+    }
+    return false
   }
 
   /** Changes the permission bits: the owner's right, and user 0's. */

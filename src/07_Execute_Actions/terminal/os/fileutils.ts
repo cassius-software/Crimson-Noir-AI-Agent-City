@@ -623,10 +623,9 @@ const rm: Program = function* (sys, argv) {
         yield* run.fail(path, "refusing to remove '.' or '..'")
         continue
       }
+      // A name that ends in a slash is a directory's name: the file system refuses it for a file (not a directory).
       const st = yield* sys.stat(path)
-      // A name that ends in a slash is a directory's name: the file system would find a file by it, but rm does not remove one.
-      if (st.kind !== 'dir' && path.endsWith('/')) yield* run.fail(path, 'not a directory')
-      else if (st.kind !== 'dir') yield* sys.unlink(path)
+      if (st.kind !== 'dir') yield* sys.unlink(path)
       else if (recursive) yield* removeTree(run, path, 0)
       else yield* run.fail(path, 'is a directory')
     } catch (e) {
@@ -1771,11 +1770,12 @@ OPTIONS
 NOTES
     The root directory / is never removed, and neither is a path that
     ends in . or .. A name that ends in a slash is a directory's name:
-    rm notes/ refuses when notes is a file. A place where another file
-    system is attached (a mount point, such as /tmp) cannot be removed
-    either: with -r what is inside it is removed first, and then the
-    refusal is reported. Read-only places such as /bin refuse every
-    removal.
+    rm notes/ refuses when notes is a file, and keeps it (with -f it
+    says nothing, as for a path that is not there). A place where
+    another file system is attached (a mount point, such as /tmp)
+    cannot be removed either: with -r what is inside it is removed
+    first, and then the refusal is reported. Read-only places such as
+    /bin refuse every removal.
 
 STATUS
     0, or 1 when something could not be removed (the rest still is).

@@ -139,9 +139,10 @@ export class MemFs implements Driver {
   /** Makes room for a file of `size` bytes, charging the growth; refuses without changing anything. */
   private grow(n: Node, size: number): void {
     if (size <= n.size) return
-    if (size > this.opts.maxFile) refuse('EFBIG')
     const delta = size - n.size
+    // Space first: on a file system whose largest file is its whole size, a file too big for it is out of space.
     if (this.used + delta > this.opts.capacity) refuse('ENOSPC')
+    if (size > this.opts.maxFile) refuse('EFBIG')
     if (size > n.data.length) {
       let room = Math.max(size, Math.min(n.data.length * 2, this.opts.maxFile), 64)
       let bigger: Uint8Array

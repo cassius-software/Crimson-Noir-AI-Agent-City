@@ -380,7 +380,9 @@ export class Kernel {
   /**
    * Turns a task into another program: it keeps its number, its descriptors and its directory, and takes the new
    * program's name and arguments (and environment, when one is given). The program is looked up first, so a name
-   * that runs nothing is refused while the task is still what it was. The new program's status.
+   * that runs nothing is refused while the task is still what it was. The new program's status. Once it runs, a
+   * refusal it does not catch ends the task the way it would end any task (a closed pipe quietly, with 141), so the
+   * program that called exec never mistakes it for a failure to start.
    */
   *exec(proc: Proc, argv: readonly string[], env?: ReadonlyMap<string, string>): Task<number> {
     const found = yield* this.load(env === undefined ? proc : { ...proc, env: new Map(env) }, argv)
@@ -390,7 +392,14 @@ export class Kernel {
     }
     proc.argv = found.argv
     proc.name = argv[0].slice(argv[0].lastIndexOf('/') + 1)
-    return yield* found.program(new Sys(this, proc), found.argv)
+    try {
+      return yield* found.program(new Sys(this, proc), found.argv)
+    } catch (e) {
+      if (!(e instanceof OsError)) throw e
+      if (e.errno === 'EPIPE') throw new Exit(141)
+      this.complain(proc, `${proc.name}: ${e.message}`)
+      throw new Exit(1)
+    }
   }
 
   /** Runs tasks until `steps` calls are spent, the clock reaches `deadline`, or none can go on. True when some still could. */
