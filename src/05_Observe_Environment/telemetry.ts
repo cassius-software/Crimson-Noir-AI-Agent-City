@@ -89,6 +89,22 @@ export interface HudPing {
 }
 
 /**
+ * The first walk's marker as the HUD draws it (engine.ts setBeacon, set by the page while a stage sends the visitor to
+ * a place: the nearest parked car, the nearest workplace's doorway): plain data, in metres, plus its place on the screen.
+ */
+export interface HudBeacon {
+  /** What it marks, in a word or two ('Parked car', 'Car', 'Workplace door'). */
+  label: string
+  x: number
+  z: number
+  /** Metres from the head now. */
+  distance: number
+  /** Where it falls on the screen (0..1 across and down) while it is in front of the camera; NaN when it is not. */
+  sx: number
+  sy: number
+}
+
+/**
  * The operator's progression as the HUD shows it: finished strings (07_Execute_Actions/progress.ts hudProgress), so the
  * HUD stays a view of the snapshot and every word stays where progress.test.ts can read it.
  */
@@ -300,6 +316,8 @@ export interface SipocSnapshot {
      * none stands.
      */
     pings?: HudPing[]
+    /** The first walk's marker (HudBeacon): a chip over the world while it is on screen and a ring on the minimap. Absent when none is set. */
+    beacon?: HudBeacon
     /**
      * The network session (10_Network/netClient.ts, the engine's net seam): the client's state, how many other players'
      * poses the page draws, and how many of this page's inputs the client refused since the session began (over its
