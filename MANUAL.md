@@ -1036,12 +1036,12 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   sentence and write nothing. While the pack is on its way the pill reads **words soon**, **words 40%** (of the whole
   pack), **words starting**; then **words on-device**, and each sentence it understood shows on the pill in quotes
   for a few seconds, so you can see what it took you to say. On a phone or any compact window the microphone is a
-  badge on the minimap, so the same words stand in a small chip under the minimap; a screen reader is told them too.
-  While the pack is on its way, a browser with its own on-device recogniser reads in the meantime, and stops once the
-  page's is ready. The page does not download 41 MB unasked on mobile data, a 2G link or with the browser's data
-  saver on, nor on a phone or tablet whose browser does not say what it is connected to (Safari and Firefox say
-  nothing, so on an iPhone this is every time until you press): the pill reads **words waiting**, a toast says why
-  once, and muting and unmuting the microphone (or `mic on`) gets it. A mute stops a download under way, and the next
+  badge on the minimap, so the same words stand in a small chip beside it, on the minimap's lower edge; a screen
+  reader is told each sentence once. While the pack is on its way, a browser whose own on-device recogniser needs
+  nothing installed reads in the meantime, and stops once the page's is ready. The page does not download 41 MB
+  unasked on mobile data, a 2G link or with the browser's data saver on, nor on a phone or tablet whose browser does
+  not say what it is connected to (Safari and Firefox say nothing, so on an iPhone this is every time until you
+  press): the pill reads **words waiting**, a toast says why once, and muting and unmuting the microphone (or `mic on`) gets it. A mute stops a download under way, and the next
   open fetches only what is not kept yet. A site that does not answer in 20 s, or a download that stalls for 30 s,
   counts as a failed try. If it cannot be had, the pill reads **no words** with the reason in its tooltip, and speech
   starting tries again a while later (a few times, further apart; the count starts again once it has read something).

@@ -34,7 +34,8 @@ export const UTTERANCE = Object.freeze({
   hang: 0.35,
   /** Seconds of speech after which an utterance is cut and handed over while the person still speaks (the rest starts
    *  the next): the recogniser reads short sentences best. A piece is at most the lead and this (12.4 s), and the page
-   *  never holds more. Full while the detector already says the room, an utterance ends as usual rather than cut. */
+   *  never holds more. Full inside the hang, it is cut too, and the hang runs on in the next piece: speech that returns
+   *  in time stays in the same sentence, and if none does the closing piece is only the rest of the hang. */
   max: 12,
   /** Seconds the detector must have said speech, under which what was caught is dropped. The detector holds speech for
    *  about a quarter of a second after the last sound, so this asks for some 0.15 s of sound itself: a click or a chair
@@ -190,8 +191,8 @@ export class UtteranceTap {
     this.row = phase * (2 * this.half + 1)
   }
 
-  /** One output sample: into the lead always, and into the open utterance (ending it once the hang ran out, or at `max`:
-   *  cut while the person speaks, ended as usual if the detector already says the room). */
+  /** One output sample: into the lead always, and into the open utterance (ending it once the hang ran out, or cutting
+   *  it at `max`; a cut inside the hang carries what of the hang has run into the next piece). */
   sample(v: number, speech: boolean): Float32Array | null {
     const lead = this.lead
     lead[this.leadAt] = v
@@ -200,7 +201,12 @@ export class UtteranceTap {
     if (!this.open) return null
     this.kept[this.fill++] = v
     if (speech) { this.quiet = 0; this.voiced++ } else this.quiet++
-    if (this.fill >= this.kept.length) return this.finish(speech)
+    if (this.fill >= this.kept.length) {
+      const quiet = this.quiet
+      const out = this.finish(true)
+      this.quiet = quiet
+      return out
+    }
     if (this.quiet >= this.hangSamples) return this.finish(false)
     return null
   }

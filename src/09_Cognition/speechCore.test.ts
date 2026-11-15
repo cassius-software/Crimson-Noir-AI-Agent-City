@@ -101,6 +101,12 @@ test('loopCut: a tail looping until the limit comes back to one copy, even with 
   assert.equal(loopCut([7, 1, 2, 1, 2, 1, 2, 1, 2, 1]), 3)
   assert.equal(loopCut([4, 9, 9, 9, 9], 3, 0), 2, 'four copies are three too many')
   assert.equal(loopCut([4, 9, 9, 6], 3, 0), -1, 'two copies are a stutter')
+  // What follows a repeat and is not the start of it is a real ending, kept whole.
+  assert.equal(loopCut([7, 9, 9, 9, 5, 6]), -1)
+  assert.equal(loopCut([7, 9, 9, 9, 5, 6, 8, 4, 3]), -1)
+  assert.equal(loopCut([50, 1, 0, 0, 0, 60, 61, 60, 61, 60, 61]), 7, '"1000" stays whole; the looping pair after it is cut to one copy')
+  // "No, no, no, no." as the model's own tokens (No , no , no , no .): the full stop is not part of the run.
+  assert.equal(loopCut([1939, 29892, 694, 29892, 694, 29892, 694, 29889]), -1)
   assert.equal(loopCut([1, 2, 3, 4, 5, 6]), -1)
   assert.equal(loopCut([5, 5]), -1)
   assert.equal(loopCut([]), -1)
@@ -157,6 +163,10 @@ test('the loop stops at the length a sentence of that duration cannot pass, a re
   const said = fake([4, 9, 9, 9, 9, 6])
   const kept = await readTokens(said.rt, seconds(5))
   assert.deepEqual([kept.tokens, kept.cut], [[4, 9, 9, 9, 9, 6], false])
+  // The limit counts the length it is told (the whole utterance), not only the samples read.
+  const told = fake(Array.from({ length: 100 }, (_, i) => 3 + (i % 7)))
+  const longer = await readTokens(told.rt, seconds(0.5), SPEECH_SHAPE, 3)
+  assert.equal(longer.tokens.length, Math.trunc(3 * SPEECH_LIMITS.tokensPerSecond))
   const nothing = await readTokens(fake([]).rt, seconds(1))
   assert.deepEqual([nothing.tokens, nothing.sure, nothing.cut], [[], 0, false])
 })
@@ -213,6 +223,10 @@ test('an utterance: too short or too quiet is not read; unsure or wordless gives
   assert.equal(fed.length, Math.round((0.4 + 2 * SPEECH_LIMITS.margin) * SPEECH_SHAPE.rate), 'the word and the margin either side')
   assert.equal(fed[Math.round(SPEECH_LIMITS.margin * SPEECH_SHAPE.rate)], Math.fround(0.2), 'the word starts after the margin')
   assert.ok(Math.abs(word.r.seconds - 2) < 1e-9, 'the utterance\'s own length is reported')
+  // A fast "no, no, no, no" (8 tokens in the 0.7 s read) in a 2 s utterance: the limit is the utterance's (13), so the
+  // decoder reaches its own end mark and nothing is cut.
+  const fast = await run([3, 4, 5, 4, 5, 4, 5, 4], room)
+  assert.deepEqual([fast.r.cut, fast.r.tokens.length], [false, 8])
   assert.ok(Math.abs(long.r.seconds - (SPEECH_LIMITS.maxSeconds + 5)) < 1e-9, 'and its true length reported')
 })
 
@@ -240,6 +254,24 @@ test('voicedSpan: from a margin before the first loud frame to a margin after th
   click.fill(0.9, Math.round(1.0 * rate), Math.round(1.0 * rate) + 320)
   const c = voicedSpan(click, rate)
   assert.equal(c.byteOffset / 4, Math.round(0.35 * rate))
+  // A loud sound of 80 ms or more (a knock, a cough) after quiet words, in a quiet room: the words are not dropped.
+  const knock = new Float32Array(2 * rate).fill(0.0005)
+  knock.fill(0.045, Math.round(0.4 * rate), Math.round(1.0 * rate))
+  knock.fill(0.6, Math.round(1.4 * rate), Math.round(1.48 * rate))
+  const k = voicedSpan(knock, rate)
+  assert.ok(k.byteOffset / 4 <= Math.round(0.4 * rate), `starts at ${k.byteOffset / 4 / rate} s, before the words`)
+  assert.ok(k.byteOffset / 4 + k.length >= Math.round(1.48 * rate), 'and runs past the knock')
+  // A cough before the words, 200 ms: the same.
+  const cough = new Float32Array(3 * rate).fill(0.001)
+  cough.fill(0.9, Math.round(0.3 * rate), Math.round(0.5 * rate))
+  cough.fill(0.05, Math.round(1.2 * rate), Math.round(2.0 * rate))
+  const g = voicedSpan(cough, rate)
+  assert.ok(g.byteOffset / 4 + g.length >= Math.round(2.0 * rate), 'the words after the cough are kept')
+  // Speech alone in a quiet room is still cut to the words and the margin.
+  const plain = new Float32Array(2 * rate).fill(0.0005)
+  plain.fill(0.1, Math.round(0.8 * rate), Math.round(1.2 * rate))
+  const q = voicedSpan(plain, rate)
+  assert.equal(q.length, Math.round((0.4 + 2 * SPEECH_LIMITS.margin) * rate))
 })
 
 test('saysSomething and peak', () => {

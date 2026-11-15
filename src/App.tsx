@@ -25,7 +25,7 @@ import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import type { LookBridge, ModelBridge, NetBridge, PendingAct, TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { consoleBridge } from './07_Execute_Actions/terminal/consoleBridge.ts'
-import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
+import { hudLine, onDeviceReady, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { HUSHED_DETAIL, isOpen as micIsOpen, Microphone, voiceStatus, type MicUtterance } from './04_Connect_Hardware/microphone.ts'
 import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
 import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
@@ -1432,7 +1432,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
     let unlisten: (() => void) | null = null
     // The sentence the page's own recogniser last understood, and when: the pill shows it for SAID_MS.
-    const said = { text: '', at: Number.NEGATIVE_INFINITY }
+    const said = { text: '', at: Number.NEGATIVE_INFINITY, n: 0 }
     /** Stops the page's keeper cueing this city's checks (its one listener), and the recruiter's events earning. */
     let uncheck: (() => void) | null = null
     let unearn: (() => void) | null = null
@@ -1478,7 +1478,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // The screen reader's line (announcer.ts): the district, a vehicle beside you, a seat taken or left, a toast.
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
-          s.supplier.voice = { phase: mic.phase, detail: mic.silent ? mic.silentDetail : mic.hushed ? HUSHED_DETAIL : mic.state.detail, speaking: speaker.speaking, path: mic.path, words: (recruiter !== null && recruiter.mic.state === 'listening') || (mic.hearing && PAGE_SPEECH().ready), silent: mic.silent, hushed: mic.hushed, note: speechNote(PAGE_SPEECH().state), speech: PAGE_SPEECH().word(), said: performance.now() - said.at < SAID_MS ? said.text : '' }
+          s.supplier.voice = { phase: mic.phase, detail: mic.silent ? mic.silentDetail : mic.hushed ? HUSHED_DETAIL : mic.state.detail, speaking: speaker.speaking, path: mic.path, words: (recruiter !== null && recruiter.mic.state === 'listening') || (mic.hearing && PAGE_SPEECH().ready), silent: mic.silent, hushed: mic.hushed, note: speechNote(PAGE_SPEECH().state), speech: PAGE_SPEECH().word(), said: performance.now() - said.at < SAID_MS ? said.text : '', heard: said.n, heardText: said.text }
           // The team at work (08_Swarm/team.ts; Sloane's, or the first walk's swarm): its lanes for the Concierge, its one line for the MIC chip.
           if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
@@ -1661,8 +1661,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const asked = !unasked
           unasked = false
           if (open) void speech.start(asked)
-          // The browser's own reads until the page's is ready (it is stopped then), so nothing said meanwhile is lost.
-          if (open && !live && words() && !speech.ready) void r.listen()
+          // The browser's own reads until the page's is ready (it is stopped then), so nothing said meanwhile is lost:
+          // where the page's own is not to be had, always; while it is on its way, only if the browser's needs nothing
+          // installed first (else its "run recruit install" line would stand for a model that will not be needed).
+          if (open && !live && words() && !speech.ready) {
+            if (!speech.claims) void r.listen()
+            else void onDeviceReady().then((ok) => { if (ok && mic.open && speech.claims && !speech.ready && !browserLive()) void r.listen() })
+          }
         }
         mic.addEventListener('change', onMicChange)
         const onRecruiterMic = (ev: Event) => {
@@ -1719,6 +1724,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const h = (ev as CustomEvent<Heard>).detail
           said.text = h.text
           said.at = performance.now()
+          said.n++
           vouched = true
           try { void r.hear(h.text) } finally { vouched = false }
         }
@@ -2124,11 +2130,16 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
               ...voiceStatus(mic, speaker.speaking, words()
                 ? r.mic.state === 'listening' ? "the browser's on-device recognition listening (recruitment.ts): a skill asked for, or \"Sloane, ...\" for a goal" : "the browser's on-device recognition: available (the page's own reads first; recruit listen asks for the browser's)"
                 : "the browser's on-device recognition: none in this browser (the page's own reads where its speech pack is served)"),
-              `${speech.word()}${speech.ready ? ` · ${speech.counts.heard} sentence${speech.counts.heard === 1 ? '' : 's'} understood` : speech.claims || speech.phase === 'absent' ? '' : ' · mic on asks for it again'}`,
+              `${speech.word()}${speech.ready ? ` · ${speech.counts.heard} sentence${speech.counts.heard === 1 ? '' : 's'} understood` : speech.claims || speech.phase === 'absent' || !speech.served ? '' : ' · mic on asks for it again'}`,
             ],
             // The visitor's own ask also asks again for the speech pack (past a data saver's wait or an earlier failure),
-            // once the microphone is open: a blocked or missing device fetches nothing.
-            on: (on: boolean) => (on ? mic.listen().then((st) => { if (micIsOpen(st.phase)) void speech.start(true); return `${st.phase}${st.detail ? ` · ${st.detail}` : ''}` }) : (mic.mute(), 'muted: the device is released')),
+            // once the microphone is open: a blocked or missing device fetches nothing. An open still under way (the one
+            // the city makes as it starts) becomes the visitor's ask too, so the pack is not held when it settles.
+            on: (on: boolean) => {
+              if (!on) { mic.mute(); return 'muted: the device is released' }
+              unasked = false
+              return mic.listen().then((st) => { if (micIsOpen(st.phase)) void speech.start(true); return `${st.phase}${st.detail ? ` · ${st.detail}` : ''}` })
+            },
           }),
           access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
           goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),

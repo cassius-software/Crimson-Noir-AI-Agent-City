@@ -200,7 +200,16 @@ export const SPEECH_CACHE = 'speech-pack:'
 export function speechStore(caches: CachesLike | null | undefined, pin: SpeechPackPin = SPEECH_PACK, respond: (bytes: ArrayBuffer) => Response = (bytes) => new Response(bytes, { headers: { 'content-type': 'application/octet-stream' } })): SpeechStore {
   const name = `${SPEECH_CACHE}${pin.id}`
   const key = (f: SpeechFile): string => `${SPEECH_DIR}${f.file}?sha256=${f.sha256}`
-  let swept = false
+  // The sweep of older packs, once, awaited by every put (the four files are put at once: none goes in before the
+  // room is made); a sweep that fails leaves the put to try anyway.
+  let sweep: Promise<void> | null = null
+  const sweepOnce = (c: CachesLike): Promise<void> => (sweep ??= (async () => {
+    try {
+      for (const other of await c.keys()) if (other.startsWith(SPEECH_CACHE) && other !== name) await c.delete(other)
+    } catch {
+      // Storage refused the sweep: the put below may still find room.
+    }
+  })())
   return {
     async get(f) {
       if (!caches) return null
@@ -215,12 +224,9 @@ export function speechStore(caches: CachesLike | null | undefined, pin: SpeechPa
     },
     async put(f, bytes) {
       if (!caches) return
+      // An older pin's pack goes first: it is what would leave no room for this one.
+      await sweepOnce(caches)
       try {
-        // An older pin's pack goes first: it is what would leave no room for this one.
-        if (!swept) {
-          swept = true
-          for (const other of await caches.keys()) if (other.startsWith(SPEECH_CACHE) && other !== name) await caches.delete(other)
-        }
         await (await caches.open(name)).put(key(f), respond(bytes))
       } catch {
         // No room, or storage refused: the pack is fetched again next visit.

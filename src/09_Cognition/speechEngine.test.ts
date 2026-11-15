@@ -21,7 +21,7 @@ import type { Link } from './siteAuto.ts'
 import type { SiteFetch } from './siteModel.ts'
 import { holdChecked, type Reading } from './speechCore.ts'
 import {
-  ASK_MS, JOIN_MS, LOAD_MS, READ_MS, RETRY_MS, STALL_MS, SpeechEngine, TRIES, WAITING_MAX, speechNote, speechWord,
+  ASK_MS, DEAD_LOADS, JOIN_MS, LOAD_MS, READ_MS, RETRY_MS, STALL_MS, SpeechEngine, TRIES, WAITING_MAX, speechNote, speechWord,
   type Heard, type SpeechPhase, type SpeechReply, type SpeechRequest, type SpeechState, type SpeechWorkerLike,
 } from './speechEngine.ts'
 import { SPEECH_MANIFEST, SPEECH_PACK, speechManifestText, type SpeechFile, type SpeechPackPin, type SpeechRole, type SpeechStore } from './speechPack.ts'
@@ -334,11 +334,12 @@ test('where the browser says nothing of its connection, the page\'s own word dec
   }
 })
 
-test('no pack on this site is final for the visit: the page opened as a file, a 404, or another pack\'s manifest', async () => {
+test('no pack on this site is final for the visit: a copy not served with one (a file, an app), a 404, or another pack\'s manifest', async () => {
   const file = rig()
   file.opts.served = false
+  assert.equal(file.engine.served, false)
   const s = await file.engine.start()
-  assert.deepEqual([s.phase, s.detail], ['absent', 'it was opened as a file, not served by a site'])
+  assert.deepEqual([s.phase, s.detail], ['absent', 'only the web copy has one'])
   assert.deepEqual([file.asked, file.ops], [[], []], 'nothing is asked or read')
   for (const manifest of [() => new Response('nope', { status: 404 }), () => new Response(speechManifestText(SPEECH_PACK)), () => new Response('<html></html>')]) {
     const r = rig()
@@ -371,7 +372,7 @@ test('a site that could not say just now is asked again later, no sooner than af
   assert.equal((await r.engine.start()).phase, 'ready')
 })
 
-test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the visitor\'s ask tries; a reading starts the count again', async () => {
+test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the visitor\'s ask tries; a load starts the count again, and loads that die unread stop it', async () => {
   const r = rig()
   r.serve.file = (name) => (name === 'enc.onnx' ? new Response('gone', { status: 500 }) : res(r.data[name]))
   const tries = (): number => r.asked.filter((a) => a === 'speech/manifest.json').length
@@ -380,6 +381,7 @@ test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the 
   assert.equal(r.engine.word(), `words: not available (${s.detail})`)
   assert.equal(speechNote(s), 'no words')
   assert.equal(r.workers.length, 0, 'no worker is made for a pack that did not arrive')
+  assert.equal(r.time.pending(), 0, 'no timer is left behind')
   for (const [i, wait] of RETRY_MS.entries()) {
     r.time.advance(wait - 1)
     await r.engine.start()
@@ -402,22 +404,31 @@ test('a failed try is held off 15 s, then 60 s, then 5 min; after four only the 
   const last = r.asked.slice(before)
   assert.ok(last.includes('speech/enc.onnx') && last.length <= 5)
   for (const f of r.pin.files) assert.deepEqual(r.kept.get(f.role), r.data[f.file])
-  // Ready is not yet working: a worker that dies before it reads anything leaves the count where it was.
-  r.workers.at(-1)!.onerror?.({ message: 'out of memory' })
-  r.time.advance(24 * 3_600_000)
-  assert.equal((await r.engine.start()).phase, 'failed', 'still spent: a worker that loads and dies is not restarted forever')
-  assert.equal((await r.engine.start(true)).phase, 'ready')
-  // It reads something: the count begins again, and one crash later the hold-off is the first one.
-  const w = r.workers.at(-1)!
-  r.engine.read(samples())
-  w.answer(w.reads[0].id, 'hello')
-  r.workers.at(-1)!.onerror?.({ message: 'out of memory' })
+  // It loaded: the count of failed tries starts again, so a crash is held off only the first time's 15 s.
+  const dies = (): void => { r.workers.at(-1)!.onerror?.({ message: 'out of memory' }) }
+  dies()
   assert.deepEqual([r.engine.phase, r.engine.state.detail], ['failed', 'the recogniser stopped (out of memory)'])
   r.time.advance(RETRY_MS[0] - 1)
   await r.engine.start()
   assert.equal(r.engine.phase, 'failed')
   r.time.advance(1)
   assert.equal((await r.engine.start()).phase, 'ready', 'a new worker, from the keep')
+  // A second load whose worker dies before it reads anything: the visit does not load it again by itself.
+  assert.equal(DEAD_LOADS, 2)
+  dies()
+  r.time.advance(24 * 3_600_000)
+  assert.equal((await r.engine.start()).phase, 'failed', 'a worker that loads and dies is not restarted for ever')
+  assert.equal((await r.engine.start(true)).phase, 'ready', 'the visitor\'s ask still loads it')
+  // It reads something: the count of dead loads begins again, and one crash later the hold-off is the first one.
+  const w = r.workers.at(-1)!
+  r.engine.read(samples())
+  w.answer(w.reads[0].id, 'hello')
+  dies()
+  r.time.advance(RETRY_MS[0] - 1)
+  await r.engine.start()
+  assert.equal(r.engine.phase, 'failed')
+  r.time.advance(1)
+  assert.equal((await r.engine.start()).phase, 'ready')
   assert.equal(r.asked.length, before + last.length, 'and nothing asked of the network')
 })
 
@@ -677,6 +688,61 @@ test('speech that outruns the device: at most three wait, and the oldest waiting
   assert.deepEqual(w.reads.map((m) => m.samples.length), [all[0], all[3], all[4], all[5]].map((s) => s.length), 'the newest are read, in order')
   assert.deepEqual(r.heard.map((h) => h.text), ['s1', 's2', 's3', 's4'])
   assert.equal(r.engine.counts.late, 2)
+})
+
+test('two files fetched again at once: the load\'s timer waits for the last of them, a mute stops them, and no timer is left', async () => {
+  const r = rig()
+  const corrupt = (name: string): Uint8Array => r.data[name].map((b, i) => (i === 1 ? b ^ 1 : b))
+  let release: (() => void) | null = null
+  r.serve.file = (name, fresh) => {
+    if (name !== 'enc.onnx' && name !== 'dec.onnx') return res(r.data[name])
+    if (!fresh) return res(corrupt(name))
+    // The encoder comes again at once; the decoder trickles for longer than LOAD_MS, well inside STALL_MS each time.
+    if (name === 'enc.onnx') return res(r.data[name])
+    const b = r.data[name]
+    let at = 0
+    return new Response(new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (at >= b.length) { c.close(); return }
+        await new Promise<void>((go) => { release = go })
+        c.enqueue(b.slice(at, at + 50))
+        at += 50
+      },
+    }))
+  }
+  const p = r.engine.start()
+  await settle()
+  assert.deepEqual([r.engine.phase, r.engine.fetching], ['starting', true], 'a file coming again is a download')
+  let waited = 0
+  for (let i = 0; i < 20 && r.engine.phase !== 'ready' && r.engine.phase !== 'failed'; i++) {
+    await settle()
+    r.time.advance(STALL_MS * 2 / 3)
+    waited += STALL_MS * 2 / 3
+    const go = release as (() => void) | null
+    release = null
+    go?.()
+  }
+  const s = await p
+  assert.ok(waited > LOAD_MS, `${waited} ms of download`)
+  assert.deepEqual([s.phase, s.detail], ['ready', 'Tiny'], 'the encoder\'s return did not start the timer while the decoder was still coming')
+  assert.deepEqual([r.engine.fetching, r.time.pending()], [false, 0])
+  assert.equal(r.workers[0].loads.length, 3, 'the four files, then each one fetched again')
+  // A mute while a file is coming again stops that download (App.tsx stops the engine when it is fetching).
+  const q = rig()
+  let cancelled = false
+  q.serve.file = (name, fresh) => {
+    if (name !== 'dec.onnx') return res(q.data[name])
+    if (!fresh) return res(corrupt(name).slice())
+    return new Response(new ReadableStream<Uint8Array>({ pull: () => new Promise<void>(() => undefined), cancel: () => { cancelled = true } }))
+  }
+  const t = q.engine.start()
+  await settle()
+  assert.equal(q.engine.fetching, true)
+  q.engine.stop()
+  assert.equal((await t).phase, 'off')
+  await settle()
+  assert.ok(cancelled, 'the download was cancelled')
+  assert.deepEqual([q.engine.fetching, q.time.pending()], [false, 0])
 })
 
 test('a worker that stops answering a reading is taken for hung after 20 s and four times the speech, ended, and replaced on the next start', async () => {

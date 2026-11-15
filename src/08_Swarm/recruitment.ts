@@ -144,6 +144,27 @@ const realClock: Clock = {
 const LOCAL: LocalOptions = { langs: [SPEECH_LANG], processLocally: true }
 const USE_THE_COMMAND = 'type recruit <skill> in the console instead'
 
+/**
+ * Whether the browser's own on-device recogniser could listen now with nothing to install or download: its own check
+ * says 'available'. False where it has none, cannot promise on-device recognition, has no check, says anything else,
+ * fails, or does not answer within `wait`. For a stand-in that is only worth starting if it is ready (App.tsx: while
+ * the page's own recogniser is on its way, a browser that would first need its model installed is not asked, so no
+ * "run recruit install" line appears for a model that will not be needed). Never rejects.
+ */
+export async function onDeviceReady(env: SpeechEnv = speechEnv(), wait: number = AVAILABLE_WAIT_MS, clock: Clock = realClock): Promise<boolean> {
+  const R = env.Recognition
+  if (!R || !('processLocally' in R.prototype) || typeof R.available !== 'function') return false
+  let timer: unknown = null
+  try {
+    const late = new Promise<string>((resolve) => { timer = clock.setTimeout(() => resolve(''), wait) })
+    return (await Promise.race([R.available(LOCAL), late])) === 'available'
+  } catch {
+    return false
+  } finally {
+    if (timer !== null) clock.clearTimeout(timer)
+  }
+}
+
 interface Pending { resolve: (o: RecruitOutcome) => void; skill: Skill; agent: number; states: number }
 interface PendingRally { resolve: (o: RallyOutcome) => void; x: number; z: number; states: number }
 

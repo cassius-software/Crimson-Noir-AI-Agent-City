@@ -119,6 +119,9 @@ export const LOAD_MS = 120_000
 export const RETRY_MS: readonly number[] = Object.freeze([15_000, 60_000, 300_000])
 /** Tries a visit gets by itself; past them only a forced start() (the visitor's own ask) tries again. */
 export const TRIES = 4
+/** Loads that ended with a worker that died before it read anything: past these, only a forced start() loads it again
+ *  (a device where the model loads and then cannot run is not made to download and load it over and over). */
+export const DEAD_LOADS = 2
 /** A sentence cut at the microphone's cap waits this long for its rest before it is passed on alone. */
 export const JOIN_MS = 15_000
 /** How long the site may take to answer for the manifest, and how long a download may go without a byte, before the
@@ -174,9 +177,14 @@ export class SpeechEngine extends EventTarget {
   /** Bumped by every start and stop: a start that awaited the site does nothing if it changed meanwhile. */
   #generation = 0
   #abort: AbortController | null = null
-  /** Failed tries this visit, and when the last one ended. */
+  /** Failed tries since the recogniser last loaded, and when the last one ended. */
   #fails = 0
   #failedAt = -Infinity
+  /** Loads this visit whose worker died before it read anything, and whether the running one has read something. */
+  #dead = 0
+  #readSome = false
+  /** Pack files being fetched again for the worker (a `bad` one), while it is starting. */
+  #refetching = 0
   /** Utterances waiting to be read (`after`: the one before it, which ended a sentence, was dropped as late, so what is
    *  held of a cut sentence goes on alone first), and the one being read (its id, its length, its watchdog). */
   #waiting: { samples: Float32Array; cut: boolean; after?: boolean }[] = []
@@ -207,8 +215,11 @@ export class SpeechEngine extends EventTarget {
   get claims(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || this.#phase === 'starting' || this.#phase === 'ready' }
   /** Waiting only because the connection says not to download unasked (mobile data, a data saver): a forced start() gets it. */
   get held(): boolean { return this.#phase === 'waiting' && this.#linkHeld }
-  /** Asking the site or downloading the pack: what a mute stops (stop()), since the visitor's microphone is no longer open. */
-  get fetching(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' }
+  /** Asking the site or downloading the pack (or a file of it again, while starting): what a mute stops (stop()), since
+   *  the visitor's microphone is no longer open. */
+  get fetching(): boolean { return this.#phase === 'checking' || this.#phase === 'getting' || (this.#phase === 'starting' && this.#refetching > 0) }
+  /** Whether this copy of the page can have a pack at all (it was served by a site with the web copy's files). */
+  get served(): boolean { return this.#d.served() }
   /** Why the connection says not to download unasked, or null. */
   #hold(): string | null {
     const link = this.#d.link?.() ?? null
@@ -229,12 +240,12 @@ export class SpeechEngine extends EventTarget {
     if (this.#disposed || this.claims) return this.state
     if (this.#phase === 'absent') return this.state
     if (!force) {
-      if (this.#fails >= TRIES) return this.state
+      if (this.#fails >= TRIES || this.#dead >= DEAD_LOADS) return this.state
       if (this.#fails > 0 && this.#now() - this.#failedAt < RETRY_MS[Math.min(this.#fails, RETRY_MS.length) - 1]) return this.state
     }
     // Still held by the connection, and not the visitor's own ask: nothing has changed, so nothing is read or said again.
     if (!force && this.held && this.#hold() !== null) return this.state
-    if (!this.#d.served()) return this.#set('absent', 'it was opened as a file, not served by a site')
+    if (!this.#d.served()) return this.#set('absent', 'only the web copy has one')
     const generation = ++this.#generation
     const abort = new AbortController()
     this.#abort = abort
@@ -278,7 +289,10 @@ export class SpeechEngine extends EventTarget {
       this.#set('getting')
       let stalled = false
       let quiet: unknown = null
+      // Once the download is over (done, failed or stopped), a late byte count sets no new watch.
+      let over = false
       const watch = (): void => {
+        if (over || abort.signal.aborted) return
         if (quiet !== null) this.#clearTimeout(quiet)
         quiet = this.#setTimeout(() => { stalled = true; abort.abort() }, STALL_MS)
       }
@@ -297,12 +311,14 @@ export class SpeechEngine extends EventTarget {
           kept.set(f.role, bytes)
         }))
       } catch (e) {
+        over = true
         abort.abort()
         if (quiet !== null) this.#clearTimeout(quiet)
         if (!mine()) return this.state
         this.#failed()
         return this.#set('failed', stalled ? `the download stalled: nothing arrived for ${STALL_MS / 1000} s` : say(e))
       }
+      over = true
       if (quiet !== null) this.#clearTimeout(quiet)
     }
     const files = this.#pin.files.map((f) => ({ f, bytes: kept.get(f.role)! }))
@@ -323,8 +339,10 @@ export class SpeechEngine extends EventTarget {
       return this.#set('failed', say(e))
     }
     if (!mine()) return this.state
-    // The count of tries starts again only once it has read something (#reply): a worker that loads and then dies at
-    // every reading is not restarted forever.
+    // It loads here: the count of failed tries starts again. A worker that then dies before it reads anything is
+    // counted apart (#crashed), so one that loads and dies every time is not restarted for ever.
+    this.#fails = 0
+    this.#readSome = false
     return this.#set('ready', this.#pin.name)
   }
 
@@ -344,10 +362,14 @@ export class SpeechEngine extends EventTarget {
         return
       }
       this.#worker = worker
+      this.#refetching = 0
       const again = new Set<SpeechRole>()
-      const late = (): unknown => this.#setTimeout(() => reject(new Error('the recogniser took too long to start')), LOAD_MS)
+      // The load's timer runs while no file is being fetched again (a download is not a load): `timer` null while one is.
+      const late = (): unknown => this.#setTimeout(() => done(() => reject(new Error('the recogniser took too long to start'))), LOAD_MS)
       let timer: unknown = late()
-      const done = (fn: () => void): void => { this.#clearTimeout(timer); fn() }
+      let settled = false
+      const pause = (): void => { if (timer !== null) this.#clearTimeout(timer); timer = null }
+      const done = (fn: () => void): void => { settled = true; pause(); this.#refetching = 0; fn() }
       // Stopped while it was loading: the wait ends now, not when the timer would have.
       signal.addEventListener('abort', () => done(() => reject(new Error('the recogniser was stopped'))), { once: true })
       worker.onerror = (e) => done(() => reject(new Error(`the recogniser's worker stopped (${say((e as { message?: unknown })?.message ?? e)})`)))
@@ -380,13 +402,16 @@ export class SpeechEngine extends EventTarget {
             return
           }
           // The load's timer waits while the file comes again (a download is not a load); a stall gives it up.
-          this.#clearTimeout(timer)
+          pause()
+          this.#refetching++
           const again2 = new AbortController()
           const onStop = (): void => again2.abort()
           signal.addEventListener('abort', onStop, { once: true })
           let stalled = false
           let quiet: unknown = null
+          let over = false
           const watch = (): void => {
+            if (over || settled || again2.signal.aborted) return
             if (quiet !== null) this.#clearTimeout(quiet)
             quiet = this.#setTimeout(() => { stalled = true; again2.abort() }, STALL_MS)
           }
@@ -397,12 +422,16 @@ export class SpeechEngine extends EventTarget {
             await store?.put(f, bytes)
             return bytes
           })().finally(() => {
+            over = true
             if (quiet !== null) this.#clearTimeout(quiet)
             signal.removeEventListener('abort', onStop)
           }).then(
             (bytes) => {
-              if (!mine() || this.#worker !== worker) return
-              timer = late()
+              if (settled || !mine() || this.#worker !== worker) return
+              this.#refetching = Math.max(0, this.#refetching - 1)
+              // The timer starts again once no other file is still coming.
+              pause()
+              if (this.#refetching === 0) timer = late()
               worker.postMessage({ t: 'load', files: [{ role: f.role, bytes, sha256: f.sha256 }] }, [bytes])
             },
             (err: unknown) => done(() => reject(stalled ? new Error(`the download of ${f.file} stalled: nothing arrived for ${STALL_MS / 1000} s`) : err instanceof Error ? err : new Error(String(err)))),
@@ -457,8 +486,8 @@ export class SpeechEngine extends EventTarget {
     const cur = this.#current
     this.#clearTimeout(cur.timer)
     this.#current = null
-    // It read something: the recogniser works here, and its count of failed tries starts again.
-    if (m.t === 'read') this.#fails = 0
+    // It read something: the recogniser runs here, and its count of loads that died starts again.
+    if (m.t === 'read') { this.#readSome = true; this.#dead = 0 }
     if (m.t === 'error') {
       this.#count('error', cur.seconds)
       if (!cur.cut) this.flush()
@@ -510,6 +539,7 @@ export class SpeechEngine extends EventTarget {
     // What was already read of a cut sentence is still the visitor's words.
     this.flush()
     this.#drop()
+    if (!this.#readSome) this.#dead++
     this.#failed()
     this.#set('failed', `the recogniser stopped (${why})`)
   }

@@ -41,15 +41,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
     for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
     where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
-    dropped: no audio leaves the device. A repeat the person said ("no, no, no", "five five five") is kept; only a
-    model that writes the same thing until its length runs out is cut back. A site that does not answer in 20 s or a
+    dropped: no audio leaves the device. A loud sound in the sentence (a knock, a cough) does not cut the words away.
+    A repeat the person said ("no, no, no", "five five five") is kept; only a model that writes the same thing until
+    its length runs out is cut back. A site that does not answer in 20 s or a
     download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started
     again for ever; a mute stops a download under way; a page with no pack is never said to be waiting for one.
   - **What you see.** The microphone pill reads **words soon**, **words 40%**, **words starting**, then **words
     on-device**, and shows each sentence it understood in quotes for a few seconds; on a phone, where the microphone
-    is a badge, the same words stand in a chip under the minimap, and a screen reader is told them. While the pack is
-    on its way a browser with its own recogniser reads in the meantime. On mobile data, 2G or a data saver, and on a
-    phone or tablet whose browser does not say what it is connected to (an iPhone's Safari never does), the 41 MB are
+    is a badge, the same words stand in a chip beside it on the minimap, and a screen reader is told each sentence
+    once. While the pack is on its way a browser with its own recogniser reads in the meantime, if its model needs
+    nothing installed. On mobile data, 2G or a data saver, and on a phone or tablet whose browser does not say what it
+    is connected to (an iPhone's Safari never does), the 41 MB are
     not downloaded unasked: the pill reads **words waiting**, a toast says why, and pressing the microphone yourself
     (or `mic on`) gets it. A microphone whose audio stops arriving, or that the system holds muted, reads **Mic
     silent**; one that has sent only exact silence since it opened reads **No sound yet**, a hint in the usual colour

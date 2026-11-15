@@ -335,11 +335,12 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const micPill = micShown && <MicPill voice={voice} mic={mic} onMic={onMic} contrast={highContrast} panel={panel} muted={muted} dark={dark} />
   const micBadge = micShown && visible && compact && <MicBadge voice={voice} onMic={onMic} panel={panel} />
   // The badge has no room for words: on a compact layout the sentence last understood, or where the page's own
-  // recogniser stands while it is not reading yet ("words 40%", "no words"), stands in a small chip under the minimap,
-  // and only while there is one of the two to show.
-  const micWords = micBadge && micOpen && voice ? voice.said ? `\u201c${voice.said}\u201d` : voice.note ?? '' : ''
+  // recogniser stands while nothing reads words yet ("words 40%", "no words"), stands in a small chip beside the badge,
+  // inside the minimap's box (so it moves nothing: not Sloane's chip, not the speedometer), and only while there is one
+  // of the two to show. The same order as the pill's: a sentence, else nothing while words are read, else the note.
+  const micWords = micBadge && micOpen && voice ? voice.said ? `\u201c${voice.said}\u201d` : voice.words ? '' : voice.note ?? '' : ''
   const micWordsChip = micWords !== '' && (
-    <div className={`pointer-events-none max-w-28 truncate px-2 py-0.5 text-[10px] font-medium ${voice?.said ? 'italic' : ''} ${muted} ${panel}`} title={voice?.speech || undefined} data-mic-chip aria-hidden="true">{micWords}</div>
+    <div className={`pointer-events-none absolute bottom-0 left-[30px] max-w-20 truncate px-2 py-0.5 text-[10px] font-medium ${voice?.said ? 'italic' : ''} ${muted} ${panel}`} title={voice?.speech || undefined} data-mic-chip aria-hidden="true">{micWords}</div>
   )
   // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team at work (Sloane's
   // for a goal, or the first walk's swarm), in one line (08_Swarm/team.ts). Without a host microphone (an older host,
@@ -469,6 +470,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       {/* The microphone's state for a reader: here, not in the pill, which a phone or a hidden HUD leaves unmounted while
           the device is shut, so "muted" is heard wherever the switch was pressed (the Menu, V, R3). */}
       <span className="sr-only" role="status" aria-live="polite" data-mic-told>{voice ? micTold(voice) : ''}</span>
+      {/* Each sentence understood, told once: a region of its own, so the state above is not told again when the pill's
+          quote goes, and a sentence said twice is told twice (a zero-width space alternates with the count). */}
+      <span className="sr-only" aria-live="polite" data-mic-heard>{voice?.heardText ? `Heard: ${voice.heardText}${(voice.heard ?? 0) % 2 === 1 ? '\u200b' : ''}` : ''}</span>
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">
@@ -663,8 +667,8 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             <div className="relative">
               <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} homes={homes} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
               {micBadge && <div className="absolute bottom-0 left-0">{micBadge}</div>}
+              {micWordsChip}
             </div>
-            {micWordsChip}
             {driving && !short && speedChip}
           </div>
 
@@ -782,7 +786,7 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
  * and the pill's coloured dot at its shoulder (green while it hears speech, amber while Sloane speaks, blue while it
  * listens, red when it could not open or sends nothing); no meter. A device that is open and sends nothing has a
  * dashed stroke the other way. A tap does what the pill's does, and its accessible name is the pill's. The words the
- * pill shows after its meter stand in a chip under the minimap instead (Hud's micWordsChip).
+ * pill shows after its meter stand in a chip beside it instead (Hud's micWordsChip).
  */
 function MicBadge({ voice, onMic, panel }: {
   voice: NonNullable<SipocSnapshot['supplier']['voice']>; onMic?: () => void; panel: string
@@ -816,15 +820,16 @@ function MicBadge({ voice, onMic, panel }: {
 
 /**
  * The reader's line for the microphone: the state without speech onsets (speech reads as listening) or Sloane's turns,
- * then, while it is open, the sentence last understood ("heard: ...") or where the page's own recogniser stands
- * ("words 40%", "no words"), so a screen reader hears what the pill shows after its meter. The percentage moves in
- * tens, so a download is told some ten times, not a hundred.
+ * then, while it is open, what the pill shows after its meter when it shows no sentence: "words on-device" while words
+ * are read, else where the page's own recogniser stands ("words 40%", "no words"). The sentences themselves are told
+ * in a region of their own (data-mic-heard). The percentage moves in tens, so a download is told some ten times, not a
+ * hundred.
  */
 function micTold(voice: NonNullable<SipocSnapshot['supplier']['voice']>): string {
   const phase = voice.phase
   const state = `Microphone ${phaseWord(phase === 'speech' ? 'listening' : phase).replace(/^Mic /, '').toLowerCase()}`
   if (!isOpen(phase)) return state
-  if (voice.said) return `${state}. Heard: ${voice.said}`
+  if (voice.words) return `${state}, words on-device`
   const note = (voice.note ?? '').replace(/(\d+)%/, (_, n: string) => `${Math.floor(Number(n) / 10) * 10}%`)
   return note ? `${state}, ${note}` : state
 }

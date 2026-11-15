@@ -17,7 +17,7 @@ import { CITY } from '../01_Initialize_World/city.ts'
 import { AUDIBLE_RADIUS, RALLY_RANGE, skillsOf, type Skill } from '../03_Spawn_Agents/skills.ts'
 import type { RecruitHost } from '../07_Execute_Actions/engine.ts'
 import type { RecruitView, SimCommand, SimEvent, StepState } from '../07_Execute_Actions/simProtocol.ts'
-import { hudLine, recruitBridge, Recruiter, SPEECH_LANG, type Clock, type RecruitOutcome, type SpeechEnv, AVAILABLE_WAIT_MS, INSTALL_WAIT_MS } from './recruitment.ts'
+import { hudLine, onDeviceReady, recruitBridge, Recruiter, SPEECH_LANG, type Clock, type RecruitOutcome, type SpeechEnv, AVAILABLE_WAIT_MS, INSTALL_WAIT_MS } from './recruitment.ts'
 
 const N = 64
 /** The operator on a sidewalk mid-block, 5.8 m east of a north-south street. */
@@ -385,6 +385,27 @@ function speech(opts: { local?: boolean; available?: string | null; install?: bo
   const env = { Recognition: Rec, Phrase } as unknown as SpeechEnv
   return { env, made, calls }
 }
+
+test('onDeviceReady: true only when the browser\'s own check says available, with nothing to install; never rejects, never waits past its limit', async () => {
+  const clock = new ManualClock()
+  assert.equal(await onDeviceReady(speech().env, 100, clock), true)
+  for (const answer of ['downloadable', 'downloading', 'unavailable', '']) assert.equal(await onDeviceReady(speech({ available: answer }).env, 100, clock), false, answer)
+  assert.equal(await onDeviceReady(speech({ available: null }).env, 100, clock), false, 'no check: not known to be ready')
+  assert.equal(await onDeviceReady(speech({ local: false }).env, 100, clock), false, 'no on-device promise')
+  assert.equal(await onDeviceReady({ Recognition: null, Phrase: null }, 100, clock), false)
+  const asked = speech()
+  await onDeviceReady(asked.env, 100, clock)
+  assert.deepEqual(asked.calls, [`available {"langs":["${SPEECH_LANG}"],"processLocally":true}`], 'asked for on-device recognition only, and nothing installed')
+  const failing = speech()
+  ;(failing.env.Recognition as unknown as { available: () => Promise<string> }).available = () => Promise.reject(new Error('no'))
+  assert.equal(await onDeviceReady(failing.env, 100, clock), false)
+  const silent = speech()
+  ;(silent.env.Recognition as unknown as { available: () => Promise<string> }).available = () => new Promise<string>(() => undefined)
+  const p = onDeviceReady(silent.env, 100, clock)
+  clock.advance(100)
+  assert.equal(await p, false, 'an answer that never comes is no')
+  assert.equal(clock.timers.size, 0, 'and no timer is left')
+})
 
 function micRig(opts: Parameters<typeof speech>[0] = {}) {
   const host = new FakeHost()

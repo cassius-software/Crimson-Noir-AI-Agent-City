@@ -231,6 +231,20 @@ test('the keep clears an older pack\'s cache when this one is first written, and
   assert.ok(c.stores.has(`${SPEECH_CACHE}older-pack`), 'reading clears nothing')
   await keep.put(pin.files[0], data[pin.files[0].file].slice().buffer)
   assert.deepEqual([...c.stores.keys()].sort(), ['agent-city-abc123', 'someone-elses', `${SPEECH_CACHE}${pin.id}`].sort())
+  // The files are put at once: none goes in before the older pack is gone, and the sweep runs once.
+  const d = fakeCaches()
+  d.stores.set(`${SPEECH_CACHE}older-pack`, new Map([['speech/x', new Uint8Array(4)]]))
+  const order: string[] = []
+  const slow = { ...d.caches, async keys() { await new Promise((r) => setTimeout(r, 5)); order.push('keys'); return d.caches.keys() }, async delete(n: string) { order.push(`delete ${n}`); return d.caches.delete(n) }, async open(n: string) { const o = await d.caches.open(n); return { ...o, async put(k: string, r: Response) { order.push('put'); return o.put(k, r) } } } }
+  const both = speechStore(slow as typeof d.caches, pin)
+  await Promise.all(pin.files.slice(0, 2).map((f) => both.put(f, data[f.file].slice().buffer)))
+  assert.deepEqual(order, ['keys', `delete ${SPEECH_CACHE}older-pack`, 'put', 'put'])
+  // A sweep storage refuses still lets the files be put.
+  const e = fakeCaches()
+  const refusing = { ...e.caches, async keys(): Promise<string[]> { throw new DOMException('refused', 'SecurityError') } }
+  const kept = speechStore(refusing as typeof e.caches, pin)
+  await kept.put(pin.files[0], data[pin.files[0].file].slice().buffer)
+  assert.equal(e.stores.get(`${SPEECH_CACHE}${pin.id}`)?.size, 1)
 })
 
 test('the keep never throws: no Cache Storage, storage refused, no room, a failed read each keep nothing and say nothing', async () => {
