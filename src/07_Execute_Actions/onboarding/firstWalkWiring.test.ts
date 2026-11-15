@@ -3,11 +3,13 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the evidence that the first walk is wired through the page: the hook's small
- * readers (the glyph family to the device's words, a bearing, the nearest workplace), the hook reading the engine
- * for nothing but its rooms and its car count, App switching the walk on from the URL and the pass record, feeding
- * it the Concierge's goal, the console's lines and opening, the HUD's microphone and captions, holding the quiet
- * watch until it is passed, and the card having no close, no skip and no key that puts it away while every stage
- * has its accessible button. Source-level, as the other wiring tests are: the components need a browser to render.
+ * readers (the glyph family to the device's words, a bearing, the nearest workplace, the machine for the first card,
+ * the marker's place), the hook reading the engine for nothing but its rooms and its car count, App switching the
+ * walk on from the URL and the pass record, feeding it the Concierge's goal, the console's lines and opening, the
+ * HUD's microphone and captions, lighting the control and placing the marker while it lends a hand, printing the
+ * banner when the console is reached, holding the quiet watch until it is passed, and the card having no close, no
+ * skip and no key that puts it away while every stage has its accessible button. Source-level, as the other wiring
+ * tests are: the components need a browser to render.
  * What breaks if it is removed? A prop or a report could be dropped and a stage would never finish, or a close could
  * be added and the walk would be a card like any other.
  */
@@ -15,7 +17,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
-import { TICK_MS, bearingOf, nearestPlace, wordsOf } from './useFirstWalk.ts'
+import { TICK_MS, beaconOf, bearingOf, machineOf, nearestPlace, wordsOf } from './useFirstWalk.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const shown = (src: string) => src.replace(/^import .*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -36,6 +38,38 @@ test('the hook\'s readers: the device\'s words from the glyphs, a bearing, the n
   assert.equal(TICK_MS, 1000)
 })
 
+test('the first card\'s machine: the device, its graphics and the tier in plain words, the bar from Lite to Peak', () => {
+  const laptop = machineOf('desktop', 'integrated', { label: 'Medium', tier: 2 })
+  assert.deepEqual({ ...laptop }, { device: 'A laptop or desktop', graphics: 'built-in graphics', picture: 'Medium', level: 4 / 7, sloane: 'Ready to plan' })
+  assert.ok(Object.isFrozen(laptop))
+  assert.equal(machineOf('phone', 'mobile', { label: 'Lite', tier: -1 }).level, 1 / 7, 'Lite is the bar\'s first step, never empty')
+  assert.equal(machineOf('phone', 'mobile', { label: 'Lite', tier: -1 }).device, 'A phone')
+  assert.equal(machineOf('workstation', 'discrete', { label: 'Peak', tier: 5 }).level, 1)
+  assert.equal(machineOf('workstation', 'discrete', { label: 'Peak', tier: 5 }).graphics, 'its own graphics card')
+  assert.equal(machineOf('desktop', 'unknown', { label: 'Low', tier: 1 }).graphics, '', 'unknown graphics say nothing')
+  // A tier out of range or not a number is held to the scale: the bar never overflows or goes empty.
+  assert.equal(machineOf('desktop', 'discrete', { label: 'Peak', tier: 9 }).level, 1)
+  assert.equal(machineOf('desktop', 'discrete', { label: '?', tier: Number.NaN }).level, 1 / 7)
+  assert.equal(machineOf('desktop', 'discrete', { label: 'High', tier: 3.4 }).level, 5 / 7)
+})
+
+test('the marker: the nearest parked car on the car stage, the nearest doorway on the indoor stage, nothing elsewhere', () => {
+  const cars = [
+    { x: 5, z: 0, mode: 'player' },
+    { x: 8, z: 0, mode: 'moving' },
+    { x: 40, z: 0, mode: 'parked' },
+    { x: -30, z: 0, mode: 'parked' },
+  ]
+  const rooms = [{ name: 'medical triage clinic', door: { x: 100, z: 0 } }, { name: 'executive boardroom', door: { x: 0, z: -30 } }]
+  assert.deepEqual(beaconOf('fleet', { cars, rooms }, 0, 0), { x: -30, z: 0, label: 'Parked car' }, 'a parked car before a nearer moving one, never the visitor\'s own')
+  assert.deepEqual(beaconOf('fleet', { cars: cars.slice(0, 2), rooms }, 0, 0), { x: 8, z: 0, label: 'Car' }, 'a moving car only when none is parked, and not called a parked one')
+  assert.equal(beaconOf('fleet', { cars: cars.slice(0, 1), rooms }, 0, 0), null, 'the visitor\'s own car is never the marker')
+  assert.deepEqual(beaconOf('work', { cars, rooms }, 0, 0), { x: 0, z: -30, label: 'Workplace door' })
+  assert.deepEqual(beaconOf('work', { cars, rooms }, 90, 0), { x: 100, z: 0, label: 'Workplace door' })
+  assert.equal(beaconOf('work', { cars, rooms: [] }, 0, 0), null)
+  for (const stage of ['move', 'voice', 'style', 'console', null] as const) assert.equal(beaconOf(stage, { cars, rooms }, 0, 0), null, `${stage}: no marker`)
+})
+
 test('the hook listens and never writes: readings from the snapshot, the engine asked only for its rooms, its car count and whether it has shops and homes, the pass kept once', () => {
   const src = read('./useFirstWalk.ts')
   assert.match(src, /engine\.workplaces\(\)/)
@@ -49,10 +83,23 @@ test('the hook listens and never writes: readings from the snapshot, the engine 
   assert.match(src, /insideRoom\(r, x, z\)/)
   assert.match(src, /hud\.customer\.viewYaw/)
   assert.match(src, /hud\.input\.mode === 'vehicle'/)
-  assert.match(src, /consoleOpen: termOpen/)
+  assert.match(src, /w\.read\(readingOf\(hud, engine, termOpen\), now\(\)\)/)
+  // The first reading is taken as the walk starts, before the card can be pressed: a turn made before the next snapshot
+  // (Walk for me, pressed at once) is not the anchor itself.
+  assert.match(src, /w\.start\(now\(\)\)\n\s+walk\.current = w\n(?:\s+\/\/[^\n]*\n)*\s+if \(h\) w\.read\(readingOf\(h, engine, latest\.current\.termOpen\), now\(\)\)\n\s+sync\(\)/)
   assert.match(src, /if \(w\.passed && !kept\.current\) \{\s*kept\.current = true\s*saveFirstWalkPassed\(/)
   assert.match(src, /mustKeep\(s, b\.keep\)/, 'a rewording that drops the key or command is not shown')
-  assert.match(src, /if \(lawLine\(text\)\) note\('law'\)/)
+  assert.match(src, /const line = useCallback\(\(_text: string\) => \{ note\('console'\) \}, \[note\]\)/, 'any console line is the console in use')
+  assert.match(src, /setAssisting\(w\.assisting\)/, 'the lent hand follows the walk')
+  assert.doesNotMatch(src, /installed\(|\.answer\(|\.load\(|job\.start/, 'the machine reading looks at nothing that probes, asks or downloads')
+  // The clocks are made once: an inline default is a new function each render, which restarted the once-a-second tick
+  // on every HUD snapshot (ten a second), so on a fast machine Sloane's lines, the hint, the hand and the closing line
+  // never came.
+  assert.match(src, /^const PERF_NOW = \(\): number => performance\.now\(\)$/m)
+  assert.match(src, /^const WALL_NOW = \(\): number => Date\.now\(\)$/m)
+  assert.match(src, /, now = PERF_NOW, wallClock = WALL_NOW, timing \}: FirstWalkProps\)/)
+  assert.doesNotMatch(src, /(?:now|wallClock) = \(\) =>/, 'no clock made inline in the parameters')
+  assert.match(src, /\}, \[ready, engine, now, sync\]\)/)
 })
 
 test('App: the walk is switched on from the URL and the pass record, fed the Concierge\'s goal, the console\'s lines and opening, the HUD\'s microphone and captions, the wardrobe, a shop\'s card or a home\'s doorstep card put away; the quiet watch waits for it', () => {
@@ -82,8 +129,16 @@ test('App: the walk is switched on from the URL and the pass record, fed the Con
   // The accessible path goes through the same controls the operator tier has, and the console's handle.
   assert.match(src, /case 'move': \{\s*e\.input\.yaw \+= 0\.7/)
   assert.match(src, /case 'style': openLook\(\); return/, 'the look stage\'s button opens the wardrobe card the chip opens')
-  assert.match(src, /case 'ring0': termRef\.current\?\.run\('laws'\)/)
-  assert.match(src, /case 'exam': termRef\.current\?\.type\(`noir \$\{PROGRAM\[0\]\}`\)/)
+  assert.match(src, /case 'console': termRef\.current\?\.open\(\); return/, 'the last stage\'s button opens the console, which ends the walk')
+  assert.doesNotMatch(src, /case 'ring0'|case 'exam'/, 'the old Ring-0 and program stages are gone')
+  // While it lends a hand: the control lit (one attribute on the root, taken away with the hand), the marker placed
+  // from the HUD's own cars and the engine's rooms, and taken away when the walk is over.
+  assert.match(src, /const assistTarget = walking && fw\.assisting && fw\.stage !== null \? assistTargetOf\(fw\.stage, familyOf\(hud\?\.supplier\.glyphs \?\? 'keyboard'\)\) : null/)
+  assert.match(src, /if \(assistTarget === null\) \{ delete root\.dataset\.walkAssist; return \}\s*root\.dataset\.walkAssist = assistTarget\s*return \(\) => \{ delete root\.dataset\.walkAssist \}/)
+  assert.match(src, /e\.setBeacon\(walking && hud \? beaconOf\(fw\.stage, \{\s*cars: hud\.map\.map\(/)
+  assert.match(src, /rooms: e\.workplaces\(\),\s*\}, hud\.customer\.x, hud\.customer\.z\) : null\)/)
+  // The walk passed: the banner printed in the console once and the passed line said (the card is gone by then).
+  assert.match(src, /if \(b === null \|\| b\.kind !== 'passed' \|\| passedSaid\.current !== -1\) return\s*passedSaid\.current = b\.id\s*termRef\.current\?\.print\(passedBanner\(profile\?\.name \?\? '', familyOf\(hud\?\.supplier\.glyphs \?\? 'keyboard'\)\)\)\s*onSay\(b\.text\)/)
   // The exam behind the exit program: composed in the console bridge over the host's vouch for the air gap, the
   // kernel-panic state, the bridge's laws, the page's one team runner and the walk; the nonce drawn once per page load.
   assert.match(src, /exam: createExam\(\{/)
@@ -239,7 +294,7 @@ test('on a phone the walk\'s card keeps below Sloane\'s chip, and held sideways 
   assert.ok(saying.length > 200, 'the effect that says each line is there')
   assert.doesNotMatch(shown(saying), /\b(?:shown|open|folded|foldable)\b/)
   assert.match(card, /\}, \[beat, heard\]\)/)
-  // The touch Menu's sheet stands over the walk's card (the Ring-0 stage sends the visitor to it), under the onboarding.
+  // The touch Menu's sheet stands over the walk's card (the console stage sends the visitor to it), under the onboarding.
   const touch = read('../../04_Connect_Hardware/TouchControls.tsx')
   const sheet = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\] select-none" style=\{ROOT_STYLE\}>\n\s+<div\n\s+aria-hidden/.exec(touch)?.[1])
   const walkZ = Number(/<div className="ui-zoom pointer-events-none absolute inset-0 z-\[(\d+)\]">/.exec(card)?.[1])
@@ -293,16 +348,16 @@ test('on a phone held upright the card folds to a strip under the HUD\'s header 
   assert.match(card, /style=\{brief \? \{ WebkitLineClamp: fit\.lines \} : undefined\}/)
   assert.match(card, /edges\?\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \['style'\] \}\)/, 'measured again when the touch layer or Sloane publish a new edge')
   // The short card that fits takes touches on its buttons only: a finger on its words reaches the look area or the
-  // stick (and folds the card). Not the last stage's, which holds the program and scrolls.
-  assert.match(card, /const through = brief && !exitStage && fit\.whole && fit\.below\n/, 'and only under her chip: above it a touch would reach the HUD\'s strip or the microphone\'s badge')
+  // stick (and folds the card).
+  assert.match(card, /const through = brief && fit\.whole && fit\.below\n/, 'and only under her chip: above it a touch would reach the HUD\'s strip or the microphone\'s badge')
   assert.match(card, /const below = !pill \|\| el\.getBoundingClientRect\(\)\.top >= pill\.getBoundingClientRect\(\)\.bottom - 1\n/)
   assert.match(card, /\$\{through \? 'pointer-events-none' : 'pointer-events-auto'\}/)
   assert.match(card, /<div className="flex shrink-0 flex-wrap items-center gap-2 \[&>button\]:pointer-events-auto">/)
   assert.match(card, /\{foldable && <button type="button" onClick=\{\(\) => setMore\(\(m\) => !m\)\} aria-expanded=\{more\} className="noir-button" data-walk-more>\{more \? 'Less' : 'More'\}<\/button>\}/)
-  // A fold is not a close: nothing in the card ends the walk or reports to it but the stage's own button and the
-  // program (the hook's props), and the strip stays on screen with the stage's number and title.
+  // A fold is not a close: nothing in the card ends the walk or reports to it but the stage's own button (the hook's
+  // props), and the strip stays on screen with the stage's number and title.
   const calls = [...shown(card).matchAll(/\bon[A-Z]\w*\(/g)].map((m) => m[0])
-  assert.deepEqual([...new Set(calls)].sort(), ['onOutside(', 'onRun(', 'onShow(', 'onType('].sort())
+  assert.deepEqual([...new Set(calls)].sort(), ['onOutside(', 'onShow('].sort())
   assert.match(card, /\{card\.index\} of \{card\.count\}<\/span>\n\s+<span className="min-w-0 truncate font-semibold text-noir-titanium-100">\{card\.title\}<\/span>/)
   // The HUD's layer stands over the touch layer and under Sloane's, so the strip (and the HUD's other few buttons)
   // take their taps on a phone, where the look area covers half the screen.
@@ -327,11 +382,13 @@ test('the exam reaches the walk\'s program and the bridge\'s type, and nothing e
   assert.deepEqual([...copy![1]!.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]), [...PROGRAM])
 })
 
-test('the console reports every line run and types or runs a line for the card; the Concierge reports a goal sent; the engine shows its rooms', () => {
+test('the console reports every line run, types or runs a line, and prints the walk\'s banner; the Concierge reports a goal sent; the engine shows its rooms and holds the marker', () => {
   const term = read('../terminal/Terminal.tsx')
   assert.match(term, /onLine\?\(line: string\): void/)
   assert.match(term, /type\(text: string\): void/)
   assert.match(term, /run\(line\?: string\): void/)
+  assert.match(term, /print\(lines: readonly string\[\]\): void/)
+  assert.match(term, /print\(lines\) \{\s*append\(lines\.map\(\(text\): Line => \(\{ kind: 'sys', text \}\)\)\)\s*\}/, 'printed as the console\'s own rows, nothing run')
   assert.match(term, /if \(line\) onLineRef\.current\?\.\(line\)/)
   assert.match(term, /submitRef\.current\(line \?\? inputRef\.current\?\.value \?\? ''\)/)
   const concierge = read('../Concierge.tsx')
@@ -339,20 +396,29 @@ test('the console reports every line run and types or runs a line for the card; 
   assert.match(concierge, /onGoalSent\?\.\(goalText\)/)
   const engine = read('../engine.ts')
   assert.match(engine, /workplaces\(\): readonly Workplace\[\] \{\s*return this\.rooms\s*\}/)
+  // The marker: kept only when every number is finite, its label cut short, and on the snapshot only while there is one.
+  assert.match(engine, /setBeacon\(b: \{ x: number; z: number; label: string \} \| null\): void \{/)
+  assert.match(engine, /\.\.\.\(beacon && \{ beacon \}\)/)
+  const hud = read('../Hud.tsx')
+  assert.match(hud, /data-hint="beacon"/)
 })
 
-test('the card has no close, no skip and no key that puts it away; every stage has its button, the last its program lines and Run; it never calls the walk a lesson', () => {
+test('the card has no close, no skip and no key that puts it away; every stage has its button, a lent hand and the first card the machine; it never calls the walk a lesson', () => {
   const src = read('./FirstWalk.tsx')
-  assert.doesNotMatch(src, /onClose|onSkip|Escape|data-walk-close|data-walk-skip/, 'no way out but the program')
+  assert.doesNotMatch(src, /onClose|onSkip|Escape|data-walk-close|data-walk-skip/, 'no way out but the console')
   assert.doesNotMatch(src, /<button[^>]*>\s*(?:Close|Skip|Dismiss|Later|Not now)\b/i)
   assert.match(src, /data-walk-show/)
   assert.match(src, /data-walk-why/)
-  assert.match(src, /data-walk-run/)
-  assert.match(src, /data-walk-line-button=\{i \+ 1\}/)
-  assert.match(src, /onType\(`noir \$\{l\}`\)/)
+  assert.doesNotMatch(src, /data-walk-run|data-walk-line-button|onType|onRun/, 'no program on the card any more')
   assert.match(src, /data-walk=\{card\.stage\}/)
   assert.match(src, /aria-live="polite"/)
+  // The lent hand: the stage's button lit, the strip's dot awake, the keys for the stage and a line offering to do it.
+  assert.match(src, /data-walk-show data-walk-assist=\{assisting \|\| undefined\}/)
+  assert.match(src, /data-walk-hand/)
+  assert.match(src, /assistLine\(card\.stage, \{ family: familyOf\(family\) \}\)/)
+  // The first card reads the machine (device, picture, Sloane), never on a short folded card.
+  assert.match(src, /data-walk-machine/)
   const text = shown(src)
   assert.doesNotMatch(text, /[Tt]utorial|lesson/, 'Sloane calls it a walk')
-  assert.match(text, /No skip: the city opens when the program on the last card has run\./)
+  assert.match(text, /No skip: the city opens the moment you reach the console, on the last card\./)
 })

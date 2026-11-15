@@ -6,11 +6,14 @@
  * small panel in Sloane's own style (the onboarding's ink and titanium) that names the stage the visitor is on, says
  * the one thing to do in their device's words, tells them what it is in a line an eight-year-old follows, and unfolds
  * the five whys one at a time when they ask. It has no close button, no skip and no key that puts it away: the walk
- * ends when the console's exit program unlocks the city, and the card says so in plain words. Its accessible path is
- * one button per stage that has Sloane do the action for a visitor who cannot (a switch, a screen reader, a phone with
- * no keyboard): walk and turn, plan a goal, take them to a car, take them inside, open the console; on the last stage
- * the buttons type each line of the program into the console's prompt and run it, so the walk is completable with
- * taps alone. It stands clear of the HUD, the touch controls and Sloane's own card: on a wide screen under the
+ * ends the moment the visitor reaches the console on its last stage, and the card says so in plain words. Its
+ * accessible path is one button per stage that has Sloane do the action for a visitor who cannot (a switch, a screen
+ * reader, a phone with no keyboard): walk and turn, plan a goal, take them to a car, take them inside, open the
+ * wardrobe, open the console; so the walk is completable with taps alone. A visitor who stalls is lent a hand
+ * (`assisting`): the card shows the stage's keys in the device's own glyphs with a one-line offer, and its button is
+ * lit (the host lights the control on the page too, and marks the car or the doorway). The first stage's card also
+ * reads the visitor's machine in three rows (the device, the picture, Sloane). It stands clear of the HUD, the touch
+ * controls and Sloane's own card: on a wide screen under the
  * readout on the right, with Sloane's open card moved left of it (Concierge.tsx WIDE_BESIDE) from 60 rem across and,
  * in a narrower wide window, stepping aside while her card is open; on a compact or touch screen in the band above
  * the stick and the buttons and below her chip, stepping aside while her card is open (hers takes the same band); on
@@ -24,18 +27,25 @@
  * to the lines its band has room for over the stage's button, and More unfolds the rest (the whole line, what the
  * stage is, the whys). That short card takes touches on its buttons only: a finger dragged across its words turns the
  * view, as the first stage asks, and folds it. Folding puts nothing away for good: the strip has no close either, and
- * the walk still ends only in the console.
+ * the walk still ends only at the console.
  * What breaks if it is removed? The walk has no face: Sloane's lines are heard but never seen, and a visitor without
  * a keyboard or a mouse has no way through it.
  */
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { createPortal } from 'react-dom'
-import { PROGRAM, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
+import { assistControlsOf, assistLine, type AssistControl, type Beat, type StageCard } from '../../09_Cognition/firstWalk.ts'
 import { besideRoom } from '../Concierge.tsx'
+import { glyph, glyphKind, type GlyphFamily } from '../glyphs.ts'
+import { GlyphKey } from '../Hud.tsx'
 import { WALK_SLOT } from '../walkSlot.ts'
 import { CONCIERGE_NAME } from './script.ts'
+import type { MachineReading } from './useFirstWalk.ts'
+import { familyOf } from './useMentor.ts'
 import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
 import { insideKeys } from '../../04_Connect_Hardware/keyboardSense.ts'
+
+/** What each key the card shows while it lends a hand does, in a word or two. */
+const CONTROL_WORD: Record<AssistControl, string> = { look: 'Look', move: 'Walk', interact: 'Get in', console: 'Console' }
 
 /** Where the card stands (full class strings, so Tailwind sees them). The card is inside the text size's zoom
  *  (index.css `.ui-zoom`), like the HUD it keeps clear of: the HUD's wide readout is 18 rem wide and about 14 rem tall
@@ -111,16 +121,17 @@ export interface FirstWalkCardProps {
   card: StageCard
   /** Sloane's newest line (the stage's ask, or a hint); the ask is shown until one comes. */
   beat: Beat | null
-  /** The exit's doors so far. */
-  exam: { seal: boolean; swarm: boolean }
+  /** The walk lends a hand (useFirstWalk assisting): the keys and the offer shown, the button lit. */
+  assisting?: boolean
+  /** The glyph family in use (snapshot.supplier.glyphs): the keys are drawn in the device's own glyphs. */
+  family?: GlyphFamily
+  /** The first stage's reading of the visitor's machine (useFirstWalk machineOf); absent until the city is up. */
+  machine?: MachineReading | null
   /** The touch overlay on screen (snapshot.supplier.touch), the console open. */
   overlay: boolean
   termOpen: boolean
   /** The accessible path: Sloane does this stage's action. */
   onShow(): void
-  /** The last stage: a program line into the console's prompt, and the prompt run. */
-  onType(line: string): void
-  onRun(): void
   /** Sloane's spoken voice: called once with each new line. */
   onSay?(text: string): void
   /** Sloane's own card is open (Concierge onOpen): anywhere but a wide window from 60 rem across, where the two stand side by side, this card steps aside until hers closes. */
@@ -133,7 +144,7 @@ export interface FirstWalkCardProps {
   travelled?: number
 }
 
-export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, onShow, onType, onRun, onSay, crowded = false, driving = false, zoom = 1, travelled }: FirstWalkCardProps): JSX.Element | null {
+export function FirstWalkCard({ visible, card, beat, assisting = false, family = 'keyboard', machine = null, overlay, termOpen, onShow, onSay, crowded = false, driving = false, zoom = 1, travelled }: FirstWalkCardProps): JSX.Element | null {
   const compact = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const sideways = useSyncExternalStore(SIDEWAYS.subscribe, SIDEWAYS.matches, SIDEWAYS.server)
   const tight = squeezedAt(zoom)
@@ -238,9 +249,10 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
       aria-label={`Your first walk, ${card.index} of ${card.count}: ${card.title}.${unread ? ` A new line from ${CONCIERGE_NAME}.` : ''} ${open && shown ? 'Fold' : 'Show'} ${CONCIERGE_NAME}’s line.`}
       data-walk-strip={card.stage}
       data-walk-unread={unread || undefined}
+      data-walk-assist={assisting || undefined}
       className="noir-panel pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left font-noir-text text-[12px] leading-4 text-noir-titanium-200 antialiased focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-noir-crimson"
     >
-      <span className={`inline-block h-2 w-2 shrink-0 rounded-full bg-noir-crimson ${unread ? 'animate-pulse motion-reduce:animate-none' : ''}`} aria-hidden="true" />
+      <span className={`inline-block h-2 w-2 shrink-0 rounded-full bg-noir-crimson ${unread || assisting ? 'animate-pulse motion-reduce:animate-none' : ''}`} aria-hidden="true" />
       <span className="shrink-0 tabular-nums text-noir-titanium-400">{card.index} of {card.count}</span>
       <span className="min-w-0 truncate font-semibold text-noir-titanium-100">{card.title}</span>
       <svg viewBox="0 0 12 12" className={`h-3 w-3 shrink-0 text-noir-titanium-400 ${open && shown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -251,7 +263,6 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
     </>,
     slot,
   )
-  const exitStage = card.stage === 'exam'
   /** Where it folds the card is short: the line cut to the lines the band has room for over the button, the rest
    *  behind More (the strip above carries the stage's number and title, so the card's own header is left out). */
   const brief = foldable && !more
@@ -293,10 +304,11 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
   /** Opened out with More, the folding card takes the band from the minimap's row down. */
   const place = foldable && more ? AT.touchMore : at
   /** The short card, when all of it fits, takes touches on its buttons only: a finger on its words reaches the look
-   *  area or the stick under it (and folds the card, as any touch outside does). The last stage's card holds the
-   *  program and scrolls, so it keeps its touches; so does a short card too tall for its band, and one standing above
-   *  Sloane's chip. */
-  const through = brief && !exitStage && fit.whole && fit.below
+   *  area or the stick under it (and folds the card, as any touch outside does). A short card too tall for its band
+   *  keeps its touches, and so does one standing above Sloane's chip. */
+  const through = brief && fit.whole && fit.below
+  /** The keys the stage asks for, in the device's glyphs (none where the family has no such control). */
+  const keys = assistControlsOf(card.stage).map((c) => ({ c, g: glyph(c, family) })).filter((k) => k.g !== '')
   return (
     <>
       {strip}
@@ -334,22 +346,32 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
           </p>
           {!brief && <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>}
 
-          {exitStage && (
-            <div className="flex flex-col gap-1.5">
-              <pre className="overflow-x-auto rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 font-noir-mono text-[12px] leading-[18px] text-noir-titanium-100" aria-label="The program">
-                {PROGRAM.map((l, i) => <div key={i}>noir {l}</div>)}
-              </pre>
-              <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Type the program">
-                {PROGRAM.map((l, i) => (
-                  <button key={i} type="button" onClick={() => onType(`noir ${l}`)} className="noir-button" data-walk-line-button={i + 1}>Line {i + 1}</button>
-                ))}
-                <button type="button" onClick={onRun} className="noir-button is-active" data-walk-run>Run</button>
-              </div>
-              <div className="flex gap-3 text-[12px] text-noir-titanium-400" aria-live="polite" data-walk-doors>
-                <span data-door="seal">{exam.seal ? '✓' : '○'} seal</span>
-                <span data-door="swarm">{exam.swarm ? '✓' : '○'} swarm</span>
-                <span data-door="city">○ city</span>
-              </div>
+          {!brief && machine && card.index === 1 && (
+            <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 text-[12px] leading-4" aria-label="Your machine" data-walk-machine>
+              <dt className="text-noir-titanium-400">Device</dt>
+              <dd className="text-noir-titanium-100">{machine.device}{machine.graphics ? `, ${machine.graphics}` : ''}</dd>
+              <dt className="text-noir-titanium-400">Picture</dt>
+              <dd className="flex items-center gap-2 text-noir-titanium-100">
+                <span className="tabular-nums">{machine.picture}</span>
+                <span className="h-1 w-16 overflow-hidden rounded-full bg-noir-titanium-800" aria-hidden="true">
+                  <span className="block h-full rounded-full bg-noir-crimson" style={{ width: `${Math.round(machine.level * 100)}%` }} />
+                </span>
+              </dd>
+              <dt className="text-noir-titanium-400">{CONCIERGE_NAME}</dt>
+              <dd className="text-noir-titanium-100">{machine.sloane}</dd>
+            </dl>
+          )}
+
+          {!brief && assisting && (
+            <div className="flex flex-col gap-1.5 rounded-noir-control border border-noir-crimson/60 bg-noir-ink-2 px-3 py-2" data-walk-hand>
+              {keys.length > 0 && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-noir-titanium-200">
+                  {keys.map((k) => (
+                    <span key={k.c} className="inline-flex items-center gap-1.5"><GlyphKey glyph={k.g} kind={glyphKind(k.c, family)} />{CONTROL_WORD[k.c]}</span>
+                  ))}
+                </div>
+              )}
+              <p className="text-[13px] leading-[18px] text-noir-titanium-100">{assistLine(card.stage, { family: familyOf(family) })}</p>
             </div>
           )}
 
@@ -363,10 +385,10 @@ export function FirstWalkCard({ visible, card, beat, exam, overlay, termOpen, on
             {!brief && whys < card.whys.length && (
               <button type="button" onClick={() => setWhys((n) => n + 1)} className="noir-button" data-walk-why>{whys === 0 ? 'Why?' : 'And why?'}</button>
             )}
-            <button type="button" onClick={onShow} className="noir-button" data-walk-show>{card.show}</button>
+            <button type="button" onClick={onShow} className={`noir-button ${assisting ? 'is-active walk-assist' : ''}`} data-walk-show data-walk-assist={assisting || undefined}>{card.show}</button>
             {foldable && <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className="noir-button" data-walk-more>{more ? 'Less' : 'More'}</button>}
           </div>
-          {!brief && <p className="text-[11px] leading-4 text-noir-titanium-600">No skip: the city opens when the program on the last card has run.</p>}
+          {!brief && <p className="text-[11px] leading-4 text-noir-titanium-600">No skip: the city opens the moment you reach the console, on the last card.</p>}
         </section>
       </div>
     </>

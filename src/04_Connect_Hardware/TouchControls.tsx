@@ -229,7 +229,7 @@ function TouchLayer({ input, driving, nearVehicle, menu }: Props) {
             <div className="flex flex-col items-end gap-3">
               <div className="flex items-end gap-3 portrait:max-[376px]:flex-col-reverse">
                 {menuButton}
-                {nearVehicle && <TapButton label="Enter car" onTap={press(() => input.press('interact'))} />}
+                {nearVehicle && <TapButton label="Enter car" tap="enter" onTap={press(() => input.press('interact'))} />}
               </div>
               <div className="flex items-end gap-3 portrait:max-[376px]:flex-col">
                 <TapButton label="Ping" round onTap={press(() => input.press('ping'))} />
@@ -433,7 +433,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
         maxHeight: `calc((${Math.round(at.top - 12)}px - max(12px, env(safe-area-inset-top, 0px))) / var(--ui-zoom, 1))`,
       }
   // Its own layer above the HUD cards, the Concierge (z-30) and the first walk's card (z-[1050], onboarding/FirstWalk.tsx,
-  // whose Ring-0 stage sends the visitor here), below the onboarding (z-[1100]) and the console: an open sheet must not
+  // whose console stage sends the visitor here), below the onboarding (z-[1100]) and the console: an open sheet must not
   // hide under a card on a short landscape screen, and its backdrop closes it on a tap anywhere else, a card included.
   return (
     <div className="ui-zoom pointer-events-none absolute inset-0 z-[1060] select-none" style={ROOT_STYLE}>
@@ -451,6 +451,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
             type="button"
             role={it.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
             aria-checked={it.on}
+            data-menu-item={it.label === 'Console' ? 'console' : undefined}
             onClick={act(it.run, !it.keep)}
             onContextMenu={noMenu}
             className={`pointer-events-auto h-11 min-w-[148px] shrink-0 touch-pan-y rounded-xl px-4 text-left text-[13px] font-semibold tracking-tight select-none ${it.on ? 'bg-white/80 text-slate-900' : 'text-white'}`}
@@ -467,7 +468,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
  * Fires on pointerdown (any finger, even while another holds the stick). The click a pointer press produces
  * afterwards is ignored; a click with no press before it (keyboard or assistive activation) fires.
  */
-function TapButton({ label, onTap, pressed, round }: { label: string; onTap: () => void; pressed?: boolean; round?: boolean }) {
+function TapButton({ label, onTap, pressed, round, tap }: { label: string; onTap: () => void; pressed?: boolean; round?: boolean; /** Names the button for the first walk's lent hand (index.css data-touch-tap). */ tap?: string }) {
   /** Event time of this button's latest pointer down/up/cancel: a click right after one is that press's echo. */
   const pointerAt = useRef(-1e9)
   const stamp = (e: PointerEvent<HTMLButtonElement>) => { pointerAt.current = e.timeStamp }
@@ -479,6 +480,7 @@ function TapButton({ label, onTap, pressed, round }: { label: string; onTap: () 
       type="button"
       aria-pressed={pressed}
       data-touch="tap"
+      data-touch-tap={tap}
       onPointerDown={(e) => {
         stamp(e)
         if (e.pointerType !== 'mouse' || e.button === 0) onTap()

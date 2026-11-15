@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the first-run tutorial as pure data and timing: the seven things a brand-new visitor
- * does before the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; step inside a
- * workplace; choose a look in the wardrobe or a shop, or read a home's deed; read the four laws at the Ring-0 console; run the three-line NoirScript
- * program that is the only way out), what counts as having done each one (a reading of the page, or an event the page reports), and what Sloane
- * says at each: the thing to do in the visitor's own device's words, one plain line of what it is (for an
- * eight-year-old), and five whys that go one deeper each time, every one of them true of the city as it runs today.
- * Sloane calls it "your first walk"; the words "tutorial", "lesson" and "step" never appear in a spoken line. Like the
- * quiet watch beside it (tutorial.ts Mentor) this reads the simulation and never writes to it, and every moment comes
- * from the clock values it is given, never from Date.now, so a test can walk the seven stages in a microsecond. The
- * React side (07_Execute_Actions/onboarding/useFirstWalk.ts, FirstWalk.tsx) feeds it and shows it; the exit itself
- * is the console's (terminal/noirscript: verify_ring0, spawn_subagents, unlock_city) and reaches here as events.
+ * Why does this file exist? It is the first-run walk as pure data and timing: the six things a brand-new visitor does
+ * before the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; step inside a
+ * workplace; choose a look in the wardrobe or a shop, or read a home's deed; open the console), what counts as having
+ * done each one (a reading of the page, or an event the page reports), and what Sloane says at each: the thing to do in
+ * the visitor's own device's words, one plain line of what it is (for an eight-year-old), and five whys that go one
+ * deeper each time, every one of them true of the city as it runs today. The walk is held only until the visitor
+ * reaches the console: the moment it opens on the last stage the city is theirs and the pass is kept. A visitor who
+ * stalls is never left alone: after a few seconds with nothing done the walk lends a hand (`assisting`: the card shows
+ * the keys and offers its one-tap button, the page lights the control to use), and later Sloane says the how again.
+ * The console's Crimson Noir Script exit program (terminal/noirscript: verify_ring0, spawn_subagents, unlock_city) ends the
+ * walk from any stage, for the visitor who already knows the way. Sloane calls it "your first walk"; the words
+ * "tutorial", "lesson" and "step" never appear in a spoken line. Like the quiet watch beside it (tutorial.ts Mentor)
+ * this reads the simulation and never writes to it, and every moment comes from the clock values it is given, never
+ * from Date.now, so a test can walk the six stages in a microsecond. The React side
+ * (07_Execute_Actions/onboarding/useFirstWalk.ts, FirstWalk.tsx) feeds it and shows it.
  * The look stage teaches what the city has for it: the wardrobe card (Customizer.tsx), on a map with shops
  * (01_Initialize_World/storefronts.ts) the shops' cards (StoreCard.tsx), and on a map with homes
  * (01_Initialize_World/properties.ts) a home's doorstep card (HomeCard.tsx); any one of them put away after it was open
@@ -23,27 +27,29 @@ import type { InputFamily } from './tutorial.ts'
 
 export type { InputFamily } from './tutorial.ts'
 
-/** The seven stages, in order. */
-export type Stage = 'move' | 'voice' | 'fleet' | 'work' | 'style' | 'ring0' | 'exam'
-export const STAGES: readonly Stage[] = Object.freeze(['move', 'voice', 'fleet', 'work', 'style', 'ring0', 'exam'])
+/** The six stages, in order; the last one, the console, is where the walk ends. */
+export type Stage = 'move' | 'voice' | 'fleet' | 'work' | 'style' | 'console'
+export const STAGES: readonly Stage[] = Object.freeze(['move', 'voice', 'fleet', 'work', 'style', 'console'])
 
-/** How patient Sloane is, ms, and what counts. */
+/** How patient the walk is, ms, and what counts. */
 export const WALK = Object.freeze({
-  /** A stage with no progress for this long, and Sloane says the how again, more plainly. */
-  hintMs: 45_000,
+  /** A stage with nothing done for this long, and the walk lends a hand: the keys on the card, its button offered, the control lit. */
+  assistMs: 8_000,
+  /** A stage with no progress for this long, and Sloane says the how again, more plainly (once a stage). */
+  hintMs: 20_000,
   /** The least time between two of Sloane's unasked lines. */
-  cooldownMs: 45_000,
+  cooldownMs: 20_000,
   /** Looking around: this much turn of the head counts, radians (about 20 degrees). */
   lookRadians: 0.35,
   /** Walking: this much ground counts, metres. */
   walkMetres: 3,
 } as const)
 
-/** The role the exit program names and the swarm it asks for (docs/noirscript.md, "The first walk's exit"). */
+/** The role the exit program names and the swarm it asks for (docs/noirscript.md, the exam intrinsics). */
 export const SWARM_ROLE = 'sim2real_workplaces'
 export const SWARM_SIZE = 24
 
-/** The exit program, one console line each (typed after `noir `; the session keeps `seal` and `swarm` between lines). */
+/** The exit program, one console line each (typed after `noir `; the session keeps `seal` and `swarm` between lines): it ends the walk from any stage. */
 export const PROGRAM: readonly string[] = Object.freeze([
   'let seal = verify_ring0();',
   `let swarm = spawn_subagents(${SWARM_SIZE}, "${SWARM_ROLE}");`,
@@ -82,6 +88,7 @@ export interface FirstWalkOptions {
   place?: () => WalkPlace | null
   /** Stages already done (a reload mid-walk; nothing is kept unless the walk was passed, so usually none). */
   done?: readonly Stage[]
+  assistMs?: number
   hintMs?: number
   cooldownMs?: number
 }
@@ -105,11 +112,10 @@ export interface WalkReading {
 /**
  * An event the page reports outright: a goal told to Sloane, the microphone opened, the captions turned, a car
  * entered, a room entered, the wardrobe card, a shop's card or a home's doorstep card put away after it was opened, the
- * console opened, a law line run there
- * (`laws`, `kernel`, `act gate`, `ring0`), and the exit program's three doors as the console's exam reports them (a
- * seal checked, a swarm called, the city unlocked).
+ * console opened or a line run there, and the exit program's three doors as the console's exam reports them (a seal
+ * checked, a swarm called, the city unlocked).
  */
-export type WalkEvent = 'look' | 'move' | 'goal' | 'mic' | 'captions' | 'vehicle' | 'inside' | 'wardrobe' | 'store' | 'home' | 'console' | 'law' | 'seal' | 'swarm' | 'unlock'
+export type WalkEvent = 'goal' | 'mic' | 'captions' | 'vehicle' | 'inside' | 'wardrobe' | 'store' | 'home' | 'console' | 'seal' | 'swarm' | 'unlock'
 
 /** One of Sloane's lines: at a stage's start (the thing to do), as a hint, or when the walk is passed. */
 export interface Beat {
@@ -136,12 +142,6 @@ export interface StageCard {
   readonly whys: readonly string[]
   /** The accessible path's button: what Sloane does for a visitor who cannot do the action themselves. */
   readonly show: string
-}
-
-/** Console lines that are reading Ring-0: the laws, the kernel's interventions, the action gate, the elite tier's status. */
-const LAW_LINES = /^(?:laws|kernel|act\s+gate|act\s+list|ring0(?:\s+status)?)$/
-export function lawLine(line: string): boolean {
-  return LAW_LINES.test(line.trim().toLowerCase())
 }
 
 /** What the visitor does to turn the head and walk, in their own device's words. */
@@ -176,6 +176,49 @@ function doorstepHow(o: FirstWalkOptions): string {
   return o.family === 'touch' ? 'tap For sale' : browseHow(o)
 }
 
+/**
+ * Where the visitor's eye should go while the walk lends a hand: the control the stage asks for, lit on the page
+ * (App.tsx sets it on the root as `data-walk-assist`; index.css draws the ring). The touch stick, Sloane's chip, the
+ * touch Enter car button, the Look word on her chip, the touch Menu (whose first item is Console); null where the
+ * thing to use is a key or a place, which the card's keys and the walk's marker show instead.
+ */
+export type AssistTarget = 'stick' | 'chip' | 'enter' | 'look' | 'menu'
+export function assistTargetOf(s: Stage, family: InputFamily): AssistTarget | null {
+  switch (s) {
+    case 'move': return family === 'touch' ? 'stick' : null
+    case 'voice': return 'chip'
+    case 'fleet': return family === 'touch' ? 'enter' : null
+    case 'work': return null
+    case 'style': return 'look'
+    case 'console': return family === 'touch' ? 'menu' : null
+  }
+}
+
+/** The controls a stage asks for, in glyph names (07_Execute_Actions/glyphs.ts): the card draws them as keys while it lends a hand. */
+export type AssistControl = 'look' | 'move' | 'interact' | 'console'
+export function assistControlsOf(s: Stage): readonly AssistControl[] {
+  switch (s) {
+    case 'move': return LOOK_MOVE
+    case 'fleet': return INTERACT
+    case 'console': return CONSOLE
+    default: return NONE
+  }
+}
+const LOOK_MOVE: readonly AssistControl[] = Object.freeze(['look', 'move'])
+const INTERACT: readonly AssistControl[] = Object.freeze(['interact'])
+const CONSOLE: readonly AssistControl[] = Object.freeze(['console'])
+const NONE: readonly AssistControl[] = Object.freeze([])
+
+/** The card's offer while it lends a hand (shown beside the keys, not spoken: Sloane's spoken hint comes later). */
+export function assistLine(s: Stage, o: Pick<FirstWalkOptions, 'family'>): string {
+  const button = o.family === 'touch' ? 'tap the button below' : 'use the button below'
+  switch (s) {
+    case 'fleet': return `Want a hand? Follow the marker to a parked car, or ${button} and I’ll take you there.`
+    case 'work': return `Want a hand? Follow the marker to a doorway, or ${button} and I’ll take you in.`
+    default: return `Want a hand? ${button.charAt(0).toUpperCase()}${button.slice(1)} and I’ll do it for you.`
+  }
+}
+
 /** A number in words, for the few the lines say. */
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'twenty-one', 'twenty-two', 'twenty-three', 'twenty-four']
 export const inWords = (n: number): string => WORDS[n] ?? String(n)
@@ -186,7 +229,7 @@ export function available(s: Stage, city: FirstWalkOptions['city']): boolean {
     case 'fleet': return city.fleet
     case 'work': return city.rooms
     case 'style': return city.wardrobe !== false || city.stores === true || city.homes === true
-    default: return true
+    case 'move': case 'voice': case 'console': return true
   }
 }
 
@@ -198,8 +241,7 @@ export function titleOf(s: Stage): string {
     case 'fleet': return 'The parked fleet'
     case 'work': return 'Inside a workplace'
     case 'style': return 'Your look'
-    case 'ring0': return 'Ring-0'
-    case 'exam': return 'The way out'
+    case 'console': return 'The console'
   }
 }
 
@@ -211,8 +253,7 @@ export function showOf(s: Stage): string {
     case 'fleet': return 'Take me to a car'
     case 'work': return 'Take me inside'
     case 'style': return 'Open the wardrobe'
-    case 'ring0': return 'Open it for me'
-    case 'exam': return 'Type it for me'
+    case 'console': return 'Open the console'
   }
 }
 
@@ -235,13 +276,11 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
       const homes = o.city.homes === true ? ` Or step into a home for sale, a glass room on its own lot, and ${doorstepHow(o)} to read its deed; the smallest is free to claim.` : ''
       return { text: `Now choose how you look${name}. ${tap(o)} Look at the end of my chip: pick your clothes and their colours, your hair, your skin, your face and your build, then press Done.${shops}${homes}`, keep: ['Look', 'Done'] }
     }
-    case 'ring0':
-      if (o.family === 'touch') return { text: 'Under the city is a kernel called Ring-0. Open the Menu in the corner, tap Console, type the word laws and tap go.', keep: ['Console', 'laws'] }
-      // A pad opens the console from its own menu, and types on the on-screen keys that rise with it.
-      if (o.family === 'pad') return { text: `Under the city is a kernel called Ring-0. Press ${o.words.console} for the menu, choose Console, type the word laws on the keys that rise and press Enter.`, keep: [o.words.console, 'Console', 'laws'] }
-      return { text: `Under the city is a kernel called Ring-0. Open the console with the ${o.words.console} key, type the word laws and press Enter.`, keep: [o.words.console, 'laws'] }
-    case 'exam':
-      return { text: `Last thing, and the only way out. In the console, run the three lines on this card, in order: verify_ring0 checks the seal on the kernel, spawn_subagents calls ${inWords(SWARM_SIZE)} sub-agents to work, and unlock_city opens the city when both hold.`, keep: ['verify_ring0', 'spawn_subagents', 'unlock_city'] }
+    case 'console':
+      if (o.family === 'touch') return { text: `Last one${name}, and then the city is yours. Open the Menu in the corner and tap Console: the city’s command line, where the city answers to typed words. The moment it opens, everything here is open to you.`, keep: ['Menu', 'Console'] }
+      // A pad has no ~ key: its own menu opens the console too, and the on-screen keys rise with it to type on.
+      if (o.family === 'pad') return { text: `Last one${name}, and then the city is yours. Open the console with the button on this card, or press ${o.words.console} and choose Console: the city’s command line, where the city answers to typed words, on keys that rise with it. The moment it opens, everything here is open to you.`, keep: ['console'] }
+      return { text: `Last one${name}, and then the city is yours. Press the ${o.words.console} key to open the console: the city’s command line, where the city answers to typed words. The moment it opens, everything here is open to you.`, keep: [o.words.console] }
   }
 }
 
@@ -266,14 +305,10 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
       const homes = o.city.homes === true ? ` So does a home: step inside, ${doorstepHow(o)}, and press Done when you have read its deed.` : ''
       return { text: `Look is the small word at the end of my chip. ${tap(o)} it, change anything you like or nothing at all, and press Done.${shops}${homes} The button on this card opens the wardrobe for you.`, keep: ['Look', 'Done'] }
     }
-    case 'ring0':
-      return { text: o.family === 'touch'
-        ? 'The console drops down from the top of the screen once you tap Console in the Menu. Type laws and tap go; act gate and kernel work too.'
-        : o.family === 'pad'
-          ? `The console drops down from the top of the screen once you press ${o.words.console} and choose Console, and the keys rise with it. Type laws and press Enter; act gate and kernel work too.`
-          : `The console drops down from the top of the screen on the ${o.words.console} key. Type laws and press Enter; act gate and kernel work too.`, keep: ['laws'] }
-    case 'exam':
-      return { text: 'Type noir, a space, then the first line, and press Enter; the console keeps seal for the next line. The buttons on this card type each line for you, and the last one runs it.', keep: ['noir'] }
+    case 'console':
+      if (o.family === 'touch') return { text: 'The Menu is the button marked Menu in the corner. Tap it, then tap Console at the top of the list; the button on this card opens it too.', keep: ['Menu', 'Console'] }
+      if (o.family === 'pad') return { text: `The button on this card opens the console; so does ${o.words.console}, then Console, with keys that rise with it. On a keyboard it is the key left of 1, under Esc.`, keep: ['console'] }
+      return { text: `The ${o.words.console} key is the one left of 1, under Esc. Press it once and the console drops down from the top of the screen; the button on this card opens it too.`, keep: [o.words.console] }
   }
 }
 
@@ -288,16 +323,14 @@ export function eli8Of(s: Stage, city?: FirstWalkOptions['city']): string {
     case 'fleet': return 'The streets have a fleet: cars of eight kinds that drive, park and let you take the wheel, and craft that fly between rooftop pads above the avenues. Every one of them keeps the same laws as the people.'
     case 'work': return 'Inside, the people of the city work: they type, inspect and talk at their stations, and what an agent does there is real agent work, prompts and answers, not a cartoon of it. A robot, real or simulated, can take a body in this city too, over the joint bridge.'
     case 'style': return `You choose how you look: your clothes and their colours, your hair, your skin, your face and your build. Everyone on the street is dressed from the same wardrobe you are, the city’s own business-casual one.${city?.stores === true ? ' The shops on the street sell lines from it too, and trying them on costs nothing.' : ''}${city?.homes === true ? ' A home can be yours as well: the homes on the street are for sale, and the smallest costs nothing to claim.' : ''}`
-    case 'ring0': return 'Underneath the city is a kernel called Ring-0. It holds four laws in rank order, and every car, every agent and every command passes through them. Nothing in the city, and nothing you type, can turn them off.'
-    case 'exam': return 'This is a tiny program in NoirScript, the console’s own typed language. It runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens. The three words are doors.'
+    case 'console': return 'The console is the city’s command line. Type a word, press Enter, and the city answers: the clock, the people, the cars, the kernel underneath. A lot of what you do with your hands you can also do with words there, and some things only words can do.'
   }
 }
 
-/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`, the workplaces' desks only where `city.rooms`). */
+/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`). */
 export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly string[] {
   const shops = city?.stores === true
   const homes = city?.homes === true
-  const rooms = city?.rooms !== false
   switch (s) {
     case 'move': return Object.freeze([
       'Why does the picture smear a little when you turn fast? Because the camera is a film camera: it shows twenty-four pictures a second and each one is open for half of its moment (a 180-degree shutter), so motion blurs the way it does at the cinema.',
@@ -334,21 +367,12 @@ export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly stri
       `Why does the wardrobe card draw you rather than show a mirror? Because out on the street you see through your own eyes; the card draws you from the very rings your graphics chip builds your body from, and your shadow and everyone else see the rest, freckles and vitiligo included.${shops ? ' In a shop, while its card is open, the camera steps out and circles you like a mirror (not in a headset or a shared room).' : ''}`,
       `Why does your look have a short code? Because a look is a set of numbers: the code, with a check built in, carries them to another device or a friend; and beside You, the card has a tab for each of your own agents, with a voice and a look from the same wardrobe.${homes ? ' A home is a number too: its deed is one line of the shops’ catalogue, kept by the one shopkeeper, so every card agrees on what is yours.' : ''}`,
     ])
-    case 'ring0': return Object.freeze([
-      'Why four laws and not three? Because the Zeroth Law sits above the others: no action may harm the city as a whole, and the action gate holds every ask, proposal and run to it before the First, Second and Third.',
-      'Why is there a gate at all? Because an agent that can act is allowed to act only through a catalogue of named actions, each checked twelve ways, and each one waits for your OK on a card; the agent never gets its hands on the engine.',
-      'Why is the city air-gapped? Because its scripts reach no network, no clock and no file on their own; a container that fails that check keeps the gate closed.',
-      'Why is the console a shell? Because operators read root shells, and this one shows you what the kernel sees: the laws, the interventions, the gate, and the audit trail with its hash chain.',
-      'Why must you see this before the city opens? Because you are about to be given a swarm, and you should know what holds it.',
-    ])
-    case 'exam': return Object.freeze([
-      'Why a program and not a button? Because this city is a coding tool you live in: the first thing you do here should be the thing you will do most, which is tell a machine exactly what you mean.',
-      'Why does verify_ring0 give a number? Because it is a seal: a checksum of the kernel’s live state, the four laws, the fifteen checks and the air gap; if any of them is off, the seal is zero and the city stays shut.',
-      rooms
-        ? `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program at one of the sixteen workplaces, held by the same walls as yours and opened from wherever you stand; anyone near with a desk’s skill is asked over too, and the console tells you how many are running.`
-        : `Why ${inWords(SWARM_SIZE)} sub-agents? Because that is a swarm you can count: each one a lane, a small program held by the same walls as yours and opened from wherever you stand; this map has no workplaces, so they read the city around where you started, and the console tells you how many are running.`,
-      'Why can the program not simply set a flag? Because NoirScript writes to nothing it is not handed; unlock_city is handed one door, this walk’s own, and only the kernel’s seal opens it.',
-      'Why does the walk end in the console? Because from here on the console is where you meet the city as it is, and the city should meet you there too.',
+    case 'console': return Object.freeze([
+      'Why a command line in a city? Because this city is a coding tool you live in: telling a machine exactly what you mean, in words, is the thing you will do most here.',
+      'Why does help list so many words? Because the console reads the city the way the HUD does, and further: the clock, the crowd, the traffic, the frame rate and the lanes your sub-agents run in are each one word away.',
+      'Why can nothing you type turn the laws off? Because underneath the city is a kernel called Ring-0 that holds four laws in rank order; every car, every agent and every command passes through them, and the console has no word that sets them aside.',
+      'Why does the city open here? Because from now on the console is where you meet the city as it is, and the city should meet you there too.',
+      'Why is there more to find in here? Because the console has its own typed language, Crimson Noir Script, that runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens; type noir and a line to try it.',
     ])
   }
 }
@@ -364,16 +388,29 @@ export function passedLine(name?: string): string {
   return `The city is yours${n}. Everything you just did, you can do again any time; and I am on the chip whenever you want me.`
 }
 
+/** What the console prints when the walk ends: Sloane's line, then where to go from here (its Close button on touch, where there is no Esc). */
+export function passedBanner(name?: string, family: InputFamily = 'keyboard'): readonly string[] {
+  const away = family === 'touch' ? 'Close puts the console away' : 'Esc closes the console'
+  return Object.freeze([
+    `Sloane: ${passedLine(name)}`,
+    `The city is open: nothing is held back any more. ${away}; help lists every command.`,
+  ])
+}
+
 /**
  * The walk: told when the visitor is in (`start`), fed readings (`read`) and events (`note`), and asked a few times a
- * second (`tick`) whether there is something to say. A stage is done when its readings or events say so; the walk is
- * passed when the console's exam reports `unlock`. Everything is timed from the clock values it is given.
+ * second (`tick`) whether there is something to say and whether to lend a hand. A stage is done when its readings or
+ * events say so; the walk is passed when the console opens on its last stage, or when the console's exam reports
+ * `unlock` (the exit program, from any stage). Everything is timed from the clock values it is given.
  */
 export class FirstWalk {
   readonly options: Readonly<FirstWalkOptions>
   readonly #done = new Set<Stage>()
   #started = Number.NaN
+  /** The last progress of any kind (the hint's clock). */
   #progress = Number.NaN
+  /** When the stage on the card began, or last moved forward (the hand's clock). */
+  #since = Number.NaN
   #lastSaid = Number.NaN
   #last: WalkReading | null = null
   #yaw0 = Number.NaN
@@ -383,6 +420,7 @@ export class FirstWalk {
   #seal = false
   #swarm = false
   #passed = false
+  #assisting = false
   #said = 0
   #hinted = new Set<Stage>()
   #pending: Beat | null = null
@@ -391,7 +429,7 @@ export class FirstWalk {
     this.options = Object.freeze({ ...options, words: Object.freeze({ ...options.words }), city: Object.freeze({ ...options.city }) })
     for (const s of options.done ?? []) this.#done.add(s)
     for (const s of STAGES) if (!available(s, options.city)) this.#done.add(s)
-    if (this.#done.has('exam')) this.#done.delete('exam') // the exit is never passed over
+    if (this.#done.has('console')) this.#done.delete('console') // the console is never passed over: it is where the walk ends
   }
 
   /** The visitor is in: the first stage starts now, and Sloane says it. */
@@ -399,6 +437,7 @@ export class FirstWalk {
     if (this.started) return
     this.#started = now
     this.#progress = now
+    this.#since = now
     this.#pending = this.#beat('ask', this.stage, askFor(this.stage, this.options))
   }
 
@@ -406,14 +445,14 @@ export class FirstWalk {
     return Number.isFinite(this.#started)
   }
 
-  /** The city was unlocked: the walk is over. */
+  /** The city is the visitor's: the walk is over. */
   get passed(): boolean {
     return this.#passed
   }
 
-  /** The stage the visitor is on (the exit, once every other is done). */
+  /** The stage the visitor is on (the console, once every other is done). */
   get stage(): Stage {
-    return STAGES.find((s) => !this.#done.has(s)) ?? 'exam'
+    return STAGES.find((s) => !this.#done.has(s)) ?? 'console'
   }
 
   get done(): ReadonlySet<Stage> {
@@ -425,9 +464,14 @@ export class FirstWalk {
     return cardFor(this.stage, this.options)
   }
 
-  /** The exit's doors so far: the seal checked, the swarm called. */
+  /** The exit program's doors so far: the seal checked, the swarm called. */
   get exam(): { seal: boolean; swarm: boolean } {
     return { seal: this.#seal, swarm: this.#swarm }
+  }
+
+  /** Whether the walk is lending a hand on this stage (assistMs with nothing done on it, as of the last tick). */
+  get assisting(): boolean {
+    return this.#assisting
   }
 
   /** How many lines Sloane has said. */
@@ -444,16 +488,10 @@ export class FirstWalk {
       case 'vehicle': this.#finish('fleet', now); break
       case 'inside': this.#finish('work', now); break
       case 'wardrobe': case 'store': case 'home': this.#finish('style', now); break
-      case 'law': this.#finish('ring0', now); break
+      case 'console': if (this.stage === 'console') this.#pass(); break
       case 'seal': this.#seal = true; break
       case 'swarm': this.#swarm = true; break
-      case 'unlock':
-        if (this.stage !== 'exam') return
-        this.#passed = true
-        this.#done.add('exam')
-        this.#pending = this.#beat('passed', 'exam', { text: passedLine(this.options.name), keep: [] })
-        break
-      default: break
+      case 'unlock': this.#pass(); break
     }
   }
 
@@ -465,25 +503,39 @@ export class FirstWalk {
     if (!last) {
       this.#yaw0 = r.yaw
       this.#travelled0 = r.travelled
+      if (r.consoleOpen && this.stage === 'console') this.#pass()
       return
     }
     let active = false
-    if (Number.isFinite(r.yaw) && Number.isFinite(this.#yaw0) && Math.abs(turn(r.yaw - this.#yaw0)) >= WALK.lookRadians) { if (!this.#looked) active = true; this.#looked = true }
-    if (Number.isFinite(r.travelled) && Number.isFinite(this.#travelled0) && r.travelled - this.#travelled0 >= WALK.walkMetres) { this.#walked = true; this.#travelled0 = r.travelled; active = true }
+    if (Number.isFinite(r.yaw) && Number.isFinite(this.#yaw0) && Math.abs(turn(r.yaw - this.#yaw0)) >= WALK.lookRadians) {
+      if (!this.#looked) { active = true; if (this.stage === 'move') this.#since = now }
+      this.#looked = true
+    }
+    if (Number.isFinite(r.travelled) && Number.isFinite(this.#travelled0) && r.travelled - this.#travelled0 >= WALK.walkMetres) {
+      this.#walked = true
+      this.#travelled0 = r.travelled
+      active = true
+      if (this.stage === 'move') this.#since = now
+    }
     if (this.#looked && this.#walked) this.#finish('move', now)
     if (r.driving && !last.driving) { active = true; this.#finish('fleet', now) }
     if (r.inside && !last.inside) { active = true; this.#finish('work', now) }
     if (r.consoleOpen && !last.consoleOpen) active = true
     if (active) this.#progress = now
+    // The console open on the last stage, however it got there (opened just now, or open already when the stage came).
+    if (r.consoleOpen && this.stage === 'console') this.#pass()
   }
 
   /**
    * Whether this is a moment for Sloane to speak: a stage just started or the walk was just passed (said at once),
    * or the stage has had no progress for hintMs and the last line was cooldownMs ago (one hint per stage). Returns
-   * the line (marked as said) or null.
+   * the line (marked as said) or null. It also decides whether the walk lends a hand (`assisting`): assistMs since
+   * the stage began or last moved forward.
    */
   tick(now: number): Beat | null {
     if (!this.started) return null
+    const o = this.options
+    this.#assisting = !this.#passed && now - this.#since >= (o.assistMs ?? WALK.assistMs)
     const p = this.#pending
     if (p) {
       this.#pending = null
@@ -491,7 +543,6 @@ export class FirstWalk {
       return p
     }
     if (this.#passed) return null
-    const o = this.options
     const s = this.stage
     if (this.#hinted.has(s)) return null
     if (now - this.#progress < (o.hintMs ?? WALK.hintMs)) return null
@@ -506,16 +557,30 @@ export class FirstWalk {
     return Object.freeze({ id: this.#said, stage, kind, text: line.text, keep: Object.freeze([...line.keep]) })
   }
 
-  /** A stage is done: the next one starts, and Sloane says it (the exit is finished only by `unlock`). */
+  /** A stage is done: the next one starts, and Sloane says it (the console is finished only by `#pass`). */
   #finish(s: Stage, now: number): void {
-    if (s === 'exam' || this.#done.has(s)) return
+    if (s === 'console' || this.#done.has(s)) return
     const before = this.stage
     this.#done.add(s)
     this.#progress = now
     // A later stage done early (a car entered while still learning to walk) is kept, and said nothing of until its turn
     // would have come: Sloane speaks only when the stage on the card changes.
     const next = this.stage
-    if (next !== before) this.#pending = this.#beat('ask', next, askFor(next, this.options))
+    if (next === before) return
+    this.#since = now
+    this.#assisting = false
+    // Arriving at the last stage with the console already open is reaching it: the walk is passed at once.
+    if (next === 'console' && this.#last?.consoleOpen === true) { this.#pass(); return }
+    this.#pending = this.#beat('ask', next, askFor(next, this.options))
+  }
+
+  /** The city is the visitor's: every stage counts as done, the hand is withdrawn, and Sloane says so. */
+  #pass(): void {
+    if (this.#passed) return
+    this.#passed = true
+    this.#assisting = false
+    for (const s of STAGES) this.#done.add(s)
+    this.#pending = this.#beat('passed', 'console', { text: passedLine(this.options.name), keep: [] })
   }
 }
 

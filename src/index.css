@@ -353,3 +353,59 @@ html[data-keys-open] .r0-root[data-open]:not([data-full]) {
 html[data-keys-open] .r0-root[data-full] {
   height: calc(100% - var(--keys-height, 0px));
 }
+
+/* The first walk's lent hand (App.tsx data-walk-assist, 09_Cognition/firstWalk.ts assistTargetOf): after a few seconds
+   with nothing done on a stage, the control the stage asks for (the touch stick, Sloane's chip, the touch Enter car
+   button, the Look word on her chip, the touch Menu and its Console item) and the card's own button are ringed in the
+   brand's crimson, breathing unless the system asks for reduced motion. An outline, which the frosted panels' high
+   contrast rules leave alone; in high contrast it is yellow, dashed and still, so it is never mistaken for the solid
+   focus ring. The same list in all three rules, so nothing but a ringed control is touched, and each steps aside while
+   the dwell click marks the control (data-dwell): its arming fill and done ring show as ever. */
+:is(
+    html[data-walk-assist='stick'] [data-touch='stick'],
+    html[data-walk-assist='chip'] [data-concierge='chip'],
+    html[data-walk-assist='look'] [data-concierge='chip-look'],
+    html[data-walk-assist='enter'] [data-touch-tap='enter'],
+    html[data-walk-assist='menu'] [data-touch='menu'],
+    html[data-walk-assist='menu'] [data-menu-item='console'],
+    .walk-assist
+  ):not([data-dwell]) {
+  outline: 3px solid #e8203a;
+  outline-offset: 3px;
+  animation: walk-assist 1.4s ease-in-out infinite;
+}
+@keyframes walk-assist {
+  0%,
+  100% {
+    outline-color: rgba(232, 32, 58, 1);
+  }
+  50% {
+    outline-color: rgba(232, 32, 58, 0.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(
+      html[data-walk-assist='stick'] [data-touch='stick'],
+      html[data-walk-assist='chip'] [data-concierge='chip'],
+      html[data-walk-assist='look'] [data-concierge='chip-look'],
+      html[data-walk-assist='enter'] [data-touch-tap='enter'],
+      html[data-walk-assist='menu'] [data-touch='menu'],
+      html[data-walk-assist='menu'] [data-menu-item='console'],
+      .walk-assist
+    ):not([data-dwell]) {
+    animation: none;
+  }
+}
+html[data-contrast='high'] :is(
+    html[data-walk-assist='stick'] [data-touch='stick'],
+    html[data-walk-assist='chip'] [data-concierge='chip'],
+    html[data-walk-assist='look'] [data-concierge='chip-look'],
+    html[data-walk-assist='enter'] [data-touch-tap='enter'],
+    html[data-walk-assist='menu'] [data-touch='menu'],
+    html[data-walk-assist='menu'] [data-menu-item='console'],
+    .walk-assist
+  ):not([data-dwell]) {
+  outline-color: #ffd400;
+  outline-style: dashed;
+  animation: none;
+}

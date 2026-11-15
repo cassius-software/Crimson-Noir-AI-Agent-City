@@ -2172,6 +2172,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The first walk holds a visitor only until they reach the console, and lends a hand when they stall.** Six stages
+  now (look and walk, talk to Sloane, the parked fleet, inside a workplace, your look, the console), down from seven:
+  the Ring-0 stage and the program stage are one stage, the console, and the moment it opens on that last stage the
+  walk is passed (`src/09_Cognition/firstWalk.ts`). Sloane's closing line, never shown or spoken before because the
+  card was gone by the time it came, is now said and printed in the console with where to go from here (Esc closes
+  it, or its Close button on touch; `help` lists every command; `TerminalHandle.print`). Opening the console on an
+  earlier stage passes nothing (on the look stage it puts an open wardrobe, shop or home card away, which finishes
+  that stage, and the walk is then passed at the console).
+  The Crimson Noir Script exit program (`verify_ring0`, `spawn_subagents`, `unlock_city`) now ends the walk from any stage, for
+  a visitor who already knows the console; the card no longer carries its three line buttons and Run. After eight
+  seconds with nothing done on a stage the walk lends a hand: the stage's button is ringed, the card offers to do it
+  (with the stage's keys where it has some), and the control the stage asks for is ringed on the page where it is on
+  screen (Sloane's chip and Look on it on every device; on touch the stick, the Enter car button, the Menu and its
+  Console item; `index.css`, breathing unless reduced motion is asked for, yellow, dashed and still in high contrast,
+  stepping aside while the dwell click marks a control). From the start of the car and indoor stages a marker stands
+  over the nearest parked car (a car in traffic, labelled so, where none is parked) or workplace doorway with its
+  distance, and a double ring marks it on the minimap
+  (`Engine.setBeacon`, view-only: no ping, no rally, nothing sent to the realm). The first card reads the machine in
+  three rows (the device and its graphics as the engine sized the city for at boot, the picture tier it runs at now
+  with a bar from Lite to Peak, Sloane ready to plan), with no network or model call. Sloane's hint comes after twenty
+  seconds without progress instead of forty-five. Pinned by the node tests (`firstWalk.test.ts`,
+  `firstWalkWiring.test.ts`, `exam.test.ts`, `commands.test.ts`) and the browser smoke in CI's Chrome: `walk` (the
+  machine rows, the console opened early passing nothing, every button, the hand and its ring on Sloane's chip, both
+  markers, the console ending the walk with the line printed, the pass kept, the exit program after it), `walkshop`
+  and `walkhome` (the console as the stage after the look; `walkhome` then ends the walk with the ~ key), `walkphone`
+  (the hand lent on the touch stick, the touch Menu's Console on an early stage passing nothing, then the exit program
+  ending the walk with the ring and any marker gone). The rings and the marker on a
+  real phone, a pad or a screen reader are unverified.
+
 - **The KV page table evicts the cached page least likely to be reused, not the one left longest ago.** Each cached
   page carries the log-odds that it will be read again: a prior from where it came from (a pinned prefix 0.95, a
   prompt 0.50, a generated token 0.10), raised by a Bayes factor of 3 at every cache hit or fork, and relaxing toward
@@ -2434,6 +2463,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **Sloane's first-walk lines and her quiet watch's nudges waited for a slow frame.** The two hooks
+  (`onboarding/useFirstWalk.ts`, `onboarding/useMentor.ts`) wrote their default clock inline, a new function on every
+  render, and restarted their once-a-second tick (and the watch its listeners) whenever the clock changed. The page
+  renders on every HUD snapshot, ten a second, so on a machine fast enough to keep up the tick never came round: the
+  walk's spoken lines, its hint and its closing line, and the watch's nudges, came only when a frame took longer than a
+  second. The default clocks are now made once; `firstWalkWiring.test.ts` and `mentorWiring.test.ts` pin that, and the
+  browser smoke's `walk` scenario sees the closing line printed. The walk also takes its first reading as it starts:
+  the head's anchor had come with the first snapshot after the card appeared, so a Walk for me pressed at once could
+  be the anchor itself, and the first stage then waited for a second turn that button never makes.
+
+- **A ping behind the visitor was drawn ahead of them.** The renderer draws with a reversed depth buffer, under which
+  a point behind the camera projects with a depth below 0 and its place mirrored, and the HUD's chip test (`z < 1`)
+  let it through: a ping, and the first walk's new marker, could show over the street ahead while the place was
+  behind. The side is now decided in view space (`src/07_Execute_Actions/screenPoint.ts`), and in split screen the
+  chip is placed in player 1's viewport rather than across the whole canvas. `screenPoint.test.ts` checks it with
+  three's own camera set up as the city's (reversed depth, 62 degrees), behind, ahead, to the side and split.
 
 - **A cached KV page could outlive the page before it.** The page table released an agent's pages head first, so a
   chain's head could be evicted while its tail stayed cached under a key no prompt can reach any more, holding a page
