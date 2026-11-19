@@ -3220,7 +3220,8 @@ Complexity Parity:
         <span class="why-q">Why did storing SAE64_DEC as a global instead of passing it into sae64_train_step save so much gas?</span>
         <span class="why-chevron" aria-hidden="true">&gt;</span>
       </summary>
-      <div class="why-body"><p>Crimson Noir Script passes arrays by value. Copying <code>[f32x4; 64]</code> ($w = 256$ cells = 1,024 bytes) into a parameter and returning a modified copy copies 512 cells and incurs $2 \times \lfloor 256/16 \rfloor = 32$ move-gas surcharges per step. Indexing the 64B-aligned global mutates only the active 4-cell atoms ($lfloor 4/16 floor = 0$ surcharge)!</p></div>
+      <div class="why-body"><p>Crimson Noir Script passes arrays by value. Copying <code>[f32x4; 64]</code> ($w = 256$ cells = 1,024 bytes) into a parameter and returning a modified copy copies 512 cells and incurs $2 \times \lfloor 256/16 \rfloor = 32$ move-gas surcharges per step. Indexing the 64B-aligned global mutates only the active 4-cell atoms ($lfloor 4/16 
+floor = 0$ surcharge)!</p></div>
     </details>
     <details class="why-item">
       <summary class="why-summary">
@@ -7239,4 +7240,124 @@ $('#console-button').onclick=()=>$('#console').classList.toggle('is-open');$('#c
 let consoleSession=new NS.NoirSession();$('#console-run').onclick=()=>{let code=$('#console-input').value.replace(/^\s*noir\s+/, '');try{$('#console-output').textContent=formatResult(consoleSession.run(code,makeMockCityHost({exam:true}),NS.LIMITS))}catch(e){$('#console-output').textContent=String(e)}};$('#console-reset').onclick=()=>{consoleSession=new NS.NoirSession();$('#console-output').textContent='Session reset.'};
 $('#run-all-labs-btn')?.addEventListener('click',()=>{let out=$('#self-verify-output'),results=[];out.style.display='block';for(let l of LABS){try{let r=execute(l,l.code);results.push(l.id+': '+(!r.error&&!r.fault?'PASS':'FAIL '+(r.error||JSON.stringify(r.fault))))}catch(e){results.push(l.id+': FAIL '+e)}}out.textContent=results.join('\n')});
 const initial=location.hash.slice(1);if(document.getElementById(initial)?.classList.contains('chapter-view'))view(initial);else view('mod-00');
+</script><script>
+(() => {
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const listen = (id, type, fn) => { const el = byId(id); if (el) el.addEventListener(type, fn); };
+  const readouts = (id, values) => {
+    const root = byId(id); root.replaceChildren();
+    for (const [label, value] of values) {
+      const cell = document.createElement('div'); cell.className = 'readout-cell';
+      const name = document.createElement('div'); name.className = 'noir-label'; name.textContent = label;
+      const val = document.createElement('div'); val.className = 'val'; val.textContent = String(value);
+      cell.append(name, val); root.append(cell);
+    }
+  };
+  const context = id => { try { return byId(id)?.getContext('2d') || null; } catch (_) { return null; } };
+  const init = (name, fn) => { try { fn(); } catch (e) { console.error(name + ' visualization:', e); } };
+
+  init('32-bit cell', () => {
+    let bits = 0x3f800000;
+    const grid = byId('bit-grid');
+    function render() {
+      const buffer = new ArrayBuffer(4); new DataView(buffer).setUint32(0,bits,true);
+      const f = new DataView(buffer).getFloat32(0,true);
+      grid.replaceChildren();
+      for (let i=31;i>=0;i--) {
+        const b = document.createElement('button'); b.type='button'; b.className='bit-btn '+(i===31?'bit-sign':i>=23?'bit-exp':'');
+        b.dataset.on=String((bits>>>i)&1); b.setAttribute('aria-label','bit '+i+', '+b.dataset.on); b.setAttribute('aria-pressed',String(b.dataset.on==='1'));
+        b.append(document.createTextNode(b.dataset.on)); const small=document.createElement('small');small.textContent=String(i);b.append(small);
+        b.onclick=()=>{bits=(bits^(2**i))>>>0;render();}; grid.append(b);
+      }
+      const pop=bits.toString(2).split('1').length-1;
+      readouts('bit-readouts', [['Hex','0x'+bits.toString(16).padStart(8,'0').toUpperCase()],['Unsigned u32',bits>>>0],['Signed i32',bits|0],['Float32',f],['popcount',pop],['clz',Math.clz32(bits)],['ctz',bits===0?32:31-Math.clz32((bits & -bits)>>>0)]]);
+    }
+    byId('bit-presets').addEventListener('click', e=>{const b=e.target.closest('[data-bitval]');if(b){bits=Number(b.dataset.bitval)>>>0;render();}});
+    listen('bit-xor-flip','click',()=>{bits=(bits^0xffffffff)>>>0;render();});render();
+  });
+
+  init('Morton curve', () => {
+    const canvas=byId('morton-canvas'), ctx=context('morton-canvas');
+    const morton=(x,y)=>{let z=0;for(let i=0;i<4;i++) z|=((x>>i)&1)<<(i*2)|((y>>i)&1)<<(i*2+1);return z;};
+    const coords=z=>{let x=0,y=0;for(let i=0;i<4;i++){x|=((z>>(2*i))&1)<<i;y|=((z>>(2*i+1))&1)<<i;}return [x,y];};
+    function render(){
+      const x=Number(byId('morton-x').value), y=Number(byId('morton-y').value), z=morton(x,y);
+      byId('morton-x-val').textContent=x; byId('morton-y-val').textContent=y;
+      byId('morton-readout').textContent=`morton2(${x}, ${y}) = ${z} (0b${z.toString(2).padStart(8,'0')}) · x=${x.toString(2).padStart(4,'0')} · z=${y.toString(2).padStart(4,'0')}`;
+      if(!ctx)return;const s=18;ctx.clearRect(0,0,288,288);ctx.fillStyle='#050507';ctx.fillRect(0,0,288,288);
+      ctx.strokeStyle='#282a31';ctx.lineWidth=1;ctx.beginPath();for(let i=0;i<=16;i++){ctx.moveTo(i*s+.5,0);ctx.lineTo(i*s+.5,288);ctx.moveTo(0,i*s+.5);ctx.lineTo(288,i*s+.5);}ctx.stroke();
+      ctx.strokeStyle='#e8203a';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<=z;i++){let [a,b]=coords(i);if(i===0)ctx.moveTo(a*s+9,b*s+9);else ctx.lineTo(a*s+9,b*s+9);}ctx.stroke();
+      ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(x*s+9,y*s+9,5,0,Math.PI*2);ctx.fill();
+    }
+    ['morton-x','morton-y'].forEach(id=>listen(id,'input',render));
+    canvas.addEventListener('pointerdown',e=>{const r=canvas.getBoundingClientRect();if(!r.width||!r.height)return;byId('morton-x').value=Math.max(0,Math.min(15,Math.floor((e.clientX-r.left)/r.width*16)));byId('morton-y').value=Math.max(0,Math.min(15,Math.floor((e.clientY-r.top)/r.height*16)));render();});render();
+  });
+
+  init('cache lines', () => {
+    let mode='soa';
+    function render(){
+      const n=+byId('cache-rows').value, fields=+byId('cache-fields').value;
+      byId('cache-rows-val').textContent=n;byId('cache-fields-val').textContent=fields;
+      byId('cache-mode-soa').classList.toggle('is-active',mode==='soa');byId('cache-mode-aos').classList.toggle('is-active',mode==='aos');
+      const span=mode==='soa'?n:((n-1)*fields+1), lines=Math.ceil(span/16), padded=Math.ceil(n/4)*4;
+      const root=byId('cache-cells');root.replaceChildren();
+      for(let i=0;i<lines*16;i++){
+        const used=mode==='soa'?i<n:i%fields===0&&i/fields<n;
+        const pad=mode==='soa'&&i>=n&&i<padded;
+        const div=document.createElement('div');div.className='cache-slot '+(used?'is-used':pad?'is-pad':'is-waste');div.textContent=used?'x'+(mode==='soa'?i:i/fields):pad?'pad':'·';div.title='Cell '+i+'; cache line '+Math.floor(i/16);root.append(div);
+      }
+      readouts('cache-stats',[['Cache lines',lines],['Useful bytes',n*4],['Fetched bytes',lines*64],['Useful fraction',((n/(lines*16))*100).toFixed(1)+'%']]);
+    }
+    ['cache-rows','cache-fields'].forEach(id=>listen(id,'input',render));
+    ['soa','aos'].forEach(m=>listen('cache-mode-'+m,'click',()=>{mode=m;render();}));render();
+  });
+
+  init('depth precision', () => {
+    const ctx=context('depth-canvas');
+    function render(){
+      const near=+byId('depth-near').value/100;
+      const distance=Math.max(near,Math.pow(10,(+byId('depth-dist').value)/250));
+      byId('depth-dist-val').textContent=distance.toFixed(distance<10?2:1)+' m';byId('depth-near-val').textContent=near.toFixed(2)+' m';
+      // Infinite-far-plane approximation: forward fixed-point quantization vs reversed float32.
+      const f24=distance*distance/(near*(2**24-1)), f32=distance*distance/near*(2**-24), reversed=distance*(2**-23);
+      readouts('depth-readouts',[['Distance',distance.toPrecision(4)+' m'],['Forward 24-bit ≈',f24.toExponential(2)+' m'],['Forward float32 ≈',f32.toExponential(2)+' m'],['Reversed float32 ≈',reversed.toExponential(2)+' m']]);
+      if(!ctx)return;const w=680,h=150,left=44,right=665,top=15,bottom=122;ctx.clearRect(0,0,w,h);ctx.fillStyle='#050507';ctx.fillRect(0,0,w,h);ctx.strokeStyle='#3a3c44';ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(left,bottom);ctx.lineTo(right,bottom);ctx.stroke();ctx.font='10px monospace';ctx.fillStyle='#c8c8cc';ctx.fillText('Approx. precision (m), log scale',left+4,12);ctx.fillText('1 m',left,bottom+15);ctx.fillText('10 km',right-35,bottom+15);
+      const curves=[['#e8203a',d=>d*d/(near*(2**24-1))],['#d89a2a',d=>d*d/near*(2**-24)],['#a7d2c1',d=>d*(2**-23)]];
+      for(const [color,fn] of curves){ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<=100;i++){let d=Math.pow(10,4*i/100), value=fn(d);let px=left+(right-left)*i/100, py=Math.max(top,Math.min(bottom,bottom-((Math.log10(value)+8)/10)*(bottom-top)));if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);}ctx.stroke();}
+      ctx.fillStyle='#e8203a';ctx.fillText('forward 24',45,145);ctx.fillStyle='#d89a2a';ctx.fillText('forward f32',130,145);ctx.fillStyle='#a7d2c1';ctx.fillText('reversed f32',220,145);
+    }
+    ['depth-dist','depth-near'].forEach(id=>listen(id,'input',render));render();
+  });
+
+  init('steering and attention', () => {
+    let ablate=false, head=0, currentCode='';
+    const baseCode=LABS.find(l=>l.id==='lab-12a').code.split('// Unsteered residual stream')[0];
+    const prompts={audit:'0.88, 0.92, -0.12, -0.95',agent:'0.42, 0.68, 0.25, -0.55',patrol:'0.60, 0.78, 0.05, -0.70'};
+    const names=['BOS','CITY','RING0','AGENT','AUDIT','SECURE','SWARM','BREACH'];
+    function render(){
+      const prompt=byId('steer-prompt').value, feat=byId('steer-feat').value, alpha=(+byId('steer-alpha').value/100).toFixed(2);
+      byId('steer-alpha-val').textContent=alpha;
+      byId('steer-ablate-btn').textContent='Ablate d_k: '+(ablate?'ON':'OFF');byId('steer-ablate-btn').setAttribute('aria-pressed',String(ablate));
+      currentCode=baseCode+'\nlet h_input: f32x4 = f32x4('+prompts[prompt]+');\nlet h_steered: f32x4 = h_input + D_'+feat+' * splat_f32x4('+alpha+');\nlet h_final: f32x4 = '+(ablate?'ablate_direction(h_steered, D_'+feat+')':'h_steered')+';\nlet h_norm: f32x4 = h_final * splat_f32x4(1.0 / sqrt(0.25 * hsum(h_final * h_final) + 1.0e-5));\nfor i in 0..8 { print(i, hsum(C_VOCAB[i] * h_norm)); }';
+      const result=execute(LABS.find(l=>l.id==='lab-12a'),currentCode);const logits=(result.out||[]).map(line=>Number(line.trim().split(/\s+/).pop()));
+      const out=byId('steer-logits');out.replaceChildren();
+      if(result.error||result.fault||logits.length!==8||logits.some(n=>!Number.isFinite(n))){byId('steer-vm-meta').textContent='VM error: '+(result.error||JSON.stringify(result.fault)||'unexpected output');return;}
+      let max=Math.max(...logits), exp=logits.map(x=>Math.exp(x-max)), sum=exp.reduce((a,b)=>a+b,0), winner=logits.indexOf(max);
+      logits.forEach((value,i)=>{let row=document.createElement('div');row.className='logit-row'+(i===winner?' is-winner':'');let name=document.createElement('span');name.textContent=names[i];let bg=document.createElement('span');bg.className='logit-bar-bg';let bar=document.createElement('span');bar.className='logit-bar-fill';bar.style.display='block';bar.style.width=(100*exp[i]/sum)+'%';bg.append(bar);let pct=document.createElement('span');pct.textContent=(100*exp[i]/sum).toFixed(1)+'%';row.append(name,bg,pct);out.append(row);});
+      byId('steer-vm-meta').textContent='NoirScript VM · '+result.steps+' steps · predicted '+names[winner]+' ('+winner+') · softmax computed in JavaScript';
+      const ctx=context('mha-canvas');if(ctx){ctx.clearRect(0,0,280,220);ctx.fillStyle='#050507';ctx.fillRect(0,0,280,220);ctx.font='11px monospace';for(let row=0;row<4;row++){let weights=[];for(let col=0;col<=row;col++)weights.push(head===0?1+col:1+row-col);let total=weights.reduce((a,b)=>a+b,0);for(let col=0;col<4;col++){let v=col<=row?weights[col]/total:0;ctx.fillStyle=col<=row?`rgba(232,32,58,${0.16+v*.84})`:'#16171c';ctx.fillRect(42+col*45,20+row*43,41,39);ctx.fillStyle='#fff';ctx.fillText(col<=row?v.toFixed(2):'—',47+col*45,43+row*43);}}}
+      byId('mha-caption').textContent='Illustrative causal weights, head '+head+' (not extracted from the VM); upper triangle is masked.';
+    }
+    // This display is a schematic rather than the output of a live multi-head attention model.
+    byId('widget-steering').querySelector('p').textContent='The logits below use the embedded NoirScript VM and a small illustrative residual vector for the selected prompt. The attention heatmap is a schematic example, not live model output.';
+    ['steer-prompt','steer-feat'].forEach(id=>listen(id,'change',render));listen('steer-alpha','input',render);
+    listen('steer-ablate-btn','click',()=>{ablate=!ablate;render();});
+    document.querySelectorAll('[data-steer-preset]').forEach(b=>b.addEventListener('click',()=>{let [a,f,off]=b.dataset.steerPreset.split(',');byId('steer-alpha').value=a;byId('steer-feat').value=f;ablate=off==='1';render();}));
+    [0,1].forEach(n=>listen('mha-head-'+n,'click',()=>{head=n;[0,1].forEach(i=>byId('mha-head-'+i).classList.toggle('is-active',i===head));render();}));
+    listen('steer-copy-1l','click',async()=>{const text=flattenNoirOneLine(currentCode);byId('steer-vm-meta').textContent=(await copy(text)?'Copied ':'Copy unavailable; use the Lab 12.1 editor. ')+text.length+' characters.';});
+    render();
+  });
+})();
+
 </script></body></html>
