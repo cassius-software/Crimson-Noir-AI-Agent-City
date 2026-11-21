@@ -35,7 +35,7 @@ import type {
   BlendFactor, BlendOp, BlendPart, ColorOutput, Compare, ComputePipeline, DepthState, Handle, Lens, RenderPipeline,
   RenderPipelineInfo, Topology, VertexAttribute, VertexBufferLayout, VertexFormat,
 } from './api.ts'
-import { decode, encode } from './binary.ts'
+import { checkedCopy, decode } from './binary.ts'
 import { BindingLayoutImpl, PipelineLayoutImpl } from './bindings.ts'
 import { fail, isFault } from './fault.ts'
 import { FORMATS, FORMAT_NAMES, sampleKind } from './formats.ts'
@@ -84,15 +84,14 @@ export function createLens(core: Core, source: unknown, label: unknown, where: s
   const name = labelOf(label, where)
   let module: LensModule
   try {
+    // A private, frozen copy is made first (decode copies the words; a module is carried through the binary form),
+    // and only that copy is checked and kept, so no later change to what the caller holds can reach the lens.
     if (source instanceof Uint32Array) {
       module = decode(source)
+      verify(module)
     } else {
-      // Checked first for the clearest refusal, then carried through the binary form so the lens holds a frozen
-      // copy no later change to the caller's object can reach, and checked again as the copy it keeps.
-      verify(source as LensModule)
-      module = decode(encode(source as LensModule))
+      module = checkedCopy(source as LensModule)
     }
-    verify(module)
   } catch (e) {
     if (isFault(e, 'lens')) fail('lens', `${where}: ${e.message}`)
     throw e

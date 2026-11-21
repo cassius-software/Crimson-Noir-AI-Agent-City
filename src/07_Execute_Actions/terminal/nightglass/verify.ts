@@ -6,10 +6,13 @@
  * the builder, decoded from words, or written by hand is held to every rule of the form: the structure of its ids
  * (each defined once, used only after, inside its block or a nested one; variables only through var, get and set),
  * the type of every instruction by the specification's table, the rules of its stage, its resources and their byte
- * layouts, its ports, its control flow, and the bounds of LENS_LIMITS. A module it accepts can be run by the
- * reference renderer and lowered to WGSL with neither of them checking again. A module it refuses is refused with a
- * Fault of code `lens` whose message names the place (`lens: body[3].then[0] binary: ...`) and the rule. The typing
- * rules are exported, so the builder infers result types and refuses a mistake by the very same table.
+ * layouts, its ports, its control flow, and the bounds of LENS_LIMITS (but for the words of the binary form, which
+ * encode holds, and so createLens and the builder's finish()). It refuses -0 wherever it reads a whole number (an
+ * id, an index, a set or binding, a slot, a path step, a lane, a column, a length), so the binary form, which cannot
+ * tell -0 from 0 in a word, keeps every module it accepts exactly. A module it accepts can be run by the reference
+ * renderer and lowered to WGSL with neither of them checking again. A module it refuses is refused with a Fault of
+ * code `lens` whose message names the place (`lens: body[3].then[0] binary: ...`) and the rule. The typing rules are
+ * exported, so the builder infers result types and refuses a mistake by the very same table.
  * What breaks if it is removed? A malformed or ill-typed shader would reach the back ends: the reference renderer
  * would run something the form never defined, and the GPU back end would hand the browser WGSL that it refuses.
  *
@@ -94,13 +97,14 @@ const WALK_BUDGET = 1 << 24
 
 type Obj = { readonly [key: string]: unknown }
 const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x)
-const isIndex = (x: unknown, below: number): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < below
+const isIndex = (x: unknown, below: number): x is number => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < below && !Object.is(x, -0)
 const isOneOf = <T>(list: readonly T[], x: unknown): x is T => (list as readonly unknown[]).includes(x)
 
 /** A value as it reads in a message: short, and safe to print whatever a caller passed. */
 export function say(x: unknown): string {
   if (typeof x === 'string') return JSON.stringify(x.length > 40 ? `${x.slice(0, 40)}...` : x)
-  if (typeof x === 'number' || typeof x === 'boolean' || x === null || x === undefined) return String(x)
+  if (typeof x === 'number') return Object.is(x, -0) ? '-0' : String(x)
+  if (typeof x === 'boolean' || x === null || x === undefined) return String(x)
   if (Array.isArray(x)) return 'a list'
   return typeof x === 'object' ? 'an object' : `a ${typeof x}`
 }
@@ -377,7 +381,7 @@ function typeRule(t: unknown, space: Space, runtimeOk: boolean, where: string, l
   }
   shapeRule(t, ['array', 'len'], [], (rule) => no(`field ${where}: ${rule}`))
   const len = t.len
-  if (typeof len !== 'number' || !Number.isInteger(len) || len < 0 || len > LENS_LIMITS.elements) no(`field ${where}: an array holds 0 to ${LENS_LIMITS.elements} elements, not ${say(len)}`)
+  if (typeof len !== 'number' || !Number.isInteger(len) || len < 0 || len > LENS_LIMITS.elements || Object.is(len, -0)) no(`field ${where}: an array holds 0 to ${LENS_LIMITS.elements} elements, not ${say(len)}`)
   if (len === 0 && !runtimeOk) no(`field ${where}: an array without a length is only the last field of a storage block`)
   typeRule(t.array, space, false, `${where}[]`, level + 1, budget, no)
   if (space === 'uniform' && laidOut(() => strideOf(t.array as DataType, space), no) % 16 !== 0) no(`field ${where}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
@@ -687,7 +691,7 @@ class Checker {
   }
 
   private port(ports: Map<number, ValueType>, side: string, slot: unknown, no: Refuse): ValueType {
-    const t = typeof slot === 'number' ? ports.get(slot) : undefined
+    const t = typeof slot === 'number' && !Object.is(slot, -0) ? ports.get(slot) : undefined
     if (t === undefined) no(`no ${side} is declared at slot ${say(slot)}`)
     return t
   }
@@ -723,7 +727,7 @@ class Checker {
     for (let s = 0; s < path.length; s++) {
       const step: unknown = path[s]
       if (typeof step === 'number') {
-        if (!Number.isInteger(step) || step < 0 || step > MAX_INDEX) no(`step ${s} (${say(step)}) is not a constant index from 0 to ${MAX_INDEX}`)
+        if (!Number.isInteger(step) || step < 0 || step > MAX_INDEX || Object.is(step, -0)) no(`step ${s} (${say(step)}) is not a constant index from 0 to ${MAX_INDEX}`)
         key += `,${step}`
       } else {
         if (!isObj(step)) no(`step ${s} is a constant index or an { at } value`)

@@ -14,11 +14,12 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { decode, encode } from './binary.ts'
 import { LensBuilder, arrayOf, block, lens } from './builder.ts'
-import type { Val } from './builder.ts'
+import type { BlockSpec, Val } from './builder.ts'
 import { isFault } from './fault.ts'
 import { BINARY, LENS_LIMITS, TERNARY, UNARY, scalarOf } from './lens.ts'
-import type { BinaryFn, Inst, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
+import type { BinaryFn, Block, Inst, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
 
 /** Asserts a lens Fault whose message matches. */
 function refused(f: () => unknown, re: RegExp): void {
@@ -709,4 +710,68 @@ test('the instruction and id limits are refused at the instruction that would pa
   for (let n = 0; n < LENS_LIMITS.ids; n++) c.var('u32')
   refused(() => c.var('u32'), /var: a module holds at most 65536 values and variables/)
   assert.equal(c.finish().ids, LENS_LIMITS.ids)
+})
+
+test('a block spec or Block shared under many fields is copied within LENS_LIMITS.blockFields, and refused past it', () => {
+  // Six fields per level, each pointing at one shared inner Block, eight levels deep: about two million fields once
+  // copied out, which the builder once copied whole (and a wider one exhausted the heap) before refusing.
+  const shared = (k: number, levels: number): Block => {
+    let b: Block = { fields: Array.from({ length: k }, (_, i) => ({ name: `f${i}`, type: 'f32x4' })) }
+    for (let l = 1; l < levels; l++) {
+      const inner = b
+      b = { fields: Array.from({ length: k }, (_, i) => ({ name: `f${i}`, type: { struct: inner } })) }
+    }
+    return b
+  }
+  const vast = shared(6, 8)
+  refused(() => block(vast), /^lens: block: the block holds more than 1048576 fields in all/)
+  refused(() => arrayOf(vast, 2), /^lens: block: the block holds more than 1048576 fields in all/)
+  refused(() => lens('compute').storage(0, 0, vast), /^lens: block: the block holds more than 1048576 fields in all/)
+  refused(() => lens('compute').uniform(0, 0, shared(16, 7)), /^lens: block: the block holds more than 1048576 fields in all/)
+  // The same holds for a spec written as keys.
+  let spec: BlockSpec = { x: 'f32x4' }
+  for (let l = 0; l < 7; l++) {
+    const inner = spec
+    spec = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`f${i}`, inner]))
+  }
+  refused(() => lens('compute').storage(0, 0, spec), /^lens: block: the block holds more than 1048576 fields in all/)
+  // A shared Block within the bound is copied out and declared.
+  const fits = shared(4, 8)
+  const r = lens('compute').storage(0, 0, fits)
+  assert.notEqual(r.block, fits)
+  assert.deepEqual(r.block, fits)
+})
+
+test('finish refuses a module whose binary form would pass LENS_LIMITS.words, as createLens would', () => {
+  // Sixteen scalars and m4s made of them, 19 words each: within the instruction and id limits, past the word limit.
+  const b = lens('compute')
+  const xs = Array.from({ length: 16 }, (_, i) => b.f32(i))
+  const n = Math.ceil(LENS_LIMITS.words / 19)
+  for (let k = 0; k < n; k++) b.make('m4', ...xs)
+  assert.ok(b.ids <= LENS_LIMITS.ids)
+  refused(() => b.finish(), /^lens: finish: the binary form cannot carry the module \(lens: encode: module: the module takes more than 1048576 words\)/)
+})
+
+test('-0 given for a set, binding, slot, path step, lane or column is written as 0, so the module round-trips exactly', () => {
+  const b = lens('fragment')
+  const uv = b.input(-0, 'f32x2')
+  const out = b.output(-0, 'f32x4')
+  const u = b.uniform(-0, -0, { list: arrayOf('f32x4', 2), g: 'm2' })
+  b.image(-0, 1)
+  b.sampler(1, -0)
+  b.storageImage(2, -0, 'rgba8')
+  const again = b.in(-0)
+  const first = b.read(u, 'list', -0)
+  const col = b.column(b.read(u, 1), -0)
+  const lanes = b.pick(b.make('f32x4', uv, col), [-0, 1, -0, 1])
+  b.out(out, b.add(b.add(first, lanes), b.pick(again, [-0, -0, 1, 1])))
+  const m = b.finish()
+  const whole: unknown[] = [
+    m.inputs[0].slot, m.outputs[0].slot, ...m.resources.flatMap((r) => (r.kind === 'constants' ? [] : [r.set, r.binding])),
+    ...m.body.flatMap((x) => (x.op === 'in' || x.op === 'out' ? [x.slot] : x.op === 'read' ? x.path : x.op === 'pick' ? x.lanes : x.op === 'column' ? [x.i] : [])),
+  ]
+  assert.ok(whole.length > 12)
+  for (const x of whole) assert.ok(Object.is(x, 0) || (typeof x === 'number' && x > 0), String(x))
+  assert.ok(!whole.some((x) => Object.is(x, -0)))
+  assert.deepEqual(decode(encode(m)), m)
 })

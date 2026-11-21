@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { isFault } from './fault.ts'
-import { IMAGE_DIMS, LENS_LIMITS, RESOURCE_KINDS, SAMPLE_KINDS, componentsOf, layoutBlock } from './lens.ts'
+import { IMAGE_DIMS, LENS_LIMITS, RESOURCE_KINDS, SAMPLE_KINDS, componentsOf, layoutBlock, walk } from './lens.ts'
 import type { LensModule, ValueType } from './lens.ts'
 import { binaryType, makeRule, ternaryType, unaryType, verify } from './verify.ts'
 import type { Refuse } from './verify.ts'
@@ -610,4 +610,70 @@ test('layoutBlock holds the uniform array rule at every depth, and lens.ts owns 
   assert.deepEqual(SAMPLE_KINDS, ['float', 'uint', 'sint', 'depth'])
   assert.deepEqual(IMAGE_DIMS, ['2d', '2d-array'])
   assert.equal(LENS_LIMITS.blockFields, 1_048_576)
+})
+
+test('in a uniform block and the inline constants every array starts on a 16-byte boundary, as WGSL\'s uniform space asks', () => {
+  // Arrays whose elements step 16 bytes but align below 16 (m2, a block of four f32) once started mid-row, at 8 or 4,
+  // where the GPU back end could not declare them; they start at 16, and the block aligns to 16.
+  const quad: Loose = { struct: { fields: ['a', 'b', 'c', 'd'].map((name) => ({ name, type: 'f32' })) } }
+  const grids: Loose = { fields: [{ name: 'x', type: 'f32' }, { name: 'arr', type: { array: 'm2', len: 2 } }] }
+  const quads: Loose = { fields: [{ name: 'x', type: 'f32' }, { name: 'arr', type: { array: quad, len: 2 } }] }
+  const deep: Loose = { fields: [{ name: 'x', type: 'f32' }, { name: 'arr', type: { array: { array: quad, len: 2 }, len: 2 } }] }
+  const inner: Loose = { fields: [{ name: 'x', type: 'f32' }, { name: 's', type: { struct: grids } }] }
+  assert.deepEqual(layoutBlock(grids, 'uniform'), { size: 48, align: 16, offsets: [0, 16] })
+  assert.deepEqual(layoutBlock(quads, 'uniform'), { size: 48, align: 16, offsets: [0, 16] })
+  assert.deepEqual(layoutBlock(deep, 'uniform'), { size: 80, align: 16, offsets: [0, 16] })
+  assert.deepEqual(layoutBlock(inner, 'uniform'), { size: 64, align: 16, offsets: [0, 16] })
+  // Every element of every such array starts on a 16-byte boundary too.
+  assert.equal(walk(grids, 'uniform', [1, 1]).offset, 32)
+  assert.equal(walk(quads, 'uniform', [1, 1, 0]).offset, 32)
+  assert.equal(walk(deep, 'uniform', [1, 1, 1, 0]).offset, 16 + 32 + 16)
+  assert.equal(walk(inner, 'uniform', [1, 1, 1]).offset, 16 + 16 + 16)
+  // Storage keeps each type's natural alignment.
+  assert.deepEqual(layoutBlock(grids, 'storage'), { size: 40, align: 8, offsets: [0, 8] })
+  assert.deepEqual(layoutBlock(quads, 'storage'), { size: 36, align: 4, offsets: [0, 4] })
+  // The checker holds uniform blocks and constants to that layout: a constants block that fitted 128 bytes only
+  // with its array started mid-row no longer fits.
+  for (const kind of ['uniform', 'constants']) {
+    const r = (block: Loose): Loose => (kind === 'uniform' ? { kind, set: 0, binding: 0, block } : { kind, block })
+    verify(bare([], 0, [r(grids)]))
+    verify(bare([], 0, [r(deep)]))
+  }
+  const tight: Loose = { fields: [{ name: 'x', type: 'f32' }, { name: 'arr', type: { array: quad, len: 7 } }, { name: 'y', type: 'f32' }] }
+  assert.deepEqual(layoutBlock(tight, 'uniform'), { size: 144, align: 16, offsets: [0, 16, 128] })
+  refused(bare([], 0, [{ kind: 'constants', block: tight }]), /lens: resources\[0\] constants: the constants block takes 144 bytes; the limit is 128/)
+})
+
+test('-0 is refused in every whole-number field, so the binary form keeps every module it accepts exactly', () => {
+  // The module of the report: verify accepted it, and decode(encode(m)) came back with 0 for each -0.
+  const report: Loose = bare(
+    [{ op: 'read', id: -0, t: 'f32x4', res: -0, path: [-0, -0] }, { op: 'pick', id: 1, t: 'f32', a: 0, lanes: [-0] }],
+    2,
+    [{ kind: 'storage', set: -0, binding: 0, block: { fields: [{ name: 'a', type: { array: 'f32x4', len: 4 } }] }, writable: true }],
+  )
+  refused(report, /lens: resources\[0\] storage: set -0 is not a whole number below 3/)
+  report.resources[0].set = 0
+  refused(report, /lens: body\[0\] read: resource -0 is not one of the module's 1 resources/)
+  report.body[0].res = 0
+  refused(report, /lens: body\[0\] read: step 0 \(-0\) is not a constant index from 0 to 2147483647/)
+  report.body[0].path = [0, 0]
+  refused(report, /lens: body\[0\] read: the id -0 is not below the module's 2/)
+  report.body[0].id = 0
+  refused(report, /lens: body\[1\] pick: -0 is not a lane of a f32x4/)
+  report.body[1].lanes = [0]
+  verify(report)
+  // Each other whole-number field of the fixtures.
+  mutation(vertex, (m) => { m.ids = -0 }, /lens: module: ids is a whole number from 0 to 65536, not -0/)
+  mutation(compute, (m) => { m.resources[0].binding = -0 }, /lens: resources\[0\] storage: binding -0 is not a whole number below 16/)
+  mutation(vertex, (m) => { m.inputs[0].slot = -0 }, /lens: inputs\[0\] port: slot -0 is not a whole number below 16/)
+  mutation(vertex, (m) => { m.body[0].slot = -0 }, /lens: body\[0\] in: no input is declared at slot -0/)
+  mutation(vertex, (m) => { m.body[9].slot = -0 }, /lens: body\[9\] out: no output is declared at slot -0/)
+  mutation(vertex, (m) => { m.body[2].args = [-0, 1] }, /lens: body\[2\] make: operand 0 -0 is not an id below the module's 7/)
+  mutation(compute, (m) => { m.body[2].path[1] = { at: -0 } }, /lens: body\[2\] read: step 1 -0 is not an id below the module's 18/)
+  mutation(compute, (m) => { m.body[4].i = -0 }, /lens: body\[4\] column: -0 is not a column of an m3/)
+  mutation(compute, (m) => { m.body[10].image = -0 }, /lens: body\[10\] extent: resource -0 is not one of the module's 3 resources/)
+  mutation(compute, (m) => { m.resources[2].block.fields[1].type.len = -0 }, /field list: an array holds 0 to 65536 elements, not -0/)
+  mutation(fragment, (m) => { m.body[11].v = -0 }, /lens: body\[11\] get: the variable -0 is not an id below the module's 13/)
+  // An f32 literal keeps its -0: the binary form stores the f32 bits.
+  verify(bare([{ op: 'lit', id: 0, t: 'f32', v: [-0] }], 1))
 })

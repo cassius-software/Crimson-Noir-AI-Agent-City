@@ -21,7 +21,7 @@ import type { BlockRes, LensBuilder, Val } from './builder.ts'
 import { isFault } from './fault.ts'
 import type { FaultCode } from './fault.ts'
 import { BINARY, TERNARY, UNARY, columnOf, isGrid, layoutBlock, scalarOf, strideOf, vectorOf, widthOf } from './lens.ts'
-import type { BinaryFn, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
+import type { BinaryFn, Block, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
 import { DEFAULT_BUDGET, LANES, LOOP_ITERATIONS, compile, dispatch } from './interp.ts'
 import type { BlockBinding, Bindings, ImageBinding, Program, Resources, RunResult } from './interp.ts'
 import { ImageStore, lodFromRates, sample } from './texture.ts'
@@ -1120,4 +1120,31 @@ test('bind refuses missing, malformed and mismatched resources; dispatch refuses
   v.position(v.f32x4(0, 0, 0, 1))
   const vp = compile(v.finish())
   faults(() => dispatch(vp, vp.bind(NONE), [1, 1, 1]), 'invalid', /a vertex program is not dispatched/)
+})
+
+test('compile lays out each block object once, however many reads reach it, so its work stays within what verify bounds', () => {
+  // Shared blocks of eight fields, three deep under an array. Only laying a block out reads its last field's type
+  // (no path here steps into it), so those reads count the layouts compile makes.
+  let layouts = 0
+  const blockOf = (inner: unknown): Block => ({
+    fields: Array.from({ length: 8 }, (_, i) => {
+      const f = { name: `f${i}` } as { name: string; type: Block['fields'][number]['type'] }
+      Object.defineProperty(f, 'type', { enumerable: true, get: () => { if (i === 7) layouts++; return inner } })
+      return f
+    }),
+  })
+  const top = blockOf({ array: { struct: blockOf({ struct: blockOf('f32') }) }, len: 4 })
+  const reads = (n: number): LensModule => ({
+    stage: 'compute', group: [1, 1, 1], inputs: [], outputs: [],
+    resources: [{ kind: 'storage', set: 0, binding: 0, writable: false, block: top }],
+    body: Array.from({ length: n }, (_, id) => ({ op: 'read', id, t: 'f32', res: 0, path: [0, 3, 0, 0] })),
+    ids: n,
+  })
+  const cost = (n: number): number => {
+    layouts = 0
+    compile(reads(n))
+    return layouts
+  }
+  // verify() walks one path once, and compile lays each block out once: 2,000 reads cost what 2 do.
+  assert.equal(cost(2000), cost(2))
 })
