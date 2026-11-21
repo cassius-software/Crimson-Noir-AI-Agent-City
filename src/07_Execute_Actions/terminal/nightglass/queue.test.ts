@@ -151,7 +151,9 @@ test('while work is in flight, what it uses cannot be destroyed, written, reset 
   refuses(() => set.write([{ binding: 0, buffer: data }]), 'lifetime', /binding set "s" write: queued work still uses binding set "s"; wait for its fence before writing it/)
   refuses(() => pool.reset(), 'lifetime', /queued work still uses binding set "s"; wait for its fence first/)
   refuses(() => pool.destroy(), 'lifetime', /queued work still uses binding set "s"/)
-  refuses(() => readback.invalidate(), 'hazard', /memory "readback" invalidate: queued work still writes into memory "readback"; invalidate once its fence is signalled/)
+  refuses(() => readback.invalidate(), 'hazard', /^memory "readback" invalidate: submitted work that writes buffer \d+ is not done; invalidate once its fence is signalled$/)
+  // Only the buffers the work writes count: the bytes before the one it copies into are free to take back.
+  readback.invalidate(0, 1024)
   refuses(() => r.device.destroy(), 'lifetime', /submitted work is still in flight; wait for its fences first/)
   refuses(() => fence.reset(), 'state', /fence "f" reset: the fence waits on submitted work/)
   refuses(() => fence.destroy(), 'lifetime', /fence "f" destroy: queued work still uses it/)
