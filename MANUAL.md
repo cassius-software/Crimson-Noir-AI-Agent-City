@@ -220,7 +220,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   highlight are drawn in its colours. Checked in CI and emulation only: unit suites for each part, and the browser
   smoke test (headless Chrome with a simulated standard pad on the console alone, and the console on an emulated
   Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or with a screen reader.
-  Headset controllers do not yet count as a device of their own (the page is not shown inside a headset session).
+  Headset controllers are not counted as a device for the keys: the page's own panels are not shown inside a headset
+  session, where the keys fold to their chip.
   Firefox for Android has been reported to expose no gamepads to pages; there a pad's d-pad reaches the field as arrow
   keys and `access keys on` brings the keys.
 
@@ -947,7 +948,8 @@ not been seen. Where the browser offers no immersive session the whole path is i
   (xr vr)`), or the session's mode and what it holds (`vr: 2 controllers`); `xr vr` or `xr ar` asks for the session
   and `xr off` leaves it; on a touch screen the menu's **Headset** item does the same, VR where it is offered, else
   AR. A browser grants a session only inside the tap or the key press, so both ask synchronously; the page asks for
-  the `webgpu` feature and, optionally, a floor-level reference space and hand tracking. Split screen and a headset
+  the `webgpu` feature and, optionally, a floor-level reference space (a plain local one where it is withheld) and hand
+  tracking. Split screen and a headset
   do not mix (`no headset while the screen is split`). A passthrough or see-through session shows `(passthrough)`.
 - **The picture.** While presenting, the headset's own loop drives the frame (the page's animation frames are let
   go), every frame is shown (the cinema pacer's 24 a second is suspended), the post-processing chain and the ghost
@@ -960,15 +962,64 @@ not been seen. Where the browser offers no immersive session the whole path is i
   turned the body's way; the headset's pose is composed onto it, so a seated or a standing player's eyes land where
   the mouse's would. The pose read back is the headset's: yaw, pitch unclamped, roll on the camera. The stick's
   forward is where the headset looks, not where the body stands.
-- **Controllers** (`04_Connect_Hardware/xrInput.ts`, the `xr-standard` mapping): the left thumbstick walks and
-  steers, its press latches a run, the left squeeze is the handbrake; the right thumbstick snap-turns the body by
-  30° per flick (re-armed when it comes back), the right trigger accelerates, the right squeeze brakes, A (button 4)
-  pings and B (button 5) enters or leaves a car. A controller of no hand takes both duties. Their edges join the
-  pad's, under the same shield (a card waiting for your OK keeps the buttons), and no stick turns the head: the
-  headset does.
-- **Gaze and pinch, hands.** A source with no usable gamepad (a transient pointer, an articulated hand) is read by
-  the session's select events: a pinch enters or leaves a car when one is at hand, otherwise it pings where the head
-  looks. A gaze-and-pinch headset's pointers exist only during the pinch and may report no hand.
+- **Controllers** (`04_Connect_Hardware/xrInput.ts`). A controller is a tracked pointer with the `xr-standard`
+  mapping and at least one pair of axes. The 46 profiles of the WebXR input profiles registry come down to three kinds:
+  a thumbstick with up to two face buttons (some with a touchpad as well), a touchpad with no thumbstick (a pair of
+  wands), and a single pointing controller with a touchpad. Each kind works as a pair and alone, in either hand.
+  - **A pair.** The left stick, or the left touchpad while a thumb is on it, walks and steers; its click latches a run,
+    and a thumb at the touchpad's rim runs. The left squeeze is the handbrake, the left trigger pings, and the upper
+    left face button rights the car at the wheel. The right stick snap-turns the body 30° per flick on foot (re-armed
+    when it comes back); a right touchpad on a controller with no thumbstick turns with a click to either side. The
+    right trigger accelerates, the right squeeze brakes, the lower face button pings, the upper one enters or leaves a
+    car, and the right stick's click is the microphone's mute. On a right controller with no upper face button, its
+    touchpad's click enters or leaves a car, and on foot its trigger does what is at hand.
+  - **Alone** (any hand, or none). Its stick or touchpad walks forward and back. A stick pushed sideways snap-turns (a
+    push in between is one or the other, never a strafe); a touchpad with no thumbstick turns only with a click to
+    either side, so a thumb resting at the edge is never a second turn, and its centre click does what is at hand. A
+    touchpad beside a thumbstick, on a controller with no upper face button, is the door instead (what is at hand, on
+    foot); on one with that button the button is the door. At the wheel it steers and drives,
+    the trigger accelerates and the squeeze brakes; the stick's click is the handbrake on a controller with an upper
+    face button (that button is its door), and on one without it the stick's click held for a second is its door. On
+    foot the trigger does what is at hand: a car's door in reach, else a ping where the head looks. Two controllers of
+    one hand (or of none) split by order: the first walks, the second turns.
+  - **Out of a car.** The upper face button, a touchpad's click, a pinch, and the held click (the left hand's stick or
+    touchpad click, or the stick's click of a lone controller with no upper face button, held for a second while the
+    car stays stopped) step out. Each is refused while the car is faster than 1.5 m/s: the controller that asked
+    gives a short buzz where its browser can, and the monitor shows a toast (`Stop the car to step out`); a held click
+    is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
+    a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
+    still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
+    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop
+    (a squeeze of up to half a second), and from then on it drives only once pulled past a point 0.15 of its travel
+    above the lowest it has eased back to (so a jolt that dips a finger resting on it, even off it for a moment, does
+    not count). Let go for a tenth of a second, it counts from nothing again. From a resting finger or a worn trigger
+    a full pull is still full throttle; from a press eased only a little, a wobble near the stop gives little. That
+    point is taken afresh at each car and each takeover. So the car neither lurches on the way in nor creeps on a
+    resting finger or a worn trigger that rests a little above nothing.
+  - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
+    or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
+    lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
+    snap-turns instead of turning smoothly (it never tilts: the headset owns the pitch). Their edges join the pad's,
+    under the same shield (a card waiting for your OK keeps the buttons).
+- **Hands, gaze and pinch, styluses, screens.** Anything that is not a controller (an articulated hand and its pinch,
+  a gaze-and-pinch headset's transient pointer, a controller with no axes, a stylus, a phone's screen, a gaze button)
+  is read through the session's select events. A quick, still pinch (under 0.4 s and 2.5 cm) is a tap: a car's door
+  in reach, else a ping where the head looks, and out of a car only once it has slowed as above. Holding a pinch and
+  drawing the hand away walks the way the hand moved: half speed from 6 cm, full from about 11.5 cm, a run past 21 cm.
+  The draw is measured from the neck (the eyes less their offset from it, turned with the head), so a lean, a nod or
+  a look around does not walk, and it is judged against the way the head faced when the drag began, so a glance aside
+  mid-drag changes nothing: within 50° of that forward or back it walks, further round and past 8 cm sideways it
+  snap-turns once. At the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and
+  when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
+  still: back within a quarter of a second it resumes where it was, at the same speed and with no second snap, unless
+  the hand comes back on the far side of the way it was heading, which counts as a pass through the middle (it stands,
+  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A
+  pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is dropped,
+  with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller has no
+  mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head; hand
+  microgestures are not read.
+- **The floor.** A session not granted a floor-level space runs in a plain local one, whose origin is where the head
+  began, and the rig lifts its floor by the body's eye height so the eyes stay at standing height.
 - **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
   pinch`, `Tracked hand (right)`), each resolved by the device resolver's headset stage; they cannot be paired, the
   session brings them. The HUD's hardware lines and the namespace's `Hardware/Cell/Bus/xr` topic carry the state
