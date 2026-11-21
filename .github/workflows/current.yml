@@ -178,8 +178,8 @@ jobs:
           path: built
           persist-credentials: false
           sparse-checkout: crimson_noir_os
-      # Every target's files land on this one runner, the Linux packages and the Windows installer about a gigabyte each:
-      # room is made first, and the files are moved into the stage, not copied.
+      # Every target's files land on this one runner, the Linux packages, the macOS .dmg and zipped .app and the Windows
+      # installer about a gigabyte each: room is made first, and the files are moved into the stage, not copied.
       - name: Room on the disk for every target's files
         run: |
           df -h /

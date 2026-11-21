@@ -593,6 +593,9 @@ export class Input {
     this.ui |= this.mapper.ui
 
     const xr = this.xr
+    // A pad held inside a headset walks where the headset looks, as the controllers' sticks do (never at the wheel);
+    // turned before the merge, since the controllers' own moves are turned already.
+    if (xr && xr.live) xr.toHead(this.pad)
     const a = this.analog, p = xr ? mergeAnalog(this.padXr, this.pad, xr.analog) : this.pad, sx = this.stick.x, sy = this.stick.y
     if (sx * sx + sy * sy > p.moveX * p.moveX + p.moveY * p.moveY) {
       a.moveX = sx; a.moveY = sy; a.steer = -sx
@@ -605,6 +608,14 @@ export class Input {
     a.lookY = p.lookY
     a.run = p.run || this.held.run
     a.handbrake = p.handbrake || this.held.handbrake
+    // A pad held inside a headset: its right stick snap-turns the body as the controllers do, never smoothly, and never
+    // tilts (the headset owns the pitch).
+    if (xr && xr.live) {
+      const step = xr.padSnap(a.lookX)
+      if (step !== 0) this.yaw -= step
+      a.lookX = 0
+      a.lookY = 0
+    }
 
     const turn = this.lookStep
     this.padLook.step(a.lookX, a.lookY, dt, turn)

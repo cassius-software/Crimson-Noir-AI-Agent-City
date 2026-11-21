@@ -112,7 +112,8 @@
  *   App.tsx launcherSource): the launcher's own server, a model folder laid out as the package lays it, the page with
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
- * - walk: the first walk (?tutorial=1) end to end on its accessible path: the machine rows, the console opened early
+ * - walk: the first walk (?tutorial=1) end to end on its accessible path: the machine rows (Sloane's as the brain
+ *   readout has her), the console opened early
  *   passing nothing, the lent hand and its rings, the markers, the look stage through the wardrobe card, the console
  *   ending the walk with Sloane's line printed, then the three Crimson Noir Script lines finding the city open; with Sloane's
  *   name question beside the walk's card at five desktop sizes and the walk's card stepping aside for it under 960 px;
@@ -2654,9 +2655,13 @@ const SCENARIOS = {
       await p.tap('Escape', 'Escape', 27)
       await p.frames(3)
       check(await card(), 'walk: Escape does not put the card away')
-      // The first card reads the machine: the device, the picture's tier and Sloane, in words.
+      // The first card reads the machine: the device, the picture's tier and Sloane, in words; Sloane's row is the brain
+      // readout's (its brain, and its whole line as the row's title), read from memory.
       const machine = await p.eval(`document.querySelector('[data-walk-machine]')?.innerText ?? ''`)
-      check(/Device/.test(machine) && /(?:A phone|A laptop or desktop|A workstation)/.test(machine) && /Picture/.test(machine) && /Ready to plan/.test(machine), 'walk: the first card reads the machine (device, picture, Sloane)', machine.replace(/\s+/g, ' ').slice(0, 200))
+      const brainRow = await p.waitFor(`(() => { const d = document.querySelector('[data-walk-machine] [data-walk-brain]'), b = window.__SIM__.brain(); return !!d && d.dataset.walkWhere === b.where && d.querySelector('[aria-hidden="true"]')?.title === b.where && d.dataset.walkBrain === (b.brain ?? 'unknown') && { brain: d.dataset.walkBrain, where: b.where } })()`, 5_000).catch(() => null)
+      check(/Device/.test(machine) && /(?:A phone|A laptop or desktop|A workstation)/.test(machine) && /Picture/.test(machine)
+        && /(?:Ready to plan|Thinking (?:on this device|with a model on this machine|off this machine)|(?:Getting|Keeping) her model, \d+%|The app checks her model, \d+%)/.test(machine) && brainRow !== null,
+        'walk: the first card reads the machine (device, picture, and Sloane as the brain readout has her)', `${machine.replace(/\s+/g, ' ').slice(0, 200)} | ${brainRow ? `${brainRow.brain}: ${brainRow.where.slice(0, 120)}` : 'the row is not the readout\'s'}`)
       // The console opened before the last stage passes nothing: the walk is held until the visitor reaches it there.
       // (Sloane's name field may still hold the keyboard, where the tilde is a character: the page takes it back first.)
       await p.eval('document.activeElement?.blur?.()')

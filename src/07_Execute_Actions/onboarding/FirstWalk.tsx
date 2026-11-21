@@ -12,7 +12,8 @@
  * wardrobe, open the console; so the walk is completable with taps alone. A visitor who stalls is lent a hand
  * (`assisting`): the card shows the stage's keys in the device's own glyphs with a one-line offer, and its button is
  * lit (the host lights the control on the page too, and marks the car or the doorway). The first stage's card also
- * reads the visitor's machine in three rows (the device, the picture, Sloane). It stands clear of the HUD, the touch
+ * reads the visitor's machine in three rows (the device, the picture, and Sloane's brain as the brain readout has it,
+ * read from memory and never probed). It stands clear of the HUD, the touch
  * controls and Sloane's own card: on a wide screen under the
  * readout on the right, with Sloane's open card moved left of it (Concierge.tsx WIDE_BESIDE) from 60 rem across and,
  * in a narrower wide window, stepping aside while her card is open; on a compact or touch screen in the band above
@@ -39,7 +40,8 @@ import { glyph, glyphKind, type GlyphFamily } from '../glyphs.ts'
 import { GlyphKey } from '../Hud.tsx'
 import { WALK_SLOT } from '../walkSlot.ts'
 import { CONCIERGE_NAME } from './script.ts'
-import type { MachineReading } from './useFirstWalk.ts'
+import { readBrain, subscribeBrain } from '../../09_Cognition/brainReadout.ts'
+import { sloaneOf, type MachineReading } from './useFirstWalk.ts'
 import { familyOf } from './useMentor.ts'
 import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
 import { insideKeys } from '../../04_Connect_Hardware/keyboardSense.ts'
@@ -105,6 +107,26 @@ const SIDEWAYS = mediaStore('(orientation: landscape) and (max-height: 499px)')
  * At 100 % it is SMALL itself. One store per zoom.
  */
 const SQUEEZED = new Map<number, ReturnType<typeof mediaStore>>()
+/**
+ * Sloane's row on the machine card: the brain readout (brainReadout.ts), read from memory where the row is drawn, so a
+ * change there (a model found, her default model's bytes arriving) renders this row alone. Reading it starts no look
+ * at this machine and no download. The readout's whole line is the words' title for a pointer, and a screen reader
+ * hears it once, after the words (the shown words and their title are hidden from it, so the line is not said twice).
+ */
+function SloaneBrainRow(): JSX.Element {
+  const brain = useSyncExternalStore(subscribeBrain, readBrain, readBrain)
+  const row = sloaneOf(brain)
+  return (
+    <>
+      <dt className="text-noir-titanium-400">{CONCIERGE_NAME}</dt>
+      <dd className="text-noir-titanium-100" data-walk-brain={brain.brain ?? 'unknown'} data-walk-where={row.detail}>
+        <span aria-hidden="true" title={row.detail}>{row.text}</span>
+        <span className="sr-only">{row.text}: {row.detail}</span>
+      </dd>
+    </>
+  )
+}
+
 export function squeezedQuery(zoom: number): string {
   const z = Math.max(1, zoom)
   return `(max-width: ${Math.round(639 * z)}px), (max-height: ${Math.round(499 * z)}px)`
@@ -357,8 +379,7 @@ export function FirstWalkCard({ visible, card, beat, assisting = false, family =
                   <span className="block h-full rounded-full bg-noir-crimson" style={{ width: `${Math.round(machine.level * 100)}%` }} />
                 </span>
               </dd>
-              <dt className="text-noir-titanium-400">{CONCIERGE_NAME}</dt>
-              <dd className="text-noir-titanium-100">{machine.sloane}</dd>
+              <SloaneBrainRow />
             </dl>
           )}
 
