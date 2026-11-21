@@ -77,6 +77,7 @@ at all, where Sloane still answers through a model on this machine or in the app
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
+| Talk to the person near you (on foot) | T (Enter sends, Esc in an empty field finishes) | west face button; d-pad up held left-handed | tap the Talk chip |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
 | Ghost view | G | | Menu: Ghost view |
 | Rain mode | M | | Menu: Rain mode |
@@ -1100,9 +1101,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
-  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
-  handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
-  clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
+  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock, up talks to the person near you on foot) and has no reset or
+  handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake, west talks on
+  foot) and has no clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
   position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
   read: no d-pad, no centre buttons), the left hand keeps its stick and glance and opens doors with the south button,
   and the right hand reads with both hands unless the pad has four axes; a pad read in kernel order keeps the
@@ -2444,6 +2445,62 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
   chime's caption report it. Captions only describe sounds that play, so with the sound off (`audio off`,
   `?audio=0`) the chip alone shows it; `audio 0` silences the city and keeps every caption. `haptics off` or
   `?haptics=0` stills the tap and the vibration. How they feel on real controllers and phones is unverified.
+
+## Talking to people
+
+Walk up to someone in the street and you can talk with them: a passer-by, someone you asked over, or one of your
+hired agents (`07_Execute_Actions/talk.ts`, `TalkLayer.tsx`; `08_Swarm/talkLink.ts`, `talkLines.ts`).
+
+- **Who.** The nearest person within 4 m, on your floor, on screen and with no wall between you is offered; someone
+  straight ahead wins over someone nearer at the edge of the screen, and the one offered changes only for someone
+  clearly better placed. A small label rises over their head with their name (`Pedestrian 1234 (Rust)`, or a hired
+  agent's own name), their line (`Rust · Design`) and the key to press, and a **Talk to …** chip joins the HUD's chips
+  (its spoken name says how far and which way). Nobody is offered while you run, drive or wear a headset, while a card,
+  the console or Sloane's card is open, or with the HUD hidden. Sloane has no body in the street: her name still
+  reaches her card.
+- **Starting.** On purpose only: `T`; the pad's west face button (X on a pad lettered A at the south button, Y on one
+  lettered B there; the d-pad's up held left-handed, see Accessibility); a tap or a click on the chip; or a greeting
+  said aloud to the person offered ("hi", "hello", "excuse me", "good evening", or a hired agent's own name). Talk in the
+  room that greets nobody starts nothing, and `T` or the pad with nobody near says so. A small panel opens where Sloane's
+  card stands (her chip stays): the transcript, a line saying whether they are thinking or speaking, and an ordinary
+  text field. `T` puts the keyboard in the field, the pad does too unless the microphone is open, and a tap never does,
+  so no on-screen keyboard comes up unasked.
+- **Talking.** They open with a short line of their own at once. Then speak through the microphone, or type and press
+  Enter (on a keyboard the field lets go after each line, so W A S D walk again). Each reply is one to three short
+  sentences. People keep walking while they talk: walk along with them.
+- **Ending.** Done; Esc in an empty field (Esc in a field with text clears it); the pad's button again; or goodbye,
+  said or typed. It also ends when you walk on (past 6 m while nothing is in progress, past 12 m at any time), a wall
+  stands between you for a second and a half, they leave, you get in a car, open a card, the console or Sloane's card,
+  hide the HUD, switch away from the tab, or a minute passes with nothing going on. An ending you did not choose is one
+  of the HUD's messages ("Pedestrian 1234 (Rust) walked on."). A line that starts with Sloane's name ("Sloane, make it
+  night") ends the conversation and goes on to her.
+- **What they can do.** Chat. They cannot change the city, follow you or do work for you: that is Sloane's to arrange,
+  and asking someone over is the recruiter's. A spoken request for a skill ("anyone here know Rust?") still reaches the
+  recruiter first; a typed line never recruits. Nothing said is kept: not in the swarm's memory and not in the diary.
+- **Where the replies come from.** A model answers only when it is ready and cheap to ask: a model server at an
+  address on this machine, on any device, or the model in this page or the app's own once it is loaded, on a desktop
+  with a discrete GPU. On a phone, on the lite profile and on a computer without a discrete GPU a passer-by never makes
+  the model load or holds the city's quality down, so an original scripted line for their role answers; so it does when
+  the model has said nothing within 5 s or is busy with Sloane's answer. Your words and theirs pass the 14A screen:
+  words it refuses get a polite deflection, and a reply that would read as a request to recruit is replaced by a
+  scripted line before it is shown or said.
+- **Voices and captions.** With the city's sound on (whatever `sloane off` says), a hired agent you gave a provider
+  voice is heard at their head, with the walls and the room, as `say` is; everyone else speaks in an offline browser
+  voice of their own (never the one Sloane uses, where the device has another), quieter with distance, and a caption
+  without words says who speaks and where (`[Pedestrian 1234 (Rust) speaking]` with its arrow and metres). The words
+  are in the panel only. A device with no voice shows the text and gives you time to read it. Sloane's own lines are
+  not spoken over a conversation (her text still shows), and her nudges wait. A screen reader hears the opening and
+  each finished reply once, and once someone has been offered for a second and a half, "… is close enough to talk to:
+  press T" (the pad's button on a pad, the chip on a phone), at most every 15 s.
+- **Privacy.** What you say is understood on this device (Words, under Onboarding and the spatial HUD). A conversation
+  is never sent to the `claude` provider, even when it answers Sloane: replies come from a model server at an address
+  on this machine, from the model in this page or the app, or from the script. A hired agent's provider voice is said
+  by the speech provider you set up (see Speech); passers-by never use it.
+- **Not here.** Talking in a headset or as players 2 to 4 of a split screen; shop clerks and home staff; a pad held
+  left-handed and read without its d-pad has no talk button (the chip and a greeting still work). Real browser voices,
+  screen readers, phones, Safari and Firefox are unverified. The unit tests cover who is offered, every ending, the
+  replies and their screening; the browser smoke test opens a conversation on a desktop with `T`, sends "hi" and gets a
+  reply, and checks the chip and the panel on foot at fourteen phone and tablet views.
 
 ## Recruitment
 

@@ -126,6 +126,25 @@ export interface HudProgress {
   cueAge: number
 }
 
+/**
+ * The person near the player as the HUD's Talk chip and the screen reader's line read them (07_Execute_Actions/talk.ts
+ * TalkController.hud(), whose TalkHud has these fields, so the host hands it over as it is). `state` is someone
+ * offered ('near') or a conversation and the person's turn in it ('open' while they listen, 'thinking', 'speaking').
+ * `serial` names the proposal: the chip hands it back on a tap, so a chip drawn for one person never opens another.
+ * `label` is how the city names them ('Pedestrian 1234 (Rust)', or a hired agent's roster name) and `line` their role
+ * line ('Rust · Design'). `arrow`, `word` and `metres` say where they stand from the player (captions.ts bearing: '',
+ * '' and NaN while unknown).
+ */
+export interface HudTalk {
+  state: 'near' | 'open' | 'thinking' | 'speaking'
+  serial: number
+  label: string
+  line: string
+  arrow: string
+  word: string
+  metres: number
+}
+
 export interface MapCar { x: number; z: number; heading: number; player: boolean; /** Nobody at its wheel: a car to take. */ parked: boolean }
 
 /** Which control glyphs the HUD shows: the keyboard, a controller family, or touch. */
@@ -251,6 +270,11 @@ export interface SipocSnapshot {
      * for a few seconds (`said`).
      */
     voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean; silent?: boolean; hushed?: boolean; note?: string; speech?: string; said?: string; heard?: number; heardText?: string }
+    /**
+     * The person near the player (HudTalk), added by the host from the conversation's controller: the Talk chip while
+     * someone is offered, and the screen reader's line for it (announcer.ts). Absent with nobody offered or talked with.
+     */
+    talk?: HudTalk
     /**
      * The team at work (08_Swarm/team.ts; Sloane's for a goal, or the first walk's swarm), added by the host: one row a lane, with its tag, its
      * desk, whether it runs or was isolated, and its latest reading.

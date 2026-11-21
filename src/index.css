@@ -57,7 +57,7 @@ html[data-shell='tauri'] #root {
 
 /* Accessibility (07_Execute_Actions/access.ts writes these onto <html>). --ui-zoom scales every overlay that carries
    .ui-zoom (the HUD, Sloane's card and chip, the wardrobe, the action card, the way-out card, the shops' card, a home's doorstep card, the
-   first walk's card, the onboarding, the touch Menu's sheet) without the canvas or the touch buttons, 100 % to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
+   first walk's card, the onboarding, the touch Menu's sheet, the conversation's label and panel) without the canvas or the touch buttons, 100 % to 200 %. data-contrast="high" flattens every frosted-glass panel (matched by its blur utility, so every panel holds
    without each file knowing) to white on black with a solid border and no blur or shadow, lifts every light button
    inside one to black on white, and gives keyboard focus a thick ring; pulsing dots hold still. */
 :root {
@@ -262,4 +262,89 @@ html[data-contrast='high'] :is(
   outline-color: #ffd400;
   outline-style: dashed;
   animation: none;
+}
+
+/* The label over the head of the person near enough to talk to (07_Execute_Actions/TalkLayer.tsx TalkLabel; its look
+   is in its classes). talk.ts moves it by its transform alone, every frame, so it is a layer of its own and nothing
+   in it lays out the page; it starts hidden until talk.ts gives it a place. In high contrast it is white on black with
+   a solid border, as the frosted panels are (it has no blur for their rules to find). The mark of the person's turn: a
+   ring while they listen, three dots while they think, three bars while they speak, moving only for those who have
+   not asked for less motion. */
+[data-talk='label'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  will-change: transform;
+  contain: layout paint;
+}
+html[data-contrast='high'] [data-talk='label'] {
+  background: #000 !important;
+  color: #fff !important;
+  border: 2px solid #fff !important;
+  box-shadow: none !important;
+}
+html[data-contrast='high'] [data-talk='label'] span[class*='text-'] {
+  color: #fff !important;
+}
+[data-talk-mark] {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 0.75rem;
+}
+[data-talk-mark] > i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: currentColor;
+}
+[data-talk-mark='listening'] > i {
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+[data-talk-mark='speaking'] > i {
+  width: 2px;
+  height: 0.75rem;
+  border-radius: 1px;
+  transform: scaleY(0.55);
+}
+[data-talk-mark='speaking'] > i:nth-child(2) {
+  transform: scaleY(1);
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-talk-mark='thinking'] > i {
+    animation: talk-think 1.2s ease-in-out infinite;
+  }
+  [data-talk-mark='speaking'] > i {
+    animation: talk-speak 0.9s ease-in-out infinite;
+  }
+  [data-talk-mark] > i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  [data-talk-mark] > i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+}
+@keyframes talk-think {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes talk-speak {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
 }

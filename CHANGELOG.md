@@ -15,6 +15,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Talk to the person near you.** Walk up to a passer-by, someone you asked over or one of your hired agents, and
+  the nearest within 4 m on your floor, on screen and with no wall between is offered: a label over their head with
+  their name, their line and the key, and a **Talk to …** chip on the HUD. `T`, the pad's west face button (the d-pad's
+  up held left-handed), a tap on the chip or a spoken greeting ("hi", "excuse me") opens a small conversation panel
+  where Sloane's card stands, with the transcript and an ordinary text field; you speak through the microphone or type
+  (`src/08_Swarm/talkLink.ts`, `talkLines.ts`; `src/07_Execute_Actions/talk.ts`, `TalkLayer.tsx`; the engine's side in
+  `engine.ts`). They chat and do no work: a change to the city stays Sloane's, a spoken request for a skill still
+  reaches the recruiter first, and a typed line never recruits. A reply comes from a model only when it is ready and
+  cheap to ask (a model server on this machine, or the model in this page or the app once loaded on a desktop with a
+  discrete GPU), never from the `claude` provider, and otherwise, or after 5 s, from original scripted lines for their
+  role. A hired agent with a provider voice is heard at their head; everyone else speaks in an offline browser voice of
+  their own, quieter with distance, with a caption saying where. The conversation ends on Done, Esc, the pad's button
+  again, a goodbye, a line to Sloane (which goes on to her), walking away, a wall, a car, a card, the console, a hidden
+  HUD or tab, or a minute of nothing. MANUAL.md, Talking to people, has the details.
+  - **What the tests check.** Who is offered and when the offer moves (`talkLink.test.ts`, with a 20,000-step fuzz:
+    a conversation never changes person and closes only with a reason); every scripted line for every role, skill and
+    time of day passes the 14A screen, never reads as a recruitment request and keeps to three short sentences
+    (`talkLines.test.ts`); the controller's openings, endings, timers, the model's patience, a request queued behind
+    Sloane's answer given up at once, a reply that reads as a recruitment request replaced, and the label written only
+    when it moves (`talk.test.ts`); the person's voice tiers in Sloane's speaker, the line that names Sloane, the T key,
+    the pad's buttons for both hands and each hand, the glyphs, the screen reader's line and the HUD's snapshot field;
+    and the wiring in `App.tsx` and `engine.ts`, read as source (`talkLayerWiring.test.ts`). The browser smoke test's
+    desktop scenario opens a conversation with a stand-in partner (`window.__SIM__.talk`) by `T`, sends "hi" and waits
+    for the scripted reply, then closes it with Done; its phone scenario checks the chip and the panel on foot at
+    fourteen phone and tablet views, the panel judged by the rules of Sloane's card. Both scenarios passed in a local
+    Chrome on the software adapter; CI's browser jobs run them too.
+  - **Not verified.** Real browser voices and their timing, an iPhone's Safari, Firefox, Android and any phone; the
+    voice placed at a hired agent's head by ear; echo and barge-in on laptop speakers; screen readers; soft keyboards
+    over the panel; a small model keeping to the person it plays. Heads do not yet turn to the person you talk with:
+    that waits for another change. Not in a headset or for players 2 to 4 of a split screen.
+  - **Known.** On most phone and tablet views the panel stands over Sloane's chip (the smoke test records where), so
+    the chip cannot be tapped while you talk; a line to Sloane still reaches her and ends the conversation.
+
 - **The microphone understands what you say, with a recogniser of the page's own.** The document that asked for
   proximity voice said the microphone does not work. It was checked first: the microphone opened, metered the room and
   told speech from noise; what was missing was the words. Speech was turned into text only by the browser's own
