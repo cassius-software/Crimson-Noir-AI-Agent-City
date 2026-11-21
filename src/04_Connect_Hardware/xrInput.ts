@@ -63,6 +63,11 @@ export const XR_SECTOR = Object.freeze({ snap: (35 * Math.PI) / 180, walk: (55 *
 export const XR_HOLD_OUT_MS = 1000
 /** A car slower than this, m/s, has stopped enough to step out of, by any door (engine.ts tells the mapper). */
 export const XR_STEP_OUT_SPEED = 1.5
+/**
+ * A held trigger's counting point comes down to a lower one only once the trigger has stayed at or below it this long,
+ * ms: a jolt that dips a resting finger for a frame or two never lowers it (which would let the finger creep after).
+ */
+export const XR_TRIGGER_SETTLE_MS = 150
 
 /** Which duties a controller takes: the walking hand's, the turning and driving hand's, or both (a controller alone). */
 export type XrRole = 'left' | 'right' | 'both'
@@ -484,6 +489,8 @@ export class XrMapper {
    * and on foot.
    */
   private readonly triggerBase = new WeakMap<object, number>()
+  /** A lower point the trigger is settling at (the highest it has read since it went under the base) and since when. */
+  private readonly triggerSettle = new WeakMap<object, { level: number; since: number }>()
   private wasDriving = false
   private readonly stick = { x: 0, y: 0 }
   private readonly pinchOut: Analog = createAnalog()
@@ -572,11 +579,11 @@ export class XrMapper {
       const holding = (b: number) => (bits & (1 << b)) !== 0
       // A trigger held into the wheel (the press that opened the door, held as the controller woke there or as it takes
       // on the throttle; a light finger as much as a press, a worn trigger's rest too) gives no throttle where it is:
-      // it counts only what it is pulled past the lowest it has eased back to since (that plus the dead zone; the travel
-      // left is stretched to full throttle, but never more than twice the plain gain, so a wobble near the stop is no
-      // lurch), so the car never lurches on the way in nor creeps on a resting finger or a worn trigger. The point is
-      // taken afresh at each of those moments (never kept from an earlier car or duty) and dropped on foot; let go
-      // (back inside the dead zone) it counts from nothing again.
+      // it counts only what it is pulled past the lowest point it has eased back to since and stayed at for
+      // XR_TRIGGER_SETTLE_MS (that plus the dead zone; the travel left is stretched to full throttle, but never more
+      // than twice the plain gain, so a wobble near the stop is no lurch), so the car never lurches on the way in nor
+      // creeps on a resting finger or a worn trigger. The point is taken afresh at each of those moments (never kept
+      // from an earlier car or duty) and dropped on foot; let go (back inside the dead zone) it counts from nothing.
       const was = this.lastRole.get(s)
       const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
       this.lastRole.set(s, role)
@@ -584,11 +591,18 @@ export class XrMapper {
       const pull = triggerValue(tb)
       const raw = tb ? (tb.value > 0 ? tb.value : tb.pressed ? 1 : 0) : 0
       let base = this.triggerBase.get(s)
-      if (pull === 0 || !this.driving) base = undefined
-      else if (!this.wasDriving || !known || takesThrottle) base = raw
-      else if (base !== undefined) base = Math.min(base, raw)
+      let settle = this.triggerSettle.get(s)
+      if (pull === 0 || !this.driving) base = settle = undefined
+      else if (!this.wasDriving || !known || takesThrottle) { base = raw; settle = undefined }
+      else if (base !== undefined && raw < base) {
+        if (settle === undefined) settle = { level: raw, since: now }
+        else settle.level = Math.max(settle.level, raw)
+        if (now - settle.since >= XR_TRIGGER_SETTLE_MS) { base = settle.level; settle = undefined }
+      } else settle = undefined
       if (base === undefined) this.triggerBase.delete(s)
       else this.triggerBase.set(s, base)
+      if (settle === undefined) this.triggerSettle.delete(s)
+      else this.triggerSettle.set(s, settle)
       const from = base === undefined ? 0 : base + PAD_TUNING.triggerDeadzone
       const throttle = base === undefined ? pull : Math.min(1, Math.max(0, (raw - from) / Math.max(0.5, 1 - from)))
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).

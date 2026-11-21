@@ -1043,6 +1043,7 @@ test('a worn trigger resting above the dead zone never creeps and still drives; 
   w.m.read()
   for (let k = 0; k < 30; k++) {
     worn.buttons[XR_BUTTON.trigger].value = k === 0 ? 0.5 : 0.06 + (k % 2) * 0.01
+    w.tick(11)
     w.m.read()
     assert.equal(w.m.analog.throttle, 0, `sprung back from the press, frame ${k}: nothing`)
   }
@@ -1178,4 +1179,20 @@ test('a press held near the stop that wobbles is no lurch: the stretch past the 
     assert.ok(r.m.analog.throttle <= plain + 1e-9, `never more than the plain pull (${value}: ${r.m.analog.throttle})`)
     assert.ok(r.m.analog.throttle < 0.2, `a wobble near the stop gives little (${value}: ${r.m.analog.throttle})`)
   }
+})
+
+test('a jolt that dips a resting finger for a frame or two never lowers the point it counts from; an ease held does', () => {
+  const lone = ctl('none', 6, 4)
+  lone.buttons[XR_BUTTON.trigger].value = 0.3
+  const r = rig([lone])
+  r.m.driving = true
+  const frame = (value: number) => { lone.buttons[XR_BUTTON.trigger].value = value; r.tick(11); r.m.read(); return r.m.analog.throttle }
+  for (let k = 0; k < 3; k++) assert.equal(frame(0.3), 0, 'a finger resting at 0.3 as it took the wheel: nothing')
+  for (const dip of [[0.15], [0.12, 0.1], [0.2, 0.1, 0.15, 0.12]]) {
+    for (const v of dip) frame(v)
+    for (let k = 0; k < 10; k++) assert.equal(frame(0.3), 0, `after a ${dip.length}-frame jolt, back at 0.3: still nothing`)
+  }
+  // Eased back to 0.15 and held there: from there a pull drives.
+  for (let k = 0; k < 20; k++) assert.equal(frame(0.15), 0, 'eased to 0.15: nothing')
+  assert.ok(frame(0.3) > 0.1, 'held there, then pulled back to 0.3: it drives')
 })
