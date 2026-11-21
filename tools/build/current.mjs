@@ -32,8 +32,8 @@
  *   failed jobs, which keeps an earlier attempt's pick) exits 1 unless the release then holds the newest green commit
  *   on main, or GitHub says it holds a newer one. `--stage` is the folder the files are copied into, named as GitHub
  *   keeps them, before they go up (a fresh temporary folder, removed when the command ends, when not given); with
- *   `--move` they are moved there instead, out of <dir>, so the runner's disk holds each file once (the Linux packages
- *   and the Windows installer carry a model of about a gigabyte each).
+ *   `--move` they are moved there instead, out of <dir>, so the runner's disk holds each file once (the Linux packages,
+ *   the macOS .dmg and zipped .app and the Windows installer carry a model of about a gigabyte each).
  *   `--source` is a checkout of the built commit: its package.json gives the version the notes name, and
  *   crimson_noir_os/'s containment.nix, containment.lock, NOTICE.txt and LICENSE go with the x86-64 media, as
  *   build-release.yml publishes them. `--dry-run` reads the release, prints the plan, writes the notes to --summary
@@ -292,7 +292,7 @@ export function notes(state, { repo, missing = [] }) {
     '',
     `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
     '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device; the iPhone can play the web copy instead.',
-    "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); the macOS app opens with right-click › Open the first time; the `.apk` carries the Android debug key; the `.ipa` must be re-signed before a device takes it. The OS images run on a UEFI machine with Secure Boot off.",
+    "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); Gatekeeper refuses the macOS app at first (`xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up to macOS 14; not tried on a Mac); the `.apk` carries the Android debug key; the `.ipa` must be re-signed before a device takes it. The OS images run on a UEFI machine with Secure Boot off.",
     `- **Versions.** The apps' file names carry the version in \`package.json\` at the commit they were built from (\`${state.version}\` at this one), the \`.rpm\` with its pre-release part as its release number; the zipped macOS \`.app\`, the UEFI files and images, and the notices beside them carry none. The commit above, and each file's row, tell one current build from the next.`,
     `- **Checking a download.** \`sha256sum --check --ignore-missing ${SUMS}\` in the folder you downloaded into; \`${SUMS}\` lists every file here but itself and \`${STATE}\`, which records which commit, run and time made each.`,
     `- **A link that stays current.** \`${url}/releases/download/${TAG}/<file>\` gives the newest file of that name (but for the few seconds after a workflow change while the tag is made again).`,

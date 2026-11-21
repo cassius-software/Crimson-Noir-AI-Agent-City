@@ -8,11 +8,12 @@
 //! the page made for it while the command waits for how it ended; and `native_stop`, a stop by the answer's number. A
 //! page that starts loading (a reload) stops every answer it asked for (`page_loading`, from lib.rs on_page_load):
 //! a reload does not fail the channel's sends, so nothing else would stop them.
-//! The runner is compiled only with the `native-runner` feature on a Linux target (src-tauri/Cargo.toml), and runs
-//! only when the app carries its model as a resource (`models/<file>`, model_file.rs `carried`); the file is checked
-//! against its pin once and stamped in the app's data folder (`models/`). Everywhere else (Windows, macOS, a build
-//! without the feature) the same three commands answer that there is none: no model, an `offline` error with a plain
-//! sentence, and false, so the page's code is one and the same. The page's request is the runner's wire shape
+//! The runner is compiled only with the `native-runner` feature on a Linux or macOS target (build.rs sets the cfg
+//! `native_runner` there, and this file asks only that), and runs only when the app carries its model as a resource
+//! (`models/<file>`, model_file.rs `carried`: Contents/Resources/models/ in the macOS app); the file is checked against
+//! its pin once and stamped in the app's data folder (`models/`). Everywhere else (Windows, the phones, a build without
+//! the feature) the same three commands answer that there is none: no model, an `offline` error with a plain sentence,
+//! and false, so the page's code is one and the same. The page's request is the runner's wire shape
 //! (native/llm/src/wire.rs, pinned by native/llm/tests/wire.json, which the tests below and the page's read). Nothing
 //! here reaches the network or starts a process; the wait for an answer runs on Tauri's blocking pool, never on one of
 //! its async workers, and every refusal is a plain sentence.
@@ -23,8 +24,8 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 pub use imp::{GenDone, GenRequest, NativeModel, RunError, RunEvent, Runner};
 
-/// Whether this build runs the model itself: the `native-runner` feature on a Linux target.
-pub const COMPILED: bool = cfg!(all(target_os = "linux", feature = "native-runner"));
+/// Whether this build runs the model itself: the `native-runner` feature on a Linux or macOS target (build.rs).
+pub const COMPILED: bool = cfg!(native_runner);
 
 /// What the app carries and how that stands, or nothing where it runs no model (or carries none). It and `native_stop`
 /// answer from memory (a lock held for a copy, an atomic store), so they run where Tauri calls them.
@@ -61,7 +62,7 @@ pub fn page_loading<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "native-runner"))]
+#[cfg(native_runner)]
 mod imp {
     use std::collections::VecDeque;
     use std::path::PathBuf;
@@ -89,14 +90,20 @@ mod imp {
     /// Why there is nothing to ask: the app was built with the runner but carries no model.
     pub const NO_MODEL: &str = "this app carries no model to run itself";
 
-    /// The plan for a computer's processor. No GPU backend is compiled into the Linux runner, so the model runs on the
-    /// processor alone; the sampling is llama.cpp's usual chain, seeded from the clock.
+    /// Where the model's layers go. On Apple silicon (the macOS app's arm64 slice) llama.cpp is built with Metal, its
+    /// default there, and the GPU shares the memory the model is mapped into, so every layer goes to it. Everywhere
+    /// else the processor alone: the Linux runner compiles no GPU backend, and the macOS app's Intel slice is built
+    /// without Metal (tools/build/macos-slices.cmake) and behind the AVX2 guard (native/llm guard.rs).
+    pub const GPU: Gpu = if cfg!(all(target_os = "macos", target_arch = "aarch64")) { Gpu::All } else { Gpu::Off };
+
+    /// The plan for a computer: the page's context and answer length, half the threads, the GPU where `GPU` says; the
+    /// sampling is llama.cpp's usual chain, seeded from the clock.
     pub fn plan() -> Plan {
         Plan {
             n_ctx: N_CTX,
             n_batch: N_BATCH,
             threads: half_the_threads(THREADS_CAP),
-            gpu: Gpu::Off,
+            gpu: GPU,
             max_tokens: MAX_TOKENS,
             sampling: Sampling::Chat { seed: None },
         }
@@ -215,7 +222,7 @@ mod imp {
     }
 }
 
-#[cfg(not(all(target_os = "linux", feature = "native-runner")))]
+#[cfg(not(native_runner))]
 mod imp {
     use serde::de::IgnoredAny;
     use serde::Serialize;
@@ -313,7 +320,7 @@ mod tests {
         let main = include_str!("main.rs");
         let body = main.split("fn main() {").nth(1).expect("main.rs has fn main");
         let code: Vec<&str> = body.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
-        assert_eq!(code[0], r#"#[cfg(all(target_os = "linux", feature = "native-runner"))]"#, "only where the runner is compiled");
+        assert_eq!(code[0], "#[cfg(native_runner)]", "only where the runner is compiled (build.rs)");
         assert_eq!(code[1], r#"std::env::set_var("GGML_NO_BACKTRACE", "1");"#, "the first statement");
         assert_eq!(code[2], "crimson_noir_app_lib::run()", "before run() starts any thread");
         let comments: Vec<&str> =
@@ -321,7 +328,22 @@ mod tests {
         assert!(comments.iter().any(|l| l.starts_with("// SAFETY:")), "the reason it is sound is written beside it");
     }
 
-    #[cfg(not(all(target_os = "linux", feature = "native-runner")))]
+    /// build.rs decides where the runner is compiled (the cfg `native_runner`), and Cargo.toml's target table decides
+    /// where its crate is a dependency: the two name the same operating systems, and this build agrees with both.
+    #[test]
+    fn the_runner_is_compiled_where_the_feature_is_on_and_the_target_is_linux_or_macos_as_build_rs_and_cargo_toml_say() {
+        assert_eq!(COMPILED, cfg!(feature = "native-runner") && cfg!(any(target_os = "linux", target_os = "macos")));
+        let build = include_str!("../build.rs");
+        let listed = build.split("const RUNNER_OS: [&str; 2] = [").nth(1).and_then(|r| r.split(']').next()).expect("RUNNER_OS");
+        let os: Vec<&str> = listed.split(',').map(|o| o.trim().trim_matches('"')).collect();
+        assert_eq!(os, ["linux", "macos"]);
+        let cargo = include_str!("../Cargo.toml");
+        let table = os.iter().map(|o| format!("target_os = \"{o}\"")).collect::<Vec<_>>().join(", ");
+        assert!(cargo.contains(&format!("[target.'cfg(any({table}))'.dependencies]\n")), "Cargo.toml's target table names {table}");
+        assert!(build.contains("println!(\"cargo:rustc-check-cfg=cfg(native_runner)\");"), "the cfg is declared, so a typo warns");
+    }
+
+    #[cfg(not(native_runner))]
     #[test]
     fn without_the_runner_the_commands_answer_none_offline_and_false() {
         const { assert!(!COMPILED) };
@@ -344,7 +366,7 @@ mod tests {
         assert_eq!(serde_json::to_value(runner.model()).unwrap(), Value::Null);
     }
 
-    #[cfg(all(target_os = "linux", feature = "native-runner"))]
+    #[cfg(native_runner)]
     mod runner {
         use super::*;
         use crate::model_file::carried;
@@ -361,11 +383,14 @@ mod tests {
         }
 
         #[test]
-        fn the_plan_is_what_the_page_asks_on_a_computer_processor_alone() {
+        fn the_plan_is_what_the_page_asks_on_a_computer_with_the_gpu_on_apple_silicon_alone() {
             const { assert!(COMPILED) };
             let p = imp::plan();
             assert_eq!((p.n_ctx, p.n_batch, p.max_tokens), (8192, 512, 2048));
-            assert_eq!(p.gpu, Gpu::Off);
+            // Metal on the macOS app's arm64 slice; the processor alone on Linux and on the Intel slice.
+            let apple_silicon = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+            assert_eq!(p.gpu, if apple_silicon { Gpu::All } else { Gpu::Off });
+            assert_eq!(p.gpu, imp::GPU);
             assert_eq!(p.sampling, Sampling::Chat { seed: None });
             assert!((1..=imp::THREADS_CAP).contains(&p.threads));
         }

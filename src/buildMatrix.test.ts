@@ -9,14 +9,16 @@
  * .msi's WiX version, the .rpm's Version and Release, packaged from the built binary), what blocks a target on a
  * machine that cannot build it, the UEFI aarch64 port the uefi-arm64 target builds (its machine layer, its media,
  * its QEMU boot), what `host` and `all` select, the command line's exits, the workflow that runs every buildable
- * target on its own runner with GitHub's own actions alone, the Windows app's .msi, the release dispatch, the package
- * script and the manual's section.
+ * target on its own runner with GitHub's own actions alone, the Linux and macOS jobs that carry the model and check
+ * what they built before any upload, the Windows app's .msi, the release dispatch, the package script and the
+ * manual's section.
  * What breaks if it is removed? A target can silently become a shell string, drop out of the workflow, or build the
  * page twice, and the docs can name a command that no longer exists.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -38,6 +40,8 @@ const IDS: readonly string[] = m.IDS
 const host = (platform: string, arch: string, env: Record<string, string> = {}): Host => ({ platform, arch, env, has: () => true })
 const LINUX = host('linux', 'x64')
 const CTX = { out: '/tmp/out', version: '1.0.0-stable-beta', media: true, dryRun: true }
+/** The targets that carry the app's model and run it themselves. */
+const CARRIERS = ['linux-x64', 'linux-arm64', 'macos-universal']
 
 test('the nine targets, in the order the plan names them, each saying what it makes', () => {
   assert.deepEqual(IDS, ['windows-x64', 'windows-arm64', 'linux-x64', 'linux-arm64', 'macos-universal', 'android-apk', 'ios-ipa', 'uefi-x64', 'uefi-arm64'])
@@ -57,8 +61,8 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
     const steps = t.plan(CTX)
     assert.ok(steps.length > 0, t.id)
     for (const s of steps) {
-      // Besides programs: the APK's signing, and on Linux a file the build needs (the model) and folders it tidies.
-      if (s.kind !== 'run') { assert.ok(s.kind === 'sign-apk' || (t.id.startsWith('linux-') && (s.kind === 'need' || s.kind === 'tidy')), `${t.id}: ${s.kind}`); continue }
+      // Besides programs: the APK's signing, and on Linux and macOS a file the build needs (the model) and folders it tidies.
+      if (s.kind !== 'run') { assert.ok(s.kind === 'sign-apk' || (CARRIERS.includes(t.id) && (s.kind === 'need' || s.kind === 'tidy')), `${t.id}: ${s.kind}`); continue }
       assert.ok(typeof s.cmd === 'string' && Array.isArray(s.argv), `${t.id}: ${JSON.stringify(s)}`)
       // No shell: the one `sh` is the repository's own media script, run by path with its arguments.
       if (s.cmd === 'sh') assert.deepEqual(s.argv!.slice(0, 1), ['tools/build-image.sh'], t.id)
@@ -115,6 +119,37 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
       assert.ok(tidy > steps.findIndex((s) => s.argv?.[1] === 'build') && tidy < steps.indexOf(b), t.id)
       assert.equal((t as Target & { move?: boolean }).move, true, `${t.id}: its files are moved into out/, not copied`)
       assert.ok(t.tools!.includes('cmake'), t.id)
+    } else if (t.id === 'macos-universal') {
+      // Both slices with the runner and the model overlay, on the build step alone, with the per-slice settings.
+      const b = steps.find((s) => s.argv?.[1] === 'build')!
+      const a = b.argv!
+      assert.equal(a[a.indexOf('--features') + 1], 'native-runner', t.id)
+      assert.ok(a.includes(m.MODEL_CONFIG), t.id)
+      assert.equal(a[a.indexOf('--target') + 1], 'universal-apple-darwin', t.id)
+      assert.equal(a[a.indexOf('--bundles') + 1], 'app,dmg', t.id)
+      for (const st of steps.filter((x) => x !== b)) assert.ok(!st.argv?.includes('native-runner') && !st.argv?.includes(m.MODEL_CONFIG), `${t.id}: only the build step: ${st.argv?.join(' ')}`)
+      // The per-slice settings, as literals: the build step's environment, which reaches both slices' cargo builds alike.
+      const env = (b as Step & { env?: Record<string, string> }).env!
+      assert.deepEqual(Object.keys(env).sort(), ['CMAKE_DISABLE_FIND_PACKAGE_OpenSSL', 'CMAKE_PROJECT_ggml_INCLUDE', 'GGML_SLICES_SHA256', 'MACOSX_DEPLOYMENT_TARGET'], 'the build step carries the per-slice settings')
+      const slices = join(ROOT, 'tools', 'build', 'macos-slices.cmake')
+      assert.equal(m.MAC_SLICES, 'tools/build/macos-slices.cmake')
+      assert.equal(env.CMAKE_PROJECT_ggml_INCLUDE, slices)
+      // Only GGML_* variables rerun llama-cpp-sys-2's build script, so the include's hash must ride in one.
+      assert.equal(env.GGML_SLICES_SHA256, createHash('sha256').update(readFileSync(slices)).digest('hex'))
+      assert.equal(env.MACOSX_DEPLOYMENT_TARGET, '11.0')
+      assert.equal(env.CMAKE_DISABLE_FIND_PACKAGE_OpenSSL, 'ON')
+      assert.deepEqual(m.macEnv(), env, 'the step is given macEnv itself')
+      const rustup = steps.find((s) => s.cmd === 'rustup')!
+      assert.deepEqual(rustup.argv!.slice(-2), ['aarch64-apple-darwin', 'x86_64-apple-darwin'])
+      const needs = steps.filter((s) => s.kind === 'need').map((s) => relative(ROOT, s.path!).replace(/\\/g, '/'))
+      assert.deepEqual(needs, m.modelResources().map((r: string) => `src-tauri/${r}`), t.id)
+      assert.ok(steps.findIndex((s) => s.kind === 'need') < steps.indexOf(b), t.id)
+      // The copies of the model Tauri's build step leaves beside each slice's binary go once the .app and .dmg are made.
+      const tidy = steps.find((s) => s.kind === 'tidy')! as Step & { paths: () => string[] }
+      assert.ok(steps.indexOf(tidy) > steps.indexOf(b), t.id)
+      assert.deepEqual(tidy.paths().map((p) => relative(ROOT, p).replace(/\\/g, '/')), ['src-tauri/target/aarch64-apple-darwin/release/models', 'src-tauri/target/x86_64-apple-darwin/release/models'])
+      assert.equal((t as Target & { move?: boolean }).move, true, `${t.id}: the .dmg is moved into out/, not copied`)
+      assert.ok(t.tools!.includes('cmake'), t.id)
     } else {
       // Every other target builds exactly as before: no runner, no model, no overlay.
       for (const st of steps) assert.ok(!st.argv?.includes('native-runner') && !st.argv?.includes(m.MODEL_CONFIG), `${t.id}: ${st.argv?.join(' ')}`)
@@ -139,6 +174,19 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
     const machines = t.hosts.flatMap((h) => hosts[h])
     assert.ok(machines.some((h) => m.blocker(t, h) === null), `${t.id}: ${machines.map((h) => m.blocker(t, h)).join('; ')}`)
   }
+})
+
+test('macos-slices.cmake: Metal off and the guard\'s six instruction sets on, FORCE, for the x86_64 slice alone; a line of its own for each slice', () => {
+  const c = readFileSync(join(ROOT, 'tools', 'build', 'macos-slices.cmake'), 'utf8')
+  assert.match(c, /^if\(APPLE AND CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"\)$/m)
+  assert.match(c, /^\s+set\(GGML_METAL OFF CACHE BOOL "[^"]*" FORCE\)$/m)
+  assert.match(c, /foreach\(option GGML_SSE42 GGML_AVX GGML_AVX2 GGML_FMA GGML_F16C GGML_BMI2\)\s*\n\s+set\(\$\{option\} ON CACHE BOOL "[^"]*" FORCE\)/)
+  // The status lines macAudit.mjs `slices` reads from each slice's build output (parseSliceBuild's `slices`).
+  assert.match(c, /message\(STATUS "crimson-noir macos-slices: x86_64: Metal off; SSE4\.2, AVX, AVX2, FMA, F16C and BMI2 on"\)/)
+  assert.match(c, /^elseif\(APPLE\)\n\s+message\(STATUS "crimson-noir macos-slices: \$\{CMAKE_OSX_ARCHITECTURES\}: ggml's own defaults \(Metal on\)"\)\nendif\(\)$/m)
+  // Nothing else is set: no other option, and nothing outside the two branches.
+  assert.equal(c.match(/^\s*set\(/gm)?.length, 2)
+  assert.deepEqual(c.split('\n').filter((l) => l && !l.startsWith('#')).length, 9)
 })
 
 test('the installers\' own version: the numbers alone for WiX and rpm\'s Version, the pre-release tag in the .rpm\'s Release', () => {
@@ -317,12 +365,25 @@ test('the Linux jobs: Ubuntu 22.04, the model by its pin as the Windows app gets
     assert.ok(app.includes(line), `windows-app.yml: ${line}`)
     assert.ok(W.includes(line), `build-matrix.yml: ${line}`)
   }
-  const linux = "startsWith(matrix.target, 'linux-')"
-  assert.match(jobStep(W, '- id: model\n'), new RegExp(`if: ${linux.replace(/[()|.]/g, '\\$&')}\n`))
-  assert.match(jobStep(W, '- id: model-cache'), /if: startsWith\(matrix\.target, 'linux-'\)\n/)
-  assert.match(jobStep(W, 'from Hugging Face, at the pinned revision'), /if: startsWith\(matrix\.target, 'linux-'\) && steps\.model-cache\.outputs\.cache-hit != 'true'\n/)
+  // The jobs marked model: the two Linux ones and the macOS one, nothing else.
+  assert.match(jobStep(W, '- id: model\n'), /if: matrix\.model\n/)
+  assert.match(jobStep(W, '- id: model-cache'), /if: matrix\.model\n/)
+  assert.match(jobStep(W, 'from Hugging Face, at the pinned revision'), /if: matrix\.model && steps\.model-cache\.outputs\.cache-hit != 'true'\n/)
+  assert.match(jobStep(W, 'Checked byte for byte'), /if: matrix\.model\n/)
+  const marked = [...W.matchAll(/^ {10}- target: (\S+)\n {12}runner: \S+\n {12}model: true$/gm)].map((x) => x[1])
+  assert.deepEqual(marked, CARRIERS)
+  assert.equal((W.match(/model: true/g) ?? []).length, 3)
   // A Linux cache key names the runner's image, so objects built against another glibc's headers are never restored.
   assert.match(W, /key: build-matrix-\$\{\{ matrix\.target \}\}-\$\{\{ startsWith\(matrix\.target, 'linux-'\) && format\('\{0\}-', matrix\.runner\) \|\| '' \}\}\$\{\{ env\.RUST_TOOLCHAIN \}\}-/)
+  // The key hashes what decides how llama.cpp is built: both lockfiles, the features both Cargo.toml files turn on, and
+  // the macOS slices' CMake include (the file macEnv hashes into GGML_SLICES_SHA256). actions/cache saves nothing after
+  // an exact hit, so a key these leave as it was would keep restoring an entry built without them, and every run would
+  // build llama.cpp again and save none of it. The restore key is the key's own prefix, so a new key starts warm.
+  const key = /^ {10}key: (build-matrix-.*-)\$\{\{ hashFiles\(([^)]*)\) \}\}\n {10}restore-keys: (.*)$/m.exec(W)
+  assert.ok(key, 'one key, its hash last, the restore key after it')
+  assert.deepEqual(key[2].split(', ').map((f) => f.replace(/^'(.*)'$/, '$1')), ['src-tauri/Cargo.lock', 'crimson_noir_os/Cargo.lock', 'src-tauri/Cargo.toml', 'native/llm/Cargo.toml', m.MAC_SLICES])
+  assert.equal(key[3], key[1], 'the restore key is the key without its hash')
+  assert.equal(W.match(/hashFiles\('src-tauri\/Cargo\.lock'/g)?.length, 1, 'one build cache')
   // The order: room, libraries, the model, the build, the three checks, then tauri-driver, the install and the run,
   // and only then the upload; the cache leaves the packages and the model's copies out.
   const order = ['Room on the disk for the model', "The Linux shell's libraries", '- id: model\n', 'siteModel.mjs app --from', 'node tools/build/matrix.mjs --targets "${{ matrix.target }}" --out out',
@@ -348,14 +409,60 @@ test('the Linux jobs: Ubuntu 22.04, the model by its pin as the Windows app gets
   assert.equal(W.split(room).length - 1, 2, 'the Linux jobs and the release job make room')
   const release = W.slice(W.indexOf('\n  release:\n'))
   assert.ok(release.indexOf(room) > 0 && release.indexOf(room) < release.indexOf('actions/download-artifact'), 'the release job makes room before it downloads')
-  assert.match(W, /compression-level: \$\{\{ startsWith\(matrix\.target, 'linux-'\) && '0' \|\| '6' \}\}/)
+  assert.match(W, /compression-level: \$\{\{ matrix\.model && '0' \|\| '6' \}\}/)
   // The paths that change what the Linux jobs build or check.
   for (const path of ['native/llm/**', 'src/09_Cognition/siteModel.ts', 'tools/web/siteModel.mjs', 'third_party/qwen2.5-1.5b-instruct/**', 'third_party/llama.cpp/**', 'tools/browser/nativeE2e.mjs', 'tools/browser/tinyGguf.mjs']) assert.ok(W.includes(`      - ${path}\n`), path)
-  // No other job turns the runner on or fetches the model: the conditions name the Linux targets alone.
+  // No other job turns the runner on or fetches the model: the model's steps name the marked jobs, the Linux checks the
+  // Linux targets, the macOS checks the macOS one.
   const job = W.slice(W.indexOf('\n    steps:\n'), W.indexOf('\n  summary:\n'))
-  for (const step of job.split('\n      - ').slice(1).filter((st) => /siteModel\.mjs|linuxAudit|nativeE2e|app-model/.test(st))) {
+  for (const step of job.split('\n      - ').slice(1).filter((st) => /siteModel\.mjs|app-model/.test(st))) assert.match(step, /if: matrix\.model(?: &&|\n)/, step.slice(0, 120))
+  for (const step of job.split('\n      - ').slice(1).filter((st) => /linuxAudit|nativeE2e/.test(st))) {
     assert.match(step, /if: (?:startsWith\(matrix\.target, 'linux-'\)|matrix\.target == 'linux-x64')/, step.slice(0, 120))
   }
+  for (const step of job.split('\n      - ').slice(1).filter((st) => /macAudit/.test(st))) assert.match(step, /if: matrix\.target == 'macos-universal'\n/, step.slice(0, 120))
+})
+
+test('the macOS job: the model by its pin, room on the disk, both slices with the runner, and six checks before any upload, none of them skipped or allowed to fail', () => {
+  const W = WORKFLOW
+  const mac = "if: matrix.target == 'macos-universal'\n"
+  // The job is not best effort: a failing check fails the run.
+  assert.match(W, /^ {10}- target: macos-universal\n {12}runner: macos-15\n {12}model: true\n {10}- target: android-apk$/m)
+  const job = W.slice(W.indexOf('\n    steps:\n'), W.indexOf('\n  summary:\n'))
+  const steps = job.split('\n      - ').slice(1)
+  const checks = steps.filter((st) => /macAudit\.mjs/.test(st))
+  assert.deepEqual(checks.map((st) => /node tools\/build\/macAudit\.mjs (\w+)/.exec(st)?.[1]), ['package', 'archs', 'libraries', 'minos', 'symbols', 'slices'])
+  for (const st of checks) {
+    assert.ok(st.includes(mac), st.slice(0, 120))
+    assert.doesNotMatch(st, /continue-on-error|always\(\)|\|\| true/, st.slice(0, 120))
+  }
+  assert.match(W, /^ {2}MAC_APP: src-tauri\/target\/universal-apple-darwin\/release\/bundle\/macos$/m, 'where Tauri leaves the universal .app')
+  // The package check reads the pin's file and size, the .dmg and the zip the build left, one of each.
+  const pkg = jobStep(W, 'node tools/build/macAudit.mjs package')
+  assert.match(pkg, /MODEL_FILE: \$\{\{ steps\.model\.outputs\.file \}\}\n {10}MODEL_BYTES: \$\{\{ steps\.model\.outputs\.bytes \}\}/)
+  assert.match(pkg, /node tools\/build\/macAudit\.mjs package --app "\$MAC_APP" --file "\$MODEL_FILE" --bytes "\$MODEL_BYTES" --dmg "\$\{dmg\[0\]\}" --zip "\$\{zip\[0\]\}"/)
+  assert.match(pkg, /echo "::error::expected one \.dmg and one zipped \.app in out\/macos-universal"; exit 1/)
+  assert.doesNotMatch(pkg, /Qwen|gguf/)
+  // The symbols check reads the map build.rs has Apple's linker write beside each slice's binary.
+  assert.match(jobStep(W, 'macAudit.mjs symbols'), /--map src-tauri\/target\/aarch64-apple-darwin\/release\/crimson-noir-app\.map --map src-tauri\/target\/x86_64-apple-darwin\/release\/crimson-noir-app\.map/)
+  assert.match(readFileSync(join(ROOT, 'src-tauri', 'build.rs'), 'utf8'), /profile\.join\("crimson-noir-app\.map"\)[\s\S]*format!\("-Wl,-map,\{\}", map\.display\(\)\)/)
+  assert.match(jobStep(W, 'macAudit.mjs slices'), /--target src-tauri\/target/)
+  // The order: room, the model, the build, the six checks, the upload, the cache left without the app and the copies.
+  const order = ["Room on the disk for the model's copies (the runner's Android SDK, CodeQL and .NET go", '- id: model\n', 'siteModel.mjs app --from',
+    'node tools/build/matrix.mjs --targets "${{ matrix.target }}" --out out', 'macAudit.mjs package', 'macAudit.mjs archs', 'macAudit.mjs libraries',
+    'macAudit.mjs minos', 'macAudit.mjs symbols', 'macAudit.mjs slices', 'name: matrix-${{ matrix.target }}',
+    'rm -rf src-tauri/target/universal-apple-darwin/release/bundle src-tauri/target/*-apple-darwin/release/models src-tauri/target/*-apple-darwin/release/build/llama-cpp-sys-2-*/out/build'].map((x) => W.indexOf(x))
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
+  // Room: the Android SDK, CodeQL and .NET, each only when it is there, with the disk printed before and after.
+  const room = jobStep(W, "Room on the disk for the model's copies (the runner's Android SDK, CodeQL and .NET go")
+  assert.ok(room.includes(mac))
+  assert.match(room, /df -h \/\n {10}for dir in "\$\{ANDROID_HOME:-\}" "\$\{RUNNER_TOOL_CACHE:-\}\/CodeQL" "\$HOME\/\.dotnet"; do\n {12}if \[ -n "\$dir" \] && \[ -d "\$dir" \]; then sudo rm -rf "\$dir"; fi\n {10}done\n {10}df -h \//)
+  assert.match(jobStep(W, 'macAudit.mjs package'), /df -h \//)
+  assert.match(jobStep(W, 'macAudit.mjs slices'), /df -h \//)
+  assert.match(jobStep(W, 'The macOS app, the model\'s copies and llama.cpp\'s CMake folders stay out'), /if: always\(\) && matrix\.target == 'macos-universal'\n/)
+  // The zip is stored, not deflated again: the model does not compress, and the upload stores it as it is.
+  assert.deepEqual(m.zipArgs('a.app', 'a.zip'), ['-c', '-k', '--keepParent', '--zlibCompressionLevel', '0', 'a.app', 'a.zip'])
+  // The release job: the model-carrying files of every job, room made before they come down.
+  assert.match(W.slice(W.indexOf('\n  release:\n')), /eight of them about a gigabyte each, the Linux packages and the\n {6}# macOS \.dmg and zipped \.app/)
 })
 
 test('the Windows app\'s workflow packages an .msi from the same binary, with the numbers as WiX\'s version, and keeps it as an artifact and on a tag\'s release', () => {

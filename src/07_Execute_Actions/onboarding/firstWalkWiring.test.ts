@@ -16,8 +16,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { BRAIN_UNKNOWN, type BrainDefault, type BrainReadout } from '../../09_Cognition/brainReadout.ts'
 import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
-import { TICK_MS, beaconOf, bearingOf, machineOf, nearestPlace, wordsOf } from './useFirstWalk.ts'
+import { TICK_MS, beaconOf, bearingOf, machineOf, nearestPlace, sloaneOf, wordsOf } from './useFirstWalk.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const shown = (src: string) => src.replace(/^import .*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -40,7 +41,7 @@ test('the hook\'s readers: the device\'s words from the glyphs, a bearing, the n
 
 test('the first card\'s machine: the device, its graphics and the tier in plain words, the bar from Lite to Peak', () => {
   const laptop = machineOf('desktop', 'integrated', { label: 'Medium', tier: 2 })
-  assert.deepEqual({ ...laptop }, { device: 'A laptop or desktop', graphics: 'built-in graphics', picture: 'Medium', level: 4 / 7, sloane: 'Ready to plan' })
+  assert.deepEqual({ ...laptop }, { device: 'A laptop or desktop', graphics: 'built-in graphics', picture: 'Medium', level: 4 / 7 })
   assert.ok(Object.isFrozen(laptop))
   assert.equal(machineOf('phone', 'mobile', { label: 'Lite', tier: -1 }).level, 1 / 7, 'Lite is the bar\'s first step, never empty')
   assert.equal(machineOf('phone', 'mobile', { label: 'Lite', tier: -1 }).device, 'A phone')
@@ -51,6 +52,32 @@ test('the first card\'s machine: the device, its graphics and the tier in plain 
   assert.equal(machineOf('desktop', 'discrete', { label: 'Peak', tier: 9 }).level, 1)
   assert.equal(machineOf('desktop', 'discrete', { label: '?', tier: Number.NaN }).level, 1 / 7)
   assert.equal(machineOf('desktop', 'discrete', { label: 'High', tier: 3.4 }).level, 5 / 7)
+})
+
+test('Sloane\'s row: the model she thinks with where one answers, else her default model coming, else ready to plan; the readout\'s line beside it', () => {
+  const brain = (over: Partial<BrainReadout>): BrainReadout => Object.freeze({ ...BRAIN_UNKNOWN, provider: 'auto', ...over })
+  const coming = (over: Partial<BrainDefault>): BrainDefault => Object.freeze({ from: 'site', file: 'm.gguf', title: 'Model', bytes: 400, state: 'getting', step: 'download', done: 100, total: 400, why: null, ...over })
+  // Before the page binds a readout: nothing known, and her scripted planner still plans.
+  assert.deepEqual({ ...sloaneOf(BRAIN_UNKNOWN) }, { text: 'Ready to plan', detail: BRAIN_UNKNOWN.where })
+  assert.ok(Object.isFrozen(sloaneOf(BRAIN_UNKNOWN)))
+  // Each brain that answers, in a few words; the readout's whole line rides along unchanged.
+  const where = 'Sloane answers with the model kept in this page (m.gguf), run on this device'
+  assert.deepEqual({ ...sloaneOf(brain({ settled: true, brain: 'page', local: true, model: 'm.gguf', where })) }, { text: 'Thinking on this device', detail: where })
+  assert.equal(sloaneOf(brain({ settled: true, brain: 'app', local: true })).text, 'Thinking on this device')
+  assert.equal(sloaneOf(brain({ settled: true, brain: 'server', local: true, server: 'http://127.0.0.1:11434' })).text, 'Thinking with a model on this machine')
+  assert.equal(sloaneOf(brain({ settled: true, brain: 'server', gateway: true, server: 'http://127.0.0.1:8787' })).text, 'Thinking off this machine', 'the gateway is never called this device')
+  // A model answering wins over her default model still on its way.
+  assert.equal(sloaneOf(brain({ settled: true, brain: 'server', local: true, default: coming({}) })).text, 'Thinking with a model on this machine')
+  // No model answering: her default model's progress while it comes, in whole percent.
+  assert.equal(sloaneOf(brain({ default: coming({}) })).text, 'Getting her model, 25%')
+  assert.equal(sloaneOf(brain({ settled: true, brain: 'scripted', default: coming({ step: 'keep', done: 399, total: 400 }) })).text, 'Keeping her model, 99%')
+  assert.equal(sloaneOf(brain({ default: coming({ done: 0, total: 0 }) })).text, 'Getting her model, 0%', 'nothing counted yet is 0, never NaN')
+  assert.equal(sloaneOf(brain({ default: coming({ from: 'native', state: 'checking', step: null, done: 3, total: 4 }) })).text, 'The app checks her model, 75%')
+  // Otherwise ready to plan, which is always true: the scripted planner answers, her model is kept, held or none.
+  for (const state of ['kept', 'held', 'waiting', 'none'] as const) {
+    assert.equal(sloaneOf(brain({ settled: true, brain: 'scripted', default: coming({ state, step: null }) })).text, 'Ready to plan', state)
+  }
+  assert.equal(sloaneOf(brain({})).text, 'Ready to plan', 'under auto before a look')
 })
 
 test('the marker: the nearest parked car on the car stage, the nearest doorway on the indoor stage, nothing elsewhere', () => {
@@ -417,8 +444,17 @@ test('the card has no close, no skip and no key that puts it away; every stage h
   assert.match(src, /data-walk-show data-walk-assist=\{assisting \|\| undefined\}/)
   assert.match(src, /data-walk-hand/)
   assert.match(src, /assistLine\(card\.stage, \{ family: familyOf\(family\) \}\)/)
-  // The first card reads the machine (device, picture, Sloane), never on a short folded card.
+  // The first card reads the machine (device, picture, Sloane), never on a short folded card. Sloane's row reads the brain
+  // readout where it is drawn (a change there renders that row alone), from memory: nothing on the card probes, asks or
+  // downloads.
   assert.match(src, /data-walk-machine/)
+  assert.match(src, /import \{ readBrain, subscribeBrain \} from '\.\.\/\.\.\/09_Cognition\/brainReadout\.ts'/)
+  assert.match(src, /const brain = useSyncExternalStore\(subscribeBrain, readBrain, readBrain\)\s+const row = sloaneOf\(brain\)/)
+  assert.match(src, /data-walk-brain=\{brain\.brain \?\? 'unknown'\} data-walk-where=\{row\.detail\}/)
+  // The line once to a screen reader: the shown words and their title hidden from it, the words and the line said once.
+  assert.match(src, /<span aria-hidden="true" title=\{row\.detail\}>\{row\.text\}<\/span>\s+<span className="sr-only">\{row\.text\}: \{row\.detail\}<\/span>/)
+  assert.match(src, /<SloaneBrainRow \/>/)
+  assert.doesNotMatch(src, /installed\(|\.answer\(|\.load\(|job\.start|bindBrain|lookState|\.models\(/, 'the card reads the readout and nothing else of the mind')
   const text = shown(src)
   assert.doesNotMatch(text, /[Tt]utorial|lesson/, 'Sloane calls it a walk')
   assert.match(text, /No skip: the city opens the moment you reach the console, on the last card\./)

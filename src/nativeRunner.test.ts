@@ -127,7 +127,8 @@ test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and 
     'node tools/web/siteModel.mjs pin | tee',
     'node tools/web/siteModel.mjs check --from',
     '--test real -- --ignored',
-    // Then the desktop's model on the x86-64 job: its own pin, its own cache, checked, and the Linux plan's test.
+    // Then the desktop's model on the x86-64 Linux and Apple silicon jobs: its own pin, its own cache, checked, and the
+    // desktop plan's test.
     'node tools/web/siteModel.mjs pin --pin app | tee',
     'path: ${{ runner.temp }}/app-model\n          key: ${{ steps.app-model.outputs.key }}',
     '"$URL" -o "$RUNNER_TEMP/app-model/$FILE"',
@@ -136,18 +137,40 @@ test('native-llm.yml tests the crate and the real model on Linux, Arm Linux and 
   ].map((s) => WORKFLOW.indexOf(s))
   assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `in order: ${order}`)
   // Nothing that must run is skipped or allowed to fail: the apt step (Linux only), the Hugging Face fetches (cache
-  // miss only), the desktop's model (the x86-64 job alone: one gigabyte download is enough) and the cache trim
-  // (always) are the only conditions, and no job or step may fail without failing the run.
+  // miss only), the desktop's model (the jobs marked desktop: x86-64 Linux, whose plan is the processor alone, and
+  // Apple silicon, whose plan is Metal; the Arm Linux job skips the gigabyte) and the cache trim (always) are the only
+  // conditions, and no job or step may fail without failing the run.
   assert.doesNotMatch(WORKFLOW, /continue-on-error/, 'a failing step fails the job')
   const conditions = [...WORKFLOW.matchAll(/^[ \t]*(?:- )?if:\s*(.*)$/gm)].map((m) => m[1])
-  const x86 = "matrix.runner == 'ubuntu-24.04'"
-  assert.deepEqual(conditions, ["runner.os == 'Linux'", "steps.model-cache.outputs.cache-hit != 'true'", x86, x86, `${x86} && steps.app-model-cache.outputs.cache-hit != 'true'`, x86, x86, 'always()'])
+  const desk = 'matrix.desktop'
+  assert.deepEqual(conditions, ["runner.os == 'Linux'", "steps.model-cache.outputs.cache-hit != 'true'", desk, desk, `${desk} && steps.app-model-cache.outputs.cache-hit != 'true'`, desk, desk, 'always()'])
+  assert.match(WORKFLOW, /^ {8}include:\n {10}- runner: ubuntu-24\.04\n {12}desktop: true\n {10}- runner: macos-15\n {12}desktop: true\n/m, 'x86-64 Linux and Apple silicon, nothing else')
+  assert.equal((WORKFLOW.match(/desktop: true/g) ?? []).length, 2)
   for (const path of ['third_party/qwen2.5-1.5b-instruct/**']) assert.equal(WORKFLOW.split(`- ${path}`).length - 1, 2, `${path} under both pull_request and push`)
-  // The test reads a few greedy tokens of the desktop's model with the Linux app's own plan (src-tauri/src/runner.rs).
+  // The test reads a few greedy tokens of the desktop's model with the desktop app's own plan for the computer it runs
+  // on (src-tauri/src/runner.rs): the same numbers, and the GPU by the same expression (Metal on Apple silicon alone).
   const desktop = read(ROOT, 'native', 'llm', 'tests', 'desktop.rs')
   const runner = read(ROOT, 'src-tauri', 'src', 'runner.rs')
-  const plan = /Plan \{ n_ctx: (\d+), n_batch: (\d+), threads: half_the_threads\((\d+)\), gpu: Gpu::Off, max_tokens: (\d+), sampling: Sampling::Greedy \}/.exec(desktop)
-  assert.ok(plan, 'the Linux plan, greedy')
+  const plan = /Plan \{ n_ctx: (\d+), n_batch: (\d+), threads: half_the_threads\((\d+)\), gpu: GPU, max_tokens: (\d+), sampling: Sampling::Greedy \}/.exec(desktop)
+  assert.ok(plan, 'the desktop plan, greedy')
+  const gpu = (src: string) => /const GPU: Gpu = (.+);$/m.exec(src)?.[1]
+  assert.equal(gpu(desktop), 'if cfg!(all(target_os = "macos", target_arch = "aarch64")) { Gpu::All } else { Gpu::Off }')
+  assert.equal(gpu(desktop), gpu(runner), 'the app\'s own expression')
+  // It prints the devices llama.cpp listed and where the weights went, read from llama.cpp's own log of its weight
+  // buffers (a listed GPU is not proof that it ran), and fails for no token or no such line, never for a missing GPU.
+  assert.match(desktop, /list_llama_ggml_backend_devices\(\)/)
+  assert.match(desktop, /"the processor: the plan asks for the GPU, and llama\.cpp found none here"/)
+  assert.match(desktop, /if line\.contains\(" model buffer size = "\)/, 'llama-model.cpp load_tensors: one line per weight buffer')
+  assert.match(desktop, /llama_cpp_sys_2::llama_log_set\(Some\(keep_buffers\), std::ptr::null_mut\(\)\)/)
+  assert.match(desktop, /!name\.starts_with\("CPU"\) && \*mib > 0\.0/, 'the GPU only when a buffer not the processor\'s holds weights')
+  assert.doesNotMatch(desktop, /contains\("[^"]*offload/, 'llama.cpp\'s "offloaded N/M layers" line follows the plan alone: never read')
+  const run = desktop.slice(desktop.indexOf('fn desktop_model_answers_a_few_greedy_tokens_with_the_desktop_plan()'))
+  assert.ok(run.indexOf('llama_log_set(Some(keep_buffers)') < run.indexOf('Engine::start('), 'the callback is in place before the model loads')
+  assert.match(run, /let weights = weights_on\(plan\.gpu, &buffers, gpu\.as_deref\(\)\);/)
+  assert.match(run, /assert!\(events\.iter\(\)\.any\(\|e\| matches!\(e, RunEvent::Text \{ \.\. \}\)\)/)
+  assert.doesNotMatch(run, /assert[^;]*(?:Gpu::All|device_type|weights_on)/, 'no assertion on the device')
+  // How the lines are read is a test of its own, which runs with every plain cargo test (not ignored).
+  assert.match(desktop, /#\[test\]\nfn where_the_weights_went_is_read_from_llama_cpps_buffer_lines_not_from_the_devices_it_lists\(\)/)
   assert.deepEqual(plan.slice(1).map(Number), ['N_CTX: u32', 'N_BATCH: u32', 'THREADS_CAP: i32', 'MAX_TOKENS: u32'].map((c) => Number(new RegExp(`pub const ${c.replace(/[()]/g, '\\$&')} = (\\d+);`).exec(runner)?.[1])))
   assert.match(desktop, /#\[ignore = "needs APP_GGUF/)
   const carried = /pub const FILE: &str = "([^"]+)";/.exec(read(ROOT, 'src-tauri', 'src', 'model_file.rs'))?.[1]
@@ -361,7 +384,7 @@ test('main sets GGML_NO_BACKTRACE first, where the runner is compiled, so llama.
   const main = read(ROOT, 'src-tauri', 'src', 'main.rs')
   const body = main.slice(main.indexOf('fn main() {'))
   const code = body.split('\n').slice(1).map((l) => l.trim()).filter((l) => l && !l.startsWith('//'))
-  assert.deepEqual(code.slice(0, 3), ['#[cfg(all(target_os = "linux", feature = "native-runner"))]', 'std::env::set_var("GGML_NO_BACKTRACE", "1");', 'crimson_noir_app_lib::run()'])
+  assert.deepEqual(code.slice(0, 3), ['#[cfg(native_runner)]', 'std::env::set_var("GGML_NO_BACKTRACE", "1");', 'crimson_noir_app_lib::run()'])
   assert.match(body, /\/\/ SAFETY: /)
   assert.match(read(ROOT, 'src-tauri', 'Cargo.toml'), /^edition = "2021"$/m, 'set_var is safe in edition 2021; an edition 2024 build needs an unsafe block here')
   // The Rust test beside the runner pins the same lines.
