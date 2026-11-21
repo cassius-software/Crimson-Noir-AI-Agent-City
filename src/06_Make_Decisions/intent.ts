@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the Concierge's 5-Whys intent engine. A plain-language goal ("make it
- * night", "it feels laggy", "take me to the harbour") is classified against a keyword taxonomy of the
- * city's operator controls, refined by up to five "why" questions with quick replies, and turned into a
+ * Why does this file exist? It is the Concierge's goal-question engine (the class keeps its first name, FiveWhys). A
+ * plain-language goal ("make it night", "it feels laggy", "take me to the harbour") is classified against a keyword
+ * taxonomy of the city's operator controls, refined by up to five short questions with quick replies (what, which
+ * time, where, how: "What time of day would suit you?", "Anywhere in particular?", "On foot, or by car?"), and turned into a
  * brief: the root intent, a plan of steps (those the host can apply now, and those that need the
  * operator's console or a restart) and a copyable architecture brief naming the modules an engineer would
  * touch. A goal about work ("a 24-agent warehouse robotics drill", "the metro schedule") and a goal nothing maps
@@ -1115,7 +1116,7 @@ function markdownOf(goal: string, whys: readonly { question: string; answer: str
   const later = plan.filter((s) => !s.immediate)
   const item = (s: PlanStep) => `- [${applied.has(s.control) ? 'x' : ' '}] ${s.label} — ${code(s.modules)}`
   const lines = [
-    '# Architecture brief', '', `**Goal:** ${goal}`, '', '## Why',
+    '# Architecture brief', '', `**Goal:** ${goal}`, '', '## Questions asked',
     ...(whys.length ? whys.map((w, i) => `${i + 1}. ${w.question} — **${w.answer}**`) : ['_No questions needed: the goal was clear._']),
     '', '## Root intent', root, '', '## Plan',
   ]
@@ -1127,7 +1128,7 @@ function markdownOf(goal: string, whys: readonly { question: string; answer: str
   const gaps = unmapped.filter((u) => u.exists !== true)
   if (there.length) lines.push('', '## Already in the city', ...there.map((u) => `- ${u.label}${u.modules.length ? ` — ${code(u.modules)}` : ''}`))
   if (gaps.length) lines.push('', '## Not mapped', ...gaps.map((u) => `- ${u.label}${u.modules.length ? ` — would touch ${code(u.modules)}` : ''}`))
-  lines.push('', '---', '_Written by the concierge’s 5-Whys engine (deterministic, offline). Module paths are under `src/`._', '')
+  lines.push('', '---', '_Written by the concierge’s goal questions (deterministic, offline). Module paths are under `src/`._', '')
   return lines.join('\n')
 }
 

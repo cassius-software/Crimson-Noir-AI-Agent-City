@@ -2366,7 +2366,11 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   Noir Script in full, and the cinema-camera, GGX and microphone details are left out as too deep for the card.
   Sloane's spoken line on the talk stage now says she may ask a few questions to be sure what you mean (her goal
   questions are a few, not always five). `firstWalk.test.ts` pins the five W's in order, each answer screened and free of
-  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers.
+  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers. Sloane's goal
+  questions drop the "5-Whys" name where a player sees it: her copyable brief heads them **Questions asked** (it said
+  **Why**) and signs itself "the concierge's goal questions", and the README and MANUAL describe them as up to five short
+  questions (what, which time, where, how), which is what they always were (`intent.ts`; the class keeps its name,
+  `FiveWhys`). The quiet watch's lines are described as a question and then the how.
 
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
