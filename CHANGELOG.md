@@ -2408,7 +2408,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   cut (a car's seat nearer than 1.2 m included), and a recruit's head turning back by no more than 0.03 rad a frame,
   at 60 and at 5 frames a second, when your eye jumps into a car's seat, up to a sky floor, away, or to beside or
   behind them (`talkGaze.test.ts`); the engine's wiring
-  (`talkWiring.test.ts`). The page grows by 3,894 bytes (12,357,671 of the 14,817,000 budget). Before and after
+  (`talkWiring.test.ts`). The page grows by 3,900 bytes (12,369,342 of the 14,817,000 budget). Before and after
   pictures were taken on the software WebGPU adapter only; how it looks on a real GPU and on a real phone is
   unverified.
 
