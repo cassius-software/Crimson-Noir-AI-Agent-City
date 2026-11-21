@@ -7,10 +7,15 @@
  * is missing, beside the same submit with the right barrier, layout or semaphore, accepted. It pins what each command
  * touches, how stages and accesses are covered, that a refused submit (by the checker or by the back end) changes
  * nothing, that the state carries over from submit to submit and queue to queue, the host's rule for invalidate(),
- * and a seeded run of random copies and barriers against a small model of the rules. It ends with three frames of a
- * real renderer's work, every barrier in place.
+ * and seeded runs of random copies and barriers against small models of the rules. It runs the checker at scales where
+ * a state per level and layer, a memory barrier or wait applied to every unit, or a copy of the whole ledger per
+ * submit would take minutes to hours or more memory than a machine has; the air gap leaves a test no clock and no
+ * timer (a test's timeout cannot stop a test that never yields), so a cost that grows back shows as a run that does not
+ * finish or runs out of memory, not as a failed assertion. It ends with three frames of a real renderer's work, every
+ * barrier in place.
  * What breaks if it is removed? A checker that let a missing barrier through, or refused a correct frame, would go
- * unnoticed, and an app would draw right on the reference renderer and wrong on a GPU.
+ * unnoticed, and an app would draw right on the reference renderer and wrong on a GPU; one whose costs grew with
+ * every unit it tracks could stall a submit or run the host out of memory.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -23,7 +28,7 @@ import { ACCESSES, PIPE_STAGES } from './commands.ts'
 import type { LensModule } from './lens.ts'
 import type { MemoryImpl } from './memory.ts'
 import { ORDER_STAGES, READ_ACCESSES, WRITE_ACCESSES, hostRead } from './order.ts'
-import { KIND, buffer, fragmentLens, image, imageView, refuses, rig, texturedLens, vertexLens } from './harness.test.ts'
+import { HEAP_HOST, KIND, buffer, fragmentLens, image, imageView, refuses, rig, texturedLens, vertexLens } from './harness.test.ts'
 import type { Rig } from './harness.test.ts'
 
 // ---------------------------------------------------------------------------------------------------
@@ -833,6 +838,34 @@ test('readback: invalidate() needs the writing work done and its last write made
   hostRead(offMemory, 0, 4096, where)
 })
 
+test('readback: invalidate() waits only for work that writes a buffer bound in its range, not for work elsewhere in the memory', () => {
+  const r = rig()
+  const memory = r.device.allocate({ size: 4096, kind: KIND.readback, label: 'readback' })
+  const a = r.device.createBuffer({ size: 1024, use: ['copy-dst'], label: 'a' })
+  const b = r.device.createBuffer({ size: 1024, use: ['copy-dst'], label: 'b' })
+  r.device.bind(a, memory, 0)
+  r.device.bind(b, memory, 1024)
+  const fill = (into: Buffer, label: string): CommandList => recorded(r, label, (l) => {
+    l.zeroBuffer(into, 0, 1024)
+    l.barrier({ buffers: [{ ...edge(COPIED, at(['host'], ['host-read'])), buffer: into }] })
+  })
+  go(r, fill(a, 'first'))
+  r.fake.auto = false
+  go(r, fill(b, 'second'))
+  // The work in flight writes b alone: a's bytes, and the bytes after b, which hold no buffer, may be taken back.
+  memory.invalidate(0, 1024)
+  memory.invalidate(2048)
+  assert.deepEqual(r.fake.named('invalidate').map((c) => c.args.slice(1)), [[0, 1024], [2048, 2048]])
+  // A range that reaches any of b's bytes waits for it.
+  const busy = /^memory "readback" invalidate: submitted work that writes buffer "b" is not done; invalidate once its fence is signalled$/
+  refuses(() => memory.invalidate(1023, 2), 'hazard', busy)
+  refuses(() => memory.invalidate(2044, 4), 'hazard', busy)
+  refuses(() => memory.invalidate(), 'hazard', busy)
+  r.fake.finish()
+  memory.invalidate()
+  assert.equal(r.fake.named('invalidate').length, 3)
+})
+
 test('a refused submit leaves the state as it was, whether the checker or the back end refuses it', () => {
   const s = scene()
   const { r } = s
@@ -864,6 +897,46 @@ test('a refused submit leaves the state as it was, whether the checker or the ba
   go(r, fill)
   go(r, refill)
   refuses(() => go(r, fill), 'hazard', /command list "fill" command 0 \(barrier\): images\[0\]: moving level 0 layer 0 of image "tex" from blank to copy-dst does not wait for its last write, at copy \(copy-write\) by command list "refill" command 1 \(copy-buffer-image\)/)
+})
+
+test('a refused submit puts back what its memory barriers and semaphore waits did, whether the checker or the back end refuses it', () => {
+  const setup = () => {
+    const s = scene()
+    const { r } = s
+    const draw = (): CommandList => recorded(r, 'frame', (l) => {
+      openPass(s, l)
+      l.draw(3)
+      l.endPass()
+    })
+    const again = (): CommandList => recorded(r, 'again', (l) => upload(s, l))
+    const sem = r.device.createSemaphore({ label: 's' })
+    r.device.queue(0, 0).submit([{ lists: [recorded(r, 'copy', (l) => upload(s, l))], signal: [sem] }])
+    return { r, q: r.device.queue(0, 0), draw, again, sem }
+  }
+  const unordered = re(cmd(4, 'draw'), 'buffer "vertices" is read as vertex buffer 0 at vertex-input (vertex-read), and its last write, at copy (copy-write) by command list "copy" command 0 (copy-buffer), was not made visible to it')
+  const raise = (r: Rig): void => {
+    r.fake.raise = { name: 'submit', error: new Error('gpu gone') }
+  }
+  // A memory barrier, in a submit the checker refuses at a later list, then in one the back end refuses.
+  const b = setup()
+  const covering = (): CommandList => recorded(b.r, 'covering', (l) => l.barrier({ memory: [edge(COPIED, at(['vertex-input'], ['vertex-read']))] }))
+  refuses(() => go(b.r, covering(), b.again()), 'hazard', /lists\[1\]: command list "again" command 0 \(copy-buffer\): buffer "vertices" is written/)
+  refuses(() => go(b.r, b.draw()), 'hazard', unordered)
+  raise(b.r)
+  refuses(() => go(b.r, covering()), 'device', /the back end raised Error: gpu gone/)
+  refuses(() => go(b.r, b.draw()), 'hazard', unordered)
+  go(b.r, covering())
+  go(b.r, b.draw())
+  // A wait, the same way; the semaphore stays armed for the next.
+  const w = setup()
+  const waits = [{ semaphore: w.sem, stages: ['vertex-input', 'copy'] as PipeStage[] }]
+  refuses(() => w.q.submit([{ lists: [], wait: waits }, { lists: [w.draw(), w.again()] }]), 'hazard', /command list "again" command 0 \(copy-buffer\): buffer "vertices" is written as the destination at copy \(copy-write\), and the read at vertex-input/)
+  refuses(() => go(w.r, w.draw()), 'hazard', unordered)
+  raise(w.r)
+  refuses(() => w.q.submit([{ lists: [], wait: waits }]), 'device', /the back end raised Error: gpu gone/)
+  refuses(() => go(w.r, w.draw()), 'hazard', unordered)
+  w.q.submit([{ lists: [], wait: waits }])
+  go(w.r, w.draw())
 })
 
 test('a seeded run of random copies, updates, zeros and barriers agrees with a small model of the rules', () => {
@@ -948,6 +1021,179 @@ test('a seeded run of random copies, updates, zeros and barriers agrees with a s
     }
   }
   assert.ok(refused > 50 && accepted > 50, `${refused} refused, ${accepted} accepted`)
+})
+
+test('memory barriers of random scopes between a write and the next access agree with the rule, however wide each side is', () => {
+  // The checker keeps a barrier that covers every kind of write, or makes writes visible at every place, apart from a
+  // narrower one; this mixes all four, and barriers before the write, which must count for nothing.
+  const r = rig()
+  const b = buffer(r, 256, ['copy-src', 'copy-dst'], KIND.device, 'b')
+  // The generator's high bits: its low bits repeat every few numbers, which would tie one choice to the next.
+  const draw = lcg(20261121)
+  const next = (n: number): number => Math.floor((draw(0x100000000) / 0x100000000) * n)
+  const scope = (widest: Scope): Scope => {
+    if (next(4) === 0) return widest
+    const stages = PIPE_STAGES.filter(() => next(5) === 0)
+    return at(stages.length === 0 ? [PIPE_STAGES[next(PIPE_STAGES.length)]] : stages, ACCESSES.filter(() => next(4) === 0))
+  }
+  const barrier = (): MemoryBarrier => edge(scope(FULL.before), scope(FULL.after))
+  const stageIn = (sc: Scope, s: PipeStage): boolean => sc.stages.includes('all') || sc.stages.includes(s)
+  const accessIn = (sc: Scope, a: Access): boolean => (sc.access ?? []).some((x) => x === a || x === (a.endsWith('-read') ? 'any-read' : 'any-write'))
+  /** The rule: a barrier whose before covers the write at copy (copy-write) makes it visible at its after. */
+  const shows = (m: MemoryBarrier, a: Access): boolean => stageIn(m.before, 'copy') && accessIn(m.before, 'copy-write') && stageIn(m.after, 'copy') && accessIn(m.after, a)
+  /** Late barriers by width: [both sides widest, only the before, only the after, neither]. */
+  const widths = [0, 0, 0, 0]
+  const counts = { accepted: 0, refused: 0 }
+  for (let round = 0; round < 400; round++) {
+    const early = Array.from({ length: next(3) }, barrier)
+    const late = Array.from({ length: 1 + next(3) }, barrier)
+    const copy = next(2) === 0
+    const split = next(2) === 0
+    const list = recorded(r, 'frame', (l) => {
+      // Covers the last round's write and read; it comes before this round's write, so covers nothing of it.
+      l.barrier({ memory: [FULL] })
+      if (early.length > 0) l.barrier({ memory: early })
+      l.zeroBuffer(b, 0, 4)
+      if (split) for (const m of late) l.barrier({ memory: [m] })
+      else l.barrier({ memory: late })
+      if (copy) l.copyBuffer(b, b, [{ from: 0, to: 128, size: 4 }])
+      else l.zeroBuffer(b, 64, 4)
+    })
+    for (const m of late) widths[(m.before === FULL.before ? 0 : 1) + (m.after === FULL.after ? 0 : 2)]++
+    const seen = (a: Access): boolean => late.some((m) => shows(m, a))
+    if (copy ? seen('copy-read') && seen('copy-write') : seen('copy-write')) {
+      go(r, list)
+      counts.accepted++
+    } else {
+      const write = early.length > 0 ? 2 : 1
+      const probe = write + 1 + (split ? late.length : 1)
+      const doing = copy && !seen('copy-read') ? 'read as the source at copy (copy-read)' : 'written as the destination at copy (copy-write)'
+      refuses(() => go(r, list), 'hazard', re(cmd(probe, copy ? 'copy-buffer' : 'zero'), `buffer "b" is ${doing}, and its last write, at copy (copy-write) by command list "frame" command ${write} (zero), was not made visible to it`))
+      counts.refused++
+    }
+  }
+  assert.ok(counts.accepted > 80 && counts.refused > 80, JSON.stringify(counts))
+  assert.ok(widths.every((n) => n > 30), widths.join(', '))
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Costs: each of these would take the checker minutes to hours, or more memory than a machine has, if it kept a
+// state for every level and layer it has seen, applied a memory barrier or a wait to every one of them, or kept a
+// copy of its whole ledger for each submit in flight. With no clock or timer in the folder, such a cost shows as a run
+// that does not finish (or runs out of memory), not as a failure; each also checks what it ran.
+
+/** A device whose image heap holds a gigabyte. */
+const bigRig = (): Rig => rig({ report: { heaps: [{ index: 0, size: 1 << 30, local: true }, { index: 1, size: HEAP_HOST, local: false }] } })
+
+/** `count` bound images of the info, a hundred to a memory. */
+function manyImages(r: Rig, info: Parameters<Rig['device']['createImage']>[0], count: number): Image[] {
+  const out: Image[] = []
+  const need = r.device.needs(r.device.createImage(info)).size
+  for (let at = 0; at < count; at += 100) {
+    const memory = r.device.allocate({ size: 100 * need, kind: KIND.images })
+    for (let i = 0; i < 100 && at + i < count; i++) {
+      const img = r.device.createImage({ ...info, label: `i${at + i}` })
+      r.device.bind(img, memory, i * need)
+      out.push(img)
+    }
+  }
+  return out
+}
+
+test('units changed together share one state: ten million levels and layers, moved whole and copied into, cost a state or two per image', () => {
+  const r = bigRig()
+  const staging = buffer(r, 4096, ['copy-src'], KIND.upload, 'staging')
+  // 5600 images of 64 x 1, 7 levels and 256 layers: 1792 units each, 10,035,200 in all, in 182 MB of image memory.
+  const all = manyImages(r, { format: 'r8', width: 64, height: 1, levels: 7, layers: 256, use: ['sampled', 'copy-dst'] }, 5600)
+  const each = (label: string, body: (l: CommandList, img: Image) => void): CommandList => recorded(r, label, (l) => {
+    for (const img of all) body(l, img)
+  })
+  go(r, each('first', (l, img) => l.barrier({ images: [move(img, 'blank', 'shader-read', NOTHING, at(['fragment'], ['shader-read']))] })))
+  go(r, each('second', (l, img) => l.barrier({ images: [move(img, 'shader-read', 'copy-dst', at(['fragment']), COPIED)] })))
+  // One level and layer of each is written by a copy, so its state parts from the rest of the image's.
+  go(r, each('fill', (l, img) => l.copyBufferToImage(staging, img, [{ offset: 0, rowBytes: 256, region: { width: 64, height: 1 } }])))
+  const back = (before: Scope): CommandList => each('back', (l, img) => l.barrier({ images: [move(img, 'copy-dst', 'shader-read', before, at(['fragment'], ['shader-read']))] }))
+  refuses(() => go(r, back(at(['copy']))), 'hazard', re(cmd(0, 'barrier', 'back'), 'images[0]: moving level 0 layer 0 of image "i0" from copy-dst to shader-read does not wait for its last write, at copy (copy-write) by command list "fill" command 0 (copy-buffer-image); the barrier\'s before must cover copy and copy-write$'))
+  go(r, back(COPIED))
+  // Every unit is in shader-read again; one that was not moved (level 6 layer 255 of the last image) says so.
+  refuses(() => go(r, recorded(r, 'late', (l) => l.barrier({ images: [move(all[5599], 'copy-dst', 'shader-read', COPIED, NOTHING, { levels: { base: 6, count: 1 }, layers: { base: 255, count: 1 } })] }))), 'layout', /the barrier takes level 6 layer 255 of image "i5599" from layout copy-dst, and it is in layout shader-read$/)
+})
+
+test('a memory barrier and a semaphore wait cost the same however many units the device has state for', () => {
+  const r = bigRig()
+  const q = r.device.queue(0, 0)
+  // 400 images of 8 x 8, 4 levels and 256 layers: 409,600 units, each with a state.
+  const all = manyImages(r, { format: 'rgba8', width: 8, height: 8, levels: 4, layers: 256, use: ['sampled', 'copy-dst'] }, 400)
+  go(r, recorded(r, 'setup', (l) => {
+    for (const img of all) l.barrier({ images: [move(img, 'blank', 'shader-read', NOTHING, at(['fragment'], ['shader-read']))] })
+  }))
+  const tally = buffer(r, 256, ['copy-dst'], KIND.device, 'tally')
+  // Ten thousand memory barriers in one command, of 81 pairs of stages.
+  const memory = Array.from({ length: 10_000 }, (_, k) => edge(at([ORDER_STAGES[k % 9]], ['any-write']), at([ORDER_STAGES[Math.floor(k / 9) % 9]], ['any-read', 'any-write'])))
+  go(r, recorded(r, 'many', (l) => l.barrier({ memory })))
+  // Two thousand full ones, each followed by a write that the next must cover.
+  go(r, recorded(r, 'chain', (l) => {
+    for (let k = 0; k < 2000; k++) {
+      l.barrier({ memory: [FULL] })
+      l.zeroBuffer(tally, 0, 256)
+    }
+  }))
+  const careless = (): CommandList => recorded(r, 'careless', (l) => l.zeroBuffer(tally, 0, 256))
+  refuses(() => go(r, careless()), 'hazard', /command list "careless" command 0 \(zero\): buffer "tally" is written as the destination at copy \(copy-write\), and its last write, at copy \(copy-write\) by command list "chain" command 3999 \(zero\), was not made visible to it/)
+  // A thousand empty submissions, each waiting on the one before: the last write is then visible everywhere.
+  const sems = Array.from({ length: 1000 }, () => r.device.createSemaphore())
+  q.submit([{ lists: [], signal: [sems[0]] }, ...sems.slice(1).map((s, i) => ({ lists: [], wait: [{ semaphore: sems[i], stages: ['all'] as PipeStage[] }], signal: [s] }))])
+  go(r, careless())
+})
+
+test('a full memory barrier sets a clock or two, not one for each kind of write and place: fifty thousand, each after a write', () => {
+  // At some seven thousand clocks a barrier, as the checker once set, this list took seconds.
+  const r = rig()
+  const tally = buffer(r, 256, ['copy-dst'], KIND.device, 'tally')
+  go(r, recorded(r, 'chain', (l) => {
+    for (let k = 0; k < 50_000; k++) {
+      l.barrier({ memory: [FULL] })
+      l.zeroBuffer(tally, 0, 4)
+    }
+  }))
+  const careless = (): CommandList => recorded(r, 'careless', (l) => l.zeroBuffer(tally, 0, 4))
+  refuses(() => go(r, careless()), 'hazard', /command list "careless" command 0 \(zero\): buffer "tally" is written as the destination at copy \(copy-write\), and its last write, at copy \(copy-write\) by command list "chain" command 99999 \(zero\), was not made visible to it/)
+  go(r, recorded(r, 'covered', (l) => {
+    l.barrier({ memory: [FULL] })
+    l.zeroBuffer(tally, 0, 4)
+  }))
+})
+
+test('submits held in flight keep only the buffers they write: forty thousand waits and ten thousand lists of memory barriers', () => {
+  // When each kept a copy of the whole ledger (56 KiB) until its work was done, these held 2.7 GB.
+  const r = rig()
+  const q = r.device.queue(0, 0)
+  const memory = r.device.allocate({ size: 4096, kind: KIND.readback, label: 'readback' })
+  const b = r.device.createBuffer({ size: 1024, use: ['copy-dst'], label: 'b' })
+  r.device.bind(b, memory, 0)
+  const lists = Array.from({ length: 10_000 }, (_, i) => recorded(r, `l${i}`, (l) => {
+    l.barrier({ memory: [edge(COPIED, COPIED)] })
+    l.zeroBuffer(b, 0, 4)
+    l.barrier({ memory: [edge(COPIED, at(['host'], ['host-read']))] })
+  }))
+  r.fake.auto = false
+  const sems = [r.device.createSemaphore(), r.device.createSemaphore()]
+  q.submit([{ lists: [], signal: [sems[0]] }])
+  for (let i = 1; i < 40_000; i++) q.submit([{ lists: [], wait: [{ semaphore: sems[(i - 1) % 2], stages: ['all'] }], signal: [sems[i % 2]] }])
+  lists.forEach((l, i) => q.submit([{ lists: [l], signal: i === lists.length - 1 ? [sems[0]] : [] }]))
+  // All of it is in flight, and what it did carries on: b's last write is visible to the host and not to a copy.
+  const last = (): CommandList => recorded(r, 'last', (l) => {
+    l.zeroBuffer(b, 0, 4)
+    l.barrier({ memory: [edge(COPIED, at(['host'], ['host-read']))] })
+  })
+  refuses(() => go(r, last()), 'hazard', /command list "last" command 0 \(zero\): buffer "b" is written as the destination at copy \(copy-write\), and its last write, at copy \(copy-write\) by command list "l9999" command 1 \(zero\), was not made visible to it/)
+  refuses(() => memory.invalidate(), 'hazard', /submitted work that writes buffer "b" is not done/)
+  memory.invalidate(1024)
+  // A wait on the signal after the last list covers its write.
+  q.submit([{ lists: [last()], wait: [{ semaphore: sems[0], stages: ['copy'] }] }])
+  r.fake.finish()
+  memory.invalidate()
+  assert.equal(r.fake.named('invalidate').length, 2)
 })
 
 // ---------------------------------------------------------------------------------------------------

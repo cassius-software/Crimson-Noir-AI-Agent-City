@@ -6,16 +6,17 @@
  * the device's limits and the room left on each heap, maps host-visible memory, hands host writes over with flush and
  * takes device writes back with invalidate, says what a buffer or image needs of memory (the spec's sizes, alignments
  * and kinds), and binds a resource into memory, which is when the back end makes its object for it. It keeps the
- * books the rules need: bytes used per heap, allocations alive, the resources bound into each memory and where, and
- * the submissions in flight that write into it.
+ * books the rules need: bytes used per heap, allocations alive, and the resources bound into each memory and where;
+ * it also counts the submissions in flight that write into each memory.
  * What breaks if it is removed? No buffer or image could be given bytes, a heap could be overdrawn, two resources
  * could be bound over the same bytes, and the host could read back memory the device is still writing.
  *
  * Rules beyond the field-by-field ones:
  * - Memory is destroyed only once every resource bound into it is (a resource stays bound for its whole life).
  * - Resources never share bytes: a bind whose range overlaps a live resource in the same memory is refused.
- * - `invalidate` is refused while a submission in flight writes into the memory (when the instance checks); the
- *   ordering checker adds the visibility rule of the spec on top.
+ * - `invalidate` is refused (when the instance checks) while a submission in flight writes a buffer bound in the
+ *   range, and while the last write to one is not visible to the host: the ordering checker's rule (order.ts
+ *   hostRead). In-flight work that writes only other bytes of the memory does not refuse it.
  * - `flush` and `invalidate` take a range of at least one byte: the offset defaults to 0 and the size to the rest.
  */
 import type { Handle, MemoryKind, Memory, Needs } from './api.ts'
@@ -70,7 +71,6 @@ export class MemoryImpl extends Base implements Memory {
     guard(this.core.report, where, () => {
       this.host(where)
       const [at, n] = this.range(offset, size, where)
-      if (this.core.checks && this.writers > 0) fail('hazard', `${where}: queued work still writes into ${this.name}; invalidate once its fence is signalled`)
       hostRead(this, at, n, where)
       this.core.call(where, () => this.core.backend.invalidate(this.handle, at, n))
     })
