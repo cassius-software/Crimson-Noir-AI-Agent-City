@@ -300,6 +300,172 @@ export class Driver {
 }
 
 /**
+ * What runs inside the probe when the browser gave an adapter: one small drawing experiment per kind of work the
+ * city's renderer asks of a GPU, each on a device of its own, so that a browser which drops the device on one of them
+ * says which. Each waits for its work to be done, reads a pixel back where there is one, and reports what came:
+ * `{ ok, pixel, lost, errors }`. WebKit reports a lost device with no words, so this is how the check learns whether
+ * a browser can draw at all (clear, draw), through a render bundle (bundle), three's own mipmap pass (mips, and
+ * mipsDirect: the same passes with the draws made directly), an indirect indexed draw from a vertex buffer
+ * (indirect), into a multisampled float target with depth (msaa), and onto a canvas (canvas).
+ */
+export const LADDER = `async (withTimeout) => {
+  const U = GPUTextureUsage, B = GPUBufferUsage
+  const TRI = '@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { var p = array(vec2f(-1, -1), vec2f(-1, 3), vec2f(3, -1)); return vec4f(p[i], 0, 1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(0, 1, 0, 1); }'
+  const MIP = 'struct V { @builtin(position) Position: vec4f, @location(0) vTex: vec2f, @location(1) @interpolate(flat, either) vBaseArrayLayer: u32 }; @group(0) @binding(2) var<uniform> flipY: u32; @vertex fn mainVS(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> V { var out: V; var pos = array(vec2f(-1, -1), vec2f(-1, 3), vec2f(3, -1)); let p = pos[vertexIndex]; let mult = select(vec2f(0.5, -0.5), vec2f(0.5, 0.5), flipY != 0); out.vTex = p * mult + vec2f(0.5); out.Position = vec4f(p, 0, 1); out.vBaseArrayLayer = instanceIndex; return out; } @group(0) @binding(0) var imgSampler: sampler; @group(0) @binding(1) var img2dArray: texture_2d_array<f32>; @fragment fn main_2d_array(v: V) -> @location(0) vec4<f32> { return textureSample(img2dArray, imgSampler, v.vTex, v.vBaseArrayLayer); }'
+  const BUF = 'struct A { @location(0) p: vec2f }; @vertex fn vs(a: A) -> @builtin(position) vec4f { return vec4f(a.p, 0, 1); } @fragment fn fs() -> @location(0) vec4f { return vec4f(0, 1, 0, 1); }'
+  const pixelOf = async (d, texture, mipLevel, bytes) => {
+    const read = d.createBuffer({ size: 256, usage: B.MAP_READ | B.COPY_DST })
+    const e = d.createCommandEncoder()
+    e.copyTextureToBuffer({ texture, mipLevel: mipLevel || 0 }, { buffer: read, bytesPerRow: 256 }, [1, 1])
+    d.queue.submit([e.finish()])
+    await withTimeout(Promise.race([read.mapAsync(GPUMapMode.READ), d.lost.then(() => { throw new Error('the device was lost before the pixel was read') })]), 15000, 'reading a pixel back')
+    const got = [...new Uint8Array(read.getMappedRange().slice(0, bytes || 4))]
+    read.unmap()
+    return got
+  }
+  const near = (got, want) => got.length === want.length && got.every((x, i) => Math.abs(x - want[i]) <= 2)
+  const target = (d, format) => d.createTexture({ size: [64, 64], format: format || 'rgba8unorm', usage: U.RENDER_ATTACHMENT | U.COPY_SRC })
+  const colour = (view, extra) => ({ colorAttachments: [Object.assign({ view, loadOp: 'clear', storeOp: 'store', clearValue: [1, 0, 0, 1] }, extra)] })
+  const triangle = (d, format, extra) => d.createRenderPipeline(Object.assign({ layout: 'auto', vertex: { module: d.createShaderModule({ code: TRI }), entryPoint: 'vs' }, fragment: { module: d.createShaderModule({ code: TRI }), entryPoint: 'fs', targets: [{ format: format || 'rgba8unorm' }] } }, extra))
+  // three r186's mipmap pass (WebGPUTexturePassUtils), call for call: a 64 px texture's six lower levels, each drawn
+  // from the level above through a 2d-array view, in one encoder; \`bundles\` as three does it, or the draws made directly.
+  const mips = async (d, bundles) => {
+    const texture = d.createTexture({ size: { width: 64, height: 64, depthOrArrayLayers: 1 }, mipLevelCount: 7, sampleCount: 1, dimension: '2d', format: 'rgba8unorm', usage: U.COPY_SRC | U.COPY_DST | U.TEXTURE_BINDING | U.RENDER_ATTACHMENT })
+    const texels = new Uint8Array(64 * 64 * 4)
+    for (let i = 0; i < texels.length; i += 4) texels.set([51, 102, 204, 255], i)
+    d.queue.writeTexture({ texture, mipLevel: 0 }, texels, { bytesPerRow: 256 }, [64, 64, 1])
+    const flip = d.createBuffer({ size: 4, usage: B.UNIFORM })
+    const sampler = d.createSampler({ minFilter: 'linear' })
+    const module = d.createShaderModule({ label: 'mipmap', code: MIP })
+    const pipeline = d.createRenderPipeline({ label: 'mipmap-rgba8unorm-2d-array', layout: 'auto', vertex: { module }, fragment: { module, entryPoint: 'main_2d_array', targets: [{ format: 'rgba8unorm' }] } })
+    const e = d.createCommandEncoder({ label: 'mipmapEncoder' })
+    for (let level = 1; level < 7; level++) {
+      const group = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: texture.createView({ dimension: '2d-array', baseMipLevel: level - 1, mipLevelCount: 1 }) }, { binding: 2, resource: { buffer: flip } }] })
+      const into = texture.createView({ dimension: '2d', baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 })
+      const pass = e.beginRenderPass({ colorAttachments: [{ view: into, loadOp: 'clear', storeOp: 'store' }] })
+      if (bundles) {
+        const b = d.createRenderBundleEncoder({ colorFormats: ['rgba8unorm'] })
+        b.setPipeline(pipeline); b.setBindGroup(0, group); b.draw(3, 1, 0, 0)
+        pass.executeBundles([b.finish()])
+      } else { pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.draw(3, 1, 0, 0) }
+      pass.end()
+    }
+    d.queue.submit([e.finish()])
+    const pixel = await pixelOf(d, texture, 6)
+    return { pixel, right: near(pixel, [51, 102, 204, 255]) }
+  }
+  const STAGES = {
+    clear: async (d) => {
+      const t = target(d)
+      const e = d.createCommandEncoder()
+      e.beginRenderPass(colour(t.createView())).end()
+      d.queue.submit([e.finish()])
+      const pixel = await pixelOf(d, t)
+      return { pixel, right: near(pixel, [255, 0, 0, 255]) }
+    },
+    draw: async (d) => {
+      const t = target(d)
+      const e = d.createCommandEncoder()
+      const pass = e.beginRenderPass(colour(t.createView()))
+      pass.setPipeline(triangle(d)); pass.draw(3)
+      pass.end()
+      d.queue.submit([e.finish()])
+      const pixel = await pixelOf(d, t)
+      return { pixel, right: near(pixel, [0, 255, 0, 255]) }
+    },
+    bundle: async (d) => {
+      const t = target(d)
+      const b = d.createRenderBundleEncoder({ colorFormats: ['rgba8unorm'] })
+      b.setPipeline(triangle(d)); b.draw(3)
+      const e = d.createCommandEncoder()
+      const pass = e.beginRenderPass(colour(t.createView()))
+      pass.executeBundles([b.finish()])
+      pass.end()
+      d.queue.submit([e.finish()])
+      const pixel = await pixelOf(d, t)
+      return { pixel, right: near(pixel, [0, 255, 0, 255]) }
+    },
+    mips: (d) => mips(d, true),
+    mipsDirect: (d) => mips(d, false),
+    indirect: async (d) => {
+      const t = target(d)
+      const module = d.createShaderModule({ code: BUF })
+      const pipeline = d.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] }, fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] } })
+      const vertices = d.createBuffer({ size: 24, usage: B.VERTEX | B.COPY_DST })
+      d.queue.writeBuffer(vertices, 0, new Float32Array([-1, -1, -1, 3, 3, -1]))
+      const indices = d.createBuffer({ size: 12, usage: B.INDEX | B.COPY_DST })
+      d.queue.writeBuffer(indices, 0, new Uint32Array([0, 1, 2]))
+      const args = d.createBuffer({ size: 20, usage: B.INDIRECT | B.STORAGE | B.COPY_DST })
+      d.queue.writeBuffer(args, 0, new Uint32Array([3, 1, 0, 0, 0]))
+      const e = d.createCommandEncoder()
+      const pass = e.beginRenderPass(colour(t.createView()))
+      pass.setPipeline(pipeline); pass.setVertexBuffer(0, vertices); pass.setIndexBuffer(indices, 'uint32'); pass.drawIndexedIndirect(args, 0)
+      pass.end()
+      d.queue.submit([e.finish()])
+      const pixel = await pixelOf(d, t)
+      return { pixel, right: near(pixel, [0, 255, 0, 255]) }
+    },
+    msaa: async (d) => {
+      const many = d.createTexture({ size: [64, 64], sampleCount: 4, format: 'rgba16float', usage: U.RENDER_ATTACHMENT })
+      const depth = d.createTexture({ size: [64, 64], sampleCount: 4, format: 'depth24plus', usage: U.RENDER_ATTACHMENT })
+      const t = target(d, 'rgba16float')
+      const e = d.createCommandEncoder()
+      const pass = e.beginRenderPass(Object.assign(colour(many.createView(), { resolveTarget: t.createView() }), { depthStencilAttachment: { view: depth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } }))
+      pass.setPipeline(triangle(d, 'rgba16float', { multisample: { count: 4 }, depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' } })); pass.draw(3)
+      pass.end()
+      d.queue.submit([e.finish()])
+      // Half floats, little end first: 0, 1, 0, 1.
+      const pixel = await pixelOf(d, t, 0, 8)
+      return { pixel, right: near(pixel, [0, 0, 0, 60, 0, 0, 0, 60]) }
+    },
+    canvas: async (d) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 64; canvas.height = 64
+      document.body.appendChild(canvas)
+      const context = canvas.getContext('webgpu')
+      if (!context) throw new Error('no webgpu context on a canvas')
+      const format = navigator.gpu.getPreferredCanvasFormat()
+      context.configure({ device: d, format, alphaMode: 'premultiplied' })
+      for (let frame = 0; frame < 3; frame++) {
+        const e = d.createCommandEncoder()
+        const pass = e.beginRenderPass(colour(context.getCurrentTexture().createView()))
+        pass.setPipeline(triangle(d, format)); pass.draw(3)
+        pass.end()
+        d.queue.submit([e.finish()])
+        await new Promise((next) => { requestAnimationFrame(next); setTimeout(next, 500) })
+      }
+      return { format, right: true }
+    },
+  }
+  const out = {}
+  for (const name of Object.keys(STAGES)) {
+    const r = { ok: false, lost: null, errors: [] }
+    out[name] = r
+    try {
+      const adapter = await withTimeout(navigator.gpu.requestAdapter(), 20000, 'requestAdapter')
+      if (!adapter) { r.errors.push('no adapter'); continue }
+      const d = await withTimeout(adapter.requestDevice({ label: 'probe: ' + name }), 20000, 'requestDevice')
+      let over = false
+      d.lost.then((l) => { if (!over) r.lost = l.reason + (l.message ? ': ' + l.message : '') })
+      d.addEventListener('uncapturederror', (e) => r.errors.push(String(e.error && e.error.message).slice(0, 300)))
+      d.pushErrorScope('validation')
+      let got = null
+      try { got = await STAGES[name](d) } catch (e) { r.errors.push(String(e).slice(0, 300)) }
+      const scoped = await withTimeout(Promise.race([d.popErrorScope(), d.lost.then(() => null)]), 10000, 'popErrorScope').catch((e) => ({ message: String(e) }))
+      if (scoped) r.errors.push(String(scoped.message).slice(0, 300))
+      await withTimeout(Promise.race([d.queue.onSubmittedWorkDone(), d.lost]), 10000, 'the submitted work').catch((e) => r.errors.push(String(e).slice(0, 300)))
+      // A loss reported a moment after the work was done still belongs to this stage.
+      await new Promise((later) => setTimeout(later, 400))
+      if (got) Object.assign(r, got)
+      r.ok = r.lost === null && r.errors.length === 0 && got !== null && got.right === true
+      over = true
+      if (r.lost === null) d.destroy()
+    } catch (e) { r.errors.push(String(e).slice(0, 300)) }
+  }
+  return out
+}`
+
+/**
  * A page expression (async): what this browser offers, on the page and inside a worker. Every step is guarded, so one
  * missing API is one field, never the end of the probe.
  */
@@ -368,6 +534,8 @@ export const PROBE = `(async () => {
       d.destroy()
       return r
     })
+    // What this browser's GPU can draw, one kind of work at a time (LADDER).
+    if (out.adapter && !out.adapter.threw) await step('render', () => (${LADDER})(withTimeout))
   }
   const WORKER = 'onmessage = async () => { const o = { gpu: typeof navigator.gpu, offscreen: typeof OffscreenCanvas, sharedArrayBuffer: typeof SharedArrayBuffer, wasm: typeof WebAssembly, cores: navigator.hardwareConcurrency ?? null }; try { if (navigator.gpu) { const a = await navigator.gpu.requestAdapter(); o.adapter = !!a; if (a) { const i = a.info; o.info = i ? { vendor: i.vendor, architecture: i.architecture, device: i.device, description: i.description } : null; const d = await a.requestDevice(); o.device = !!d; o.maxStorageBuffersPerShaderStage = d.limits.maxStorageBuffersPerShaderStage; d.destroy() } } } catch (e) { o.threw = String(e).slice(0, 400) } postMessage(o) }'
   const inWorker = (options) => withTimeout(new Promise((yes, no) => {
@@ -598,6 +766,7 @@ async function main() {
     const want = expected(target, probe)
     report.expected = want
     console.log(`${target}: WebGPU on the page: ${probe?.gpu === 'object' ? 'yes' : 'no'}; adapter: ${adapter ? (adapter.threw ?? JSON.stringify(adapter.info)) : 'none'}; compute pass: ${adapter?.computed === true ? 'read back right' : 'not run'}; in a worker: ${JSON.stringify(probe?.worker ?? null).slice(0, 300)}`)
+    if (probe?.render) console.log(`${target}: what this GPU draws: ${probe.render.threw ?? Object.entries(probe.render).map(([name, r]) => `${name} ${r.ok ? 'ok' : `NO (${[r.lost ? `device lost, ${r.lost}` : '', ...(r.errors ?? []), r.pixel && r.right !== true ? `pixel ${r.pixel}` : ''].filter(Boolean).join('; ') || 'no result'})`}`).join(', ')}`)
     console.log(`${target}: so the page owes ${want.outcome === 'running' ? 'a running city' : `the ${want.kind ?? 'recovery'} card`}: ${want.why}`)
     if (flag('needs-gpu')) check(want.outcome === 'running', `${target}: this browser has a GPU for WebGPU, as this runner is expected to give it`, want.why)
 

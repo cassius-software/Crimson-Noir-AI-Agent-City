@@ -34,6 +34,7 @@ const safari = (await import(SAFARI)) as {
   STATE: string
   RECORDER: string
   TRACE: string
+  LADDER: string
   withRecorder(html: string, trace?: boolean): string
 }
 
@@ -231,6 +232,18 @@ test('the tracer: in a page with a device, it notes the calls, an error caught i
   new GPUQueue().submit([{}])
   assert.equal(gpu.calls.length, before, 'the list is frozen at the loss: it ends with what came before')
   assert.equal(gpu.frozen, true)
+})
+
+test('the probe: its drawing ladder parses, runs inside the probe, and tries each kind of work the renderer asks for', () => {
+  assert.doesNotThrow(() => new Function(`return ${safari.LADDER}`), 'the ladder is a function expression')
+  assert.doesNotThrow(() => new Function(`return ${safari.PROBE}`), 'the probe is an expression with the ladder in it')
+  assert.ok(safari.PROBE.includes(safari.LADDER), 'the probe runs the ladder')
+  const stages = /const STAGES = \{([\s\S]*?)\n {2}\}\n/.exec(safari.LADDER)
+  assert.ok(stages, 'the stages')
+  assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'indirect', 'msaa', 'canvas'])
+  // Each stage has a device of its own: a browser that drops the device on one kind of work still answers for the rest.
+  assert.match(safari.LADDER, /for \(const name of Object\.keys\(STAGES\)\) \{[\s\S]*?requestAdapter\(\)[\s\S]*?requestDevice\(\{ label: 'probe: ' \+ name \}\)/)
+  assert.match(safari.LADDER, /r\.ok = r\.lost === null && r\.errors\.length === 0 && got !== null && got\.right === true/)
 })
 
 test('the tool: Safari through safaridriver on this machine only, the two targets, and a verdict that can fail', () => {
