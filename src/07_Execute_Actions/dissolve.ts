@@ -53,9 +53,12 @@ export interface PoleSlot {
 }
 
 /**
- * The mesh slot of pole `i` of a PoleIndex (contact.ts): the index concatenates the lamps, then the trees, then the
- * signals, the same order ghost.ts's proxies and world.ts's instances take, so instance `index` of that mesh is the
- * pole. Null when out of range.
+ * The slot of pole `i` of a PoleIndex (contact.ts) built over furniture `f` (the engine's: world.furniture): the index
+ * concatenates the lamps, then the trees, then the signals, so `index` is the prop's place in that list, its slot in
+ * the world's dissolve amounts (World.dissolve). The city's one mesh of a kind draws slot `index` as its instance
+ * `index`; a generated region's tile meshes each draw a run of the list, so slot `index` is instance index − the run's
+ * start of the tile holding it. The ghost view draws world.sensors, a different list in a region: never index it with
+ * this. Null when out of range.
  */
 export function poleSlot(i: number, f: Furniture): PoleSlot | null {
   if (!Number.isInteger(i) || i < 0) return null

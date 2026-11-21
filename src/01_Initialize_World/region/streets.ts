@@ -295,12 +295,27 @@ export function streetCapacity(g: StreetGrid, seed: number): number {
 }
 
 /**
- * The window's street furniture, placed as the city's (city.ts streetFurniture): lamps at 10 and 30 m along every
- * segment with a sidewalk, on both kerbs, a tree at 20 m; the four signal poles at every intersection where car streets
- * meet from at least three sides (a bend or a straight has no signal: the shared cycle still times the stop lines).
+ * A tree's size from where it stands, 0.85 to 1.2 (a hash of the seed and its place to the decimetre): the same tree
+ * is the same size in every grid that holds it, the street window's and the whole map's (propTiles.ts).
+ */
+export function treeScale(seed: number, x: number, z: number): number {
+  let h = Math.imul((seed | 0) ^ 0x2545f491, 0x9e3779b1) >>> 0
+  h = Math.imul(h ^ (Math.round(x * 10) | 0), 0x85ebca6b) >>> 0
+  h = Math.imul(h ^ (h >>> 15) ^ (Math.round(z * 10) | 0), 0xc2b2ae35) >>> 0
+  h ^= h >>> 13
+  h = Math.imul(h, 0x27d4eb2f) >>> 0
+  h = (h ^ (h >>> 16)) >>> 0
+  return 0.85 + (h / 4294967296) * 0.35
+}
+
+/**
+ * A grid's street furniture, placed as the city's (city.ts streetFurniture): lamps at 10 and 30 m along every
+ * segment with a sidewalk, on both kerbs, a tree at 20 m (its size by treeScale); the four signal poles at every
+ * intersection where car streets meet from at least three sides (a bend or a straight has no signal: the shared cycle
+ * still times the stop lines). The grid is a street window, or a whole map (mapStreetGrid), which the page draws in
+ * tiles (propTiles.ts); a node on the grid's own edge counts only the arms the grid holds.
  */
 export function windowFurniture(g: StreetGrid, seed: number): Furniture {
-  const rng = createRng(seed + 99)
   const out: Furniture = { lamps: [], trees: [], signals: [] }
   const B = g.blocks, f = g.furniture
   for (let line = 0; line <= B; line++) {
@@ -314,9 +329,8 @@ export function windowFurniture(g: StreetGrid, seed: number): Furniture {
           if (v) out.lamps.push([g.originX + c, g.originZ + along, side > 0 ? -Math.PI / 2 : Math.PI / 2])
         }
         const along = seg * P + 20
-        const th = 0.85 + rng() * 0.35, tv = 0.85 + rng() * 0.35
-        if (h) out.trees.push([g.originX + along, g.originZ + c, th])
-        if (v) out.trees.push([g.originX + c, g.originZ + along, tv])
+        if (h) out.trees.push([g.originX + along, g.originZ + c, treeScale(seed, g.originX + along, g.originZ + c)])
+        if (v) out.trees.push([g.originX + c, g.originZ + along, treeScale(seed, g.originX + c, g.originZ + along)])
       }
     }
   }
