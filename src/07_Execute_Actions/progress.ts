@@ -238,6 +238,8 @@ const SKILLED = /^[^\s:,]+(?:,[^\s:,]+)*:/
  * The skill a console command earns a check in when it ran without an error, or -1 for none. Reading the city
  * (status, help, a list, a dry plan) earns nothing; doing something in it does. `args` as the console parsed them:
  * the rest of the line in one piece for the commands that take it raw (noir, r0, run, ask, say, swarm, sloane).
+ * `sh` is a line the console's shell ran (terminal/os/), given whole: it earns when it puts programs together (a
+ * pipe, a redirection, a list, a loop, a condition), not when it runs one program or reads one file.
  */
 export function commandSkill(name: string, args: readonly string[]): number {
   const head = (args[0] ?? '').trim().split(/\s+/)[0].toLowerCase()
@@ -246,6 +248,7 @@ export function commandSkill(name: string, args: readonly string[]): number {
     case 'noir':
     case 'r0': return any && head !== 'reset' && head !== 'words' && head !== 'asm' ? COMPUTERS : -1
     case 'run': return any ? COMPUTERS : -1
+    case 'sh': return /[|;&<>]|^\s*(?:for|while|until|if)\s/.test(args[0] ?? '') ? COMPUTERS : -1
     case 'robot': return ['spawn', 'urdf', 'demo', 'set', 'arm', 'calibrate', 'mode'].includes(head) ? ROBOTICS : -1
     case 'harness': return head === 'run' ? SECURITY : -1
     case 'act': return head === 'ok' ? SWARM : head === 'gate' || (head === 'log' && args[1] === 'verify') ? SECURITY : -1

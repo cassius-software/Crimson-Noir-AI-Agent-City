@@ -131,6 +131,7 @@ test('train, reroll, spend and reset through the keeper', () => {
 test('which commands earn: doing something does, reading the city does not', () => {
   const earns: [string, string[], number][] = [
     ['noir', ['print(1);'], 0], ['r0', ['1 2 + .'], 0], ['run', ['rust: 1'], 0],
+    ['sh', ['ls /bin | wc -l'], 0], ['sh', ['stats --once > now.txt'], 0], ['sh', ['for f in *; do cat $f; done'], 0], ['sh', ['mkdir a && cd a'], 0],
     ['robot', ['set', 'arm', 'j1', '0.2'], 2], ['robot', ['demo'], 2],
     ['harness', ['run', 'sanctuary'], 3], ['act', ['gate'], 3], ['act', ['log', 'verify'], 3], ['swarm', ['audit verify'], 3],
     ['act', ['ok'], 4], ['swarm', ['run fix the build'], 4], ['recruit', ['rally', '12'], 4], ['ask', ['rust: why'], 4],
@@ -142,6 +143,7 @@ test('which commands earn: doing something does, reading the city does not', () 
   for (const [name, args, skill] of earns) assert.equal(commandSkill(name, args), skill, `${name} ${args.join(' ')}`)
   const reads: [string, string[]][] = [
     ['noir', []], ['noir', ['reset']], ['noir', ['words']], ['noir', ['asm 1']], ['r0', ['reset']], ['run', []],
+    ['sh', []], ['sh', ['ls']], ['sh', ['cat /proc/city/stats']], ['sh', ['format disk']],
     ['robot', []], ['harness', ['list']], ['act', []], ['act', ['log']], ['act', ['list']], ['act', ['no']], ['swarm', ['status']], ['swarm', ['plan x']],
     ['swarm', ['audit']], ['recruit', []], ['recruit', ['stop']], ['recruit', ['dismiss']], ['recruit', ['install']],
     // The arrival earns Swarm command and an understood spoken request earns Acoustics and voice (earnFromRecruiter).

@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_INK_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_TATTOO_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
-  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
+  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type Line,
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type HardwareReport, type LookBridge, type LookChange,
@@ -1289,8 +1289,11 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
   // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
+  // os/index.ts is the console's operating layer (files, programs, a shell): likewise a directory that imports nothing
+  // from outside itself (os/airgap.test.ts), reached through its one door. cityfs.ts is the city as files for that
+  // layer: it knows the bridge as a type and reaches the city only through what commands.ts hands it.
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts', './os/index.ts', './cityfs.ts']
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', 'cityfs.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
     const imports = [...src.matchAll(/^\s*(import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?'([^']+)'/gm)]
@@ -3117,12 +3120,64 @@ test('redactForHistory: a typed key or token is kept as dots, every other line a
   assert.equal(redactForHistory('say key sk_0123456789abcdef'), 'say key ••••', 'the speech provider\'s key likewise')
   assert.equal(redactForHistory('say key'), 'say key')
   assert.equal(redactForHistory('say voice Sarah'), 'say voice Sarah')
+  // The shell runs a console command anywhere in a line: the secret is dotted there too, with the rest of the line.
+  assert.equal(redactForHistory('echo x; ring0 unlock --elite open sesame'), 'echo x; ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('true && ask key sk-ant-x; echo done'), 'true && ask key ••••')
+  assert.equal(redactForHistory('echo "$(say key sk_0123)"'), 'echo "$(say key ••••')
+  assert.equal(redactForHistory('false||net join wss://room.example tok'), 'false||net join wss://room.example ••••')
+  assert.equal(redactForHistory('ls | ask connect openai sk-proj-SECRET'), 'ls | ask connect openai ••••')
+  assert.equal(redactForHistory('if true; then ring0 elite set new phrase; fi'), 'if true; then ring0 elite set ••••')
+  // A word that only ends in the command's name is not the command.
+  assert.equal(redactForHistory('task key value'), 'task key value')
+  assert.equal(redactForHistory('my-ask key value'), 'my-ask key value')
   assert.equal(redactForHistory('ask model m'), 'ask model m')
   assert.equal(redactForHistory('net join wss://room.example'), 'net join wss://room.example')
   assert.equal(redactForHistory('echo ask key x'), 'echo ask key x')
   assert.equal(redactForHistory(''), '')
   const b = fake()
   assert.deepEqual(texts(run('history', b, ['ask key ••••', 'net join wss://room.example ••••'])), ['    1  ask key ••••', '    2  net join wss://room.example ••••', '    3  history'])
+})
+
+test('redactForHistory takes a few milliseconds on a line of thousands of line breaks, and still dots a secret after them', () => {
+  for (const long of [`echo a${'\n'.repeat(8190)}echo b`, `echo a${'\n '.repeat(4090)}echo b`, '\n'.repeat(8192)]) {
+    const t0 = performance.now()
+    assert.equal(redactForHistory(long), long)
+    const ms = performance.now() - t0
+    assert.ok(ms < 50, `${ms.toFixed(1)} ms`)
+  }
+  assert.equal(redactForHistory(`echo a${'\n'.repeat(8000)}ask key sk-1`), `echo a${'\n'.repeat(8000)}ask key ••••`)
+  assert.equal(redactForHistory('true &&\n\n\n  ask key sk-2'), 'true &&\n\n\n  ask key ••••')
+  assert.equal(redactForHistory('if true; then\n\n ask key sk-3; fi'), 'if true; then\n\n ask key ••••')
+  assert.equal(redactForHistory('do\n\n\tsay key k'), 'do\n\n\tsay key ••••')
+  assert.equal(redactForHistory('true |\n \n ask connect openai sk-x'), 'true |\n \n ask connect openai ••••')
+})
+
+test('redactForHistory with whole keeps a line the console takes whole as it always did: only a secret at its start is dotted; runsWhole names those lines', () => {
+  for (const line of [
+    'ask sloane: which is safer; ask key rotation or a vault?', 'ask sloane: if you do say key points, keep them short', 'say sloane: then say key facts first',
+    'noir print(1); net join is not a noir word', 'run sloane: if (x) { ask key }', '  goal tidy up; then ask key holders',
+  ]) {
+    assert.equal(runsWhole(line), true, line)
+    assert.equal(redactForHistory(line, true), line, line)
+    assert.notEqual(redactForHistory(line), line, `without whole the forms later in the line still dot: ${line}`)
+  }
+  assert.equal(redactForHistory('ask key sk-1; echo x', true), 'ask key ••••')
+  assert.equal(redactForHistory('  ring0 unlock --elite open sesame', true), '  ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-x', true), 'ask connect claude http://localhost:8089 ••••')
+  for (const line of ['echo x; ask key sk', 'time', 'act ok', '"ask" key sk', 'X=1 ask key sk', 'asked key sk', '', '   ']) assert.equal(runsWhole(line), false, line)
+})
+
+test('scrubSecrets dots each secret where it first stands in an entry, with everything after it, in place; an empty secret dots nothing', () => {
+  const h = ["sh -c 'ask key sk-1'", 'echo plain', 'a TOK b sk-1 c', '']
+  scrubSecrets(h, ['sk-1', 'TOK', ''])
+  assert.deepEqual(h, ["sh -c 'ask key ••••", 'echo plain', 'a ••••', ''])
+  // Where two secrets overlap, the cut is at the one that starts first, so no part of either is left.
+  const g = ['x ab-cd y']
+  scrubSecrets(g, ['cd y', 'ab-c'])
+  assert.deepEqual(g, ['x ••••'])
+  const none = ['kept as typed']
+  scrubSecrets(none, [])
+  assert.deepEqual(none, ['kept as typed'])
 })
 
 test('say with ElevenLabs: the provider and the masked key are shown, and the chosen voice is marked whether it was named or pasted as its id', async () => {

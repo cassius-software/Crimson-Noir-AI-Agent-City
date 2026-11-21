@@ -38,10 +38,13 @@ import type {
   AccessBridge, ActEnd, ActEvent, ActsBridge, AgentBridge, AskResult, ConciergeBridge, EliteWrites, ExecResult, GateTether, GoalPlan, HalDevice, HardwareReport, HarnessReport, LanesBridge, LookBridge, LookChange, MemoryBridge, MicBridge, MindStatus, ModelBridge,
   NetBridge, NetReport, OperatorBridge, PendingAct, Piece, PingKind, PingPick, ProgressBridge, RecordBridge, RecruitBridge, Ring0Stats, RobotConsole, RobotRow, RunResult, SayResult, TerminalBridge, TopicBridge, VoiceStatus,
 } from './bridge.ts'
+import { offlineBridge } from './bridge.ts'
 import type { QualityState, RecordingState } from '../../05_Observe_Environment/telemetry.ts'
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
 import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
+import { BUILTIN_NAMES, Later, MANUAL, OsError, PROGRAMS, System, hasOperator, sealed, sha256, type CityHost, type CityLine, type CityResult, type TtyEvent } from './os/index.ts'
+import { CITY_MANUAL, cityFiles } from './cityfs.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
 export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
@@ -177,8 +180,501 @@ const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'n
  * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
  * and the Crimson Noir Script session (noirscript/index.ts).
  */
-export interface ReplSession { machine: Machine; noir: NoirSession }
-export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
+export interface ReplSession { machine: Machine; noir: NoirSession; os: OsSession | null }
+
+/**
+ * A session. With a host (clocks, random bytes, somewhere to keep the disk) it also starts the console's operating
+ * layer (os/): files, programs and a shell behind the same prompt. Without one, the console is its command table
+ * alone, as it was before the layer existed.
+ */
+export function replSession(host: OsHost | null = null): ReplSession {
+  const session: ReplSession = { machine: new Machine(), noir: new NoirSession(), os: null }
+  if (host !== null) session.os = new OsSession(session, host)
+  return session
+}
+
+/**
+ * Where the console's disk is kept between visits (the host's own storage). `load` gives the saved image, or null
+ * when there is none; it is refused when the storage cannot be read (the console then says at once that its files are
+ * not kept, and saves nothing over what may still be there). `save` puts an image over the one this page last loaded or saved:
+ * 'kept'; 'stale' when another page saved since (nothing is written, so the newer disk is not lost); 'failed'.
+ * `setAside` keeps an image that failed its checks under another name, so it is never written over unseen; false
+ * when the copy could not be kept (the console then leaves the stored image alone for the visit).
+ */
+export interface DiskStore {
+  load(): Promise<Uint8Array | null>
+  save(image: Uint8Array): Promise<'kept' | 'stale' | 'failed'>
+  setAside(image: Uint8Array): Promise<boolean>
+}
+
+/** What the host hands the console's operating layer: the brand it boots under, two clocks, random bytes, a store. */
+export interface OsHost {
+  readonly brand: TerminalBridge['brand']
+  /** Milliseconds that only go up. */
+  clock(): number
+  /** Milliseconds since 1970. */
+  wall(): number
+  /** Fills an array with bytes nobody can foretell (/dev/random); without it that device says it has none. */
+  entropy?(bytes: Uint8Array): void
+  /** Where the disk is kept; without one, files last as long as the page. */
+  readonly disk?: DiskStore | null
+  /**
+   * The SHA-256 of `bytes`, from a digest that does not hold the page up (the browser's own); a save seals the disk's
+   * image with it. Without one, or when it fails, the image is sealed with the layer's own SHA-256, which runs at once.
+   */
+  digest?(bytes: Uint8Array): Promise<Uint8Array>
+}
+
+/** The most kernel calls one turn of the layer may take, so a clock that stands still (a test's) still bounds it. */
+const PUMP_STEPS = 200_000
+/** How long a typed line may run before the console answers with what it has so far; the rest follows as it comes. */
+export const LINE_MS = 30
+/**
+ * The most console commands the shell may run in one turn of the layer (a file read or written under /proc/city or
+ * /sys/city counts as one): past it, a command waits for the next turn, in order. A loop in the shell then drives the
+ * city at a pace typing could, and never fills the engine's queue of commands for the physics, which drops what does
+ * not fit (the player's own among them).
+ */
+export const CITY_TURN_MAX = 32
+
+/** What the console says when the shell would answer a proposal: only a person at the prompt does. */
+const ANSWERED_AT_THE_PROMPT = 'act: a proposal is answered at the prompt: type act ok, act no, y or n on its own'
+
+/**
+ * Whether a console command, run for the shell or for a file, would decide the proposal that waits (allow or refuse
+ * it). A job, a loop or a script could otherwise answer a proposal nobody had read, in the person's name.
+ */
+const decides = (name: string, args: readonly string[]): boolean => name === 'act' && (args[0] === 'ok' || args[0] === 'no')
+
+/** An http(s) address with no name or password in it: what `ask connect` may take before a key, kept in clear. */
+const PLAIN_URL = /^(https?:\/\/[^\s@]*)(?:\s+([\s\S]*))?$/i
+
+/**
+ * The secret a console command run for the shell carries, as the handler takes it: the key of `ask key` and `say key`
+ * (not `none`, which clears it), what follows the provider (and a plain address) in `ask connect`, the token of
+ * `net join`, the passphrase of `ring0 unlock --elite` and `ring0 elite set`. Null when it carries none. `args` are as
+ * the handler reads them (the rest of the line, whole, for a command that takes it so).
+ */
+function secretOf(name: string, args: readonly string[]): string | null {
+  const rest = (args[0] ?? '').trim()
+  const kept = (value: string | undefined): string | null => {
+    const v = (value ?? '').trim()
+    return v === '' ? null : v
+  }
+  if (name === 'ask' || name === 'say') {
+    const key = /^key\s+(\S[\s\S]*)$/.exec(rest)
+    if (key) return /^none$/i.test(key[1].trim()) ? null : kept(key[1])
+    if (name === 'say') return null
+    const connect = /^connect\s+\S+\s+(\S[\s\S]*)$/.exec(rest)
+    if (!connect) return null
+    const url = PLAIN_URL.exec(connect[1])
+    return url ? kept(url[2]) : kept(connect[1])
+  }
+  if (name === 'ring0') {
+    const pass = /^unlock\s+--elite\s+(\S[\s\S]*)$/.exec(rest) ?? /^elite\s+set\s+(\S[\s\S]*)$/.exec(rest)
+    return pass ? kept(pass[1]) : null
+  }
+  if (name === 'net') return args[0] === 'join' ? kept(args[2]) : null
+  return null
+}
+
+/** A result that is lines and nothing else: more lines may join it. */
+const plainResult = (r: CommandResult): boolean =>
+  !r.clear && !r.live && !r.close && !r.boot && !r.map && !r.pending && !r.stream
+
+/**
+ * The operating layer as the console holds it: the system (os/), the bridge and history the city's commands run
+ * with when the shell calls them, what the layer printed and the console has not shown yet, and the saving of the
+ * disk. The console asks two things of it: run a typed line (`run` does, below) and hand over what was printed
+ * (`next`); and it takes the secrets console commands were handed by the shell (`takeSecrets`) to dot them in its
+ * history. A host with a timer calls `pump` so that jobs in the background and lines that answer later go on.
+ */
+export class OsSession {
+  readonly system: System
+  /** The bridge and the history of the line being run: the shell runs the city's commands with these. */
+  bridge: TerminalBridge
+  history: readonly string[] = []
+  /**
+   * The line being run as the history keeps it (secrets dotted), set by `run`: what `history` lists as its last row
+   * when the shell runs it, as it does when the line is typed alone. Empty until a line is typed.
+   */
+  typed = ''
+  private readonly clock: () => number
+  private readonly store: DiskStore | null
+  private readonly digest: ((bytes: Uint8Array) => Promise<Uint8Array>) | null
+  /** Console commands (and city files) run in this turn of the layer, against CITY_TURN_MAX. */
+  private calls = 0
+  /** Console commands past the turn's share, oldest first: each runs at the start of a later turn. */
+  private readonly owed: (() => void)[] = []
+  /** Secrets console commands took from the shell since the console last asked (takeSecrets). */
+  private secrets: string[] = []
+  /** What the layer printed, in order, each entry one result for the console to show. */
+  private readonly queue: CommandResult[] = []
+  /** The entries of the queue that are this class's own (lines only), which later lines may join. */
+  private readonly own = new Set<CommandResult>()
+  /** Why the disk is no longer saved (another page saved a newer one, the store keeps failing), once that is so. */
+  private volatile: string | null = null
+  /** The save on its way to the store, if one is. */
+  private saving: Promise<void> | null = null
+  /**
+   * The save whose image waits for the host's seal, if one does: its body, and once a save that may not wait (the page
+   * going) has taken that body over, the promise of that save.
+   */
+  private sealing: { readonly body: Uint8Array; taken: Promise<void> | null } | null = null
+  private failures = 0
+  /** The body of an image whose save failed, to try again before a newer one is made. */
+  private unsaved: Uint8Array | null = null
+  /** A saved disk that failed its checks: seen, and, until its copy is kept, a reason not to save over it. */
+  private aside = false
+  private holding = false
+  /**
+   * Called when something the layer waits for from outside has arrived (the saved disk, a city command's later
+   * lines), so a host with a timer can give it a turn at once instead of at its next look.
+   */
+  wake: (() => void) | null = null
+
+  constructor(session: ReplSession, host: OsHost) {
+    this.clock = () => host.clock()
+    this.store = host.disk ?? null
+    this.digest = host.digest ? (bytes) => host.digest!(bytes) : null
+    // Until the first line names the real bridge: the offline one, whose every reading says the engine is not running.
+    this.bridge = offlineBridge(host.brand)
+    const failed = (lines: readonly Line[]): boolean => lines.some((l) => l.kind === 'err')
+    const cityLine = (l: Line): CityLine => ({ err: l.kind === 'err', text: l.text })
+    /**
+     * One of the console's commands run for the layer (by the shell, or for a file under /proc/city or /sys/city): the
+     * same handler, checks and tier locks, but no check of its own. The line typed earns, once, when it has finished
+     * (shellLine): a loop does not earn once a turn, and a check's lines never go down a pipe or into a file. Two more
+     * things differ from a line typed alone, both decided before this is called: a proposal is never answered this way
+     * (decides), and no more than CITY_TURN_MAX of them run in one turn (paced).
+     */
+    const handled = (name: string, args: string[], line: string): CommandResult => {
+      // `history` lists the line as typed (and as the history keeps it), not the shell's words for the command.
+      const said = name === 'history' && this.typed !== '' ? this.typed : line
+      try {
+        return HANDLERS[name as Name](args, this.bridge, this.history, said, session)
+      } catch (e) {
+        return fail(`${name}: ${message(e)}`)
+      }
+    }
+    const city: CityHost = {
+      has: (name) => Object.hasOwn(HANDLERS, name),
+      whole: (name) => RAW.has(name),
+      run: (name, args, line, direct): CityResult => {
+        const a = RAW.has(name) ? (args.length ? [args.join(' ')] : []) : [...args]
+        // A secret the shell hands a command is recorded at once, whether or not the command takes it, so the console
+        // can dot it in the history in whatever form it was typed (quoted, after `sh -c`, read from a pipe).
+        const secret = secretOf(name, a)
+        if (secret !== null) this.secrets.push(secret)
+        const answered = decides(name, a)
+        const made = answered ? fail(ANSWERED_AT_THE_PROMPT) : this.paced(() => handled(name, a, line))
+        if (!(made instanceof Later)) {
+          const r = made
+          let later: Later<readonly CityLine[]> | null = null
+          if (r.pending) {
+            const settle = new Later<readonly CityLine[]>()
+            r.pending.then((lines) => settle.resolve(lines.map(cityLine)), () => settle.resolve([])).then(() => this.wake?.())
+            later = settle
+          }
+          // Straight to the console: the console shows the result itself, exactly as if the line had been typed alone.
+          if (direct) return { lines: [], later, post: r, status: failed(r.lines) ? 1 : 0 }
+          // Into a pipe or a file: the lines only. What a result would do to the console (clear it, close it, draw live) is left out.
+          return { lines: r.lines.map(cityLine), later }
+        }
+        // Past the turn's share: the command runs at the start of a later turn and the shell waits for it. Straight to
+        // the console, its result is then queued for the console in the order the shell would have posted it (the
+        // shell posts nothing now); either way the lines the shell waits for are all of its lines, so a pipe gets them
+        // and the status counts an error among them.
+        const lines = new Later<readonly CityLine[]>()
+        made.settled((from) => {
+          const r = from.value
+          if (from.error !== null || r === undefined) {
+            lines.resolve([{ err: true, text: `${name}: ${from.error?.message ?? 'no answer'}` }])
+            return
+          }
+          if (direct) this.queue.push(r)
+          const first = r.lines.map(cityLine)
+          if (!r.pending) { lines.resolve(first); return }
+          r.pending.then((more) => lines.resolve([...first, ...more.map(cityLine)]), () => lines.resolve(first)).then(() => this.wake?.())
+        })
+        return direct ? { lines: [], later: lines, post: null, status: 0 } : { lines: [], later: lines }
+      },
+    }
+    const files = cityFiles({
+      bridge: () => this.bridge,
+      command: (name, args) => (decides(name, args) ? [err(ANSWERED_AT_THE_PROMPT)]
+        : Object.hasOwn(HANDLERS, name) ? handled(name, [...args], [name, ...args].join(' ')).lines : [err(`${name}: not found`)]),
+      paced: (job) => this.paced(job),
+      tuning: () => {
+        try {
+          const op = this.bridge.operator
+          return op && op.unlocked() ? tableRows(op.tuning()) : null
+        } catch {
+          return null
+        }
+      },
+    })
+    const store = this.store
+    let image: Later<Uint8Array | null> | null = null
+    if (store !== null) {
+      const arriving = new Later<Uint8Array | null>()
+      store.load().then((bytes) => arriving.resolve(bytes), () => {
+        // Unread is not empty: the disk starts new, nothing is saved over what the storage may hold, and the console says so now.
+        this.lose('the storage could not be read, so nothing is written over what it may hold')
+        arriving.resolve(null)
+      }).then(() => this.wake?.())
+      image = arriving
+    }
+    this.system = new System({
+      hostname: host.brand.host,
+      version: `${host.brand.name} ${host.brand.version}`,
+      clock: this.clock,
+      wall: () => host.wall(),
+      image,
+      entropy: host.entropy ? (bytes) => host.entropy?.(bytes) : undefined,
+      city,
+      proc: files.proc,
+      sys: files.sys,
+      programs: PROGRAMS,
+      manual: { ...MANUAL, ...CITY_MANUAL },
+    })
+    // The first turn: the tree is laid out and the shell reaches its prompt (or waits for the saved disk).
+    this.pump(LINE_MS)
+  }
+
+  /** Gives the layer a turn of at most `ms` milliseconds and queues what it printed. */
+  pump(ms: number): void {
+    // A new turn: the console commands owed from earlier turns run first, in order, within the turn's share.
+    this.calls = 0
+    while (this.owed.length > 0 && this.calls < CITY_TURN_MAX) {
+      this.calls++
+      this.owed.shift()!()
+    }
+    this.take(this.system.run(PUMP_STEPS, this.clock() + ms))
+    // A saved disk that failed its checks is copied under another name before anything is saved over it; if the copy
+    // cannot be kept, the stored one is left alone and this visit's files are not kept.
+    if (!this.aside && this.system.state === 'refused' && this.system.refused !== null && this.store !== null) {
+      this.aside = true
+      this.holding = true
+      this.store.setAside(this.system.refused).catch(() => false).then((kept) => {
+        this.holding = false
+        if (kept) this.note('disk: the saved disk failed its check and was set aside; this is a new, empty one')
+        else this.lose('the saved disk failed its check and could not be copied aside, so it is left where it is')
+        this.wake?.()
+      })
+    }
+  }
+
+  /**
+   * Runs `job` (a console command, or a city file read or written) now while this turn's share of them lasts and none
+   * is owed from before; else owes it to a later turn and answers with a Later that holds what it gives then (or its
+   * refusal). A job that answers with a Later of its own is waited for.
+   */
+  private paced<T>(job: () => T | Later<T>): T | Later<T> {
+    if (this.owed.length === 0 && this.calls < CITY_TURN_MAX) {
+      this.calls++
+      return job()
+    }
+    const later = new Later<T>()
+    this.owed.push(() => {
+      let got: T | Later<T>
+      try {
+        got = job()
+      } catch (e) {
+        later.reject(e instanceof OsError ? e : new OsError('EIO', message(e)))
+        return
+      }
+      if (!(got instanceof Later)) { later.resolve(got); return }
+      got.settled((from) => {
+        if (from.error !== null) later.reject(from.error)
+        else later.resolve(from.value as T)
+      })
+    })
+    return later
+  }
+
+  /** The secrets console commands took from the shell since the last call, oldest first (each handed over once). */
+  takeSecrets(): string[] {
+    const taken = this.secrets
+    this.secrets = []
+    return taken
+  }
+
+  private take(events: readonly TtyEvent[]): void {
+    for (const e of events) {
+      if (e.kind === 'post') {
+        // Only the shell posts, and only a city command's own result.
+        const r = e.payload as CommandResult | null
+        if (typeof r === 'object' && r !== null && Array.isArray(r.lines)) this.queue.push(r)
+        continue
+      }
+      this.say({ kind: e.kind, text: e.text })
+    }
+  }
+
+  private say(line: Line): void {
+    const last = this.queue[this.queue.length - 1]
+    if (last !== undefined && this.own.has(last)) { last.lines.push(line); return }
+    const r: CommandResult = { lines: [line] }
+    this.own.add(r)
+    this.queue.push(r)
+  }
+
+  /** A line of the console's own about the layer (the disk's fate), in order with what the programs print. */
+  private note(text: string): void {
+    this.system.kernel.log(text)
+    this.say(sys(text))
+  }
+
+  /** The next result to show, oldest first; null when everything printed has been shown. */
+  next(): CommandResult | null {
+    const r = this.queue.shift() ?? null
+    if (r !== null) this.own.delete(r)
+    return r
+  }
+
+  /** Whether a call to `pump` would move anything: a task can run, or something printed waits to be shown. */
+  get busy(): boolean { return this.queue.length > 0 || this.owed.length > 0 || !this.system.idle }
+
+  /** Whether `first` and everything still queued behind it are lines alone, none of them an error (a line that may earn its check printed so). */
+  clean(first: CommandResult): boolean {
+    return [first, ...this.queue].every((r) => plainResult(r) && !r.lines.some((l) => l.kind === 'err'))
+  }
+
+  /** Lines of the console's own, after everything queued (the check a shell line earned). */
+  tell(lines: readonly Line[]): void {
+    for (const l of lines) this.say(l)
+  }
+
+  /** What the console shows before the next typed line: the shell's prompt, its continuation mark, or nothing while a job has the terminal. */
+  get prompt(): string { return this.system.prompt }
+
+  /**
+   * Saves the disk if it changed since it was last saved. Resolves when the store has answered; never throws and never
+   * rejects. The image is sealed with the host's digest when it has one (so a large disk does not hold the page up),
+   * else with the layer's own SHA-256; with `now` (the page is going) it is sealed here and the store is asked before
+   * this returns, and a save still waiting for the host's seal is taken over, so the newest change is not left behind
+   * a seal that may never come. Asked while a save is with the store, it saves again once that one has answered, so the
+   * newest change is not left out. An image that cannot be made (the browser refuses the memory for it) counts as a
+   * failed save, and the change stays owed. Once another page has saved a newer disk, or saving has failed three times
+   * running, nothing more is saved from this page and the console says so once (the files then last as long as the
+   * page).
+   */
+  save(opts: { readonly now?: boolean } = {}): Promise<void> {
+    const now = opts.now === true
+    const sealing = this.sealing
+    if (now && sealing !== null && sealing.taken === null && this.store !== null && this.volatile === null) {
+      // The body that waits for its seal is sealed here, or a newer one is when the disk changed since: it holds both.
+      let body = sealing.body
+      try {
+        body = this.system.snapshotBody() ?? body
+      } catch {
+        // The newer image could not be made: the waiting one still holds what it held, and the change stays owed.
+      }
+      this.sealing = null
+      const taking = this.put(this.store, body, true)
+      sealing.taken = taking
+      return taking
+    }
+    if (this.saving !== null) return this.saving.then(() => this.save(opts))
+    if (this.holding || this.volatile !== null) return Promise.resolve()
+    const store = this.store
+    // With nowhere to keep a disk, a new one that holds only what every disk starts with has nothing to lose yet.
+    if (store === null && this.unsaved === null && this.system.pristine) return Promise.resolve()
+    // The disk as it is now when it changed since; else the body of the image whose save failed.
+    let body: Uint8Array | null
+    try {
+      body = this.system.snapshotBody() ?? this.unsaved
+    } catch {
+      this.failed()
+      return Promise.resolve()
+    }
+    if (body === null) return Promise.resolve()
+    if (store === null) {
+      this.lose('this page has nowhere to keep them')
+      return Promise.resolve()
+    }
+    this.unsaved = null
+    return this.put(store, body, now)
+  }
+
+  /**
+   * Seals `body` and hands the image to the store, then acts on the answer. Sealed here when `now` or the host has no
+   * digest (the store is then asked before this returns); else with the host's digest, and with the layer's own
+   * SHA-256 when that fails.
+   */
+  private put(store: DiskStore, body: Uint8Array, now: boolean): Promise<void> {
+    const ask = (image: Uint8Array): Promise<'kept' | 'stale' | 'failed'> => {
+      try {
+        return store.save(image).catch((): 'failed' => 'failed')
+      } catch {
+        return Promise.resolve('failed')
+      }
+    }
+    const digest = this.digest
+    let answer: Promise<'kept' | 'stale' | 'failed' | 'taken'>
+    let mine: { readonly body: Uint8Array; taken: Promise<void> | null } | null = null
+    if (now || digest === null) {
+      let image: Uint8Array | null = null
+      try {
+        image = sealed(body, sha256(body))
+      } catch {
+        // The seal could not be made: a failed save, like one the store refused.
+      }
+      answer = image === null ? Promise.resolve<'failed'>('failed') : ask(image)
+    } else {
+      const record = { body, taken: null as Promise<void> | null }
+      mine = record
+      this.sealing = record
+      const own = (): Uint8Array => sealed(body, sha256(body))
+      let sealing: Promise<Uint8Array>
+      try {
+        sealing = digest(body).then((seal) => sealed(body, seal), own)
+      } catch {
+        sealing = Promise.resolve().then(own)
+      }
+      answer = sealing.then((image) => {
+        // A save that could not wait sealed this body itself and asked the store for it.
+        if (record.taken !== null) return 'taken' as const
+        this.sealing = null
+        return ask(image)
+      }, (): 'failed' | 'taken' => {
+        if (record.taken !== null) return 'taken'
+        this.sealing = null
+        return 'failed'
+      })
+    }
+    const saving: Promise<void> = answer.then((how) => {
+      if (how === 'taken') return mine?.taken ?? undefined
+      if (this.saving === saving) this.saving = null
+      if (how === 'kept') { this.failures = 0; return }
+      if (how === 'stale') { this.lose('another page of this site saved a newer disk (reload this one to open it)'); return }
+      // A newer image will hold everything this one does: keep this one only while nothing newer was made.
+      if (!this.system.dirty) this.unsaved = body
+      this.failed()
+    })
+    this.saving = saving
+    return saving
+  }
+
+  /** One more save that failed in a row; the third gives up on keeping the files. */
+  private failed(): void {
+    if (++this.failures >= 3) this.lose('the browser refused to store them')
+  }
+
+  private lose(why: string): void {
+    if (this.volatile !== null) return
+    this.volatile = why
+    this.unsaved = null
+    this.note(`disk: files are not kept between visits from here on: ${why}`)
+  }
+
+  /** Whether the disk has changes that were not saved (and saving is still worth trying: not a new disk with nowhere to keep it). */
+  get unsavedChanges(): boolean {
+    return this.volatile === null && (this.unsaved !== null || (this.system.dirty && (this.store !== null || !this.system.pristine)))
+  }
+}
+
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
 export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'native', 'ollama', 'openai', 'scripted'] as const
@@ -1095,7 +1591,7 @@ const knob = (name: Name, fn: (b: TerminalBridge, arg: 'on' | 'off' | undefined)
 }
 
 const HANDLERS: Record<Name, Handler> = {
-  help(args) {
+  help(args, _b, _history, _line, session) {
     if (args.length > 1) return fail(usage('help'))
     if (args.length === 1) {
       const c = COMMANDS.find((x) => x.name === args[0])
@@ -1110,6 +1606,8 @@ const HANDLERS: Record<Name, Handler> = {
         sys("Ring-0 operator (after 'operator unlock'): scripts, tuning and harnesses over the simulation; the laws stay in force."),
         ...OPERATOR.map(entry),
         sys('keys: Tab complete  Up/Down history  Shift+Enter new line  Ctrl+C stop live view  Ctrl+L clear  PgUp/PgDn scroll'),
+        // Only where the operating layer runs (os/): the console's own table above is the same with or without it.
+        ...(session?.os ? [sys("files and programs: this prompt is also a shell (pipes, redirection, scripts): 'man intro' opens the manual, 'ls /bin' lists the programs")] : []),
       ],
     }
   },
@@ -2257,15 +2755,34 @@ function actWaiting(b: TerminalBridge): boolean {
  * definitions persist); without one, each `r0` line runs on a fresh machine.
  */
 export function run(input: string, bridge: TerminalBridge, history: readonly string[], session: ReplSession | null = null): CommandResult {
+  const os = session?.os ?? null
+  if (os) {
+    os.bridge = bridge
+    os.history = history
+    // The line as the history will keep it (Terminal.submit stores the same), for `history` run by the shell. A
+    // program's input never enters the history, so the line whose command reads it stays the one listed.
+    const capturing = os.system.capturing
+    if (!os.system.feeding) {
+      os.typed = redactForHistory(capturing ? input : input.trim(), !capturing && runsWhole(input))
+    }
+    // Something already running reads the terminal (a program's input, the rest of a command the shell is reading):
+    // the line is its, whatever it says.
+    if (os.system.capturing) return shellLine(os, input, null)
+  }
   // `y` and `n` alone are `act ok` and `act no` while a proposal waits; otherwise the console knows no such word (they
   // are in no table, so help, completion and the locked sweep never see them).
   const alias = /^\s*([yn])\s*$/i.exec(input)
   if (alias && actWaiting(bridge)) return dispatch('act', [alias[1].toLowerCase() === 'y' ? 'ok' : 'no'], bridge, history, input.trim(), session)
   const head = /^\s*(\S+)/.exec(input)
-  if (head && RAW.has(head[1])) {
+  if (head && runsWhole(input)) {
     const rest = input.slice(head.index + head[0].length).trim()
     return dispatch(head[1] as Name, rest ? [rest] : [], bridge, history, input.trim(), session)
   }
+  // With the operating layer, a line goes to its shell unless it is one of the console's own commands typed alone,
+  // which runs here exactly as it always has (`echo` is the shell's: it expands what it is given). A line that starts
+  // with a console command and holds an operator (a pipe, a redirection, a list) is the shell's too, and the shell
+  // runs the console command inside it.
+  if (os && head && !(head[1] !== 'echo' && Object.hasOwn(HANDLERS, head[1]) && !hasOperator(input))) return shellLine(os, input, bridge)
   const words = tokenize(input)
   if (!words) return fail('ash: syntax error: unterminated quoted string')
   if (!words.length) return { lines: [] }
@@ -2275,20 +2792,100 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
 }
 
 /**
+ * Hands a typed line to the operating layer's shell, gives it a moment, and answers with the first of what it
+ * printed (the rest, and what arrives later, waits in `os.next()` for a host that follows the layer). With `earn`,
+ * a line that finished without an error and combined programs earns the check a shell line earns (progress.ts),
+ * once, after everything the line printed; the console commands it ran earn none of their own.
+ */
+function shellLine(os: OsSession, input: string, earn: TerminalBridge | null): CommandResult {
+  if (!os.system.type(input)) return fail('ash: too many lines are waiting to be read: wait for the running command, or press Ctrl+C')
+  os.pump(LINE_MS)
+  const r = os.next() ?? { lines: [] }
+  const p = earn?.progress
+  // Finished: the shell is back at its prompt with nothing left to run, and what it printed holds no error.
+  if (!p || !os.system.atPrompt || !os.system.idle || !os.clean(r)) return r
+  let check: Line[] = []
+  try { check = p.command('sh', [input]).map(out) } catch { /* a progression that throws costs the line nothing */ }
+  if (!check.length) return r
+  if (os.busy) {
+    os.tell(check)
+    return r
+  }
+  return { ...r, lines: [...r.lines, ...check] }
+}
+
+/**
+ * Where a console command may start inside a line, since the shell runs one anywhere a command goes
+ * (`true && ask key <key>`): at the line's start, after `;`, `|`, `&`, `(`, a line end or a backquote, or after a word
+ * such as `then` or `do`, with any blanks between. `echo ask key x` holds no command there and is kept as typed. The
+ * blanks after the start are spaces and tabs only: a run of line ends is covered from its last line end (itself a
+ * start), and a start that could run over line ends would be tried from every one of them, which takes time that grows
+ * with the square of the run's length.
+ */
+const COMMAND_START = String.raw`((?:^|[;&|(\n\x60]|(?:^|\s)(?:if|then|elif|else|do|while|until|!|\{)\s)[ \t]*)`
+
+/** The forms that carry a secret, each as (where the command starts, what is kept), the secret and the rest after it. */
+const SECRET_FORMS: readonly RegExp[] = [
+  String.raw`(ring0\s+unlock\s+--elite\s+)\S[\s\S]*$`,
+  String.raw`(ring0\s+elite\s+set\s+)\S[\s\S]*$`,
+  String.raw`((?:ask|say)\s+key\s+)\S[\s\S]*$`,
+  String.raw`(ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$`,
+  String.raw`(ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$`,
+  String.raw`(net\s+join\s+\S+\s+)\S[\s\S]*$`,
+].map((form, i) => new RegExp(COMMAND_START + form, i === 3 ? 'i' : ''))
+
+/**
  * A line as the console's history keeps it: a key given to `ask key`, `say key` or `ask connect`, a token given to
  * `net join`, and the elite tier's passphrase given to `ring0 unlock --elite` or `ring0 elite set`, are replaced by
- * dots, so `history` and the Up arrow never show a secret typed earlier. After `ask connect <provider>` only a leading
- * http(s) address is kept; anything else there (a key typed where the url goes) is dotted with everything after it.
- * Every other line is kept as typed.
+ * dots with everything after them on the line, at the line's start and wherever else in it the shell would start a
+ * command (after `;`, `|`, `&&`, `then` ...), so `history` and the Up arrow never show a secret typed earlier. After
+ * `ask connect <provider>` only a leading http(s) address is kept; anything else there (a key typed where the url goes)
+ * is dotted with everything after it. With `whole` (a line the console takes whole: runsWhole, and nothing was waiting
+ * for more input), only a secret at the line's start is dotted, since nothing later in such a line runs as a command of
+ * its own. Every other line is kept as typed. A command the shell reaches in a way this cannot see (a quoted name,
+ * `sh -c '...'`) is dotted afterwards from the secret it was given (OsSession.takeSecrets, scrubSecrets).
  */
-export function redactForHistory(line: string): string {
-  return line
+export function redactForHistory(line: string, whole = false): string {
+  let kept = line
     .replace(/^(\s*ring0\s+unlock\s+--elite\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*ring0\s+elite\s+set\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*(?:ask|say)\s+key\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+)(?!https?:\/\/[^\s@]*(?:\s|$))\S[\s\S]*$/i, '$1••••')
     .replace(/^(\s*ask\s+connect\s+\S+\s+\S+\s+)\S[\s\S]*$/, '$1••••')
     .replace(/^(\s*net\s+join\s+\S+\s+)\S[\s\S]*$/, '$1••••')
+  if (whole) return kept
+  // The same forms where the shell runs a command later in the line (a form already dotted stays as it is).
+  for (const form of SECRET_FORMS) kept = kept.replace(form, '$1$2••••')
+  return kept
+}
+
+/**
+ * Whether `run` hands the line to the console whole, as one argument of its first word, when nothing is waiting for
+ * more input: true exactly when that word is one of the commands that take the rest of their line (ask, say, run,
+ * noir ...). Nothing after the first word of such a line runs as a command of its own.
+ */
+export function runsWhole(line: string): boolean {
+  const head = /^\s*(\S+)/.exec(line)
+  return head !== null && RAW.has(head[1])
+}
+
+/**
+ * Dots secrets in the history, in place: in each entry that holds one of `secrets` as written, the entry is kept up to
+ * the first place any of them starts, and that place and everything after it become dots. An empty secret is passed
+ * over. For a secret the shell handed a console command (OsSession.takeSecrets) in a form redactForHistory could not
+ * see in the typed line.
+ */
+export function scrubSecrets(history: string[], secrets: readonly string[]): void {
+  for (let i = 0; i < history.length; i++) {
+    const entry = history[i]
+    let cut = -1
+    for (const secret of secrets) {
+      if (secret === '') continue
+      const at = entry.indexOf(secret)
+      if (at >= 0 && (cut < 0 || at < cut)) cut = at
+    }
+    if (cut >= 0) history[i] = `${entry.slice(0, cut)}••••`
+  }
 }
 
 /**
@@ -2302,6 +2899,101 @@ export function complete(prefix: string): string[] {
   const key = words.slice(0, -1).join(' ')
   const options = words.length === 1 ? NAMES : Object.hasOwn(ARGS, key) ? ARGS[key] : []
   return options.filter((o) => o.startsWith(last)).map((o) => head + o)
+}
+
+/** The words after which a command name is expected, so Tab offers programs there, not files. */
+const COMMAND_AFTER: ReadonlySet<string> = new Set(['|', '||', '&&', ';', '&', '!', '{', '(', 'if', 'then', 'elif', 'else', 'while', 'until', 'do'])
+
+/** What ends a word for the shell outside quotes: a blank, or the first character of an operator. */
+const WORD_ENDS = ' \t\n|&;()<>'
+
+/** Characters the shell reads as something other than themselves outside quotes. */
+const SHELL_SPECIAL = /[\s|&;<>()$`\\"'*?[\]{}#~!=]/g
+
+/**
+ * A name as it must be typed for the shell to read it back as one word that names exactly it: each special character
+ * after a backslash; a name with a control character in single quotes (a backslash before a line end joins two lines).
+ */
+function shellWord(name: string): string {
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i)
+    if (code < 32 || code === 127) return `'${name.replace(/'/g, "'\\''")}'`
+  }
+  return name.replace(SHELL_SPECIAL, (c) => `\\${c}`)
+}
+
+/**
+ * The last word of a line as the shell would read it: where it starts, what it says with its quotes and backslashes
+ * taken out, whether it held a quote, and whether a command goes there (first on the line, or after an operator or a
+ * word such as `do`). A blank or an operator inside quotes or after a backslash is part of the word.
+ */
+function lastWord(line: string): { start: number; text: string; quoted: boolean; command: boolean } {
+  let prev: string | null = null
+  let start = -1
+  let text = ''
+  let quoted = false
+  let quote = ''
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (quote !== '') {
+      if (c === quote) quote = ''
+      else if (c === '\\' && quote === '"' && i + 1 < line.length && '$`"\\'.includes(line[i + 1])) text += line[++i]
+      else text += c
+      continue
+    }
+    if (WORD_ENDS.includes(c)) {
+      if (start >= 0) prev = line.slice(start, i)
+      start = -1
+      text = ''
+      quoted = false
+      if (c !== ' ' && c !== '\t' && c !== '\n') {
+        // `||`, `&&` and `>>` are one operator each.
+        const two = line[i + 1] === c && (c === '|' || c === '&' || c === '>')
+        prev = two ? c + c : c
+        if (two) i++
+      }
+      continue
+    }
+    if (start < 0) start = i
+    if (c === '\\') {
+      if (i + 1 < line.length) text += line[++i]
+    } else if (c === "'" || c === '"') {
+      quote = c
+      quoted = true
+    } else text += c
+  }
+  return { start: start < 0 ? line.length : start, text, quoted, command: prev === null || COMMAND_AFTER.has(prev) }
+}
+
+/**
+ * Tab completion with the operating layer: where a command is expected, the console's commands, the shell's own and
+ * every program along its path; elsewhere the console's own candidates for that command, and when it has none, the
+ * files the word could name (a directory ends in `/`). A name is given back as the shell must read it: a blank, an
+ * operator or a quote in it is escaped, so the completed line names that one file and runs nothing else. Without the
+ * layer it is `complete`.
+ */
+export function completeLine(prefix: string, session: ReplSession | null = null): string[] {
+  const os = session?.os ?? null
+  if (!os) return complete(prefix)
+  const word = lastWord(prefix)
+  const head = prefix.slice(0, word.start)
+  if (word.command && !word.text.includes('/')) {
+    const names = new Set<string>()
+    for (const n of [...NAMES, ...BUILTIN_NAMES, ...os.system.commands(word.text)]) if (n.startsWith(word.text) && /^[a-z]/.test(n)) names.add(n)
+    return [...names].sort().map((o) => head + shellWord(o))
+  }
+  const own = complete(prefix)
+  if (own.length) return own
+  // The directory part stays as typed (so `~/` is still the home directory); a word begun in quotes is given back
+  // escaped instead. What the file system adds is escaped, a directory's slash after it.
+  const cut = word.text.lastIndexOf('/') + 1
+  const raw = prefix.slice(word.start)
+  const typed = word.text.slice(0, cut)
+  const kept = !word.quoted ? raw.slice(0, raw.lastIndexOf('/') + 1) : typed.startsWith('~/') ? `~/${shellWord(typed.slice(2))}` : shellWord(typed)
+  return os.system.complete(word.text).map((o) => {
+    const name = o.slice(cut)
+    return name.endsWith('/') ? `${head}${kept}${shellWord(name.slice(0, -1))}/` : `${head}${kept}${shellWord(name)}`
+  })
 }
 
 /** Longest string every word starts with. */
