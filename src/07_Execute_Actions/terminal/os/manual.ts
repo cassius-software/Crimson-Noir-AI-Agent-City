@@ -141,7 +141,9 @@ COMMANDS OF THE SHELL ITSELF
     stop job   end one (stop %1, or stop with a task's number)
     exit typed at the console closes it, and the rest of the line (and
     of a file read with source) is given up, with what was typed with
-    it or ahead of it, as Ctrl+C gives it up.
+    it or ahead of it, as Ctrl+C gives it up. exit in /etc/profile or
+    ~/.profile does the same as the shell starts, and the rest of the
+    login does not run.
 
 THE CITY'S COMMANDS
     The console's own commands (help lists them) can be used in a pipe,
@@ -197,7 +199,9 @@ THE TREE
 WHAT IS KEPT
     Everything outside /tmp, /bin, /usr, /dev, /proc and /sys is one
     disk of 8 MiB, saved in this browser's own storage for this site a
-    moment after it changes and when the page is hidden. It comes back
+    moment after it changes, when the page is hidden and as it starts to
+    go (a change made in the very last moment before a reload can still
+    be lost, more so on a large disk). It comes back
     the next time the page is opened in the same browser. It is not
     sent anywhere, and another browser or device has its own.
 
@@ -216,7 +220,8 @@ PERMISSIONS
 LIMITS
     A name is at most 255 characters and a path 4096 (a character past
     U+FFFF counts as two). The disk holds at most 4096 files and
-    directories (each save writes all of it). There are no links.
+    directories, and each save writes all of it, so a disk near full is
+    saved less often. There are no links.
     Times are in UTC. A file
     under /proc or /sys is made afresh each time it is read, so its size
     always shows as 0.

@@ -878,6 +878,26 @@ test('the console\'s own shell: exit also gives up what was typed with it or ahe
   assert.deepEqual(k.settle(), ['still here'])
 })
 
+test('exit in a profile closes the console as at the prompt: what was typed before the shell started is given up, and so is the rest of the login', () => {
+  const c = testCity()
+  const k = boot(all, { city: c.host })
+  assert.deepEqual(k.sh('mkdir -p /tmp/home/notes; touch /tmp/home/README'), [])
+  k.write('/home/operator/.profile', 'cd /tmp/nowhere || exit\n')
+  k.sh('stop $$')
+  // Typed while the console's shell starts again (as the first line of a visit is, before the saved disk arrives).
+  k.system.type('cd /tmp/home; rm -r *')
+  k.tick(250)
+  assert.deepEqual(k.settle(), ['!cd: /tmp/nowhere: no such file or directory', 'exit ran'])
+  assert.deepEqual(k.sh('cd /tmp/home; echo *'), ['README notes'])
+  // /etc/profile's exit ends the login there: ~/.profile does not run, and the first prompt's $? is its status.
+  k.write('/etc/profile', 'exit 4\n')
+  k.write('/home/operator/.profile', 'echo from home\n')
+  k.sh('stop $$')
+  k.tick(250)
+  assert.deepEqual(k.settle(), ['exit ran'])
+  assert.deepEqual(k.sh('echo $?'), ['4'])
+})
+
 // Ctrl+C, Ctrl+D and the console's own shell.
 
 test('Ctrl+C ends the foreground job, forgets the lines typed ahead, and gives the line up with status 130', () => {

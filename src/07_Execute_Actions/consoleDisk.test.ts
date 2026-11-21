@@ -43,17 +43,33 @@ interface FakeIdb {
   opens: number
   /** The writes asked for, by key, in the order they were asked (whether or not they landed). */
   puts: string[]
+  /** Reads asked for, and transactions asked to commit at once (IDBTransaction.commit). */
+  gets: number
+  commits: number
+  /**
+   * Transactions run one after another in the order they were made, as the browser runs writing transactions over
+   * one store (a transaction made while another runs starts when it has ended).
+   */
+  serial: boolean
 }
 
 function fakeIdb(): FakeIdb {
   const held: (() => void)[] = []
   const idb: FakeIdb = {
-    factory: null as unknown as IDBFactory, rows: new Map(), opening: 'ok', full: false, unreadable: false, silentReads: false, holding: false, opens: 0, puts: [],
+    factory: null as unknown as IDBFactory, rows: new Map(), opening: 'ok', full: false, unreadable: false, silentReads: false, holding: false, opens: 0, puts: [], gets: 0, commits: 0, serial: false,
     release: () => { for (const commit of held.splice(0)) commit() },
   }
   const later = (fn: () => void): void => queueMicrotask(fn)
+  /** With `serial`, for each database (every page's connection to it): whether a transaction runs, and those waiting. */
+  const lines = new Map<string, { active: boolean; waiting: (() => void)[] }>()
   const database = (name: string) => {
     const stores = new Set<string>(idb.rows.has(name) ? ['disk'] : [])
+    if (!lines.has(name)) lines.set(name, { active: false, waiting: [] })
+    const line = lines.get(name)!
+    const next = (): void => {
+      line.active = false
+      line.waiting.shift()?.()
+    }
     return {
       objectStoreNames: { contains: (s: string) => stores.has(s) },
       createObjectStore: (s: string) => { stores.add(s); if (!idb.rows.has(name)) idb.rows.set(name, new Map()) },
@@ -65,13 +81,25 @@ function fakeIdb(): FakeIdb {
         const tx = { oncomplete: null as (() => void) | null, onerror: null as (() => void) | null, onabort: null as (() => void) | null, error: null as Error | null }
         let pending = 0
         let over = false
+        // With `serial`, nothing of this transaction is carried out until the ones made before it have ended.
+        let started = !idb.serial
+        const deferred: (() => void)[] = []
+        const soon = (fn: () => void): void => { if (started) later(fn); else deferred.push(fn) }
+        const begin = (): void => {
+          started = true
+          line.active = true
+          for (const fn of deferred.splice(0)) later(fn)
+        }
+        if (idb.serial) { if (line.active) line.waiting.push(begin); else begin() }
+        const ended = (): void => { if (idb.serial) next() }
         const commit = (): void => {
           if (over) return
           over = true
           for (const [k, v] of staged) rows.set(k, v)
           tx.oncomplete?.()
+          ended()
         }
-        const settleSoon = (): void => later(() => later(() => later(() => {
+        const settleSoon = (): void => soon(() => later(() => later(() => {
           if (over || pending > 0) return
           if (idb.holding && staged.size > 0) held.push(commit)
           else commit()
@@ -79,7 +107,7 @@ function fakeIdb(): FakeIdb {
         const ask = (fn: () => unknown): FakeRequest => {
           const r: FakeRequest = { onsuccess: null, onerror: null, result: undefined, error: null }
           pending++
-          later(() => {
+          soon(() => {
             pending--
             if (over) return
             try {
@@ -92,6 +120,7 @@ function fakeIdb(): FakeIdb {
               tx.error = e as Error
               r.onerror?.()
               tx.onabort?.()
+              ended()
             }
           })
           return r
@@ -110,9 +139,13 @@ function fakeIdb(): FakeIdb {
             staged.clear()
             tx.error = null
             tx.onabort?.()
+            ended()
           },
+          // Asked to commit once its requests are done: here every transaction does so anyway; it is counted.
+          commit: () => { idb.commits++ },
           objectStore: () => ({
             get: (key: string) => {
+              idb.gets++
               if (idb.silentReads) {
                 // Asked and never answered: the transaction waits on it for good.
                 pending++
@@ -475,4 +508,62 @@ test('a copy set aside that the store never answers is given up on once OPEN_MS 
   assert.equal(await outcome(copying), 'no answer', 'it waits while the wait lasts')
   t.fire()
   assert.equal(await outcome(copying), false)
+})
+
+test('a save as the page goes is one write committed at once, with no read first; a page told another saved a newer disk writes nothing as it goes', async () => {
+  const idb = fakeIdb()
+  const t = timers()
+  const name = 'test:going'
+  const a = consoleDisk(idb.factory, t.wait, name)
+  const b = consoleDisk(idb.factory, t.wait, name)
+  await a.load()
+  await b.load()
+  const reads = idb.gets
+  const going = a.save(bytes(1), true)
+  assert.deepEqual(idb.puts, ['image'], 'asked before anything was awaited')
+  assert.equal(idb.gets, reads, 'no read first: a page being reloaded would not see it answered')
+  assert.equal(idb.commits, 1, 'committed at once, not when the page\'s task ends')
+  assert.equal(await going, 'kept')
+  // The other page is told, between the site's pages, that a newer generation was saved.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(await b.save(bytes(2), true), 'stale')
+  assert.deepEqual(idb.puts, ['image'], 'and asks for no write over it')
+  // A timed save still reads first, and is not committed early (its read may yet undo it).
+  assert.equal(await a.save(bytes(3)), 'kept')
+  assert.equal(idb.commits, 1)
+  const c = consoleDisk(idb.factory, t.wait, name)
+  assert.deepEqual([...(await c.load() ?? [])], [3])
+})
+
+test('a save asked while this page\'s own given-up write still waits in line is kept once that write lands, not told stale; another page\'s write in line is still another page\'s', async () => {
+  const idb = fakeIdb()
+  idb.serial = true
+  const t = timers()
+  const name = 'test:queued'
+  const d = consoleDisk(idb.factory, t.wait, name)
+  await d.load()
+  assert.equal(await d.save(bytes(1)), 'kept')
+  idb.holding = true
+  const first = d.save(bytes(2))
+  t.fire()
+  assert.equal(await first, 'failed', 'given up on once OPEN_MS have passed')
+  // The retry is asked while the first write still holds the store: it runs after it, in line.
+  const second = d.save(bytes(3))
+  idb.holding = false
+  idb.release()
+  assert.equal(await second, 'kept', 'its own late write ahead of it does not make the page stale')
+  assert.deepEqual([...(await consoleDisk(idb.factory, timers().wait, name).load() ?? [])], [3])
+  // Two pages that loaded the same disk: the one whose write lands first wins, and the other is told stale.
+  const p = consoleDisk(idb.factory, t.wait, 'test:queued2')
+  const q = consoleDisk(idb.factory, t.wait, 'test:queued2')
+  await p.load()
+  await q.load()
+  idb.holding = true
+  const qs = q.save(bytes(4))
+  const ps = p.save(bytes(5))
+  idb.holding = false
+  idb.release()
+  assert.equal(await qs, 'kept')
+  assert.equal(await ps, 'stale')
+  assert.deepEqual([...(await consoleDisk(idb.factory, timers().wait, 'test:queued2').load() ?? [])], [4])
 })

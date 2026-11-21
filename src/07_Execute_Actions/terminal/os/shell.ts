@@ -730,12 +730,6 @@ class Shell {
       return yield* body()
     } catch (e) {
       if (e instanceof Jump) return e.status
-      if (e instanceof ExitLine) {
-        // Only the console's own shell throws this, so here it comes from a profile that ran exit: the prompt that
-        // follows shows its status as $?.
-        this.st.status = e.status
-        return e.status
-      }
       if (e instanceof Trouble) {
         yield* this.sys.eprint(`${SELF}: ${e.message}\n`)
         return 2
@@ -951,6 +945,9 @@ class Shell {
       return yield* builtin.call(this, argv)
     } catch (e) {
       if (!(e instanceof OsError) || e.errno === 'EPIPE') throw e
+      // Refused because a Ctrl+C gave up what it waited for (a city file owed to a later turn): the Ctrl+C ends the
+      // line here, unsaid, as the next step of the line would have it.
+      if (e.errno === 'EINTR') this.interruptCheck()
       yield* this.sys.eprint(`${SELF}: ${argv[0]}: ${e.message}\n`)
       return 1
     }
@@ -1098,6 +1095,13 @@ class Shell {
         try {
           yield* this.guarded(() => this.source(profile))
         } catch (e) {
+          if (e instanceof ExitLine) {
+            // exit in a profile closes the console as it does at the prompt: what was typed ahead goes, and so does the
+            // rest of the login (the next profile); the first prompt's $? is its status.
+            sys.forgetTyped()
+            st.status = e.status
+            break
+          }
           if (!(e instanceof OsError)) throw e
           yield* sys.eprint(`${SELF}: ${profile}: ${e.message}\n`)
         }

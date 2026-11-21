@@ -470,3 +470,35 @@ test('image: the body and its seal can be made apart, so a host may seal with it
   for (const length of [0, 31, 33, 64]) assert.throws(() => sealed(body, new Uint8Array(length)), RangeError, String(length))
   assert.throws(() => restore(sealed(body, new Uint8Array(SEAL_BYTES)), disk()), (e: unknown) => e instanceof OsError && e.errno === 'EINVAL')
 })
+
+test('image: a body dumpBody made is sealed in the room it left, with no copy of the image; any other body is copied', () => {
+  const fs = small()
+  const body = dumpBody(fs)
+  const seal = sha256(body)
+  const image = sealed(body, seal)
+  assert.equal(image.buffer, body.buffer, 'the seal written after the body, in the same memory')
+  assert.equal(image.byteOffset, body.byteOffset)
+  assert.deepEqual(image, concat([body, seal]))
+  assert.deepEqual(image, dump(fs))
+  // Sealed again (a save tried a second time), or a body made elsewhere: a copy, and the first image is left as it was.
+  const again = sealed(body, new Uint8Array(SEAL_BYTES))
+  assert.notEqual(again.buffer, body.buffer)
+  assert.deepEqual(image, dump(fs))
+  const other = body.slice()
+  assert.notEqual(sealed(other, seal).buffer, other.buffer)
+})
+
+test('image: a host that checked the seal itself (sealChecked) spares restore its own; every other check still runs', () => {
+  const fs = small()
+  const body = dumpBody(fs)
+  const unsealed = sealed(body, new Uint8Array(SEAL_BYTES))
+  assert.throws(() => restore(unsealed, disk()), (e: unknown) => e instanceof OsError && e.errno === 'EINVAL')
+  const into = disk()
+  restore(unsealed, into, { sealChecked: true })
+  assert.deepEqual(listing(into), listing(fs))
+  // What the seal does not cover is still refused: a body cut short, or a wrong header.
+  assert.throws(() => restore(unsealed.subarray(0, unsealed.length - 40), disk(), { sealChecked: true }), (e: unknown) => e instanceof OsError && e.errno === 'EINVAL')
+  const wrong = unsealed.slice()
+  wrong[0] ^= 1
+  assert.throws(() => restore(wrong, disk(), { sealChecked: true }), (e: unknown) => e instanceof OsError && e.errno === 'EINVAL')
+})

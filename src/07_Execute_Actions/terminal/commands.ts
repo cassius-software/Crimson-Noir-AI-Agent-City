@@ -196,14 +196,17 @@ export function replSession(host: OsHost | null = null): ReplSession {
 /**
  * Where the console's disk is kept between visits (the host's own storage). `load` gives the saved image, or null
  * when there is none; it is refused when the storage cannot be read (the console then says at once that its files are
- * not kept, and saves nothing over what may still be there). `save` puts an image over the one this page last loaded or saved:
- * 'kept'; 'stale' when another page saved since (nothing is written, so the newer disk is not lost); 'failed'.
+ * not kept, and saves nothing over what may still be there). `save` puts an image over the one this page last loaded or
+ * saved: 'kept'; 'stale' when another page saved since (nothing is written, so the newer disk is not lost); 'failed'.
+ * With `now` the page is going: the write is asked for and committed at once, with no read first (a page being
+ * reloaded runs nothing more, and its storage work ends with it), so a store learns of another page's newer save
+ * some other way (a message between pages) and is told as much in its own docs.
  * `setAside` keeps an image that failed its checks under another name, so it is never written over unseen; false
  * when the copy could not be kept (the console then leaves the stored image alone for the visit).
  */
 export interface DiskStore {
   load(): Promise<Uint8Array | null>
-  save(image: Uint8Array): Promise<'kept' | 'stale' | 'failed'>
+  save(image: Uint8Array, now?: boolean): Promise<'kept' | 'stale' | 'failed'>
   setAside(image: Uint8Array): Promise<boolean>
 }
 
@@ -220,7 +223,9 @@ export interface OsHost {
   readonly disk?: DiskStore | null
   /**
    * The SHA-256 of `bytes`, from a digest that does not hold the page up (the browser's own); a save seals the disk's
-   * image with it. Without one, or when it fails, the image is sealed with the layer's own SHA-256, which runs at once.
+   * image with it, and the saved image's seal is checked with it before the disk is restored. Without one, or when it
+   * fails, the layer's own SHA-256 does both, at once. It must answer or fail within a bounded time (the console's
+   * start waits on it).
    */
   digest?(bytes: Uint8Array): Promise<Uint8Array>
 }
@@ -300,9 +305,12 @@ export class OsSession {
   /** The bridge and the history of the line being run: the shell runs the city's commands with these. */
   bridge: TerminalBridge
   history: readonly string[] = []
-  /** The line being run as the history keeps it, and the secrets console commands took from the shell since it was set. */
+  /**
+   * The line being run as the history keeps it, and the same line dotted where it holds a secret a console command took
+   * from the shell since it was set (each secret dots it once, as it is taken: nothing grows while a loop runs).
+   */
   private line = ''
-  private lineSecrets: string[] = []
+  private lineKept = ''
   private readonly clock: () => number
   private readonly store: DiskStore | null
   private readonly digest: ((bytes: Uint8Array) => Promise<Uint8Array>) | null
@@ -316,8 +324,8 @@ export class OsSession {
    * it ran (one whose shell gave up waiting for it, at Ctrl+C or when its job ended, is dropped instead).
    */
   private readonly owed: (() => boolean)[] = []
-  /** Secrets console commands took from the shell since the console last asked (takeSecrets). */
-  private secrets: string[] = []
+  /** Secrets console commands took from the shell since the console last asked (takeSecrets), each once. */
+  private secrets = new Set<string>()
   /** What the layer printed, in order, each entry one result for the console to show. */
   private readonly queue: CommandResult[] = []
   /** The entries of the queue that are this class's own (lines only), which later lines may join. */
@@ -326,6 +334,11 @@ export class OsSession {
   private volatile: string | null = null
   /** The save on its way to the store, if one is. */
   private saving: Promise<void> | null = null
+  /**
+   * The body of that save, when it was asked for as a timed save (with a read first, committed when the page's task
+   * ends): a page that goes before it has landed takes it with it, so the save made as the page goes asks for it again.
+   */
+  private asking: Uint8Array | null = null
   /**
    * The save whose image waits for the host's seal, if one does: its body, and once a save that may not wait (the page
    * going) has taken that body over, the promise of that save.
@@ -361,10 +374,19 @@ export class OsSession {
      * (decides), and no more than CITY_TURN_MAX of them run in one turn (paced).
      */
     const handled = (name: string, args: string[], line: string): CommandResult => {
-      // `history` lists the line as typed (and as the history keeps it), not the shell's words for the command.
+      // `history` lists the line as typed (and as the history keeps it), not the shell's words for the command; and the
+      // earlier entries as the console's history will hold them once it has dotted the secrets taken since it last
+      // asked, so a key handed over in this same turn (by an earlier line typed ahead, or the first half of this one)
+      // is never listed, or written to a file, in clear.
       const said = name === 'history' && this.line !== '' ? this.typed : line
+      let listed = this.history
+      if (name === 'history' && this.secrets.size > 0) {
+        const dotted = [...this.history]
+        scrubSecrets(dotted, [...this.secrets])
+        listed = dotted
+      }
       try {
-        return HANDLERS[name as Name](args, this.bridge, this.history, said, session)
+        return HANDLERS[name as Name](args, this.bridge, listed, said, session)
       } catch (e) {
         return fail(`${name}: ${message(e)}`)
       }
@@ -375,11 +397,13 @@ export class OsSession {
       run: (name, args, line, direct): CityResult => {
         const a = RAW.has(name) ? (args.length ? [args.join(' ')] : []) : [...args]
         // A secret the shell hands a command is recorded at once, whether or not the command takes it, so the console
-        // can dot it in the history in whatever form it was typed (quoted, after `sh -c`, read from a pipe).
+        // can dot it in the history as it was typed (quoted, escaped, spaced out, after `sh -c`, over two lines).
         const secret = secretOf(name, a)
         if (secret !== null) {
-          this.secrets.push(secret)
-          this.lineSecrets.push(secret)
+          this.secrets.add(secret)
+          const kept = [this.lineKept]
+          scrubSecrets(kept, [secret])
+          this.lineKept = kept[0]
         }
         const answered = decides(name, a)
         // What the shell waits for when the command is owed to a later turn. When the shell gives the wait up (it settles
@@ -438,9 +462,27 @@ export class OsSession {
     })
     const store = this.store
     let image: Later<Uint8Array | null> | null = null
+    /** Saved images whose seal the host's own digest found right, so restoring them spares the page its own SHA-256. */
+    const checked = new WeakSet<Uint8Array>()
     if (store !== null) {
       const arriving = new Later<Uint8Array | null>()
-      store.load().then((bytes) => arriving.resolve(bytes), () => {
+      const digest = this.digest
+      /** The saved image, once the host's digest (when it has one) has checked its seal; a wrong or failed check is left to the layer's own. */
+      const check = (bytes: Uint8Array | null): Promise<Uint8Array | null> => {
+        if (bytes === null || digest === null || bytes.length <= SEAL_BYTES) return Promise.resolve(bytes)
+        const end = bytes.length - SEAL_BYTES
+        let asked: Promise<Uint8Array>
+        try {
+          asked = digest(bytes.subarray(0, end))
+        } catch {
+          return Promise.resolve(bytes)
+        }
+        return asked.then((seal) => {
+          if (seal instanceof Uint8Array && seal.length === SEAL_BYTES && seal.every((x, i) => x === bytes[end + i])) checked.add(bytes)
+          return bytes
+        }, () => bytes)
+      }
+      store.load().then(check).then((bytes) => arriving.resolve(bytes), () => {
         // Unread is not empty: the disk starts new, nothing is saved over what the storage may hold, and the console says so now.
         this.lose('the storage could not be read, so nothing is written over what it may hold')
         arriving.resolve(null)
@@ -453,6 +495,7 @@ export class OsSession {
       clock: this.clock,
       wall: () => host.wall(),
       image,
+      sealChecked: (bytes) => checked.has(bytes),
       entropy: host.entropy ? (bytes) => host.entropy?.(bytes) : undefined,
       city,
       proc: files.proc,
@@ -467,7 +510,6 @@ export class OsSession {
   /** Gives the layer a turn of at most `ms` milliseconds and queues what it printed. */
   pump(ms: number): void {
     const start = this.clock()
-    const deadline = start + ms
     // A new share of console commands comes with each turn the host gives of its own accord (its timer, a typed line, a
     // key); a turn given because something arrived goes on with the share it has until a frame has passed.
     if (!this.roused || start - this.shareFrom >= SHARE_MS) {
@@ -475,6 +517,14 @@ export class OsSession {
       this.shareFrom = start
     }
     this.roused = false
+    // A turn given because something arrived keeps to the share's time as well as its count: `ms` from when the share
+    // began. Answers that arrive as promises already settled then cannot chain turns, one inside the next, past it
+    // (the page would never draw); the host's own timer gives the next share.
+    const deadline = Math.min(start + ms, this.shareFrom + ms)
+    if (start >= deadline) return
+    // Tasks already asked to end (a Ctrl+C, a job stopped) end first, with what they stop as they go, so an owed
+    // command whose task went with them is seen to be unwanted.
+    if (this.owed.length > 0) this.system.settle()
     // The console commands owed from earlier turns run first, in order, within the share and the turn's time (one at
     // least, so a slow one still gets its turn).
     let ran = 0
@@ -544,22 +594,17 @@ export class OsSession {
    * dotted where it holds a secret a console command took from the shell since it was set, as the console's history
    * then is (`"ask" key ...; history > f` writes no key).
    */
-  get typed(): string {
-    if (this.lineSecrets.length === 0) return this.line
-    const kept = [this.line]
-    scrubSecrets(kept, this.lineSecrets)
-    return kept[0]
-  }
+  get typed(): string { return this.lineKept }
 
   set typed(line: string) {
     this.line = line
-    this.lineSecrets = []
+    this.lineKept = line
   }
 
   /** The secrets console commands took from the shell since the last call, oldest first (each handed over once). */
   takeSecrets(): string[] {
-    const taken = this.secrets
-    this.secrets = []
+    const taken = [...this.secrets]
+    this.secrets.clear()
     return taken
   }
 
@@ -639,7 +684,21 @@ export class OsSession {
       sealing.taken = taking
       return taking
     }
-    if (this.saving !== null) return this.saving.then(() => this.save(opts))
+    if (this.saving !== null) {
+      // The page may be going, and nothing runs after it has: the newest image is asked for now, behind the one with
+      // the store (a store keeps the order it is asked in), not once that one has answered.
+      if (now && this.sealing === null && this.store !== null && this.volatile === null && !this.holding) {
+        let body: Uint8Array | null
+        try {
+          body = this.image() ?? this.asking
+        } catch {
+          body = this.asking
+          this.failed()
+        }
+        if (body !== null) return this.put(this.store, body, true)
+      }
+      return this.saving.then(() => this.save(opts))
+    }
     if (this.holding || this.volatile !== null) return Promise.resolve()
     const store = this.store
     // With nowhere to keep a disk, a new one that holds only what every disk starts with has nothing to lose yet.
@@ -682,9 +741,10 @@ export class OsSession {
    * SHA-256 when that fails.
    */
   private put(store: DiskStore, body: Uint8Array, now: boolean): Promise<void> {
+    this.asking = now ? null : body
     const ask = (image: Uint8Array): Promise<'kept' | 'stale' | 'failed'> => {
       try {
-        return store.save(image).catch((): 'failed' => 'failed')
+        return store.save(image, now).catch((): 'failed' => 'failed')
       } catch {
         return Promise.resolve('failed')
       }
@@ -725,11 +785,14 @@ export class OsSession {
     }
     const saving: Promise<void> = answer.then((how) => {
       if (how === 'taken') return mine?.taken ?? undefined
-      if (this.saving === saving) this.saving = null
+      if (this.saving === saving) {
+        this.saving = null
+        this.asking = null
+      }
       if (how === 'kept') { this.failures = 0; return }
       if (how === 'stale') { this.lose('another page of this site saved a newer disk (reload this one to open it)'); return }
-      // A newer image will hold everything this one does: keep this one only while nothing newer was made.
-      if (!this.system.dirty) this.unsaved = body
+      // A newer image will hold everything this one does: keep this one only while nothing newer was made or asked for.
+      if (this.saving === null && !this.system.dirty) this.unsaved = body
       this.failed()
     })
     this.saving = saving
@@ -747,6 +810,9 @@ export class OsSession {
     this.unsaved = null
     this.note(`disk: files are not kept between visits from here on: ${why}`)
   }
+
+  /** Whether a save is on its way to the store and has not been answered. */
+  get saveOnItsWay(): boolean { return this.saving !== null }
 
   /** Whether the disk has changes that were not saved (and saving is still worth trying: not a new disk with nowhere to keep it). */
   get unsavedChanges(): boolean {
@@ -2842,9 +2908,10 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
     // program's input never enters the history, so the line whose command reads it stays the one listed.
     const capturing = os.system.capturing
     if (!os.system.feeding) {
-      // An empty line (one that ends a continuation, say) leaves the line the history holds as it was.
+      // An empty line (one that ends a continuation, say) leaves the line the history holds as it was; a line of blanks
+      // typed while the shell reads the rest of a command is stored by the console, so it is the one listed.
       const kept = redactForHistory(capturing ? input : input.trim(), !capturing && runsWhole(input))
-      if (kept.trim() !== '') os.typed = kept
+      if (kept !== '') os.typed = kept
     }
     // Something already running reads the terminal (a program's input, the rest of a command the shell is reading):
     // the line is its, whatever it says.
@@ -2951,55 +3018,87 @@ export function runsWhole(line: string): boolean {
   return head !== null && RAW.has(head[1])
 }
 
-/** The characters the shell takes out of a word (quotes and the backslash): `sk-'V'7` and `sk-V\\7` both hand over sk-V7. */
-const QUOTING = /['"\\]/
+/** Whether a character is one the shell takes out of a word (a quote or the backslash). */
+const quoting = (ch: string): boolean => ch === "'" || ch === '"' || ch === '\\'
 
-/** A pattern for `secret` in which any run of blanks matches any other (the shell joins words with one space). */
-function secretPattern(secret: string): RegExp | null {
-  const words = secret.split(/\s+/).filter((w) => w !== '')
-  return words.length === 0 ? null : new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'))
-}
+/** Whether a character is a blank, as `\s` counts one (the shell joins words with one space). */
+const BLANK = /\s/
 
 /**
- * Where `secret` starts in `entry`, or -1: as written (any run of blanks matching any other), else as the shell read
- * both, with their quotes and backslashes taken out.
+ * `text` with each run of blanks as one space and, when `loose`, read as the shell reads it: quotes and backslashes
+ * taken out, and a backslash before a line end taken out with that line end (the shell joins the two lines). With it,
+ * where each character kept stood in `text`.
  */
-function secretAt(entry: string, secret: string): number {
-  const written = secretPattern(secret)
-  if (written === null) return -1
-  const found = written.exec(entry)
-  if (found) return found.index
-  if (!QUOTING.test(entry)) return -1
-  const loose = secretPattern(secret.split('').filter((ch) => !QUOTING.test(ch)).join(''))
-  if (loose === null) return -1
-  // The entry without its quoting, and where each character it keeps stood.
-  const stood: number[] = []
-  let bare = ''
-  for (let i = 0; i < entry.length; i++) {
-    if (QUOTING.test(entry[i])) continue
-    stood.push(i)
-    bare += entry[i]
+function squeezed(text: string, loose: boolean): { readonly text: string; readonly stood: Int32Array } {
+  const stood = new Int32Array(text.length)
+  const kept: string[] = []
+  let blank = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (loose) {
+      if (ch === '\\' && text[i + 1] === '\n') { i++; continue }
+      if (quoting(ch)) continue
+    }
+    const isBlank = BLANK.test(ch)
+    if (isBlank && blank) continue
+    blank = isBlank
+    stood[kept.length] = i
+    kept.push(isBlank ? ' ' : ch)
   }
-  const read = loose.exec(bare)
-  return read ? stood[read.index] : -1
+  return { text: kept.join(''), stood: stood.subarray(0, kept.length) }
 }
 
 /**
- * Dots secrets in the history, in place: in each entry that holds one of `secrets`, the entry is kept up to the first
- * place any of them starts, and that place and everything after it become dots. A secret is found as written, with any
- * run of blanks for one (a command that takes the rest of its line is handed its words joined by one space), or as the
- * shell read it, quotes and backslashes left out of both. An empty secret is passed over. For a secret the shell handed
- * a console command (OsSession.takeSecrets) in a form redactForHistory could not see in the typed line.
+ * Dots secrets in the history, in place. Each entry is kept up to the first place any of `secrets` starts in it, and
+ * that place and everything after it become dots; an entry a secret runs into from the one before (a key continued
+ * over two lines) is dotted whole. A secret is found as written, with any run of blanks for one (a command that takes
+ * the rest of its line is handed its words joined by one space), and as the shell read it, with quotes and backslashes
+ * left out of both and a backslash before a line end joining the lines; the earliest place either way is where it
+ * starts. The entries are searched as one text, a line end between each, so a secret typed over several of them is
+ * found. An empty secret is passed over. For a secret the shell handed a console command (OsSession.takeSecrets) in a
+ * form redactForHistory could not see in the typed line. A secret the shell built from parts (`sk-$(...)`, `${P}`) is
+ * in no entry as such, and no entry is dotted for it.
  */
 export function scrubSecrets(history: string[], secrets: readonly string[]): void {
-  for (let i = 0; i < history.length; i++) {
-    const entry = history[i]
-    let cut = -1
-    for (const secret of secrets) {
-      const at = secretAt(entry, secret)
-      if (at >= 0 && (cut < 0 || at < cut)) cut = at
+  const wanted = [...new Set(secrets.map((s) => s.split(/\s+/).filter((w) => w !== '').join(' ')))].filter((s) => s !== '')
+  if (wanted.length === 0 || history.length === 0) return
+  const text = history.join('\n')
+  /** Where each entry starts in `text`. */
+  const from: number[] = []
+  for (let i = 0, at = 0; i < history.length; at += history[i].length + 1, i++) from.push(at)
+  const entryAt = (at: number): number => {
+    let lo = 0
+    let hi = from.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1
+      if (from[mid] <= at) lo = mid
+      else hi = mid - 1
     }
-    if (cut >= 0) history[i] = `${entry.slice(0, cut)}••••`
+    return lo
+  }
+  const cut = new Array<number>(history.length).fill(-1)
+  const whole = new Array<boolean>(history.length).fill(false)
+  /** Marks every place `secret` stands in `read` (a squeezed `text`): where it starts is cut, an entry it runs into dotted. */
+  const mark = (read: { readonly text: string; readonly stood: Int32Array }, secret: string): void => {
+    if (secret === '') return
+    for (let at = read.text.indexOf(secret); at >= 0; at = read.text.indexOf(secret, at + 1)) {
+      const start = read.stood[at]
+      const end = read.stood[at + secret.length - 1] + 1
+      const k = entryAt(start)
+      const inEntry = start - from[k]
+      if (cut[k] < 0 || inEntry < cut[k]) cut[k] = inEntry
+      for (let j = k + 1; j < from.length && from[j] < end; j++) whole[j] = true
+    }
+  }
+  const asWritten = squeezed(text, false)
+  for (const secret of wanted) mark(asWritten, secret)
+  if (/['"\\]/.test(text)) {
+    const asRead = squeezed(text, true)
+    for (const secret of wanted) mark(asRead, squeezed(secret, true).text.trim())
+  }
+  for (let i = 0; i < history.length; i++) {
+    if (whole[i]) history[i] = '••••'
+    else if (cut[i] >= 0) history[i] = `${history[i].slice(0, cut[i])}••••`
   }
 }
 

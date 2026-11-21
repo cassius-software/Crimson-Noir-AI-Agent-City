@@ -2243,51 +2243,52 @@ The prompt is also a small operating system of its own: a tree of directories, 6
 that joins them. Nothing in it reaches your computer's own files or the network: a program sees only what the
 console hands it. The design, every limit and what is not there yet are in `docs/console-operating-layer.md`.
 
-- **Two kinds of line, one prompt.** A console command typed alone (`stats`, `time 18:30`, `rain on`) runs exactly
-  as before. Every other line goes to the shell: a program (`ls`, `cat`, `grep`), and any line with `|`, `>`, `>>`,
-  `<`, `;`, `&&`, `||` or `&` standing alone between blanks. A console command can stand in such a line:
-  `stats --once | grep fps`, `laws > laws.txt`, `time 18:30 && time`, `echo "it is $(time)"`. Its arguments are read
-  the console's way (nothing in them is expanded). Inside a pipe or a file it gives its lines only; clearing the
-  screen, closing the console and live views happen when it reaches the screen. `run`, `ask`, `say`, `noir`, `r0`,
-  `ring0`, `goal`, `agent`, `sloane` and `swarm` at the start of a line still take the whole line. `echo` is the
-  shell's. Where a console command and a program share a name (`time`, `uname`, `whoami`), the console's command
-  answers and `/bin/time sleep 1` runs the program; `type <name>` says which runs. The shell's messages start `ash:`,
-  and `help` ends with a line that points at `man intro`. A proposal is answered only at the prompt: `act ok` and
-  `act no` typed alone (or `y` and `n`) answer it, and in a pipe, a list, a loop, a job or a script they are refused
-  and decide nothing. The shell runs at most 32 console commands a turn; past that a loop waits for the next turn, so
-  it never floods the city.
+- **Two kinds of line, one prompt.** A console command typed alone (`stats`, `time 18:30`, `rain on`) runs exactly as
+  before. Every other line goes to the shell: a program (`ls`, `cat`, `grep`), and any line with `|`, `>`, `>>`, `<`,
+  `;`, `&&`, `||` or `&` standing alone between blanks. A console command can stand in such a line:
+  `stats --once | grep fps`, `laws > laws.txt`, `time 18:30 && time`, `echo "it is $(time)"`. Its arguments are read the
+  console's way (nothing in them is expanded). Inside a pipe or a file it gives its lines only; clearing the screen,
+  closing the console and live views happen when it reaches the screen. `run`, `ask`, `say`, `noir`, `r0`, `ring0`,
+  `goal`, `agent`, `sloane` and `swarm` at the start of a line still take the whole line. `echo` is the shell's. Where a
+  console command and a program share a name (`time`, `uname`, `whoami`), the console's command answers and
+  `/bin/time sleep 1` runs the program; `type <name>` says which runs. The shell's messages start `ash:`, and `help`
+  ends with a line that points at `man intro`. A proposal is answered only at the prompt: `act ok` and `act no` typed
+  alone (or `y` and `n`) answer it, and in a pipe, a list, a loop, a job or a script they are refused and decide
+  nothing. The shell runs at most 32 console commands a turn; past that a loop waits for the next turn, so it never
+  floods the city or holds the page.
 - **First steps.** `man intro`, `ls /bin`, `man ls`, `cat README`, `pwd`, `cd /tmp`, `echo hi > note`, `cat note`,
   `ls /bin | wc -l`, `for f in *.txt; do wc -l < "$f"; done`.
 - **The shell** (`man sh`): quotes, `NAME=value`, `$NAME` and the `${NAME:-word}` forms, `export`, `$(command)`,
   whole-number sums `$((2 + 3 * 4))`, patterns `*`, `?`, `[a-z]`, pipes, `>`, `>>`, `<`, `2>`, `2>&1`, `<< WORD`, `;`,
-  `&&`, `||`, `&`, `{ a; b; }`, `if`, `while`, `until`, `for`, `test` and `[ ]`, and `jobs`, `fg`, `wait` and
-  `stop %1` for jobs left in the background. A text file that starts `#!/bin/sh` and is made runnable (`chmod +x`)
-  is a script; one in `~/bin` runs by its name. `/etc/profile` and then `~/.profile`, once you make them, run each
-  time the console's shell starts. `exit` closes the console and gives up the rest of the line, of a file read with
-  `source`, and of what was typed with it or ahead of it, so `cd /nowhere || exit; rm -r *` removes nothing, on one
-  line or two. `jobs` and `ps -f` list a job's line as typed: a key or a token on a line sent to the background shows
-  there, though the history keeps it as dots, as it does a key however it was typed (quoted, after `sh -c`), and the
-  reply to `read` stays out of the history. Not there: functions,
-  `case`, `( )` subshells, `set`, arrays, aliases, and backquotes (that key opens and closes the console: use
-  `$( )`).
+  `&&`, `||`, `&`, `{ a; b; }`, `if`, `while`, `until`, `for`, `test` and `[ ]`, and `jobs`, `fg`, `wait` and `stop %1`
+  for jobs left in the background. A text file that starts `#!/bin/sh` and is made runnable (`chmod +x`) is a script;
+  one in `~/bin` runs by its name. `/etc/profile` and then `~/.profile`, once you make them, run each time the console's
+  shell starts. `exit` closes the console and gives up the rest of the line, of a file read with `source`, and of what
+  was typed with it or ahead of it, so `cd /nowhere || exit; rm -r *` removes nothing, on one line or two. `jobs` and
+  `ps -f` list a job's line as typed: a key or a token on a line sent to the background shows there, though the history
+  keeps it as dots, as it does a key however it was typed (quoted, after `sh -c`, over two lines), and the reply to
+  `read` stays out of the history. Not there: functions, `case`, `( )` subshells, `set`, arrays, aliases, and backquotes
+  (that key opens and closes the console: use `$( )`).
 - **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
   forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
-  what you type, and on a line with text deletes the character after the cursor (a whole emoji). On a touch screen,
-  **Stop** and **End input** do the same while a program has the terminal. A line typed while a program reads
-  (`cat > notes`) is that program's, even one that names a console command. The prompt shows the directory
-  (`host:~# `), and `> ` while a command needs more lines.
+  what you type, and on a line with text deletes the character after the cursor (all of what shows as one: a flag or an
+  emoji with a skin tone goes whole). On a touch screen, **Stop** and **End input** do the same while a program has the
+  terminal. A line typed while a program reads (`cat > notes`) is that program's, even one that names a console command.
+  The prompt shows the directory (`host:~# `), and `> ` while a command needs more lines.
 - **The tree** (`man files`): `~` is `/home/operator` (with a `README`); `/etc` and `/mnt`; `/tmp`, scratch space;
   `/bin` and `/usr/share/man`, read-only; `/dev/null`, `zero`, `full`, `random`, `urandom` and `tty`; `/proc`, a
   directory per running task (`ps -f` lists them); `/proc/city` and `/sys/city`, below. You are root at the prompt,
   and still `umount` leaves the system's own `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted.
 - **What is kept.** Everything outside `/tmp`, `/bin`, `/usr`, `/dev`, `/proc` and `/sys` is one disk of 8 MiB, saved in
   this browser's own storage for the site a moment after it changes (1.5 s, longer for a disk with more than 1 MiB in
-  use or many files, 10 s at most), when the page is hidden, reloaded or closed, and before `boot`, `map` or **Back to
-  the city** reloads the page, which waits up to 4 s for the save; it holds at most 4,096 files and directories, so a
-  save never holds the city up; it is back the next time the page opens in the same browser, and the city's console and
-  the console alone (`?boot=tty`) share it. It is sent nowhere, and another browser or device has its own. `/tmp`
-  (4 MiB) is emptied when the page closes. When the storage cannot be read, a second tab of the site saved a newer disk,
-  or the browser gives the page no storage, the console says once
+  use or many files, 10 s at most), when the page is hidden or starts to go, and before `boot`, `map` or **Back to the
+  city** reloads the page, which waits up to 4 s for the save. A change made in the very last moment before you reload
+  the page can still be lost, more so on a large disk: wait a second and a half after a change before a reload you start
+  yourself. It holds at most 4,096 files and directories, and saving a disk near full can still take the city a frame or
+  two, so such a disk is saved at most every 10 s; it is back the next time the page opens in the same browser, and the
+  city's console and the console alone (`?boot=tty`) share it. It is sent nowhere, and another browser or device has its
+  own. `/tmp` (4 MiB) is emptied when the page closes. When the storage cannot be read, a second tab of the site saved a
+  newer disk, or the browser gives the page no storage, the console says once
   `disk: files are not kept between visits from here on:` with the reason, and files then last until the page closes. A
   saved disk that fails its check is set aside under another name, never written over, and a new one starts; up to eight
   are kept aside, and past that the stored one is left alone and files are not kept. Clearing the site's data erases the

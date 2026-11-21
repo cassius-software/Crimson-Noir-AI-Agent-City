@@ -248,6 +248,14 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const promptRef = useRef('')
   /** The operating layer's next turn, and its next save. */
   const osTimer = useRef<number | null>(null)
+  /**
+   * Saves the layer's disk now, sealed at once (the page is hidden or going): one function for the page's life, so
+   * the listener for the page starting to go can be added and taken away again.
+   */
+  const flushRef = useRef(() => {
+    const os = session.current?.os
+    if (os) saveDisk(os, false)
+  })
   const saveTimer = useRef<number | null>(null)
   /** A save the page gave up waiting for as it went (leave), while it has still not answered. */
   const unanswered = useRef<Promise<void> | null>(null)
@@ -496,11 +504,14 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     if (!os) return Promise.resolve()
     if (unanswered.current !== null) return Promise.resolve()
     return new Promise<void>((resolve) => {
-      const saving = os.save({ now: true })
+      let saving: Promise<void> = Promise.resolve()
+      // Armed before the save is asked, so it fires before the store's own bound on that save (armed inside it, with
+      // the same wait): a store that never answers is then marked unanswered, and the way out waits for it only once.
       const gone = window.setTimeout(() => {
         unanswered.current = saving
         resolve()
       }, LEAVE_MS)
+      saving = os.save({ now: true })
       const done = () => {
         window.clearTimeout(gone)
         if (unanswered.current === saving) unanswered.current = null
@@ -520,14 +531,27 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   const follow = () => {
     const os = session.current?.os
     if (!os) return
-    // What the layer waits for from outside (the saved disk, a city command's later lines) gets a turn as it arrives.
-    os.wake ??= () => { if (mounted.current) turn() }
+    // What the layer waits for from outside (the saved disk, a city command's later lines) gets a turn as it arrives:
+    // a task of its own, never a turn inside the promise that brought it, so the page draws (and reads a key, Ctrl+C
+    // among them) between answers however fast they come.
+    os.wake ??= () => {
+      if (osTimer.current !== null) window.clearTimeout(osTimer.current)
+      osTimer.current = window.setTimeout(() => {
+        osTimer.current = null
+        if (mounted.current) turn()
+      }, 0)
+    }
     for (let r = os.next(); r !== null; r = os.next()) applyRef.current(r)
     // A secret a line ran since (a job, a loop, a command that waited for its turn) is dotted as it is handed over.
     scrubHistory()
     setPs1(os.prompt)
     setReading(os.system.capturing)
     if (os.unsavedChanges && saveTimer.current === null) saveDisk(os, true)
+    // While a change is unsaved, or a save is on its way, the save made as the page goes is asked for when it starts to
+    // go (beforeunload), while it can still write; a page with nothing to save keeps no such listener, so the
+    // browser may still keep it whole for the back button.
+    if (os.unsavedChanges || os.saveOnItsWay) window.addEventListener('beforeunload', flushRef.current)
+    else window.removeEventListener('beforeunload', flushRef.current)
     if (osTimer.current !== null) window.clearTimeout(osTimer.current)
     osTimer.current = window.setTimeout(() => {
       osTimer.current = null
@@ -649,15 +673,13 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   // The operating layer's disk is saved when the page is hidden or left (a moment after each change otherwise), and
   // its timers end with the console.
   useEffect(() => {
-    const flush = () => {
-      const os = session.current?.os
-      if (os) saveDisk(os, false)
-    }
+    const flush = flushRef.current
     const hidden = () => { if (document.visibilityState === 'hidden') flush() }
     window.addEventListener('pagehide', flush)
     document.addEventListener('visibilitychange', hidden)
     return () => {
       window.removeEventListener('pagehide', flush)
+      window.removeEventListener('beforeunload', flush)
       document.removeEventListener('visibilitychange', hidden)
       flush()
       if (osTimer.current !== null) window.clearTimeout(osTimer.current)
@@ -695,9 +717,12 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         if (el.value === '') { if (!e.repeat) endInput() }
         else {
           const a = el.selectionStart ?? 0, b = el.selectionEnd ?? a
-          // One whole character: both halves of a character outside the basic plane (an emoji) go together.
+          // One whole character as it shows (a flag, a skin tone, joined emoji, a letter with its accents), as the
+          // browser's own forward delete takes it, where the browser can tell; else one code point, both halves of a
+          // character outside the basic plane together.
           const pair = /^[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(el.value.slice(a, a + 2))
-          setLine(el.value.slice(0, a) + el.value.slice(b > a ? b : a + (pair ? 2 : 1)), a)
+          const shown = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(el.value.slice(a)).containing(0)?.segment.length : undefined
+          setLine(el.value.slice(0, a) + el.value.slice(b > a ? b : a + (shown ?? (pair ? 2 : 1))), a)
         }
       }
     } else if (chord && (key === 'l' || key === 'L')) {

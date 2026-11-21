@@ -36,8 +36,9 @@ export const PATH = `${HOME}/bin:/bin:/usr/apps`
 export const DISK_BYTES = 8 << 20
 /**
  * The most files and directories the disk holds, as a real file system of its size has a fixed count of them. Every
- * save writes the whole disk on the page's own thread, and restoring it is the first thing a visit does; at this count
- * both stay within a frame even on a phone.
+ * save walks the whole tree on the page's own thread, and restoring it is the first thing a visit does: the count
+ * bounds that walk (a few milliseconds on a laptop), while the bytes are bounded by DISK_BYTES. Saving a disk near
+ * full still copies each of its bytes once on the page's thread, which a host spaces by its cost (OsSession.saveCost).
  */
 export const DISK_NODES = 4096
 /** Bytes /tmp holds unless the host says otherwise. */
@@ -53,6 +54,12 @@ export interface SystemOptions {
   readonly wall?: () => number
   /** The saved disk: its image, null when there is none, or a Later that brings either when the host has read it. */
   readonly image?: Io<Uint8Array | null>
+  /**
+   * Whether the host has already checked this image's seal with a digest of its own (one that does not hold the page
+   * up): restoring it then spares the page the layer's own SHA-256 of the whole disk. Without it, the seal is checked
+   * here.
+   */
+  readonly sealChecked?: (image: Uint8Array) => boolean
   /** Fills an array with bytes nobody can foretell, for /dev/random. */
   readonly entropy?: (bytes: Uint8Array) => void
   /** How the shell runs the city's own commands. */
@@ -203,7 +210,7 @@ export class System {
       else {
         const root = disk.stat(disk.root)
         try {
-          restore(bytes, disk)
+          restore(bytes, disk, { sealChecked: opts.sealChecked?.(bytes) === true })
           system.state = 'restored'
         } catch (e) {
           // Set aside whole: nothing of it stays, not even what it said of the root.
@@ -282,6 +289,12 @@ export class System {
 
   /** Ctrl+C. True when a job was ended. */
   interrupt(): boolean { return this.kernel.interrupt() }
+
+  /**
+   * Ends now the tasks asked to end (by a Ctrl+C, a stop, a job that ended), with what they stop as they go: a host
+   * asks this before it asks `givesUp` of what it owes, so a command run under timeout is seen to have ended with it.
+   */
+  settle(): void { this.kernel.settle() }
 
   /** Gives the tasks a turn (at most `steps` calls, and not past `deadline` on the clock) and collects what they printed. */
   run(steps: number, deadline: number): TtyEvent[] {

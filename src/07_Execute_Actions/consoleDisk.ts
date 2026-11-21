@@ -6,8 +6,10 @@
  * is kept between visits: one image in the page's own IndexedDB, written whole. Three things could lose a person's
  * files, and each is closed here. Two tabs of the site: every image is stored with a generation number, and a save
  * is one transaction that reads the stored generation and is undone unless it is the one this page loaded or last
- * saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk (its write is asked for at
- * once all the same, so a save made as the page goes is sent before it has gone). A store that could
+ * saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk. A save made as the page
+ * goes cannot wait for a read (a page being reloaded runs nothing more, and its storage work ends with it): it is one
+ * write, committed at once, and skipped as 'stale' when another page has said (by a message between the site's pages)
+ * that it saved a newer generation. A store that could
  * not be read (the browser refused it, the read failed, it never answered): the load is refused, so the console can
  * say at once that its files are not kept, and saving is refused for the visit, because an image that may still be
  * there must not be replaced by an empty disk. An image that fails the system's own checks: it is copied under
@@ -72,6 +74,14 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
   let db: IDBDatabase | null = null
   /** The generation this page loaded or last saved: 0 when nothing was stored. */
   let gen = 0
+  /** The highest generation this page has asked to write, landed or not: each new write's is above it. */
+  let asked = 0
+  /** The highest generation another page of the site has said it saved. */
+  let heard = 0
+  /** Where the site's pages say what they saved; none where the browser has no such channel. */
+  let channel: BroadcastChannel | null = null
+  /** This store's own mark on what it says, so it never takes its own word for another page's. */
+  const self = `${Math.random()}`
   /** Whether the stored image is known (read, or known absent): only then may it be written over. */
   let known = false
   let loading: Promise<Uint8Array | null> | null = null
@@ -119,7 +129,26 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
     }
   })
 
+  /** Listens, once, for what the site's other pages say they saved. */
+  const listen = (): void => {
+    if (channel !== null || typeof BroadcastChannel !== 'function') return
+    try {
+      channel = new BroadcastChannel(`${name}:saved`)
+    } catch {
+      return
+    }
+    channel.onmessage = (e: MessageEvent) => {
+      const said = e.data as { from?: unknown; gen?: unknown } | null
+      if (typeof said !== 'object' || said === null || said.from === self) return
+      if (typeof said.gen === 'number' && Number.isSafeInteger(said.gen)) heard = Math.max(heard, said.gen)
+    }
+    // A runtime that keeps a process alive for an open channel (a test's) need not keep it for this one.
+    const held = channel as unknown as { unref?: () => void }
+    held.unref?.()
+  }
+
   const load = async (): Promise<Uint8Array | null> => {
+    listen()
     // One wait bounds the opening and the read together: a browser that answers neither must not hold the console up.
     const limit = bound()
     try {
@@ -136,34 +165,52 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
   }
 
   /**
-   * One save's transaction: it reads the stored generation and writes the image only over the one this page loaded or
-   * last saved. The read and the write are asked for together, now, in the caller's own moment: a page being closed or
-   * reloaded runs nothing after its pagehide, so a write asked for only once the read had answered would never be sent.
-   * The read answers first, and a newer generation there undoes the whole transaction, the write with it. The page's
-   * generation moves when the write has landed, even after the save was given up on, so it stays the stored one and the
-   * page's next save is not told 'stale' over its own late write.
+   * One save's transaction. A timed save reads the stored generation and writes the image only over the one this page
+   * loaded or last saved: the read and the write are asked for together, and a newer generation there undoes the whole
+   * transaction, the write with it. The read compares with this page's generation as it stands when the read answers:
+   * the browser runs the site's writing transactions one after another in the order they were asked for, so by then
+   * every earlier write of this page has landed (and moved the page's generation with it, even one the console gave up
+   * on) or failed, and only another page's write differs. With `now` (the page is going) there is no read: the write is
+   * committed at once, unless another page has said it saved a newer generation. Every write's generation is above any
+   * this page asked for before, so a late write and the next never store the same one.
    */
-  const write = (into: IDBDatabase, image: Uint8Array): Promise<'kept' | 'stale'> => {
+  const write = (into: IDBDatabase, image: Uint8Array, now: boolean): Promise<'kept' | 'stale'> => {
+    if (heard > gen) return Promise.resolve('stale')
     const t = into.transaction(STORE, 'readwrite')
     const done = finished(t)
     const store = t.objectStore(STORE)
-    const row: Row = { gen: gen + 1, bytes: image }
-    const mine = gen
+    const row: Row = { gen: Math.max(gen, asked) + 1, bytes: image }
+    asked = row.gen
     let stale = false
-    const reading = store.get(IMAGE)
-    reading.onsuccess = () => {
-      // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.
-      if ((rowOf(reading.result)?.gen ?? 0) === mine) return
-      stale = true
-      try {
-        t.abort()
-      } catch {
-        // Already over (it failed meanwhile): what it answers below says so.
+    if (!now) {
+      const reading = store.get(IMAGE)
+      reading.onsuccess = () => {
+        // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.
+        if ((rowOf(reading.result)?.gen ?? 0) === gen) return
+        stale = true
+        try {
+          t.abort()
+        } catch {
+          // Already over (it failed meanwhile): what it answers below says so.
+        }
       }
     }
     store.put(row, IMAGE)
+    if (now) {
+      // Committed now, not when the page's task ends: the page is going, and what it has not committed goes with it.
+      try {
+        t.commit?.()
+      } catch {
+        // Already committing.
+      }
+    }
     return done.then(() => {
-      gen = row.gen
+      gen = Math.max(gen, row.gen)
+      try {
+        channel?.postMessage({ from: self, gen: row.gen })
+      } catch {
+        // No other page hears it: each still reads the generation before a timed save.
+      }
       return 'kept' as const
     }, (e: unknown) => {
       if (stale) return 'stale' as const
@@ -201,11 +248,11 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
     // Asked again while a read is on its way: that read. Asked again after it (a new session of the console): a new one,
     // so a disk saved since is what comes back, with its generation.
     load: () => (loading ??= load().finally(() => { loading = null })),
-    async save(image) {
+    async save(image, now = false) {
       if (!known || db === null) return 'failed'
       try {
         // A store that never answers is a failed save, so the console counts it and can say when it gives up.
-        return await bound().race(write(db, image))
+        return await bound().race(write(db, image, now))
       } catch {
         return 'failed'
       }

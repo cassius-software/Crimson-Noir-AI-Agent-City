@@ -139,11 +139,14 @@ test('system: the image can be had without its seal, for a host that seals it wi
   for (const make of [() => s.snapshotBody(), () => s.snapshot()]) {
     k.sh('echo more >> ~/notes')
     const read = s.disk.read
+    const bytesOf = s.disk.bytesOf
     s.disk.read = () => { throw new RangeError('Array buffer allocation failed') }
+    s.disk.bytesOf = () => { throw new RangeError('Array buffer allocation failed') }
     try {
       assert.throws(make, RangeError)
     } finally {
       s.disk.read = read
+      s.disk.bytesOf = bytesOf
     }
     assert.equal(s.dirty, true)
     const image = make()

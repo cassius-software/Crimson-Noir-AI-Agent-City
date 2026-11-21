@@ -164,10 +164,17 @@ class TtyEnd implements Channel {
   *write(data: Uint8Array): Task<number> {
     if (this.way === 'in') refuse('EBADF')
     // A long write reaches the screen a piece at a time, with a breath between pieces, so one line of megabytes cannot
-    // hold the page past its turn. The screen's decoder keeps a character split between pieces whole.
-    for (let at = 0; at < data.length; at += SCREEN_PIECE) {
+    // hold the page past its turn. Each piece ends where a character does (never inside the bytes of one), so another
+    // writer in the breath, or a Ctrl+C that ends this one, never leaves half a character in the screen's decoder.
+    for (let at = 0; at < data.length;) {
       if (at > 0) yield BREATH
-      this.term.write(this.way === 'err' ? 'err' : 'out', data.subarray(at, at + SCREEN_PIECE))
+      let end = Math.min(data.length, at + SCREEN_PIECE)
+      // Back over at most three continuation bytes (10xxxxxx) to the start of the character the cut fell in.
+      for (let back = end; end < data.length && back > end - 4 && back > at; back--) {
+        if ((data[back] & 0xc0) !== 0x80) { end = back; break }
+      }
+      this.term.write(this.way === 'err' ? 'err' : 'out', data.subarray(at, end))
+      at = end
     }
     return data.length
   }
@@ -581,6 +588,14 @@ export class Kernel {
     if (by.uid !== 0 && by.uid !== proc.cred.uid) refuse('EPERM')
     if (pid === 1) refuse('EPERM', 'task 1 cannot be stopped')
     proc.ending = status
+  }
+
+  /**
+   * Ends now every task asked to end, as the first pass of the next turn would: their cleanups run (timeout stopping
+   * the command it ran), so a host that asks afterwards whether a task still waits gets the answer that turn would give.
+   */
+  settle(): void {
+    for (const proc of [...this.table.values()]) if (proc.state !== 'ended' && proc.ending !== null) this.finish(proc, proc.ending)
   }
 
   /** Asks every task of a group to end. The count asked. */

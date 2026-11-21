@@ -895,6 +895,21 @@ test('a line of megabytes written to the screen in one go reaches it in pieces, 
   assert.equal(shown, Array.from(line).reverse().join(''), 'every character whole, the emoji where a piece ends near it')
 })
 
+test('two writers on the screen at once never split a character between them: each piece of a long write ends where a character does', () => {
+  const k = fresh()
+  // Three and two bytes a character: a cut at 16 KiB falls inside one unless it is moved back to where it starts.
+  k.write('/tmp/euro', `${'\u20ac'.repeat(20000)}\n`)
+  k.write('/tmp/accent', `${'\u00e9'.repeat(30000)}\n`)
+  k.system.type('rev euro & rev accent & wait\n')
+  let shown = ''
+  for (let turns = 0; turns < 1000 && (shown === '' || !k.system.idle); turns++) {
+    for (const e of k.system.run(1_000_000, Number.NEGATIVE_INFINITY)) if (e.kind !== 'post') shown += e.text
+  }
+  assert.equal(shown.includes('\ufffd'), false, 'no half character met another writer')
+  assert.equal([...shown].filter((ch) => ch === '\u20ac').length, 20000)
+  assert.equal([...shown].filter((ch) => ch === '\u00e9').length, 30000)
+})
+
 // nl
 
 test('nl: numbers in front, empty lines left alone unless asked, the count carried from file to file', () => {

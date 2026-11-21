@@ -145,6 +145,16 @@ export class MemFs implements Driver {
     return n.data.slice(offset, Math.min(n.size, offset + length))
   }
 
+  /**
+   * A file's bytes as they stand, without a copy: a view of the disk's own memory, only to be read at once (never kept,
+   * never written through), since the next write may change it or leave it behind. The image of the disk is made from
+   * these, so saving a full disk copies each byte once.
+   */
+  bytesOf(ino: number): Uint8Array {
+    const n = this.file(ino)
+    return n.data.subarray(0, n.size)
+  }
+
   /** Makes room for a file of `size` bytes, charging the growth; refuses without changing anything. */
   private grow(n: Node, size: number): void {
     if (size <= n.size) return

@@ -97,10 +97,16 @@ like); a line the console takes whole (question 3) is dotted only at its start, 
 command. A secret the shell hands a console command in a form the typed text does not show (`sh -c 'ask key ...'`, a
 quoted name, a script piped to `sh`) is recorded as the command takes it, and the console dots it in every history entry
 that holds it (`OsSession.takeSecrets`, `scrubSecrets`). It is found as typed, with any run of blanks standing for one
-(the shell hands a command that takes the rest of its line its words joined by one space), or as the shell read it, with
-quotes and backslashes left out of both, so `"ring0" unlock --elite correct  horse` and `"ask" key sk-'V'7` are dotted
-too. The row `history` lists for the line that runs it is dotted the same way, so `"ask" key ...; history > notes`
-writes no key to the disk. The reply to the shell's own `read` is input, as a program's is: it stays out of the history.
+(the shell hands a command that takes the rest of its line its words joined by one space), and as the shell read it,
+with quotes and backslashes left out of both and a backslash before a line end joining the two lines, so
+`"ring0" unlock --elite correct  horse`, `"ask" key sk-'V'7` and a key split by a backslash and Shift+Enter are dotted
+too; the earliest place either way is where the dots start. The entries are searched as one text, so a key typed over
+two of them (a continuation, a quote left open over Enter) dots the first from where it starts and the second whole.
+No pattern is compiled from a secret, so one of any length is found in time that grows with the history's length. The
+rows `history` lists are dotted the same way: the line that runs it, and every earlier entry, with the secrets taken in
+this same turn as well as those the console has dotted already, so `"ask" key ...; history > notes` writes no key to
+the disk. Each secret dots the listed line once, as it is taken, so a loop that hands one over again and again makes
+the listing no slower. The reply to the shell's own `read` is input, as a program's is: it stays out of the history.
 
 ## The kernel
 
@@ -164,10 +170,13 @@ ordinary and error output kept apart so the console can colour them. A line is c
 once (more is refused whole: `ash: too many lines are waiting to be read`), and each read takes one line. Only the
 foreground group may read: a job left in the background that reads is told the input has ended, so it never takes a
 line meant for another. Ctrl+D on an empty line is one end of input for whoever reads; on a line with text,
-`Terminal.tsx` deletes the character after the caret (both halves of an emoji together) or the selection instead, as
-readline does, and a held Ctrl+D that has just emptied the line does not go on to end the input. A write of more than
-16 KiB reaches the screen a piece at a time (`SCREEN_PIECE`), with a breath between pieces, so one line of megabytes
-cannot hold the page past its turn.
+`Terminal.tsx` deletes the character after the caret, as it shows (a flag, a skin tone, joined emoji and a letter with
+its accents go whole, as the browser's own forward delete takes them, where the browser has `Intl.Segmenter`; else one
+code point, both halves of a surrogate pair together), or the selection instead, as readline does, and a held Ctrl+D
+that has just emptied the line does not go on to end the input. A write of more than 16 KiB reaches the screen a piece
+at a time (`SCREEN_PIECE`), with a breath between pieces, so one line of megabytes cannot hold the page past its turn;
+each piece ends where a character does, so another writer in the breath, or a Ctrl+C that ends the writer, never meets
+half a character.
 
 ### Groups, jobs and Ctrl+C
 
@@ -271,31 +280,48 @@ store is asked before anything else is waited for; so is every save where the br
 digest fails, answers anything but a 32-byte seal, or has not answered within 4 seconds (`SEAL_MS` in `Terminal.tsx`).
 An image that comes back is always checked with the layer's own.
 
-**The store** (`consoleDisk.ts`) is one IndexedDB database of the page, `civic-simulation:console-disk`, with one
-object store, `disk`. Its row `image` holds the disk, stored with a generation number; the copies of images that
-failed their check are rows beside it: the first under `refused`, each later, different one under `refused:` and
-the hex of its last 8 bytes, at most 8 in all (`REFUSED_MAX`). A copy is never written over, and the same image
-again adds nothing. Every wait on the browser is given 4 seconds (`OPEN_MS`): opening the database and reading the
-image together, each save, and each copy set aside. A load past it is refused, as a store that could not be read
-is; a save past it answers `failed`, and a write that still lands later moves this page's generation with the
-stored one, so the page's next save is not told `stale` by its own late write. A save is one transaction that asks for
-the stored generation and the write together, at once (a page being closed or reloaded runs nothing after its
-`pagehide`, so a write asked for only once the read had answered would never be sent), and undoes itself, write and
-all, unless that generation is the one this page loaded or last saved; then it answers `stale` and has written nothing,
-so a second tab that fell behind never writes over the newer disk. If the store could
-not be read at all (refused, failed, or no answer), the console says so at once and every save is refused for the
-visit, because an image that may still be there must not be replaced by an empty disk. Both consoles hand the layer
-the same store; a console opened again in the same page reads the disk afresh, so it gets what was last saved.
+**The store** (`consoleDisk.ts`) is one IndexedDB database of the page, `civic-simulation:console-disk`, with one object
+store, `disk`. Its row `image` holds the disk, stored with a generation number; the copies of images that failed their
+check are rows beside it: the first under `refused`, each later, different one under `refused:` and the hex of its last
+8 bytes, at most 8 in all (`REFUSED_MAX`). A copy is never written over, and the same image again adds nothing. Every
+wait on the browser is given 4 seconds (`OPEN_MS`): opening the database and reading the image together, each save, and
+each copy set aside. A load past it is refused, as a store that could not be read is; a save past it answers `failed`,
+and a write that still lands later moves this page's generation with the stored one. A timed save is one transaction
+that asks for the stored generation and the write together, and undoes itself, write and all, unless the stored
+generation is this page's as it stands when the read answers; then it answers `stale` and has written nothing, so a
+second tab that fell behind never writes over the newer disk. The browser runs the site's writing transactions one after
+another, in the order they were asked for, so by the time that read answers every earlier write of this page has landed
+(and moved its generation, even one the console gave up on) or failed: a save asked while the page's own late write
+still waits in line is kept, not told `stale`. Every write's generation is above any the page asked for before. A save
+made as the page goes (`save(image, true)`) cannot wait for a read: a page being reloaded runs nothing after it has
+gone, and its storage work ends with it. It is one write, committed at once (`IDBTransaction.commit`), and answers
+`stale` without writing when another page of the site has said it saved a newer generation: each page says so after
+every save it kept, on a `BroadcastChannel` named after the database. A save another page made in the last few
+milliseconds, before its word arrived, can still be written over by it. If the store could not be read at all (refused,
+failed, or no answer), the console says so at once and every save is refused for the visit, because an image that may
+still be there must not be replaced by an empty disk. Both consoles hand the layer the same store; a console opened
+again in the same page reads the disk afresh, so it gets what was last saved.
 
 **When it is saved.** `Terminal.tsx` saves the disk 1.5 seconds after it sees a change (`SAVE_MS`; with more than 1 MiB
 in use, 1.5 seconds for each MiB, and at least 50 times as long as the last image took to make, `SAVE_SPACING`, so
 saving a disk of many small files takes no more than a fiftieth of the page's time; 10 seconds at most), and at once
-when the page is hidden, which a reload or a closed tab is too. Before the page goes it saves at once and waits for the
-store's answer, 4 seconds at most, then goes anyway: before `boot` or `map` reloads the page, and before **Back to the
-city** or the cards' **Open the console** does (App.tsx `reboot`, through `Terminal.flushAll`). It waits once: when the
-store did not answer in time, the page's own reload that follows goes at once. Only a disk that changed since its last
-image is saved; one that came back as it was saved is not written again. The image is made on the page's own thread
-(`System.snapshotBody`, about 2 ms for a disk of 4,096 files on a laptop), which is why the disk holds no more.
+when the page is hidden and when it starts to go: while a change is unsaved or a save is on its way, the page listens
+for `beforeunload`, which comes while a reload or a navigation can still write (`pagehide` comes too late for that in
+Chrome), and listens no more once all is saved, so the browser can still keep the page whole for the back button. A
+timed save still on its way then is asked for again, committed at once, since the page going would take it along, and a
+save asked while one is with the store asks for the newest image at once, behind it, not once it has answered. A change
+made in the last moment before a reload can still be lost, more likely on a large disk. Before the page goes it saves at
+once and waits for the store's answer, 4 seconds at most, then goes anyway: before `boot` or `map` reloads the page, and
+before **Back to the city** or the cards' **Open the console** does (App.tsx `reboot`, through `Terminal.flushAll`). It
+waits once: when the store did not answer in time, the page's own reload that follows goes at once. Only a disk that
+changed since its last image is saved; one that came back as it was saved is not written again. The image is made on the
+page's own thread (`System.snapshotBody`) in one pass that sizes it and one that writes it, into one array with room for
+its seal, each file's bytes copied once straight from the disk (`MemFs.bytesOf`): a few milliseconds for a disk of 4,096
+small files on a laptop, tens of milliseconds for one near its 8 MiB, with the browser's digest and the store each
+copying it once more. The cap of 4,096 files bounds the walk; the bytes are what a full disk costs, and why its saves
+are spaced by that cost. On the next visit the saved image's seal is checked with the browser's own digest, off the
+page's thread, before the disk is restored (`SystemOptions.sealChecked`); without one, or when it answers anything else,
+the layer's own SHA-256 checks it.
 
 **What the system does with what it is given.** Until the store has answered, the system waits (`waiting`): nothing
 is laid out, and typed lines wait. Then it is one of:
@@ -344,6 +370,8 @@ short:
   `\$`); `> ` while a command needs more lines.
 - **At login:** each time the console's shell starts, it reads `/etc/profile` and then `~/.profile`, where they exist
   and can be read, as `source` would, so a variable or a `PS1` set there holds at the prompt. A new disk has neither.
+  `exit` in a profile closes the console as it does at the prompt: what was typed before the shell started is dropped,
+  the rest of the login (the next profile) does not run, and the first prompt's `$?` is its status.
   One that cannot be read, or whose commands are refused, is said (`ash: /etc/profile: is a directory`) and passed
   over.
 - **Exit:** `exit` at the console's own shell closes the console (`exit` is the console's word for that) and gives up
@@ -394,9 +422,12 @@ do. The shell runs the command through the same handler the console uses, with t
   and the shell waits with them. So `while true; do rain on; rain off; done` reaches the city 32 times a turn, at the
   pace of the turns, and never fills the engine's queue of commands, which drops what does not fit (the person's own
   among them). A turn the console gives because an answer arrived goes on with the share it has until a frame (16 ms)
-  has passed, so a loop whose command answers at once (`memory`, over a store kept in memory) cannot run a new share on
-  each answer. Commands owed to a later turn run within that turn's time, one at least, and one owed to a line Ctrl+C
-  gives up, or to a job that has ended, is dropped rather than run for nobody.
+  has passed, and within the share's time (a turn's worth from when the share began), so a loop whose command answers
+  at once (`memory`, over a store kept in memory) cannot run a new share on each answer, even beside a job that fills
+  every turn; and `Terminal.tsx` gives such a turn as a task of its own, never inside the promise that brought the
+  answer, so the page draws and reads keys between them. Commands owed to a later turn run within that turn's time, one
+  at least, and one owed to a line Ctrl+C gives up, or to a job that has ended (tasks asked to end are ended first, so
+  a command under `timeout` goes with it), is dropped rather than run for nobody, without a word beyond the `^C`.
 
 ### When a city command and a program share a name
 
@@ -653,21 +684,25 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `programs.test.ts` (4): the gathered tables and the shape of every manual page.
 - `kit.test.ts` (0): the shared system under test; it holds no test of its own.
 
-Around the folder, `terminal/oslayer.test.ts` (40) holds the console to the gate, console commands in pipes, the city as
+Around the folder, `terminal/oslayer.test.ts` (49) holds the console to the gate, console commands in pipes, the city as
 files, lines typed while a program reads (and the reply to `read`), Ctrl+C, Tab, the progression check (once a line,
 none for the console commands inside it), a proposal answered only at the prompt, at most 32 console commands a turn (a
-turn's share kept across answers that arrive at once, an owed command dropped with the line Ctrl+C gives up), the
-secrets the shell hands a command recorded for the history and found however they were typed, `history` in a shell line,
-every fate of the disk, a save sealed by the host's digest (or the layer's own when the host's is no seal) or at once as
-the page goes, timed, and never throwing, and the wiring in `Terminal.tsx` and `App.tsx`; `consoleDisk.test.ts` (14)
-holds the store to its generations, its write asked for with its read, its refusal to write over what it could not read,
-a fresh read for a console opened again, the rows an image is set aside in (never one over another, eight at most), and
-the 4-second bound on the read, each save and each copy, with a late write keeping the generations in step, over a
-stand-in for IndexedDB; `consoleWiring.test.ts` (7) pins from their source what Node cannot render in `Terminal.tsx` and
+turn's share and its time kept across answers that arrive at once, an owed command dropped with the line Ctrl+C gives
+up, under `timeout` too, and without a word), the secrets the shell hands a command recorded for the history and found
+however they were typed (over two entries, joined by a backslash, of any size), `history` in a shell line (earlier
+entries dotted in the same turn), every fate of the disk, a save sealed by the host's digest (or the layer's own when
+the host's is no seal) or at once as the page goes (the newest image asked for behind one with the store, a timed one
+still on its way asked again), timed, and never throwing, the saved seal checked by the host's digest, and the wiring in
+`Terminal.tsx` and `App.tsx`; `consoleDisk.test.ts` (16) holds the store to its generations, its write asked for with
+its read, its refusal to write over what it could not read, a fresh read for a console opened again, the rows an image
+is set aside in (never one over another, eight at most), and the 4-second bound on the read, each save and each copy,
+with a late write keeping the generations in step (one still in line ahead of the next save too), and the save made as
+the page goes (one write committed at once, skipped when another page has said it saved a newer disk), over a stand-in
+for IndexedDB; `consoleWiring.test.ts` (8) pins from their source what Node cannot render in `Terminal.tsx` and
 `App.tsx`: what a closed console holds, Tab's row of at most 200 names, which results end a live view, the history's
-dots, Ctrl+D on a line with text, the save the page waits for (once) before it goes, and the seal and timing of a save.
-That is 555 tests in the folder's 20 test files, and 616 with the three around it. The browser's real IndexedDB is not
-exercised by these tests.
+dots, Ctrl+D on a line with text, the save the page waits for (once) before it goes, the seal and timing of a save, the
+listener for the page starting to go, and an answer's turn given as a task of its own. That is 559 tests in the folder's
+20 test files, and 632 with the three around it. The browser's real IndexedDB is not exercised by these tests.
 
 ## What it does not do yet
 
@@ -679,6 +714,11 @@ exercised by these tests.
 - **No programs written in Crimson Noir Script.** The `noir` command runs the console's second language as before,
   one line at a time, at the prompt or from a shell script; there is no program for it in `/bin`, so a file of it
   cannot be run as a program.
+- **A secret the shell builds from parts is in no typed line.** `"ask" key sk-$(cat part)` or `"${P}..."` hands the
+  command a key that appears in no history entry as such, so the entry stays as typed (the expression, not the key),
+  as the scrollback above already shows it.
+- **A change in the last moment before a reload can be lost.** The save made as the page starts to go is committed at
+  once, but a large disk's write may not finish before the page is gone.
 - **`jobs` and `ps -f` show a job's line as typed.** A key or a token on a line sent to the background
   (`net join <url> <token> &`) is dotted in the history, but `jobs` and `ps -f` list the line as it was typed, as the
   scrollback above it already shows it. A secret on a line that never ran its command (`false && "ask" key ...`, a

@@ -537,15 +537,18 @@ test('a saved disk that fails its check is set aside before anything is saved, a
 })
 
 /** A store whose saves answer only when the test says, and whose load gives what was last kept. */
-function slowDisk(): DiskStore & { stored: Uint8Array | null; asked: Uint8Array[]; answer(how: 'kept' | 'failed'): void } {
+function slowDisk(): DiskStore & { stored: Uint8Array | null; asked: Uint8Array[]; nows: boolean[]; answer(how: 'kept' | 'failed'): void } {
   const waiting: ((how: 'kept' | 'failed') => void)[] = []
   const d = {
     stored: null as Uint8Array | null,
     asked: [] as Uint8Array[],
+    /** For each save asked, whether it was asked as the page goes. */
+    nows: [] as boolean[],
     answer(how: 'kept' | 'failed') { waiting.shift()?.(how) },
     load: async () => d.stored,
-    save: (image: Uint8Array) => new Promise<'kept' | 'stale' | 'failed'>((resolve) => {
+    save: (image: Uint8Array, now?: boolean) => new Promise<'kept' | 'stale' | 'failed'>((resolve) => {
       d.asked.push(image)
+      d.nows.push(now === true)
       waiting.push((how) => {
         if (how === 'kept') d.stored = image.slice()
         resolve(how)
@@ -1033,4 +1036,183 @@ test('a save whose image cannot be made never throws: it counts as a failed save
   }
   giving()
   assert.match((await settle(s)).join('\n'), /disk: files are not kept between visits from here on: the browser refused to store them/)
+})
+
+test('a secret is dotted where it first shows, joined over a backslash and a line end, or typed over two entries; one of any size never throws', () => {
+  // An earlier copy written with quoting inside it is where the secret first shows.
+  const earliest = ["K=sk-'AB'C; \"ask\" key sk-ABC"]
+  scrubSecrets(earliest, ['sk-ABC'])
+  assert.deepEqual(earliest, ['K=••••'])
+  // The shell joins a line ended by a backslash to the next, and hands the key over whole.
+  const joined = ['"ask" key sk-AB\\\nCD; echo after']
+  scrubSecrets(joined, ['sk-ABCD'])
+  assert.deepEqual(joined, ['"ask" key ••••'])
+  // A key typed over two entries (a continuation, a quote left open over Enter): the second is dotted whole.
+  const over = ['echo first', '"ask" key sk-AB\\', 'CD', "\"ask\" key 'sk-EF", "GH'", 'echo last']
+  scrubSecrets(over, ['sk-ABCD', 'sk-EF\nGH'])
+  assert.deepEqual(over, ['echo first', '"ask" key ••••', '••••', "\"ask\" key '••••", '••••', 'echo last'])
+  // A passphrase of thousands of words, or one word of 40,000 characters: found, quickly, and nothing thrown.
+  const many = `${'w '.repeat(8000)}end`
+  const long = 'x'.repeat(40000)
+  const big = [`"ring0" elite set ${many}`, `"net" join ws://relay.local/x ${long}`]
+  const start = performance.now()
+  scrubSecrets(big, [many, long])
+  assert.deepEqual(big, ['"ring0" elite set ••••', '"net" join ws://relay.local/x ••••'])
+  assert.ok(performance.now() - start < 500, `${performance.now() - start} ms`)
+})
+
+test('history lists an earlier entry dotted when its secret is handed over in the same turn, and a line of blanks that ends a continuation as the history holds it', () => {
+  const b = city()
+  const s = replSession(host())
+  const hist: string[] = []
+  const listing = (line: string): string => {
+    const out = texts(run(line, b, hist, s))
+    for (let r = osOf(s).next(); r !== null; r = osOf(s).next()) out.push(...texts(r))
+    return out.join('\n')
+  }
+  // One command over two Enters: the key is handed over, and history run, in the turn the second line ends it.
+  const first = '"ask" key sk-EARLY1; \\'
+  listing(first)
+  hist.push(first)
+  const listed = listing('history | cat')
+  assert.doesNotMatch(listed, /EARLY1/)
+  assert.match(listed, /••••/)
+  assert.deepEqual(hist, [first], 'the console\'s own history is dotted by the console (Terminal), not here')
+  // A line of blanks that ends a continuation is listed as the row the console then stores.
+  const t = replSession(host())
+  all('history | tail -n 1 \\', b, t)
+  assert.deepEqual(all('   ', b, t), ['    1     '])
+})
+
+test('the line history lists is dotted once for each secret a loop hands over, and each secret is handed to the console once', () => {
+  const b = city()
+  const s = replSession(host())
+  const os = osOf(s)
+  const out = all('for i in 1 2 3 4 5 6 7 8 9 10; do "ask" key sk-SAME7 > /dev/null 2>&1; done; history | tail -n 1', b, s)
+  assert.deepEqual(out, ['    1  for i in 1 2 3 4 5 6 7 8 9 10; do "ask" key ••••'])
+  assert.deepEqual(os.takeSecrets(), ['sk-SAME7'])
+  assert.deepEqual(os.takeSecrets(), [])
+})
+
+test('answers that arrive at once cannot chain turns past the share\'s time while a job in the background fills each turn', async () => {
+  const b = city()
+  b.memory = { status: () => Promise.resolve(['kept on this page']), ledger: () => Promise.resolve([]), forget: () => Promise.resolve('none') }
+  const h = host()
+  // A clock that moves as it is read, as a real one does while the layer works.
+  const moving: OsHost = { ...h, clock: () => (h.t += 0.05) }
+  const s = replSession(moving)
+  const os = osOf(s)
+  let wakes = 0
+  // As a host that gives a turn inside the promise that brought an answer would (the terminal gives a task instead).
+  os.wake = () => { if (++wakes < 500 && os.busy) os.pump(4) }
+  run('while :; do :; done &', b, [], s)
+  run('while :; do memory > /dev/null; done', b, [], s)
+  for (let i = 0; i < 2000; i++) await Promise.resolve()
+  assert.ok(wakes < 100, `${wakes} turns chained one inside the next`)
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  while (os.next() !== null) { /* shown */ }
+})
+
+test('Ctrl+C drops a command owed to a job run under timeout, as it does one the line ran itself', () => {
+  const t = city()
+  const u = replSession(host())
+  const os = osOf(u)
+  run(`timeout 60 sh -c '${[...Array(48).keys()].map((n) => `time ${n % 24}`).join('; ')}'`, t, [], u)
+  assert.equal(t.calls.length, CITY_TURN_MAX)
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  os.pump(LINE_MS)
+  while (os.next() !== null) { /* shown */ }
+  assert.equal(t.calls.length, CITY_TURN_MAX, 'nothing more of it ran after Ctrl+C')
+})
+
+test('Ctrl+C on the console\'s shell while a write to a city file waits for a later turn says nothing more than the ^C', () => {
+  const b = city()
+  const s = replSession(host())
+  const os = osOf(s)
+  all(`for i in ${[...Array(40).keys()].join(' ')}; do echo on > /sys/city/rain; done; echo after`, b, s)
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  const out: string[] = []
+  for (let r = os.next(); r !== null; r = os.next()) out.push(...texts(r))
+  assert.deepEqual(out, [])
+  assert.deepEqual(all('echo $?', b, s), ['130'])
+})
+
+test('a save asked for as the page goes, while a timed save is with the store, asks for the newest image at once and tells the store the page is going', async () => {
+  const b = city()
+  const disk = slowDisk()
+  const s = replSession(host(disk))
+  await settle(s)
+  const os = osOf(s)
+  all('echo one > a', b, s)
+  const timed = os.save()
+  assert.equal(disk.asked.length, 1)
+  all('echo two > b', b, s)
+  const going = os.save({ now: true })
+  assert.equal(disk.asked.length, 2, 'asked before the timed save answered')
+  assert.deepEqual(disk.nows, [false, true])
+  // Asked again as it goes, with nothing new: nothing more goes behind a save that was committed at once.
+  const again = os.save({ now: true })
+  assert.equal(disk.asked.length, 2)
+  disk.answer('kept')
+  disk.answer('kept')
+  await timed
+  await going
+  await again
+  await ticks()
+  assert.equal(disk.asked.length, 2)
+  assert.equal(os.unsavedChanges, false)
+  const next = replSession(host(disk))
+  await settle(next)
+  assert.deepEqual(all('cat a b', b, next), ['one', 'two'])
+})
+
+test('a timed save still with the store when the page goes is asked for again, committed at once, so the page going cannot take it along', async () => {
+  const b = city()
+  const disk = slowDisk()
+  const s = replSession(host(disk))
+  await settle(s)
+  const os = osOf(s)
+  all('echo one > a', b, s)
+  const timed = os.save()
+  const going = os.save({ now: true })
+  assert.equal(disk.asked.length, 2)
+  assert.deepEqual(disk.asked[1], disk.asked[0], 'the same image again')
+  assert.deepEqual(disk.nows, [false, true])
+  // The page did go: the timed save never landed, the one asked as it went did.
+  disk.answer('failed')
+  disk.answer('kept')
+  await timed
+  await going
+  assert.equal(os.unsavedChanges, false, 'the failed one is not kept to try again over the newer one')
+  const next = replSession(host(disk))
+  await settle(next)
+  assert.deepEqual(all('cat a', b, next), ['one'])
+})
+
+test('the saved disk\'s seal is checked with the host\'s own digest before it is restored, and a digest that answers wrong leaves the check to the layer', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const first = replSession(host(disk))
+  await settle(first)
+  all('echo kept > a', b, first)
+  await osOf(first).save()
+  const stored = disk.image
+  assert.ok(stored !== null)
+  const asked: number[] = []
+  const h = host(disk.open())
+  h.digest = async (bytes) => { asked.push(bytes.length); return nodeSha(bytes) }
+  const next = replSession(h)
+  await ticks()
+  await settle(next)
+  assert.deepEqual(asked, [stored.length - 32], 'the body, without its seal')
+  assert.deepEqual(all('cat a', b, next), ['kept'])
+  const w = host(disk.open())
+  w.digest = async () => new Uint8Array(32)
+  const third = replSession(w)
+  await ticks()
+  await settle(third)
+  assert.deepEqual(all('cat a', b, third), ['kept'])
 })
