@@ -18,31 +18,34 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
   commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
   `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages
-  publishes no site over 1 GB), naming the five largest files; `assets <file or folder>...` fails any file of 2 GiB
-  (2,147,483,648 bytes) or more, which GitHub refuses as a release asset. `web.yml` runs `site dist-web` after the
-  site's model and the speech pack are placed and before the Pages upload. `assets` runs last before each upload of a
-  file a release carries: in `build-matrix.yml` on each target's `out/<target>/`, in `windows-app.yml` on its
-  installer, `.msi` and bare `.exe` folders, in `build-release.yml` on the baked media (its bake job now sets up Node,
-  with GitHub's own `actions/setup-node`), and in `current.yml` on every artifact it downloads, in its publish job and
-  its dry run. In `build-release.yml`, `build-matrix.yml` and `windows-app.yml` the tool is read from a sparse
-  checkout of the workflow's own commit (`github.sha`, in `.size-check/`), not from the commit the job bakes or
-  builds: a dispatch for a tag that exists bakes that tag's commit, and `current.yml` may have the other two build an
-  older commit ci passed on, either of which may predate the tool (every release tag so far does). A size is what
-  `fs.stat` says the file holds (a sparse file at its full length); a symbolic link is followed and counts at the size
-  of what it names, and a link to nothing, to itself or back into a folder that holds it fails by name. The limits are
-  constants: the command line takes no flag and the tool reads no environment variable, so no workflow can move a
-  limit or skip a check. `tools/build/macAudit.mjs` now takes its `ASSET_LIMIT` from the new tool, so 2 GiB has one
-  source, and keeps its own check of the `.dmg` and the zip; `MAX_BYTES`, the page's own budget in
-  `tools/verify/page_dist.mjs`, is unchanged. `build-matrix.yml` also runs on a pull request that changes the tool.
-  Tests: `siteBudget.test.ts` (9) pins both numbers and macAudit's limit as the same one; passes and fails each check
-  by name at its edges, by size alone and through the command line over sparse files (the copy at exactly 950,000,000
-  bytes passes and one byte more fails; a file one byte under 2 GiB passes and one of exactly 2 GiB fails); measures
-  links (and still checks when the tool is run through a link to it, rather than exit 0 unseen); refuses a flag; and
-  reads the five workflows: each of the six steps checks the files its job then uploads (or, in the dry run, plans),
-  with no condition (no `if:`, first key or not, no `continue-on-error`, no `||` after the command, its run line
-  pinned whole) and reads the tool from the workflow's own commit; and shows those rules refuse each such skip, and a
-  check read from the commit a job bakes or builds. A web copy built in the container (`npm run build:web`, no model)
-  measured 12,233,225 bytes, and 410,055,396 with a sparse stand-in of the site model's size and its three files. Not
+  publishes no site over 1 GB), naming the five largest files, and when anything there cannot be measured its line
+  says the copy was not measured, with no size and no verdict, since a total short of a file is no total; `assets
+  <file or folder>...` fails any file of 2 GiB (2,147,483,648 bytes) or more, which GitHub refuses as a release asset.
+  `web.yml` runs `site dist-web` after the site's model and the speech pack are placed and before the Pages upload.
+  `assets` runs last before each upload of a file a release carries: in `build-matrix.yml` on each target's
+  `out/<target>/`, in `windows-app.yml` on its installer, `.msi` and bare `.exe` folders, in `build-release.yml` on
+  the baked media (its bake job now sets up Node, with GitHub's own `actions/setup-node`), and in `current.yml` on
+  every artifact it downloads, in its publish job and its dry run. In `build-release.yml`, `build-matrix.yml` and
+  `windows-app.yml` the tool is read from a sparse checkout of the workflow's own commit (`github.sha`, in
+  `.size-check/`), not from the commit the job bakes or builds: a dispatch for a tag that exists bakes that tag's
+  commit, and `current.yml` may have the other two build an older commit ci passed on, either of which may predate the
+  tool (every release tag so far does). A size is what `fs.stat` says the file holds (a sparse file at its full
+  length); a symbolic link is followed and counts at the size of what it names, and a link to nothing, to itself or
+  back into a folder that holds it fails by name (a link whose target is there but cannot be read gives the system's
+  reason, never "does not exist"). The limits are constants: the command line takes no flag and the tool reads no
+  environment variable, so no workflow can move a limit or skip a check. `tools/build/macAudit.mjs` now takes its
+  `ASSET_LIMIT` from the new tool, so 2 GiB has one source, and keeps its own check of the `.dmg` and the zip;
+  `MAX_BYTES`, the page's own budget in `tools/verify/page_dist.mjs`, is unchanged. `build-matrix.yml` also runs on a
+  pull request that changes the tool. Tests: `siteBudget.test.ts` (9) pins both numbers and macAudit's limit as the
+  same one; passes and fails each check by name at its edges, by size alone and through the command line over sparse
+  files (the copy at exactly 950,000,000 bytes passes and one byte more fails; a file one byte under 2 GiB passes and
+  one of exactly 2 GiB fails); measures links (and still checks when the tool is run through a link to it, rather than
+  exit 0 unseen); refuses a flag; and reads the five workflows: each of the six steps checks the files its job then
+  uploads (or, in the dry run, plans), with no condition (no `if:`, first key or not, no `continue-on-error`, no `||`
+  after the command, its run line pinned whole) and reads the tool from the workflow's own commit; and shows those
+  rules refuse each such skip, and a check read from the commit a job bakes or builds. A web copy built in the
+  container on 21 November 2026 (`npm run build:web`) measured 12,416,491 bytes, and 453,986,789 with sparse stand-ins
+  of the site model and the speech pack at their pinned sizes beside their real manifests and licence files. Not
   verified: the steps on CI until CI runs them; GitHub's own limits can change.
 
 - **The macOS app carries Sloane's model and runs it in its own process.** The build matrix's `macos-universal` job

@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +39,9 @@ interface Report { line: string; problems: string[] }
 const GIB2 = 2 * 1024 ** 3
 // Sparse files on NTFS take their whole size on the disk, and links there need developer mode: these run elsewhere.
 const NEEDS_SPARSE = process.platform === 'win32' && 'sparse files and symbolic links (not on Windows)'
+
+/** `text` matched literally inside a regular expression. */
+const esc = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** A fresh folder for one test's fixtures, removed by `done()`. */
 function fixture(): { root: string; done: () => void } {
@@ -158,6 +161,28 @@ test('links: followed, so the file a link names counts at its own size and a lin
     // Anything that is neither a file nor a folder (a named pipe here) is named too.
     const fifo = join(t.root, 'pipe')
     if (spawnSync('mkfifo', [fifo]).status === 0) assert.deepEqual(s.walk(fifo).problems, [`${fifo} is neither a file nor a folder`])
+    // A link whose target cannot be looked up for a reason other than its absence gives that reason, never "does not
+    // exist": a name too long for the system here, and (where permissions bind, so not as root) a folder it cannot enter.
+    const far = join(t.root, 'far')
+    mkdirSync(far)
+    symlinkSync('n'.repeat(300), join(far, 'long'))
+    const long = s.walk(far).problems
+    assert.equal(long.length, 1, long.join('\n'))
+    assert.match(long[0], new RegExp(`^${esc(join(far, 'long'))} is a symbolic link to n{300}: ENAMETOOLONG: .+: it cannot be measured$`))
+    if (process.getuid?.() !== 0) {
+      const locked = join(t.root, 'locked')
+      mkdirSync(locked)
+      const big = sparse(join(locked, 'big.gguf'), 900_000_000)
+      const site = join(t.root, 'behind')
+      mkdirSync(site)
+      symlinkSync(big, join(site, 'model.gguf'))
+      chmodSync(locked, 0o000)
+      try {
+        const shut = s.walk(site).problems
+        assert.equal(shut.length, 1, shut.join('\n'))
+        assert.match(shut[0], new RegExp(`^${esc(join(site, 'model.gguf'))} is a symbolic link to ${esc(big)}: EACCES: .+: it cannot be measured$`))
+      } finally { chmodSync(locked, 0o755) }
+    }
   } finally { t.done() }
 })
 
@@ -186,12 +211,26 @@ test('the command line, site: a copy of exactly 950,000,000 bytes passes, one by
     assert.equal(linked.status, 1)
     assert.match(linked.stderr, new RegExp(`its largest files: ${join(e, 'model.gguf').replace(/[.\\]/g, '\\$&')} \\(950000000\\)`))
     // Not a folder: a file, or nothing there.
+    // Not a folder: a file, nothing there, or a link to nothing. Each fails by name, and the line gives no size and no
+    // verdict, since nothing was measured ("0 bytes ... ok" would be false).
     const file = run('site', join(d, 'index.html'))
     assert.equal(file.status, 1)
+    assert.equal(file.stdout, `site_budget: site ${join(d, 'index.html')}: not measured (1 problem)\n`)
     assert.match(file.stderr, new RegExp(`::error::site_budget: ${join(d, 'index.html').replace(/[.\\]/g, '\\$&')} is not a folder`))
     const missing = run('site', join(t.root, 'nope'))
     assert.equal(missing.status, 1)
+    assert.equal(missing.stdout, `site_budget: site ${join(t.root, 'nope')}: not measured (1 problem)\n`)
     assert.match(missing.stderr, /nope does not exist/)
+    symlinkSync(join(t.root, 'nowhere'), join(t.root, 'to-nothing'))
+    const dangling = run('site', join(t.root, 'to-nothing'))
+    assert.equal(dangling.status, 1)
+    assert.equal(dangling.stdout, `site_budget: site ${join(t.root, 'to-nothing')}: not measured (1 problem)\n`)
+    // A folder with something in it that cannot be measured: the files around it are not a total to judge.
+    symlinkSync(join(t.root, 'nowhere'), join(e, 'gone.bin'))
+    const partial = run('site', e)
+    assert.equal(partial.status, 1)
+    assert.equal(partial.stdout, `site_budget: site ${e}: not measured (1 problem)\n`)
+    assert.equal(partial.stderr, `::error::site_budget: ${join(e, 'gone.bin')} is a symbolic link to ${join(t.root, 'nowhere')}, which does not exist: it cannot be measured\n`)
   } finally { t.done() }
 })
 

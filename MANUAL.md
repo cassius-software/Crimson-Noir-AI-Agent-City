@@ -4795,19 +4795,22 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
   this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
   current build (below). Only GitHub's own actions run in it.
-- **Sizes GitHub takes.** GitHub refuses a release asset of 2 GiB or more, and GitHub Pages publishes no site over
-  1 GB, so every workflow that uploads checks first with `tools/verify/site_budget.mjs`, which prints one line per
-  check with the size and the limit and fails the run with the file or folder named: each job here on `out/<id>/`,
-  last before its upload; `windows-app.yml` on its installer, `.msi` and bare `.exe`; `build-release.yml` on the baked
+- **Sizes GitHub takes.** GitHub refuses a release asset of 2 GiB or more, and GitHub Pages publishes no site over 1
+  GB, so every workflow that uploads checks first with `tools/verify/site_budget.mjs`, which prints one line per check
+  with the size and the limit and fails the run with the file or folder named: each job here on `out/<id>/`, last
+  before its upload; `windows-app.yml` on its installer, `.msi` and bare `.exe`; `build-release.yml` on the baked
   media; `current.yml` on every file it downloads, before it publishes (The current build); and `web.yml` on the whole
   web copy, the site's model and the speech pack included, which must be at most 950,000,000 bytes (On an iPhone). A
   size is what the file system says the file holds; a symbolic link counts at the size of what it names, and one that
-  names nothing fails. No flag or environment variable moves a limit. The tool always comes from the workflow's own
-  commit: where a job bakes or builds another commit (`build-release.yml` baking a tag that exists again, or the jobs
-  here and `windows-app.yml` building the commit `current.yml` passes them), it is read from a sparse checkout of the
+  names nothing fails (one whose target is there but cannot be read gives the system's reason). A web copy with
+  anything in it that cannot be measured fails by name, and its line says it was not measured rather than giving a
+  short total. No flag or environment variable moves a limit. The tool always comes from the workflow's own commit:
+  where a job bakes or builds another commit (`build-release.yml` baking a tag that exists again, or the jobs here and
+  `windows-app.yml` building the commit `current.yml` passes them), it is read from a sparse checkout of the
   workflow's commit in `.size-check/`, so a commit older than the tool is still checked. A web copy built in the
-  container measured 12,233,225 bytes without its model, and 410,055,396 with a stand-in of the model's exact size.
-  Not verified: the steps on CI until CI runs them; GitHub's own limits can change.
+  container on 21 November 2026 measured 12,416,491 bytes without its model and speech pack, and 453,986,789 with
+  stand-ins of both at their exact sizes. Not verified: the steps on CI until CI runs them; GitHub's own limits can
+  change.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
   and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,

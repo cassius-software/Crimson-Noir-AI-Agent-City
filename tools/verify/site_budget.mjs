@@ -63,9 +63,13 @@ export function walk(path) {
       try {
         st = statSync(p)
       } catch (e) {
-        problems.push(e?.code === 'ELOOP'
+        // Only a target that is not there is called missing; one that is there but cannot be read says why.
+        const code = e?.code
+        problems.push(code === 'ELOOP'
           ? `${p} is a symbolic link that loops (to ${to}): it cannot be measured`
-          : `${p} is a symbolic link to ${to}, which does not exist: it cannot be measured`)
+          : code === 'ENOENT' || code === 'ENOTDIR'
+            ? `${p} is a symbolic link to ${to}, which does not exist: it cannot be measured`
+            : `${p} is a symbolic link to ${to}: ${message(e)}: it cannot be measured`)
         return
       }
     }
@@ -135,9 +139,14 @@ export function main(argv, out = console) {
     const w = folder ? walk(dir) : { files: [], problems: walk(dir).problems.slice(0, 1) }
     if (!folder && w.problems.length === 0) w.problems.push(`${dir} is not a folder`)
     problems.push(...w.problems)
-    const r = siteReport(dir, w.files)
-    lines.push(r.line)
-    problems.push(...r.problems)
+    if (w.problems.length > 0) {
+      // Anything unmeasured leaves the total short, so no size and no verdict: the problems say what is wrong.
+      lines.push(`site_budget: site ${dir}: not measured (${plural(w.problems.length, 'problem')})`)
+    } else {
+      const r = siteReport(dir, w.files)
+      lines.push(r.line)
+      problems.push(...r.problems)
+    }
   } else {
     for (const p of paths) {
       const w = walk(p)
