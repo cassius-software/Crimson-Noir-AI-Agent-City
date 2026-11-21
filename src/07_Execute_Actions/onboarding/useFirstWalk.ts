@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { insideRoom } from '../../01_Initialize_World/interiors.ts'
 import type { DeviceProfile, HardwareClass } from '../../05_Observe_Environment/governor.ts'
+import type { BrainReadout } from '../../09_Cognition/brainReadout.ts'
 import type { SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import type { Engine } from '../engine.ts'
 import { glyph, isPadFamily, padMenuWord, type GlyphFamily } from '../glyphs.ts'
@@ -64,7 +65,10 @@ function readingOf(hud: SipocSnapshot, engine: Engine, consoleOpen: boolean): Wa
   }
 }
 
-/** The first card's reading of the visitor's machine, in plain words (three rows: the device, the picture, Sloane). */
+/**
+ * The first card's reading of the visitor's machine, in plain words: the device and the picture (Sloane's row is
+ * sloaneOf, read from the brain readout by the card itself, so a change there renders the card and not the page).
+ */
 export interface MachineReading {
   /** 'A phone', 'A laptop or desktop', 'A workstation'. */
   readonly device: string
@@ -74,8 +78,6 @@ export interface MachineReading {
   readonly picture: string
   /** The tier as a share of the scale, 0..1 (Lite the least, Peak the most), for the card's bar. */
   readonly level: number
-  /** Sloane's state: her planner runs on every device, so she is always ready to plan. */
-  readonly sloane: string
 }
 
 const DEVICE_WORDS: Record<HardwareClass, string> = { phone: 'A phone', desktop: 'A laptop or desktop', workstation: 'A workstation' }
@@ -91,8 +93,33 @@ export function machineOf(hardware: HardwareClass, gpu: DeviceProfile['gpuClass'
     graphics: GRAPHICS_WORDS[gpu] ?? '',
     picture: quality.label,
     level: (tier - TIER_LOW + 1) / (TIER_HIGH - TIER_LOW + 1),
-    sloane: 'Ready to plan',
   })
+}
+
+/** Sloane's row on the first card: a few words for the card, and the readout's whole line for a closer look. */
+export interface SloaneRow {
+  readonly text: string
+  /** The readout's own line (brainReadout.ts where), the same one the console's `ask` prints as its brain row. */
+  readonly detail: string
+}
+
+/** A share in whole percent, 0 with nothing to count. */
+const percent = (done: number, total: number): number => (total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0)
+
+/**
+ * Sloane's row from the brain readout (09_Cognition/brainReadout.ts readBrain): which model she thinks with, where one
+ * answers; else how her default model is coming, while it comes; else ready to plan, which is always true (her
+ * scripted planner runs on every device, with no model and no network). Pure over a readout the card read: reading
+ * the readout starts no look and no download, and this asks nothing of anything.
+ */
+export function sloaneOf(b: BrainReadout): SloaneRow {
+  const d = b.default
+  const text = b.brain === 'page' || b.brain === 'app' ? 'Thinking on this device'
+    : b.brain === 'server' ? (b.gateway ? 'Thinking off this machine' : 'Thinking with a model on this machine')
+      : d?.state === 'getting' ? `${d.step === 'keep' ? 'Keeping' : 'Getting'} her model, ${percent(d.done, d.total)}%`
+        : d?.state === 'checking' ? `The app checks her model, ${percent(d.done, d.total)}%`
+          : 'Ready to plan'
+  return Object.freeze({ text, detail: b.where })
 }
 
 /** The walk's marker: a place over the world and on the minimap the stage sends the visitor to (engine.ts setBeacon). */
