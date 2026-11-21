@@ -66,12 +66,14 @@ export const XR_STEP_OUT_SPEED = 1.5
 /**
  * A trigger held into the wheel (XrMapper.read): while it is still rising its counting point follows it up (a door
  * press still travelling to the stop): until it falls XR_TRIGGER_FALL below its peak, goes XR_TRIGGER_TAKE_MS without
- * a new one, or XR_TRIGGER_TAKE_MAX_MS have passed since it was taken. After that the point sits XR_TRIGGER_JOLT (raw)
- * above the lowest it has read, so a jolt that dips a finger resting up to that far, for any number of frames, never
- * lowers it below the rest; and the hold ends once the trigger has stayed inside its dead zone for
- * XR_TRIGGER_LET_GO_MS (a jolt that lifts the finger off for a moment is no letting go).
+ * a new one (XR_TRIGGER_RISE higher), or XR_TRIGGER_TAKE_MAX_MS have passed since it was taken. After that the point
+ * sits XR_TRIGGER_JOLT (raw) above the lowest it has read, so a jolt that dips a finger resting up to that far, for any
+ * number of frames, never lowers it below the rest; and the hold ends once the trigger has stayed inside its dead zone
+ * for XR_TRIGGER_LET_GO_MS (a jolt that lifts the finger off for a moment is no letting go).
  */
 export const XR_TRIGGER_FALL = 0.05
+/** A rise this much (raw) above the last peak counts as a new one: a sensor's noise or a finger's creep does not. */
+export const XR_TRIGGER_RISE = 0.02
 export const XR_TRIGGER_TAKE_MS = 100
 export const XR_TRIGGER_TAKE_MAX_MS = 500
 export const XR_TRIGGER_JOLT = 0.15
@@ -496,7 +498,7 @@ export class XrMapper {
    * rest): the raw point its throttle counts from, when it was taken, and since when it has read nothing (-1 while it
    * reads something). Gone once it is let go, and on foot.
    */
-  private readonly triggerHold = new WeakMap<object, { base: number; at: number; zero: number; rising: boolean; peakAt: number }>()
+  private readonly triggerHold = new WeakMap<object, { base: number; at: number; zero: number; rising: boolean; peak: number; peakAt: number }>()
   private wasDriving = false
   private readonly stick = { x: 0, y: 0 }
   private readonly pinchOut: Analog = createAnalog()
@@ -599,12 +601,15 @@ export class XrMapper {
       const raw = tb ? (tb.value > 0 ? tb.value : tb.pressed ? 1 : 0) : 0
       let tHold = this.triggerHold.get(s)
       if (!this.driving) tHold = undefined
-      else if (!this.wasDriving || !known || takesThrottle) tHold = pull > 0 ? { base: raw, at: now, zero: -1, rising: true, peakAt: now } : undefined
+      else if (!this.wasDriving || !known || takesThrottle) tHold = pull > 0 ? { base: raw, at: now, zero: -1, rising: true, peak: raw, peakAt: now } : undefined
       else if (tHold) {
         if (pull > 0) tHold.zero = -1
         else if (tHold.zero < 0) tHold.zero = now
         // Still travelling in (see XR_TRIGGER_FALL): a repeated or slightly lower reading on the way is no stop.
-        if (tHold.rising && raw > tHold.base) { tHold.base = raw; tHold.peakAt = now }
+        if (tHold.rising) {
+          tHold.base = Math.max(tHold.base, raw)
+          if (raw >= tHold.peak + XR_TRIGGER_RISE) { tHold.peak = raw; tHold.peakAt = now }
+        }
         if (tHold.rising && (raw < tHold.base - XR_TRIGGER_FALL || now - tHold.peakAt >= XR_TRIGGER_TAKE_MS || now - tHold.at >= XR_TRIGGER_TAKE_MAX_MS)) tHold.rising = false
         if (tHold.zero >= 0 && now - tHold.zero >= XR_TRIGGER_LET_GO_MS) tHold = undefined
         else if (!tHold.rising) tHold.base = Math.min(tHold.base, raw + XR_TRIGGER_JOLT)

@@ -1286,3 +1286,21 @@ test('a press let go quickly and pulled straight back drives at once from about 
     }
   }
 })
+
+test('a press held part way that creeps or trembles stops being followed after a tenth of a second, so a pull then drives', () => {
+  for (const wobble of [(k: number) => 0.001 * k, (k: number) => 0.01 * Math.sin(k * 1.3), (k: number) => (k % 2 ? 0.008 : -0.008)]) {
+    const lone = ctl('none', 6, 4)
+    const r = rig([lone], 11)
+    r.m.nearCar = true
+    const b = lone.buttons[XR_BUTTON.trigger]
+    b.value = 0.7; b.pressed = true
+    r.m.read()
+    r.m.nearCar = false
+    r.m.driving = true
+    b.pressed = false
+    for (let k = 0; k < 27; k++) { b.value = 0.7 + wobble(k); r.m.read() }
+    for (let k = 1; k <= 6; k++) { b.value = 0.7 + (0.3 * k) / 6; r.m.read() }
+    for (let k = 0; k < 30; k++) r.m.read()
+    assert.ok(r.m.analog.throttle > 0.4, `held part way with a wobble, then pulled to the stop: it drives (${r.m.analog.throttle})`)
+  }
+})
