@@ -90,7 +90,14 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: The single-file build, made installable (manifest, icons, offline service worker)
+      # build.json beside the page names the commit this copy is built from, the ci run that passed on it (none for a
+      # run by hand) and this run, so the copy and the downloads can be told to come from one commit (tools/web/pwa.mjs
+      # STAMP). It is outside the page and outside the build word: the same page is the same build whatever it says.
+      - name: The single-file build, made installable (manifest, icons, offline service worker), with the commit it is
+        env:
+          BUILD_COMMIT: ${{ needs.pick.outputs.sha }}
+          BUILD_CI: ${{ github.event.workflow_run.html_url }}
+          BUILD_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: npm run build:web
       # The site's model (src/09_Cognition/siteModel.ts SITE_MODEL), served beside the page so a visitor can get it in a
       # tap on Sloane's card: fetched from Hugging Face at the pinned revision whenever the cache, keyed by the whole

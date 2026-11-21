@@ -19,8 +19,10 @@
 #   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
 #   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
 #   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
-#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then
-#   holds the newest green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
+#   does. The ci run that started a run counts by GitHub's answer for that very run, asked for by its id: the list of
+#   ci's runs can trail a run that has just ended, and once left a green commit unbuilt behind a green run. "Re-run
+#   failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then holds the newest
+#   green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
 # - It makes no numbered release. Its only tags are `current`, which it puts at each commit it publishes, and a
 #   stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (tools/build/current.mjs says
 #   why); when GitHub refuses the stand-in too, `current` stays where it was and the notes say so. The release is a
@@ -114,6 +116,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           TESTED: ${{ github.event.workflow_run.head_sha }}
+          STARTED_BY: ${{ github.event.workflow_run.id }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           FORCE: ${{ inputs.force }}
         run: |
@@ -128,7 +131,9 @@ jobs:
               [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it on main: the current build follows main alone"; exit 1; }
               args=(--sha "$GITHUB_SHA" --strict)
               if [ "$FORCE" = true ]; then args+=(--force); fi ;;
-            *) args=(--sha "$TESTED") ;;
+            # The ci run that started this run: asked for by its id, so its commit counts as green even while ci's
+            # list of runs does not show it yet (the job's condition above has already said it passed on main).
+            *) args=(--sha "$TESTED" --tested "$STARTED_BY") ;;
           esac
           node tools/build/current.mjs pick "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 

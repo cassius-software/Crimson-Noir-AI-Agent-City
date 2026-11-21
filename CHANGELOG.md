@@ -15,6 +15,30 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A check that the web copy and every download come from one commit, and the fault that let them part.** On
+  21 November 2026 the web copy, the downloads and main stood at three commits for close to five hours while every
+  run was green. Two causes. The `current` workflow picked its commit from the list of ci's runs that passed, and
+  that list trailed the run that had just ended by some seconds, so a run built nothing for a commit ci had passed on
+  and ended green: it now asks GitHub for the ci run that started it, by its id (`tools/build/current.mjs`
+  `choose`, `pick --tested`), builds that commit when GitHub's answer for the run says ci, finished and passed on
+  main in this repository, and is red, not green, when the answer says anything else. The other cause, the web
+  workflow publishing a tested commit only while it is main's tip, is not changed here and follows in its own change.
+  The web copy now says which commit it is: each publish by `web.yml` puts `build.json` beside the page (commit,
+  version, the build's name, the ci run and the publishing run; `tools/web/pwa.mjs`), outside the page, the worker's
+  copy and the build's name, so the same page is still the same build byte for byte. A new workflow, `sync`
+  (`.github/workflows/sync.yml`, `tools/build/sync.mjs`), runs after each run of web or current on main, every hour
+  and by hand, with read access alone, and turns red when the web copy's `build.json`, the release's `current.json`,
+  any required target, the tag `current`, a recorded file's size or SHA-256, or the disk GUID inside a UEFI disk
+  image (which `build-image.sh` derives from the commit) does not name the newest commit on main that ci passed on,
+  unless something is still on its way to mend it (a publisher's run that has not ended, a publish minutes old, ci
+  still running on a newer commit); a source it could not read is red too. It mends nothing by itself: its red lines
+  say which workflow to run by hand. A unit test now holds the product's version equal wherever it is typed again
+  (`package.json`, `src/brand.ts`, `src-tauri/Cargo.toml`, both lock files) and Crimson Noir OS's own version equal
+  across its crates and containment files. Shown by unit tests against stand-ins for GitHub and the site (the day's
+  three states among them) and by the disk GUID of the image published for `ad3b3b9`, read from the release, being
+  the one that commit derives. Not yet seen: the `sync` workflow on main, a publish that carries `build.json`, and
+  the `current` workflow started by a ci run under the new rule; the first web copy published after this change is
+  the first with a stamp, and until then the check reports the web copy as unstamped.
 - **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
   `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
   names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with

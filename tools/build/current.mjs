@@ -9,14 +9,19 @@
  * titled "Crimson Noir: Agent City, current build", whose files are replaced the same way after each later green run.
  * It never makes a numbered release (those stay build-release.yml's); its only tags are `current` and, for a few
  * seconds when GitHub refuses to move `current`, the stand-in `current-next`.
- * - `pick --sha <commit> [--force] [--strict]`: which commit to build, given the one that started the run. It prints
- *   `sha=<commit>` and `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) for the newest commit on main that ci
- *   passed on there (a push or a run by hand, never a pull request's run), so a run that took a waiting run's place
- *   still builds the newest green commit; nothing on stdout, and why on stderr, when the given commit is not on main,
- *   no commit on main passed ci, the release already holds a newer one, or it holds that one for every required
- *   target (the iOS build is best effort) and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
- *   exits 1 rather than pass the commit over. `--strict` exits 1 when refused (not on main, nothing green), for a
- *   run by hand.
+ * - `pick --sha <commit> [--tested <ci run id>] [--force] [--strict]`: which commit to build, given the one that
+ *   started the run. It prints `sha=<commit>` and `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) for the
+ *   newest commit on main that ci passed on there (a push or a run by hand, never a pull request's run), so a run that
+ *   took a waiting run's place still builds the newest green commit; nothing on stdout, and why on stderr, when the
+ *   given commit is not on main, no commit on main passed ci, the release already holds a newer one, or it holds that
+ *   one for every required target (the iOS build is best effort) and that publish finished (`--force` builds it
+ *   again). `--tested` is the ci run whose end started this run (current.yml gives it for a workflow_run event alone):
+ *   GitHub is asked for that run by its id, and when it passed on main its commit counts as green even while the list
+ *   of ci's runs does not show it yet (`choose`; on 21 November 2026 the list trailed the run by some seconds, the
+ *   release was taken to hold the newest green commit already, and a green run built nothing). With `--tested`, a
+ *   run GitHub does not confirm as a pass on main exits 1. When GitHub cannot say whether a commit is on main, or
+ *   which of two green commits is the newer, it exits 1 rather than pass a commit over. `--strict` exits 1 when
+ *   refused (not on main, nothing green), for a run by hand.
  * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move]
  *   [--summary <file>] [--dry-run] [--reused-pick]`:
  *   <dir> holds the run's artifacts, one folder each (`matrix-<id>`, and `windows-installer-*`, `windows-msi-*`,
@@ -354,7 +359,8 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
 
 /**
  * The newest commit on main that ci passed on there (a push, or ci run by hand, in this repository), with that run's
- * address, or null. GitHub lists runs newest first; a commit is taken only while it is still on main's history.
+ * address and when GitHub last touched the run (it ended then), or null. GitHub lists runs newest first; a commit is
+ * taken only while it is still on main's history.
  */
 export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
   const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`)).workflow_runs ?? []
@@ -363,9 +369,56 @@ export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } =
     if (!(SHA.test(r.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)) continue
     if (seen.has(r.head_sha)) continue
     seen.add(r.head_sha)
-    if (onMain(gh, repo, r.head_sha, tip, { wait })) return { sha: r.head_sha, ci: r.html_url }
+    if (onMain(gh, repo, r.head_sha, tip, { wait })) return { sha: r.head_sha, ci: r.html_url, at: r.updated_at ?? '' }
   }
   return null
+}
+
+/** A ci run's id, as GitHub numbers runs. */
+const RUN = /^[1-9]\d{0,18}$/
+
+/**
+ * One ci run, asked for by its id: its commit and address when GitHub says it is ci.yml's, finished and passed, for a
+ * push (or ci run by hand) on main in this repository; else null, with why in `why`. The list newestGreen reads is a
+ * search GitHub fills in a little after a run ends; a run asked for by id is read where it is kept, so this is how the
+ * run that started a workflow_run event is believed. A run GitHub still shows unfinished is asked for again.
+ */
+export function ciRun(gh, repo, id, { wait = 5000 } = {}) {
+  if (!RUN.test(String(id ?? ''))) return { run: null, why: `not a run id: ${id}` }
+  let r = {}
+  for (let i = 1; i <= 3; i++) {
+    const got = attempt(gh, ['api', `repos/${repo}/actions/runs/${id}`], `read ci's run ${id}`, wait)
+    if (!got.ok && answered(got)) return { run: null, why: `GitHub has no run ${id} to show (${got.err.trim()})` }
+    if (!got.ok) throw new Error(`read ci's run ${id}: ${got.err.trim() || 'no answer'}, so whether it passed is unknown`)
+    try { r = JSON.parse(got.out) ?? {} } catch { r = {} }
+    if (r.status === 'completed') break
+    if (i < 3) pause(wait)
+  }
+  const said = `GitHub says run ${id} is ${r.path ?? 'no workflow'}, ${r.status ?? 'no status'}, ${r.conclusion ?? 'no conclusion'}, a ${r.event ?? 'nameless event'} on ${r.head_branch ?? 'no branch'} of ${r.head_repository?.full_name ?? 'no repository'}`
+  const passed = r.path === '.github/workflows/ci.yml' && r.status === 'completed' && r.conclusion === 'success' && r.head_branch === 'main' &&
+    (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo && SHA.test(r.head_sha ?? '')
+  return passed ? { run: { sha: r.head_sha, ci: r.html_url ?? '', at: r.updated_at ?? '' }, why: '' } : { run: null, why: said }
+}
+
+/**
+ * The commit to publish: the newest commit on main that ci passed on, by ci's list of runs or, when `tested` names the
+ * ci run whose end started this run, by that run too (see ciRun), whichever is the newer. Returns { green, lagged,
+ * why }: `green` is { sha, ci, at } or null; `lagged` says the list did not show the tested run yet; `why` says why the
+ * tested run was not believed (not a pass on main, or its commit is no longer on main). It throws when GitHub cannot
+ * say which of the two is the newer, so a green commit is never passed over for want of an answer.
+ */
+export function choose({ tested = '', repo, wait = 5000 }, gh, tip = mainTip(gh, repo)) {
+  const listed = newestGreen(gh, repo, tip, { wait })
+  if (tested === '' || tested === undefined || tested === null) return { green: listed, lagged: false, why: '' }
+  const { run, why } = ciRun(gh, repo, tested, { wait })
+  if (!run) return { green: listed, lagged: false, why }
+  if (!onMain(gh, repo, run.sha, tip, { wait })) return { green: listed, lagged: false, why: `ci's run ${tested} passed on ${run.sha}, which is not on main now (main is at ${tip})` }
+  if (!listed) return { green: run, lagged: true, why: '' }
+  if (listed.sha === run.sha) return { green: listed, lagged: false, why: '' }
+  const order = compare(gh, repo, listed.sha, run.sha, { wait })
+  if (order === 'ahead') return { green: run, lagged: true, why: '' }
+  if (order === 'behind' || order === 'identical') return { green: listed, lagged: false, why: '' }
+  throw new Error(`GitHub could not say which is newer, ${listed.sha} (the newest commit in ci's list of runs) or ${run.sha} (ci's run ${tested} passed on it): ${order ?? 'no answer'}; nothing is picked`)
 }
 
 /**
@@ -567,15 +620,22 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
 }
 
 /** Which commit to build; see the header. Returns { sha, ci, note } or { skip, refused }. */
-export function pick({ sha, force = false, repo, wait = 5000 }, gh) {
+export function pick({ sha, tested = '', force = false, repo, wait = 5000 }, gh) {
   if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
   const tip = mainTip(gh, repo)
   if (!onMain(gh, repo, sha, tip, { wait })) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
   // The newest green commit, not only the one that started this run: one run waits at a time, and a run that took a
   // waiting one's place (a re-run, a run by hand before main's tip passed ci) must not leave the newest one unpublished.
-  const green = newestGreen(gh, repo, tip, { wait })
+  // The run that started this one counts as green by GitHub's answer for it, whether ci's list shows it yet or not.
+  const { green, lagged, why } = choose({ tested, repo, wait }, gh, tip)
+  // The event said that run passed on main; when GitHub's answer for the run says otherwise, nothing is taken on trust
+  // and nothing is passed over quietly: the run is red, and someone looks.
+  if (why) return { skip: `the ci run that started this run is not taken as a pass on main (${why}): nothing is picked on its word (Actions > current > Run workflow, on main, builds the newest commit ci's list shows)`, refused: true, unconfirmed: true }
   if (!green) return { skip: `ci has not passed on ${sha} or on any newer commit on main`, refused: true }
-  const note = green.sha === sha ? '' : `building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`
+  const notes = []
+  if (lagged) notes.push(`ci's list of runs does not show run ${tested} yet; GitHub's answer for that run says it passed on ${green.sha}, which is built`)
+  if (green.sha !== sha) notes.push(`building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`)
+  const note = notes.join('; ')
   const release = getRelease(gh, repo)
   const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== green.sha && compare(gh, repo, state.commit, green.sha, { wait }) === 'behind') {
@@ -702,16 +762,18 @@ export function main(argv, gh = realGh) {
   const [cmd] = argv
   const repo = arg('repo') ?? process.env.GH_REPO
   if (!['pick', 'publish'].includes(cmd) || flag('help')) {
-    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
+    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--tested <ci run id>] [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
     return cmd && !flag('help') ? 1 : 0
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo ?? '')) { console.error('::error::GH_REPO (or --repo owner/name) must name the repository'); return 1 }
   try {
     if (cmd === 'pick') {
-      const r = pick({ sha: arg('sha'), force: flag('force'), repo }, gh)
+      const r = pick({ sha: arg('sha'), tested: arg('tested') ?? '', force: flag('force'), repo }, gh)
       if (r.skip) {
-        console.error(`${r.refused && flag('strict') ? '::error::' : '::notice::'}${r.skip}`)
-        return r.refused && flag('strict') ? 1 : 0
+        // Refused by hand (--strict), or the run that started this one was not confirmed as a pass: red either way.
+        const red = r.refused && (flag('strict') || r.unconfirmed === true)
+        console.error(`${red ? '::error::' : '::notice::'}${r.skip}`)
+        return red ? 1 : 0
       }
       if (r.note) console.error(`::notice::${r.note}`)
       console.log(`sha=${r.sha}\nci=${r.ci}`)

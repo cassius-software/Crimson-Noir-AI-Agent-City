@@ -4870,7 +4870,10 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
 - **It never steps back.** Only a commit on main that ci passed on is built, and it is published only while it is
   still on main and at least as new as what the release holds (asked again after the build). When the release's
   record cannot be read, or GitHub cannot say whether a commit is on main or compare it with the release's, nothing is
-  written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
+  written and the run is red. The ci run that starts a run counts by GitHub's answer for that very run, asked for by
+  its id, because the list of ci's runs can trail a run that has just ended: on 21 November 2026 it did, and a run
+  ended green having built nothing for a commit ci had just passed on. A run that GitHub does not show as ci,
+  finished and passed on main in this repository is never taken on the workflow's word: that run is red. One run at a time, and one waiting: a run that comes while another waits takes its
   place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
   release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
   attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
@@ -4900,6 +4903,26 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
 - **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds the newest
   commit on main that ci passed on, and with "force" even when the release already holds that commit. Retry a failed
   run this way (or with "Re-run all jobs"), not with "Re-run failed jobs".
+- **In step with the web copy.** The web copy and the downloads are published by two workflows, each after the same
+  green ci, and either can skip, wait or fail without the other. The `sync` workflow (`.github/workflows/sync.yml`,
+  `tools/build/sync.mjs`) looks at what is published and turns red when it does not all come from one commit, the
+  newest on main that ci passed on. It reads the web copy's `build.json` (the commit it was built from, below) and
+  `build.txt`, asked for past every cache; `current.json` (the commit of the publish and of each target's files) and
+  whether a staged record is still there; where the tag `current` points; each recorded file's size and SHA-256 as
+  GitHub holds it; and the first two sectors of each UEFI disk image, whose disk GUID
+  `crimson_noir_os/tools/build-image.sh` derives from the commit it bakes, so the image itself says which commit it is. Behind is not red while something can still
+  mend it: ci passed less than ten minutes ago, a run of the publisher has not ended (45 minutes for web, three hours
+  for current), the web copy was published less than fifteen minutes ago (GitHub Pages may serve the copy before
+  for ten), or, for the web copy alone, ci is still running on a newer commit (the web workflow publishes main's tip
+  alone, so it waits for that one). Otherwise each thing that is behind is one red line with the commit it is at and
+  what to do, and a source that could not be read is red as well, since "could not look" is not "in step". The iOS
+  build, best effort everywhere, is a warning. The run's summary is a table of every published thing and its commit.
+  It runs after each run of web or current on main, every hour (GitHub may start a scheduled run late), and by hand
+  (Actions > sync > Run workflow); it only reads, with read access alone. It mends nothing by itself: a red run says
+  which publisher to run by hand. One case it reports and cannot advise away: when ci has passed on a commit and
+  failed on a newer one at main's tip, the downloads follow the green commit and the web copy waits for the tip, so
+  the two stay apart, in red, until ci passes on main's tip. Not yet seen: the workflow on main (its first runs are
+  this change's own pull request, which only reports).
 - **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
   everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
   notes it would write, and the log what it would upload, keep and delete.
@@ -4970,7 +4993,12 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the commit ci
   tested, and only while it is still main's tip, so during a burst of merges it publishes once, after the last one's
   ci passes, and never a commit ci has not passed. Actions > web > Run workflow publishes main by hand, without
-  waiting for ci. The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
+  waiting for ci. Each publish puts `build.json` beside the page: the commit the copy is built from, the version, the
+  build's name as `build.txt` gives it, the ci run that passed on that commit (empty for a run by hand) and the run
+  that published it. The page and its worker never read it and the worker never keeps it (it always comes from the
+  network), and it is no part of the build's name, so the same page is the same build whatever it says; a build made
+  on your own machine has none. It is what the `sync` workflow reads to tell whether the web copy and the downloads
+  come from one commit (The current build, In step with the web copy). The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
   the address (the repository and its releases are public already). GitHub serves the files and runs nothing. Each
   publish also puts the site's model in `models/` beside the page (A model in this page, The site's model): fetched
   from Hugging Face at its pinned revision, kept in the workflow's cache by its pin, and checked against the pin's

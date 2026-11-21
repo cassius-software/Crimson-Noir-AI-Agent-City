@@ -51,8 +51,10 @@ interface State { schema: number; commit: string; tagAt: string; version: string
 const commitOf = (n: number) => createHash('sha1').update(`commit ${n}`).digest('hex')
 const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex')
 
-/** The address of the ci run that passed on a commit, as the stand-in lists it. */
-const ciUrl = (sha: string) => `https://github.com/${REPO}/actions/runs/${parseInt(sha.slice(0, 6), 16)}`
+/** The id of the ci run on a commit, as the stand-in numbers it, that run's address, and when it ended. */
+const ciId = (sha: string) => parseInt(sha.slice(0, 6), 16)
+const ciUrl = (sha: string) => `https://github.com/${REPO}/actions/runs/${ciId(sha)}`
+const ciAt = (sha: string) => new Date(Date.UTC(2026, 10, 21) + (ciId(sha) % 86_400) * 1000).toISOString()
 
 /**
  * A stand-in for GitHub as `gh` sees it: main's history (a line of commits, oldest first, which a test can extend),
@@ -66,11 +68,16 @@ const ciUrl = (sha: string) => `https://github.com/${REPO}/actions/runs/${parseI
  */
 interface Release { id: number; tag: string; draft: boolean; title: string; notes: string; prerelease: boolean; latest: boolean; assets: Map<string, Asset> }
 
-function fakeGitHub(history: string[], { green = history, workflows = {} }: { green?: string[]; workflows?: Record<string, string> } = {}) {
+function fakeGitHub(history: string[], { green = history, listed, workflows = {} }: { green?: string[]; listed?: string[]; workflows?: Record<string, string> } = {}) {
   const refs = new Map<string, string>()
   const s = {
     history: [...history],
     green: new Set(green),
+    // The green commits ci's list of runs shows; GitHub fills that list in a little after a run ends, so a test can
+    // hold a commit back from it (`listed`), while the run asked for by its id says it passed. All of them when null.
+    listed: listed ? new Set(listed) : null as Set<string> | null,
+    // What GitHub answers for a run asked for by id, where a test wants something other than the commit's own run.
+    runs: new Map<number, Record<string, unknown>>(),
     workflows: { ...workflows } as Record<string, string>,
     refs,
     get tag() { return refs.get('current') ?? null },
@@ -114,10 +121,19 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
         return ok({ status: a < 0 || b < 0 ? 'diverged' : b > a ? 'ahead' : b < a ? 'behind' : 'identical' })
       }
       if (p === 'actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50') {
-        const run = (sha: string) => ({ head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) })
+        const run = (sha: string) => ({ head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha), updated_at: ciAt(sha) })
         // A fork's pull request from its own branch named main is listed too, and must be passed over.
         const fork = { ...run(tip()), event: 'pull_request', head_repository: { full_name: 'someone/fork' }, html_url: 'https://fork' }
-        return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c)).map(run)] })
+        return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c) && (s.listed?.has(c) ?? true)).map(run)] })
+      }
+      k = /^actions\/runs\/(\d+)$/.exec(p)
+      if (k) {
+        const id = Number(k[1])
+        const given = s.runs.get(id)
+        if (given) return ok(given)
+        const sha = s.history.find((c) => ciId(c) === id)
+        if (!sha) return missing
+        return ok({ id, path: '.github/workflows/ci.yml', status: 'completed', conclusion: s.green.has(sha) ? 'success' : 'failure', head_sha: sha, head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha), updated_at: ciAt(sha) })
       }
       k = /^releases\/tags\/([a-z-]+)$/.exec(p)
       if (k) {
@@ -935,6 +951,117 @@ test('pick: the newest commit on main that ci passed on, whichever commit starte
   } finally { t.done() }
 })
 
+test('pick: the ci run that started the run counts by GitHub\'s answer for it, so a list of runs that does not show it yet no longer leaves its commit unbuilt behind a green run', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    // 21 November 2026: the release held c1 whole, ci passed on c2 and started the run, and the list still ended at c1.
+    const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+    c.publish({ media: artifacts(join(t.dir, 'm'), allBuilt('a')), stage: join(t.dir, 's'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    const unseen = c.pick({ sha: c2, repo: REPO }, gh.gh)
+    assert.match(unseen.skip, new RegExp(`already holds ${c1} for every required target`), 'the list alone: what happened that day')
+    const seen = c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO }, gh.gh)
+    assert.equal(seen.sha, c2, 'the run asked for by its id says it passed')
+    assert.equal(seen.ci, ciUrl(c2))
+    assert.match(seen.note, new RegExp(`ci's list of runs does not show run ${ciId(c2)} yet; GitHub's answer for that run says it passed on ${c2}, which is built`))
+    assert.deepEqual(c.choose({ tested: ciId(c2), repo: REPO }, gh.gh), { green: { sha: c2, ci: ciUrl(c2), at: ciAt(c2) }, lagged: true, why: '' }, 'a number is a run id as well')
+    // The list in step with the run: the same answer, and no word about a lag.
+    gh.s.listed = null
+    assert.deepEqual(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO }, gh.gh), { sha: c2, ci: ciUrl(c2), note: '' })
+    assert.deepEqual(c.choose({ repo: REPO }, gh.gh), { green: { sha: c2, ci: ciUrl(c2), at: ciAt(c2) }, lagged: false, why: '' }, 'no run named: the list alone')
+
+    // Nothing in the list at all (a first run), and the run that started it: its commit.
+    const first = fakeGitHub([c1, c2], { green: [c2], listed: [] })
+    assert.equal(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO }, first.gh).sha, c2)
+    // During a burst the list can already show a newer green commit than the run that started this one: the newer.
+    const burst = fakeGitHub([c1, c2, c3], { green: [c1, c2, c3] })
+    const newer = c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO }, burst.gh)
+    assert.equal(newer.sha, c3)
+    assert.match(newer.note, new RegExp(`^building ${c3}, the newest commit on main that ci passed on \\(this run was started for ${c2}\\)$`))
+    // And the list can trail by more than one: the run's commit when it is the newer, the list's when it is.
+    const trail = fakeGitHub([c1, c2, c3], { green: [c1, c2, c3], listed: [c1] })
+    assert.equal(c.pick({ sha: c3, tested: String(ciId(c3)), repo: REPO }, trail.gh).sha, c3)
+    assert.equal(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO }, trail.gh).sha, c2, 'c3 is green, but only its own run or the list can say so')
+  } finally { t.done() }
+})
+
+test('pick: a run named as the one that started it is believed only as ci, finished and passed, on a push or a run by hand to main here; anything else is refused in red, and an unanswered question stops the run', () => {
+  const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+  const base = (sha: string) => ({ id: ciId(sha), path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_sha: sha, head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) })
+  const refusedWith = (change: Record<string, unknown>, why: RegExp) => {
+    const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+    gh.s.runs.set(ciId(c2), { ...base(c2), ...change })
+    const r = c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, gh.gh)
+    assert.equal(r.sha, undefined, `nothing picked: ${JSON.stringify(change)}`)
+    assert.equal(r.refused, true)
+    assert.equal(r.unconfirmed, true)
+    assert.match(r.skip, /^the ci run that started this run is not taken as a pass on main \(/)
+    assert.match(r.skip, why)
+  }
+  refusedWith({ conclusion: 'failure' }, /completed, failure, a push on main/)
+  refusedWith({ conclusion: 'cancelled' }, /cancelled/)
+  refusedWith({ conclusion: null, status: 'in_progress' }, /in_progress, no conclusion/)
+  refusedWith({ event: 'pull_request' }, /a pull_request on main/)
+  refusedWith({ event: 'schedule' }, /a schedule on main/)
+  refusedWith({ head_branch: 'feature' }, /on feature of/)
+  refusedWith({ head_repository: { full_name: 'someone/fork' } }, /of someone\/fork/)
+  refusedWith({ path: '.github/workflows/web.yml' }, /is \.github\/workflows\/web\.yml,/)
+  refusedWith({ head_sha: 'main' }, /completed, success/)
+  // A commit that passed and is no longer on main (main was rewound): not built on the run's word.
+  refusedWith({ head_sha: commitOf(42) }, new RegExp(`passed on ${commitOf(42)}, which is not on main now \\(main is at ${c2}\\)`))
+
+  // A run GitHub still shows unfinished is asked for again, and believed once it shows the pass.
+  const slow = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+  let asked = 0
+  slow.s.fail = (argv) => (argv[argv.length - 1].endsWith(`/actions/runs/${ciId(c2)}`) && ++asked < 3 ? { ok: true, out: JSON.stringify({ ...base(c2), status: 'in_progress', conclusion: null }), err: '' } : null)
+  assert.equal(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, slow.gh).sha, c2)
+  assert.equal(asked, 3)
+
+  // No such run, or no run id at all: refused, without a second try for an answer GitHub gave.
+  const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+  const gone = c.pick({ sha: c2, tested: '999', repo: REPO, wait: 0 }, gh.gh)
+  assert.match(gone.skip, /GitHub has no run 999 to show \(gh: Not Found \(HTTP 404\)\)/)
+  assert.equal(gh.s.calls.filter((a) => a[a.length - 1].endsWith('/actions/runs/999')).length, 1)
+  for (const bad of ['', '0', '-1', '12x', 'main', '1; rm -rf /', '99999999999999999999']) {
+    const r = bad === '' ? null : c.pick({ sha: c2, tested: bad, repo: REPO, wait: 0 }, gh.gh)
+    if (r) { assert.equal(r.unconfirmed, true, bad); assert.match(r.skip, /not a run id/) }
+  }
+  assert.equal(gh.s.calls.some((a) => /actions\/runs\/[^0-9]/.test(a[a.length - 1])), false, 'only a number reaches GitHub')
+
+  // A lost connection is not an answer: the run stops rather than build nothing behind a green tick.
+  const lost = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+  lost.s.fail = (argv) => (argv[argv.length - 1].endsWith(`/actions/runs/${ciId(c2)}`) ? { ok: false, out: '', err: 'connection reset' } : null)
+  const error = console.error
+  console.error = () => {}
+  try {
+    assert.throws(() => c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, lost.gh), /read ci's run \d+: connection reset, so whether it passed is unknown/)
+    // Nor is "diverged" an order: with two green commits GitHub cannot order, nothing is picked.
+    const odd = fakeGitHub([c1, c2, c3], { green: [c1, c2, c3], listed: [c1] })
+    odd.s.fail = (argv) => (argv[argv.length - 1] === `repos/${REPO}/compare/${c1}...${c2}?per_page=1` ? { ok: true, out: JSON.stringify({ status: 'diverged' }), err: '' } : null)
+    assert.throws(() => c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, odd.gh), /GitHub could not say which is newer, .* diverged; nothing is picked/)
+
+    // The command line: red for a run not confirmed, with or without --strict; the outputs stay empty.
+    const out: string[] = []
+    const err: string[] = []
+    const log = console.log
+    console.log = (...a: unknown[]) => { out.push(a.join(' ')) }
+    console.error = (...a: unknown[]) => { err.push(a.join(' ')) }
+    try {
+      const cli = fakeGitHub([c1, c2, c3], { green: [c1, c2], listed: [c1] })
+      assert.equal(c.main(['pick', '--sha', c2, '--tested', String(ciId(c2)), '--repo', REPO], cli.gh), 0)
+      assert.deepEqual(out.splice(0), [`sha=${c2}\nci=${ciUrl(c2)}`])
+      assert.match(err.splice(0).join('\n'), /::notice::ci's list of runs does not show run \d+ yet/)
+      assert.equal(c.main(['pick', '--sha', c3, '--tested', String(ciId(c3)), '--repo', REPO], cli.gh), 1, 'ci did not pass on c3')
+      assert.deepEqual(out.splice(0), [])
+      assert.match(err.splice(0).join('\n'), /^::error::the ci run that started this run is not taken as a pass on main \(GitHub says run \d+ is \.github\/workflows\/ci\.yml, completed, failure, a push on main of /)
+      cli.s.fail = (argv) => (argv[argv.length - 1] === `repos/${REPO}/compare/${c1}...${c2}?per_page=1` ? { ok: true, out: JSON.stringify({ status: 'diverged' }), err: '' } : null)
+      assert.equal(c.main(['pick', '--sha', c2, '--tested', String(ciId(c2)), '--repo', REPO], cli.gh), 1, 'an unanswered question')
+      assert.deepEqual(out.splice(0), [])
+      assert.match(err.splice(0).join('\n'), /^::error::GitHub could not say which is newer, /)
+    } finally { console.log = log }
+  } finally { console.error = error }
+})
+
 test('the command line: pick prints the outputs or nothing, --strict fails a refused commit; publish exits 1 when a required target failed (after publishing the rest) and 0 when only the iOS build did', () => {
   const t = scratch()
   const out: string[] = []
@@ -1012,6 +1139,13 @@ test('the workflow: started by a green ci on main, a pull request that touches i
   assert.equal((WORKFLOW.match(/github\.event_name == 'workflow_dispatch'/g) ?? []).length, 2, 'the queue and the pick job')
   assert.match(WORKFLOW, /\[ "\$GITHUB_REF" = refs\/heads\/main \] \|\| \{ echo "::error::run it on main/)
   assert.match(WORKFLOW, /node tools\/build\/current\.mjs pick "\$\{args\[@\]\}" \| tee -a "\$GITHUB_OUTPUT"/)
+  // The run that started this one is named to pick for a workflow_run event alone (the job's condition has said it
+  // passed on main), from the event's own id: never for a run by hand or a pull request, whose commit nothing vouches for.
+  assert.match(WORKFLOW, /^ {10}STARTED_BY: \$\{\{ github\.event\.workflow_run\.id \}\}$/m)
+  assert.match(WORKFLOW, /^ {12}\*\) args=\(--sha "\$TESTED" --tested "\$STARTED_BY"\) ;;$/m)
+  assert.equal(WORKFLOW.split('--tested').length - 1, 1, 'in that one branch')
+  assert.equal(WORKFLOW.split('STARTED_BY').length - 1, 2, 'set once, used once')
+  assert.match(WORKFLOW, /workflow_dispatch\)\n {14}\[ "\$GITHUB_REF" = refs\/heads\/main \] \|\| \{[^\n]*\n {14}args=\(--sha "\$GITHUB_SHA" --strict\)\n/)
   const jobs = WORKFLOW.split(/^jobs:$/m)[1] ?? ''
   const job = (name: string) => (jobs.split(new RegExp(`^ {2}${name}:$`, 'm'))[1] ?? '').split(/^ {2}[a-z-]+:$/m)[0]
   for (const [name, file] of [['windows', 'windows-app.yml'], ['matrix', 'build-matrix.yml']]) {
