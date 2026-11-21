@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins NoirScript's bytecode VM against the specification, value by value: i32 and u32
- * wrap, f32 is binary32 rounded after every operation (checked against Math.fround arithmetic in the test), integer
- * division by zero is a named error, casts saturate and reinterpret, shift counts are masked, vectors work lane-wise
- * with masks, select, compare and horizontals, morton2 round-trips, the bit intrinsics match reference formulas over
- * seeded values, arrays go by value, every index is bounds-checked, recursion and loops and shadowing and if-expressions
- * behave, globals and functions live across lines and may be redefined, and every bound (steps, output, depth, memory)
- * ends a runaway line with its named error while the session stays usable and ELITE_LIMITS raise it. The branchless
- * witness runs over a thousand seeded triples, and the `asm` listing is non-empty and deterministic.
+ * Why does this file exist? It pins Crimson Noir Script's bytecode VM against the specification, value by value: i32
+ * and u32 wrap, f32 is binary32 rounded after every operation (checked against Math.fround arithmetic in the test),
+ * integer division by zero is a named error, casts saturate and reinterpret, shift counts are masked, vectors work
+ * lane-wise with masks, select, compare and horizontals, morton2 round-trips, the bit intrinsics match reference
+ * formulas over seeded values, arrays go by value, every index is bounds-checked, recursion and loops and shadowing and
+ * if-expressions behave, globals and functions live across lines and may be redefined, and every bound (steps, output,
+ * depth, memory) ends a runaway line with its named error while the session stays usable and ELITE_LIMITS raise it. The
+ * branchless witness runs over a thousand seeded triples, and the `asm` listing is non-empty and deterministic.
  * What breaks if it is removed? An opcode could compute wrongly, a bound could stop working, or a line could leave
  * the session dead, and nothing would say so.
  */

@@ -226,25 +226,90 @@ C and C++ of a third party is in a shipped build for the first time:
   their sources only; the Linux packages install no collected notice of them yet, as the Windows installer installs
   none.
 
+### The speech pack the web copy serves (`third_party/moonshine-tiny-en/`, `third_party/onnxruntime-web/1.31.1/`, added 14 November 2026)
+
+The microphone turned speech into words only where the browser has an on-device recogniser of its own, which is a
+few browsers. The page now has its own, so a second third-party runtime is bundled and a second set of model weights
+is served beside the web copy:
+
+- **What it is.** Two things, both MIT. (1) ONNX Runtime Web 1.31.1 (npm `onnxruntime-web`, Copyright (c) Microsoft
+  Corporation), the sixth runtime dependency, pinned exactly: its script `dist/ort.wasm.bundle.min.mjs` (one
+  self-contained file with no static import; `speechRuntimeLean.test.ts` and `compliance.test.ts` hold that) is
+  bundled into the page inside the speech worker, and its WebAssembly module `dist/ort-wasm-simd-threaded.wasm`
+  (14,848,852 bytes, sha256 `4b884c203b0fa48d057be3332c65513ff85aa3c5bddd6946acc0fab7ecda001d`) is served beside
+  the web copy, unchanged. (2) Moonshine Tiny, the English speech-to-text model by Useful Sensors, Inc. (Copyright
+  (c) 2025 Useful Sensors, Inc.), as quantized ONNX: `encoder_model.onnx` (7,937,661 bytes, sha256
+  `c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a`) and `decoder_model_merged.onnx` (20,243,286
+  bytes, sha256 `eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367`), the files of those names under
+  `dist/model/tiny/quantized/` in the registry tarball of `@moonshine-ai/moonshine-js` 0.1.29 (21,514,347 bytes,
+  sha256 `864e17a00ed494857c71693e835306fa038e0f82002c76e3056d67d574e1c2d8`), and its vocabulary `tokens.json`
+  (307,261 bytes, sha256 `23a600089d29502c8966c95cb1b6318e015bbaf23e130fab6f4bb078402c9420`; 32,000 word pieces),
+  written from the vendor's tokenizer file in its PyPI package `useful-moonshine-onnx` 20251121. None of that npm
+  package's code is used and it is not a dependency; the same vendor's Spanish model, whose licence limits commercial
+  use, is not fetched, served or named in any code.
+- **How it is held.** The model's two files and the WebAssembly module are never committed and never in the page;
+  `tokens.json` is committed (a list of word pieces, 307 KB). `src/09_Cognition/speechPack.ts` pins the four files
+  (`SPEECH_PACK`: each file's name, size and SHA-256), the `SHA256SUMS` files beside the licences hold the same lines,
+  and `speechPack.test.ts` and `speechTool.test.ts` hold them equal. The web workflow takes the model from the npm
+  registry's tarball whenever its cache (keyed by the whole pin) lacks it, the module from the installed dependency
+  and the vocabulary from the repository, and on every publish `tools/web/speechPack.mjs place` checks each file's
+  size and SHA-256 against the pin while copying it into `dist-web/speech/`, with a manifest and the six licence and
+  notice files; a mismatch fails the publish. `place` refuses a folder that is not the web copy, so `dist/` never gets
+  the pack, and `tools/verify/page_dist.mjs` fails a `dist/` that holds an `.onnx` file, or any file but the page. The page
+  downloads the pack from its own site, checks the same hashes in the worker before any file is run, and keeps it in
+  that browser's Cache Storage. ci's `speech` job reads a synthetic sentence with the pinned pack under Node and in a
+  desktop Chromium on every run.
+- **The texts.** The npm package of ONNX Runtime Web ships no licence file. `third_party/onnxruntime-web/1.31.1/`
+  holds `LICENSE` and `ThirdPartyNotices.txt`, the files of those names at tag `v1.31.1` of
+  `github.com/microsoft/onnxruntime`; `EMSCRIPTEN-NOTICES.txt`, the licences of what the Emscripten compiler adds to
+  a WebAssembly build (Emscripten's runtime, musl libc, LLVM's libc++, libc++abi and compiler-rt), taken at
+  Emscripten 4.0.23, the version the build script of that tag names by default; `SCRIPT-LICENCE`, which the build
+  embeds in the page for the bundled script (`vite.config.ts` `RECORDED_LICENCES`: a recorded text stands in for a
+  package's missing licence file only at the exact version it was recorded for, and the build still fails a bundled
+  package with neither); and `NOTICE`. `third_party/moonshine-tiny-en/` holds `LICENSE` (the MIT section of the
+  vendor package's LICENSE file, whose opening lines put "the code in this repo and the English-language Moonshine
+  speech to text model it uses" under MIT), `NOTICE`, `SHA256SUMS` and `tokens.json`. The web workflow serves all six
+  texts beside the pack. `NOTICE.md` (two paragraphs under "Third-party software", the trademark paragraph, operator
+  note 15) and `LICENSE` section 4 name them.
+- **Open points, for the owner before a release.** They are operator note 15 of `NOTICE.md`: the model's licence
+  statement was read in the vendor's npm package and not compared with its Hugging Face model card; the model files
+  come from that npm package and were not compared with the vendor's other copies; the vocabulary appears to be the
+  32,000-piece vocabulary of the LLaMA model family, which the vendor redistributes inside its MIT packages, and its
+  first source was not traced; which of ONNX Runtime's listed third-party components are in the WebAssembly build
+  was not audited; that Microsoft built the module with exactly Emscripten 4.0.23 was not verified; the microphone
+  opens when the city starts and each new visitor downloads 41 MB (GitHub Pages' soft limit of 100 GB a month, with
+  the 0.4 GB model above); and the model is small and English-only.
+
 ## 2. The npm dependency tree (`package-lock.json`)
 
 Checked every entry of the lockfile by its `license` field (the test does the same on every run).
 
 | Licence | Packages | Where |
 |---|---|---|
-| MIT | 100 | runtime and build |
-| Apache-2.0 | 4 (`@dimforge/rapier3d-compat`, `@dimforge/rapier3d-simd-compat`, `detect-libc`, `typescript`) | Rapier at runtime; the rest build-only |
+| MIT | 103 | runtime and build |
+| Apache-2.0 | 6 (`@dimforge/rapier3d-compat`, `@dimforge/rapier3d-simd-compat`, `detect-libc`, `typescript`, `flatbuffers`, `long`) | Rapier at runtime; `flatbuffers` and `long` installed with ONNX Runtime Web and not bundled (below); the rest build-only |
 | Apache-2.0 OR MIT | 12 | build-only (Rust-built binaries of the toolchain) |
-| ISC | 2 (`graceful-fs`, `picocolors`) | build-only |
-| BSD-3-Clause | 1 (`source-map-js`) | build-only |
+| ISC | 3 (`graceful-fs`, `picocolors`, `guid-typescript`) | build-only; `guid-typescript` installed with ONNX Runtime Web and not bundled |
+| BSD-3-Clause | 11 (`source-map-js`, `protobufjs` and nine `@protobufjs/*`) | `source-map-js` build-only; the rest installed with ONNX Runtime Web and not bundled |
 | Unlicense | 1 (`fast-sha256`) | build-only |
-| MPL-2.0 | 24, all `lightningcss` and its per-platform binaries | **devDependency only**: Tailwind's CSS compiler. It runs at build time and none of its code is in `dist/index.html`; its MPL obligations attach to its own files, which are not redistributed. The build's embedded notice (`vite.config.ts`, `noticesComment`) lists only bundled packages: `react`, `react-dom`, `scheduler`, `three`, `@dimforge/rapier3d-simd-compat`, `@wllama/wllama`, all MIT or Apache-2.0, and the pinned runtime's own NOTICE (§1). |
+| MPL-2.0 | 24, all `lightningcss` and its per-platform binaries | **devDependency only**: Tailwind's CSS compiler. It runs at build time and none of its code is in `dist/index.html`; its MPL obligations attach to its own files, which are not redistributed. The build's embedded notice (`vite.config.ts`, `noticesComment`) lists only bundled packages: `react`, `react-dom`, `scheduler`, `three`, `@dimforge/rapier3d-simd-compat`, `@wllama/wllama`, `onnxruntime-web`, all MIT or Apache-2.0, and the pinned runtimes' own notices (§1). |
 | GPL, AGPL, LGPL, SSPL, EUPL, non-commercial | **0** | |
 
-The five runtime dependencies in `package.json` (`react`, `react-dom`, `three`, `@dimforge/rapier3d-simd-compat`,
-`@wllama/wllama` pinned at exactly 3.8.1) are MIT or Apache-2.0 and each ships its licence text (`compliance.test.ts`,
-"the real runtime dependencies all have a licence file the build can embed"; `@wllama/wllama`'s file is named
-`LICENCE`). `compliance.test.ts` lists the five by name, so a sixth comes through this audit.
+The six runtime dependencies in `package.json` (`react`, `react-dom`, `three`, `@dimforge/rapier3d-simd-compat`,
+`@wllama/wllama` pinned at exactly 3.8.1, `onnxruntime-web` pinned at exactly 1.31.1) are MIT or Apache-2.0. Five
+ship their licence text (`compliance.test.ts`, "the real runtime dependencies all have a licence file the build can
+embed"; `@wllama/wllama`'s file is named `LICENCE`); `onnxruntime-web` ships none, so the text recorded for that exact
+version stands in for it (§1, the speech pack). `compliance.test.ts` lists the six by name, so a seventh comes
+through this audit.
+
+`onnxruntime-web` brings sixteen packages into the lockfile (14 November 2026): itself and `onnxruntime-common`
+(MIT), `platform` (MIT), `flatbuffers` and `long` (Apache-2.0), `guid-typescript` (ISC), `protobufjs` and nine
+`@protobufjs/*` packages (BSD-3-Clause). The page bundles one file of `onnxruntime-web` only, a script that imports
+nothing (`compliance.test.ts` reads it for an import in the npm tree test). That script has `onnxruntime-common`
+(MIT, Microsoft Corporation, the same project and the same licence) compiled into it by Microsoft's own build, so
+that package's code is in `dist/index.html`, under the licence text the build embeds for the script; none of the
+other fourteen is in `dist/index.html` or served: they are installed because the package lists them for its other
+builds.
 
 ## 3. The Rust dependency trees (unverified from the cloud)
 

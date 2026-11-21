@@ -8,14 +8,15 @@
  * laws by rank and title, the gate's fifteen checks by name, the host's vouch that the page is contained, the Ring-0
  * audit standing) salted with a number drawn once per page load, so the seal is 0 when any of it fails and a number
  * typed from memory never matches. `spawn_subagents` sets n sub-agents to work for a role through Sloane's team runner
- * (08_Swarm/team.ts): one lane each, a small NoirScript program at one of the sixteen workplaces, opened from wherever
- * the player stands, under the lane limits and the Ring-0 gate, with anyone within earshot who has a desk's skill
- * asked over as the runner finds them. It answers with how many lanes are running after their first tick, never with
- * the number wished for, and opens nothing while the page is not contained or the realm is halted. `unlock_city`
+ * (08_Swarm/team.ts): one lane each, a small Crimson Noir Script program at one of the sixteen workplaces, opened from
+ * wherever the player stands, under the lane limits and the Ring-0 gate, with anyone within earshot who has a desk's
+ * skill asked over as the runner finds them. It answers with how many lanes are running after their first tick, never
+ * with the number wished for, and opens nothing while the page is not contained or the realm is halted. `unlock_city`
  * opens the city, on whatever stage the walk is, for a seal that matches the live one and a swarm of one or more, by
- * telling the walk, which keeps the pass; it writes to nothing else. Every door leaves one plain line the console prints after the run, so the visitor
- * reads why the city stayed shut. Nothing here bypasses the Ring-0 gate or the elite tier: the exam has no write
- * surface, and NoirScript reaches it only through the host the console hands it.
+ * telling the walk, which keeps the pass; it writes to nothing else. Every door leaves one plain line the console
+ * prints after the run, so the visitor reads why the city stayed shut. Nothing here bypasses the Ring-0 gate or the
+ * elite tier: the exam has no write surface, and Crimson Noir Script reaches it only through the host the console hands
+ * it.
  * What breaks if it is removed? The exit program's three words have nothing behind them: the walk ends only at the console.
  */
 import { PROGRAM, STAGES, type Stage } from '../../09_Cognition/firstWalk.ts'

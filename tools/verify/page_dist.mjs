@@ -7,9 +7,10 @@
  * runs it after the build): `node tools/verify/page_dist.mjs [DIR]` (DIR defaults to dist) exits 1 unless
  *   - DIR holds exactly index.html: the product is one self-contained file, and nothing else may ship beside it (a
  *     chunk split out of the bundle, an asset Vite copied, a model);
- *   - no .gguf file is anywhere in DIR: the page carries no model. A model is a file kept in the browser, the
- *     operator's own or the one the web copy serves beside its page, which tools/web/siteModel.mjs puts in
- *     dist-web/models/ after the build (it refuses any folder but the web copy) and which never reaches DIR;
+ *   - no .gguf or .onnx file is anywhere in DIR: the page carries no model. A model is a file kept in the browser, the
+ *     operator's own or one the web copy serves beside its page, which tools/web/siteModel.mjs puts in
+ *     dist-web/models/ and tools/web/speechPack.mjs in dist-web/speech/ after the build (each refuses any folder but
+ *     the web copy) and which never reaches DIR;
  *   - index.html is at most MAX_BYTES (the size measured with the in-page model runtime embedded, plus 3%), so a page
  *     that grows on a phone's connection does so on purpose, with this number raised in review;
  *   - the http(s) hosts the page names are exactly the reviewed list below (loopback aside): a new address anywhere in
@@ -33,9 +34,11 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 export const MAX_BYTES = 14_817_000
 
 /** The hosts the page names without the in-page runtime, all from bundled packages and notices: React's error links,
- *  Tailwind's banner, three.js's removal note and a shader's credit, the SVG and MathML namespaces, and the Apache
- *  licence text in Rapier's notice. */
-export const PAGE_HOSTS = ['github.com', 'react.dev', 'tailwindcss.com', 'www.apache.org', 'www.shadertoy.com', 'www.w3.org']
+ *  Tailwind's banner, three.js's removal note and a shader's credit, the SVG and MathML namespaces, the Apache
+ *  licence text in Rapier's notice, and the guide the speech runtime (ONNX Runtime Web, in the speech worker) names in
+ *  its message about threads without cross-origin isolation (web.dev: a sentence, never an address it asks for; the
+ *  worker runs it on one thread, from bytes it is handed). */
+export const PAGE_HOSTS = ['github.com', 'react.dev', 'tailwindcss.com', 'web.dev', 'www.apache.org', 'www.shadertoy.com', 'www.w3.org']
 /** The hosts that come with the in-page runtime: wllama's Hugging Face and CDN paths (never called: setCompat(null), no
  *  download is ever asked for), and the LLVM and miniaudio licence texts in the runtime's NOTICE. */
 export const RUNTIME_HOSTS = ['cdn.jsdelivr.net', 'huggingface.co', 'llvm.org', 'unlicense.org']
@@ -69,7 +72,7 @@ export function checkDist(dir, root = ROOT) {
   if (!existsSync(dir)) return [`${dir} does not exist: run npm run build first`]
   const problems = []
   const all = files(dir)
-  const models = all.filter((f) => /\.gguf$/i.test(f))
+  const models = all.filter((f) => /\.(?:gguf|onnx)$/i.test(f))
   if (models.length) problems.push(`a model file is in the build: ${models.join(', ')}`)
   if (all.length !== 1 || all[0] !== 'index.html') problems.push(`the build must be exactly index.html; it holds ${all.length ? all.join(', ') : 'nothing'}`)
   if (!all.includes('index.html')) return problems

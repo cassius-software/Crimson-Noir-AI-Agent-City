@@ -8,10 +8,13 @@
  * RTCPeerConnection, sendBeacon, WebTransport, importScripts, import( of an http string) or a URL literal off this
  * machine is in an explicit allowlist, and each allowlisted call site goes through the gate (02_Define_The_Rules/
  * airgap.ts loopbackOnly, or an alias of it, named in the enclosing function), but for the one fetch of the page's own
- * site, the model the web copy serves beside the page, which goes through siteUrl (09_Cognition/siteModel.ts: a
- * models/ file beside the page, on its own origin, which the installed gate admits as connect-src 'self' does); the
+ * site, the model and the speech pack the web copy serves beside the page, which goes through siteUrl
+ * (09_Cognition/siteModel.ts: a models/ or speech/ file beside the page, on its own origin, which the installed gate
+ * admits as connect-src 'self' does); the
  * gate itself is pure, defines every
- * alias and guard in terms of loopbackOnly, and is installed by main.tsx and physics.worker.ts before anything else;
+ * alias and guard in terms of loopbackOnly, and is installed by main.tsx, physics.worker.ts and speech.worker.ts before
+ * anything else (the speech worker is also the one file that names the speech runtime's package, imported only after
+ * the gate stands);
  * the replication core takes its 14A verdicts from conduct.ts; the network stage's imports stay inside the allowlist
  * (never the realm); and the in-page model runtime is reached only through its adapter (09_Cognition/wllamaRuntime.ts:
  * the one file that names wllama or its pinned module, both imported dynamically), which switches wllama's
@@ -167,17 +170,43 @@ test('the gate is pure and one: every alias and every guard is defined through l
   assert.doesNotMatch(code(readFileSync(join(SRC, '09_Cognition/localSpeech.ts'), 'utf8')), /\.hostname\b|new URL\(/, 'the speech client has none either')
 })
 
-test('main.tsx and physics.worker.ts install the air gap on their global before anything else', () => {
-  for (const [file, spec] of [['main.tsx', `./${GATE}`], ['07_Execute_Actions/physics.worker.ts', `../${GATE}`]]) {
+/** The speech recogniser's worker: the one file that names the speech runtime's package. */
+const SPEECH_WORKER = '09_Cognition/speech.worker.ts'
+
+test('main.tsx, physics.worker.ts and speech.worker.ts install the air gap on their global before anything else', () => {
+  for (const [file, spec] of [['main.tsx', `./${GATE}`], ['07_Execute_Actions/physics.worker.ts', `../${GATE}`], [SPEECH_WORKER, `../${GATE}`]]) {
     const text = readFileSync(join(SRC, file), 'utf8')
     assert.equal(specifiers(text)[0], spec, `${file}: the gate is the first import`)
     const statements = code(text).split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('import '))
     assert.equal(statements[0], 'installAirgap(globalThis)', `${file}: the first statement installs the gate`)
   }
-  // Nothing else installs it: the page's global once, the worker's once.
+  // Nothing else installs it: the page's global once, each worker's once.
   for (const [name, text] of runtimeSources()) {
-    if (name === GATE || name === 'main.tsx' || name === '07_Execute_Actions/physics.worker.ts') continue
+    if (name === GATE || name === 'main.tsx' || name === '07_Execute_Actions/physics.worker.ts' || name === SPEECH_WORKER) continue
     assert.doesNotMatch(code(text), /\binstallAirgap\b/, `${name} installs the gate`)
+  }
+})
+
+test('the speech runtime is named by its worker alone, imported only after the gate stands, handed its module as bytes, and run on one thread', () => {
+  const sources = runtimeSources()
+  assert.ok(sources.some(([name]) => name === SPEECH_WORKER), 'the worker is among the runtime sources scanned')
+  for (const [name, text] of sources) {
+    // Comments may say what the worker runs; only the worker's code names the package.
+    if (name !== SPEECH_WORKER) assert.doesNotMatch(code(text), /onnxruntime/, `${name} names the speech runtime`)
+  }
+  const worker = code(readFileSync(join(SRC, SPEECH_WORKER), 'utf8'))
+  // One mention, a dynamic import of the WebAssembly-only build: no static import could run before the gate.
+  assert.deepEqual(worker.match(/['"]onnxruntime[^'"]*['"]/g), ["'onnxruntime-web/wasm'"])
+  assert.match(worker, /await import\('onnxruntime-web\/wasm'\)/)
+  assert.ok(worker.indexOf('installAirgap(globalThis)') < worker.indexOf("import('onnxruntime-web/wasm')"), 'the gate stands before the runtime is evaluated')
+  // The runtime is given its module's bytes (hashed by the worker first) and the model's, so it asks for no file.
+  assert.match(worker, /ortConfigure\(ort, held\.get\('runtime'\)!\)/)
+  assert.match(worker, /const bad = await holdChecked\(held, files\.filter\(\(f\) => ROLES\.includes\(f\.role\)\), digest\)/, 'every file is hashed before any is run')
+  const fit = code(readFileSync(join(SRC, '09_Cognition/speechOrt.ts'), 'utf8'))
+  assert.match(fit, /ort\.env\.wasm\.numThreads = 1\n  ort\.env\.wasm\.proxy = false\n  ort\.env\.wasm\.wasmBinary = wasm/, 'one thread, no proxy worker, the module from bytes')
+  // The worker and what it imports name no outbound primitive at all: nothing to allowlist.
+  for (const file of [SPEECH_WORKER, '09_Cognition/speechOrt.ts', '09_Cognition/speechCore.ts']) {
+    assert.doesNotMatch(code(readFileSync(join(SRC, file), 'utf8')), /\bfetch\s*\(|new WebSocket\b|XMLHttpRequest|EventSource|importScripts|new Worker\b/, `${file} opens a connection or a worker of its own`)
   }
 })
 

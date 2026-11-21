@@ -81,6 +81,18 @@ const NODE_MODULES = '/node_modules/'
 
 export interface PackageNotice { name: string; version: string; license: string; text: string }
 
+/**
+ * Runtime dependencies whose npm package carries no licence file of its own: the licence text recorded for exactly
+ * that version in third_party/ (name@version to the file). onnxruntime-web's package.json says MIT and its package
+ * ships no text; the record is the project's LICENSE at the same tag, followed by the licence of the Emscripten
+ * support code its script carries (third_party/onnxruntime-web/1.31.1/NOTICE says where each comes from). A new
+ * version has no record: its notice is then NO_LICENCE_TEXT, which fails the build, until someone reads the new
+ * version's licence and records it.
+ */
+export const RECORDED_LICENCES: Readonly<Record<string, string>> = Object.freeze({ 'onnxruntime-web@1.31.1': 'third_party/onnxruntime-web/1.31.1/SCRIPT-LICENCE' })
+/** What a notice says where neither the package nor third_party/ has a licence text. */
+export const NO_LICENCE_TEXT = '(no license file in the package; see its package.json)'
+
 /** node_modules package directory a module id belongs to (scoped, nested and pnpm layouts), else null. */
 export function packageRoot(id: string): string | null {
   if (id.startsWith('\0')) return null
@@ -97,11 +109,12 @@ export function readPackageNotice(dir: string): PackageNotice | null {
   try {
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: string; version?: string; license?: unknown }
     const file = readdirSync(dir).find((f) => LICENSE_FILE.test(f))
+    const recorded = RECORDED_LICENCES[`${pkg.name ?? ''}@${pkg.version ?? ''}`]
     return {
       name: pkg.name ?? dir,
       version: pkg.version ?? '',
       license: typeof pkg.license === 'string' ? pkg.license : 'see package',
-      text: file ? readFileSync(join(dir, file), 'utf8').trim() : '(no license file in the package; see its package.json)',
+      text: file ? readFileSync(join(dir, file), 'utf8').trim() : recorded ? readFileSync(join(ROOT, recorded), 'utf8').trim() : NO_LICENCE_TEXT,
     }
   } catch {
     return null
@@ -121,10 +134,10 @@ export function noticesComment(noticeMd: string, packages: readonly PackageNotic
   return `<!--\n${commentSafe(blocks.join('\n\n'))}\n-->`
 }
 
-/** Runtime dependencies (package.json `dependencies`) with no embedded notice: each one is a licence the build would
- *  ship without. */
+/** Runtime dependencies (package.json `dependencies`) with no embedded notice, or with a notice that has no licence
+ *  text (NO_LICENCE_TEXT): each one is a licence the build would ship without. */
 export function missingNotices(dependencies: Readonly<Record<string, string>>, packages: readonly PackageNotice[]): string[] {
-  const embedded = new Set(packages.map((p) => p.name))
+  const embedded = new Set(packages.filter((p) => p.text !== NO_LICENCE_TEXT).map((p) => p.name))
   return Object.keys(dependencies).filter((name) => !embedded.has(name)).sort()
 }
 
@@ -396,6 +409,37 @@ export function deflateRapier(code: string): { code: string; bytes: number; pack
   return { code: `${code.slice(0, m.index)}${call}${code.slice(m.index + m[0].length)}\n${INFLATE_HELPER}\n`, bytes: raw.length, packed: packed.length }
 }
 
+/** The speech runtime's script as the speech worker imports it (onnxruntime-web's WebAssembly-only bundle). */
+export const SPEECH_RUNTIME_MODULE = /[\\/]onnxruntime-web[\\/]dist[\\/]ort\.wasm\.bundle\.min\.mjs$/
+/** How that script names its WebAssembly module beside itself: an address the bundler would follow and inline. */
+const SPEECH_RUNTIME_WASM = /new URL\("ort-wasm-simd-threaded\.wasm",import\.meta\.url\)/g
+
+/**
+ * The speech runtime's script without its two addresses of its own WebAssembly module. The bundler follows a
+ * `new URL(file, import.meta.url)` and inlines the file, and this one is 15 MB, twice: the page would triple. The
+ * worker never uses either address (speech.worker.ts hands the runtime the module's bytes, which the page fetched from
+ * beside itself and the worker hashed; the runtime then asks for no file), so each is replaced by the bare file name,
+ * which resolves to nothing the bundler can read. Throws unless there are exactly the two it expects, so a new version
+ * of the package that names the module another way fails the build instead of shipping a page three times its size.
+ */
+export function leanSpeechRuntime(code: string): string {
+  const found = code.match(SPEECH_RUNTIME_WASM) ?? []
+  if (found.length !== 2) throw new Error(`the speech runtime's script names its WebAssembly module ${found.length} times, not the two the build unhooks (vite.config.ts SPEECH_RUNTIME_WASM)`)
+  return code.replace(SPEECH_RUNTIME_WASM, '({href:"ort-wasm-simd-threaded.wasm"})')
+}
+
+/** Build and dev, in the page's bundle and in each worker's: the speech runtime's script, without its module's addresses. */
+function speechRuntime(): Plugin {
+  return {
+    name: 'speech-runtime-lean',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!SPEECH_RUNTIME_MODULE.test(id.split('?')[0])) return null
+      return { code: leanSpeechRuntime(code), map: null }
+    },
+  }
+}
+
 /** Build only, in the page's bundle and in each worker's: Rapier's module, deflated. */
 function rapierDeflate(): Plugin {
   return {
@@ -440,7 +484,7 @@ export function leanShaders(): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
-  plugins: [leanShaders(), react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), rapierDeflate(), viteSingleFile(), moduleLast(), isolation()],
-  worker: { plugins: () => [leanShaders(), workerNotices(), rapierDeflate()] },
+  plugins: [leanShaders(), react(), tailwindcss(), brand(), notices(), regionPack(mode), wllamaRuntime(), rapierDeflate(), speechRuntime(), viteSingleFile(), moduleLast(), isolation()],
+  worker: { plugins: () => [leanShaders(), workerNotices(), rapierDeflate(), speechRuntime()] },
   build: { outDir: mode === 'pilot' ? 'dist-pilot' : 'dist' },
 }))
