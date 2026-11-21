@@ -18,7 +18,7 @@ import { decode, encode } from './binary.ts'
 import { LensBuilder, arrayOf, block, lens } from './builder.ts'
 import type { BlockSpec, FieldSpec, Val } from './builder.ts'
 import { isFault } from './fault.ts'
-import { BINARY, LENS_LIMITS, TERNARY, UNARY, scalarOf } from './lens.ts'
+import { BINARY, LENS_LIMITS, TERNARY, UNARY, VALUE_TYPES, scalarOf, varBytesOf } from './lens.ts'
 import type { BinaryFn, Block, Inst, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
 
 /** Asserts a lens Fault whose message matches. */
@@ -706,10 +706,44 @@ test('the instruction and id limits are refused at the instruction that would pa
   for (let n = 0; n < LENS_LIMITS.instructions; n++) b.discard()
   refused(() => b.discard(), /lens: body\[65536\] discard: a module holds at most 65536 instructions/)
   assert.equal(b.finish().body.length, LENS_LIMITS.instructions)
+  // Variables up to LENS_LIMITS.varBytes (2016 of 4 bytes), then values up to the id limit.
   const c = lens('compute')
-  for (let n = 0; n < LENS_LIMITS.ids; n++) c.var('u32')
+  for (let n = 0; n < LENS_LIMITS.ids; n++) {
+    if (n < LENS_LIMITS.varBytes / 4) c.var('u32')
+    else c.u32(n)
+  }
   refused(() => c.var('u32'), /var: a module holds at most 65536 values and variables/)
   assert.equal(c.finish().ids, LENS_LIMITS.ids)
+})
+
+test('the bytes of a module\'s variables are counted as WGSL counts them, and refused at the var that would pass 8064', () => {
+  assert.equal(LENS_LIMITS.varBytes, 8064)
+  const sizes = VALUE_TYPES.map((t) => [t, varBytesOf(t)])
+  assert.deepEqual(Object.fromEntries(sizes), {
+    f32: 4, i32: 4, u32: 4, bool: 4,
+    f32x2: 8, f32x3: 16, f32x4: 16, i32x2: 8, i32x3: 16, i32x4: 16, u32x2: 8, u32x3: 16, u32x4: 16, boolx2: 8, boolx3: 16, boolx4: 16,
+    m2: 16, m3: 48, m4: 64,
+  })
+  // 125 m4, one m3 and one m2 make 8064 exactly; one f32 more is refused where it would sit, nested or not, and the
+  // refused var takes no id and no place.
+  const b = lens('fragment')
+  for (let n = 0; n < 125; n++) b.var('m4')
+  b.var('m3')
+  b.if(true, () => {
+    b.var('m2')
+    refused(() => b.var('f32'), /^lens: body\[127\]\.then\[1\] var: variables take 8068 bytes; a module holds at most 8064$/)
+  })
+  refused(() => b.var('bool'), /^lens: body\[128\] var: variables take 8068 bytes; a module holds at most 8064$/)
+  const m = b.finish()
+  assert.equal(m.ids, 128)
+  assert.equal(m.body.length, 128)
+  // The count is of declarations: a var inside a loop counts once, however often the loop runs.
+  const l = lens('compute')
+  l.loop(() => {
+    for (let n = 0; n < 504; n++) l.var('f32x4')
+    l.break()
+  })
+  assert.equal(l.finish().body.length, 1)
 })
 
 test('a block spec or Block shared under many fields is copied within LENS_LIMITS.blockFields, and refused past it', () => {

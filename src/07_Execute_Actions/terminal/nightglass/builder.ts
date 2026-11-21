@@ -48,7 +48,7 @@ import { fail, isFault } from './fault.ts'
 import type { Format } from './formats.ts'
 import {
   BINARY, DERIVATIVES, LENS_LIMITS, STAGES, TERNARY, UNARY, componentsOf, isGrid, isScalar, isValueType, isVector, scalarOf,
-  vectorOf, walk, widthOf,
+  varBytesOf, vectorOf, walk, widthOf,
 } from './lens.ts'
 import type {
   ArrayType, BinaryFn, Block, Builtin, DataType, DerivativeFn, ImageDims, Inst, LensModule, Port, Resource, SampleKind, Scalar,
@@ -204,6 +204,8 @@ export class LensBuilder {
   /** The layouts of the blocks the builder declared (its own copies, frozen once declared), laid out once each. */
   private readonly layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }
   private count = 0
+  /** The bytes of the variables made so far, as verify() counts them toward LENS_LIMITS.varBytes. */
+  private varBytes = 0
   private returned = false
   private done = false
 
@@ -831,7 +833,10 @@ export class LensBuilder {
     if (!isValueType(t)) no(`${say(t)} is not a value type`)
     const I = init === undefined ? undefined : this.need(init, t, 'the initial value', [t], no)
     const id = this.next(no)
+    const bytes = this.varBytes + varBytesOf(t)
+    if (bytes > LENS_LIMITS.varBytes) no(`variables take ${bytes} bytes; a module holds at most ${LENS_LIMITS.varBytes}`)
     this.push(I === undefined ? { op: 'var', id, t } : { op: 'var', id, t, init: I.id }, no)
+    this.varBytes = bytes
     return this.keep(Object.freeze({ id, t, variable: true as const }))
   }
 

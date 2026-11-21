@@ -147,6 +147,17 @@ export function placeValue(t: Exclude<DataType, ArrayType | StructType>): Placem
 }
 
 /**
+ * The bytes one variable of a value type counts toward LENS_LIMITS.varBytes: its size rounded up to its alignment, as
+ * WGSL counts a function's variables. A scalar takes 4 (bool too); vectors of two, three and four take 8, 16 and 16;
+ * m2, m3 and m4 take 16, 48 and 64.
+ */
+export function varBytesOf(t: ValueType): number {
+  // A bool vector takes the room of the f32 vector of its width.
+  const p = placeValue(isGrid(t) ? t : (vectorOf('f32', widthOf(t)) as 'f32' | `f32x${Width}`))
+  return roundUp(p.align, p.size)
+}
+
+/**
  * Layouts already made in one space, by block object. A caller passes one only while the blocks it lays out cannot
  * change: a decoded module's blocks are frozen data, the builder's are its own copies (frozen once declared), and
  * verify() keeps one per space for one check. Each block object is then laid out once, however often it is reached
@@ -398,6 +409,12 @@ export const LENS_LIMITS = Object.freeze({
   path: 16,
   /** Bytes of the inline-constant block. */
   constants: 128,
+  /**
+   * Bytes of a module's variables, each `var` counted once at varBytesOf() of its type. WGSL holds one function's
+   * variables to 8192 bytes, and the GPU back end keeps 128 of them for its loop counters (four bytes for each of the
+   * 32 levels `if` and `loop` may nest).
+   */
+  varBytes: 8064,
   /** Invocations of one workgroup in all, and along x and y, and along z. */
   invocations: 256,
   groupXY: 256,

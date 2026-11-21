@@ -94,6 +94,11 @@ bytes the device wrote reach `map()` only at `invalidate`. The reference rendere
 back end. A submission sees every flush made before it. `needs()` gives an alignment of 256 for buffers with
 `uniform`, `storage` or `indirect` use and 4 otherwise, and of 256 for images; sizes round up to 4.
 
+A resource bound over bytes that an earlier, destroyed resource used starts with contents the specification does not
+pin; a resource bound over bytes no resource has used starts at zero (in host-visible memory, with what the host wrote
+there and flushed). The reference renderer keeps the old bytes, which is one allowed outcome, and no test may rely on
+it.
+
 ### Command lists
 
 States: `initial` -> `begin()` -> `recording` -> `end()` -> `ready` -> submit -> `pending` -> done -> `ready` (or
@@ -225,6 +230,13 @@ and a module whose blocks, each counted every time it is reached, hold more than
 The builder copies a block spec within that same bound, and its `finish()` also refuses a module whose binary form
 would take more than `LENS_LIMITS.words` words.
 
+The checker also holds a module's variables to `LENS_LIMITS.varBytes` (**pinned**): the bytes of a module's variables,
+each counted at roundUp(align, size) of its type (4 for a scalar; 8, 16 and 16 for vectors of two, three and four; 16,
+48 and 64 for m2, m3 and m4), at most 8064. Each `var` counts once, wherever it sits and however often it runs, and the
+`var` that passes the bound is refused (`variables take N bytes; a module holds at most 8064`), by the builder where it
+is made. WGSL caps a function's variables at 8192 bytes, and the GPU back end keeps 128 of them for its 32 loop
+counters.
+
 Semantics shared by every back end (**pinned**, and the GPU back end is to emit code that makes them hold):
 
 - f32 arithmetic rounds to binary32 after each operation; i32 and u32 arithmetic wraps. Integer division by zero
@@ -301,30 +313,35 @@ rasterisation rules (**pinned**; the GPU back end's results are to be compared a
   `mip` filter (`nearest` takes level ceil(lod + 0.5) - 1), levels clamped to lodMin..lodMax and to the view. The
   layer rounds to the nearest (halves up). Only float images are sampled; integer and depth images are read with
   `texel`.
-- The contents after an `any` load or store are undefined; this renderer keeps them, and no test may rely on that.
+- The contents after an `any` load or store are undefined; this renderer keeps them, and no test may rely on that. Use
+  `any` on depth and four-sample attachments that are not read again; a GPU back end keeps them in tile memory.
 - Indirect numbers that the same direct command would have refused when recorded are skipped: the command draws or
   dispatches nothing. So is an indirect draw whose first instance is not 0, as WebGPU skips one without its optional
   `indirect-first-instance` feature; a direct draw keeps its first instance.
 
 ## Limits
 
-The reference renderer reports the WebGPU defaults, which the GPU back end is to report too, so an app that runs on
-one runs on the other: images up to 8192 pixels and 256 layers, three binding sets of up to 16 bindings, 64 KiB
-uniform and 128 MiB storage bindings at 256-byte offsets, 8 vertex buffers with 16 attributes and strides up to
-2048 bytes, 16 values between stages, 8 colour attachments taking at most 32 bytes per sample together
-(`colorBytes`, counted slot by slot by `colorBytes()` in `formats.ts` with WebGPU's per-format costs and alignments:
-each format first rounds the count up to its channel bytes, then adds its texel bytes, 8 for the four-channel 8-bit
-formats; a render pipeline's colour outputs are held to it too), 128 bytes of inline constants, 256 invocations per
-workgroup (256 x 256 x 64 at most along each axis), 65,535 workgroups per axis, 256 MiB buffers and allocations,
-4096 allocations, 256-byte copy rows, and 64 KiB per `updateBuffer`. Its two heaps hold 1 GiB each unless
-`softBackend({ heap })` says otherwise. A device may ask for lower limits when it opens, except the two alignments
-(`offsetAlign`, `copyRowAlign`), which may only be raised to a multiple of the adapter's. Lens's own bounds are
-`LENS_LIMITS`.
+The reference renderer reports the WebGPU defaults but one, and the GPU back end is to report the same limits, so an app
+that runs on one runs on the other: images up to 8192 pixels and 256 layers, three binding sets of up to 16 bindings,
+64 KiB uniform and 128 MiB storage bindings at 256-byte offsets, 11 uniform bindings in a stage, 8 vertex buffers with
+16 attributes and strides up to 2048 bytes, 16 values between stages (a fragment lens that reads `front-facing` uses one
+of the `interStage` values, so its vertex lens passes at most 15), 8 colour attachments taking at most 32 bytes per
+sample together (`colorBytes`, counted slot by slot by `colorBytes()` in `formats.ts` with WebGPU's per-format costs and
+alignments: each format first rounds the count up to its channel bytes, then adds its texel bytes, 8 for the
+four-channel 8-bit formats; a render pipeline's colour outputs are held to it too), 128 bytes of inline constants, 256
+invocations per workgroup (256 x 256 x 64 at most along each axis), 65,535 workgroups per axis, 256 MiB buffers and
+allocations, 4096 allocations, 256-byte copy rows, and 64 KiB per `updateBuffer`. Its two heaps hold 1 GiB each unless
+`softBackend({ heap })` says otherwise. The one limit that is not WebGPU's default is `stageUniforms`, 11 where WebGPU's
+is 12: a stage sees at most 11 uniform bindings; the back end keeps one for the inline constants, as it keeps the fourth
+set. A device may ask for lower limits when it opens, except the two alignments (`offsetAlign`, `copyRowAlign`), which
+may only be raised to a multiple of the adapter's. Lens's own bounds are `LENS_LIMITS`.
 
 ## Not yet
 
-Slice 1 is the core, Lens and the reference renderer. Next: the GPU back end and its browser check (slice 2), then
-surfaces (a ring of images per console pane, presented by the host) and the app kit every console app draws its
-interface with (slice 3). Cube and 3D images, comparison samplers, anisotropic filtering, lines and points, stencil,
-depth bias, timestamps and occlusion queries, workgroup memory and atomics, and a text form of Lens with a language
-that compiles to it, come after.
+Slice 1, the core, Lens and the reference renderer, is done. Slice 2, under way, is the GPU back end and its browser
+check; its first part is the amendments above that let every back end keep the same rules (11 uniform bindings in a
+stage, the bytes of a module's variables, `front-facing` among the inter-stage values, and the contents of memory a
+destroyed resource used). Then come surfaces (a ring of images per console pane, presented by the host) and the app kit
+every console app draws its interface with (slice 3). Cube and 3D images, comparison samplers, anisotropic filtering,
+lines and points, stencil, depth bias, timestamps and occlusion queries, workgroup memory and atomics, and a text form
+of Lens with a language that compiles to it, come after.

@@ -15,6 +15,7 @@ import { test } from 'node:test'
 import type { BindingEntry, BindingLayout, ColorOutput, Lens, PipelineLayout, RenderPipelineInfo, VertexBufferLayout } from './api.ts'
 import { encode } from './binary.ts'
 import { arrayOf, lens } from './builder.ts'
+import type { Val } from './builder.ts'
 import type { Format } from './formats.ts'
 import type { LensModule } from './lens.ts'
 import { ComputePipelineImpl, RenderPipelineImpl } from './pipelines.ts'
@@ -154,6 +155,42 @@ test('values passed between the stages match by slot, type and flatness, within 
   // The same vertex lens is fine without a fragment stage.
   r.device.createRenderPipeline({ layout: base.layout, vertex: { lens: wide, buffers: [{ stride: 8, attributes: [{ slot: 0, format: 'f32x2', offset: 0 }] }] }, depth: { format: 'depth16' } })
   assert.ok(vertex.module.outputs.length === 1)
+})
+
+test('a fragment lens that reads front-facing uses one of the interStage values, wherever in its body it reads it', () => {
+  const at0: readonly VertexBufferLayout[] = [{ stride: 8, attributes: [{ slot: 0, format: 'f32x2', offset: 0 }] }]
+  const check = (o: Parameters<typeof rig>[0], outs: number, refusal: RegExp): void => {
+    const r = rig(o)
+    const layout = r.device.createPipelineLayout({ sets: [] })
+    const vertexWith = (n: number): Lens => {
+      const b = lens('vertex')
+      b.position(b.make('f32x4', b.input(0, 'f32x2'), 0, 1))
+      for (let s = 0; s < n; s++) b.out(b.output(s, 'f32'), s)
+      return r.device.createLens(b.finish(), `out${n}`)
+    }
+    const fragmentWith = (facing: 'none' | 'top' | 'nested'): Lens => {
+      const b = lens('fragment')
+      const out = b.output(0, 'f32x4')
+      const x = b.input(0, 'f32')
+      const color = (): Val => b.choose(b.builtin('front-facing'), b.make('f32x4', x, 0, 0, 1), b.make('f32x4', 0, x, 0, 1))
+      if (facing === 'none') b.out(out, b.make('f32x4', x, 0, 0, 1))
+      else if (facing === 'top') b.out(out, color())
+      else b.if(b.gt(x, 0), () => b.loop(() => { b.out(out, color()); b.break() }))
+      return r.device.createLens(b.finish())
+    }
+    const pipeline = (v: Lens, f: Lens): unknown => r.device.createRenderPipeline({ layout, vertex: { lens: v, buffers: at0 }, fragment: { lens: f, outputs: [{ format: 'rgba8' }] } })
+    const most = vertexWith(outs)
+    const fewer = vertexWith(outs - 1)
+    refuses(() => pipeline(most, fragmentWith('top')), 'limit', refusal)
+    refuses(() => pipeline(most, fragmentWith('nested')), 'limit', refusal)
+    pipeline(fewer, fragmentWith('top'))
+    pipeline(fewer, fragmentWith('nested'))
+    pipeline(most, fragmentWith('none'))
+  }
+  // The device's own 16: 16 values and front-facing are refused; 15 and front-facing, or 16 without it, are fine.
+  check({}, 16, /^device 1 createRenderPipeline: lens "out16" passes 16 values to the fragment stage, and front-facing takes one more; the device allows 16$/)
+  // A device opened with fewer counts front-facing against what it was opened with.
+  check({ limits: { interStage: 2 } }, 2, /lens "out2" passes 2 values to the fragment stage, and front-facing takes one more; the device allows 2$/)
 })
 
 test('colour outputs: count, format, mask, blend, and the fragment lens output each needs', () => {
