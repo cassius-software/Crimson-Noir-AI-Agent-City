@@ -55,7 +55,8 @@
  *   never builds the occlusion either). SwiftShader still draws
  *   it: this proves the path from the profile to the boot, not a Mali's speed. A model file picked from the Menu's
  *   Model file loads on the processor with the lite profile's row (4,096 tokens of context, at most two threads),
- *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after;
+ *   the city's automatic tier (set to Minimal first) lowered to Lite while it loads and Minimal back after; the
+ *   console the Menu opens has its prompt served by the on-screen keys, the phone's own keyboard kept down;
  * - inpage: the model kept in this page (09_Cognition/inPage.ts over wllama), cross-origin isolated and asked for two
  *   threads, with the tiny model tools/browser/tinyGguf.mjs writes (it answers "aaaa…" until its token limit):
  *   `ask file` through the console's own Enter and the browser's file picker, `ask gpu off`, someone who knows Design
@@ -80,7 +81,9 @@
  *   verifies from genesis;
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all, and whose `ask` (after `operator unlock`)
  *   reaches the page's router: with nothing answering on this machine it prints the router's one sentence, and every
- *   request it made was a look at this machine, none for a model file;
+ *   request it made was a look at this machine, none for a model file; then the on-screen keys from a pad (none shown
+ *   before a pad is used; Select raises them on the prompt, A types, the d-pad steps, X deletes, a click types, RT is
+ *   Enter, B folds them to the chip, and a real keyboard's key puts them away);
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
  *   static host serves it, to an iPhone: the manifest read through the page's policy, the icons, the service worker
  *   installed, the second load cross-origin isolated by the worker and costing the host only its build word, a model
@@ -1033,6 +1036,19 @@ const AUTO_RECORD = `(() => { try { return JSON.parse(localStorage.getItem(${JSO
 /** A page expression: the toasts titled Model file (App.tsx MODEL_FILE), their bodies in order. */
 const MODEL_TOASTS = `window.__SIM__.engine.toasts.filter((t) => t.title === ${JSON.stringify(MODEL_FILE)}).map((t) => t.body)`
 
+/**
+ * Put in place before the page's first script (sitemodel): the moment App.tsx sets the debug handle (window.__SIM__,
+ * before the page's own start can begin), every change of the brain readout (09_Cognition/brainReadout.ts, read
+ * through __SIM__.brain and heard through __SIM__.onBrain) is noted in window.__smokeBrain: the brain, and the default
+ * model's state, step, count and file.
+ */
+const BRAIN_WATCH = `(() => { let sim; const seen = window.__smokeBrain = []
+  Object.defineProperty(window, '__SIM__', { configurable: true, get: () => sim, set(v) { sim = v
+    if (!v || typeof v.brain !== 'function') return
+    const note = () => { const b = v.brain(), d = b.default
+      seen.push({ brain: b.brain, state: d ? d.state : null, step: d ? d.step : null, done: d ? d.done : null, total: d ? d.total : null, file: d ? d.file : null }) }
+    note(); v.onBrain(note) } }) })()`
+
 /** A page expression: what the page's model store holds (modelStore.ts MODELS_DIR), each kept model as its files. */
 const KEPT_IN_STORE = `(async () => { try { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(${JSON.stringify(MODELS_DIR)}); const out = []
   for await (const [, h] of d.entries()) { if (h.kind !== 'directory') continue; const names = []; for await (const [n] of h.entries()) names.push(n); out.push(names.sort().join(' + ')) }
@@ -1137,6 +1153,16 @@ const SCENARIOS = {
       // candidate), and the snapshot's quality carries the class the console names.
       const hw = await p.eval(`(() => { const s = window.__SIM__.snapshot(); return { hardware: s.quality.hardware, p99: s.output.p99Ms, lanes: window.__SIM__.engine.sim.meta.agents } })()`)
       check(hw.hardware === 'desktop' && Number.isFinite(hw.p99) && hw.lanes === 512, 'desktop: the hardware class is desktop, the snapshot carries p99 and the lanes are the page\'s ?crowd', JSON.stringify(hw))
+      // The brain readout (09_Cognition/brainReadout.ts), read as the first walk reads it, twenty times over, before
+      // anyone spoke to Sloane: auto has found nothing yet, and reading it asked nothing of anyone: no request at all,
+      // to this page's own origin (its manifest, its model) or to a server on this machine.
+      const brainWatch = await watchTargets(p.b)
+      const reads = await p.eval(`(() => { const all = []; for (let i = 0; i < 20; i++) all.push(window.__SIM__.brain()); return { same: all.every((b) => b === all[0]), b: all[0] } })()`)
+      await new Promise((r) => setTimeout(r, 500))
+      const asked = brainWatch.requests.filter((r) => !/^(blob|data):/.test(r.url))
+      check(reads.same && reads.b.provider === 'auto' && reads.b.settled === false && reads.b.brain === null && /^Sloane has found no model yet: her next answer looks on this machine/.test(reads.b.where) && asked.length === 0,
+        'desktop: the brain readout, read twenty times, says auto has found no model yet and makes no request at all',
+        `${asked.length ? `asked ${asked.slice(0, 3).map((r) => r.url.slice(0, 60)).join(', ')}; ` : ''}${brainWatch.requests.length} requests in all; ${JSON.stringify(reads.b).slice(0, 300)}`)
 
       // Sloane's name question shows once the veil has finished fading, and its field takes the keyboard (Concierge.tsx).
       // booted() returns as the fade starts, and a click on the canvas leaves a focused field focused: on a runner slow
@@ -1853,6 +1879,10 @@ const SCENARIOS = {
       check(pick.tapped && p.choosers === 1 && KEPT_ON_A_PHONE.test(pick.toast ?? ''), 'lite: Menu › Model file opens the picker from the tap and keeps the file, not loaded until asked',
         `${pick.tapped ? 'tapped' : 'no Menu item'}, ${p.choosers} picker(s); ${pick.toast}`)
       check(await menuConsole(p), 'lite: the Menu opens the console')
+      // A phone's console prompt is served by the on-screen keys (Esc, Tab, Ctrl and the arrows a terminal needs): open,
+      // or offered on the chip when the tap came too long before the focus, and the phone's own keyboard kept down.
+      const served = await p.waitFor(`document.querySelector('[aria-label="Ring-0 command line"]')?.getAttribute('inputmode') === 'none' && !!document.querySelector('.sk-root, .sk-chip')`, 10_000).then(() => true, () => false)
+      check(served, 'lite: on a phone the console\'s prompt is served by the on-screen keys, the phone\'s own keyboard kept down')
       const hw = await p.command('hardware', /^machine {3}/m)
       check(/^class {5}phone {2}profile lite {2}start -1 Lite {2}tiers -1\.\.0$/m.test(hw ?? '') && /^lanes {5}2500 simulated {2}\(2500 default for a phone, 60000 ceiling\)$/m.test(hw ?? ''),
         'lite: hardware names the phone class, the lite profile and its 2,500 lanes', (hw ?? '').split('\n').filter((l) => /^(class|lanes) /.test(l.trim())).join(' | ').slice(0, 300))
@@ -1920,6 +1950,42 @@ const SCENARIOS = {
         `${watch.requests.length} requests${strays.length ? `; strays ${strays.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}${files.length ? `; files ${files.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}`)
       const after = await p.eval('[window.__adapterAsks, document.querySelectorAll("canvas").length]')
       check(after[0] === 0 && after[1] === 0, 'tty: and still asked for no GPU and drew no canvas', `adapter requests ${after[0]}, canvases ${after[1]}`)
+      // The on-screen keys (ScreenKeys.tsx) from a pad: nothing shows until a pad is used; Select raises them on the
+      // prompt, the d-pad steps, A types, X deletes, a click types, RT is Enter, B folds them to the chip (the caret
+      // stays), and a real keyboard's key puts them away.
+      await p.enter('clear')
+      check(await p.eval(`!document.querySelector('.sk-root, .sk-chip')`), 'tty: before a pad is used, no on-screen keys and no chip')
+      const pad = async (b) => {
+        await p.eval(`window.__smokePad.set([0, 0, 0, 0], [${b}])`); await p.frames(3)
+        await p.eval('window.__smokePad.set([0, 0, 0, 0], [])'); await p.frames(3)
+      }
+      const promptValue = `document.querySelector('[aria-label="Ring-0 command line"]')?.value`
+      await p.eval('window.__smokePad.connect(0); window.__smokePad.set([0, 0, 0, 0], [])')
+      await p.frames(4)
+      await pad(8)
+      const keysUp = await p.waitFor(`!!document.querySelector('.sk-root') && document.querySelector('[data-key-at]')?.getAttribute('data-key') === 'g' && document.documentElement.hasAttribute('data-keys-open')`, 10_000).then(() => true, () => false)
+      check(keysUp, 'tty: a pad\'s Select raises the on-screen keys on the prompt, the highlight on g')
+      await pad(0); await pad(15); await pad(0)
+      check(await p.eval(promptValue) === 'gh' && await p.eval(`location.search.includes('boot=tty')`), 'tty: A types the highlighted key, the d-pad steps, and Back to the city is not pressed', String(await p.eval(promptValue)))
+      await pad(2); await pad(2)
+      for (const k of ['l', 's']) {
+        const at = await p.eval(`(() => { const r = document.querySelector('[data-key="${k}"]')?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null })()`)
+        if (!at) break
+        await p.mouse('mouseMoved', at[0], at[1]); await p.mouse('mousePressed', at[0], at[1], 1); await p.mouse('mouseReleased', at[0], at[1])
+        await p.frames(2)
+      }
+      check(await p.eval(promptValue) === 'ls' && await p.eval(`document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`), 'tty: X deletes, clicked keys type, and the prompt keeps the caret', String(await p.eval(promptValue)))
+      await pad(7)
+      const ran = await p.waitFor(`(${CONSOLE_LOG}?.innerText ?? '').includes('# ls') && ${promptValue} === ''`, 10_000).then(() => true, () => false)
+      const clear = await p.eval(`(() => { const a = document.querySelector('.r0-prompt')?.getBoundingClientRect(), k = document.querySelector('.sk-root')?.getBoundingClientRect(); return !!a && !!k && a.bottom <= k.top + 1 })()`)
+      check(ran && clear, 'tty: RT is Enter (the command ran), and the prompt stands above the keys', `ran ${ran}, clear ${clear}`)
+      await p.shot('tty-keys')
+      await pad(1)
+      check(await p.eval(`!document.querySelector('.sk-root') && !!document.querySelector('.sk-chip') && document.activeElement?.getAttribute('aria-label') === 'Ring-0 command line'`), 'tty: B folds the keys to the chip and the prompt keeps the caret')
+      await p.tap('KeyX', 'x', 88)
+      await p.frames(3)
+      check(await p.eval(`!document.querySelector('.sk-root, .sk-chip')`) && await p.eval(promptValue) === 'x', 'tty: a real keyboard\'s key puts the keys away and types as usual', String(await p.eval(promptValue)))
+      await p.tap('Backspace', 'Backspace', 8)
       p.saveTranscript('tty')
       await p.shot('tty')
       check(p.errors.length === 0, 'tty: no exception in the page', p.errors.slice(0, 3).join(' | ').slice(0, 400))
@@ -2274,6 +2340,8 @@ const SCENARIOS = {
         const status = await p.command('ask', /installed|ask: /, 60_000)
         check(/inpage: a model file kept in this page/.test(status ?? '') && new RegExp(`${literal(TINY)}\\s+\\(chosen\\)`).test(status ?? '') && /storage\s+kept in this page/.test(status ?? ''),
           'sitemodel: ask says the inpage provider answers with the file kept in this page, and it is chosen', (status ?? '').split('\n').filter((l) => /provider|storage|installed|runtime/.test(l)).join(' | ').slice(0, 400))
+        check(new RegExp(`brain\\s+Sloane answers with the model kept in this page \\(${literal(TINY)}\\), run on this device`).test(status ?? ''), 'sitemodel: ask\'s brain row says what the brain readout says: the model kept in this page, the pinned file',
+          (status ?? '').split('\n').filter((l) => /^brain/.test(l.trim())).join(' | ').slice(0, 300) || 'no brain row')
         const kept = await p.eval(KEPT_IN_STORE)
         check(kept.length === 1 && kept[0] === `meta.json + ${TINY}`, 'sitemodel: the page\'s model store holds it, committed', kept.join('; '))
         // The service worker leaves models/ to the network: its offline copy holds the page, and nothing of the model.
@@ -2305,11 +2373,19 @@ const SCENARIOS = {
       // the provider left at auto.
       const r = await open(chrome)
       try {
+        await r.b.send('Page.addScriptToEvaluateOnNewDocument', { source: BRAIN_WATCH })
         const autoAt = served.length
         await r.goto(url)
         await r.booted()
         const got = await r.waitFor(`(() => { const t = ${MODEL_TOASTS}; return t.some((b) => ${loadedToast}.test(b)) && t })()`, 180_000).catch(() => r.eval(MODEL_TOASTS))
         check(got.some((b) => keptToast.test(b)) && got.some((b) => loadedToast.test(b)), 'sitemodel: a fresh browser gets the model by itself: a toast says it is kept (the provider left as it was), another that it is loaded', got.join(' | ').slice(0, 300))
+        // The brain readout through that download: the default model getting, its count rising from 0 to the whole
+        // file, then kept (window.__smokeBrain, noted from the page's first moment).
+        const brainSeen = (await r.eval('window.__smokeBrain ?? []')) ?? []
+        const dl = brainSeen.filter((n) => n.state === 'getting' && n.step === 'download')
+        const rising = dl.length >= 2 && dl[0].done === 0 && dl.every((n, i) => i === 0 || n.done >= dl[i - 1].done) && dl[0].done < dl.at(-1).done
+        check(rising && dl.at(-1).done === pin.bytes && dl.every((n) => n.file === TINY) && brainSeen.some((n) => n.state === 'kept'), 'sitemodel: during the no-click download the brain readout shows the default model getting, its count rising from 0 to the whole file, then kept',
+          `${brainSeen.length} changes; download counts ${dl.map((n) => n.done).join(', ') || 'none'} of ${pin.bytes}; states ${[...new Set(brainSeen.map((n) => n.state))].join(' > ')}`)
         check(JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]), 'sitemodel: it asked this site for the manifest and the model, once each, with no click', models(autoAt).join(', ') || 'nothing under models/')
         const record = await r.eval(AUTO_RECORD)
         const keptAuto = await r.eval(KEPT_IN_STORE)
@@ -2318,6 +2394,9 @@ const SCENARIOS = {
         const answered = talk.card
         check(answered?.state === 'said' && answered.line === `${'a'.repeat(CHAT_MAX)}…` && JSON.stringify(models(autoAt)) === JSON.stringify([SITE_MANIFEST, path]),
           'sitemodel: on the next visit Sloane answers with the model the page got, asking this site for nothing more', `${answered?.state}: ${(answered?.line ?? '').slice(0, 40)}; ${models(autoAt).join(', ')}${talk.notes.length ? `; ${talk.notes.join('; ')}` : ''}`)
+        const brainNow = await r.eval('window.__SIM__.brain()')
+        check(brainNow?.brain === 'page' && brainNow.model === TINY && brainNow.local === true && brainNow.default?.state === 'kept' && brainNow.default.file === TINY && brainNow.downloading === null,
+          'sitemodel: once Sloane has answered, the brain readout says the model kept in this page answers, the pinned file', JSON.stringify(brainNow).slice(0, 400))
         await r.shot('sitemodel-auto')
         r.health('sitemodel (got by the page)')
       } finally {
@@ -3748,6 +3827,19 @@ async function noGpu(chrome, origin, phone) {
     await p.frames(4)
     check(await p.eval(`location.search.includes('boot=tty')`), `${what}: an A held into the console shell presses nothing`)
     await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    await p.frames(4)
+    // The caret is in the prompt, which the on-screen keys serve once a pad is used: A types nothing and presses
+    // nothing there (padNav.ts typingHere), so the d-pad moves to Back to the city first, and A presses it.
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [0])')
+    await p.frames(4)
+    check(await p.eval(`location.search.includes('boot=tty')`), `${what}: with the caret in the console's prompt, the pad's A presses nothing`)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [13])')
+    await p.frames(4)
+    await p.eval('window.__smokePad.set([0, 0, 0, 0], [])')
+    const onBack = await p.waitFor(`document.activeElement?.textContent?.trim() === 'Back to the city'`, 10_000).then(() => true, () => false)
+    check(onBack, `${what}: the pad's d-pad moves from the console's prompt to Back to the city`)
     await p.frames(4)
     await p.eval('window.__smokePad.set([0, 0, 0, 0], [0])')
     const back = await p.waitFor(`!location.search.includes('boot=tty') && !!document.querySelector('[data-failure="no-api"]')`, 60_000).then(() => true, () => false)

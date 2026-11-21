@@ -684,7 +684,7 @@ test('operatorBridge features: one person and the crowd are read from the host\'
   assert.match(about, /hand-written, not learned/)
 })
 
-test('operatorBridge elite: a passphrase kept as a salted hash opens NoirScript\'s writes, each through the facade; wrong passphrases are counted; operator lock closes it', () => {
+test('operatorBridge elite: a passphrase kept as a salted hash opens Crimson Noir Script\'s writes, each through the facade; wrong passphrases are counted; operator lock closes it', () => {
   const sim = fakeSim()
   const kept: string[] = []
   const vault = { load: () => kept[kept.length - 1] ?? null, save: (v: string) => { kept.push(v) } }

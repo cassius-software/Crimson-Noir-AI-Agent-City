@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the lane runner: the isolated logical lanes a dispatched plan's sub-agents run in.
- * A lane is one NoirScript session of its own (terminal/noirscript: its own arena, so no lane reads another's
+ * A lane is one Crimson Noir Script session of its own (terminal/noirscript: its own arena, so no lane reads another's
  * memory) with a capability word (02_Define_The_Rules/capabilities.ts), a program the dispatcher wrote for it and
  * a tag naming what its last printed line measures. Each tick (`step`) runs every open lane's program once against
  * one snapshot of the city's columns, under the lane limits (MAX_OPS_PER_TICK instructions, a short output, a
@@ -33,7 +33,7 @@ export interface LaneSpec {
   readonly role: string
   /** The capability bits it is granted (forbidden bits are stripped by the table). */
   readonly caps: number
-  /** The NoirScript line run each tick; its last printed line is the tag's reading. */
+  /** The Crimson Noir Script line run each tick; its last printed line is the tag's reading. */
   readonly program: string
   /**
    * Declarations run once, before the first tick's program, in the lane's session (a cursor the program walks, a fn it

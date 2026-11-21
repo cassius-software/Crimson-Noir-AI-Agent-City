@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It builds NoirScript's syntax tree: a Pratt parser for expressions (one binding power
- * per operator level, `as` and the postfix forms binding tightest) and recursive descent for statements, items and
- * types. A block's last `if … else …` chain becomes the block's value when the block has no other trailing
- * expression, which is how a fn body or an if-expression arm yields a value without a `return`; the checker
- * decides whether that value is wanted. A `-` directly before a number folds into the literal, so `-1` adopts
- * types as one literal and `-2147483648` fits i32. Every refusal is a NoirError that names a line and column.
+ * Why does this file exist? It builds Crimson Noir Script's syntax tree: a Pratt parser for expressions (one binding
+ * power per operator level, `as` and the postfix forms binding tightest) and recursive descent for statements, items
+ * and types. A block's last `if … else …` chain becomes the block's value when the block has no other trailing
+ * expression, which is how a fn body or an if-expression arm yields a value without a `return`; the checker decides
+ * whether that value is wanted. A `-` directly before a number folds into the literal, so `-1` adopts types as one
+ * literal and `-2147483648` fits i32. Every refusal is a NoirError that names a line and column.
  * What breaks if it is removed? Nothing turns tokens into the tree the checker and the compiler walk.
  */
 import type { AssignOp, BinOp, Block, Expr, FnDecl, IfExpr, IfStmt, Item, Param, Pos, Program, Stmt, Ty, UnOp } from './ast.ts'

@@ -402,7 +402,9 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('fleet', PAD).text, /press A/)
   assert.match(askFor('console', TOUCH).text, /Open the Menu in the corner and tap Console/)
   assert.match(askFor('console', KEYS).text, /Press the ~ key to open the console/)
-  assert.match(askFor('console', PAD).text, /the button on this card, or the ~ key on a keyboard/)
+  const padMenu: FirstWalkOptions = { ...PAD, words: { ...PAD.words, console: 'Menu' } }
+  assert.match(askFor('console', padMenu).text, /the button on this card, or press Menu and choose Console: [^.]*, on keys that rise with it\./, 'a pad has no ~ key: its own menu')
+  assert.match(hintFor('console', padMenu).text, /so does Menu, then Console, with keys that rise with it\. On a keyboard it is the key left of 1, under Esc\./)
   assert.match(askFor('console', { ...KEYS, name: 'Dana' }).text, /^Last one, Dana, and then the city is yours\./)
   assert.match(hintFor('console', KEYS).text, /the one left of 1, under Esc/)
   assert.deepEqual([...askFor('console', TOUCH).keep], ['Menu', 'Console'])

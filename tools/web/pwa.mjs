@@ -21,7 +21,9 @@
  * to be kept first (it is kept in the background, by the new build's own worker, which waits for the launch's own
  * download to be over so that the two do not share the link). A page from the host that stops or crawls is given up,
  * and the launch starts from the copy instead. The site's model in models/, which the web workflow adds beside these
- * files with tools/web/siteModel.mjs, is left to the network: the page keeps that in its own storage. It also adds
+ * files with tools/web/siteModel.mjs, is left to the network: the page keeps that in its own storage. So is the
+ * speech pack in speech/ (tools/web/speechPack.mjs): the page keeps that too, in a cache of its own name that this
+ * worker never clears. It also adds
  * the two cross-origin isolation headers a static host does not send to the page it serves, so from the second visit
  * on the physics bridge shares memory with its worker as it does under `npm run preview` (without them the bridge
  * copies, and nothing else changes).
@@ -271,6 +273,10 @@ async function linkFree() {
 }
 // The site's model beside the page (tools/web/siteModel.mjs): never cached here (the page keeps it in its own storage).
 const MODELS = new URL('models/', self.location).pathname
+// The speech pack beside the page (tools/web/speechPack.mjs): never cached here either. The page keeps it itself, in a
+// cache named for the pack (speech-pack:<id>, src/09_Cognition/speechPack.ts), which activate below never clears: only
+// caches named agent-city-* are this worker's.
+const SPEECH = new URL('speech/', self.location).pathname
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -478,8 +484,9 @@ self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return
   // The model, its manifest and its licence go straight to the network: no 0.4 GB copy in this cache, and a page load
-  // of models/LICENSE is the licence, not the city.
-  if (new URL(req.url).pathname.startsWith(MODELS)) return
+  // of models/LICENSE is the licence, not the city. The speech pack the same way (the page keeps it in its own cache).
+  const path = new URL(req.url).pathname
+  if (path.startsWith(MODELS) || path.startsWith(SPEECH)) return
   if (req.mode === 'navigate') { event.respondWith(page(event)); return }
   event.respondWith(caches.open(CACHE).then((c) => c.match(req)).then((hit) => hit || fetch(req)))
 })

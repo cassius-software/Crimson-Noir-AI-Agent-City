@@ -10,7 +10,7 @@
  * file` (the picker requested inside the keydown) and `ask gpu`, `say` and `memory`, the operator tier's
  * commands over a sandboxed fake simulation, the city actions an agent proposes (`act`, `y`/`n` only while one waits,
  * the lines an ask prints for a proposal, the trail, the follower's lines printed once), the multi-line editing helpers,
- * and the content rules for its text.
+ * the brain readout's row on `ask` alone, and the content rules for its text.
  * What breaks if it is removed? A console regression (a wrong tier, a picker opened outside the user
  * gesture, a script run while locked, a crash on a bad line) would only show up in the browser.
  */
@@ -441,7 +441,7 @@ function fakeTopics(calls: string[]): FakeTopics {
   return t
 }
 
-/** The city's columns as NoirScript reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
+/** The city's columns as Crimson Noir Script reads them: four people, two cars (the second driven, fast), a quiet kernel, a 60 Hz frame. */
 function fakeTables(): NoirTables {
   return {
     crowd: { n: 4, x: Float32Array.of(1, -2, 3, -4), z: Float32Array.of(1, 2, -3, 4) },
@@ -1223,7 +1223,7 @@ test('air gap: while locked, across every command and completion, the only knobs
   // The feature inspector is only ever read while locked: no bias, clamp, release or reset reaches the tier.
   const featureVerbs = new Set(b.calls.filter((c) => c.startsWith('features ')).map((c) => c.split(' ')[1]))
   assert.deepEqual([...featureVerbs].sort(), ['about', 'explain', 'lines', 'people', 'person', 'prompt'])
-  // NoirScript reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
+  // Crimson Noir Script reads the city's columns as copies, through the one reader, and nothing else: a write intrinsic fails in the VM.
   assert.deepEqual([...new Set(b.calls.filter((c) => c.startsWith('soa ')))], ['soa tables'])
   // The robots while locked: the list, the demo (a manifest kept in this page, no body), the relay's status and its off
   // (a leave), and the cells' kinds (`robot cell` alone lists the stations: a read of a table); no body enters the
@@ -2481,7 +2481,7 @@ test('r0: the console\'s own machine runs the rest of the line, keeps definition
   assert.deepEqual(run('r0 10 3 mod .', offlineBridge(BRAND), []).lines, [{ kind: 'out', text: '1' }])
 })
 
-test('noir: NoirScript runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
+test('noir: Crimson Noir Script runs the rest of the line on the session, keeps definitions, resets, lists words and disassembles; the city\'s columns are copies and nothing is written', () => {
   const b = fake()
   const session = replSession()
   assert.deepEqual(run('noir let mut s = 0; for i in 0..10 { s += i * i; } print(s);', b, [], session).lines, [{ kind: 'out', text: '285' }])
@@ -2721,6 +2721,19 @@ test('ask alone over the model the app runs itself: no server, the file it carri
   b.operator.mind = { server: 'this app', model: 'Qwen2.5-0.5B-Instruct-Q4_K_M.gguf', provider: 'native' }
   b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, installed: null, error: "this computer's processor is older than the app's model needs (it lacks AVX2)" })
   assert.deepEqual((await run('ask', b, []).pending)?.at(-1), { kind: 'err', text: "ask: this computer's processor is older than the app's model needs (it lacks AVX2)" })
+})
+
+test('ask alone with the brain readout\'s line: one brain row, right after the provider and found rows; none without it', async () => {
+  const b = unlocked()
+  const brain = 'Sloane answers with the model this app carries (m.gguf), run by the app on this device'
+  b.operator.mind = { server: 'this app', model: 'm.gguf', provider: 'auto' }
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, auto: 'native: the model this app carries, found ready to run on this device (ask provider native keeps it)', brain, installed: ['m.gguf'] })
+  const withBrain = texts({ lines: (await run('ask', b, []).pending) ?? [] })
+  assert.match(withBrain[0], /^provider {2}auto: /)
+  assert.deepEqual(withBrain.slice(1, 4), ['found     native: the model this app carries, found ready to run on this device (ask provider native keeps it)', `brain     ${brain}`, 'server    none: the app runs the model'])
+  b.operator.askStatus = () => Promise.resolve({ ...b.operator.mind, auto: 'native: the model this app carries, found ready to run on this device (ask provider native keeps it)', installed: ['m.gguf'] })
+  const without = texts({ lines: (await run('ask', b, []).pending) ?? [] })
+  assert.deepEqual(without, withBrain.filter((l) => !l.startsWith('brain ')), 'every other row as it was')
 })
 
 test('ask connect: the provider, its address and a key in one line, through the bridge alone; a bare connect is refused; the key never shows', () => {

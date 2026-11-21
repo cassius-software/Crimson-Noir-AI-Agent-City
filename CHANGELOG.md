@@ -15,6 +15,124 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which
+  brain answers Sloane (a model server on this machine, the gateway to the Claude API, which answers from off this
+  machine and is never called local, the model the app carries, the model kept in this page, or the scripted planner)
+  and how the model this build gets by default stands (on its way with its byte count, checked by the app, kept, not
+  decided yet, held back and why, or none where this page is served none). `readBrain()` returns one frozen object
+  (`provider`, `settled`, `brain`, `local`, `gateway`, `server`, `model`, `where`, `downloading`, `default`), the same
+  object until something in it changes; `subscribeBrain(listener)` returns the unsubscribe; App.tsx binds it as the
+  city or the console alone builds its router, and before that `readBrain()` returns `BRAIN_UNKNOWN`. A model chosen
+  with `ask provider` that the page already knows cannot run (the app's runner failed or is absent, this page cannot
+  run a model, or it keeps no model file) reads as the scripted planner, with the reason. Under `auto`, a look that
+  found nothing reads as the scripted planner until the page keeps its default model; from then on, and once
+  `ask model auto` or a look stopped part way has set aside the look before it, it says her next answer looks again. A
+  default model got this visit and then forgotten with `ask file forget` reads as held, not kept. It reads only what
+  the page holds in memory: the router's provider and settings, and two new reads, `lookState()` (whether a look
+  stands, whether one runs, and what it found) and `onChange(listener)`, the router's own change hook; what the app
+  last said of its model (`nativeMind.ts` `status()`, from the boot's question, a look or an answer, and, while the
+  app checks its file, from the city asking the app again from memory about once a second until the check is done),
+  whether this page has the app's model at all (`present()`), each change of either told by `onStatus(listener)`;
+  whether this page keeps no model file as last listed (`inPage.ts` `empty()`); the site model's job; and what the
+  page already noted of that model (whether its source offers it, whether it is kept, read again after a forget, and
+  the line the page's own start ended with, which App.tsx used to write only to the browser's console). It never asks
+  a provider for its models or an answer, never fetches the manifest, never starts the job and never asks the shell.
+  `ask` alone prints its line as a new `brain` row after the provider and `found` rows, in the city's console and in
+  the console alone; every other row is as it was. With `?debug`, `window.__SIM__.brain()` and `onBrain(listener)`
+  read it. Tests: `brainReadout.test.ts` (19, over the real router, native provider and site job, with every fetch,
+  every list and answer, the shell's runner, the job's start and the site's offer throwing once the readout is made,
+  checked after the calls a provider starts a turn later would have arrived: each provider under auto before, during
+  and after a look, and each chosen at the console, maps to its brain and its line; a chosen model known not to run; a
+  default kept since a look found nothing; `ask model auto` and a look stopped part way; every default state; each job
+  change, the app's check reported during an answer, the check done and a forget (through a stand-in for App.tsx's
+  bridge) each tell a subscriber once; unsubscribe; the unbound value; App.tsx's wiring of the keep, the forget and
+  the check, pinned in its source; the module imports types only), `router.auto.test.ts` (`lookState`, `onChange`,
+  `ask model auto`, a look stopped part way), `nativeMind.test.ts` (`status()`, `present()`, `onStatus()`),
+  `inPage.test.ts` (`empty()`), `pageMind.test.ts` (the console alone's wiring), `commands.test.ts` and
+  `consoleBridge.test.ts` (the brain row, and none where no readout is bound), and the browser smoke: in `sitemodel`
+  the readout notes the default model getting with its count rising from 0 to the whole file during the page's own
+  download, then kept, then the model kept in this page answering with the pinned file once Sloane has answered, and
+  `ask` prints the same line; in `desktop`, twenty reads before anyone spoke to Sloane say `auto` has found no model
+  yet and make no request at all, to the page's own origin or anywhere else. Not verified: the readout inside the
+  Windows, Linux and macOS apps (covered by unit tests only, over a fake runner), and the city following the app's
+  check (App.tsx: its source is pinned, no test runs it).
+
+- **The microphone understands what you say, with a recogniser of the page's own.** The document that asked for
+  proximity voice said the microphone does not work. It was checked first: the microphone opened, metered the room and
+  told speech from noise; what was missing was the words. Speech was turned into text only by the browser's own
+  on-device recogniser, which a few browsers have and most do not, so in most browsers nothing said was understood.
+  The page now brings its own (`src/09_Cognition/speechEngine.ts`, `speechPack.ts`, `speech.worker.ts`,
+  `speechCore.ts`, `speechOrt.ts`; `src/04_Connect_Hardware/utterance.ts`):
+  - **The speech pack.** The web copy serves Moonshine Tiny (English; MIT, Useful Sensors, Inc.) as quantized ONNX and
+    the WebAssembly module of ONNX Runtime Web 1.31.1 (MIT, Microsoft; the project's sixth runtime dependency, pinned
+    exactly) beside the page in `speech/`: four files, 41 MB. `tools/web/speechPack.mjs` takes the model from the npm
+    registry's tarball of `@moonshine-ai/moonshine-js` 0.1.29, the module from the installed dependency and the
+    vocabulary from `third_party/moonshine-tiny-en/`, checks each against the size and SHA-256 `speechPack.ts` pins,
+    and places them in `dist-web/speech/` with a manifest and both projects' licences and notices; `web.yml` runs it
+    on every publish, with the model cached by the pin. Nothing of the pack is in `dist/index.html`
+    (`tools/verify/page_dist.mjs` now refuses an `.onnx` file there as it refuses a `.gguf`), and the Windows, Linux,
+    macOS, Android, iOS, NixOS and OS builds carry no pack yet: there the browser's own recogniser still stands in
+    where there is one.
+  - **In the page.** The detector's worklet now also cuts what it hears into sentences (from 0.4 s before speech to
+    0.35 s after, 12 s at most), resampled to 16 kHz by a windowed-sinc filter, and hands them over only while the
+    recogniser asks. When the microphone opens, the page asks its own site for the pack's manifest and files, keeps
+    them in Cache Storage (`speech-pack:<id>`; the service worker leaves `speech/` to the network and never clears
+    that keep, so the pack is downloaded once a browser, not once a publish), and hands them to a worker that
+    installs the air gap first, hashes every file against the pin before it runs any, and runs the model on one
+    thread from bytes, so it fetches nothing, starts no worker and needs no cross-origin isolation. A sentence is
+    cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
+    for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
+    where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
+    dropped: no audio leaves the device. A short loud sound in the sentence (a knock, a clap) does not cut the words away.
+    A repeat the person said ("no, no, no", "five five five") is kept; only a model that writes the same thing until
+    its length runs out is cut back. A site that does not answer in 20 s or a
+    download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started
+    again for ever; a mute stops a download under way; a page with no pack is never said to be waiting for one.
+  - **What you see.** The microphone pill reads **words soon**, **words 40%**, **words starting**, then **words
+    on-device**, and shows each sentence it understood in quotes for a few seconds; on a phone, where the microphone
+    is a badge, the same words stand in a chip beside it on the minimap, and a screen reader is told each sentence
+    once. While the pack is on its way a browser with its own recogniser reads in the meantime, if its model needs
+    nothing installed. On mobile data, 2G or a data saver, and on a phone or tablet whose browser does not say what it
+    is connected to (an iPhone's Safari never does), the 41 MB are
+    not downloaded unasked: the pill reads **words waiting**, a toast says why, and pressing the microphone yourself
+    (or `mic on`) gets it. A microphone whose audio stops arriving, or that the system holds muted, reads **Mic
+    silent**; one that has sent only exact silence since it opened reads **No sound yet**, a hint in the usual colour
+    (an input behind a noise gate does that until the first word).
+  - **Licences.** `NOTICE.md` (shipped part, trademarks, operator note 15), `LICENSE` section 4, `docs/ip-audit.md`
+    and `docs/zero-trust-audit.md` record the model, the runtime and what its WebAssembly module is built from
+    (`third_party/onnxruntime-web/1.31.1/`: ONNX Runtime's licence and third-party notices at the same tag, and the
+    licences of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt). The npm package of the runtime ships
+    no licence file, so the build embeds a text recorded for that exact version, and still fails for any other
+    bundled package without one. The same vendor's Spanish model, whose licence limits commercial use, is not used.
+  - **What CI showed** (on the pull request). The new `speech` job reads a sentence spoken by a speech synthesiser
+    with the pinned pack under Node, then serves the built web copy with the pack, opens it in a desktop Chromium
+    whose microphone is that recording, and sees the sentence on the pill on a first visit (the site asked for the
+    manifest and each file exactly once) and again on a second visit that asks for nothing under `speech/`
+    (`tools/browser/speech.mjs`). Unit suites cover the tap, the engine, the pack, the worker's checks, the tool and
+    the licences. The short-command figure above is from the real pack under Node on public-domain and synthesised
+    recordings, not from CI.
+  - **Not verified.** A real voice through a real microphone; Safari and an iPhone, Firefox, Android Chrome and any
+    phone; the time to the first sentence on a slow device. The model is small and English only, and it mishears:
+    in testing here it read the synthesiser's "Take me to the tailor." wrongly in several ways while reading other
+    sentences exactly. Talking to the people nearby and the agents' shared terminals, which the same document asks
+    for, are not in this change.
+
+- **On-screen keys and a menu for the pad.** A keyboard the page draws (`04_Connect_Hardware/ScreenKeys.tsx`, with
+  `keysDesk.ts`, `keyboardSense.ts`, `keyLayout.ts`, `keysPad.ts` and `textEntry.ts`) types into the field with the
+  caret as a real key would, with the Esc, Tab, Ctrl and arrow keys a console needs. No browser says whether a
+  keyboard is plugged in, so it goes by the device last used: after a pad it is offered on any text field and opens on
+  the select button, the pad's menu (Keyboard, or Console) or its chip; on a phone or tablet it opens on a tap on the
+  console's prompt (a chat line keeps the phone's own keyboard, and its keyboard key hands that field back to it while
+  the field keeps the caret); a real keyboard's key puts it away, though on a phone or tablet a key typed into a field
+  the phone's own keyboard may be serving is not taken for one; switch scanning and the dwell click get it on every
+  field; `access keys auto|on|off` and `?keys=` choose. The panels, Sloane's card and the console stand above the keys
+  (and above their chip), and the field with the caret is scrolled into view. The pad's menu button (start; with one
+  hand, select with that shoulder held) opens a menu with the touch Menu's items, the on-screen keys and Sloane, so a
+  pad alone reaches the console, ghost view, the HUD and the text size; hints and the first walk name the pad's own
+  menu button where they named `~`. While either is open it has player 1's pads; a card that must be answered first,
+  the halted city's lock screen or a headset session folds the keys and closes the menu. Checked by unit suites and by the browser smoke
+  test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
+  a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
@@ -57,9 +175,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   The packaged run in `build-matrix.yml`'s `linux-x64` job adds one short console ask, stopped once its first words
   stream, and judges how it ended without the stop's own reply (which comes last when the answer ended first);
   rehearsed here against a tiny-model `.deb` installed with apt, 24 of 24 checks, and with the stop forced after the
-  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). Not verified: a real Linux
-  desktop, the real 1.5B model through the console until CI runs the packaged check (and with it the stop after the
-  first words, which the tiny model never reaches), and phones.
+  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). CI's packaged run on this
+  change (the Ubuntu 22.04 runner, the installed `.deb` with the real 1.5B model): 24 of 24; the console's `ask hello`
+  began streaming the model's answer, `ask stop` typed after its first words ended it with `ask: stopped by the
+  operator`, and the ask took 3,067 ms. Not verified: a real Linux desktop, and phones.
 
 - **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
   `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`
@@ -644,7 +763,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
   goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
   intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
-  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  one isolated Crimson Noir Script lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
   move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
   over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
   rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
@@ -668,7 +787,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
   each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
   `commands.test.ts`).
-- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+- **Gas metering in the Crimson Noir Script VM, and the lane runner.** A bound that ends a Crimson Noir Script run is now named in
   the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
   by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
   limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
@@ -842,7 +961,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
   the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
-  `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
+  `laws` at the Ring-0 console; run the three-line Crimson Noir Script exit program), as a pure stage engine with Sloane's
   lines (`src/09_Cognition/firstWalk.ts`: the thing to do in the device's own words, one line for an eight-year-old,
   five whys one deeper each, one hint per stage after forty-five quiet seconds), a switch and a pass record
   (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`: `?tutorial=1|0`, `?onboarding=0` and `?boot=tty` keep it away,
@@ -854,7 +973,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   constant); the exit program is the next entry's. The quiet five-minute watch waits until the walk is passed. Pinned
   by node tests (the stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand
   scrub); how the card stands on a real phone, a pad or a screen reader is unverified.
-- **The first walk's way out: three NoirScript words and the exam behind them.** `verify_ring0() -> u32`,
+- **The first walk's way out: three Crimson Noir Script words and the exam behind them.** `verify_ring0() -> u32`,
   `spawn_subagents(n: i32, role: str) -> i32` and `unlock_city(seal: u32, swarm: i32) -> bool` are intrinsics of the
   console's language (`src/07_Execute_Actions/terminal/noirscript`: a new `NoirHost.exam` surface with `noExam` as its
   refusal, three zero-operand opcodes, the folder's air gap unchanged), behind an exam the city composes into the
@@ -1729,13 +1848,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   or the Ring-0 auditor.
 - **The Ring-0 elite tier (`ring0`).** Above the operator tier, opened by a passphrase: `ring0 elite set <passphrase>`
   keeps a salted SHA-256 record in the page (never the words); `ring0 unlock --elite <passphrase>` opens, for the
-  console session, NoirScript's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
+  console session, Crimson Noir Script's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
   through the operator's own frozen facade (the same paths as `set`, a scripted intent, `crowd.cull` and the feature
   inspector); `ring0 lock` closes it, `operator lock` closes both, five wrong passphrases in a row refuse until the
   operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
   Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
   tier calls those four things and nothing else.
-- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+- **Crimson Noir Script (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
   to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
   arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
   `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
@@ -2191,7 +2310,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
   (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
   `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
-  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,672 bytes, from 12,161,926 to 12,173,598; the limit in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,674 bytes, from 12,340,394 to 12,352,068; the limit in
   `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
   it stands on an empty street with nobody at work in it, and after dark a shop or home there is unlit inside (a
@@ -2200,6 +2319,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the fifteen starts of the three tested seeds a start's window holds one to four workplaces, one or two shops and up
   to two homes. Unverified on a real phone or GPU (the pictures are software
   WebGPU).
+
+- **The console's second language is now called Crimson Noir Script.** It was NoirScript. The name changed everywhere
+  a person reads it: the console's `help` and `noir` lines, Sloane's first-walk lines, the progression's skill text,
+  the manual, the README, and the language's own document, which moved to `docs/crimson-noir-script.md`. Nothing else
+  changed: the `noir` command, the syntax, the bytecode and every limit are as they were, and the source folder
+  (`terminal/noirscript/`) and its type names keep their spelling. The new name leads with the product's own, so the
+  language is not taken for another, unrelated programming language named Noir. The entries of this section that
+  describe the language use the new name as well.
 
 - **The first walk holds a visitor only until they reach the console, and lends a hand when they stall.** Six stages
   now (look and walk, talk to Sloane, the parked fleet, inside a workplace, your look, the console), down from seven:
