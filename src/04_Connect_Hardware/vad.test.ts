@@ -13,6 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { UtteranceTap, utteranceOptions } from './utterance.ts'
 import { VAD, VAD_PROCESSOR, VadCore, vadFrame, vadWorkletSource } from './vad.ts'
 
 const SR = 48_000
@@ -513,7 +514,11 @@ test('the FFT: a pure tone lands in its bin and nowhere else; the flatness of wh
 
 test('the worklet module: VadCore by its runtime name, the processor registered under its name, and it detects speech in a stub scope', () => {
   const src = vadWorkletSource(VAD, 4)
-  assert.ok(src.includes(`new ${VadCore.name}(`), 'the class by its own (possibly minified) name')
+  assert.ok(src.includes('new VadCoreClass(') && src.includes(`const VadCoreClass = (${VadCore.toString()});`), 'the class as an expression under the module\'s own name')
+  assert.ok(src.includes(`const UtteranceTapClass = (${UtteranceTap.toString()});`), 'and the tap beside it')
+  // What a minifier does to the two classes: one short inner name for both, or none. The module still parses.
+  const twin = [`const A = (${VadCore.toString().replace(/^class \w+/, 'class e')});`, `const B = (${UtteranceTap.toString().replace(/^class \w+/, 'class e')});`, `const C = (${UtteranceTap.toString().replace(/^class \w+/, 'class')});`].join('\n')
+  assert.doesNotThrow(() => new Function(twin))
   assert.ok(src.includes(`registerProcessor(${JSON.stringify(VAD_PROCESSOR)}`))
   // A stub AudioWorkletGlobalScope: the module must run in it, register one processor, and that processor must post
   // a level a few times a second and every boundary.
@@ -547,4 +552,32 @@ test('the worklet module: VadCore by its runtime name, the processor registered 
   p.port.onmessage?.({ data: { reset: true } })
   assert.equal(p.process([[]]), true, 'no channel: nothing happens, the processor stays')
   assert.equal(p.process([]), true)
+  // Hearing: nothing is kept until the page asks; then each sentence is posted once, at 16 kHz, its buffer transferred.
+  const q = new registered[0].ctor({ processorOptions: { tap: utteranceOptions(SR) } })
+  const sent: { m: { utterance?: Float32Array; cut?: boolean; speech?: boolean }; transfer?: unknown[] }[] = []
+  q.port.postMessage = ((m: never, transfer?: unknown[]) => { sent.push({ m, transfer }) }) as never
+  const said = concat(room(0.6), voice(0.9), room(1.2))
+  const play = (x: Float32Array): void => { for (let i = 0; i + 128 <= x.length; i += 128) q.process([[x.subarray(i, i + 128)]]) }
+  play(said)
+  assert.equal(sent.filter((x) => x.m.utterance).length, 0, 'not asked: no utterance leaves the audio thread')
+  assert.equal((q as unknown as { tap: unknown }).tap, null, 'and no tap exists to hold one')
+  q.port.onmessage?.({ data: { hear: true } })
+  play(said)
+  const got = sent.filter((x) => x.m.utterance)
+  assert.equal(got.length, 1, 'one sentence, one utterance')
+  const u = got[0].m.utterance!
+  assert.ok(u instanceof Float32Array && got[0].transfer?.[0] === u.buffer, 'transferred, not copied')
+  assert.equal(got[0].m.cut, false)
+  assert.ok(u.length / 16_000 > 0.9 && u.length / 16_000 < 2.2, `${(u.length / 16_000).toFixed(2)} s: the voice with its lead and its tail`)
+  let peak = 0
+  for (const v of u) peak = Math.max(peak, Math.abs(v))
+  assert.ok(peak > 0.05, 'the voice is in it')
+  q.port.onmessage?.({ data: { hear: false } })
+  sent.length = 0
+  play(said)
+  assert.equal(sent.filter((x) => x.m.utterance).length, 0, 'told to stop: nothing more')
+  // A processor given no tap options (an older page) ignores the ask instead of throwing on the audio thread.
+  const old = new registered[0].ctor({ processorOptions: {} })
+  old.port.onmessage?.({ data: { hear: true } })
+  assert.equal(old.process([[said.subarray(0, 128)]]), true)
 })

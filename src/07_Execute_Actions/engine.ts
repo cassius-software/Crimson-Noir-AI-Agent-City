@@ -3334,10 +3334,10 @@ export class Engine {
   }
 
   /**
-   * The city's structure-of-arrays columns for NoirScript (terminal/noirscript): every array a copy taken now, so a run
-   * reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off the
-   * zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai,
-   * 1 player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
+   * The city's structure-of-arrays columns for Crimson Noir Script (terminal/noirscript): every array a copy taken now,
+   * so a run reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off
+   * the zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai, 1
+   * player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
    */
   private soaTables(): NoirTables {
     const b = this.sim.bridge

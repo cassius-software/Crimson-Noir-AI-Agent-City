@@ -30,6 +30,7 @@ import { Script, createContext } from 'node:vm'
 import { BRAND } from './brand.ts'
 import { BUILD_META } from './07_Execute_Actions/bootFailure.ts'
 import { APP_MODEL, SITE_MODEL, manifestText, type SiteModelPin } from './09_Cognition/siteModel.ts'
+import { SPEECH_CACHE, SPEECH_PACK } from './09_Cognition/speechPack.ts'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const PWA: string = '../tools/web/pwa.mjs'
@@ -904,6 +905,27 @@ test('the site\'s model folder is left to the network: no model in the worker\'s
   assert.ok(!web.CACHED.some((f) => f.startsWith('models/')), 'nothing of the model is cached on install')
 })
 
+test('the speech pack\'s folder is left to the network too, and the page\'s own keep of the pack survives every publish', async () => {
+  const w = runWorker({ [CACHE]: { 'index.html': 'the city', 'speechx.png': 'png' } }, publishing(CACHE, () => html('never asked for')))
+  for (const path of ['speech/manifest.json', ...SPEECH_PACK.files.map((f) => `speech/${f.file}`), 'speech/MODEL-LICENSE']) {
+    assert.equal(await w.request(`${SCOPE}${path}`), null, path)
+    assert.equal(await w.request(`${SCOPE}${path}`, { mode: 'navigate' }), null, `a page load of ${path}`)
+  }
+  assert.deepEqual(urls(w), [], 'nothing asked of the host for them: the browser fetches them itself')
+  assert.equal(await (await w.request(`${SCOPE}speechx.png`))?.text(), 'png', 'only the folder itself')
+  assert.ok(!web.CACHED.some((f) => f.startsWith('speech/')), 'nothing of the pack is cached on install')
+  // The page keeps the pack in a cache named for the pack (speechPack.ts speechStore). A new build's worker drops
+  // the caches of older builds and nothing else, so the pack is not downloaded again after a publish.
+  const keep = `${SPEECH_CACHE}${SPEECH_PACK.id}`
+  assert.ok(!keep.startsWith('agent-city-'))
+  const served = (url: string): Answer => (url === PAGE_URL ? html(pageOf(BUILD)) : basic(`body of ${url.slice(SCOPE.length)}`))
+  const v = runWorker({ [OTHER]: { 'index.html': 'the build before' }, [keep]: { 'speech/tokens.json': 'kept' } }, served)
+  await v.lifecycle('install')
+  await v.lifecycle('activate')
+  assert.deepEqual([...v.store.keys()].sort(), [CACHE, keep].sort(), 'the older build\'s cache is gone, the pack\'s keep is not')
+  assert.equal(v.store.get(keep)!.get('speech/tokens.json'), 'kept')
+})
+
 // tools/web/siteModel.mjs is plain JavaScript; a computed specifier keeps the page's typecheck off it.
 const SITE: string = '../tools/web/siteModel.mjs'
 const siteTool = (await import(SITE)) as {
@@ -1007,6 +1029,31 @@ test('the web workflow places the checked model after the build and before the u
   const check = readFileSync(new URL('../.github/workflows/site-model.yml', import.meta.url), 'utf8')
   assert.match(check, /pull_request:\s+paths:[\s\S]*src\/09_Cognition\/siteModel\.ts[\s\S]*tools\/web\/siteModel\.mjs/)
   assert.match(check, /node tools\/web\/siteModel\.mjs check --from "\$RUNNER_TEMP\/site-model"/)
+})
+
+test('the web workflow places the checked speech pack after the model and before the upload, on every publish, cached by its pin alone', () => {
+  const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
+  const at = (needle: string): number => {
+    const i = yml.indexOf(needle)
+    assert.ok(i >= 0, needle)
+    return i
+  }
+  const build = at('run: npm run build:web')
+  const model = at('run: node tools/web/siteModel.mjs place --from "$RUNNER_TEMP/site-model" --out dist-web')
+  const pin = at('run: node tools/web/speechPack.mjs pin >> "$GITHUB_OUTPUT"')
+  const cache = at('key: ${{ steps.speech.outputs.key }}')
+  const fetchStep = at('if: steps.speech-cache.outputs.cache-hit != \'true\'')
+  const fetched = at('run: node tools/web/speechPack.mjs fetch --to "$RUNNER_TEMP/speech-pack"')
+  const place = at('run: node tools/web/speechPack.mjs place --from "$RUNNER_TEMP/speech-pack" --out dist-web')
+  const upload = at('uses: actions/upload-pages-artifact@')
+  assert.ok(build < model && model < pin && pin < cache && cache < fetchStep && fetchStep < fetched && fetched < place && place < upload, 'build, the model, then pin, cache, fetch, place, upload')
+  // The cache holds what the fetch wrote, and the place step reads the same folder.
+  assert.match(yml.slice(pin, fetchStep), /path: \$\{\{ runner\.temp \}\}\/speech-pack\n/)
+  const placeStep = yml.slice(yml.lastIndexOf('- name:', place), place)
+  assert.doesNotMatch(placeStep, /\bif:/, 'the check runs on every publish, the cached files included')
+  // After the deploy the site is only looked at: the pack's manifest, never its 41 MB.
+  const note = yml.slice(at('${PAGE}speech/manifest.json'))
+  assert.doesNotMatch(note, /\.onnx|\.wasm/, 'the note downloads no file of the pack')
 })
 
 test('the app\'s pin is the page\'s too: its own cache key, its own licence, fetched at its pinned revision', () => {

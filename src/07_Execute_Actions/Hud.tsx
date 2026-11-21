@@ -334,6 +334,14 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   const micShown = voice && (micOpen || (visible && (!compact || micNeeded)))
   const micPill = micShown && <MicPill voice={voice} mic={mic} onMic={onMic} contrast={highContrast} panel={panel} muted={muted} dark={dark} />
   const micBadge = micShown && visible && compact && <MicBadge voice={voice} onMic={onMic} panel={panel} />
+  // The badge has no room for words: on a compact layout the sentence last understood, or where the page's own
+  // recogniser stands while nothing reads words yet ("words 40%", "no words"), stands in a small chip beside the badge,
+  // inside the minimap's box (so it moves nothing: not Sloane's chip, not the speedometer), and only while there is one
+  // of the two to show. The same order as the pill's: a sentence, else nothing while words are read, else the note.
+  const micWords = micBadge && micOpen && voice ? voice.said ? `\u201c${voice.said}\u201d` : voice.words ? '' : voice.note ?? '' : ''
+  const micWordsChip = micWords !== '' && (
+    <div className={`pointer-events-none absolute bottom-0 left-8 max-w-20 truncate px-2 py-0.5 text-[10px] font-medium ${voice?.said ? 'italic' : ''} ${muted} ${panel}`} title={voice?.speech || undefined} data-mic-chip aria-hidden="true">{micWords}</div>
+  )
   // Recruitment: who is coming over, the Active swarm's skills and the activity line; then the team at work (Sloane's
   // for a goal, or the first walk's swarm), in one line (08_Swarm/team.ts). Without a host microphone (an older host,
   // no pill) the chip also carries the MIC dot, so an open microphone is never without its indicator (it outlives the H
@@ -461,7 +469,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       <span className="sr-only" role="status" aria-live="polite" data-announce>{c.announce ?? ''}</span>
       {/* The microphone's state for a reader: here, not in the pill, which a phone or a hidden HUD leaves unmounted while
           the device is shut, so "muted" is heard wherever the switch was pressed (the Menu, V, R3). */}
-      <span className="sr-only" role="status" aria-live="polite" data-mic-told>{voice ? micTold(voice.phase) : ''}</span>
+      <span className="sr-only" role="status" aria-live="polite" data-mic-told>{voice ? micTold(voice) : ''}</span>
+      {/* Each sentence understood, told once: a region of its own, so the state above is not told again when the pill's
+          quote goes, and a sentence said twice is told twice (a zero-width space alternates with the count). */}
+      <span className="sr-only" aria-live="polite" data-mic-heard>{voice?.heardText ? `Heard: ${voice.heardText}${(voice.heard ?? 0) % 2 === 1 ? '\u200b' : ''}` : ''}</span>
       {visible && !compact && (
         <div className={FRAME_WIDE}>
           <div className="absolute top-0 left-0 flex flex-col items-start gap-2">
@@ -656,6 +667,7 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             <div className="relative">
               <Minimap s={s} dark={dark} ui={208 / 112} layer={mapLayer} homes={homes} className={`h-28 w-28 overflow-hidden rounded-full border-2 ${mapRing} shadow-[0_8px_24px_rgba(15,23,42,0.3)]`} />
               {micBadge && <div className="absolute bottom-0 left-0">{micBadge}</div>}
+              {micWordsChip}
             </div>
             {driving && !short && speedChip}
           </div>
@@ -704,8 +716,14 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
  * The microphone's pill (04_Connect_Hardware/microphone.ts): a button with the state's word and colour, a live meter
  * of the room while the device is open, and an accessible name that says the state, what a press does and the key.
  * The meter is drawn at frame rate from the microphone's own ring of levels, outside React; the word comes with the
- * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), not of
- * every onset of speech nor of Sloane speaking: those are the meter's news.
+ * snapshot. A live region beside it tells a screen reader of a change of state (listening, muted, blocked), of the
+ * page's own recogniser's state and of each sentence it understood, not of every onset of speech nor of Sloane
+ * speaking: those are the meter's news. An open device that sends nothing reads Mic silent in the failure's colour
+ * (the system holds it muted, or its audio stopped arriving); one that has sent only exact silence since it opened
+ * reads No sound yet, a hint in the usual colour (an input behind a noise gate does that until the first word). After the
+ * meter: the sentence last understood, for a few seconds, so the visitor sees their words arrive; else "words
+ * on-device" while a recogniser is reading; else where the page's own recogniser stands while it is not reading yet
+ * ("words 40%", "no words"), with the whole reason in the tooltip.
  */
 function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
   voice: NonNullable<SipocSnapshot['supplier']['voice']>; mic: MicMeter | null; onMic?: () => void; contrast: boolean; panel: string; muted: string; dark: boolean
@@ -734,22 +752,30 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
     return () => cancelAnimationFrame(raf)
   }, [mic, open, dark, contrast])
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
-  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
+  // Open, and nothing at all arrives (microphone.ts silent): the pill says so in the failure's colour, with the reason.
+  // Only zeros since it opened (hushed): a hint, in the usual colour.
+  const quiet = voice.silent === true && voice.phase === 'listening' && !voice.speaking
+  const hushed = !quiet && voice.hushed === true && voice.phase === 'listening' && !voice.speaking
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : quiet ? 'bg-rose-500' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : dark ? 'bg-slate-400' : 'bg-slate-500'
   return (
     <button
       type="button"
       onClick={onMic}
-      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed || quiet || hushed ? voice.detail : '', 'V', quiet, hushed)}
       aria-pressed={open}
-      title={voice.detail || undefined}
+      title={[voice.detail, voice.speech].filter(Boolean).join(' · ') || undefined}
       className={`pointer-events-auto flex max-w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
       data-hint="voice"
       data-mic={voice.phase}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
-      <span className="truncate">{pillWord(voice.phase, voice.speaking)}</span>
+      <span className="truncate">{pillWord(voice.phase, voice.speaking, quiet, hushed)}</span>
       {open && <canvas ref={canvas} width={96} height={20} className="h-3.5 w-12 shrink-0" aria-hidden="true" />}
-      {open && voice.words && <span className={`truncate font-medium ${muted}`}>words on-device</span>}
+      {open && voice.said
+        ? <span className={`min-w-0 max-w-48 truncate font-medium italic ${muted}`} data-mic-said>{`\u201c${voice.said}\u201d`}</span>
+        : open && voice.words
+          ? <span className={`truncate font-medium ${muted}`}>words on-device</span>
+          : open && voice.note && <span className={`truncate font-medium ${muted}`} data-mic-note>{voice.note}</span>}
     </button>
   )
 }
@@ -758,21 +784,25 @@ function MicPill({ voice, mic, onMic, contrast, panel, muted, dark }: {
  * The microphone's pill on a phone (and in any compact window): a round badge, 28 px, on the minimap's lower-left
  * corner, so it takes no row of the panels' column. A microphone glyph, struck through when the device could not open,
  * and the pill's coloured dot at its shoulder (green while it hears speech, amber while Sloane speaks, blue while it
- * listens, red when it could not open); no meter. A tap does what the pill's does, and its accessible name is the pill's.
+ * listens, red when it could not open or sends nothing); no meter. A device that is open and sends nothing has a
+ * dashed stroke the other way. A tap does what the pill's does, and its accessible name is the pill's. The words the
+ * pill shows after its meter stand in a chip beside it instead (Hud's micWordsChip).
  */
 function MicBadge({ voice, onMic, panel }: {
   voice: NonNullable<SipocSnapshot['supplier']['voice']>; onMic?: () => void; panel: string
 }) {
   const open = isOpen(voice.phase)
   const failed = voice.phase === 'blocked' || voice.phase === 'error' || voice.phase === 'unavailable'
-  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : 'bg-slate-400'
+  const quiet = voice.silent === true && voice.phase === 'listening' && !voice.speaking
+  const hushed = !quiet && voice.hushed === true && voice.phase === 'listening' && !voice.speaking
+  const dot = voice.phase === 'speech' ? 'bg-emerald-400' : quiet ? 'bg-rose-500' : open && voice.speaking ? 'bg-amber-400' : open ? 'bg-sky-500' : failed ? 'bg-rose-500' : 'bg-slate-400'
   return (
     <button
       type="button"
       onClick={onMic}
-      aria-label={pillLabel(voice.phase, voice.speaking, failed ? voice.detail : '')}
+      aria-label={pillLabel(voice.phase, voice.speaking, failed || quiet || hushed ? voice.detail : '', 'V', quiet, hushed)}
       aria-pressed={open}
-      title={voice.detail || undefined}
+      title={[voice.detail, voice.speech].filter(Boolean).join(' · ') || undefined}
       className={`pointer-events-auto relative flex h-7 w-7 cursor-pointer items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${panel}`}
       data-hint="voice"
       data-mic={voice.phase}
@@ -781,15 +811,27 @@ function MicBadge({ voice, onMic, panel }: {
         <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" />
         <path d="M3 8a5 5 0 0 0 10 0M8 13v1.75" />
         {failed && <path d="M2.5 2.5l11 11" />}
+        {quiet && <path d="M2.5 13.5l11-11" strokeDasharray="2 2" />}
       </svg>
       <span className={`absolute top-0 right-0 h-2 w-2 rounded-full ${dot} ${voice.phase === 'speech' ? 'animate-pulse' : ''}`} />
     </button>
   )
 }
 
-/** The reader's line for the microphone: the state without speech onsets (speech reads as listening) or Sloane's turns. */
-function micTold(phase: NonNullable<SipocSnapshot['supplier']['voice']>['phase']): string {
-  return `Microphone ${phaseWord(phase === 'speech' ? 'listening' : phase).replace(/^Mic /, '').toLowerCase()}`
+/**
+ * The reader's line for the microphone: the state without speech onsets (speech reads as listening) or Sloane's turns,
+ * then, while it is open, what the pill shows after its meter when it shows no sentence: "words on-device" while words
+ * are read, else where the page's own recogniser stands ("words 40%", "no words"). The sentences themselves are told
+ * in a region of their own (data-mic-heard). The percentage moves in tens, so a download is told some ten times, not a
+ * hundred.
+ */
+function micTold(voice: NonNullable<SipocSnapshot['supplier']['voice']>): string {
+  const phase = voice.phase
+  const state = `Microphone ${phaseWord(phase === 'speech' ? 'listening' : phase).replace(/^Mic /, '').toLowerCase()}`
+  if (!isOpen(phase)) return state
+  if (voice.words) return `${state}, words on-device`
+  const note = (voice.note ?? '').replace(/(\d+)%/, (_, n: string) => `${Math.floor(Number(n) / 10) * 10}%`)
+  return note ? `${state}, ${note}` : state
 }
 
 /** What a ping landed on: 'a spot', 'person 12', 'car 3', 'pole 7'. */

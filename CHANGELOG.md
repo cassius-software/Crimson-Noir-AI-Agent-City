@@ -15,6 +15,66 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The microphone understands what you say, with a recogniser of the page's own.** The document that asked for
+  proximity voice said the microphone does not work. It was checked first: the microphone opened, metered the room and
+  told speech from noise; what was missing was the words. Speech was turned into text only by the browser's own
+  on-device recogniser, which a few browsers have and most do not, so in most browsers nothing said was understood.
+  The page now brings its own (`src/09_Cognition/speechEngine.ts`, `speechPack.ts`, `speech.worker.ts`,
+  `speechCore.ts`, `speechOrt.ts`; `src/04_Connect_Hardware/utterance.ts`):
+  - **The speech pack.** The web copy serves Moonshine Tiny (English; MIT, Useful Sensors, Inc.) as quantized ONNX and
+    the WebAssembly module of ONNX Runtime Web 1.31.1 (MIT, Microsoft; the project's sixth runtime dependency, pinned
+    exactly) beside the page in `speech/`: four files, 41 MB. `tools/web/speechPack.mjs` takes the model from the npm
+    registry's tarball of `@moonshine-ai/moonshine-js` 0.1.29, the module from the installed dependency and the
+    vocabulary from `third_party/moonshine-tiny-en/`, checks each against the size and SHA-256 `speechPack.ts` pins,
+    and places them in `dist-web/speech/` with a manifest and both projects' licences and notices; `web.yml` runs it
+    on every publish, with the model cached by the pin. Nothing of the pack is in `dist/index.html`
+    (`tools/verify/page_dist.mjs` now refuses an `.onnx` file there as it refuses a `.gguf`), and the Windows, Linux,
+    macOS, Android, iOS, NixOS and OS builds carry no pack yet: there the browser's own recogniser still stands in
+    where there is one.
+  - **In the page.** The detector's worklet now also cuts what it hears into sentences (from 0.4 s before speech to
+    0.35 s after, 12 s at most), resampled to 16 kHz by a windowed-sinc filter, and hands them over only while the
+    recogniser asks. When the microphone opens, the page asks its own site for the pack's manifest and files, keeps
+    them in Cache Storage (`speech-pack:<id>`; the service worker leaves `speech/` to the network and never clears
+    that keep, so the pack is downloaded once a browser, not once a publish), and hands them to a worker that
+    installs the air gap first, hashes every file against the pin before it runs any, and runs the model on one
+    thread from bytes, so it fetches nothing, starts no worker and needs no cross-origin isolation. A sentence is
+    cut to the part that holds the words (the room the microphone keeps around them made this model write nothing
+    for most short commands: 57 of 60 recorded and synthesised short commands are read now), read, its text goes
+    where the browser recogniser's went (a skill asked for to the recruiter, the rest to Sloane), and the samples are
+    dropped: no audio leaves the device. A short loud sound in the sentence (a knock, a clap) does not cut the words away.
+    A repeat the person said ("no, no, no", "five five five") is kept; only a model that writes the same thing until
+    its length runs out is cut back. A site that does not answer in 20 s or a
+    download that stalls for 30 s is a failed try; a worker that loads and then dies at every reading is not started
+    again for ever; a mute stops a download under way; a page with no pack is never said to be waiting for one.
+  - **What you see.** The microphone pill reads **words soon**, **words 40%**, **words starting**, then **words
+    on-device**, and shows each sentence it understood in quotes for a few seconds; on a phone, where the microphone
+    is a badge, the same words stand in a chip beside it on the minimap, and a screen reader is told each sentence
+    once. While the pack is on its way a browser with its own recogniser reads in the meantime, if its model needs
+    nothing installed. On mobile data, 2G or a data saver, and on a phone or tablet whose browser does not say what it
+    is connected to (an iPhone's Safari never does), the 41 MB are
+    not downloaded unasked: the pill reads **words waiting**, a toast says why, and pressing the microphone yourself
+    (or `mic on`) gets it. A microphone whose audio stops arriving, or that the system holds muted, reads **Mic
+    silent**; one that has sent only exact silence since it opened reads **No sound yet**, a hint in the usual colour
+    (an input behind a noise gate does that until the first word).
+  - **Licences.** `NOTICE.md` (shipped part, trademarks, operator note 15), `LICENSE` section 4, `docs/ip-audit.md`
+    and `docs/zero-trust-audit.md` record the model, the runtime and what its WebAssembly module is built from
+    (`third_party/onnxruntime-web/1.31.1/`: ONNX Runtime's licence and third-party notices at the same tag, and the
+    licences of Emscripten's runtime, musl, libc++, libc++abi and compiler-rt). The npm package of the runtime ships
+    no licence file, so the build embeds a text recorded for that exact version, and still fails for any other
+    bundled package without one. The same vendor's Spanish model, whose licence limits commercial use, is not used.
+  - **What CI showed** (on the pull request). The new `speech` job reads a sentence spoken by a speech synthesiser
+    with the pinned pack under Node, then serves the built web copy with the pack, opens it in a desktop Chromium
+    whose microphone is that recording, and sees the sentence on the pill on a first visit (the site asked for the
+    manifest and each file exactly once) and again on a second visit that asks for nothing under `speech/`
+    (`tools/browser/speech.mjs`). Unit suites cover the tap, the engine, the pack, the worker's checks, the tool and
+    the licences. The short-command figure above is from the real pack under Node on public-domain and synthesised
+    recordings, not from CI.
+  - **Not verified.** A real voice through a real microphone; Safari and an iPhone, Firefox, Android Chrome and any
+    phone; the time to the first sentence on a slow device. The model is small and English only, and it mishears:
+    in testing here it read the synthesiser's "Take me to the tailor." wrongly in several ways while reading other
+    sentences exactly. Talking to the people nearby and the agents' shared terminals, which the same document asks
+    for, are not in this change.
+
 - **On-screen keys and a menu for the pad.** A keyboard the page draws (`04_Connect_Hardware/ScreenKeys.tsx`, with
   `keysDesk.ts`, `keyboardSense.ts`, `keyLayout.ts`, `keysPad.ts` and `textEntry.ts`) types into the field with the
   caret as a real key would, with the Esc, Tab, Ctrl and arrow keys a console needs. No browser says whether a
@@ -678,7 +738,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   name), a count in the goal is how many sub-agents (up to the lane runner's 32; more is said to be dropped), and a
   goal nothing maps to sends two scouts (the twin studio and the control tower) that read the city and report; the
   intent engine (`intent.ts`) gains the `dispatch` control beside its knobs. `src/08_Swarm/team.ts` (new) runs a team:
-  one isolated NoirScript lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
+  one isolated Crimson Noir Script lane a sub-agent, placed at its desk's door front, a probe a tick under the lane limits, with
   move and a workplace task as its whole capability word; one person within earshot with the desk's skill is asked
   over through the recruiter, after the lane's own ask on the gate, and sent in only once the player stands within
   rally range of the desk's door (the tether is never loosened). The Concierge shows the lanes' readings under the
@@ -702,7 +762,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   for; `act gate` says which checks a lane passes; `goal` prints a dispatch's lane count and missing desks. Tests pin
   each (`lanes.test.ts` at 60,000 people, `dispatch.test.ts`, `team.test.ts`, `teamWiring.test.ts`,
   `commands.test.ts`).
-- **Gas metering in the NoirScript VM, and the lane runner.** A bound that ends a NoirScript run is now named in
+- **Gas metering in the Crimson Noir Script VM, and the lane runner.** A bound that ends a Crimson Noir Script run is now named in
   the result as well as in its text (`NoirResult.fault`: `gas`, `bounds`, `memory`, `depth` or `output`; a division
   by zero, a type error or a refused host write is a plain error and carries none), and the VM exports the lane
   limits (`LANE_LIMITS`: `MAX_OPS_PER_TICK` = 4,096 instructions a tick, 256 characters of output, a 65,536-cell
@@ -876,7 +936,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   unarmed). Browser shots on SwiftShader only; nothing visual is confirmed on real hardware.
 - **Sloane's first walk, the first-run tutorial (stages, switch and card).** Six stages a brand-new visitor does before
   the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; stand inside a workplace; run
-  `laws` at the Ring-0 console; run the three-line NoirScript exit program), as a pure stage engine with Sloane's
+  `laws` at the Ring-0 console; run the three-line Crimson Noir Script exit program), as a pure stage engine with Sloane's
   lines (`src/09_Cognition/firstWalk.ts`: the thing to do in the device's own words, one line for an eight-year-old,
   five whys one deeper each, one hint per stage after forty-five quiet seconds), a switch and a pass record
   (`src/07_Execute_Actions/onboarding/firstWalkStore.ts`: `?tutorial=1|0`, `?onboarding=0` and `?boot=tty` keep it away,
@@ -888,7 +948,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   constant); the exit program is the next entry's. The quiet five-minute watch waits until the walk is passed. Pinned
   by node tests (the stage order and detection, the switch, the wiring, the lines' plainness, conduct screen and brand
   scrub); how the card stands on a real phone, a pad or a screen reader is unverified.
-- **The first walk's way out: three NoirScript words and the exam behind them.** `verify_ring0() -> u32`,
+- **The first walk's way out: three Crimson Noir Script words and the exam behind them.** `verify_ring0() -> u32`,
   `spawn_subagents(n: i32, role: str) -> i32` and `unlock_city(seal: u32, swarm: i32) -> bool` are intrinsics of the
   console's language (`src/07_Execute_Actions/terminal/noirscript`: a new `NoirHost.exam` surface with `noExam` as its
   refusal, three zero-operand opcodes, the folder's air gap unchanged), behind an exam the city composes into the
@@ -1763,13 +1823,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   or the Ring-0 auditor.
 - **The Ring-0 elite tier (`ring0`).** Above the operator tier, opened by a passphrase: `ring0 elite set <passphrase>`
   keeps a salted SHA-256 record in the page (never the words); `ring0 unlock --elite <passphrase>` opens, for the
-  console session, NoirScript's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
+  console session, Crimson Noir Script's write intrinsics (`tune`, `intent`, `cull`, `steer`) and its raised limits, each write
   through the operator's own frozen facade (the same paths as `set`, a scripted intent, `crowd.cull` and the feature
   inspector); `ring0 lock` closes it, `operator lock` closes both, five wrong passphrases in a row refuse until the
   operator tier is locked and unlocked again, and the history keeps the passphrase as dots. The three laws, the
   Sanctuary, the Ring-0 auditor and the 14A screen are not on that facade and stay out of reach; a test pins that the
   tier calls those four things and nothing else.
-- **NoirScript (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
+- **Crimson Noir Script (`noir`), the console's second language.** Beside R0 (the Forth), a statically typed language compiled
   to bytecode and run on a bounded VM (`terminal/noirscript/`): `i32`, `u32`, `f32` (true binary32), `bool`, fixed
   arrays, the lane types `f32x4`, `i32x4`, `u32x4` and `u32x8` with lane-wise arithmetic, comparisons to masks,
   `select` and `mask` for branchless code, horizontals, `popcount`/`clz`/`ctz`/`rotl`/`rotr`/`morton2`; `let`,
@@ -2193,6 +2253,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   conversation quality and speed, and any real phone or GPU.
 
 ### Changed
+
+- **The console's second language is now called Crimson Noir Script.** It was NoirScript. The name changed everywhere
+  a person reads it: the console's `help` and `noir` lines, Sloane's first-walk lines, the progression's skill text,
+  the manual, the README, and the language's own document, which moved to `docs/crimson-noir-script.md`. Nothing else
+  changed: the `noir` command, the syntax, the bytecode and every limit are as they were, and the source folder
+  (`terminal/noirscript/`) and its type names keep their spelling. The new name leads with the product's own, so the
+  language is not taken for another, unrelated programming language named Noir. The entries of this section that
+  describe the language use the new name as well.
 
 - **The first walk holds a visitor only until they reach the console, and lends a hand when they stall.** Six stages
   now (look and walk, talk to Sloane, the parked fleet, inside a workplace, your look, the console), down from seven:

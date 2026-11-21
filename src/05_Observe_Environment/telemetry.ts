@@ -244,9 +244,13 @@ export interface SipocSnapshot {
      * The microphone (04_Connect_Hardware/microphone.ts), added by the host: its phase and detail for the HUD's pill
      * (the browser's own indicator is never on without it), whether the page itself is speaking (Sloane; the pill
      * reads Speaking), which detector analyses the audio ('worklet', 'page' or 'none'), and whether on-device speech
-     * recognition is running beside it (`words`; Firefox has none, so the pill shows level and speech only).
+     * recognition is reading what is said (`words`: the page's own recogniser, 09_Cognition/speechEngine.ts, or the
+     * browser's), whether the open device sends nothing at all (`silent`: the pill reads Mic silent, `detail` says
+     * why), the few words on where the page's own recogniser stands while it is not reading yet (`note`: "words
+     * 40%", "no words"; '' otherwise) with the whole sentence for the tooltip (`speech`), and the sentence it last understood,
+     * for a few seconds (`said`).
      */
-    voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean }
+    voice?: { phase: MicPhase; detail: string; speaking: boolean; path: 'worklet' | 'page' | 'none'; words: boolean; silent?: boolean; hushed?: boolean; note?: string; speech?: string; said?: string; heard?: number; heardText?: string }
     /**
      * The team at work (08_Swarm/team.ts; Sloane's for a goal, or the first walk's swarm), added by the host: one row a lane, with its tag, its
      * desk, whether it runs or was isolated, and its latest reading.
