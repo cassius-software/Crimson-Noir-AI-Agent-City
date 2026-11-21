@@ -42,6 +42,7 @@ import type { QualityState, RecordingState } from '../../05_Observe_Environment/
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
 import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
+import { LESSONS, finishedFrom, finishedText, lessonAfter, lessonHint, lessonList, lessonNext, lessonStart, lessonStop, lessonWhole, newLessonRun, type LessonRun } from './lessons.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
 export const PRONOUN_WORDS = 'they/them|she/her|he/him|any'
@@ -133,7 +134,7 @@ const CORE = [
   { name: 'rooms', usage: 'rooms', summary: 'the indoor workplaces of this map: slot, kind, lot, doorway, stations and name (the city has sixteen; the metropolis the lots its window gave)' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "Crimson Noir Script, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
-  { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line Crimson Noir Script program that ends it from any stage" },
+  { name: 'tutorial', usage: 'tutorial [<n>|hint|next|stop|status|program]', summary: "the console lessons in Crimson Noir Script (tutorial lists them, tutorial <n> starts one), and Sloane's first walk: the stage you are on, and the three-line program that ends it from any stage" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
 
@@ -177,8 +178,9 @@ const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'n
  * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
  * and the Crimson Noir Script session (noirscript/index.ts).
  */
-export interface ReplSession { machine: Machine; noir: NoirSession }
-export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
+/** The console's own state for as long as it is mounted: the R0 machine, the Crimson Noir Script session, and the lesson running (lessons.ts). */
+export interface ReplSession { machine: Machine; noir: NoirSession; lesson?: LessonRun }
+export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession(), lesson: newLessonRun() })
 
 /** The model providers, as typed after `ask provider` (commands.test.ts pins them to 09_Cognition/router.ts, which this file must not import). */
 export const PROVIDER_ARGS = ['auto', 'claude', 'inpage', 'llamacpp', 'native', 'ollama', 'openai', 'scripted'] as const
@@ -357,7 +359,7 @@ const ARGS: Record<string, readonly string[]> = {
   'ring0 unlock': ['--elite'],
   'ring0 elite': ['set'],
   noir: ['asm', 'reset', 'words'],
-  tutorial: ['program', 'status'],
+  tutorial: [...LESSONS.map((_, i) => String(i + 1)), 'hint', 'next', 'program', 'status', 'stop'],
   hal: ['pair'],
   'hal pair': ['ble', 'hid', 'serial'],
   robot: ['arm', 'calibrate', 'cell', 'demo', 'disarm', 'fit', 'mode', 'relay', 'remove', 'set', 'shape', 'spawn', 'urdf'],
@@ -1714,19 +1716,36 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines }
   },
 
-  // Read-only: the walk's stage and its exit program. There is no `tutorial off`: the console, reached on the walk's
-  // last stage, is the way out, and the program the shortcut from any stage.
-  tutorial(args, b) {
+  // The console lessons (lessons.ts) and the walk: `tutorial` lists the lessons under the walk's stage, `tutorial <n>`
+  // starts one (the session then watches each line, dispatch below), hint, next and stop steer it; `status` and
+  // `program` read the walk. There is no `tutorial off`: the console, reached on the walk's last stage, is the way out,
+  // and the program the shortcut from any stage.
+  tutorial(args, b, _history, _line, session) {
     const a = args[0]
-    if (args.length > 1 || (a !== undefined && a !== 'status' && a !== 'program')) return fail(usage('tutorial'))
+    if (args.length > 1) return fail(usage('tutorial'))
     const e = b.exam
-    const lines: Line[] = []
-    if (a !== 'program') lines.push(out(e === undefined ? 'tutorial: no first walk in this shell (it runs in the city)' : e.status()))
-    if (a !== 'status') {
-      lines.push(sys("the exit program, from any stage, one 'noir' line at a time (the session keeps seal and swarm between lines):"))
-      for (const l of e?.program() ?? EXAM_PROGRAM) lines.push(out(`  noir ${l}`))
+    const walk = (): Line => out(e === undefined ? 'tutorial: no first walk in this shell (it runs in the city)' : e.status())
+    if (a === undefined) return { lines: [walk(), ...lessonList(finishedOf(b, session))] }
+    if (a === 'status') return { lines: [walk()] }
+    if (a === 'program') {
+      return { lines: [sys("the exit program, from any stage, one 'noir' line at a time (the session keeps seal and swarm between lines):"), ...(e?.program() ?? EXAM_PROGRAM).map((l) => out(`  noir ${l}`))] }
     }
-    return { lines }
+    if (/^\d+$/.test(a)) {
+      const n = Number(a)
+      if (n < 1 || n > LESSONS.length) return fail(`tutorial: there is no lesson ${a}; there are ${LESSONS.length} (tutorial lists them)`)
+      if (!session) return { lines: lessonWhole(n) }
+      finishedOf(b, session)
+      return { lines: lessonStart(session.lesson!, n) }
+    }
+    if (a !== 'hint' && a !== 'next' && a !== 'stop') return fail(usage('tutorial'))
+    const run = session?.lesson
+    if (!run?.active) return fail('tutorial: no lesson is running; tutorial lists them, tutorial <n> starts one')
+    if (a === 'hint') return { lines: lessonHint(run) }
+    if (a === 'stop') return { lines: lessonStop(run) }
+    finishedOf(b, session)
+    const r = lessonNext(run)
+    if (r.finished !== null) keepFinished(b, run)
+    return { lines: r.lines }
   },
 
   // ---- the operator tier ----
@@ -2238,7 +2257,44 @@ function dispatch(name: Name, args: string[], bridge: TerminalBridge, history: r
   } catch (e) {
     return fail(`${name}: ${message(e)}`)
   }
-  return earned(name, args, bridge, r)
+  return earned(name, args, bridge, watched(name, line, r, bridge, session))
+}
+
+/** The lesson's lines after a line it was waiting for (lessons.ts lessonAfter), before any check the line earned; a `tutorial` line, a live view, a clear and a result that settles later are left as they are. */
+function watched(name: Name, line: string, r: CommandResult, b: TerminalBridge, session: ReplSession | null): CommandResult {
+  const run = session?.lesson
+  if (!run?.active || name === 'tutorial' || r.pending || r.live || r.clear) return r
+  finishedOf(b, session)
+  const after = lessonAfter(run, line, r.lines)
+  if (after.finished !== null) keepFinished(b, run)
+  return after.lines.length ? { ...r, lines: [...r.lines, ...after.lines] } : r
+}
+
+/** The finished marks in the host's store (none without one, or when it refuses). */
+function storedFinished(b: TerminalBridge): Set<number> {
+  try { return finishedFrom(b.lessons?.load() ?? null) } catch { return new Set() }
+}
+
+/**
+ * The lessons finished: this console's marks merged with the store's, read again each time (a tab beside this one, or
+ * the store arriving after a console opened before the city was up, is never missed), or straight from the store
+ * without a session.
+ */
+function finishedOf(b: TerminalBridge, session: ReplSession | null): ReadonlySet<number> {
+  if (!session) return storedFinished(b)
+  const run = (session.lesson ??= newLessonRun())
+  const mine = (run.finished ??= new Set())
+  for (const n of storedFinished(b)) mine.add(n)
+  return mine
+}
+
+/** The finished marks handed to the host's store, merged with what it holds now; a store that refuses keeps them for this visit only. */
+function keepFinished(b: TerminalBridge, run: LessonRun): void {
+  if (!b.lessons) return
+  const all = storedFinished(b)
+  for (const n of run.finished ?? []) all.add(n)
+  run.finished = all
+  try { b.lessons.save(finishedText(all)) } catch { /* kept for this visit */ }
 }
 
 /** Whether a proposed city action waits for the OK; false on a bridge without the tier (so `y` stays an unknown word there). */

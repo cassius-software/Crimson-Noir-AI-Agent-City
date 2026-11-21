@@ -402,12 +402,13 @@ export function passedLine(name?: string): string {
   return `The city is yours${n}. Everything you just did, you can do again any time; and I am on the chip whenever you want me.`
 }
 
-/** What the console prints when the walk ends: Sloane's line, then where to go from here (its Close button on touch, where there is no Esc). */
+/** What the console prints when the walk ends: Sloane's line, where to go from here (its Close button on touch, where there is no Esc), and the way to Stage 2, the console lessons. */
 export function passedBanner(name?: string, family: InputFamily = 'keyboard'): readonly string[] {
   const away = family === 'touch' ? 'Close puts the console away' : 'Esc closes the console'
   return Object.freeze([
     `Sloane: ${passedLine(name)}`,
     `The city is open: nothing is held back any more. ${away}; help lists every command.`,
+    'When you like, tutorial lists ten short lessons in Crimson Noir Script.',
   ])
 }
 

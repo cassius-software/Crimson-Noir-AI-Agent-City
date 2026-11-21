@@ -36,6 +36,8 @@ export interface ConsoleDeps {
   mind: () => Promise<{ router: Mind; inPage: ConsoleFile }>
   /** What the host vouches to the gate (App.tsx: the air gap main.tsx installed). */
   contained: () => boolean
+  /** Where the console lessons' finished marks are kept (App.tsx: the page's local storage under LESSONS_KEY). */
+  lessons?: TerminalBridge['lessons']
   now?: () => number
 }
 
@@ -166,5 +168,5 @@ export function consoleBridge(brand: TerminalBridge['brand'], deps: ConsoleDeps)
     forget: (name?: string) => kept().then((f) => f.forget(name)),
     log: () => (file ? file.log() : []),
   }
-  return { ...base, operator, model }
+  return { ...base, operator, model, ...(deps.lessons && { lessons: deps.lessons }) }
 }

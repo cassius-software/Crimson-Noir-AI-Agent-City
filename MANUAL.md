@@ -1454,7 +1454,8 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   "Team 24 · 16 workplaces". `unlock_city(seal, swarm)` opens the city for a seal that matches the live one and a swarm
   of one or more, refuses with its reason otherwise, and after the pass answers that the city is already yours. After
   each line the console prints what the doors said. In the console shell (`?boot=tty`) there is no city and no exam: the
-  three words answer so. `tutorial [status|program]` reads the stage and the program; there is no `tutorial off`.
+  three words answer so. `tutorial status` reads the stage and `tutorial program` the program; there is no `tutorial off`.
+  `tutorial` alone reads the stage and lists the console lessons (below).
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
   `__SIM__.walkNote(event)` reports an event into it, for the browser smoke. Its `walk` scenario does the whole walk
   on the accessible path in CI's Chrome (the machine rows, the console opened early passing nothing, every button,
@@ -1466,6 +1467,46 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
 - **Verified:** the stage engine, the switch and the store, the page wiring and the lines' plainness, admissibility
   and brand scrub are pinned by the node tests. How the card stands on a real phone, a pad and a screen reader is
   unverified.
+
+### The console lessons (the tutorial's second stage)
+
+The first walk ends at the console; from there the second stage is optional, a set of ten short lessons in Crimson
+Noir Script, typed in the console itself (`src/07_Execute_Actions/terminal/lessons.ts`). The banner the console prints
+when the walk ends says so ("When you like, tutorial lists ten short lessons in Crimson Noir Script."). They work the
+same in the city's console and in the console alone (`?boot=tty`), where the city's tables are empty and their numbers
+read 0.
+
+- **`tutorial`** prints the walk's stage, then the ten lessons, each marked "(finished)" once finished: 1 your first
+  line, 2 names that remember (`let`, `let mut` and the session's memory), 3 kinds of numbers (i32, u32, f32, bool and
+  `as`), 4 choosing and repeating (`if`, `for`, `while`), 5 your own words (`fn`), 6 reading the city (`crowd`, `cars`,
+  `kernel`, `frame` and `query`), 7 the walls (the step budget, list edges, a stop keeping what printed before it, call
+  depth), 8 switches inside numbers (`&`, `|`, `<<`, `>>`, `popcount`), 9 four at once (`f32x4`, `splat_f32x4`, `hsum`,
+  `load_f32x4`), 10 under the hood (`noir asm`).
+- **`tutorial <n>`** starts lesson n. It opens with the five W's (who, what, when, where, why), each answered in words a
+  five-year-old follows, and then gives one line to type, on a row of its own under "try 1 of 3, type this line:".
+  The console runs the line as it always does; when it is the lesson's line (spaces aside) and prints what the lesson
+  says it prints, the lesson says what just happened ("yes: …") and gives the next line. A line of your own passes
+  without a word, even one that prints the same thing; a `noir` line that stops with an error, on any try (one that is
+  meant to stop too), gets a pointer back to the line, and the lesson's own line doing something else (a name it needs
+  forgotten by `noir reset`, say) is told so, with `tutorial hint` saying what it needs. After the last line the lesson
+  is finished and names the next one.
+- **`tutorial hint`** gives the line again with a tip, **`tutorial next`** skips it (skipping the last line finishes the
+  lesson), **`tutorial stop`** ends the lesson where it was, and starting another lesson replaces the running one.
+- **The finished marks** are kept in the page's local storage (`civic-simulation:lessons:v1`, in the city and in the
+  console alone); a browser that refuses storage keeps them for the visit. The console merges its marks with the
+  stored ones every time it reads or writes them, so a console opened before the city was up, or a second tab, never
+  wipes marks already kept.
+- **Names the lessons leave behind:** lessons 2 to 5 and 7 make names (`apples`, `count`, `cats`, `cake`, `n`,
+  `total`, `k`, `sq`, `sign`, `a`, `down`), which stay in the console's session like any other until a new `let` or
+  `fn` of the same name, `noir reset`, or a reload.
+- **No lesson asks for the ~, ^ or ` characters:** on some keyboards those keys open and close the city's console.
+- **Verified:** every line a lesson asks for, and the output it says that line prints, is run through the real
+  console in `lessons.test.ts`: in a console with no city and in one with a small city, each lesson in a fresh console
+  and all ten one after another in one console. The same file pins what the lessons say about the language: a new
+  `let` makes a new name while `=` is refused, a bare `3` beside `1.5` is taken as `3.0`, a `fn` can come anywhere on a
+  line but never inside `{ }`, the million-step wall, one `f32x4` sum being one order, and `noir asm print(1 + 2);`
+  being five orders that cost five steps. The browser smoke's `tty` scenario lists the lessons, runs lesson 1 line by
+  line in Chrome and sees its finished mark kept and listed.
 
 ## The character customizer
 
