@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins the WGSL that wgsl.ts prints for compute modules, so a change to the lowering
- * shows as a text diff a reviewer can read. Golden text covers each family: literals, every helper, min and max,
- * casts, arithmetic, logic, geometry, variables and loops with their cap, statement behaviours, uniform, storage and
- * constant blocks, the hidden block, and the compute entry. Beside the goldens it checks the printed struct layouts
- * against layoutBlock and strideOf for random blocks in both spaces, the literal rule over special values,
- * positionSure, the WGSL bounds a module at each Lens bound stays within, the refusals of what is not lowered yet,
- * and properties of every text printed here: the same text every time, ASCII, none of the air gap's words, a length
- * linear in the module, names that are declared once and called, and no operation on two literals.
+ * Why does this file exist? It pins the WGSL that wgsl.ts prints, so a change to the lowering shows as a text diff a
+ * reviewer can read. Golden text covers each family: literals, every helper, min and max, casts, arithmetic, logic,
+ * geometry, variables and loops with their cap, statement behaviours, uniform, storage and constant blocks, raw words,
+ * the hidden block, images (texel, put, extent and sample, with the coordinate and level helpers), derivatives with
+ * the uniformity directive, discard and the guard on writes after it, and the three entries: compute, vertex (the
+ * limit selects, the position left unwritten, the live value) and fragment (outputs shaped to their attachments, the
+ * live test, a depth-only module). Beside the goldens it checks the printed struct layouts against layoutBlock and
+ * strideOf for random blocks in both spaces, the literal rule over special values, positionSure, the WGSL bounds a
+ * module at each Lens bound stays within (16 ports each way included), the refusals, and properties of every text
+ * printed here: the same text every time, ASCII, none of the air gap's words, a length linear in the module, names
+ * that are declared once and called, and no operation on two literals.
  * What breaks if it is removed? The lowering could change shape, lay a block out differently from the reference,
  * let a word the air gap bans into a shader, or lower something it should refuse, and no test would see it.
  */
@@ -25,13 +28,23 @@ import type { WgslOptions } from './wgsl.ts'
 
 const lines = (...xs: string[]): string => `${xs.join('\n')}\n`
 
-/** The options a module's own resources ask for: each storage block read_write when it is written, else read. */
+/**
+ * The options a module's own resources and ports ask for: each storage block read_write when it is written, else
+ * read; a fragment module's every output meeting an attachment of its kind (in the 8 colour slots a pipeline has); a
+ * vertex module's every input fed per vertex; no live value.
+ */
 function optionsFor(m: LensModule, over: Partial<WgslOptions> = {}): WgslOptions {
   const storage = m.resources.map((r): 'read' | 'read_write' | null => (r.kind === 'storage' ? (r.writable ? 'read_write' : 'read') : null))
-  return { storage, outputs: [], vertexRate: 0, live: null, arithmetic: 'native', ...over }
+  const slots = m.stage === 'fragment' ? Math.min(8, Math.max(0, ...m.outputs.map((p) => p.slot + 1))) : 0
+  const outputs = Array.from({ length: slots }, (_, s) => {
+    const p = m.outputs.find((q) => q.slot === s)
+    return p === undefined ? null : (p.type.slice(0, 3) as 'f32' | 'i32' | 'u32')
+  })
+  const vertexRate = m.stage === 'vertex' ? m.inputs.reduce((r, p) => r | (1 << p.slot), 0) : 0
+  return { storage, outputs, vertexRate, live: null, arithmetic: 'native', ...over }
 }
 
-const wgsl = (m: LensModule): string => toWgsl(m, optionsFor(m)).code
+const wgsl = (m: LensModule, over: Partial<WgslOptions> = {}): string => toWgsl(m, optionsFor(m, over)).code
 
 function refused(f: () => unknown, code: 'lens' | 'device', re: RegExp, label = ''): void {
   assert.throws(f, (e: unknown) => {
@@ -249,10 +262,136 @@ function allHelpers(): LensModule {
   return b.finish()
 }
 
+/**
+ * Raw words: a read-only block with a fixed part (a u32, a grid, an array of two) and a final array of structs, read
+ * at a u32 index and a constant one; a block that is only a final array, written at an i32 index and a constant one.
+ */
+function raw(): LensModule {
+  const b = lens('compute')
+  const a = b.storage(0, 0, { n: 'u32', g: 'm2', pair: arrayOf('i32x2', 2), items: arrayOf({ p: 'f32x3', k: 'i32' }) })
+  const o = b.storage(0, 1, { xs: arrayOf('u32') }, { writable: true })
+  const n = b.read(a, 'n')
+  const j = b.cast(n, 'i32')
+  const g = b.read(a, 'g')
+  const q = b.read(a, 'pair', j)
+  const p = b.read(a, 'items', n, 'p')
+  const k = b.read(a, 'items', 2, 'k')
+  b.write(o, ['xs', j], b.add(b.bits(b.pick(p, 'y'), 'u32'), b.bits(b.add(k, b.pick(q, 'x')), 'u32')))
+  b.write(o, ['xs', 0], b.bits(b.pick(b.column(g, 1), 'x'), 'u32'))
+  return b.finish()
+}
+
+/**
+ * Images in a compute module: texel of a 2d image (i32 position, u32 level), a 2d-array one (u32 position, i32 layer
+ * and level), a depth one and an integer array one; extent of a level (an i32 below 0) and of a storage image; sample
+ * at an explicit level, without and with a layer; put to an rgba8 image at an i32 position and an r32u one at a u32.
+ */
+function images(): LensModule {
+  const b = lens('compute')
+  const img = b.image(0, 0)
+  const arr = b.image(0, 1, { dims: '2d-array' })
+  const depth = b.image(0, 2, { sample: 'depth' })
+  const ints = b.image(0, 3, { sample: 'uint', dims: '2d-array' })
+  const smp = b.sampler(0, 4)
+  const st = b.storageImage(1, 0, 'rgba8')
+  const su = b.storageImage(1, 1, 'r32u')
+  const at = b.make('i32x2', b.i32(-1), b.i32(2))
+  const un = b.make('u32x2', b.u32(1), b.u32(0))
+  const t0 = b.texel(img, at, { level: b.u32(1) })
+  const t1 = b.texel(arr, un, { layer: b.i32(2), level: b.i32(0) })
+  const t2 = b.texel(depth, at)
+  const t3 = b.texel(ints, un, { layer: b.u32(1) })
+  const e0 = b.extent(img, b.i32(-3))
+  const e1 = b.extent(st)
+  const s0 = b.sample(img, smp, b.make('f32x2', b.f32(0.25), b.f32(0.75)), { level: b.f32(0.5) })
+  const s1 = b.sample(arr, smp, b.make('f32x2', b.f32(0.5)), { layer: b.u32(1), level: b.f32(2) })
+  b.put(st, at, b.add(b.add(t0, t1), b.mul(b.add(s0, s1), t2)))
+  b.put(su, un, b.add(t3, b.make('u32x4', b.pick(e0, 'x'), b.pick(e1, 'y'), b.u32(0), b.u32(0))))
+  return b.finish()
+}
+
+/** A vertex module: both builtins, three inputs, a flat output and an interpolated one, the position written in one branch. */
+function vertex(): LensModule {
+  const b = lens('vertex')
+  const p = b.input(0, 'f32x4')
+  const w = b.input(2, 'u32x2')
+  const s = b.input(5, 'f32')
+  const c = b.output(1, 'f32x2')
+  const f = b.output(4, 'u32', { flat: true })
+  const k = b.add(b.builtin('vertex-index'), b.builtin('instance-index'))
+  b.out(f, b.add(k, b.pick(w, 'y')))
+  b.out(c, b.mul(b.pick(p, 'xy'), s))
+  b.if(b.gt(k, 3), () => b.position(p))
+  return b.finish()
+}
+
+/** A vertex module that always writes its position. */
+function sure(): LensModule {
+  const b = lens('vertex')
+  const u = b.uniform(0, 0, { scale: 'f32' })
+  const p = b.input(1, 'f32x4')
+  b.position(b.mul(p, b.read(u, 'scale')))
+  return b.finish()
+}
+
+/**
+ * A fragment module: an implicit-level sample, the three derivatives, both builtins, a discard, then a write to raw
+ * words and a put, and outputs of one to four components in each kind.
+ */
+function fragment(): LensModule {
+  const b = lens('fragment')
+  const uv = b.input(0, 'f32x2')
+  const n = b.input(1, 'u32', { flat: true })
+  const o0 = b.output(0, 'f32')
+  const o1 = b.output(1, 'f32x3')
+  const o2 = b.output(2, 'i32x2')
+  const o3 = b.output(3, 'u32')
+  const o5 = b.output(5, 'f32x4')
+  const img = b.image(0, 0)
+  const smp = b.sampler(0, 1)
+  const out = b.storage(0, 2, { hits: 'u32', xs: arrayOf('f32') }, { writable: true })
+  const st = b.storageImage(0, 3, 'r32f')
+  const c = b.sample(img, smp, uv)
+  const dx = b.dx(uv)
+  const dy = b.dy(b.pick(uv, 'y'))
+  const wd = b.deriv('width', c)
+  const fc = b.builtin('frag-coord')
+  b.if(b.not(b.builtin('front-facing')), () => b.discard())
+  b.write(out, ['xs', n], b.add(b.pick(dx, 'x'), dy))
+  b.put(st, b.cast(b.pick(fc, 'xy'), 'u32x2'), wd)
+  b.out(o0, b.pick(c, 'x'))
+  b.out(o1, b.pick(c, 'xyz'))
+  b.out(o2, b.make('i32x2', b.cast(n, 'i32')))
+  b.out(o3, n)
+  b.out(o5, c)
+  return b.finish()
+}
+
+/** The fragment module a depth-only pipeline whose vertex module needs the live value is given: empty. */
+function depthOnly(): LensModule {
+  return lens('fragment').finish()
+}
+
 /** The modules this file lowers by name; the properties and the coverage table read them all. */
 const CORPUS: { readonly [name: string]: () => LensModule } = {
   small, literals, families, widths, minmax, casts, arithmetic, logic, geometry, control, unreachable, blocks, entry, hidden, allHelpers,
+  raw, images, vertex, sure, fragment, depthOnly,
 }
+
+/**
+ * The options each module of the corpus is lowered with, beyond optionsFor's: slot 5 of `vertex` fed per instance and
+ * the live value at location 3; `sure`'s input fed per instance; `fragment`'s slot 3 meeting an attachment of another
+ * kind, slot 4 none, the live value at 6; `depthOnly` reading the live value at location 0.
+ */
+const OVER: { readonly [name: string]: Partial<WgslOptions> } = {
+  vertex: { vertexRate: 0b101, live: 3 },
+  fragment: { outputs: ['f32', 'f32', 'i32', 'f32', null, 'f32'], live: 6 },
+  sure: { vertexRate: 0 },
+  depthOnly: { live: 0 },
+}
+
+/** A module of the corpus as this file lowers it. */
+const lowered = (name: string): string => wgsl(CORPUS[name](), OVER[name])
 
 // ---------------------------------------------------------------------------------------------------
 // Goldens
@@ -1062,6 +1201,480 @@ test('a read-only storage block may be bound read_write, as its layout entry say
   assert.ok(code.includes('@group(1) @binding(0) var<storage, read_write> r1: B2;'))
 })
 
+test('raw words: inline loads and stores at clamped words, zero and no store when the final array holds no element', () => {
+  const m = raw()
+  const out = toWgsl(m, optionsFor(m))
+  assert.equal(out.code, lines(
+    '@group(0) @binding(0) var<storage, read> r0: array<u32>;',
+    '@group(0) @binding(1) var<storage, read_write> r1: array<u32>;',
+    '',
+    'fn ng_body() {',
+    '  let v0: u32 = r0[0u];',
+    '  let v1: i32 = bitcast<i32>(v0);',
+    '  let v2: mat2x2<f32> = mat2x2<f32>(bitcast<f32>(r0[2u]), bitcast<f32>(r0[3u]), bitcast<f32>(r0[4u]), bitcast<f32>(r0[5u]));',
+    '  let ng_j0: u32 = select(min(bitcast<u32>(v1), 1u), 0u, v1 < 0i);',
+    '  let ng_w1: u32 = (ng_j0 * 2u) + 6u;',
+    '  let v3: vec2<i32> = vec2<i32>(bitcast<i32>(r0[ng_w1]), bitcast<i32>(r0[ng_w1 + 1u]));',
+    '  let ng_len2: u32 = arrayLength(&r0);',
+    '  let ng_n3: u32 = select(0u, (ng_len2 - 12u) / 4u, ng_len2 >= 12u);',
+    '  let ng_j4: u32 = min(v0, max(ng_n3, 1u) - 1u);',
+    '  let ng_w5: u32 = min((ng_j4 * 4u) + 12u, ng_len2 - 1u);',
+    '  let ng_t6: vec3<f32> = vec3<f32>(bitcast<f32>(r0[ng_w5]), bitcast<f32>(r0[min(ng_w5 + 1u, ng_len2 - 1u)]), bitcast<f32>(r0[min(ng_w5 + 2u, ng_len2 - 1u)]));',
+    '  let v4: vec3<f32> = select(vec3<f32>(), ng_t6, ng_n3 != 0u);',
+    '  let ng_len7: u32 = arrayLength(&r0);',
+    '  let ng_n8: u32 = select(0u, (ng_len7 - 12u) / 4u, ng_len7 >= 12u);',
+    '  let ng_j9: u32 = min(2u, max(ng_n8, 1u) - 1u);',
+    '  let ng_w10: u32 = min((ng_j9 * 4u) + 15u, ng_len7 - 1u);',
+    '  let ng_t11: i32 = bitcast<i32>(r0[ng_w10]);',
+    '  let v5: i32 = select(i32(), ng_t11, ng_n8 != 0u);',
+    '  let v6: f32 = v4.y;',
+    '  let v7: u32 = bitcast<u32>(v6);',
+    '  let v8: i32 = v3.x;',
+    '  let v9: i32 = v5 + v8;',
+    '  let v10: u32 = bitcast<u32>(v9);',
+    '  let v11: u32 = v7 + v10;',
+    '  let ng_len12: u32 = arrayLength(&r1);',
+    '  let ng_n13: u32 = ng_len12;',
+    '  let ng_j14: u32 = min(select(bitcast<u32>(v1), 0u, v1 < 0i), max(ng_n13, 1u) - 1u);',
+    '  let ng_w15: u32 = min(ng_j14, ng_len12 - 1u);',
+    '  if (ng_n13 != 0u) {',
+    '    r1[ng_w15] = v11;',
+    '  }',
+    '  let v12: vec2<f32> = v2[1u];',
+    '  let v13: f32 = v12.x;',
+    '  let v14: u32 = bitcast<u32>(v13);',
+    '  let ng_len16: u32 = arrayLength(&r1);',
+    '  let ng_n17: u32 = ng_len16;',
+    '  let ng_w18: u32 = min(0u, ng_len16 - 1u);',
+    '  if (ng_n17 != 0u) {',
+    '    r1[ng_w18] = v14;',
+    '  }',
+    '}',
+    '',
+    '@compute @workgroup_size(1, 1, 1) fn ng_compute() {',
+    '  ng_body();',
+    '}',
+  ))
+  assert.deepEqual(out.raw, [0, 1])
+  // Every word of the final array is clamped into the binding, every index into the elements held.
+  assert.equal(out.code.split('arrayLength(&r').length - 1, 4)
+})
+
+test('images: texel tested and clamped, put inside only, extent of a clamped level, sample through the coordinate and level helpers', () => {
+  const m = images()
+  const out = toWgsl(m, optionsFor(m))
+  assert.equal(out.code, lines(
+    '@group(0) @binding(0) var r0: texture_2d<f32>;',
+    '@group(0) @binding(1) var r1: texture_2d_array<f32>;',
+    '@group(0) @binding(2) var r2: texture_depth_2d;',
+    '@group(0) @binding(3) var r3: texture_2d_array<u32>;',
+    '@group(0) @binding(4) var r4: sampler;',
+    '@group(1) @binding(0) var r5: texture_storage_2d<rgba8unorm, write>;',
+    '@group(1) @binding(1) var r6: texture_storage_2d<r32uint, write>;',
+    '',
+    'fn ng_uv(x: vec2<f32>) -> vec2<f32> {',
+    '  let u: vec2<u32> = bitcast<vec2<u32>>(x);',
+    '  let m: vec2<u32> = u & vec2<u32>(0x7fffffffu);',
+    '  let big: vec2<f32> = bitcast<vec2<f32>>((u & vec2<u32>(0x80000000u)) | vec2<u32>(0x4b800000u));',
+    '  return select(select(x, big, m > vec2<u32>(0x4b800000u)), vec2<f32>(0.0), m > vec2<u32>(0x7f800000u));',
+    '}',
+    '',
+    'fn ng_lvl(x: f32) -> f32 {',
+    '  let u: u32 = bitcast<u32>(x);',
+    '  let m: u32 = u & 0x7fffffffu;',
+    '  let hi: bool = (u < 0x80000000u) & (m > 0x42040000u);',
+    '  let lo: bool = (u >= 0x80000000u) & (m > 0x3f800000u);',
+    '  return select(select(select(x, 33.0, hi), -1.0, lo), 0.0, m > 0x7f800000u);',
+    '}',
+    '',
+    'fn ng_body() {',
+    '  let v0: i32 = -1i;',
+    '  let v1: i32 = 2i;',
+    '  let v2: vec2<i32> = vec2<i32>(v0, v1);',
+    '  let v3: u32 = 1u;',
+    '  let v4: u32 = 0u;',
+    '  let v5: vec2<u32> = vec2<u32>(v3, v4);',
+    '  let v6: u32 = 1u;',
+    '  let ng_t0: u32 = textureNumLevels(r0);',
+    '  let ng_t1: u32 = min(v6, ng_t0 - 1u);',
+    '  let ng_t2: vec2<u32> = textureDimensions(r0, ng_t1);',
+    '  let ng_t3: vec2<u32> = bitcast<vec2<u32>>(v2);',
+    '  let ng_t4: vec2<u32> = min(ng_t3, ng_t2 - vec2<u32>(1u));',
+    '  let ng_t5: bool = (v6 < ng_t0) & all(ng_t3 < ng_t2);',
+    '  let ng_t6: vec4<f32> = textureLoad(r0, ng_t4, ng_t1);',
+    '  let v7: vec4<f32> = select(vec4<f32>(), ng_t6, ng_t5);',
+    '  let v8: i32 = 2i;',
+    '  let v9: i32 = 0i;',
+    '  let ng_t7: u32 = bitcast<u32>(v9);',
+    '  let ng_t8: u32 = textureNumLevels(r1);',
+    '  let ng_t9: u32 = min(ng_t7, ng_t8 - 1u);',
+    '  let ng_t10: vec2<u32> = textureDimensions(r1, ng_t9);',
+    '  let ng_t11: vec2<u32> = min(v5, ng_t10 - vec2<u32>(1u));',
+    '  let ng_t12: u32 = bitcast<u32>(v8);',
+    '  let ng_t13: u32 = textureNumLayers(r1);',
+    '  let ng_t14: u32 = min(ng_t12, ng_t13 - 1u);',
+    '  let ng_t15: bool = ((ng_t7 < ng_t8) & all(v5 < ng_t10)) & (ng_t12 < ng_t13);',
+    '  let ng_t16: vec4<f32> = textureLoad(r1, ng_t11, ng_t14, ng_t9);',
+    '  let v10: vec4<f32> = select(vec4<f32>(), ng_t16, ng_t15);',
+    '  let v11: u32 = 0u;',
+    '  let ng_t17: u32 = textureNumLevels(r2);',
+    '  let ng_t18: u32 = min(v11, ng_t17 - 1u);',
+    '  let ng_t19: vec2<u32> = textureDimensions(r2, ng_t18);',
+    '  let ng_t20: vec2<u32> = bitcast<vec2<u32>>(v2);',
+    '  let ng_t21: vec2<u32> = min(ng_t20, ng_t19 - vec2<u32>(1u));',
+    '  let ng_t22: bool = (v11 < ng_t17) & all(ng_t20 < ng_t19);',
+    '  let ng_t23: f32 = textureLoad(r2, ng_t21, ng_t18);',
+    '  let v12: f32 = select(f32(), ng_t23, ng_t22);',
+    '  let v13: u32 = 1u;',
+    '  let v14: u32 = 0u;',
+    '  let ng_t24: u32 = textureNumLevels(r3);',
+    '  let ng_t25: u32 = min(v14, ng_t24 - 1u);',
+    '  let ng_t26: vec2<u32> = textureDimensions(r3, ng_t25);',
+    '  let ng_t27: vec2<u32> = min(v5, ng_t26 - vec2<u32>(1u));',
+    '  let ng_t28: u32 = textureNumLayers(r3);',
+    '  let ng_t29: u32 = min(v13, ng_t28 - 1u);',
+    '  let ng_t30: bool = ((v14 < ng_t24) & all(v5 < ng_t26)) & (v13 < ng_t28);',
+    '  let ng_t31: vec4<u32> = textureLoad(r3, ng_t27, ng_t29, ng_t25);',
+    '  let v15: vec4<u32> = select(vec4<u32>(), ng_t31, ng_t30);',
+    '  let v16: i32 = -3i;',
+    '  let ng_t32: u32 = select(bitcast<u32>(v16), 0u, v16 < 0i);',
+    '  let ng_t33: u32 = textureNumLevels(r0);',
+    '  let v17: vec2<u32> = textureDimensions(r0, min(ng_t32, ng_t33 - 1u));',
+    '  let v18: vec2<u32> = textureDimensions(r5);',
+    '  let k19: u32 = 0x3e800000u;',
+    '  let v19: f32 = bitcast<f32>(k19);',
+    '  let k20: u32 = 0x3f400000u;',
+    '  let v20: f32 = bitcast<f32>(k20);',
+    '  let v21: vec2<f32> = vec2<f32>(v19, v20);',
+    '  let k22: u32 = 0x3f000000u;',
+    '  let v22: f32 = bitcast<f32>(k22);',
+    '  let v23: vec4<f32> = textureSampleLevel(r0, r4, ng_uv(v21), ng_lvl(v22));',
+    '  let k24: u32 = 0x3f000000u;',
+    '  let v24: f32 = bitcast<f32>(k24);',
+    '  let v25: vec2<f32> = vec2<f32>(v24);',
+    '  let v26: u32 = 1u;',
+    '  let v27: f32 = 2.0;',
+    '  let ng_t34: u32 = textureNumLayers(r1);',
+    '  let ng_t35: u32 = min(v26, ng_t34 - 1u);',
+    '  let v28: vec4<f32> = textureSampleLevel(r1, r4, ng_uv(v25), ng_t35, ng_lvl(v27));',
+    '  let v29: vec4<f32> = v7 + v10;',
+    '  let v30: vec4<f32> = v23 + v28;',
+    '  let v31: vec4<f32> = v30 * v12;',
+    '  let v32: vec4<f32> = v29 + v31;',
+    '  let ng_t36: vec2<u32> = bitcast<vec2<u32>>(v2);',
+    '  let ng_t37: bool = all(ng_t36 < textureDimensions(r5));',
+    '  if (ng_t37) {',
+    '    textureStore(r5, v2, v32);',
+    '  }',
+    '  let v33: u32 = v17.x;',
+    '  let v34: u32 = v18.y;',
+    '  let v35: u32 = 0u;',
+    '  let v36: u32 = 0u;',
+    '  let v37: vec4<u32> = vec4<u32>(v33, v34, v35, v36);',
+    '  let v38: vec4<u32> = v15 + v37;',
+    '  let ng_t38: bool = all(v5 < textureDimensions(r6));',
+    '  if (ng_t38) {',
+    '    textureStore(r6, v5, v38);',
+    '  }',
+    '}',
+    '',
+    '@compute @workgroup_size(1, 1, 1) fn ng_compute() {',
+    '  ng_body();',
+    '}',
+  ))
+  assert.deepEqual(out.raw, [])
+  assert.equal(out.directive, false)
+})
+
+test('the vertex entry: limit selects for vertex-rate inputs, the position NaN until written, the live value, outputs handed on', () => {
+  const m = vertex()
+  const out = toWgsl(m, optionsFor(m, OVER.vertex))
+  assert.equal(out.code, lines(
+    'struct NgHidden {',
+    '  @size(128) c: array<vec4<u32>, 8>,',
+    '  lim: array<vec4<u32>, 4>,',
+    '  none: u32,',
+    '  checked: u32,',
+    '  base: i32,',
+    '  zero: u32,',
+    '}',
+    '',
+    '@group(3) @binding(0) var<uniform> ng_h: NgHidden;',
+    'var<private> ng_vi: u32;',
+    'var<private> ng_ii: u32;',
+    'var<private> ng_i0: vec4<f32>;',
+    'var<private> ng_i2: vec2<u32>;',
+    'var<private> ng_i5: f32;',
+    'var<private> ng_o1: vec2<f32>;',
+    'var<private> ng_o4: u32;',
+    'var<private> ng_pos: vec4<f32>;',
+    'var<private> ng_live: f32;',
+    '',
+    'fn ng_body() {',
+    '  let v0: vec4<f32> = ng_i0;',
+    '  let v1: vec2<u32> = ng_i2;',
+    '  let v2: f32 = ng_i5;',
+    '  let v3: u32 = ng_vi;',
+    '  let v4: u32 = ng_ii;',
+    '  let v5: u32 = v3 + v4;',
+    '  let v6: u32 = v1.y;',
+    '  let v7: u32 = v5 + v6;',
+    '  ng_o4 = v7;',
+    '  let v8: vec2<f32> = v0.xy;',
+    '  let v9: vec2<f32> = v8 * v2;',
+    '  ng_o1 = v9;',
+    '  let v10: u32 = 3u;',
+    '  let v11: bool = v5 > v10;',
+    '  if (v11) {',
+    '    ng_pos = v0;',
+    '    ng_live = 0.0;',
+    '  }',
+    '}',
+    '',
+    'struct NgVIn {',
+    '  @builtin(vertex_index) vi: u32,',
+    '  @builtin(instance_index) ii: u32,',
+    '  @location(0) a0: vec4<f32>,',
+    '  @location(2) a2: vec2<u32>,',
+    '  @location(5) a5: f32,',
+    '}',
+    '',
+    'struct NgVOut {',
+    '  @builtin(position) @invariant pos: vec4<f32>,',
+    '  @location(1) o1: vec2<f32>,',
+    '  @location(4) @interpolate(flat) o4: u32,',
+    '  @location(3) live: f32,',
+    '}',
+    '',
+    '@vertex fn ng_vertex(a: NgVIn) -> NgVOut {',
+    '  ng_vi = a.vi;',
+    '  ng_ii = a.ii;',
+    '  let ng_b: u32 = bitcast<u32>(ng_h.base);',
+    '  let ng_neg: bool = (ng_h.base < 0i) & (a.vi >= ng_b);',
+    '  let ng_over: bool = (ng_h.base > 0i) & (a.vi < ng_b);',
+    '  let ng_l0: u32 = ng_h.lim[0u].x;',
+    '  let ng_ok0: bool = ((ng_h.checked & 1u) == 0u) | ((((ng_h.none & 1u) == 0u) & !ng_neg) & ((ng_l0 == 0xffffffffu) | (!ng_over & (a.vi <= ng_l0))));',
+    '  ng_i0 = select(vec4<f32>(), a.a0, ng_ok0);',
+    '  let ng_l2: u32 = ng_h.lim[0u].z;',
+    '  let ng_ok2: bool = ((ng_h.checked & 4u) == 0u) | ((((ng_h.none & 4u) == 0u) & !ng_neg) & ((ng_l2 == 0xffffffffu) | (!ng_over & (a.vi <= ng_l2))));',
+    '  ng_i2 = select(vec2<u32>(), a.a2, ng_ok2);',
+    '  ng_i5 = a.a5;',
+    '  let ng_k: u32 = 0x7fc00000u;',
+    '  ng_pos = vec4<f32>(bitcast<f32>(ng_k));',
+    '  ng_live = 1.0;',
+    '  ng_body();',
+    '  var o: NgVOut;',
+    '  o.pos = ng_pos;',
+    '  o.o1 = ng_o1;',
+    '  o.o4 = ng_o4;',
+    '  o.live = ng_live;',
+    '  return o;',
+    '}',
+  ))
+  assert.equal(out.entry, 'ng_vertex')
+  assert.equal(out.directive, false)
+  // Without a live location the position still starts as NaN, and no live value is kept or handed on.
+  const plain = wgsl(m, { vertexRate: 0 })
+  assert.ok(plain.includes('  ng_pos = vec4<f32>(bitcast<f32>(ng_k));\n') && !plain.includes('live') && !plain.includes('ng_h'))
+  // Rate bits of slots that hold no input are not read.
+  assert.equal(wgsl(m, { vertexRate: 0b1111111111011010, live: 3 }), wgsl(m, { vertexRate: 0, live: 3 }))
+})
+
+test('a vertex module that always writes its position adds nothing for it', () => {
+  assert.equal(lowered('sure'), lines(
+    'struct B0 {',
+    '  @align(4) @size(4) f0: f32,',
+    '}',
+    '',
+    '@group(0) @binding(0) var<uniform> r0: B0;',
+    'var<private> ng_i1: vec4<f32>;',
+    'var<private> ng_pos: vec4<f32>;',
+    '',
+    'fn ng_body() {',
+    '  let v0: vec4<f32> = ng_i1;',
+    '  let v1: f32 = r0.f0;',
+    '  let v2: vec4<f32> = v0 * v1;',
+    '  ng_pos = v2;',
+    '}',
+    '',
+    'struct NgVIn {',
+    '  @location(1) a1: vec4<f32>,',
+    '}',
+    '',
+    'struct NgVOut {',
+    '  @builtin(position) @invariant pos: vec4<f32>,',
+    '}',
+    '',
+    '@vertex fn ng_vertex(a: NgVIn) -> NgVOut {',
+    '  ng_i1 = a.a1;',
+    '  ng_body();',
+    '  var o: NgVOut;',
+    '  o.pos = ng_pos;',
+    '  return o;',
+    '}',
+  ))
+})
+
+test('the fragment entry: the uniformity directive, fine derivatives, discard and the guard after it, outputs shaped, the live test', () => {
+  const m = fragment()
+  const out = toWgsl(m, optionsFor(m, OVER.fragment))
+  assert.equal(out.code, lines(
+    'diagnostic(off, derivative_uniformity);',
+    '',
+    '@group(0) @binding(0) var r0: texture_2d<f32>;',
+    '@group(0) @binding(1) var r1: sampler;',
+    '@group(0) @binding(2) var<storage, read_write> r2: array<u32>;',
+    '@group(0) @binding(3) var r3: texture_storage_2d<r32float, write>;',
+    'var<private> ng_fc: vec4<f32>;',
+    'var<private> ng_ff: bool;',
+    'var<private> ng_i0: vec2<f32>;',
+    'var<private> ng_i1: u32;',
+    'var<private> ng_o0: f32;',
+    'var<private> ng_o1: vec3<f32>;',
+    'var<private> ng_o2: vec2<i32>;',
+    'var<private> ng_o3: u32;',
+    'var<private> ng_o5: vec4<f32>;',
+    'var<private> ng_gone: bool;',
+    '',
+    'fn ng_nanx2(x: vec2<f32>) -> vec2<bool> {',
+    '  return (bitcast<vec2<u32>>(x) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u);',
+    '}',
+    '',
+    'fn ng_f2ux2(x: vec2<f32>) -> vec2<u32> {',
+    '  let u: vec2<u32> = bitcast<vec2<u32>>(x);',
+    '  let t: vec2<u32> = vec2<u32>(clamp(x, vec2<f32>(0.0), vec2<f32>(4294967040.0)));',
+    '  return select(select(t, vec2<u32>(4294967295u), u >= vec2<u32>(0x4f800000u)), vec2<u32>(0u), (u >= vec2<u32>(0x80000000u)) | ng_nanx2(x));',
+    '}',
+    '',
+    'fn ng_uv(x: vec2<f32>) -> vec2<f32> {',
+    '  let u: vec2<u32> = bitcast<vec2<u32>>(x);',
+    '  let m: vec2<u32> = u & vec2<u32>(0x7fffffffu);',
+    '  let big: vec2<f32> = bitcast<vec2<f32>>((u & vec2<u32>(0x80000000u)) | vec2<u32>(0x4b800000u));',
+    '  return select(select(x, big, m > vec2<u32>(0x4b800000u)), vec2<f32>(0.0), m > vec2<u32>(0x7f800000u));',
+    '}',
+    '',
+    'fn ng_body() {',
+    '  let v0: vec2<f32> = ng_i0;',
+    '  let v1: u32 = ng_i1;',
+    '  let v2: vec4<f32> = textureSample(r0, r1, ng_uv(v0));',
+    '  let v3: vec2<f32> = dpdxFine(v0);',
+    '  let v4: f32 = v0.y;',
+    '  let v5: f32 = dpdyFine(v4);',
+    '  let v6: vec4<f32> = fwidthFine(v2);',
+    '  let v7: vec4<f32> = ng_fc;',
+    '  let v8: bool = ng_ff;',
+    '  let v9: bool = !v8;',
+    '  if (v9) {',
+    '    ng_gone = true;',
+    '    discard;',
+    '  }',
+    '  let v10: f32 = v3.x;',
+    '  let v11: f32 = v10 + v5;',
+    '  let ng_len0: u32 = arrayLength(&r2);',
+    '  let ng_n1: u32 = select(0u, ng_len0 - 1u, ng_len0 >= 1u);',
+    '  let ng_j2: u32 = min(v1, max(ng_n1, 1u) - 1u);',
+    '  let ng_w3: u32 = min(ng_j2 + 1u, ng_len0 - 1u);',
+    '  if ((ng_n1 != 0u) & !ng_gone) {',
+    '    r2[ng_w3] = bitcast<u32>(v11);',
+    '  }',
+    '  let v12: vec2<f32> = v7.xy;',
+    '  let v13: vec2<u32> = ng_f2ux2(v12);',
+    '  let ng_t4: bool = all(v13 < textureDimensions(r3));',
+    '  if (ng_t4 & !ng_gone) {',
+    '    textureStore(r3, v13, v6);',
+    '  }',
+    '  let v14: f32 = v2.x;',
+    '  ng_o0 = v14;',
+    '  let v15: vec3<f32> = v2.xyz;',
+    '  ng_o1 = v15;',
+    '  let v16: i32 = bitcast<i32>(v1);',
+    '  let v17: vec2<i32> = vec2<i32>(v16);',
+    '  ng_o2 = v17;',
+    '  ng_o3 = v1;',
+    '  ng_o5 = v2;',
+    '}',
+    '',
+    'struct NgFIn {',
+    '  @builtin(position) fc: vec4<f32>,',
+    '  @builtin(front_facing) ff: bool,',
+    '  @location(0) i0: vec2<f32>,',
+    '  @location(1) @interpolate(flat) i1: u32,',
+    '  @location(6) live: f32,',
+    '}',
+    '',
+    'struct NgFOut {',
+    '  @location(0) c0: vec4<f32>,',
+    '  @location(1) c1: vec4<f32>,',
+    '  @location(2) c2: vec4<i32>,',
+    '  @location(5) c5: vec4<f32>,',
+    '}',
+    '',
+    '@fragment fn ng_fragment(a: NgFIn) -> NgFOut {',
+    '  ng_fc = a.fc;',
+    '  ng_ff = a.ff;',
+    '  ng_i0 = a.i0;',
+    '  ng_i1 = a.i1;',
+    '  if ((bitcast<u32>(a.live) & 0x7fffffffu) != 0u) {',
+    '    ng_gone = true;',
+    '    discard;',
+    '  }',
+    '  ng_body();',
+    '  var o: NgFOut;',
+    '  o.c0 = vec4<f32>(ng_o0, 0.0, 0.0, 1.0);',
+    '  o.c1 = vec4<f32>(ng_o1, 1.0);',
+    '  o.c2 = vec4<i32>(ng_o2, 0i, 1i);',
+    '  o.c5 = ng_o5;',
+    '  return o;',
+    '}',
+  ))
+  assert.equal(out.entry, 'ng_fragment')
+  assert.equal(out.directive, true)
+  assert.deepEqual(out.raw, [2])
+})
+
+test('a depth-only pipeline\'s fragment module is the empty module with the live test', () => {
+  const out = toWgsl(depthOnly(), optionsFor(depthOnly(), OVER.depthOnly))
+  assert.equal(out.code, lines(
+    'var<private> ng_gone: bool;',
+    '',
+    'fn ng_body() {',
+    '}',
+    '',
+    'struct NgFIn {',
+    '  @location(0) live: f32,',
+    '}',
+    '',
+    '@fragment fn ng_fragment(a: NgFIn) {',
+    '  if ((bitcast<u32>(a.live) & 0x7fffffffu) != 0u) {',
+    '    ng_gone = true;',
+    '    discard;',
+    '  }',
+    '  ng_body();',
+    '}',
+  ))
+  // With no live value and nothing to do, the module is its entry and an empty body.
+  assert.equal(wgsl(depthOnly()), lines('fn ng_body() {', '}', '', '@fragment fn ng_fragment() {', '  ng_body();', '}'))
+})
+
+test('a fragment module without discard or live value keeps no ng_gone and writes unguarded; without derivatives no directive', () => {
+  const b = lens('fragment')
+  const n = b.input(0, 'u32', { flat: true })
+  const o = b.storage(0, 0, { xs: arrayOf('u32', 4) }, { writable: true })
+  const img = b.image(0, 1)
+  const smp = b.sampler(0, 2)
+  b.write(o, ['xs', n], n)
+  b.out(b.output(0, 'f32x4'), b.sample(img, smp, b.make('f32x2', b.f32(0.5)), { level: b.f32(0) }))
+  const m = b.finish()
+  const out = toWgsl(m, optionsFor(m))
+  assert.ok(!out.code.includes('ng_gone') && !out.code.includes('diagnostic') && !out.directive)
+  assert.ok(out.code.includes('  r0.f0[ng_j0] = v0;\n'))
+  // An output whose attachment is missing or of another kind is not handed on: the entry returns nothing.
+  for (const outputs of [[], [null], ['u32']] as const) {
+    const none = toWgsl(m, optionsFor(m, { outputs })).code
+    assert.ok(none.includes('@fragment fn ng_fragment(a: NgFIn) {\n') && !none.includes('NgFOut'), JSON.stringify(outputs))
+  }
+})
+
 // ---------------------------------------------------------------------------------------------------
 // Layout
 
@@ -1078,7 +1691,8 @@ function parseStructs(code: string): Map<string, Member[]> {
   const structs = new Map<string, Member[]>()
   for (const m of code.matchAll(/^struct (\w+) \{\n((?: {2}.*\n)*?)\}$/gm)) {
     structs.set(m[1], m[2].trimEnd().split('\n').map((l) => {
-      const p = /^ {2}(?:@align\((\d+)\) )?(?:@size\((\d+)\) )?(\w+): (.+),$/.exec(l)
+      // Stage attributes (@builtin, @location, @invariant, @interpolate) are read past: they take no bytes.
+      const p = /^ {2}(?:@(?:builtin|location|interpolate)\(\w+\) |@invariant )*(?:@align\((\d+)\) )?(?:@size\((\d+)\) )?(\w+): (.+),$/.exec(l)
       assert.ok(p !== null, l)
       return { name: p[3], align: p[1] === undefined ? 0 : Number(p[1]), size: p[2] === undefined ? 0 : Number(p[2]), type: p[4] }
     }))
@@ -1318,21 +1932,23 @@ function vertexWith(write: (b: LensBuilder, p: Val, c: () => Val) => void): Lens
   return b.finish()
 }
 
+/** Where a vertex module writes its position, and whether positionSure is to call it sure. */
+const POSITION_CASES: readonly [string, boolean, (b: LensBuilder, p: Val, c: () => Val) => void][] = [
+  ['at the top level', true, (b, p) => b.position(p)],
+  ['in both branches', true, (b, p, c) => b.if(c(), () => b.position(p), () => b.position(p))],
+  ['in both branches of both branches', true, (b, p, c) => b.if(c(), () => b.if(c(), () => b.position(p), () => b.position(p)), () => b.position(p))],
+  ['before an if that returns', true, (b, p, c) => { b.position(p); b.if(c(), () => b.return()) }],
+  ['after a loop that holds no return', true, (b, p) => { b.loop(() => b.break()); b.position(p) }],
+  ['in one branch only', false, (b, p, c) => b.if(c(), () => b.position(p))],
+  ['in one branch, the other returning', false, (b, p, c) => { b.if(c(), () => b.return(), () => b.position(p)); b.position(p) }],
+  ['only in a loop', false, (b, p) => b.loop(() => { b.position(p); b.break() })],
+  ['after an if that returns', false, (b, p, c) => { b.if(c(), () => b.return()); b.position(p) }],
+  ['after a loop that holds a return', false, (b, p, c) => { b.loop(() => { b.if(c(), () => b.return()); b.break() }); b.position(p) }],
+  ['never', false, (b, p) => { b.add(p, p) }],
+]
+
 test('positionSure: written at the top level or in both branches, never only in a loop, in one branch, or after a return', () => {
-  const sure: [string, boolean, (b: LensBuilder, p: Val, c: () => Val) => void][] = [
-    ['at the top level', true, (b, p) => b.position(p)],
-    ['in both branches', true, (b, p, c) => b.if(c(), () => b.position(p), () => b.position(p))],
-    ['in both branches of both branches', true, (b, p, c) => b.if(c(), () => b.if(c(), () => b.position(p), () => b.position(p)), () => b.position(p))],
-    ['before an if that returns', true, (b, p, c) => { b.position(p); b.if(c(), () => b.return()) }],
-    ['after a loop that holds no return', true, (b, p) => { b.loop(() => b.break()); b.position(p) }],
-    ['in one branch only', false, (b, p, c) => b.if(c(), () => b.position(p))],
-    ['in one branch, the other returning', false, (b, p, c) => { b.if(c(), () => b.return(), () => b.position(p)); b.position(p) }],
-    ['only in a loop', false, (b, p) => b.loop(() => { b.position(p); b.break() })],
-    ['after an if that returns', false, (b, p, c) => { b.if(c(), () => b.return()); b.position(p) }],
-    ['after a loop that holds a return', false, (b, p, c) => { b.loop(() => { b.if(c(), () => b.return()); b.break() }); b.position(p) }],
-    ['never', false, (b, p) => { b.add(p, p) }],
-  ]
-  for (const [name, want, write] of sure) assert.equal(positionSure(vertexWith(write)), want, name)
+  for (const [name, want, write] of POSITION_CASES) assert.equal(positionSure(vertexWith(write)), want, name)
 })
 
 // ---------------------------------------------------------------------------------------------------
@@ -1411,60 +2027,73 @@ test('bounds: a module at every Lens bound at once stays within the WGSL bounds 
   assert.ok(structs.size >= LENS_LIMITS.nesting)
 })
 
+/** Bytes of the private variables a printed module declares (a bool counted as 4, as WGSL's own bound counts it). */
+function privateBytes(code: string): number {
+  const w = new WgslLayout(parseStructs(code))
+  return [...code.matchAll(/^var<private> \w+: ([^;]+);$/gm)].reduce((sum, v) => {
+    const p = v[1] === 'bool' ? { align: 4, size: 4 } : w.place(v[1])
+    return sum + roundUp(p.align, p.size)
+  }, 0)
+}
+
+/** A vertex module at the port bound: 16 inputs, 16 outputs, both builtins, the position written in one branch. */
+function boundsVertex(): LensModule {
+  const v = lens('vertex')
+  const ins = Array.from({ length: LENS_LIMITS.ports }, (_, s) => v.input(s, 'f32x4'))
+  const k = v.add(v.builtin('vertex-index'), v.builtin('instance-index'))
+  for (let s = 0; s < LENS_LIMITS.ports; s++) v.out(v.output(s, s % 2 === 0 ? 'f32x4' : 'u32x4', { flat: true }), s % 2 === 0 ? ins[s] : v.make('u32x4', k))
+  v.if(v.gt(k, 0), () => v.position(ins[0]))
+  return v.finish()
+}
+
+/**
+ * A fragment module at the port bound: `inputs` inputs (15 leave one location free, 14 leave room for the live value
+ * beside front-facing), 16 outputs, both builtins, a discard.
+ */
+function boundsFragment(inputs = LENS_LIMITS.ports - 1): LensModule {
+  const f = lens('fragment')
+  const fins = Array.from({ length: inputs }, (_, s) => f.input(s, 'f32x4'))
+  const facing = f.cast(f.builtin('front-facing'), 'f32')
+  const c = f.pick(f.builtin('frag-coord'), 'x')
+  for (let s = 0; s < LENS_LIMITS.ports; s++) f.out(f.output(s, 'f32x4'), f.mul(fins[s % fins.length], f.add(facing, c)))
+  f.if(f.gt(c, 0), () => f.discard())
+  return f.finish()
+}
+
+test('bounds: 16 ports each way, both builtins, the position, the live value and ng_gone stay far within WGSL\'s private bytes', () => {
+  const vm = boundsVertex()
+  const vc = wgsl(vm)
+  // 16 inputs, 16 outputs, both builtins and the position; every input is selected per vertex.
+  assert.equal(privateBytes(vc), 16 * 16 * 2 + 4 + 4 + 16)
+  assert.equal((vc.match(/^ {2}@location\(\d+\)/gm) ?? []).length, 32)
+  assert.equal((vc.match(/^ {2}ng_i\d+ = select\(/gm) ?? []).length, 16)
+  const fm = boundsFragment()
+  const fc = wgsl(fm)
+  // 15 inputs, 16 outputs (8 meet attachments), both builtins, ng_gone: within 16 * 16 * 2 + 64 bytes, under 600.
+  const bytes = privateBytes(fc)
+  assert.equal(bytes, 15 * 16 + 16 * 16 + 16 + 4 + 4)
+  assert.ok(bytes <= 16 * 16 * 2 + 64 && bytes < 600, `${bytes} private bytes, far within WGSL's 8192`)
+  assert.equal((fc.match(/^ {2}@location\(\d+\) c\d+: vec4<f32>,$/gm) ?? []).length, 8)
+  // Beside front-facing, 15 inputs and the live value would pass 17 values between the stages, one more than a
+  // pipeline passes (the browser refuses such a pipeline): the live value fits beside 14. It is no private.
+  refused(() => toWgsl(fm, optionsFor(fm, { live: 15 })), 'lens', /^wgsl: options: the live value would make 17 values passed between the stages \(15 inputs, front-facing and the live value\), and a pipeline passes at most 16$/)
+  const fl = boundsFragment(LENS_LIMITS.ports - 2)
+  const flc = wgsl(fl, { live: 15 })
+  assert.equal(privateBytes(flc), 14 * 16 + 16 * 16 + 16 + 4 + 4)
+  assert.equal((flc.match(/^ {2}@location\(15\) live: f32,$/gm) ?? []).length, 1)
+  properties('16 vertex ports', vm, vc, Infinity)
+  properties('16 fragment ports', fm, fc, Infinity)
+  properties('16 fragment ports, the live value', fl, flc, Infinity, { live: 15 })
+})
+
 // ---------------------------------------------------------------------------------------------------
 // Refusals
 
-function vertexModule(): LensModule {
-  const b = lens('vertex')
-  const p = b.input(0, 'f32x4')
-  const k = b.add(b.builtin('vertex-index'), b.builtin('instance-index'))
-  b.if(b.gt(k, 3), () => b.position(p), () => b.position(b.mul(p, 2)))
-  return b.finish()
-}
-
-function fragmentModule(): LensModule {
-  const b = lens('fragment')
-  const uv = b.input(0, 'f32x2')
-  const o = b.output(0, 'f32x4')
-  const img = b.image(0, 0)
-  const c = b.sample(img, b.sampler(0, 1), uv)
-  const d = b.dx(b.pick(uv, 'x'))
-  const fc = b.builtin('frag-coord')
-  const tx = b.texel(img, b.cast(b.pick(fc, 'xy'), 'i32x2'))
-  const e = b.extent(img)
-  b.if(b.not(b.builtin('front-facing')), () => b.discard())
-  b.out(o, b.add(b.mul(c, d), b.mul(tx, b.cast(b.pick(e, 'x'), 'f32'))))
-  return b.finish()
-}
-
-function computeImages(): LensModule {
-  const b = lens('compute')
-  const img = b.image(0, 0)
-  b.sampler(0, 1)
-  const st = b.storageImage(0, 2, 'rgba8')
-  const tx = b.texel(img, b.make('i32x2', b.i32(0)))
-  b.put(st, b.make('i32x2', b.i32(1)), b.add(tx, b.cast(b.pick(b.extent(img), 'x'), 'f32')))
-  return b.finish()
-}
-
-/** What is not lowered yet, each refused (Fault `device`) by name. */
-const NOT_YET: readonly [string, () => LensModule, RegExp][] = [
-  ['a vertex module', vertexModule, /^wgsl: the vertex entry is not yet lowered$/],
-  ['a fragment module', fragmentModule, /^wgsl: the fragment entry is not yet lowered$/],
-  ['images in a compute module', computeImages, /^wgsl: resources\[0\] image: images are not yet lowered$/],
-  ['a sampler', () => { const b = lens('compute'); b.sampler(0, 0); return b.finish() }, /^wgsl: resources\[0\] sampler: images are not yet lowered$/],
-  ['a storage image', () => { const b = lens('compute'); b.storageImage(0, 0, 'rgba8'); return b.finish() }, /^wgsl: resources\[0\] storage-image: images are not yet lowered$/],
-  ['raw words', () => { const b = lens('compute'); b.storage(0, 0, { n: 'u32', xs: arrayOf('u32') }); return b.finish() },
-    /^wgsl: resources\[0\] storage: a storage block that ends in an array without a length \(raw words\) is not yet lowered$/],
-]
-
-test('what is not lowered yet is refused by name, code device: the vertex and fragment entries, images, raw words, stepwise', () => {
-  for (const [name, make, why] of NOT_YET) {
-    const m = make()
-    refused(() => toWgsl(m, optionsFor(m)), 'device', why, name)
+test('stepwise arithmetic is refused by name, code device, rather than lowered natively', () => {
+  for (const name of ['small', 'vertex', 'fragment']) {
+    const m = CORPUS[name]()
+    refused(() => toWgsl(m, optionsFor(m, { ...OVER[name], arithmetic: 'stepwise' })), 'device', /^wgsl: stepwise arithmetic is not yet lowered$/, name)
   }
-  const m = small()
-  refused(() => toWgsl(m, optionsFor(m, { arithmetic: 'stepwise' })), 'device', /^wgsl: stepwise arithmetic is not yet lowered$/)
 })
 
 test('options that do not match the module are refused, code lens', () => {
@@ -1488,6 +2117,31 @@ test('options that do not match the module are refused, code lens', () => {
   bad({ ...ok, arithmetic: 'fast' }, /arithmetic is native or stepwise/)
   // The same module and well-formed options lower.
   assert.equal(toWgsl(m, { ...ok, outputs: [null, null] }).code, wgsl(m))
+  // The stages: colour outputs only for a fragment module, vertex inputs only for a vertex module, and a live value
+  // only where it can be carried.
+  const v = vertex()
+  const vo = optionsFor(v, OVER.vertex)
+  const badV = (o: unknown, re: RegExp): void => refused(() => toWgsl(v, o as WgslOptions), 'lens', re)
+  badV({ ...vo, outputs: ['f32'] }, /^wgsl: options: a vertex module has no colour outputs$/)
+  badV({ ...vo, live: 4 }, /^wgsl: options: location 4 carries an output port, so it cannot carry the live value$/)
+  const s = sure()
+  refused(() => toWgsl(s, optionsFor(s, { live: 0 })), 'lens', /^wgsl: options: a vertex module that always writes its position carries no live value$/)
+  const f = fragment()
+  const fo = optionsFor(f, OVER.fragment)
+  const badF = (o: unknown, re: RegExp): void => refused(() => toWgsl(f, o as WgslOptions), 'lens', re)
+  badF({ ...fo, vertexRate: 1 }, /^wgsl: options: a fragment module has no vertex inputs$/)
+  badF({ ...fo, live: 1 }, /^wgsl: options: location 1 carries an input port, so it cannot carry the live value$/)
+  badF({ ...fo, storage: [null, null, 'read', null] }, /resource 2 is written, so its access is read_write/)
+  badF({ ...fo, storage: [null, 'read', 'read_write', null] }, /resource 1 is a sampler, which takes no storage access/)
+  badF({ ...fo, outputs: [...fo.outputs, null, null, null] }, /^wgsl: options: outputs has 9 colour slots, and a pipeline has at most 8$/)
+  // A storage entry never lists the vertex stage, so a vertex module's storage block is read only.
+  const vs = lens('vertex')
+  vs.position(vs.read(vs.storage(0, 0, { p: 'f32x4' }), 'p'))
+  const vsm = vs.finish()
+  assert.match(toWgsl(vsm, optionsFor(vsm)).code, /var<storage, read> r0: B0;/)
+  refused(() => toWgsl(vsm, optionsFor(vsm, { storage: ['read_write'] })), 'lens', /^wgsl: options: resource 0 is read by a vertex module, which binds storage read only$/)
+  // A colour slot past the module's outputs, or with no output, is no refusal: nothing is handed to it.
+  assert.equal(toWgsl(f, { ...fo, outputs: [...fo.outputs, 'u32', 'i32'] }).code, lowered('fragment'))
 })
 
 test('a module verify() refuses is refused, code lens, before any lowering', () => {
@@ -1520,12 +2174,15 @@ function sizeOf(m: LensModule): number {
   return count(m.body) + m.resources.reduce((n, r) => n + ('block' in r ? fields({ struct: r.block }) : 0), 0)
 }
 
+/** The entries: called by the device, never by the module. */
+const ENTRIES = ['ng_compute', 'ng_vertex', 'ng_fragment']
+
 /** The text of a module's helpers: every function but the body and the entry. */
-const helperText = (code: string): number => fnNames(code).filter((f) => f !== 'ng_body' && f !== 'ng_compute').reduce((n, f) => n + fnText(code, f).length, 0)
+const helperText = (code: string): number => fnNames(code).filter((f) => f !== 'ng_body' && !ENTRIES.includes(f)).reduce((n, f) => n + fnText(code, f).length, 0)
 
 /** Checks the properties every printed module has. */
-function properties(name: string, m: LensModule, code: string, helpersAtMost: number): void {
-  assert.equal(code, wgsl(m), `${name}: the same text again`)
+function properties(name: string, m: LensModule, code: string, helpersAtMost: number, over: Partial<WgslOptions> = {}): void {
+  assert.equal(code, wgsl(m, over), `${name}: the same text again`)
   assert.match(code, /^[\n\x20-\x7e]*\n$/, `${name}: printable ASCII and line feeds, ending in one`)
   assert.doesNotMatch(code, / \n|\n\n\n/, `${name}: no trailing space, no run of blank lines`)
   for (const re of [...DOORS, ...BANNED, ANYWHERE]) assert.doesNotMatch(code, re, `${name}: ${re.source}`)
@@ -1540,7 +2197,8 @@ function properties(name: string, m: LensModule, code: string, helpersAtMost: nu
   // Functions: each declared once, each called, and every call to one of the lowering's names declared.
   const declared = fnNames(code)
   assert.equal(new Set(declared).size, declared.length, `${name}: a function declared twice`)
-  for (const f of declared) if (f !== 'ng_compute') assert.ok(code.split(`${f}(`).length >= 3, `${name}: ${f} is never called`)
+  for (const f of declared) if (!ENTRIES.includes(f)) assert.ok(code.split(`${f}(`).length >= 3, `${name}: ${f} is never called`)
+  assert.equal(declared.filter((f) => ENTRIES.includes(f)).length, 1, `${name}: one entry`)
   for (const [, f] of code.matchAll(/\b(ng_\w+)\(/g)) assert.ok(declared.includes(f), `${name}: ${f} is called and not declared`)
   // Names: within each function every let and var once.
   for (const f of declared) {
@@ -1625,10 +2283,10 @@ function randomModule(seed: number): LensModule {
 test('properties of every printed module: deterministic, ASCII, none of the air gap\'s words, linear in size, names declared once and used', () => {
   const most = helperText(wgsl(allHelpers()))
   for (const [name, make] of Object.entries(CORPUS)) {
-    const code = wgsl(make())
+    const code = lowered(name)
     // A module built again the same way prints the same text.
-    assert.equal(wgsl(make()), code, name)
-    properties(name, make(), code, most)
+    assert.equal(wgsl(make(), OVER[name]), code, name)
+    properties(name, make(), code, most, OVER[name])
   }
   properties('bounds', bounds(), wgsl(bounds()), most)
   for (let seed = 1; seed <= 60; seed++) {
@@ -1669,17 +2327,10 @@ function census(modules: readonly LensModule[]): Set<string> {
   return seen
 }
 
-test('coverage: every op, function, builtin, resource kind and stage is lowered in a golden here, or refused by name', () => {
+test('coverage: every op, function, builtin, resource kind and stage is lowered in a golden here', () => {
   assert.ok(EVERY_OP)
-  const lowered = census(Object.values(CORPUS).map((make) => make()))
-  const refusedHere = census(NOT_YET.map(([, make]) => make()))
-  const later = new Set(['op in', 'op out', 'op position', 'op sample', 'op texel', 'op put', 'op extent', 'op deriv', 'op discard',
-    'resource image', 'resource sampler', 'resource storage-image', 'stage vertex', 'stage fragment',
-    'builtin vertex-index', 'builtin instance-index', 'builtin frag-coord', 'builtin front-facing'])
+  const seen = census(Object.values(CORPUS).map((make) => make()))
   const all = [...OPS.map((o) => `op ${o}`), ...UNARY.map((f) => `unary ${f}`), ...BINARY.map((f) => `binary ${f}`), ...TERNARY.map((f) => `ternary ${f}`),
     ...Object.keys(BUILTINS).map((n) => `builtin ${n}`), ...RESOURCE_KINDS.map((k) => `resource ${k}`), ...STAGES.map((s) => `stage ${s}`)]
-  for (const key of all) {
-    if (later.has(key)) assert.ok(refusedHere.has(key) && !lowered.has(key), `${key} is refused by name`)
-    else assert.ok(lowered.has(key), `${key} is in a golden`)
-  }
+  for (const key of all) assert.ok(seen.has(key), `${key} is in a golden`)
 })

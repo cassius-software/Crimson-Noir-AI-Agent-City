@@ -11,12 +11,33 @@
  * pinned rule (a NaN that gives way in min, a saturating cast, the loop cap, the integer division by zero) hold on a
  * GPU whose own builtins leave those cases open.
  *
- * WHAT IS LOWERED (slice 2, PR 2). Compute modules: the WGSL tree and its printer, every value type, literals as exact
- * bit patterns, arithmetic with the emulations below, casts, building and picking, variables, `if` and `loop` with
- * the 65,536-iteration cap and statement behaviours, typed blocks (uniform blocks, the inline constants in the hidden
- * block, storage blocks of fixed size) and the compute entry. Everything else (images, derivatives, discard, storage
- * blocks that end in an array without a length, the vertex and fragment entries, stepwise arithmetic) is refused
- * with a Fault of code `device` that names it as not yet lowered, never lowered wrong.
+ * WHAT IS LOWERED (slice 2, PRs 2 and 3). Every stage: the WGSL tree and its printer, every value type, literals as
+ * exact bit patterns, arithmetic with the emulations below, casts, building and picking, variables, `if` and `loop`
+ * with the 65,536-iteration cap and statement behaviours, typed blocks (uniform blocks, the inline constants in the
+ * hidden block, storage blocks of fixed size), raw words, images, derivatives, `discard`, and the compute, vertex and
+ * fragment entries. Only stepwise arithmetic is refused, with a Fault of code `device` that names it as not yet
+ * lowered, never lowered wrong.
+ *
+ * RAW WORDS. A storage block whose last field is an array without a length is an `array<u32>`: WebGPU's minimum
+ * binding size would otherwise count one element of the final array, which the core lets a binding lack. Each read and
+ * write is emitted inline at its words: the index clamped into the elements the binding holds, every word clamped
+ * into the binding, zero read and nothing written when no element is held.
+ *
+ * IMAGES. `texel` tests its level, layer and position in u32 against the view and loads at clamped ones, so it reads
+ * zero outside and never reaches outside; `put` writes nothing outside; `extent` clamps its level into the view;
+ * `sample` hands the hardware a coordinate whose NaN reads 0 and whose size is held to 2^24, a layer clamped into the
+ * view, and an explicit level whose NaN reads 0 and which is held to [-1, 33], so the sampler's own clamp gives the
+ * pinned level. Filtering and the implicit level of detail are the GPU's (named in the ledger).
+ *
+ * STAGES. The vertex entry replaces each vertex-rate input by zero where the reference's attribute rule reads none,
+ * from the limits in the hidden block (a wrapped element, a negative one, past the buffer); starts the position as NaN
+ * and the live value as 1 when the module may leave its position unwritten; and hands on the position (invariant),
+ * the outputs and the live value. The fragment entry discards where the live value is not exactly zero, runs the body,
+ * and hands on each output that meets an attachment of its kind, shaped to four components (missing ones 0, a missing
+ * alpha 1). `discard` demotes the invocation to a helper that runs on for its neighbours' derivatives, and `ng_gone`
+ * keeps every later write and put from taking place. Derivatives are the fine ones; a fragment module with a
+ * derivative or an implicit-level sample starts with the directive that turns off WGSL's conservative uniformity
+ * refusal, since the verifier already keeps both where every lane of a quad reaches them.
  *
  * NAMES. No text of the caller reaches the code: values are `v<id>` (the components of a literal `v<id>_<c>`, and
  * the u32 pattern behind an f32 literal `k<id>`), variables `x<id>`, resources `r<index>`, structs `B<n>` in order of
@@ -42,8 +63,9 @@
  * infinity is made at run time from the hidden block's zero word, never as a constant.
  */
 import { fail, isFault } from './fault.ts'
-import { columnOf, isGrid, isScalar, isVector, layoutBlock, scalarOf, widthOf } from './lens.ts'
-import type { Block, Builtin, DataType, Inst, LensModule, Scalar, Space, Step, ValueType } from './lens.ts'
+import type { Format } from './formats.ts'
+import { BUILTINS, columnOf, isGrid, isScalar, isVector, layoutBlock, scalarOf, strideOf, widthOf } from './lens.ts'
+import type { Block, Builtin, DataType, Inst, LensModule, Port, Resource, Scalar, Space, Step, ValueType } from './lens.ts'
 import { verify } from './verify.ts'
 
 // ---------------------------------------------------------------------------------------------------
@@ -85,7 +107,7 @@ export interface WgslOptions {
 export interface WgslOut {
   readonly code: string
   readonly entry: 'ng_vertex' | 'ng_fragment' | 'ng_compute'
-  /** Resources lowered as raw words (none before raw blocks are lowered). */
+  /** Resources lowered as raw words: storage blocks that end in an array without a length. */
   readonly raw: readonly number[]
   /** The module starts with the derivative-uniformity directive. */
   readonly directive: boolean
@@ -99,7 +121,7 @@ type Expr =
   | { readonly k: 'id'; readonly name: string }
   | { readonly k: 'lit'; readonly text: string }
   | { readonly k: 'call'; readonly fn: string; readonly args: readonly Expr[] }
-  | { readonly k: 'unary'; readonly op: '-' | '!' | '~'; readonly a: Expr }
+  | { readonly k: 'unary'; readonly op: '-' | '!' | '~' | '&'; readonly a: Expr }
   | { readonly k: 'binary'; readonly op: string; readonly a: Expr; readonly b: Expr }
   | { readonly k: 'member'; readonly a: Expr; readonly name: string }
   | { readonly k: 'index'; readonly a: Expr; readonly i: Expr }
@@ -113,6 +135,7 @@ type Stmt =
   | { readonly k: 'loop'; readonly body: readonly Stmt[] }
   | { readonly k: 'break' }
   | { readonly k: 'continue' }
+  | { readonly k: 'discard' }
   | { readonly k: 'return'; readonly e: Expr | null }
 
 interface Member {
@@ -128,6 +151,7 @@ interface Param {
 }
 
 type Decl =
+  | { readonly k: 'directive'; readonly text: string }
   | { readonly k: 'struct'; readonly name: string; readonly members: readonly Member[] }
   | { readonly k: 'var'; readonly attrs: string; readonly space: string; readonly name: string; readonly type: string }
   | { readonly k: 'fn'; readonly attrs: string; readonly name: string; readonly params: readonly Param[]; readonly ret: string | null; readonly body: readonly Stmt[] }
@@ -135,7 +159,7 @@ type Decl =
 const id = (name: string): Expr => ({ k: 'id', name })
 const lit = (text: string): Expr => ({ k: 'lit', text })
 const call = (fn: string, ...args: readonly Expr[]): Expr => ({ k: 'call', fn, args })
-const un = (op: '-' | '!' | '~', a: Expr): Expr => ({ k: 'unary', op, a })
+const un = (op: '-' | '!' | '~' | '&', a: Expr): Expr => ({ k: 'unary', op, a })
 const bin = (op: string, a: Expr, b: Expr): Expr => ({ k: 'binary', op, a, b })
 const member = (a: Expr, name: string): Expr => ({ k: 'member', a, name })
 const index = (a: Expr, i: Expr): Expr => ({ k: 'index', a, i })
@@ -192,12 +216,16 @@ function stmts(list: readonly Stmt[], pad: string, out: string[]): void {
         break
       case 'break': out.push(`${pad}break;`); break
       case 'continue': out.push(`${pad}continue;`); break
+      case 'discard': out.push(`${pad}discard;`); break
       case 'return': out.push(s.e === null ? `${pad}return;` : `${pad}return ${expr(s.e)};`); break
     }
   }
 }
 
-/** The text of a tree: declarations in order, a blank line before each struct and function, one final line feed. */
+/**
+ * The text of a tree: declarations in order (a directive first), a blank line before each struct and function and
+ * after the directive, one final line feed.
+ */
 function print(decls: readonly Decl[]): string {
   const out: string[] = []
   let last: Decl['k'] | null = null
@@ -205,6 +233,9 @@ function print(decls: readonly Decl[]): string {
     if (last !== null && (d.k !== 'var' || last !== 'var')) out.push('')
     last = d.k
     switch (d.k) {
+      case 'directive':
+        out.push(d.text)
+        break
       case 'struct':
         out.push(`struct ${d.name} {`)
         for (const m of d.members) out.push(`  ${m.attrs === '' ? '' : `${m.attrs} `}${m.name}: ${m.type},`)
@@ -271,7 +302,7 @@ type Known = typeof UNKNOWN | typeof SURE | typeof FINITE
 const FAMILIES = [
   'nan', 'truth', 'min', 'max', 'saturate', 'step', 'sign', 'floor', 'ceil', 'trunc', 'round', 'fract', 'f2i', 'f2u', 'u2f', 'i2f',
   'sqrt', 'rsqrt', 'exp', 'exp2', 'log', 'log2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pow',
-  'length', 'normalize',
+  'length', 'normalize', 'uv', 'lvl',
 ] as const
 type Family = (typeof FAMILIES)[number]
 
@@ -284,11 +315,14 @@ const DEPENDS: { readonly [F in Family]?: readonly Family[] } = {
 /** Families whose body makes a fresh NaN or infinity from the hidden block's zero word. */
 const HIDDEN_FAMILIES: ReadonlySet<Family> = new Set<Family>(['sqrt', 'rsqrt', 'log', 'log2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'pow', 'length', 'normalize'])
 
+/** Families used at one width only (a coordinate pair, a level), whose helper's name carries no width. */
+const ONE_WIDTH: { readonly [F in Family]?: number } = { uv: 2, lvl: 1 }
+
 /**
  * A helper's name: the family's for a scalar, with `x<n>` for a vector of n as Lens names its vectors (a bare width
- * would make `exp` of two lanes `ng_exp2`, the name of `exp2` of one).
+ * would make `exp` of two lanes `ng_exp2`, the name of `exp2` of one). `uv` and `lvl` have one width and no suffix.
  */
-const helperName = (f: Family, n: number): string => `ng_${f}${n === 1 ? '' : `x${n}`}`
+const helperName = (f: Family, n: number): string => `ng_${f}${n === 1 || ONE_WIDTH[f] !== undefined ? '' : `x${n}`}`
 
 /** Types and splats at one width. */
 class Width {
@@ -559,11 +593,34 @@ function helperFn(f: Family, w: Width): Decl {
         ret(sel(id('r0'), id('q'), bin('|', w.any(bin('>', id('m'), w.u('0x7f800000u'))), w.all(bin('==', id('m'), w.u('0u')))))),
       ])
     }
+    case 'uv':
+      // texture.ts's coordinate(): NaN reads 0, and a size past 2^24 (infinities too) is held to 2^24 of its sign.
+      // Worked on the bits, so neither a NaN nor an infinity meets a float operation finite math leaves open.
+      return fn(p1(T), T, [
+        uLet(),
+        letS('m', U, mag(u)),
+        letS('big', T, w.float(bin('|', bin('&', u, w.u('0x80000000u')), w.u('0x4b800000u')))),
+        ret(sel(sel(x, id('big'), bin('>', id('m'), w.u('0x4b800000u'))), w.f('0.0'), bin('>', id('m'), w.u('0x7f800000u')))),
+      ])
+    case 'lvl':
+      // A level for the sampler's own clamp to [lodMin, lodMax] (0 <= lodMin <= lodMax <= 32): NaN reads 0 (so
+      // lodMin), past 33 reads 33 and below -1 reads -1 (so the ends), infinities included, all on the bits.
+      return fn(p1(T), T, [
+        uLet(),
+        letS('m', U, mag(u)),
+        letS('hi', B, bin('&', bin('<', u, w.u('0x80000000u')), bin('>', id('m'), w.u('0x42040000u')))),
+        letS('lo', B, bin('&', bin('>=', u, w.u('0x80000000u')), bin('>', id('m'), w.u('0x3f800000u')))),
+        ret(sel(sel(sel(x, w.f('33.0'), id('hi')), w.f('-1.0'), id('lo')), w.f('0.0'), bin('>', id('m'), w.u('0x7f800000u')))),
+      ])
   }
 }
 
 // ---------------------------------------------------------------------------------------------------
 // Checking the options and the scope
+
+/** Colour slots a pipeline has at most, and values passed between its stages (front-facing counted). */
+const COLOUR_SLOTS = 8
+const INTER_STAGE = 16
 
 /** Refuses options that do not match the module: an internal error of the caller, so code `lens`. */
 function optionsRule(m: LensModule, options: unknown): asserts options is WgslOptions {
@@ -588,17 +645,38 @@ function optionsRule(m: LensModule, options: unknown): asserts options is WgslOp
     }
   })
   for (const k of outputs as readonly unknown[]) if (k !== null && k !== 'f32' && k !== 'i32' && k !== 'u32') no('an output kind is f32, i32, u32 or null')
-  if (m.stage === 'compute') {
-    if ((outputs as readonly unknown[]).some((k) => k !== null)) no('a compute module has no colour outputs')
-    if (vertexRate !== 0) no('a compute module has no vertex inputs')
-    if (live !== null) no('a compute module carries no live value')
+  if ((outputs as readonly unknown[]).length > COLOUR_SLOTS) no(`outputs has ${(outputs as readonly unknown[]).length} colour slots, and a pipeline has at most ${COLOUR_SLOTS}`)
+  if (m.stage !== 'fragment' && (outputs as readonly unknown[]).some((k) => k !== null)) no(`a ${m.stage} module has no colour outputs`)
+  if (m.stage !== 'vertex' && vertexRate !== 0) no(`a ${m.stage} module has no vertex inputs`)
+  if (m.stage === 'compute' && live !== null) no('a compute module carries no live value')
+  // A storage entry never lists the vertex stage (it writes nothing), so a vertex module's storage blocks are read only.
+  if (m.stage === 'vertex') {
+    list.forEach((s, i) => {
+      if (s === 'read_write') no(`resource ${i} is read by a vertex module, which binds storage read only`)
+    })
   }
+  if (m.stage === 'vertex' && live !== null) {
+    if (positionSure(m)) no('a vertex module that always writes its position carries no live value')
+    if (m.outputs.some((p) => p.slot === live)) no(`location ${String(live)} carries an output port, so it cannot carry the live value`)
+  }
+  if (m.stage === 'fragment' && live !== null) {
+    if (m.inputs.some((p) => p.slot === live)) no(`location ${String(live)} carries an input port, so it cannot carry the live value`)
+    // The live value is one more value passed between the stages, and front-facing counts as one too.
+    const facing = readsBuiltin(m.body, 'front-facing')
+    const n = m.inputs.length + 1 + (facing ? 1 : 0)
+    if (n > INTER_STAGE) no(`the live value would make ${n} values passed between the stages (${m.inputs.length} inputs${facing ? ', front-facing' : ''} and the live value), and a pipeline passes at most ${INTER_STAGE}`)
+  }
+}
+
+/** True when a list of instructions reads a builtin, nested ones included. */
+function readsBuiltin(insts: readonly Inst[], name: Builtin): boolean {
+  return insts.some((i) => (i.op === 'builtin' && i.name === name) || (i.op === 'if' && (readsBuiltin(i.then, name) || readsBuiltin(i.else, name))) || (i.op === 'loop' && readsBuiltin(i.body, name)))
 }
 
 /** Refuses what this slice does not lower yet, by name, rather than lowering it wrong. */
 const notYet = (what: string): never => fail('device', `wgsl: ${what} not yet lowered`)
 
-/** A storage block whose last field is an array without a length (raw words, lowered later). */
+/** A storage block whose last field is an array without a length: lowered as raw words. */
 function endsInRuntimeArray(b: Block): boolean {
   const last = b.fields[b.fields.length - 1].type
   return typeof last !== 'string' && 'array' in last && last.len === 0
@@ -607,14 +685,54 @@ function endsInRuntimeArray(b: Block): boolean {
 // ---------------------------------------------------------------------------------------------------
 // The lowering
 
-/** The WGSL builtin and the private variable behind each compute builtin. */
-const COMPUTE_BUILTINS: { readonly [B in Builtin]?: { readonly wgsl: string; readonly name: string } } = {
-  'global-id': { wgsl: 'global_invocation_id', name: 'ng_global' },
-  'local-id': { wgsl: 'local_invocation_id', name: 'ng_local' },
-  'group-id': { wgsl: 'workgroup_id', name: 'ng_group' },
-  'local-index': { wgsl: 'local_invocation_index', name: 'ng_index' },
-  'group-count': { wgsl: 'num_workgroups', name: 'ng_count' },
+/** The WGSL builtin, the private variable and the entry's parameter or member behind each builtin. */
+const BUILTIN_VARS: { readonly [B in Builtin]: { readonly wgsl: string; readonly name: string; readonly member: string } } = {
+  'vertex-index': { wgsl: 'vertex_index', name: 'ng_vi', member: 'vi' },
+  'instance-index': { wgsl: 'instance_index', name: 'ng_ii', member: 'ii' },
+  'frag-coord': { wgsl: 'position', name: 'ng_fc', member: 'fc' },
+  'front-facing': { wgsl: 'front_facing', name: 'ng_ff', member: 'ff' },
+  'global-id': { wgsl: 'global_invocation_id', name: 'ng_global', member: 'ng_global_in' },
+  'local-id': { wgsl: 'local_invocation_id', name: 'ng_local', member: 'ng_local_in' },
+  'group-id': { wgsl: 'workgroup_id', name: 'ng_group', member: 'ng_group_in' },
+  'local-index': { wgsl: 'local_invocation_index', name: 'ng_index', member: 'ng_index_in' },
+  'group-count': { wgsl: 'num_workgroups', name: 'ng_count', member: 'ng_count_in' },
 }
+
+/** The WGSL storage texel format of each format a storage image may have. */
+const STORAGE_TEXEL: { readonly [F in Format]?: string } = {
+  rgba8: 'rgba8unorm', rgba16f: 'rgba16float', r32f: 'r32float', rg32f: 'rg32float', rgba32f: 'rgba32float', r32u: 'r32uint', r32i: 'r32sint',
+}
+
+/** The WGSL type of an image or sampler resource. */
+function handleType(r: Resource): string {
+  switch (r.kind) {
+    case 'image': {
+      const arrayed = r.dims === '2d-array' ? '_array' : ''
+      if (r.sample === 'depth') return `texture_depth_2d${arrayed}`
+      return `texture_2d${arrayed}<${r.sample === 'float' ? 'f32' : r.sample === 'uint' ? 'u32' : 'i32'}>`
+    }
+    case 'storage-image': {
+      const f = STORAGE_TEXEL[r.format]
+      return f === undefined ? fail('lens', `wgsl: ${r.format} is not a storage image format`) : `texture_storage_2d<${f}, write>`
+    }
+    case 'sampler': return 'sampler'
+    default: return fail('lens', `wgsl: a ${r.kind} is not a handle`)
+  }
+}
+
+/** The fine derivatives, as pinned (a driver may give coarse ones: A16). */
+const DERIV = { dx: 'dpdxFine', dy: 'dpdyFine', width: 'fwidthFine' } as const
+
+/** True when a list of instructions holds a `discard`, nested ones included. */
+function holdsDiscard(insts: readonly Inst[]): boolean {
+  return insts.some((i) => i.op === 'discard' || (i.op === 'if' && (holdsDiscard(i.then) || holdsDiscard(i.else))) || (i.op === 'loop' && holdsDiscard(i.body)))
+}
+
+/** Ports in slot order. */
+const bySlot = (ports: readonly Port[]): Port[] => [...ports].sort((a, b) => a.slot - b.slot)
+
+/** A port's stage attributes: its location, and flat interpolation (first vertex) where it is flat. */
+const portAttrs = (p: Port): string => `@location(${p.slot})${p.flat === true ? ' @interpolate(flat)' : ''}`
 
 type InstOf<K extends Inst['op']> = Extract<Inst, { readonly op: K }>
 
@@ -636,8 +754,16 @@ class Lowerer {
   private readonly helpers = new Set<string>()
   private readonly builtins = new Set<Builtin>()
   private readonly depths = new Set<number>()
+  /** Storage resources lowered as raw words (their block ends in an array without a length). */
+  private readonly raw = new Set<number>()
   private hidden = false
   private temps = 0
+  /** A derivative or an implicit-level sample was lowered: the module needs the uniformity directive. */
+  private derivs = false
+  /** Fragment: writes and puts are guarded by `!ng_gone` (the module holds a discard, or tests a live value). */
+  private gone = false
+  /** Vertex: `position` also clears `ng_live` (the module may leave its position unwritten, and live is carried). */
+  private liveOut = false
 
   constructor(m: LensModule) {
     this.m = m
@@ -746,16 +872,23 @@ class Lowerer {
       case 'column': this.def(i.id, index(this.v(i.a), lit(`${i.i}u`)), out, this.known[i.a]); return true
       case 'cast': this.cast(i, out); return true
       case 'bits': this.def(i.id, call(`bitcast<${wtype(i.t)}>`, this.v(i.a)), out); return true
-      case 'builtin': {
-        const b = COMPUTE_BUILTINS[i.name]
-        if (b === undefined) return notYet(`the ${i.name} builtin is`)
+      case 'builtin':
         this.builtins.add(i.name)
-        this.def(i.id, id(b.name), out)
+        this.def(i.id, id(BUILTIN_VARS[i.name].name), out)
         return true
-      }
+      case 'in': this.def(i.id, id(`ng_i${i.slot}`), out); return true
+      case 'out': out.push({ k: 'assign', lhs: id(`ng_o${i.slot}`), e: this.v(i.a) }); return true
+      case 'position':
+        out.push({ k: 'assign', lhs: id('ng_pos'), e: this.v(i.a) })
+        if (this.liveOut) out.push({ k: 'assign', lhs: id('ng_live'), e: lit('0.0') })
+        return true
       case 'read': {
         const r = this.m.resources[i.res]
         if (r.kind !== 'uniform' && r.kind !== 'storage' && r.kind !== 'constants') return fail('lens', `wgsl: read of resource ${i.res}, a ${r.kind}`)
+        if (this.raw.has(i.res)) {
+          this.rawRead(i, r.block, out)
+          return true
+        }
         const base = r.kind === 'constants' ? member(id('ng_h'), 'c') : id(`r${i.res}`)
         if (r.kind === 'constants') this.hidden = true
         this.def(i.id, this.path(base, r.block, i.path, out), out)
@@ -764,7 +897,12 @@ class Lowerer {
       case 'write': {
         const r = this.m.resources[i.res]
         if (r.kind !== 'storage') return fail('lens', `wgsl: write to resource ${i.res}, a ${r.kind}`)
-        out.push({ k: 'assign', lhs: this.path(id(`r${i.res}`), r.block, i.path, out), e: this.v(i.a) })
+        if (this.raw.has(i.res)) {
+          this.rawWrite(i, r.block, out)
+          return true
+        }
+        const lhs = this.path(id(`r${i.res}`), r.block, i.path, out)
+        this.guarded(null, [{ k: 'assign', lhs, e: this.v(i.a) }], out)
         return true
       }
       case 'var':
@@ -797,11 +935,28 @@ class Lowerer {
       case 'break': out.push({ k: 'break' }); return false
       case 'continue': out.push({ k: 'continue' }); return false
       case 'return': out.push({ k: 'return', e: null }); return false
-      case 'sample': case 'texel': case 'put': case 'extent': return notYet(`images (${i.op}) are`)
-      case 'deriv': return notYet('derivatives are')
-      case 'discard': return notYet('discard is')
-      case 'in': case 'out': case 'position': return notYet(`stage ports (${i.op}) are`)
+      case 'sample': this.sample(i, out); return true
+      case 'texel': this.texel(i, out); return true
+      case 'put': this.put(i, out); return true
+      case 'extent': this.extent(i, out); return true
+      case 'deriv':
+        this.derivs = true
+        this.def(i.id, call(DERIV[i.fn], this.v(i.a)), out)
+        return true
+      case 'discard':
+        // WGSL's discard demotes the invocation to a helper and lets it run on, as the pinned rule does; ng_gone
+        // keeps every later write and put from taking place, whatever a platform does with a helper's stores.
+        out.push({ k: 'assign', lhs: id('ng_gone'), e: lit('true') }, { k: 'discard' })
+        return true
     }
+  }
+
+  /** Statements that take place only where `c` holds (when given) and, in a module with ng_gone, not after discard. */
+  private guarded(c: Expr | null, body: Stmt[], out: Stmt[]): void {
+    const g = this.gone ? un('!', id('ng_gone')) : null
+    const cond = c === null ? g : g === null ? c : bin('&', c, g)
+    if (cond === null) out.push(...body)
+    else out.push({ k: 'if', c: cond, then: body, else: [] })
   }
 
   /** Defines a value: `let v<id>: T = e;`, and records what the value is known not to be. */
@@ -841,6 +996,201 @@ class Lowerer {
       }
     }
     return e
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // Raw words
+
+  /**
+   * Where a value in a raw block lies, as interp.ts's plan() and address() find it: the word of each component, and
+   * the elements the binding holds when the path enters the final array (null when it stays in the fixed part, which
+   * the core guarantees the binding holds). An index into the final array is clamped into the elements held, and every
+   * word into the binding, so no access leaves it; with none held the caller reads zero and writes nothing.
+   */
+  private rawPlace(res: number, b: Block, path: readonly Step[], out: Stmt[]): { readonly words: Expr[]; readonly held: Expr | null; readonly leaf: ValueType } {
+    const r = id(`r${res}`)
+    let t: DataType = { struct: b }
+    let base = 0
+    const terms: Expr[] = []
+    let held: Expr | null = null
+    let len: Expr | null = null
+    const scaled = (j: Expr, words: number): Expr => (words === 1 ? j : bin('*', j, lit(`${words}u`)))
+    for (const step of path) {
+      if (typeof t === 'string') break
+      if ('struct' in t) {
+        const k = step as number
+        base += layoutBlock(t.struct, 'storage').offsets[k]
+        t = t.struct.fields[k].type
+        continue
+      }
+      const words = strideOf(t.array, 'storage') / 4
+      if (t.len === 0) {
+        // Elements held: floor((size - start) / stride), in words since both are whole words, or 0 when the
+        // binding ends before the array starts.
+        const n = this.let('u32', call('arrayLength', un('&', r)), out, 'len')
+        len = n
+        const s4 = base / 4
+        const rest = s4 === 0 ? n : bin('-', n, lit(`${s4}u`))
+        const count = words === 1 ? rest : bin('/', rest, lit(`${words}u`))
+        held = this.let('u32', s4 === 0 ? count : sel(lit('0u'), count, bin('>=', n, lit(`${s4}u`))), out, 'n')
+        const last = bin('-', call('max', held, lit('1u')), lit('1u'))
+        if (typeof step !== 'number') {
+          const v = this.v(step.at)
+          const i = this.typeOf(step.at) === 'u32' ? v : sel(call('bitcast<u32>', v), lit('0u'), bin('<', v, lit('0i')))
+          terms.push(scaled(this.let('u32', call('min', i, last), out, 'j'), words))
+        } else if (step !== 0) {
+          terms.push(scaled(this.let('u32', call('min', lit(`${step}u`), last), out, 'j'), words))
+        }
+      } else if (typeof step === 'number') {
+        base += step * words * 4
+      } else {
+        terms.push(scaled(this.clamped(step.at, t.len, out), words))
+      }
+      t = t.array
+    }
+    const leaf = t as ValueType
+    const n = widthOf(leaf)
+    const parts: number[] = []
+    if (isGrid(leaf)) {
+      const column = strideOf(columnOf(leaf) as DataType, 'storage') / 4
+      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) parts.push(j * column + i)
+    } else {
+      for (let c = 0; c < n; c++) parts.push(c)
+    }
+    const b4 = base / 4
+    if (terms.length === 0 && len === null) return { words: parts.map((p) => lit(`${b4 + p}u`)), held, leaf }
+    let w: Expr = terms.length === 0 ? lit(`${b4}u`) : terms.reduce((acc, e) => bin('+', acc, e))
+    if (terms.length > 0 && b4 !== 0) w = bin('+', w, lit(`${b4}u`))
+    const end = len === null ? null : bin('-', len, lit('1u'))
+    if (end !== null) w = call('min', w, end)
+    const word = this.let('u32', w, out, 'w')
+    const words = parts.map((p) => {
+      if (p === 0) return word
+      const at = bin('+', word, lit(`${p}u`))
+      return end === null ? at : call('min', at, end)
+    })
+    return { words, held, leaf }
+  }
+
+  /** A read of a raw block: each component's word, bit cast; zero when the final array holds no element. */
+  private rawRead(i: InstOf<'read'>, b: Block, out: Stmt[]): void {
+    const { words, held, leaf } = this.rawPlace(i.res, b, i.path, out)
+    const k = scalarOf(leaf)
+    const T = wtype(leaf)
+    const r = id(`r${i.res}`)
+    const comps = words.map((w) => (k === 'u32' ? index(r, w) : call(`bitcast<${k}>`, index(r, w))))
+    const value = comps.length === 1 ? comps[0] : call(T, ...comps)
+    if (held === null) {
+      this.def(i.id, value, out)
+      return
+    }
+    const t = this.let(T, value, out)
+    const some = bin('!=', held, lit('0u'))
+    if (!isGrid(leaf)) {
+      this.def(i.id, sel(call(T), t, some), out)
+      return
+    }
+    // select takes no grid: a grid is chosen column by column.
+    const col = wtype(columnOf(leaf))
+    this.def(i.id, call(T, ...Array.from({ length: widthOf(leaf) }, (_, j) => sel(call(col), index(t, lit(`${j}u`)), some))), out)
+  }
+
+  /** A write to a raw block: each component's bits to its word, only when the final array holds an element. */
+  private rawWrite(i: InstOf<'write'>, b: Block, out: Stmt[]): void {
+    const { words, held, leaf } = this.rawPlace(i.res, b, i.path, out)
+    const k = scalarOf(leaf)
+    const n = widthOf(leaf)
+    const a = this.v(i.a)
+    const r = id(`r${i.res}`)
+    const comp = (c: number): Expr => (isGrid(leaf) ? index(index(a, lit(`${Math.floor(c / n)}u`)), lit(`${c % n}u`)) : isScalar(leaf) ? a : member(a, SWIZZLE[c]))
+    const body = words.map((w, c): Stmt => ({ k: 'assign', lhs: index(r, w), e: k === 'u32' ? comp(c) : call('bitcast<u32>', comp(c)) }))
+    this.guarded(held === null ? null : bin('!=', held, lit('0u')), body, out)
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // Images
+
+  /** An integer value as u32: itself, or an i32's bits (a negative one is then past every size it is compared with). */
+  private unsigned(v: number, out: Stmt[]): Expr {
+    const t = this.typeOf(v)
+    if (scalarOf(t) === 'u32') return this.v(v)
+    const U = vtype('u32', widthOf(t))
+    return this.let(U, call(`bitcast<${U}>`, this.v(v)), out)
+  }
+
+  /** An integer value as u32 with a negative i32 taken to 0, as texture.ts clamps a level or a layer. */
+  private atLeastZero(v: number, out: Stmt[]): Expr {
+    const a = this.v(v)
+    return this.typeOf(v) === 'u32' ? a : this.let('u32', sel(call('bitcast<u32>', a), lit('0u'), bin('<', a, lit('0i'))), out)
+  }
+
+  /**
+   * texel: level, layer and position tested in u32 against the view's levels, layers and the level's size; the load
+   * uses clamped values, so no access is ever out of range, and the result is zero (alpha included) outside.
+   */
+  private texel(i: InstOf<'texel'>, out: Stmt[]): void {
+    const r = id(`r${i.image}`)
+    const q = this.unsigned(i.level, out)
+    const nl = this.let('u32', call('textureNumLevels', r), out)
+    const lq = this.let('u32', call('min', q, bin('-', nl, lit('1u'))), out)
+    const d = this.let('vec2<u32>', call('textureDimensions', r, lq), out)
+    const p = this.unsigned(i.at, out)
+    const pc = this.let('vec2<u32>', call('min', p, bin('-', d, call('vec2<u32>', lit('1u')))), out)
+    let inside = bin('&', bin('<', q, nl), call('all', bin('<', p, d)))
+    const args: Expr[] = [r, pc]
+    if (i.layer !== undefined) {
+      const k = this.unsigned(i.layer, out)
+      const nk = this.let('u32', call('textureNumLayers', r), out)
+      args.push(this.let('u32', call('min', k, bin('-', nk, lit('1u'))), out))
+      inside = bin('&', inside, bin('<', k, nk))
+    }
+    args.push(lq)
+    const ok = this.let('bool', inside, out)
+    const T = wtype(i.t)
+    const t = this.let(T, call('textureLoad', ...args), out)
+    this.def(i.id, sel(call(T), t, ok), out)
+  }
+
+  /** put: nothing written outside the image's first level, nor after discard; the conversion is the format's (A6). */
+  private put(i: InstOf<'put'>, out: Stmt[]): void {
+    const r = id(`r${i.image}`)
+    const p = this.unsigned(i.at, out)
+    const ok = this.let('bool', call('all', bin('<', p, call('textureDimensions', r))), out)
+    this.guarded(ok, [{ k: 'call', e: call('textureStore', r, this.v(i.at), this.v(i.a)) }], out)
+  }
+
+  /** extent: the size of a sampled image's level clamped into the view's levels, or of a storage image's one level. */
+  private extent(i: InstOf<'extent'>, out: Stmt[]): void {
+    const r = id(`r${i.image}`)
+    if (i.level === undefined) {
+      this.def(i.id, call('textureDimensions', r), out)
+      return
+    }
+    const l = this.atLeastZero(i.level, out)
+    const nl = this.let('u32', call('textureNumLevels', r), out)
+    this.def(i.id, call('textureDimensions', r, call('min', l, bin('-', nl, lit('1u')))), out)
+  }
+
+  /**
+   * sample: the coordinate through ng_uv (texture.ts's NaN and size rules), the layer clamped into the view's layers
+   * here rather than left to the platform, and an explicit level through ng_lvl for the sampler's own clamp to its
+   * level range. Filtering and the implicit level of detail are the GPU's (A7, A8).
+   */
+  private sample(i: InstOf<'sample'>, out: Stmt[]): void {
+    const r = id(`r${i.image}`)
+    const args: Expr[] = [r, id(`r${i.sampler}`), call(this.helper('uv', 2), this.v(i.uv))]
+    if (i.layer !== undefined) {
+      const k = this.atLeastZero(i.layer, out)
+      const nk = this.let('u32', call('textureNumLayers', r), out)
+      args.push(this.let('u32', call('min', k, bin('-', nk, lit('1u'))), out))
+    }
+    if (i.level === undefined) {
+      this.derivs = true
+      this.def(i.id, call('textureSample', ...args), out)
+      return
+    }
+    args.push(call(this.helper('lvl', 1), this.v(i.level)))
+    this.def(i.id, call('textureSampleLevel', ...args), out)
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -1068,20 +1418,24 @@ class Lowerer {
     const m = this.m
     if (options.arithmetic === 'stepwise') notYet('stepwise arithmetic is')
     m.resources.forEach((r, i) => {
-      if (r.kind === 'image' || r.kind === 'sampler' || r.kind === 'storage-image') notYet(`resources[${i}] ${r.kind}: images are`)
-      if (r.kind === 'storage' && endsInRuntimeArray(r.block)) notYet(`resources[${i}] storage: a storage block that ends in an array without a length (raw words) is`)
+      if (r.kind === 'storage' && endsInRuntimeArray(r.block)) this.raw.add(i)
     })
+    this.gone = m.stage === 'fragment' && (holdsDiscard(m.body) || options.live !== null)
+    this.liveOut = m.stage === 'vertex' && options.live !== null
     // Structs are named in order of first reach: resources in order, each block before the blocks it holds.
-    m.resources.forEach((r) => {
+    m.resources.forEach((r, i) => {
       if (r.kind === 'uniform' || r.kind === 'constants') this.struct(r.block, 'uniform')
-      else if (r.kind === 'storage') this.struct(r.block, 'storage')
+      else if (r.kind === 'storage' && !this.raw.has(i)) this.struct(r.block, 'storage')
     })
     const constants = m.resources.find((r) => r.kind === 'constants')
     const body: Stmt[] = []
     this.list(m.body, 0, body)
     const counters: Stmt[] = [...this.depths].sort((a, b) => a - b).map((d) => ({ k: 'var', name: `ng_c${d}`, type: 'u32', e: null }))
+    // The entry is built before the declarations: the vertex limit selects read the hidden block.
+    const entry = m.stage === 'vertex' ? this.vertexEntry(options) : m.stage === 'fragment' ? this.fragmentEntry(options) : this.computeEntry()
 
     const decls: Decl[] = []
+    if (this.derivs) decls.push({ k: 'directive', text: 'diagnostic(off, derivative_uniformity);' })
     for (const s of this.order) decls.push({ k: 'struct', name: s.name, members: this.members(s.block, s.space) })
     if (this.hidden || constants !== undefined) {
       const c = constants === undefined ? 'array<vec4<u32>, 8>' : (this.structs.uniform.get(constants.block) as string)
@@ -1098,33 +1452,154 @@ class Lowerer {
       decls.push({ k: 'var', attrs: `@group(${WGSL_HIDDEN.group}) @binding(${WGSL_HIDDEN.binding})`, space: '<uniform>', name: 'ng_h', type: 'NgHidden' })
     }
     m.resources.forEach((r, i) => {
-      if (r.kind !== 'uniform' && r.kind !== 'storage') return
-      const space = r.kind === 'uniform' ? '<uniform>' : `<storage, ${options.storage[i]}>`
-      decls.push({ k: 'var', attrs: `@group(${r.set}) @binding(${r.binding})`, space, name: `r${i}`, type: this.structs[r.kind].get(r.block) as string })
+      if (r.kind === 'constants') return
+      const attrs = `@group(${r.set}) @binding(${r.binding})`
+      if (r.kind === 'uniform') decls.push({ k: 'var', attrs, space: '<uniform>', name: `r${i}`, type: this.structs.uniform.get(r.block) as string })
+      else if (r.kind === 'storage') {
+        const type = this.raw.has(i) ? 'array<u32>' : (this.structs.storage.get(r.block) as string)
+        decls.push({ k: 'var', attrs, space: `<storage, ${options.storage[i]}>`, name: `r${i}`, type })
+      } else decls.push({ k: 'var', attrs, space: '', name: `r${i}`, type: handleType(r) })
     })
-    const builtins = (Object.keys(COMPUTE_BUILTINS) as Builtin[]).filter((b) => this.builtins.has(b))
-    for (const b of builtins) decls.push({ k: 'var', attrs: '', space: '<private>', name: (COMPUTE_BUILTINS[b] as { name: string }).name, type: wtype(builtinType(b)) })
+    const priv = (name: string, type: string): void => {
+      decls.push({ k: 'var', attrs: '', space: '<private>', name, type })
+    }
+    for (const b of this.usedBuiltins()) priv(BUILTIN_VARS[b].name, wtype(BUILTINS[b].type))
+    for (const p of bySlot(m.inputs)) priv(`ng_i${p.slot}`, wtype(p.type))
+    for (const p of bySlot(m.outputs)) priv(`ng_o${p.slot}`, wtype(p.type))
+    if (m.stage === 'vertex') priv('ng_pos', 'vec4<f32>')
+    if (this.liveOut) priv('ng_live', 'f32')
+    if (this.gone) priv('ng_gone', 'bool')
     for (const f of FAMILIES) {
-      for (let n = 1; n <= 4; n++) if (this.helpers.has(helperName(f, n))) decls.push(helperFn(f, new Width(n)))
+      for (let n = 1; n <= 4; n++) if ((ONE_WIDTH[f] ?? n) === n && this.helpers.has(helperName(f, n))) decls.push(helperFn(f, new Width(n)))
     }
     decls.push({ k: 'fn', attrs: '', name: 'ng_body', params: [], ret: null, body: [...counters, ...body] })
-    const params: Param[] = builtins.map((b) => {
-      const info = COMPUTE_BUILTINS[b] as { wgsl: string; name: string }
-      return { attrs: `@builtin(${info.wgsl})`, name: `${info.name}_in`, type: wtype(builtinType(b)) }
-    })
-    const entry: Stmt[] = [
-      ...params.map((p): Stmt => ({ k: 'assign', lhs: id(p.name.slice(0, -'_in'.length)), e: id(p.name) })),
+    decls.push(...entry)
+    const name = m.stage === 'vertex' ? 'ng_vertex' : m.stage === 'fragment' ? 'ng_fragment' : 'ng_compute'
+    return Object.freeze({ code: print(decls), entry: name, raw: Object.freeze([...this.raw]), directive: this.derivs })
+  }
+
+  /** The builtins the body reads, in BUILTINS order. */
+  private usedBuiltins(): Builtin[] {
+    return (Object.keys(BUILTINS) as Builtin[]).filter((b) => this.builtins.has(b))
+  }
+
+  /** The compute entry: each builtin used copied into its private variable, then the body. */
+  private computeEntry(): Decl[] {
+    const builtins = this.usedBuiltins()
+    const params: Param[] = builtins.map((b) => ({ attrs: `@builtin(${BUILTIN_VARS[b].wgsl})`, name: BUILTIN_VARS[b].member, type: wtype(BUILTINS[b].type) }))
+    const body: Stmt[] = [
+      ...builtins.map((b): Stmt => ({ k: 'assign', lhs: id(BUILTIN_VARS[b].name), e: id(BUILTIN_VARS[b].member) })),
       { k: 'call', e: call('ng_body') },
     ]
-    const [gx, gy, gz] = m.group
-    decls.push({ k: 'fn', attrs: `@compute @workgroup_size(${gx}, ${gy}, ${gz})`, name: 'ng_compute', params, ret: null, body: entry })
-    return Object.freeze({ code: print(decls), entry: 'ng_compute', raw: Object.freeze([]), directive: false })
+    const [gx, gy, gz] = this.m.group
+    return [{ k: 'fn', attrs: `@compute @workgroup_size(${gx}, ${gy}, ${gz})`, name: 'ng_compute', params, ret: null, body }]
   }
-}
 
-/** The type of a compute builtin. */
-function builtinType(b: Builtin): ValueType {
-  return b === 'local-index' ? 'u32' : 'u32x3'
+  /**
+   * The vertex entry: builtins and inputs copied in, each vertex-rate input replaced by zero where the reference's
+   * attribute rule reads none (the limit selects, from the hidden block), the position started as NaN when the module
+   * may leave it unwritten, then the body, and every output, the position (invariant) and the live value handed on.
+   */
+  private vertexEntry(options: WgslOptions): Decl[] {
+    const m = this.m
+    const a = id('a')
+    const h = id('ng_h')
+    const inputs = bySlot(m.inputs)
+    const rate = inputs.filter((p) => ((options.vertexRate >>> p.slot) & 1) === 1)
+    const vin: Member[] = []
+    if (this.builtins.has('vertex-index') || rate.length > 0) vin.push({ attrs: '@builtin(vertex_index)', name: 'vi', type: 'u32' })
+    if (this.builtins.has('instance-index')) vin.push({ attrs: '@builtin(instance_index)', name: 'ii', type: 'u32' })
+    for (const p of inputs) vin.push({ attrs: `@location(${p.slot})`, name: `a${p.slot}`, type: wtype(p.type) })
+    const vout: Member[] = [{ attrs: '@builtin(position) @invariant', name: 'pos', type: 'vec4<f32>' }]
+    for (const p of bySlot(m.outputs)) vout.push({ attrs: portAttrs(p), name: `o${p.slot}`, type: wtype(p.type) })
+    if (this.liveOut) vout.push({ attrs: `@location(${options.live as number})`, name: 'live', type: 'f32' })
+
+    const body: Stmt[] = []
+    for (const b of this.usedBuiltins()) body.push({ k: 'assign', lhs: id(BUILTIN_VARS[b].name), e: member(a, BUILTIN_VARS[b].member) })
+    if (rate.length > 0) {
+      // With base < 0 the true element index + base is negative exactly when the wrapped vertex_index >= u32(base);
+      // with base > 0 it reaches 2^32 exactly when vertex_index < base. Otherwise the element is vertex_index.
+      this.hidden = true
+      const vi = member(a, 'vi')
+      const base = member(h, 'base')
+      body.push(
+        letS('ng_b', 'u32', call('bitcast<u32>', base)),
+        letS('ng_neg', 'bool', bin('&', bin('<', base, lit('0i')), bin('>=', vi, id('ng_b')))),
+        letS('ng_over', 'bool', bin('&', bin('>', base, lit('0i')), bin('<', vi, id('ng_b')))),
+      )
+      for (const p of rate) {
+        const s = p.slot
+        const bit = lit(`${1 << s}u`)
+        const l = id(`ng_l${s}`)
+        const unchecked = bin('==', bin('&', member(h, 'checked'), bit), lit('0u'))
+        const some = bin('==', bin('&', member(h, 'none'), bit), lit('0u'))
+        // lim 0xFFFFFFFF marks a stride-0 attribute, whose bytes do not depend on the element.
+        const within = bin('|', bin('==', l, lit('0xffffffffu')), bin('&', un('!', id('ng_over')), bin('<=', vi, l)))
+        body.push(
+          letS(`ng_l${s}`, 'u32', member(index(member(h, 'lim'), lit(`${s >> 2}u`)), SWIZZLE[s & 3])),
+          letS(`ng_ok${s}`, 'bool', bin('|', unchecked, bin('&', bin('&', some, un('!', id('ng_neg'))), within))),
+          { k: 'assign', lhs: id(`ng_i${s}`), e: sel(call(wtype(p.type)), member(a, `a${s}`), id(`ng_ok${s}`)) },
+        )
+      }
+    }
+    for (const p of inputs) if (!rate.includes(p)) body.push({ k: 'assign', lhs: id(`ng_i${p.slot}`), e: member(a, `a${p.slot}`) })
+    if (!positionSure(m)) {
+      body.push(letS('ng_k', 'u32', lit(hex(QNAN))), { k: 'assign', lhs: id('ng_pos'), e: call('vec4<f32>', call('bitcast<f32>', id('ng_k'))) })
+      if (this.liveOut) body.push({ k: 'assign', lhs: id('ng_live'), e: lit('1.0') })
+    }
+    body.push({ k: 'call', e: call('ng_body') }, { k: 'var', name: 'o', type: 'NgVOut', e: null }, { k: 'assign', lhs: member(id('o'), 'pos'), e: id('ng_pos') })
+    for (const p of bySlot(m.outputs)) body.push({ k: 'assign', lhs: member(id('o'), `o${p.slot}`), e: id(`ng_o${p.slot}`) })
+    if (this.liveOut) body.push({ k: 'assign', lhs: member(id('o'), 'live'), e: id('ng_live') })
+    body.push({ k: 'return', e: id('o') })
+    const out: Decl[] = []
+    if (vin.length > 0) out.push({ k: 'struct', name: 'NgVIn', members: vin })
+    out.push({ k: 'struct', name: 'NgVOut', members: vout })
+    out.push({ k: 'fn', attrs: '@vertex', name: 'ng_vertex', params: vin.length > 0 ? [{ attrs: '', name: 'a', type: 'NgVIn' }] : [], ret: 'NgVOut', body })
+    return out
+  }
+
+  /**
+   * The fragment entry: builtins and inputs copied in, a fragment whose live value is not exactly 0 discarded, then
+   * the body, and each output with an attachment of its kind shaped to four components (missing ones 0, alpha 1).
+   */
+  private fragmentEntry(options: WgslOptions): Decl[] {
+    const m = this.m
+    const a = id('a')
+    const fin: Member[] = []
+    for (const b of this.usedBuiltins()) fin.push({ attrs: `@builtin(${BUILTIN_VARS[b].wgsl})`, name: BUILTIN_VARS[b].member, type: wtype(BUILTINS[b].type) })
+    for (const p of bySlot(m.inputs)) fin.push({ attrs: portAttrs(p), name: `i${p.slot}`, type: wtype(p.type) })
+    if (options.live !== null) fin.push({ attrs: `@location(${options.live})`, name: 'live', type: 'f32' })
+    const shaped = bySlot(m.outputs).filter((p) => options.outputs[p.slot] === scalarOf(p.type))
+    const fout: Member[] = shaped.map((p) => ({ attrs: `@location(${p.slot})`, name: `c${p.slot}`, type: vtype(scalarOf(p.type), 4) }))
+
+    const body: Stmt[] = []
+    for (const b of this.usedBuiltins()) body.push({ k: 'assign', lhs: id(BUILTIN_VARS[b].name), e: member(a, BUILTIN_VARS[b].member) })
+    for (const p of bySlot(m.inputs)) body.push({ k: 'assign', lhs: id(`ng_i${p.slot}`), e: member(a, `i${p.slot}`) })
+    if (options.live !== null) {
+      // A triangle whose vertices all wrote a position interpolates live as exactly 0; any other value, NaN
+      // included, is told by its bits, not by an IEEE comparison.
+      const dead = bin('!=', bin('&', call('bitcast<u32>', member(a, 'live')), lit('0x7fffffffu')), lit('0u'))
+      body.push({ k: 'if', c: dead, then: [{ k: 'assign', lhs: id('ng_gone'), e: lit('true') }, { k: 'discard' }], else: [] })
+    }
+    body.push({ k: 'call', e: call('ng_body') })
+    if (fout.length > 0) {
+      body.push({ k: 'var', name: 'o', type: 'NgFOut', e: null })
+      for (const p of shaped) {
+        const k = scalarOf(p.type)
+        const n = widthOf(p.type)
+        const o = id(`ng_o${p.slot}`)
+        const pad = (c: number): Expr => lit(k === 'f32' ? (c === 3 ? '1.0' : '0.0') : `${c === 3 ? 1 : 0}${k === 'u32' ? 'u' : 'i'}`)
+        const e = n === 4 ? o : call(vtype(k, 4), o, ...Array.from({ length: 4 - n }, (_, c) => pad(n + c)))
+        body.push({ k: 'assign', lhs: member(id('o'), `c${p.slot}`), e })
+      }
+      body.push({ k: 'return', e: id('o') })
+    }
+    const out: Decl[] = []
+    if (fin.length > 0) out.push({ k: 'struct', name: 'NgFIn', members: fin })
+    if (fout.length > 0) out.push({ k: 'struct', name: 'NgFOut', members: fout })
+    out.push({ k: 'fn', attrs: '@fragment', name: 'ng_fragment', params: fin.length > 0 ? [{ attrs: '', name: 'a', type: 'NgFIn' }] : [], ret: fout.length > 0 ? 'NgFOut' : null, body })
+    return out
+  }
 }
 
 /** The natural alignment of a value type (layoutBlock's): 4 for a scalar, 8 or 16 for a vector, a column's for a grid. */
@@ -1183,7 +1658,6 @@ export function positionSure(module: LensModule): boolean {
  */
 export function toWgsl(module: LensModule, options: WgslOptions): WgslOut {
   verify(module)
-  if (module.stage !== 'compute') notYet(`the ${module.stage} entry is`)
   optionsRule(module, options)
   try {
     return new Lowerer(module).lower(options)

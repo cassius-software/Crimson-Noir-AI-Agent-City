@@ -59,7 +59,9 @@
  * - oob: a read outside a vector, grid, array or texture gives poison; a store outside lands at the start of the
  *   array; a textureStore outside writes poison at texel (0, 0); textureDimensions of a level outside gives poison
  *   (exact: clamped indices and zero reads outside, as interp.ts and texture.ts).
- * - helper-stores: stores from helper lanes (initial or demoted by discard) take place.
+ * - helper-stores: stores from lanes demoted by discard take place (WGSL says a helper stores nothing; a platform may
+ *   still let a demoted invocation's stores through, which the lowering's ng_gone guards against). A lane that starts
+ *   as a helper (it covers no sample) stores nothing in either mode: the lowering cannot tell it, and WGSL defines it.
  * - sample-nan: textureSample and textureSampleLevel with a NaN coordinate or level give poison.
  * - derivatives: the fine and plain derivatives are coarse, the coarse ones fine.
  * Poison is 0x5a5a5a5a in every scalar kind (as an f32, about 1.5e16), and true for a bool.
@@ -67,15 +69,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { arrayOf, lens } from './builder.ts'
-import type { BlockRes, LensBuilder, Val as LensVal, Var as LensVar } from './builder.ts'
+import type { BlockRes, LensBuilder, PathStep, Val as LensVal, Var as LensVar } from './builder.ts'
 import { sampleKind } from './formats.ts'
 import type { Format } from './formats.ts'
-import { compile as compileLens, dispatch as dispatchLens } from './interp.ts'
+import { LANES, compile as compileLens, dispatch as dispatchLens } from './interp.ts'
+import type { Bindings as LensBindings, Program as LensProgram } from './interp.ts'
 import { columnOf, isGrid, layoutBlock, strideOf as lensStrideOf, widthOf as lensWidthOf } from './lens.ts'
-import type { Block, DataType, LensModule, Scalar as LensScalar, ValueType } from './lens.ts'
+import type { Block, DataType, Inst, LensModule, Port, Scalar as LensScalar, ValueType } from './lens.ts'
 import { ImageStore, load, lodFromRates, put, sample } from './texture.ts'
 import type { SamplerState, ViewRange } from './texture.ts'
-import { WGSL_HIDDEN, toWgsl } from './wgsl.ts'
+import { WGSL_HIDDEN, positionSure, toWgsl } from './wgsl.ts'
 
 // ---------------------------------------------------------------------------------------------------
 // Errors
@@ -2357,17 +2360,21 @@ class Compiler {
     return lhs
   }
 
-  /** Stores per running lane; a helper lane's stores to storage and handles are dropped unless `helper-stores`. */
+  /**
+   * Stores per running lane; a helper lane's stores to storage are dropped, except a demoted lane's under
+   * `helper-stores`.
+   */
   storeRun(lhs: Ex, ev: (m: Mask) => Lanes): Run {
     const st = this.st
     const pl = lhs.pl as (m: Mask) => Ref[]
     const ty = lhs.ty
-    const guarded = lhs.space === 'storage' && !this.n.helperStores
+    const guarded = lhs.space === 'storage'
+    const demoted = this.n.helperStores
     return (m) => {
       const refs = pl(m)
       const vals = ev(m)
       for (let l = 0; l < m.length; l++) {
-        if (m[l] === 0 || (guarded && st.helper[l] !== 0)) continue
+        if (m[l] === 0 || (guarded && st.helper[l] !== 0 && !(demoted && st.discarded[l] !== 0))) continue
         storeRef(refs[l], ty, vals[l])
       }
       return m
@@ -3337,14 +3344,14 @@ class Compiler {
     const at = this.intArg(raw[1], 'textureStore', pos, 2).ev
     const value = this.conv(this.loaded(raw[2]), vecTy(4, t.s)).ev
     const oob = this.n.oob
-    const helpers = this.n.helperStores
+    const demoted = this.n.helperStores
     return this.valueEx(VOID, pos, (m) => {
       const img = this.image(h)
       const xy = at(m)
       const vs = value(m)
       const base = img.view.levels.base
       for (let l = 0; l < m.length; l++) {
-        if (m[l] === 0 || (!helpers && st.helper[l] !== 0)) continue
+        if (m[l] === 0 || (st.helper[l] !== 0 && !(demoted && st.discarded[l] !== 0))) continue
         const [x, y] = xy[l] as number[]
         if (x >= 0 && y >= 0 && x < img.store.levelWidth(base) && y < img.store.levelHeight(base)) put(img.store, img.view, x, y, 0, vs[l] as number[])
         else {
@@ -4817,7 +4824,7 @@ const DEMOTE = `
   return vec4<f32>(d, 0.0, 0.0, 1.0);
 }`
 
-test('quads: discard demotes a lane that runs on for its neighbours\' differences; helpers store nothing unless helper-stores', () => {
+test('quads: discard demotes a lane that runs on for its neighbours\' differences; helpers store nothing, demoted ones under helper-stores', () => {
   const quad = quadAt(0, 0, (l) => [l * l, 0, 0, 0], (l) => l === 3)
   const go = (options: RunOptions): { words: number[]; out: StageOut[] } => {
     const bytes = new Uint8Array(32)
@@ -4830,8 +4837,9 @@ test('quads: discard demotes a lane that runs on for its neighbours\' difference
   assert.deepEqual(e.out.map((o) => o.discarded), [false, true, false, false])
   assert.deepEqual(e.out.map((o) => o.helper), [false, true, false, true])
   assert.deepEqual(e.words, [fb(2), 0, fb(10), 0, 1, 0, 1, 0])
+  // Under helper-stores the demoted lane 1 stores; lane 3, a helper from the start, never does.
   const v = go(only('helper-stores'))
-  assert.deepEqual(v.words, [fb(2), fb(2), fb(10), fb(10), 1, 1, 1, 1])
+  assert.deepEqual(v.words, [fb(2), fb(2), fb(10), 0, 1, 1, 1, 0])
 })
 
 test('quads: a difference or implicit-level sample reached by only some lanes is a RunError (exact) or poison (derivatives)', () => {
@@ -6593,4 +6601,1000 @@ test('differential: the families pin what they are for (the loop cap, clamped re
     assert.equal(read(ctl, k, n - 3), returned ? 111 : CANARY, `invocation ${k}`)
     assert.equal(read(ctl, k, n - 2), returned ? CANARY : 222, `invocation ${k}`)
   }
+})
+
+// ===================================================================================================
+// The differential, for the stages and images
+//
+// The differential above runs compute modules of arithmetic. This part runs what images, raw words and the other two
+// stages add. Each module is built with builder.ts, run by interp.ts as the reference renderer (soft.ts) runs it,
+// lowered by toWgsl, and run by the evaluator in exact mode and in adversarial mode (every freedom but `flush`; the
+// modules make no subnormal of their own):
+// - IMAGES AND RAW WORDS, in compute modules: texel, extent, explicit-level sample and raw reads at positions, levels,
+//   layers and indices in range and out of it, through views that start past level and layer 0, written to raw
+//   words at indices in range and out of it; put at positions in range and out of it. Every word written and every
+//   byte of the storage image is compared bit for bit (all E: design 12.1; the evaluator samples through texture.ts,
+//   so filtering, A7, is the browser check's to bound).
+// - VERTEX MODULES, per vertex: draws indexed and not, base vertices that wrap the element past 2^32 or below 0,
+//   attributes whose bytes lie past the buffer's end, stride-0 attributes, instance-rate inputs. The reference is
+//   handed each attribute by soft.ts's rule (element index + base, zero below element 0 or past the buffer); the
+//   lowered module what the GPU's attribute read hands it (element vertex_index, wrapped; past the buffer zero in exact
+//   mode and poison in adversarial mode, as WebGPU's robustness allows), with the hidden block design 7.4 asks of the
+//   planner. Outputs and the position bit for bit; a vertex the reference leaves unpositioned gives a NaN position
+//   and the live value 1, a positioned one the live value 0.
+// - FRAGMENT MODULES, per 2 x 2 quad: helper lanes from the start, discard, derivatives, samples, writes and puts after
+//   discard, colour outputs shaped to their attachments, the live test. E values bit for bit; a derivative is A16
+//   (the fine difference, or in adversarial mode the coarse one) and an implicit-level sample A8 (the sample at the
+//   fine level of detail, or in adversarial mode the coarse one), open when a lane's coordinate is not finite or past
+//   2^24, since the GPU differentiates the coordinate ng_uv hands it and the reference the raw one. A quad whose live
+//   value is not exactly zero lies in a triangle the reference never draws: all four lanes are discarded and nothing
+//   changes.
+
+/** Interp's program, bound to a module's resources by index. */
+function bindReference(m: LensModule, blocks: ReadonlyMap<number, Uint8Array>, images: ReadonlyMap<number, ImageBinding>, samplers: ReadonlyMap<number, SamplerState>): { program: LensProgram; bindings: LensBindings } {
+  const program = compileLens(m)
+  const bindings = program.bind({
+    block: (i) => {
+      const x = blocks.get(i)
+      return x === undefined ? null : { bytes: x, offset: 0, size: x.length }
+    },
+    image: (i) => images.get(i) ?? null,
+    sampler: (i) => samplers.get(i) ?? null,
+    storageImage: (i) => images.get(i) ?? null,
+  })
+  return { program, bindings }
+}
+
+/** The evaluator's resources for the same bindings: by `${set}:${binding}`, the hidden block beside them. */
+function evaluatorResources(m: LensModule, blocks: ReadonlyMap<number, Uint8Array>, images: ReadonlyMap<number, ImageBinding>, samplers: ReadonlyMap<number, SamplerState>, hidden: Uint8Array): Resources {
+  const out: { [key: string]: Resource } = { [`${WGSL_HIDDEN.group}:${WGSL_HIDDEN.binding}`]: { bytes: hidden } }
+  m.resources.forEach((r, i) => {
+    if (r.kind === 'constants') return
+    const key = `${r.set}:${r.binding}`
+    const bytes = blocks.get(i)
+    const image = images.get(i)
+    const sampler = samplers.get(i)
+    if (bytes !== undefined) out[key] = { bytes }
+    else if (image !== undefined) out[key] = image
+    else if (sampler !== undefined) out[key] = { sampler }
+  })
+  return out
+}
+
+/** The options a module of this part is lowered with: storage access by writability, and the stage's own. */
+const stageOptions = (m: LensModule, over: Partial<Parameters<typeof toWgsl>[1]> = {}): Parameters<typeof toWgsl>[1] => ({ ...lowerOptions(m), ...over })
+
+const STAGE_ADVERSARIAL: RunOptions = { mode: 'adversarial', except: ['flush'] }
+
+/** A float image's formats, an integer or depth image's, and a storage image's. */
+const FLOAT_FORMATS: readonly Format[] = ['rgba8', 'rgba16f', 'r32f', 'rgba32f']
+const STORAGE_FORMATS_ALL: readonly Format[] = ['rgba8', 'rgba16f', 'r32f', 'rg32f', 'rgba32f', 'r32u', 'r32i']
+
+/** A seeded sampler: any filters and wraps, a level range within [0, 32]. */
+function samplerOf(r: (n: number) => number): SamplerState {
+  const filter = (): 'nearest' | 'linear' => (r(2) === 0 ? 'nearest' : 'linear')
+  const wrap = (): 'clamp' | 'repeat' | 'mirror' => (['clamp', 'repeat', 'mirror'] as const)[r(3)]
+  const lo = [0, 0, 0, 0.5, 1, 2][r(6)]
+  const hi = Math.max(lo, [0, 1, 2, 3, 32, 32][r(6)])
+  return { mag: filter(), min: filter(), mip: filter(), wrap: [wrap(), wrap(), 'clamp'], lodMin: lo, lodMax: hi }
+}
+
+/**
+ * A seeded image and a view of it (a 2d view shows one layer), each texel filled with words of its kind; `big` makes
+ * it 4 to 8 texels a side, so it has levels a sample's level of detail reaches.
+ */
+function seededImage(r: (n: number) => number, format: Format, arrayed: boolean, storage: boolean, big = false): ImageBinding {
+  const width = big ? 4 + r(5) : 1 + r(5)
+  const height = big ? 4 + r(5) : 1 + r(4)
+  const most = 1 + Math.floor(Math.log2(Math.max(width, height)))
+  const levels = storage ? 1 + r(2) : big ? 2 + r(2) : 1 + r(Math.min(3, most))
+  const layers = 1 + r(3)
+  const store = new ImageStore({ format, width: Math.max(width, levels > 1 ? 2 : 1), height: Math.max(height, levels > 1 ? 2 : 1), layers, levels, samples: 1 })
+  const kind = sampleKind(format)
+  for (let q = 0; q < levels; q++) {
+    for (let k = 0; k < layers; k++) {
+      for (let y = 0; y < store.levelHeight(q); y++) {
+        for (let x = 0; x < store.levelWidth(q); x++) {
+          const one = (): number => (kind === 'uint' ? wordOf(r, 'u32') : kind === 'sint' ? wordOf(r, 'i32') | 0 : kind === 'depth' ? r(1000) / 1000 : r(8) === 0 ? bf(wordOf(r, 'f32')) : (r(512) - 256) / 64)
+          store.write(q, k, x, y, 0, [one(), one(), one(), one()])
+        }
+      }
+    }
+  }
+  const lb = big ? r(2) === 0 ? 0 : 1 : r(levels)
+  const kb = r(layers)
+  const view: ViewRange = {
+    levels: { base: lb, count: storage ? 1 : big ? levels - lb : 1 + r(levels - lb) },
+    layers: { base: kb, count: storage || !arrayed ? 1 : 1 + r(layers - kb) },
+  }
+  return { store, view }
+}
+
+/** A copy of an image binding with its own bytes, for a run that writes it. */
+const copyImage = (b: ImageBinding): ImageBinding => ({ store: new ImageStore(b.store, new Uint8Array(b.store.bytes)), view: b.view })
+
+/** Words of a byte array (a multiple of 4 long). */
+const words32 = (bytes: Uint8Array): number[] => wordsIn(bytes)
+
+// ---------------------------------------------------------------------------------------------------
+// Images and raw words in compute
+
+/** Input words per invocation, records per invocation, and invocations. */
+const IMG_WORDS = 24
+const IMG_RECS = 10
+const IMG_INV = 8
+
+/** The layouts a raw source block takes: a fixed part (or none) and a final array of a value or a struct. */
+const RAW_SOURCES: readonly Parameters<LensBuilder['storage']>[2][] = [
+  { n: 'u32', xs: arrayOf('f32x3') },
+  { head: 'm2', items: arrayOf({ a: 'i32', v: 'f32x2', g: 'm3' }) },
+  { xs: arrayOf('u32') },
+  { pad: 'f32x2', k: 'i32', ws: arrayOf({ w: 'u32x2' }) },
+]
+
+/** The record fields of the raw output block's final array. */
+const DST_ELEMENT = { f: 'f32x4', u: 'u32x4', i: 'i32x4', s: 'f32', e: 'u32x2', g: 'm2', v: 'f32x3', w: 'u32', a: 'i32', h: 'f32x2', g3: 'm3', w2: 'u32x2' } as const
+/** The field a leaf of a raw source block is written to. */
+const DST_FIELD: { readonly [t: string]: keyof typeof DST_ELEMENT } = { f32x3: 'v', i32: 'a', f32x2: 'h', m3: 'g3', u32: 'w', m2: 'g', u32x2: 'w2' }
+
+interface ImageBuilt {
+  readonly m: LensModule
+  readonly src: number
+  readonly dst: number
+}
+
+/** A seeded compute module of images and raw words (see the head of this part). */
+function imageModule(seed: number): ImageBuilt {
+  const r = xorshift32(seed)
+  const b = lens('compute', { group: [4, 1, 1] })
+  const inp = b.storage(0, 0, { w: arrayOf('u32') })
+  const srcSpec = RAW_SOURCES[r(RAW_SOURCES.length)]
+  const src = b.storage(0, 1, srcSpec)
+  const dst = b.storage(1, 0, { head: 'u32', ys: arrayOf({ ...DST_ELEMENT }) }, { writable: true })
+  const img = b.image(0, 2, { dims: r(2) === 0 ? '2d' : '2d-array' })
+  const other = b.image(0, 3, [{ sample: 'uint', dims: '2d' }, { sample: 'sint', dims: '2d-array' }, { sample: 'depth', dims: '2d' }, { sample: 'depth', dims: '2d-array' }][r(4)] as { sample: 'uint' | 'sint' | 'depth'; dims: '2d' | '2d-array' })
+  const smp = b.sampler(0, 4)
+  const st = b.storageImage(1, 1, STORAGE_FORMATS_ALL[r(STORAGE_FORMATS_ALL.length)])
+  const inv = b.pick(b.builtin('global-id'), 'x')
+  const base = b.mul(inv, b.u32(IMG_WORDS))
+  let next = 0
+  const word = (): LensVal => b.read(inp, 'w', b.add(base, b.u32(next++ % IMG_WORDS)))
+  const int = (): LensVal => (r(2) === 0 ? word() : b.bits(word(), 'i32'))
+  const pos = (): LensVal => (r(2) === 0 ? b.make('u32x2', word(), word()) : b.make('i32x2', b.bits(word(), 'i32'), b.bits(word(), 'i32')))
+  const layerOf = (dims: string): { layer?: LensVal } => (dims === '2d-array' ? { layer: int() } : {})
+  let k = 0
+  const rec = (field: keyof typeof DST_ELEMENT, v: LensVal): void => {
+    // A record's own element, or now and then one an input word names (anywhere: clamped into the elements held).
+    const at = r(6) === 0 ? int() : b.add(b.mul(inv, b.u32(IMG_RECS)), b.u32(k))
+    k++
+    b.write(dst, ['ys', at, field], v)
+  }
+  // The leaves of the raw source block: paths with each index into the final array from an input word, or a constant.
+  const leaves: { path: () => PathStep[]; t: ValueType }[] = []
+  const walk = (blk: Block, prefix: () => PathStep[]): void => {
+    for (const f of blk.fields) {
+      const t = f.type
+      if (typeof t === 'string') leaves.push({ path: () => [...prefix(), f.name], t })
+      else if ('struct' in t) walk(t.struct, () => [...prefix(), f.name])
+      else {
+        const e = t.array
+        const at = (): PathStep[] => [...prefix(), f.name, r(4) === 0 ? r(3) : int()]
+        if (typeof e === 'string') leaves.push({ path: at, t: e })
+        else if ('struct' in e) walk(e.struct, at)
+      }
+    }
+  }
+  walk(src.block, () => [])
+  for (let n = 0; n < IMG_RECS; n++) {
+    switch (r(8)) {
+      case 0:
+        rec('f', b.texel(img, pos(), { level: int(), ...layerOf(img.dims) }))
+        break
+      case 1:
+        rec(other.sample === 'uint' ? 'u' : other.sample === 'sint' ? 'i' : 's', b.texel(other, pos(), { level: int(), ...layerOf(other.dims) }))
+        break
+      case 2: rec('e', b.extent(r(2) === 0 ? img : other, int())); break
+      case 3: rec('e', b.extent(st)); break
+      case 4:
+        rec('f', b.sample(img, smp, b.make('f32x2', b.bits(word(), 'f32'), b.bits(word(), 'f32')), { level: b.bits(word(), 'f32'), ...layerOf(img.dims) }))
+        break
+      case 5: case 6: {
+        const leaf = leaves[r(leaves.length)]
+        rec(DST_FIELD[leaf.t], b.read(src, ...leaf.path()))
+        break
+      }
+      default: {
+        const kind = sampleKind(st.format)
+        const v = kind === 'uint' ? b.make('u32x4', word(), word(), word(), word()) : kind === 'sint' ? b.bits(b.make('u32x4', word(), word(), word(), word()), 'i32x4')
+          : r(2) === 0 ? b.texel(img, pos(), { level: int(), ...layerOf(img.dims) }) : b.bits(b.make('u32x4', word(), word(), word(), word()), 'f32x4')
+        b.put(st, pos(), v)
+      }
+    }
+  }
+  return { m: b.finish(), src: src.res, dst: dst.res }
+}
+
+/** The bytes and images one seed's module runs on (the same seed gives the same ones). */
+interface ImageInputs {
+  readonly blocks: Map<number, Uint8Array>
+  readonly images: Map<number, ImageBinding>
+  readonly samplers: Map<number, SamplerState>
+}
+
+function imageInputs(built: ImageBuilt, seed: number): ImageInputs {
+  const r = xorshift32(seed ^ 0x2545f491)
+  const m = built.m
+  const blocks = new Map<number, Uint8Array>()
+  const images = new Map<number, ImageBinding>()
+  const samplers = new Map<number, SamplerState>()
+  // Input words: positions, levels, layers and indices near the edges, and f32 coordinates and levels of every kind.
+  const edge = (): number => [0, 1, 2, 3, 4, 5, 7, 0xffffffff, 0xfffffffe, 0x80000000, 0x7fffffff, 33, 40][r(13)]
+  blocks.set(0, wordsOf(Array.from({ length: IMG_INV * IMG_WORDS }, () => (r(3) === 0 ? wordOf(r, 'f32') : r(2) === 0 ? edge() : r(4) === 0 ? fb((r(64) - 16) / 8) : r(6)))))
+  // The source holds its fixed part, then 0 to 5 whole elements and maybe part of another.
+  const srcBlock = (m.resources[built.src] as { block: Block }).block
+  const lay = layoutBlock(srcBlock, 'storage')
+  const start = lay.offsets[lay.offsets.length - 1]
+  const last = srcBlock.fields[srcBlock.fields.length - 1].type as { array: DataType }
+  const stride = lensStrideOf(last.array, 'storage')
+  const srcBytes = start + [0, 1, 2, 5][r(4)] * stride + (r(3) === 0 ? 4 * r(stride / 4) : 0)
+  blocks.set(built.src, wordsOf(Array.from({ length: Math.max(1, srcBytes / 4) }, () => wordOf(r, ['f32', 'u32', 'i32'][r(3)] as LensScalar))).subarray(0, Math.max(4, srcBytes)))
+  // The output: canaries, room for every record, or for fewer (some writes dropped), or for none.
+  const dstBlock = (m.resources[built.dst] as { block: Block }).block
+  const dlay = layoutBlock(dstBlock, 'storage')
+  const dstart = dlay.offsets[dlay.offsets.length - 1]
+  const dstride = lensStrideOf((dstBlock.fields[1].type as { array: DataType }).array, 'storage')
+  const held = [IMG_INV * IMG_RECS, IMG_INV * IMG_RECS - 3, 5, 0][r(4)]
+  const dst = new Uint8Array(dstart + held * dstride)
+  new DataView(dst.buffer).setUint32(0, CANARY, true)
+  for (let at = 4; at < dst.length; at += 4) dst.copyWithin(at, 0, 4)
+  blocks.set(built.dst, dst)
+  m.resources.forEach((res, i) => {
+    if (res.kind === 'image') {
+      const format: Format = res.sample === 'float' ? FLOAT_FORMATS[r(FLOAT_FORMATS.length)] : res.sample === 'uint' ? 'r32u' : res.sample === 'sint' ? 'r32i' : r(2) === 0 ? 'depth32f' : 'depth16'
+      images.set(i, seededImage(r, format, res.dims === '2d-array', false))
+    } else if (res.kind === 'storage-image') images.set(i, seededImage(r, res.format, false, true))
+    else if (res.kind === 'sampler') samplers.set(i, samplerOf(r))
+  })
+  return { blocks, images, samplers }
+}
+
+/** The f32 words of the raw output block (a NaN there equals any NaN: payloads are not pinned). */
+function floatWords(block: Block, bytes: number): Set<number> {
+  const lay = layoutBlock(block, 'storage')
+  const start = lay.offsets[lay.offsets.length - 1]
+  const elem = (block.fields[block.fields.length - 1].type as { array: { struct: Block } }).array.struct
+  const stride = lensStrideOf({ struct: elem }, 'storage')
+  const out = new Set<number>()
+  for (let e = 0; start + (e + 1) * stride <= bytes; e++) eachWord(elem, 'storage', start + e * stride, (k, at) => {
+    if (k === 'f32') out.add(at)
+  })
+  return out
+}
+
+/** Runs one seed's module both ways in one mode; returns the messages of what differs. */
+function imageRun(seed: number, mode: RunOptions, count: { words: number; texels: number }): string[] {
+  const built = imageModule(seed)
+  const ins = imageInputs(built, seed)
+  const m = built.m
+  const copies = (): { blocks: Map<number, Uint8Array>; images: Map<number, ImageBinding> } => ({
+    blocks: new Map([...ins.blocks].map(([i, x]) => [i, new Uint8Array(x)])),
+    images: new Map([...ins.images].map(([i, x]) => [i, m.resources[i].kind === 'storage-image' ? copyImage(x) : x])),
+  })
+  const ref = copies()
+  const { program, bindings } = bindReference(m, ref.blocks, ref.images, ins.samplers)
+  dispatchLens(program, bindings, [IMG_INV / 4, 1, 1], 1e8)
+  const got = copies()
+  const code = toWgsl(m, stageOptions(m)).code
+  new Program(code, { budget: 1e8, ...mode }).dispatch([IMG_INV / 4, 1, 1], evaluatorResources(m, got.blocks, got.images, ins.samplers, new Uint8Array(WGSL_HIDDEN.size)))
+  const bad: string[] = []
+  const rw = words32(ref.blocks.get(built.dst) as Uint8Array)
+  const gw = words32(got.blocks.get(built.dst) as Uint8Array)
+  const floats = floatWords((m.resources[built.dst] as { block: Block }).block, rw.length * 4)
+  rw.forEach((w, i) => {
+    count.words++
+    if (!sameWord(gw[i], w, floats.has(4 * i))) bad.push(`image seed ${seed} ${mode.mode}: output word ${i}: got ${hex(gw[i])}, the reference ${hex(w)}`)
+  })
+  m.resources.forEach((res, i) => {
+    if (res.kind !== 'storage-image') return
+    const a = (ref.images.get(i) as ImageBinding).store.bytes
+    const g = (got.images.get(i) as ImageBinding).store.bytes
+    count.texels += a.length
+    const at = a.findIndex((x, j) => x !== g[j])
+    if (at >= 0) bad.push(`image seed ${seed} ${mode.mode}: storage image byte ${at}: got ${g[at]}, the reference ${a[at]}`)
+  })
+  return bad
+}
+
+test('differential: images and raw words in compute modules, every word and texel bit for bit in both modes', (t) => {
+  const SEEDS = 120
+  const failures: string[] = []
+  const count = { words: 0, texels: 0 }
+  const ops = new Map<string, number>()
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    for (const mode of [EXACT_RUN, STAGE_ADVERSARIAL]) failures.push(...imageRun(seed, mode, count))
+    const tally = (insts: readonly Inst[]): void => {
+      for (const i of insts) ops.set(i.op, (ops.get(i.op) ?? 0) + 1)
+    }
+    tally(imageModule(seed).m.body)
+  }
+  t.diagnostic(`${SEEDS} modules, two modes: ${count.words} output words and ${count.texels} storage image bytes compared; ${['texel', 'extent', 'sample', 'put', 'read', 'write'].map((o) => `${o} ${ops.get(o) ?? 0}`).join(', ')}`)
+  assert.deepEqual(failures.slice(0, 12), [])
+  for (const o of ['texel', 'extent', 'sample', 'put']) assert.ok((ops.get(o) ?? 0) > 100, `${o}: ${ops.get(o) ?? 0}`)
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Vertex modules, per vertex
+
+/** The input types a vertex module's ports take. */
+const VERTEX_INPUTS: readonly ValueType[] = ['f32', 'f32x2', 'f32x3', 'f32x4', 'u32', 'u32x2', 'u32x4', 'i32', 'i32x3', 'i32x4']
+
+/** A seeded order of the 16 slots. */
+function slotOrder(r: (n: number) => number): number[] {
+  const s = Array.from({ length: 16 }, (_, i) => i)
+  for (let i = 15; i > 0; i--) {
+    const j = r(i + 1)
+    ;[s[i], s[j]] = [s[j], s[i]]
+  }
+  return s
+}
+
+/** Pools of values by type, for the E operations the stage generators use. */
+class Pools {
+  readonly b: LensBuilder
+  readonly r: (n: number) => number
+  readonly by = new Map<ValueType, LensVal[]>()
+
+  constructor(b: LensBuilder, r: (n: number) => number) {
+    this.b = b
+    this.r = r
+  }
+
+  keep(v: LensVal): LensVal {
+    const list = this.by.get(v.t)
+    if (list === undefined) this.by.set(v.t, [v])
+    else list.push(v)
+    return v
+  }
+
+  has(t: ValueType): boolean {
+    return (this.by.get(t)?.length ?? 0) > 0
+  }
+
+  any(t: ValueType): LensVal {
+    const list = this.by.get(t) as LensVal[]
+    return list[this.r(list.length)]
+  }
+
+  /** A value of type t: pooled, or built from pooled scalars (literals where none is pooled). */
+  want(t: ValueType): LensVal {
+    if (this.has(t) && this.r(4) !== 0) return this.any(t)
+    const k = kindOf(t)
+    const n = lensWidthOf(t)
+    const one = (): LensVal => (this.has(k) && this.r(3) !== 0 ? this.any(k) : this.b.lit(k, k === 'f32' ? (this.r(64) - 32) / 4 : k === 'i32' ? this.r(64) - 32 : this.r(64)))
+    return this.keep(n === 1 ? one() : this.b.make(t, ...Array.from({ length: n }, one)))
+  }
+
+  /** `body` with the pools as they are, dropping what it pools when it ends (a value made in a branch stays in it). */
+  scoped(body: () => void): () => void {
+    return (): void => {
+      const saved = new Map([...this.by].map(([t, l]) => [t, [...l]]))
+      body()
+      this.by.clear()
+      for (const [t, l] of saved) this.by.set(t, l)
+    }
+  }
+
+  /** One exact operation (design 12.1) over pooled values. */
+  step(): void {
+    const b = this.b
+    const r = this.r
+    switch (r(9)) {
+      case 0: { const t = (['u32', 'i32'] as const)[r(2)]; this.keep(b.binary((['add', 'xor', 'min', 'max', 'mul', 'and'] as const)[r(6)], this.want(t), this.want(t))); break }
+      case 1: { const v = this.want((['f32x4', 'u32x2', 'i32x3', 'f32x2'] as const)[r(4)]); this.keep(b.pick(v, 'xyzw'[r(lensWidthOf(v.t))])); break }
+      case 2: this.keep(b.make('f32x4', this.want('f32'), this.want('f32'), this.want('f32'), this.want('f32'))); break
+      case 3: this.keep(b.cast(this.want('f32'), r(2) === 0 ? 'i32' : 'u32')); break
+      case 4: this.keep(b.cast(this.want(r(2) === 0 ? 'i32' : 'u32'), 'f32')); break
+      case 5: this.keep(b.bits(this.want('u32'), 'i32')); this.keep(b.bits(this.want('i32'), 'u32')); break
+      case 6: { const t = (['f32', 'f32x4'] as const)[r(2)]; this.keep(b.unary(r(2) === 0 ? 'neg' : 'abs', this.want(t))); break }
+      case 7: { const t = (['f32', 'u32', 'f32x2', 'i32'] as const)[r(4)]; this.keep(b.choose(b.lt(this.want('u32'), this.want('u32')), this.want(t), this.want(t))); break }
+      default: this.keep(b.bits(this.want('u32'), 'f32'))
+    }
+  }
+}
+
+interface VertexBuilt {
+  readonly m: LensModule
+  /** The uniform block's resource, or -1. */
+  readonly uni: number
+}
+
+/** A seeded vertex module: inputs, builtins, a uniform block, E operations, outputs, and the position written or not. */
+function vertexModule(seed: number): VertexBuilt {
+  const r = xorshift32(seed)
+  const b = lens('vertex')
+  const p = new Pools(b, r)
+  const order = slotOrder(r)
+  const nIn = 1 + r(5)
+  const ins = Array.from({ length: nIn }, (_, i) => ({ slot: order[i], type: VERTEX_INPUTS[r(VERTEX_INPUTS.length)] }))
+  for (const port of ins) p.keep(b.input(port.slot, port.type))
+  if (r(3) !== 0) p.keep(b.builtin('vertex-index'))
+  if (r(2) === 0) p.keep(b.builtin('instance-index'))
+  let uni = -1
+  if (r(2) === 0) {
+    const u = b.uniform(0, 0, { s: 'f32', n: 'u32', v: 'f32x4' })
+    uni = u.res
+    p.keep(b.read(u, 's'))
+    p.keep(b.read(u, 'n'))
+    p.keep(b.read(u, 'v'))
+  }
+  const steps = (n: number): void => {
+    for (let i = 0; i < n; i++) p.step()
+  }
+  steps(4 + r(8))
+  const outSlots = slotOrder(r)
+  const outs = outSlots.slice(0, 1 + r(4)).map((slot) => {
+    const t = (['f32', 'f32x2', 'f32x4', 'u32', 'i32x2', 'u32x4'] as const)[r(6)]
+    return b.output(slot, t, { flat: t.startsWith('f32') ? r(4) === 0 : true })
+  })
+  // Most inputs are handed on whole as well, so what the limit selects give them reaches an output.
+  const direct = ins.filter(() => r(5) !== 0).map((port, i) => ({ v: b.in(port.slot), o: b.output(outSlots[outs.length + i], port.type, { flat: !port.type.startsWith('f32') }) }))
+  for (const d of direct) b.out(d.o, d.v)
+  const write = (): void => {
+    for (const o of outs) if (r(3) !== 0) b.out(o, p.want(o.t))
+  }
+  const pos = p.scoped(() => b.position(p.want('f32x4')))
+  const c = (): LensVal => b.gt(p.want('u32'), p.want('u32'))
+  write()
+  switch (r(6)) {
+    case 0: pos(); break
+    case 1: b.if(c(), pos, pos); break
+    case 2: b.if(c(), pos); break
+    case 3: b.if(c(), () => b.return()); pos(); break
+    case 4: b.loop(() => { pos(); b.break() }); break
+    default: break
+  }
+  steps(r(4))
+  write()
+  return { m: b.finish(), uni }
+}
+
+/** One attribute as a draw binds it: its offset in an element, the stride, the bytes from the binding's start. */
+interface VertexAttr {
+  readonly o: number
+  readonly stride: number
+  readonly bytes: Uint8Array
+}
+
+/** The value of `n` words of a kind read at byte `at` of an attribute's bytes. */
+function attrRead(a: VertexAttr, at: number, t: ValueType): number[] {
+  const d = new DataView(a.bytes.buffer, a.bytes.byteOffset, a.bytes.length)
+  const k = kindOf(t)
+  return Array.from({ length: lensWidthOf(t) }, (_, c) => (k === 'f32' ? d.getFloat32(at + 4 * c, true) : k === 'i32' ? d.getInt32(at + 4 * c, true) : d.getUint32(at + 4 * c, true)))
+}
+
+/** One draw: indexed or not, its base vertex, its elements, its instance, and each input's attribute. */
+interface Draw {
+  readonly indexed: boolean
+  readonly base: number
+  /** Indexed: the indices; otherwise the elements firstVertex + i. */
+  readonly at: readonly number[]
+  readonly instance: number
+  readonly attrs: ReadonlyMap<number, VertexAttr>
+}
+
+function drawOf(r: (n: number) => number, m: LensModule, rate: number): Draw {
+  const indexed = r(3) !== 0
+  const base = indexed ? [0, 0, 2, -1, -3, 5, 0x7fffffff, -0x80000000, -0x7ffffffe, 1000][r(10)] : 0
+  const count = 1 + r(9)
+  const first = r(4)
+  const special = [0xffffffff, 0xfffffffe, 0x80000000, 0x7fffffff, 0x80000001]
+  // Indices: small ones, ones near 2^32 (with a base above 0 the element passes 2^32 and vertex_index wraps to a small
+  // one), ones that with the base land on an element near the edge or a small one, and the special values.
+  const index = (): number => {
+    switch (r(6)) {
+      case 0: case 1: return r(8)
+      case 2: return 0xffffffff - r(4)
+      case 3: return special[r(special.length)]
+      case 4: return (r(6) - base) >>> 0
+      default: return (special[r(special.length)] - base) >>> 0
+    }
+  }
+  const at = Array.from({ length: count }, (_, i) => (indexed ? index() : first + i))
+  const instance = r(3)
+  const attrs = new Map<number, VertexAttr>()
+  for (const p of m.inputs) {
+    const n = 4 * lensWidthOf(p.type)
+    const o = 4 * r(3)
+    const stride = [0, n, n + 4, 32, 4][r(5)]
+    const perVertex = ((rate >>> p.slot) & 1) === 1
+    // Bytes from the binding's start: past every element the core checks (instance-rate inputs, draws that are not
+    // indexed), or, for an indexed draw, any size: none whole, a few elements, many.
+    const reach = (e: number): number => o + e * stride + n
+    const need = perVertex && !indexed ? reach(first + count - 1) : !perVertex ? reach(instance) : 0
+    const size = need > 0 ? need + 4 * r(3) : [o + n - 4, reach(r(4)), reach(8) + 4 * r(4), 0][r(4)]
+    const bytes = wordsOf(Array.from({ length: Math.max(1, Math.ceil(Math.max(0, size) / 4)) }, () => wordOf(r, kindOf(p.type)))).subarray(0, Math.max(0, size))
+    attrs.set(p.slot, { o, stride, bytes })
+  }
+  return { indexed, base, at, instance, attrs }
+}
+
+/** The hidden block of a draw, as design 7.4 asks the planner to write it. */
+function hiddenOf(m: LensModule, d: Draw, rate: number): Uint8Array {
+  const out = new Uint8Array(WGSL_HIDDEN.size)
+  const v = new DataView(out.buffer)
+  if (!d.indexed) return out
+  let none = 0
+  let checked = 0
+  for (const p of m.inputs) {
+    if (((rate >>> p.slot) & 1) === 0) continue
+    const a = d.attrs.get(p.slot) as VertexAttr
+    const n = 4 * lensWidthOf(p.type)
+    const bit = 1 << p.slot
+    if (a.bytes.length < a.o + n) none |= bit
+    else v.setUint32(WGSL_HIDDEN.lim + 4 * p.slot, a.stride === 0 ? 0xffffffff : Math.floor((a.bytes.length - a.o - n) / a.stride), true)
+    checked |= bit
+  }
+  v.setUint32(WGSL_HIDDEN.none, none >>> 0, true)
+  v.setUint32(WGSL_HIDDEN.checked, checked >>> 0, true)
+  v.setInt32(WGSL_HIDDEN.base, d.base, true)
+  return out
+}
+
+/** The bits of a component of a kind, for comparing (an f32 NaN as one pattern). */
+const bitsOf = (x: number, k: LensScalar): number => (k === 'f32' ? (Number.isNaN(x) ? NAN_BITS : fb(x)) : x >>> 0)
+
+/**
+ * A seed's vertex module and the options it is lowered with: inputs fed per vertex or per instance, and a free
+ * location for the live value when the module may leave its position unwritten; with the generator its draws go on
+ * from.
+ */
+function vertexCase(seed: number): { built: VertexBuilt; rate: number; live: number | null; options: Parameters<typeof toWgsl>[1]; r: (n: number) => number } {
+  const built = vertexModule(seed)
+  const m = built.m
+  const r = xorshift32(seed ^ 0x68e31da4)
+  const rate = m.inputs.reduce((acc, p) => acc | (r(4) !== 0 ? 1 << p.slot : 0), 0)
+  const used = new Set(m.outputs.map((p) => p.slot))
+  const free = Array.from({ length: 16 }, (_, s) => s).filter((s) => !used.has(s))
+  const live = !positionSure(m) && r(3) !== 0 ? free[r(free.length)] : null
+  return { built, rate, live, options: stageOptions(m, { vertexRate: rate, live }), r }
+}
+
+/** Runs one seed's vertex module over its draws both ways in one mode; returns the messages of what differs. */
+function vertexRun(seed: number, mode: RunOptions, count: { vertices: number; words: number; unpositioned: number; zeroed: number }): string[] {
+  const { built, rate, live, options, r } = vertexCase(seed)
+  const m = built.m
+  const code = toWgsl(m, options).code
+  const lowered = new Program(code, { budget: 1e8, ...mode })
+  const uni = new Map<number, Uint8Array>()
+  if (built.uni >= 0) uni.set(built.uni, wordsOf(Array.from({ length: 8 }, (_, i) => wordOf(r, i === 1 ? 'u32' : 'f32'))))
+  const { program, bindings } = bindReference(m, uni, new Map(), new Map())
+  const bad: string[] = []
+  for (let k = 0; k < 4; k++) {
+    const d = drawOf(r, m, rate)
+    const hidden = hiddenOf(m, d, rate)
+    // The reference: soft.ts's attribute rule at element index + base.
+    const elements = d.at.map((x) => (d.indexed ? x + d.base : x))
+    const refOut: { pos: number[]; positioned: boolean; outs: Map<number, number[]> }[] = []
+    for (let first = 0; first < elements.length; first += LANES) {
+      const lanes = Math.min(LANES, elements.length - first)
+      const inputs = new Float64Array(lanes * program.inputWidth)
+      const vi = new Float64Array(lanes)
+      const ii = new Float64Array(lanes)
+      for (let l = 0; l < lanes; l++) {
+        const element = elements[first + l]
+        vi[l] = element >>> 0
+        ii[l] = d.instance
+        for (const p of program.inputs) {
+          const a = d.attrs.get(p.slot) as VertexAttr
+          const e = ((rate >>> p.slot) & 1) === 1 ? element : d.instance
+          const at = a.o + e * a.stride
+          const inside = e >= 0 && at + 4 * p.size <= a.bytes.length
+          const vals = inside ? attrRead(a, at, p.type) : new Array<number>(p.size).fill(0)
+          if (!inside) count.zeroed++
+          vals.forEach((x, c) => { inputs[l * program.inputWidth + p.offset + c] = x })
+        }
+      }
+      const res = program.run({ lanes, inputs, builtins: { 'vertex-index': vi, 'instance-index': ii } }, bindings, 1e8)
+      for (let l = 0; l < lanes; l++) {
+        const outs = new Map<number, number[]>()
+        for (const p of program.outputs) outs.set(p.slot, Array.from({ length: p.size }, (_, c) => res.outputs[l * program.outputWidth + p.offset + c]))
+        refOut.push({ pos: Array.from({ length: 4 }, (_, c) => res.position[l * 4 + c]), positioned: ((res.positioned >> l) & 1) === 1, outs })
+      }
+    }
+    // The lowered module: what the GPU's attribute read hands it at the wrapped vertex_index.
+    const vertices: VertexIn[] = d.at.map((x) => {
+      const vi = d.indexed ? (x + d.base) >>> 0 : x
+      const locations: { [slot: number]: number | readonly number[] } = {}
+      for (const p of m.inputs) {
+        const a = d.attrs.get(p.slot) as VertexAttr
+        const e = ((rate >>> p.slot) & 1) === 1 ? vi : d.instance
+        const at = a.o + e * a.stride
+        const n = lensWidthOf(p.type)
+        const v = at + 4 * n <= a.bytes.length ? attrRead(a, at, p.type) : new Array<number>(n).fill(mode.mode === 'exact' ? 0 : asNum(POISON_BITS, kindOf(p.type)))
+        locations[p.slot] = n === 1 ? v[0] : v
+      }
+      return { vertex_index: vi, instance_index: d.instance, locations }
+    })
+    const got = lowered.vertex(vertices, evaluatorResources(m, uni, new Map(), new Map(), hidden))
+    got.forEach((g, l) => {
+      const ref = refOut[l]
+      const what = `vertex seed ${seed} ${mode.mode} draw ${k} vertex ${l}`
+      count.vertices++
+      for (const p of m.outputs) {
+        const k2 = kindOf(p.type)
+        const want = (ref.outs.get(p.slot) as number[]).map((x) => bitsOf(x, k2))
+        const gv = g.locations[p.slot]
+        const have = (typeof gv === 'number' ? [gv] : (gv as number[])).map((x) => bitsOf(x, k2))
+        count.words += want.length
+        if (want.some((w, c) => w !== have[c])) bad.push(`${what}: output ${p.slot}: got ${have.map(hex)}, the reference ${want.map(hex)}`)
+      }
+      const gp = (g.builtins.position as number[]).map((x) => bitsOf(x, 'f32'))
+      if (ref.positioned) {
+        const want = ref.pos.map((x) => bitsOf(x, 'f32'))
+        if (want.some((w, c) => w !== gp[c])) bad.push(`${what}: position ${gp.map(hex)}, the reference ${want.map(hex)}`)
+      } else {
+        count.unpositioned++
+        if (!gp.every(isNanBits)) bad.push(`${what}: unpositioned, and the position is ${gp.map(hex)}, not NaN`)
+      }
+      if (live !== null) {
+        const lv = bitsOf(g.locations[live] as number, 'f32')
+        if (lv !== (ref.positioned ? 0 : fb(1))) bad.push(`${what}: live ${hex(lv)} for a vertex ${ref.positioned ? '' : 'not '}positioned`)
+      }
+    })
+  }
+  return bad
+}
+
+test('differential: vertex modules per vertex, the limit selects against soft.ts\'s attribute rule, positions and the live value', (t) => {
+  const SEEDS = 120
+  const failures: string[] = []
+  const count = { vertices: 0, words: 0, unpositioned: 0, zeroed: 0 }
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    for (const mode of [EXACT_RUN, STAGE_ADVERSARIAL]) failures.push(...vertexRun(seed, mode, count))
+  }
+  t.diagnostic(`${SEEDS} modules, two modes: ${count.vertices} vertices, ${count.words} output words bit for bit, ${count.unpositioned} unpositioned, ${count.zeroed} attributes the reference reads as zero`)
+  assert.deepEqual(failures.slice(0, 12), [])
+  assert.ok(count.unpositioned > 200 && count.zeroed > 500, `${count.unpositioned} unpositioned, ${count.zeroed} zeroed`)
+})
+
+// ---------------------------------------------------------------------------------------------------
+// Fragment modules, per quad
+
+/** Words a fragment lane writes, quads per module. */
+const FRAG_WORDS = 6
+const FRAG_QUADS = 8
+
+/** How a value a fragment module hands on is compared: exactly, as a derivative (A16), or as an implicit-level sample (A8). */
+type FragCls = { readonly k: 'E' } | { readonly k: 'A16'; readonly fn: 'dx' | 'dy' | 'width'; readonly slot: number; readonly lanes: string } | { readonly k: 'A8'; readonly slot: number; readonly layer: number | null }
+
+interface FragBuilt {
+  readonly m: LensModule
+  readonly out: number
+  readonly img: number
+  readonly smp: number
+  /** The class of each word a lane writes (by j), and of each output port (by slot). */
+  readonly writes: readonly (FragCls & { readonly c: number })[]
+  readonly outs: ReadonlyMap<number, FragCls>
+  /** The f32 input ports a derivative or a sample may read: slot and type. */
+  readonly smooth: readonly Port[]
+}
+
+/** A seeded fragment module (see the head of this part). Slot 0 is the quad's number, flat. */
+function fragmentModule(seed: number): FragBuilt {
+  const r = xorshift32(seed)
+  const b = lens('fragment')
+  const p = new Pools(b, r)
+  const id = b.input(0, 'u32', { flat: true })
+  const smooth: Port[] = []
+  const vals: LensVal[] = []
+  for (const [slot, t] of [[1, 'f32x2'], [2 + r(3), (['f32', 'f32x4', 'f32x3'] as const)[r(3)]]] as const) {
+    const v = b.input(slot, t)
+    smooth.push({ slot, type: t })
+    vals.push(p.keep(v))
+  }
+  if (r(2) === 0) p.keep(b.input(6, 'i32x2', { flat: true }))
+  const uv = vals[0]
+  const fc = b.builtin('frag-coord')
+  const facing = r(2) === 0 ? b.builtin('front-facing') : null
+  const arrayed = r(2) === 0
+  const img = b.image(0, 0, { dims: arrayed ? '2d-array' : '2d' })
+  const smp = b.sampler(0, 1)
+  const out = b.storage(0, 2, { n: 'u32', xs: arrayOf('u32') }, { writable: true })
+  const st = b.storageImage(0, 3, (['r32f', 'rgba8', 'r32u', 'rgba32f'] as const)[r(4)])
+  const px = b.cast(b.pick(fc, 'x'), 'u32')
+  const py = b.cast(b.pick(fc, 'y'), 'u32')
+  p.keep(px)
+  p.keep(py)
+  const lane = b.add(b.and(px, b.u32(1)), b.mul(b.and(py, b.u32(1)), b.u32(2)))
+  const at = (j: number): LensVal => b.add(b.mul(b.add(b.mul(id, b.u32(4)), lane), b.u32(FRAG_WORDS)), b.u32(j))
+  const writes: (FragCls & { c: number })[] = []
+  const outs = new Map<number, FragCls>()
+  const special: { v: LensVal; cls: FragCls }[] = []
+  // Derivatives and implicit samples at the top level, before anything that holds a return.
+  const nd = 1 + r(3)
+  for (let i = 0; i < nd; i++) {
+    const src = r(2) === 0 ? 0 : 1
+    const v = vals[src]
+    const n = lensWidthOf(v.t)
+    const lanes = r(2) === 0 || n === 1 ? 'xyzw'.slice(0, n) : 'xyzw'[r(n)]
+    const fn = (['dx', 'dy', 'width'] as const)[r(3)]
+    special.push({ v: b.deriv(fn, lanes.length === n ? v : b.pick(v, lanes)), cls: { k: 'A16', fn, slot: smooth[src].slot, lanes } })
+  }
+  if (r(4) !== 0) {
+    const layer = arrayed ? [0, 1, 2, -1, 7][r(5)] : null
+    special.push({ v: b.sample(img, smp, uv, layer === null ? {} : { layer: b.i32(layer) }), cls: { k: 'A8', slot: 1, layer } })
+  }
+  const steps = (n: number): void => {
+    for (let i = 0; i < n; i++) p.step()
+  }
+  steps(2 + r(4))
+  // E values from images: an explicit-level sample, a texel at the lane's pixel.
+  p.keep(b.sample(img, smp, uv, { level: p.want('f32'), ...(arrayed ? { layer: p.want('u32') } : {}) }))
+  p.keep(b.texel(img, b.make('u32x2', px, py), { level: p.want('u32'), ...(arrayed ? { layer: b.i32(r(3)) } : {}) }))
+  const discard = (): void => {
+    // E conditions only: a float comparison with a NaN is A14, so the coordinate is compared as the i32 it casts to.
+    const c = facing !== null && r(3) === 0 ? b.not(facing) : r(2) === 0 ? b.eq(lane, b.u32(r(4))) : b.lt(b.cast(b.pick(uv, 'x'), 'i32'), b.i32(r(6) - 2))
+    b.if(c, () => b.discard())
+  }
+  if (r(3) !== 0) discard()
+  // Writes: E values, or a component of a derivative or a sample, each word of the lane's own.
+  for (let j = 0; j < FRAG_WORDS; j++) {
+    writes.push({ k: 'E', c: 0 })
+    if (r(5) === 0) continue
+    if (special.length > 0 && r(3) === 0) {
+      const s = special[r(special.length)]
+      const c = r(lensWidthOf(s.v.t))
+      writes[j] = { ...s.cls, c }
+      b.write(out, ['xs', at(j)], b.bits(lensWidthOf(s.v.t) === 1 ? s.v : b.pick(s.v, 'xyzw'[c]), 'u32'))
+    } else {
+      const t = (['u32', 'f32', 'i32'] as const)[r(3)]
+      const v = p.want(t)
+      b.write(out, ['xs', at(j)], t === 'u32' ? v : b.bits(v, 'u32'))
+    }
+    if (r(4) === 0) discard()
+  }
+  // Puts at the lane's pixel, or past it, of E values.
+  if (r(3) !== 0) {
+    const kind = sampleKind(st.format)
+    const v = kind === 'uint' ? p.want('u32x4') : p.want('f32x4')
+    b.put(st, b.make('u32x2', b.add(px, b.u32(r(3) === 0 ? 3 : 0)), py), v)
+  }
+  // Outputs: E values, or a derivative or a sample whole, at colour slots 0 to 7.
+  const outSlots = slotOrder(r).filter((s) => s < 8).slice(0, 1 + r(3))
+  const late: (() => void)[] = []
+  for (const slot of outSlots) {
+    const s = special.length > 0 && r(2) === 0 ? special[r(special.length)] : null
+    const t = s !== null ? s.v.t : (['f32', 'f32x2', 'f32x4', 'u32', 'i32x2', 'u32x4', 'f32x3'] as const)[r(7)]
+    const o = b.output(slot, t)
+    outs.set(slot, s !== null ? s.cls : { k: 'E' })
+    const v = s !== null ? s.v : p.want(t)
+    late.push(() => b.out(o, v))
+  }
+  // An early return under a lane's condition, then the outputs.
+  if (r(4) === 0) b.if(b.eq(lane, b.u32(r(4))), () => b.return())
+  for (const f of late) f()
+  return { m: b.finish(), out: out.res, img: img.res, smp: smp.res, writes, outs, smooth }
+}
+
+/** One quad's inputs: per lane the location values (f32-exact), and the quad's facing, origin, helpers and live value. */
+interface QuadIn {
+  readonly x: number
+  readonly y: number
+  readonly facing: boolean
+  readonly helpers: number
+  readonly locations: readonly (ReadonlyMap<number, readonly number[]>)[]
+  readonly depth: readonly number[]
+  /** All lanes' live value: exactly 0 (or -0), or a value the live test discards. */
+  readonly live: number
+}
+
+function quadOf(r: (n: number) => number, built: FragBuilt, q: number): QuadIn {
+  const m = built.m
+  const odd = r(5) === 0
+  // Smooth values: a quad's start, steps along x and y that take an image of 4 to 8 texels a side through its levels,
+  // and a jitter per lane, so the fine and coarse differences part; now and then a value not finite, or huge.
+  const start = [0, 1, 2, 3].map(() => (r(256) - 64) / 32)
+  const step = [0, 1, 2, 3].map(() => [[0, 0.0625, 0.125, 0.25, 0.375][r(5)], [0, 0.0625, 0.125, 0.25, 0.375][r(5)]])
+  const value = (l: number, c: number): number => {
+    if (odd && r(3) === 0) return [NaN, Infinity, -Infinity, 1e30, -3e7, 2 ** 24 + 2][r(6)]
+    return Math.fround(start[c] + (l & 1) * step[c][0] + (l >> 1) * step[c][1] + r(8) / 128)
+  }
+  const flat = new Map<number, number[]>()
+  for (const p of m.inputs) if (p.flat === true) flat.set(p.slot, p.slot === 0 ? [q] : Array.from({ length: lensWidthOf(p.type) }, () => r(9) - 4))
+  const locations = [0, 1, 2, 3].map((l) => new Map(m.inputs.map((p) => [p.slot, p.flat === true ? (flat.get(p.slot) as number[]) : Array.from({ length: lensWidthOf(p.type) }, (_, c) => value(l, c))] as const)))
+  return {
+    x: 2 * (q % 4),
+    y: 2 * Math.floor(q / 4),
+    facing: r(2) === 0,
+    helpers: [0, 0, 0, 1, 2, 4, 8, 9, 6, 14, 7][r(11)],
+    locations,
+    depth: [0, 1, 2, 3].map(() => Math.fround(r(100) / 100)),
+    live: r(6) === 0 ? [NaN, 0.5, 1, 2 ** -149][r(4)] : r(8) === 0 ? -0 : 0,
+  }
+}
+
+/** What a lane's location numbers are, for the reference: ports in slot order, packed. */
+function packInputs(program: LensProgram, quad: QuadIn): Float64Array {
+  const inputs = new Float64Array(4 * program.inputWidth)
+  for (let l = 0; l < 4; l++) for (const p of program.inputs) (quad.locations[l].get(p.slot) as readonly number[]).forEach((x, c) => { inputs[l * program.inputWidth + p.offset + c] = x })
+  return inputs
+}
+
+/**
+ * The values an approximated value may take in lane l: the reference's (fine), and in adversarial mode the coarse
+ * difference or the sample at the coarse level of detail; null when nothing is compared (A8 with a lane's coordinate
+ * not finite or past 2^24).
+ */
+function fragAlternatives(cls: FragCls, quad: QuadIn, l: number, img: ImageBinding, smp: SamplerState, adversarial: boolean): number[][] | null {
+  if (cls.k === 'E') return []
+  const comps = (slot: number, lanes: string): number[][] => [0, 1, 2, 3].map((k) => lanes.split('').map((ch) => (quad.locations[k].get(slot) as readonly number[])['xyzw'.indexOf(ch)]))
+  if (cls.k === 'A16') {
+    const v = comps(cls.slot, cls.lanes)
+    const coarse = v[0].map((_, c) => {
+      const dx = f32(v[1][c] - v[0][c])
+      const dy = f32(v[2][c] - v[0][c])
+      return cls.fn === 'dx' ? dx : cls.fn === 'dy' ? dy : f32(Math.abs(dx) + Math.abs(dy))
+    })
+    return adversarial ? [coarse] : []
+  }
+  const uv = comps(cls.slot, 'xy')
+  if (uv.some((c) => c.some((x) => !(Math.abs(x) <= 2 ** 24)))) return null
+  if (!adversarial) return []
+  const w = img.store.levelWidth(img.view.levels.base)
+  const h = img.store.levelHeight(img.view.levels.base)
+  const lod = lodFromRates(f32(uv[1][0] - uv[0][0]), f32(uv[1][1] - uv[0][1]), f32(uv[2][0] - uv[0][0]), f32(uv[2][1] - uv[0][1]), w, h)
+  const rgba = [0, 0, 0, 0]
+  sample(img.store, img.view, smp, uv[l][0], uv[l][1], cls.layer ?? 0, lod, rgba)
+  return [rgba.map(f32)]
+}
+
+/** Whether a component is the reference's ('ref'), one of the alternatives ('alt'), or neither (null). */
+function fragMatch(got: number, want: number, alts: readonly number[][], c: number, k: LensScalar): 'ref' | 'alt' | null {
+  if (bitsOf(got, k) === bitsOf(want, k)) return 'ref'
+  return alts.some((a) => bitsOf(got, k) === bitsOf(a[c], k)) ? 'alt' : null
+}
+
+/**
+ * A seed's fragment module and the options it is lowered with: per colour slot an attachment of the output's kind,
+ * none, or one of another kind (the core allows it with write mask 0), and now and then a free location for the live
+ * value; with the generator its quads go on from.
+ */
+function fragmentCase(seed: number): { built: FragBuilt; outputs: readonly ('f32' | 'i32' | 'u32' | null)[]; live: number | null; options: Parameters<typeof toWgsl>[1]; r: (n: number) => number } {
+  const built = fragmentModule(seed)
+  const m = built.m
+  const r = xorshift32(seed ^ 0x1b873593)
+  const outputs: ('f32' | 'i32' | 'u32' | null)[] = Array.from({ length: 8 }, () => null)
+  for (const p of m.outputs) outputs[p.slot] = r(6) === 0 ? null : r(8) === 0 ? (kindOf(p.type) === 'f32' ? 'u32' : 'f32') : (kindOf(p.type) as 'f32' | 'i32' | 'u32')
+  const taken = new Set(m.inputs.map((p) => p.slot))
+  const free = Array.from({ length: 16 }, (_, s) => s).filter((s) => !taken.has(s))
+  const live = r(3) === 0 ? free[r(free.length)] : null
+  return { built, outputs, live, options: stageOptions(m, { outputs, live }), r }
+}
+
+/** Runs one seed's fragment module over its quads both ways in one mode; returns the messages of what differs. */
+function fragmentRun(seed: number, mode: RunOptions, count: { lanes: number; words: number; dead: number; helpers: number; discarded: number; open: number; A16: number; A8: number }): string[] {
+  const { built, outputs, live, options, r } = fragmentCase(seed)
+  const m = built.m
+  const adversarial = mode.mode !== 'exact'
+  const code = toWgsl(m, options).code
+  const lowered = new Program(code, { budget: 1e8, ...mode })
+  const imgBinding = seededImage(r, FLOAT_FORMATS[r(FLOAT_FORMATS.length)], (m.resources[built.img] as { dims: string }).dims === '2d-array', false, true)
+  const smp = samplerOf(r)
+  const stIndex = m.resources.findIndex((x) => x.kind === 'storage-image')
+  const st = seededImage(r, (m.resources[stIndex] as { format: Format }).format, false, true)
+  const outBytes = (): Uint8Array => {
+    const bytes = new Uint8Array(4 + FRAG_QUADS * 4 * FRAG_WORDS * 4)
+    new DataView(bytes.buffer).setUint32(0, CANARY, true)
+    for (let at = 4; at < bytes.length; at += 4) bytes.copyWithin(at, 0, 4)
+    return bytes
+  }
+  const refBlocks = new Map([[built.out, outBytes()]])
+  const gotBlocks = new Map([[built.out, outBytes()]])
+  const refImages = new Map([[built.img, imgBinding], [stIndex, copyImage(st)]])
+  const gotImages = new Map([[built.img, imgBinding], [stIndex, copyImage(st)]])
+  const samplers = new Map([[built.smp, smp]])
+  const { program, bindings } = bindReference(m, refBlocks, refImages, samplers)
+  const resources = evaluatorResources(m, gotBlocks, gotImages, samplers, new Uint8Array(WGSL_HIDDEN.size))
+  const bad: string[] = []
+  const quads = Array.from({ length: FRAG_QUADS }, (_, q) => quadOf(r, built, q))
+  for (let q = 0; q < FRAG_QUADS; q++) {
+    const quad = quads[q]
+    const dead = live !== null && (bitsOf(quad.live, 'f32') & 0x7fffffff) !== 0
+    const pos = [0, 1, 2, 3].map((l) => [quad.x + (l & 1) + 0.5, quad.y + (l >> 1) + 0.5, quad.depth[l], 1])
+    const what = `fragment seed ${seed} ${mode.mode} quad ${q}`
+    const lanesIn: FragmentIn[] = [0, 1, 2, 3].map((l) => {
+      const locations: { [slot: number]: readonly number[] | number } = {}
+      for (const [slot, v] of quad.locations[l]) locations[slot] = v.length === 1 ? v[0] : v
+      if (live !== null) locations[live] = quad.live
+      return { position: pos[l], front_facing: quad.facing, locations, helper: ((quad.helpers >> l) & 1) === 1 }
+    })
+    const before = new Uint8Array(gotBlocks.get(built.out) as Uint8Array)
+    const beforeImage = new Uint8Array((gotImages.get(stIndex) as ImageBinding).store.bytes)
+    const got = lowered.fragment(lanesIn, resources)
+    if (dead) {
+      // A triangle the reference never draws: every lane discarded, nothing written, nothing put.
+      count.dead++
+      if (!got.every((g) => g.discarded || g.helper)) bad.push(`${what}: dead, and a lane was not discarded`)
+      if (!sameBytes(before, gotBlocks.get(built.out) as Uint8Array) || !sameBytes(beforeImage, (gotImages.get(stIndex) as ImageBinding).store.bytes)) bad.push(`${what}: dead, and something was written`)
+      continue
+    }
+    const res = program.run({ lanes: 4, helpers: quad.helpers, inputs: packInputs(program, quad), builtins: { 'frag-coord': pos.flat(), 'front-facing': [quad.facing ? 1 : 0, quad.facing ? 1 : 0, quad.facing ? 1 : 0, quad.facing ? 1 : 0] } }, bindings, 1e8)
+    for (let l = 0; l < 4; l++) {
+      const helper = ((quad.helpers >> l) & 1) === 1
+      const discarded = ((res.discarded >> l) & 1) === 1
+      if (helper) {
+        count.helpers++
+        continue
+      }
+      if (got[l].discarded !== discarded) bad.push(`${what} lane ${l}: discarded ${got[l].discarded}, the reference ${discarded}`)
+      if (discarded) {
+        count.discarded++
+        continue
+      }
+      count.lanes++
+      // Colour outputs: shaped as soft.ts shapes them (missing components 0, a missing alpha 1), where attached.
+      for (const p of program.outputs) {
+        const k = kindOf(p.type)
+        const gv = got[l].locations[p.slot]
+        if (outputs[p.slot] !== k) {
+          if (gv !== undefined) bad.push(`${what} lane ${l}: output ${p.slot} handed on with no attachment of its kind`)
+          continue
+        }
+        const want = [0, 1, 2, 3].map((c) => (c < p.size ? res.outputs[l * program.outputWidth + p.offset + c] : c === 3 ? 1 : 0))
+        const alts = fragAlternatives(built.outs.get(p.slot) as FragCls, quad, l, imgBinding, smp, adversarial)
+        if (alts === null) {
+          count.open++
+          continue
+        }
+        const have = gv as number[]
+        const cls = built.outs.get(p.slot) as FragCls
+        count.words += 4
+        const ok = want.every((w, c) => {
+          if (c >= p.size) return bitsOf(have[c], k) === bitsOf(w, k)
+          const how = fragMatch(have[c], w, alts, c, k)
+          if (how === 'alt' && cls.k !== 'E') count[cls.k]++
+          return how !== null
+        })
+        if (!ok) bad.push(`${what} lane ${l}: output ${p.slot} got ${have.map((x) => hex(bitsOf(x, k)))}, the reference ${want.map((x) => hex(bitsOf(x, k)))}`)
+      }
+    }
+  }
+  // The words written: E bit for bit (an f32's NaN as any NaN), a derivative's or a sample's component by its class.
+  const rw = words32(refBlocks.get(built.out) as Uint8Array)
+  const gw = words32(gotBlocks.get(built.out) as Uint8Array)
+  for (let i = 1; i < rw.length; i++) {
+    const j = (i - 1) % FRAG_WORDS
+    const l = Math.floor((i - 1) / FRAG_WORDS) % 4
+    const q = Math.floor((i - 1) / (4 * FRAG_WORDS))
+    const cls = built.writes[j] ?? { k: 'E', c: 0 }
+    count.words++
+    if (sameWord(gw[i], rw[i], true)) continue
+    const alts = rw[i] === CANARY ? [] : fragAlternatives(cls, quads[q], l, imgBinding, smp, adversarial)
+    if (alts === null) {
+      count.open++
+      continue
+    }
+    if (alts.some((a) => bitsOf(bf(gw[i]), 'f32') === bitsOf(a[cls.c], 'f32'))) {
+      if (cls.k !== 'E') count[cls.k]++
+    } else bad.push(`fragment seed ${seed} ${mode.mode}: quad ${q} lane ${l} word ${j} (${cls.k}): got ${hex(gw[i])}, the reference ${hex(rw[i])}`)
+  }
+  const a = (refImages.get(stIndex) as ImageBinding).store.bytes
+  const g = (gotImages.get(stIndex) as ImageBinding).store.bytes
+  const at = a.findIndex((x, j) => x !== g[j])
+  if (at >= 0) bad.push(`fragment seed ${seed} ${mode.mode}: storage image byte ${at}: got ${g[at]}, the reference ${a[at]}`)
+  return bad
+}
+
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i])
+
+test('differential: fragment modules per quad: helpers, discard, derivatives (A16), samples (A8), writes, puts, outputs, the live test', (t) => {
+  const SEEDS = 120
+  const failures: string[] = []
+  const count = { lanes: 0, words: 0, dead: 0, helpers: 0, discarded: 0, open: 0, A16: 0, A8: 0 }
+  for (let seed = 1; seed <= SEEDS; seed++) {
+    for (const mode of [EXACT_RUN, STAGE_ADVERSARIAL]) failures.push(...fragmentRun(seed, mode, count))
+  }
+  t.diagnostic(`${SEEDS} modules, two modes: ${count.lanes} lanes shaded, ${count.words} words compared, ${count.A16} components the coarse difference (A16) and ${count.A8} the coarse level of detail (A8) gave, ${count.open} left open (A8), ${count.helpers} helper lanes, ${count.discarded} discarded, ${count.dead} quads the live test drops`)
+  assert.deepEqual(failures.slice(0, 12), [])
+  assert.ok(count.dead > 20 && count.discarded > 100 && count.helpers > 200 && count.A16 > 100 && count.A8 > 20, JSON.stringify(count))
 })
