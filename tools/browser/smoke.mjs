@@ -2671,6 +2671,8 @@ const SCENARIOS = {
       }
       const answered = await p.eval(`[...document.querySelectorAll('[data-walk-ws] li')].map((li) => li.innerText.trim())`)
       const askedAll = await p.eval(`!document.querySelector('[data-walk-w]')`)
+      await p.eval(`document.querySelector('[data-walk-ws]')?.scrollIntoView({ block: 'end' })`)
+      await p.frames(2)
       await p.shot('walk-five-ws')
       check(asked.join(' ') === 'Who? What? When? Where? Why?' && answered.length === 5 && answered.every((a, i) => a.startsWith(['Who? ', 'What? ', 'When? ', 'Where? ', 'Why? '][i])) && askedAll,
         'walk: the card answers who, what, when, where and why, one at a time, and then has nothing left to ask', `${asked.join(' ')} | ${answered.map((a) => a.slice(0, 28)).join(' / ')} | button gone ${askedAll}`)
