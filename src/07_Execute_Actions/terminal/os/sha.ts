@@ -5,8 +5,9 @@
  * Why does this file exist? It is SHA-256 as the published standard states it (FIPS 180-4), written out in plain
  * integer arithmetic so it runs at once and the same everywhere: the platform's own digest is asynchronous, and the
  * console's file system is not. It takes its input whole or a piece at a time (so `sha256sum` digests a file of any
- * length without holding it), and the saved image of the disk is sealed with it so a corrupt or half-written save is
- * noticed and set aside instead of being read as files.
+ * length without holding it), and the saved image of the disk is checked with it when it comes back (and sealed with
+ * it when the host has no digest of its own) so a corrupt or half-written save is noticed and set aside instead of
+ * being read as files.
  * What breaks if it is removed? The disk's image has no seal, and `sha256sum` has nothing to print.
  */
 

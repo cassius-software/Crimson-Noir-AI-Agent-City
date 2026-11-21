@@ -17,7 +17,7 @@ import { concat, encode, hex, writeU32 } from './bytes.ts'
 import { OsError } from './errno.ts'
 import { ROOT_CRED } from './fs.ts'
 import type { Stat } from './fs.ts'
-import { dump, restore } from './image.ts'
+import { SEAL_BYTES, dump, dumpBody, restore, sealed } from './image.ts'
 import { MemFs, NODE_COST } from './memfs.ts'
 import type { MemFsOptions } from './memfs.ts'
 import { sha256 } from './sha.ts'
@@ -448,4 +448,25 @@ test('image: an image handed over as part of a larger array is read from its own
   const fs = disk()
   restore(larger.subarray(13, 13 + image.length), fs)
   assert.deepEqual(listing(fs), listing(small()))
+})
+
+test('image: the body and its seal can be made apart, so a host may seal with its own digest: the same bytes as a whole image', () => {
+  const fs = small()
+  const body = dumpBody(fs)
+  const whole = dump(fs)
+  assert.equal(SEAL_BYTES, 32)
+  assert.equal(body.length, whole.length - SEAL_BYTES)
+  assert.deepEqual(body, whole.subarray(0, body.length))
+  assert.deepEqual(sealed(body, sha256(body)), whole)
+  const into = disk()
+  restore(sealed(body, sha256(body)), into)
+  assert.deepEqual(listing(into), listing(fs))
+  // Making the body changes nothing on the disk.
+  const version = fs.version
+  dumpBody(fs)
+  assert.equal(fs.version, version)
+  // A seal of any other length could never be checked, so it is refused rather than written; a wrong digest of the
+  // right length makes an image that restore refuses.
+  for (const length of [0, 31, 33, 64]) assert.throws(() => sealed(body, new Uint8Array(length)), RangeError, String(length))
+  assert.throws(() => restore(sealed(body, new Uint8Array(SEAL_BYTES)), disk()), (e: unknown) => e instanceof OsError && e.errno === 'EINVAL')
 })

@@ -11,10 +11,10 @@
  */
 import { encode } from './bytes.ts'
 import { devices } from './devices.ts'
-import { OsError, reasonOf, refuse } from './errno.ts'
+import { OsError, reasonOf } from './errno.ts'
 import { ROOT_CRED } from './fs.ts'
 import type { Driver } from './fs.ts'
-import { dump, restore } from './image.ts'
+import { dump, dumpBody, restore } from './image.ts'
 import { Kernel } from './kernel.ts'
 import type { Program } from './kernel.ts'
 import { MemFs } from './memfs.ts'
@@ -73,19 +73,37 @@ export type DiskState =
   /** There was one and it failed its checks: the disk started empty and the image is kept in `refused` for the host to set aside. */
   | 'refused'
 
-/** Where task 1 mounts the system's own file systems. */
-const MOUNT_POINTS: readonly string[] = ['/bin', '/usr', '/tmp', '/dev', '/proc', '/sys']
+/** Where task 1 mounts the system's own file systems; `umount` leaves them where they are. */
+export const MOUNT_POINTS: readonly string[] = Object.freeze(['/bin', '/usr', '/tmp', '/dev', '/proc', '/sys'])
 
 /**
- * Refuses a disk that came back with something other than a directory where a file system is mounted: the system
- * could not be laid out over it (a person who unmounted /tmp and made a file of that name, or an image built so).
+ * Moves aside anything other than a directory that came back where a file system is mounted (an image built so, or
+ * one saved before umount kept the system's own mount points), so the system can be laid out over the disk and the
+ * rest of it is kept. Each such entry takes the first free name of `tmp.file`, `tmp.file.1` ... and `log` says so.
+ * A move the disk refuses (no room for the longer name) is said too; the mount there then fails and is said in its
+ * turn. The number of entries moved.
  */
-function mountable(disk: MemFs): void {
-  const names = new Map(disk.list(disk.root).map((e) => [e.name, e.kind]))
+function moveAside(disk: MemFs, log: (text: string) => void): number {
+  const entries = disk.list(disk.root)
+  const taken = new Set(entries.map((e) => e.name))
+  let moved = 0
   for (const path of MOUNT_POINTS) {
-    const kind = names.get(path.slice(1))
-    if (kind !== undefined && kind !== 'dir') refuse('ENOTDIR', `${path} is not a directory`)
+    const name = path.slice(1)
+    if (!entries.some((e) => e.name === name && e.kind !== 'dir')) continue
+    let free = `${name}.file`
+    for (let n = 1; taken.has(free); n++) free = `${name}.file.${n}`
+    try {
+      disk.rename(disk.root, name, disk.root, free)
+    } catch (e) {
+      if (!(e instanceof OsError)) throw e
+      log(`${path} on the saved disk is not a directory and could not be moved aside: ${e.message}`)
+      continue
+    }
+    taken.add(free)
+    moved++
+    log(`${path} on the saved disk was not a directory: it is kept as /${free}`)
   }
+  return moved
 }
 
 const README = `This is your home directory. What you keep here stays between visits
@@ -171,12 +189,13 @@ export class System {
       } catch (e) {
         sys.log(`the saved disk could not be read: ${reasonOf(e)}`)
       }
+      /** Entries moved aside so the system could be mounted: the disk then differs from its image and needs saving. */
+      let moved = 0
       if (bytes === null) system.state = 'new'
       else {
         const root = disk.stat(disk.root)
         try {
           restore(bytes, disk)
-          mountable(disk)
           system.state = 'restored'
         } catch (e) {
           // Set aside whole: nothing of it stays, not even what it said of the root.
@@ -186,6 +205,7 @@ export class System {
           system.refused = bytes
           sys.log(`the saved disk was set aside: ${reasonOf(e)}`)
         }
+        if (system.state === 'restored') moved = moveAside(disk, (text) => sys.log(text))
       }
       const fresh = system.state !== 'restored'
       /** One step of laying the tree out: a refusal (a disk that came back full, say) is logged and the rest goes on, so the shell always starts. */
@@ -215,8 +235,9 @@ export class System {
         ['/bin', bin, 'rom'], ['/usr', usr, 'rom'], ['/tmp', tmp, 'tmpfs'], ['/dev', dev, 'devfs'], ['/proc', proc, 'proc'], ['/sys', sysTree, 'sysfs'],
       ]
       for (const [path, driver, source] of mounts) yield* step(`${path} could not be mounted`, sys.mount(path, driver, source))
-      // A disk that came back as it was saved needs no saving again; a new one does.
-      if (!fresh) system.saved = disk.version
+      // A disk that came back as it was saved needs no saving again; a new one does, and so does one that had an
+      // entry moved aside.
+      if (!fresh && moved === 0) system.saved = disk.version
       for (;;) {
         try {
           system.session = yield* sys.spawn(['-sh'], { program: sh, env, cwd: HOME, group: 'new' })
@@ -281,8 +302,11 @@ export class System {
   /** The directory of the shell at the terminal (the home directory until it has started). */
   get cwd(): string { return this.kernel.proc(this.session)?.cwd ?? HOME }
 
-  /** The names that run from the prompt: every file along the shell's path that may be run, sorted, each once. For Tab. */
-  commands(): string[] {
+  /**
+   * The names that run from the prompt and start with `prefix`: every such file along the shell's path that may be
+   * run, sorted, each once. For Tab.
+   */
+  commands(prefix = ''): string[] {
     const vfs = this.kernel.vfs
     const path = this.kernel.proc(this.session)?.env.get('PATH') ?? PATH
     const found = new Set<string>()
@@ -290,7 +314,10 @@ export class System {
       try {
         const at = d === '' ? '.' : d
         for (const e of now(vfs.list(at, this.cwd, ROOT_CRED))) {
-          if (e.kind === 'file' && now(vfs.access(`${at}/${e.name}`, this.cwd, ROOT_CRED, 1))) found.add(e.name)
+          // The check of each file is what costs over a large directory, so a name that cannot complete the word, or
+          // one already found, is passed over before it.
+          if (e.kind !== 'file' || !e.name.startsWith(prefix) || found.has(e.name)) continue
+          if (now(vfs.access(`${at}/${e.name}`, this.cwd, ROOT_CRED, 1))) found.add(e.name)
         }
       } catch {
         // A directory on the path that is not there (or would wait) offers nothing.
@@ -320,15 +347,34 @@ export class System {
     return out.sort()
   }
 
-  /** The disk's image if the disk changed since the last one handed out (and the saved one has been dealt with); null otherwise. */
+  /**
+   * The disk's image if the disk changed since the last one handed out (and the saved one has been dealt with); null
+   * otherwise. The disk counts as saved only once the image is made: one that cannot be made (the browser refuses the
+   * memory for it) throws and leaves the change owed, so the next try makes it.
+   */
   snapshot(): Uint8Array | null {
-    if (this.state === 'waiting' || this.disk.version === this.saved) return null
+    if (!this.dirty) return null
+    const image = dump(this.disk)
     this.saved = this.disk.version
-    return dump(this.disk)
+    return image
+  }
+
+  /**
+   * The same image without its seal, for a host that seals it with a digest of its own (image.ts `sealed` with the
+   * SHA-256 of the body); null when `snapshot` would give null. Marked saved, or left owed, as `snapshot` is.
+   */
+  snapshotBody(): Uint8Array | null {
+    if (!this.dirty) return null
+    const body = dumpBody(this.disk)
+    this.saved = this.disk.version
+    return body
   }
 
   /** Whether the disk has changes no image has been made of. */
   get dirty(): boolean { return this.state !== 'waiting' && this.disk.version !== this.saved }
+
+  /** Bytes in use on the disk, as df counts them: every file's bytes, and a fixed cost for each node and its name. */
+  get diskUsed(): number { return this.disk.usage().used }
 
   /** Whether the disk is new and still holds only what every new disk is given: nothing of the person's to lose. */
   get pristine(): boolean { return this.state !== 'waiting' && this.disk.version === this.seeded }

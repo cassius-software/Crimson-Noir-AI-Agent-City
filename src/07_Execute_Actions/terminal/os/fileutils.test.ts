@@ -6,7 +6,8 @@
  * shell of a system held in memory, with what they print, what they leave on the file system and the status they end
  * with all checked. Every option of every program is used at least once, and so are the ways each one is refused: a
  * path that is not there among paths that are, a directory where a file is wanted, a read-only place, a mount point,
- * the root directory, a pipe whose reader has gone, bytes that are no text, a file larger than one read.
+ * the root directory, one of the system's own file systems, a pipe whose reader has gone, bytes that are no text, a
+ * file larger than one read.
  * What breaks if it is removed? A change to one of these programs could alter what a script depends on (the text of
  * a listing, an exit status, the words of a refusal) or lose a file's bytes, and nothing would say so.
  */
@@ -16,6 +17,8 @@ import { FILE_MANUAL, FILE_PROGRAMS } from './fileutils.ts'
 import { ROOT_CRED } from './fs.ts'
 import { boot } from './kit.test.ts'
 import type { Kit } from './kit.test.ts'
+import { MemFs } from './memfs.ts'
+import { MOUNT_POINTS } from './system.ts'
 import { now } from './task.ts'
 
 /** A system with the file programs, its shell working in /tmp. */
@@ -1282,19 +1285,42 @@ test('mount: lists the mounts as /proc/mounts does, and says honestly that it ca
 
 test('umount: detaches a mount, and reports what is refused', () => {
   const k = fresh()
-  k.write('/tmp/f', 'x')
+  const system = k.sh('mount')
+  // Nothing at the prompt can attach a file system yet, so the test attaches one of its own at /mnt.
+  const extra = new MemFs({ type: 'tmpfs', capacity: 1 << 16, maxFile: 1 << 16, maxNodes: 64, clock: () => 0 })
+  now(k.system.kernel.vfs.mount('/mnt', extra, 'extra', ROOT_CRED))
+  k.write('/mnt/f', 'x')
   const pid = k.sh('echo $$')[0]
-  assert.deepEqual(k.sh('umount /tmp; echo $?'), [`!umount: /tmp: task ${pid} is working in it`, '1'])
+  assert.deepEqual(k.sh('cd /mnt; umount /mnt; echo $?'), [`!umount: /mnt: task ${pid} is working in it`, '1'])
   assert.deepEqual(k.sh('cd /; umount /nosuch /etc /; echo $?'), [
     '!umount: /nosuch: not a mount point', '!umount: /etc: not a mount point', '!umount: /: task 1 is working in it', '1',
   ])
   assert.deepEqual(k.sh('umount; echo $?'), ['!usage: umount path ...', '2'])
-  assert.deepEqual(k.sh('umount /tmp/ /sys; echo $?; ls -a /tmp; mount'), [
-    '0', '.  ..', 'disk / diskfs rw', 'rom /bin romfs ro', 'rom /usr romfs ro', 'devfs /dev devfs rw', 'proc /proc proc rw',
-  ])
-  assert.deepEqual(k.sh('umount /tmp; echo $?'), ['!umount: /tmp: not a mount point', '1'])
+  assert.deepEqual(k.sh('mount'), [...system, 'extra /mnt tmpfs rw'])
+  assert.deepEqual(k.sh('umount /mnt/; echo $?; ls -a /mnt; mount'), ['0', '.  ..', ...system])
+  assert.deepEqual(k.sh('umount /mnt; echo $?'), ['!umount: /mnt: not a mount point', '1'])
   // What was under the mount is an ordinary directory again.
-  assert.deepEqual(k.sh('touch /tmp/under; df /tmp/under | cat'), ['Source  Type    Size  Used  Free  Use%  Path', k.sh('df /')[1]])
+  assert.deepEqual(k.sh('touch /mnt/under; df /mnt/under | cat'), ['Source  Type    Size  Used  Free  Use%  Path', k.sh('df /')[1]])
+})
+
+test('umount: the system\'s own file systems stay mounted, however the path is written', () => {
+  const k = fresh()
+  const mounts = k.sh('mount')
+  for (const path of MOUNT_POINTS) {
+    assert.deepEqual(k.sh(`cd /; umount ${path}; echo $?`), [`!umount: ${path}: the system keeps it mounted`, '1'], path)
+  }
+  assert.deepEqual(k.sh('cd /usr; umount ../tmp/ /sys/.. ../bin; echo $?'), [
+    '!umount: ../tmp/: the system keeps it mounted',
+    '!umount: /sys/..: task 1 is working in it',
+    '!umount: ../bin: the system keeps it mounted',
+    '1',
+  ])
+  assert.deepEqual(k.sh('mount'), mounts)
+  // So /tmp can never be left as a file for the next visit to find where the system mounts its scratch space.
+  assert.deepEqual(k.sh('cd /; umount /tmp; rmdir /tmp; echo x > /tmp; echo $?'), [
+    '!umount: /tmp: the system keeps it mounted', '!rmdir: /tmp: a mount point', '!ash: /tmp: is a directory', '1',
+  ])
+  assert.deepEqual(k.sh('echo t > /tmp/t; cat /tmp/t; df /tmp | cat').slice(0, 2), ['t', 'Source  Type   Size  Used  Free  Use%  Path'])
 })
 
 // realpath, basename, dirname

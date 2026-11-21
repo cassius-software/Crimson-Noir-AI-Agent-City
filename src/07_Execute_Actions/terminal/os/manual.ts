@@ -139,6 +139,8 @@ COMMANDS OF THE SHELL ITSELF
     jobs   the background jobs      wait [job]   wait for them
     fg [job]   bring one back to the terminal
     stop job   end one (stop %1, or stop with a task's number)
+    exit typed at the console closes it, and the rest of the line (and
+    of a file read with source) is given up.
 
 THE CITY'S COMMANDS
     The console's own commands (help lists them) can be used in a pipe,

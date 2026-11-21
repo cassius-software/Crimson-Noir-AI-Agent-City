@@ -7,14 +7,16 @@
  * system up to their limit, word splitting), pipelines and lists and the status they carry, background jobs,
  * redirections that put every descriptor back on every path, each builtin's options, refusals and status, scripts run
  * by name or by sh, the city's own commands inside pipes and lists (lines that arrive later, answers the host shows
- * itself, Ctrl+C giving up the wait), Ctrl+C and Ctrl+D at every moment, the caps on nesting, and the console's own
- * shell starting again. It began with what the reviewers of the programs proved the shell once got wrong: a program
- * the shell runs in its own place that meets a closed pipe ends quietly, a line of thousands of `!` is answered
- * rather than ending the shell, two long numbers are never compared after rounding, a city command inside `$( )` ends
- * at the `)` that closes it, and a builtin whose write is refused fails alone, without taking the rest of the line.
+ * itself, Ctrl+C giving up the wait), Ctrl+C and Ctrl+D at every moment, the caps on nesting, `exit` at the console
+ * giving up the rest of the line, and the console's own shell starting again. It began with what the reviewers of
+ * the programs proved the shell once got wrong: a program the shell runs in its own place that meets a closed pipe
+ * ends quietly, a line of thousands of `!` is answered rather than ending the shell, two long numbers are never
+ * compared after rounding, a city command inside `$( )` ends at the `)` that closes it, and a builtin whose write is
+ * refused fails alone, without taking the rest of the line.
  * What breaks if it is removed? Any of those could change without a test noticing: a descriptor or a task lost on
  * every failed line until nothing more can start, a loop or a long value that holds the page up, a wait that Ctrl+C
- * cannot end, a long pasted line run as two commands, `printenv BIG | true` printing a broken-pipe complaint again.
+ * cannot end, a long pasted line run as two commands, `printenv BIG | true` printing a broken-pipe complaint again,
+ * `cd dir || exit; rm -r *` emptying the directory the console was already in.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -557,9 +559,13 @@ test('exit: the status it is given (mod 256), 2 for one that is not a number, th
   // Inside $( ) and inside a script read with source, exit ends that task.
   k.write('/tmp/ex', 'echo before\nexit 3\necho after\n')
   assert.deepEqual(k.sh("x=$(echo in; exit 9; echo never); echo \"$? [$x]\"; sh -c '. /tmp/ex; echo not here'; echo $?"), ['9 [in]', 'before', '3'])
-  // The console's own shell does not end: there, exit is only the status (no city here to close the console).
-  assert.deepEqual(k.sh('exit 7; echo "still here $?"; exit abc; echo $?'), ['still here 7', '2'])
-  assert.deepEqual(k.sh('. /tmp/ex; echo "still here $?"'), ['before', 'after', 'still here 0'])
+  // The console's own shell does not end: there, exit gives up the rest of the line, and of a script read with
+  // source, with the status it was given (no city here to close the console).
+  assert.deepEqual(k.sh('exit 7; echo "not here $?"'), [])
+  assert.deepEqual(k.sh('echo "still here $?"; exit abc; echo $?'), ['still here 7'])
+  assert.deepEqual(k.sh('echo $?'), ['2'])
+  assert.deepEqual(k.sh('. /tmp/ex; echo "not here $?"'), ['before'])
+  assert.deepEqual(k.sh('echo "still here $?"'), ['still here 3'])
 })
 
 test('source and .: a file name is needed; the arguments are $1... while it runs; return ends it; #! is a comment', () => {
@@ -802,9 +808,46 @@ test('a city command typed with nothing in between may be shown by the host itse
   assert.deepEqual(k.sh('posty y | cat'), ['started'])
   pendingOf(c).resolve([{ err: false, text: 'fine' }])
   assert.deepEqual(k.settle(), ['fine'])
-  // At the console exit is the city's own command (it closes the console); the shell goes on.
-  assert.deepEqual(k.sh('exit 3; echo "after $?"'), ['exit ran', 'after 0'])
+  // At the console exit is the city's own command (it closes the console), and the rest of the line is given up.
+  assert.deepEqual(k.sh('exit 3; echo "after $?"'), ['exit ran'])
   assert.deepEqual(c.calls.slice(-1), ['exit[3] exit 3 (direct)'])
+  assert.deepEqual(k.sh('echo "next $?"'), ['next 3'])
+})
+
+test('the console\'s own shell: exit closes the console once and ends the line, a script read with source and a loop', () => {
+  const c = testCity()
+  const k = boot(all, { city: c.host })
+  // The guard idiom: a failed cd gives up the line before what would have run in the wrong place.
+  assert.deepEqual(k.sh('mkdir -p /tmp/home/notes; touch /tmp/home/README /tmp/home/plan.txt; cd /tmp/home'), [])
+  assert.deepEqual(k.sh('cd /tmp/build || exit; rm -r *'), ['!cd: /tmp/build: no such file or directory', 'exit ran'])
+  assert.deepEqual(k.sh('echo * $?'), ['README notes plan.txt 1'])
+  assert.deepEqual(k.sh('false || exit 4; echo "st=$?"'), ['exit ran'])
+  assert.deepEqual(k.sh('echo $?'), ['4'])
+  // A script read with source stops at its exit, and so does the line that read it: no city command after it runs.
+  k.write('/tmp/guard', '[ -f /tmp/needed ] || exit\nstats\necho after-exit\n')
+  let before = c.calls.length
+  assert.deepEqual(k.sh('. /tmp/guard; stats'), ['exit ran'])
+  assert.deepEqual(c.calls.slice(before), ['exit[] exit (direct)'])
+  assert.deepEqual(k.sh('echo $?'), ['1'])
+  // A loop that runs exit asks the console to close once, and the prompt comes back at once.
+  before = c.calls.length
+  assert.deepEqual(k.sh('while true; do exit; done; echo not here'), ['exit ran'])
+  assert.deepEqual(c.calls.slice(before), ['exit[] exit (direct)'])
+  assert.equal(k.system.atPrompt, true)
+  assert.deepEqual(k.sh('echo $?'), ['0'])
+  // A $( ), a stage of a pipe or a job that runs exit ends alone, with that status, and closes nothing.
+  before = c.calls.length
+  assert.deepEqual(k.sh('x=$(exit 5); echo "st $?"; true | exit 6; echo "st $?"'), ['st 5', 'st 6'])
+  assert.deepEqual(k.sh('exit 7 & wait $!; echo "st $?"').slice(1), ['st 7'])
+  assert.deepEqual(c.calls.slice(before), [])
+  // A profile that runs exit stops there, and the shell still comes to its prompt.
+  k.write('/home/operator/.profile', 'echo from home\nexit 2\necho never\n')
+  k.sh('stop $$')
+  k.tick(250)
+  assert.deepEqual(k.settle(), ['from home', 'exit ran'])
+  assert.equal(k.system.atPrompt, true)
+  assert.deepEqual(k.sh('echo $?'), ['2'])
+  assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh'])
 })
 
 // Ctrl+C, Ctrl+D and the console's own shell.

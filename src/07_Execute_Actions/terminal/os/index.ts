@@ -4,14 +4,17 @@
 /**
  * Why does this file exist? It is the one door into the console's operating layer for the rest of the page: the
  * system to build and hold, the shapes the host fills in (the city's commands, the readings under /proc and /sys,
- * a saved disk that arrives later), and the two questions the console asks of a typed line. Nothing else in the
- * folder is imported from outside it.
+ * a saved disk that arrives later), what a host needs to seal the disk's image itself (the seal's length, the
+ * page's own SHA-256 where it has no digest of its own), and the two questions the console asks of a typed line.
+ * Nothing else in the folder is imported from outside it.
  * What breaks if it is removed? The console would reach into the layer's files one by one, and a change inside the
  * layer would break its callers.
  */
 export { OsError } from './errno.ts'
+export { SEAL_BYTES, sealed } from './image.ts'
 export { hasOperator } from './parser.ts'
 export { MANUAL, PROGRAMS } from './programs.ts'
+export { sha256 } from './sha.ts'
 export type { CityHost, CityLine, CityResult } from './shell.ts'
 export { BUILTIN_NAMES } from './shell.ts'
 export { dir, knob, text } from './synth.ts'

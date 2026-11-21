@@ -5,9 +5,11 @@
  * Why does this file exist? It tests the system that puts the console's operating layer together (system.ts): the
  * tree task 1 lays out and the files a new disk is given, the file systems it mounts, the shell it keeps at the
  * terminal (started again when it ends, even when no task can be made for a moment), and each state of the saved
- * disk: waiting for the host, new, restored, refused and set aside. It checks what the host relies on (snapshot,
- * dirty, pristine, the prompt, Tab's lists) and that no saved disk, however it was left, keeps the shell from coming
- * back: a file where a directory belongs, a full disk, an image built to do harm.
+ * disk: waiting for the host, new, restored, refused and set aside. It checks what the host relies on (the image with
+ * or without its seal, marked saved only once it is made, dirty, pristine, the bytes in use, the prompt, Tab's lists)
+ * and that no saved disk, however it was left, keeps the shell from coming back or is set aside for less than a
+ * failed check: a file where a directory belongs or where a file system is mounted, a full disk, an image built to do
+ * harm.
  * What breaks if it is removed? A disk a person left in an odd state could leave the console with no shell on every
  * visit after, or a new disk could be taken for a saved one and overwrite it, and nothing would say so.
  */
@@ -17,7 +19,7 @@ import { concat, encode } from './bytes.ts'
 import { OsError } from './errno.ts'
 import { FILE_PROGRAMS } from './fileutils.ts'
 import { ROOT_CRED } from './fs.ts'
-import { dump, restore } from './image.ts'
+import { SEAL_BYTES, dump, restore, sealed } from './image.ts'
 import { PROCS_MAX } from './kernel.ts'
 import type { Program } from './kernel.ts'
 import { boot } from './kit.test.ts'
@@ -116,6 +118,53 @@ test('system: a new disk is pristine and dirty until its first image; then only 
   assert.equal(s.dirty, true)
   // An image given null starts a new disk too.
   assert.equal(boot({}, { image: null }).system.state, 'new')
+})
+
+test('system: the image can be had without its seal, for a host that seals it with its own digest; either way the disk counts as saved only once the image is made', () => {
+  const k = boot(FILE_PROGRAMS)
+  const s = k.system
+  const body = s.snapshotBody()
+  assert.ok(body !== null)
+  assert.equal(s.dirty, false)
+  assert.equal(s.snapshotBody(), null)
+  assert.equal(s.snapshot(), null)
+  const back = blank()
+  restore(sealed(body, sha256(body)), back)
+  assert.deepEqual(back.list(back.root).map((e) => e.name).sort(), ['bin', 'dev', 'etc', 'home', 'mnt', 'proc', 'sys', 'tmp', 'usr'])
+  // The same disk gives the same bytes either way.
+  k.sh('echo mine > ~/notes')
+  const whole = dump(s.disk)
+  assert.deepEqual(s.snapshotBody(), whole.subarray(0, whole.length - SEAL_BYTES))
+  // An image that cannot be made (the browser refuses the memory for it) leaves the change owed, so it is tried again.
+  for (const make of [() => s.snapshotBody(), () => s.snapshot()]) {
+    k.sh('echo more >> ~/notes')
+    const read = s.disk.read
+    s.disk.read = () => { throw new RangeError('Array buffer allocation failed') }
+    try {
+      assert.throws(make, RangeError)
+    } finally {
+      s.disk.read = read
+    }
+    assert.equal(s.dirty, true)
+    const image = make()
+    assert.ok(image !== null)
+    assert.equal(s.dirty, false)
+  }
+})
+
+test('system: the bytes in use on the disk are the ones df counts, and only the disk\'s', () => {
+  const k = boot(FILE_PROGRAMS)
+  const s = k.system
+  const used = (): number => Number(k.sh('df /')[1].split(/ +/)[3])
+  assert.equal(s.diskUsed, s.disk.usage().used)
+  assert.equal(used(), Math.ceil(s.diskUsed / 1024))
+  const before = s.diskUsed
+  k.write(`${HOME}/big`, new Uint8Array(100000))
+  // The file's bytes, and what a node and its name cost.
+  assert.equal(s.diskUsed, before + 100000 + 64 + 'big'.length)
+  assert.equal(used(), Math.ceil(s.diskUsed / 1024))
+  k.write('/tmp/scratch', new Uint8Array(50000))
+  assert.equal(s.diskUsed, before + 100000 + 64 + 'big'.length)
 })
 
 test('system: before the host says whether there is a saved disk, nothing is laid out, nothing is saved, and typed lines wait', () => {
@@ -248,39 +297,59 @@ test('system: a home that became a file at the prompt does not keep the shell fr
   assert.deepEqual(k.sh(`cd /; rm /home; mkdir -p ${HOME}; cd; pwd`), [HOME])
 })
 
-test('system: a file where a file system is mounted (an unmounted /tmp made a file, or an image built so) is refused and set aside', () => {
-  const one = boot(FILE_PROGRAMS)
-  assert.deepEqual(one.sh('umount /tmp; rmdir /tmp; echo x > /tmp; echo $?'), ['0'])
-  const image = one.system.snapshot()
-  assert.ok(image !== null)
-  const k = boot(FILE_PROGRAMS, { image })
-  assert.equal(k.system.state, 'refused')
-  assert.equal(k.system.refused, image)
-  assert.ok(logged(k, 'the saved disk was set aside: /tmp is not a directory'))
-  assert.deepEqual(tasks(k), ['init', '-sh'])
-  answers(k)
-  assert.deepEqual(k.sh('echo t > /tmp/t; cat /tmp/t'), ['t'])
-  for (const name of ['bin', 'usr', 'dev', 'proc', 'sys']) {
+test('system: a file where a file system is mounted (an image built so, or saved before umount kept them) is moved aside under a free name, and the rest of the disk comes back', () => {
+  for (const name of ['bin', 'usr', 'tmp', 'dev', 'proc', 'sys']) {
     const fs = blank()
-    fs.create(fs.root, name, 'file', 0o644, ROOT_CRED)
-    const built = boot(FILE_PROGRAMS, { image: dump(fs) })
-    assert.equal(built.system.state, 'refused', name)
-    assert.ok(logged(built, `/${name} is not a directory`), name)
-    answers(built)
+    const f = fs.create(fs.root, name, 'file', 0o644, ROOT_CRED)
+    fs.write(f, 0, encode(`was ${name}\n`))
+    // The first free name is taken by a file of the person's own, which stays as it is.
+    const taken = fs.create(fs.root, `${name}.file`, 'file', 0o644, ROOT_CRED)
+    fs.write(taken, 0, encode('mine\n'))
+    const home = fs.create(fs.create(fs.root, 'home', 'dir', 0o755, ROOT_CRED), 'operator', 'dir', 0o755, ROOT_CRED)
+    fs.write(fs.create(home, 'novel.txt', 'file', 0o644, ROOT_CRED), 0, encode('CHAPTER-ONE\n'))
+    const k = boot(FILE_PROGRAMS, { image: dump(fs) })
+    const s = k.system
+    assert.equal(s.state, 'restored', name)
+    assert.equal(s.refused, null, name)
+    assert.ok(logged(k, `/${name} on the saved disk was not a directory: it is kept as /${name}.file.1`), name)
+    assert.equal(k.read(`/${name}.file.1`), `was ${name}\n`, name)
+    assert.equal(k.read(`/${name}.file`), 'mine\n', name)
+    assert.equal(k.read(`${HOME}/novel.txt`), 'CHAPTER-ONE\n', name)
+    assert.ok(s.kernel.vfs.mounts().some((m) => m.path === `/${name}`), `/${name} is mounted`)
+    assert.deepEqual(tasks(k), ['init', '-sh'])
+    answers(k)
+    // The disk as it now stands is saved, and comes back with nothing more to move.
+    assert.equal(s.dirty, true, name)
+    const image = s.snapshot()
+    assert.ok(image !== null)
+    const again = boot(FILE_PROGRAMS, { image })
+    assert.equal(again.system.state, 'restored', name)
+    assert.ok(!logged(again, 'on the saved disk was not a directory'), name)
+    assert.equal(again.read(`/${name}.file.1`), `was ${name}\n`, name)
+    assert.equal(again.system.dirty, false, name)
   }
-  // Refused after it was read whole, it still leaves nothing behind, not even what it said of the root.
-  const odd = blank()
-  odd.setattr(odd.root, { mode: 0, uid: 4242, gid: 4242 })
-  odd.create(odd.root, 'tmp', 'file', 0o644, ROOT_CRED)
-  const set = boot(FILE_PROGRAMS, { image: dump(odd) })
-  assert.equal(set.system.state, 'refused')
-  const st = now(set.system.kernel.vfs.stat('/', '/', ROOT_CRED))
-  assert.deepEqual([st.mode, st.uid, st.gid], [0o755, 0, 0])
-  // A file where a plain directory of the tree belongs is the person's own business: the disk is kept.
+  // With no room on the disk for the longer name, the file stays where it is and the log says so; the mount there
+  // fails and is said too, and the disk is still restored, the file whole and the shell at its prompt.
+  const full = blank()
+  for (const name of ['bin', 'dev', 'etc', 'home', 'mnt', 'proc', 'sys', 'usr']) {
+    full.create(full.root, name, 'dir', 0o755, ROOT_CRED)
+  }
+  full.create(full.lookup(full.root, 'home'), 'operator', 'dir', 0o755, ROOT_CRED)
+  const tmp = full.create(full.root, 'tmp', 'file', 0o644, ROOT_CRED)
+  const usage = full.usage()
+  full.write(tmp, 0, new Uint8Array(usage.capacity - usage.used))
+  const k = boot(FILE_PROGRAMS, { image: dump(full) })
+  assert.equal(k.system.state, 'restored')
+  assert.ok(logged(k, '/tmp on the saved disk is not a directory and could not be moved aside: no space left on device'))
+  assert.ok(logged(k, '/tmp could not be mounted: not a directory'))
+  assert.equal(k.bytes('/tmp').length, usage.capacity - usage.used)
+  answers(k)
+  // A file where a plain directory of the tree belongs is the person's own business: the disk is kept as it is.
   const fs = blank()
   fs.create(fs.root, 'mnt', 'file', 0o644, ROOT_CRED)
   const kept = boot(FILE_PROGRAMS, { image: dump(fs) })
   assert.equal(kept.system.state, 'restored')
+  assert.ok(!kept.exists('/mnt.file'))
   answers(kept)
 })
 
@@ -400,6 +469,34 @@ test('system: Tab\'s list of commands is every file along the shell\'s path that
   assert.deepEqual(s.commands(), ['cat', 'mine'])
   k.sh('PATH=/nowhere')
   assert.deepEqual(s.commands(), [])
+})
+
+test('system: Tab\'s list of commands for a word holds only the names that start with it, and checks no other name', () => {
+  const k = boot(FILE_PROGRAMS)
+  const s = k.system
+  assert.deepEqual(k.sh('mkdir ~/bin; cd ~/bin; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo echo t$i > t$i; done; chmod 755 t1 t10 t2; cd'), [])
+  assert.deepEqual(s.commands('t1'), ['t1', 't10'])
+  assert.deepEqual(s.commands('t'), ['t1', 't10', 't2', 'touch', 'tree'])
+  assert.deepEqual(s.commands('c'), ['cat', 'chmod', 'cp'])
+  assert.deepEqual(s.commands('zz'), [])
+  assert.deepEqual(s.commands(''), s.commands())
+  // The check of each file is what costs over a large directory: a name that cannot complete the word is never checked.
+  const vfs = s.kernel.vfs
+  const access = vfs.access
+  let checked = 0
+  vfs.access = function (...args) {
+    checked++
+    return access.apply(vfs, args)
+  }
+  try {
+    assert.deepEqual(s.commands('zz'), [])
+    assert.equal(checked, 0)
+    assert.deepEqual(s.commands('t1'), ['t1', 't10'])
+    // t1, t10, t11 and t12 in ~/bin (the last two may not be run), and nothing along the rest of the path starts so.
+    assert.equal(checked, 4)
+  } finally {
+    vfs.access = access
+  }
 })
 
 test('system: Tab completes a path as typed, ~ for home, a directory ending in a slash, names with a dot only when asked for', () => {

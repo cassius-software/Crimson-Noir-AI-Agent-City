@@ -6,14 +6,16 @@
  * shell of a system held in memory, with what they print, the bytes they leave in a file and the status they end with
  * all checked. Every option of every program is used at least once, and so are the ways each one is refused or cut
  * short: a file that is not there among files that are, a directory where a file is wanted, input with no line end
- * at its end, no input at all, bytes that are no text, a line longer than one read, an output that takes nothing,
- * and a reader that takes one line of a large answer and leaves.
+ * at its end, no input at all, bytes that are no text, a line longer than one read (worked through a slice at a time,
+ * so no turn holds the page up), an output that takes nothing, and a reader that takes one line of a large answer
+ * and leaves.
  * What breaks if it is removed? A change to one of these programs could alter what a pipeline depends on (the text
  * of a count, an exit status, the words of a refusal) or lose bytes on the way through, and nothing would say so.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { decode, encode } from './bytes.ts'
+import { LOOK } from './kernel.ts'
 import { boot } from './kit.test.ts'
 import type { Kit } from './kit.test.ts'
 import { TEXT_MANUAL, TEXT_PROGRAMS } from './textutils.ts'
@@ -67,6 +69,41 @@ function bytesOf(k: Kit, command: string): Uint8Array {
 
 /** The same, as text. */
 const textOf = (k: Kit, command: string): string => decode(bytesOf(k, command))
+
+/**
+ * Types a command line and runs the system in turns that each end at the first look at the clock (the deadline has
+ * always passed, so a turn is at most LOOK calls): how many turns it took. A program that calls the kernel once for
+ * every slice of its work takes a turn for every LOOK slices at least, so no turn holds the page up for more.
+ */
+function shortTurns(k: Kit, line: string): number {
+  k.system.type(`${line}\n`)
+  let n = 0
+  while (!k.system.idle) {
+    k.system.run(1_000_000, Number.NEGATIVE_INFINITY)
+    n++
+  }
+  return n
+}
+
+/** A line folded at a width, built here from fold's description (characters, not code units), not from its code. */
+function folded(line: string, width: number, words: boolean): string {
+  const chars = Array.from(line)
+  let out = ''
+  let at = 0
+  while (chars.length - at > width) {
+    let to = at + width
+    if (words) {
+      for (let j = to - 1; j >= at; j--) {
+        if (chars[j] !== ' ' && chars[j] !== '\t') continue
+        to = j + 1
+        break
+      }
+    }
+    out += `${chars.slice(at, to).join('')}\n`
+    at = to
+  }
+  return `${out}${chars.slice(at).join('')}\n`
+}
 
 /** One line of a dump in the canonical layout, built here from its description, not from the program's code. */
 function dumpRow(offset: number, bytes: readonly number[]): string {
@@ -832,6 +869,16 @@ test('rev: each line back to front, by whole characters', () => {
   assert.equal(textOf(k, 'rev u | rev'), 'h\u00e9llo \u{1f600}!\n\u4e2d\u6587\n')
 })
 
+test('rev: a long line is turned round a slice at a time, with a call to the kernel between slices, every character kept whole', () => {
+  const k = fresh()
+  // The pair sits where the last slice of 4096 code units begins, counted from the end: it must not be split there.
+  const line = `${'ab'.repeat(300000)}\u{1f600}z${'xy'.repeat(2047)}`
+  k.write('/tmp/long', `${line}\nshort\n`)
+  const turns = shortTurns(k, 'rev long > /tmp/.out')
+  assert.equal(k.read('/tmp/.out'), `${Array.from(line).reverse().join('')}\ntrohs\n`)
+  assert.ok(turns >= Math.floor(line.length / 4096 / LOOK), `${turns} turns`)
+})
+
 // nl
 
 test('nl: numbers in front, empty lines left alone unless asked, the count carried from file to file', () => {
@@ -881,6 +928,25 @@ test('fold: lines broken at a width, at a blank with -s', () => {
   const usage = '!usage: fold [-s] [-w width] [file ...]'
   assert.deepEqual(k.sh('fold -w 0 f; echo $?'), ["!fold: option '-w' needs a whole number of 1 or more, not '0'", usage, '2'])
   assert.deepEqual(k.sh('fold -w wide f; echo $?'), ["!fold: option '-w' needs a whole number of 1 or more, not 'wide'", usage, '2'])
+})
+
+test('fold: a long line is walked a slice at a time, with a call to the kernel between slices, at any width and with -s', () => {
+  const k = fresh()
+  // Pairs at many places, some of them where a piece or a stretch of the walk ends, and blanks far apart for -s.
+  let line = ''
+  for (let i = 0; i < 40; i++) line += `${'ab'.repeat(3000 + i)}\u{1f600} ${'cd'.repeat(4000 - i)}\t`
+  k.write('/tmp/long', `${line}\n`)
+  const cases = [
+    ['fold -w 100000', 100000, false], ['fold -s -w 100000', 100000, true], ['fold -s -w 9001', 9001, true], ['fold -w 80', 80, false],
+  ] as const
+  for (const [command, width, words] of cases) {
+    const turns = shortTurns(k, `${command} long > /tmp/.out`)
+    assert.equal(k.read('/tmp/.out'), folded(line, width, words), command)
+    assert.ok(turns >= Math.floor(line.length / 4096 / LOOK), `${command}: ${turns} turns`)
+  }
+  // A line of more code units than the width but no more characters goes through whole; one more character does not.
+  k.write('/tmp/pairs', `${'\u{1f600}'.repeat(5)}\n${'\u{1f600}'.repeat(6)}\n`)
+  assert.equal(textOf(k, 'fold -w 5 pairs'), `${'\u{1f600}'.repeat(5)}\n${'\u{1f600}'.repeat(5)}\n\u{1f600}\n`)
 })
 
 // paste

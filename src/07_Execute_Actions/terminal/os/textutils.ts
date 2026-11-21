@@ -31,6 +31,11 @@ const HOLD_MAX = READ_ALL_MAX
 const LINE_COST = 32
 /** A loop that asks nothing of the kernel gives the other tasks a turn once in 1024 of its own: when its count has none of these bits. */
 const PACE = 1023
+/**
+ * The most code units of one line that rev or fold works through between two calls to the kernel. A line may be a
+ * mebibyte long, and done in one go it would hold the page up for tens of milliseconds where no deadline could cut it.
+ */
+const STRETCH = 4096
 /** The widest field a format or an option may ask for: a larger one is refused instead of filled. */
 const WIDTH_MAX = 4096
 /** A line end, as bytes (shared, never written). */
@@ -1037,7 +1042,20 @@ const rev = tool('rev', function* (sys, argv, pen) {
     for (;;) {
       const line = yield* lines.next()
       if (line === null) return
-      yield* pen.line(Array.from(line).reverse().join(''))
+      // Turned round a stretch at a time from the end, with a call to the kernel between two stretches (a short line
+      // is one stretch and costs no call). A stretch never starts on the second half of a pair, so the two halves stay
+      // together and in their order.
+      const parts: string[] = []
+      let end = line.length
+      while (end > 0) {
+        let start = Math.max(0, end - STRETCH)
+        const c = line.charCodeAt(start)
+        if (start > 0 && c >= 0xdc00 && c <= 0xdfff) start--
+        parts.push(Array.from(line.slice(start, end)).reverse().join(''))
+        end = start
+        if (end > 0) yield* sys.step()
+      }
+      yield* pen.line(parts.join(''))
     }
   })
 })
@@ -1084,21 +1102,34 @@ const fold = tool('fold', function* (sys, argv, pen) {
       if (line === null) return
       // A line of no more code units than the width has no more characters than it either.
       if (line.length <= width) { yield* pen.line(line); continue }
-      const chars = Array.from(line)
+      // The line is walked in place, a character (one code unit, or the two of a pair) at a time, with a call to the
+      // kernel once in every STRETCH code units looked at, so a long line at a wide width never holds the page up.
+      let looked = 0
       let at = 0
-      while (chars.length - at > width) {
-        let to = at + width
+      for (;;) {
+        // Where `width` characters past `at` end, or the end of the line when no more than that are left.
+        let to = at
+        for (let n = 0; n < width && to < line.length; n++) {
+          const c = line.charCodeAt(to)
+          const d = line.charCodeAt(to + 1)
+          to += c >= 0xd800 && c <= 0xdbff && d >= 0xdc00 && d <= 0xdfff ? 2 : 1
+          if (++looked >= STRETCH) { looked = 0; yield* sys.step() }
+        }
+        if (to >= line.length) break
+        // More than `width` characters were left: this piece ends after its last blank with -s, else at the width.
+        // A blank is one code unit, never half of a pair, so the place after it is always between two characters.
         if (words) {
           for (let j = to - 1; j >= at; j--) {
-            if (!blank(chars[j])) continue
+            if (++looked >= STRETCH) { looked = 0; yield* sys.step() }
+            if (!blank(line[j])) continue
             to = j + 1
             break
           }
         }
-        yield* pen.line(chars.slice(at, to).join(''))
+        yield* pen.line(line.slice(at, to))
         at = to
       }
-      yield* pen.line(chars.slice(at).join(''))
+      yield* pen.line(line.slice(at))
     }
   })
 })

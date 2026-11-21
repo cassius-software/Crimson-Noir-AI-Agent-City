@@ -91,6 +91,17 @@ class Trouble extends Error {}
 /** Ctrl+C reached the console's shell: the line it was running is given up. */
 class Interrupted {}
 
+/**
+ * `exit` at the console's own shell, which does not end: the line it was running is given up (and any script read
+ * with source on the way), and the shell takes the next one with this status.
+ */
+class ExitLine {
+  readonly status: number
+  constructor(status: number) {
+    this.status = status
+  }
+}
+
 interface Job { readonly id: number; readonly pids: readonly number[]; readonly pgid: number; readonly text: string }
 
 interface Piece { readonly s: string; readonly q: boolean }
@@ -719,6 +730,12 @@ class Shell {
       return yield* body()
     } catch (e) {
       if (e instanceof Jump) return e.status
+      if (e instanceof ExitLine) {
+        // Only the console's own shell throws this, so here it comes from a profile that ran exit: the prompt that
+        // follows shows its status as $?.
+        this.st.status = e.status
+        return e.status
+      }
       if (e instanceof Trouble) {
         yield* this.sys.eprint(`${SELF}: ${e.message}\n`)
         return 2
@@ -1190,6 +1207,10 @@ class Shell {
           this.st.status = 130
           continue
         }
+        if (e instanceof ExitLine) {
+          this.st.status = e.status
+          continue
+        }
         if (e instanceof Trouble) {
           yield* sys.eprint(`${SELF}: ${e.message}\n`)
           this.st.status = 2
@@ -1283,10 +1304,11 @@ class Shell {
 
   *exit(argv: string[]): Task<number> {
     const n = argv[1] === undefined ? this.st.status : /^[0-9]+$/.test(argv[1]) ? Number(argv[1]) & 255 : 2
-    // The console's own shell does not end: there, `exit` is the console's word for closing it.
+    // The console's own shell does not end: there, `exit` is the console's word for closing it, and nothing after it
+    // on the line runs, so `cd dir || exit; rm -r *` never empties the wrong directory and a loop of exits closes once.
     if (this.st.session) {
-      if (this.city.has('exit')) return yield* this.cityRun('exit', argv.slice(1), argv.join(' '), true)
-      return n
+      if (this.city.has('exit')) yield* this.cityRun('exit', argv.slice(1), argv.join(' '), true)
+      throw new ExitLine(n)
     }
     return this.sys.exit(n)
   }

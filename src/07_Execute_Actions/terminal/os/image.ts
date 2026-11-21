@@ -8,7 +8,8 @@
  * all that. Reading an image trusts nothing in it: the seal is checked first, every length is checked against what
  * is left, and the nodes are put back through the disk's own calls, so a name a file cannot have, a file inside a
  * file, or more bytes than the disk may hold is refused exactly as it would be from a program. An image that fails
- * any check is refused whole, and the disk is left empty rather than half filled.
+ * any check is refused whole, and the disk is left empty rather than half filled. The body can be made apart from its
+ * seal, so a host whose own digest runs off the page's thread seals a large disk without holding the page up.
  * What breaks if it is removed? Files last only until the page is closed.
  */
 import { concat, decode, encode, readU32, writeU32 } from './bytes.ts'
@@ -19,10 +20,11 @@ import { sha256 } from './sha.ts'
 
 /** The first bytes of every image: the format's name and version. */
 const MAGIC = encode('CNDISK1\n')
-const SEAL = 32
+/** Bytes of the seal at the end of every image: the SHA-256 of everything before it. */
+export const SEAL_BYTES = 32
 
-/** The disk as one array of bytes. */
-export function dump(fs: MemFs): Uint8Array {
+/** The disk as one array of bytes, without its seal: what `sealed` makes an image of. Changes nothing on the disk. */
+export function dumpBody(fs: MemFs): Uint8Array {
   const chunks: Uint8Array[] = [MAGIC]
   const count = new Uint8Array(4)
   chunks.push(count)
@@ -56,8 +58,23 @@ export function dump(fs: MemFs): Uint8Array {
     }
   }
   writeU32(count, 0, nodes)
-  const body = concat(chunks)
-  return concat([body, sha256(body)])
+  return concat(chunks)
+}
+
+/**
+ * An image: a body from `dumpBody` with its seal, the SHA-256 of the body, after it. A seal of any other length is
+ * refused (a RangeError), since no image could be checked with it; a wrong digest of the right length makes an image
+ * that `restore` refuses.
+ */
+export function sealed(body: Uint8Array, seal: Uint8Array): Uint8Array {
+  if (seal.length !== SEAL_BYTES) throw new RangeError(`a seal is ${SEAL_BYTES} bytes, not ${seal.length}`)
+  return concat([body, seal])
+}
+
+/** The disk as one array of bytes, sealed. */
+export function dump(fs: MemFs): Uint8Array {
+  const body = dumpBody(fs)
+  return sealed(body, sha256(body))
 }
 
 /**
@@ -67,11 +84,11 @@ export function dump(fs: MemFs): Uint8Array {
  */
 export function restore(image: Uint8Array, fs: MemFs): void {
   const bad = (why: string): never => refuse('EINVAL', `not a disk image (${why})`)
-  if (image.length < MAGIC.length + 4 + SEAL) bad('too short')
+  if (image.length < MAGIC.length + 4 + SEAL_BYTES) bad('too short')
   for (let i = 0; i < MAGIC.length; i++) if (image[i] !== MAGIC[i]) bad('wrong header')
-  const end = image.length - SEAL
+  const end = image.length - SEAL_BYTES
   const seal = sha256(image.subarray(0, end))
-  for (let i = 0; i < SEAL; i++) if (image[end + i] !== seal[i]) bad('the seal does not match')
+  for (let i = 0; i < SEAL_BYTES; i++) if (image[end + i] !== seal[i]) bad('the seal does not match')
   if (fs.list(fs.root).length > 0) refuse('EINVAL', 'the disk is not empty')
   const view = new DataView(image.buffer, image.byteOffset, image.byteLength)
   let at = MAGIC.length

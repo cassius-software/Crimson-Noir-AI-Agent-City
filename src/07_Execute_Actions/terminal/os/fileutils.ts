@@ -12,12 +12,13 @@
  * What breaks if it is removed? The console has a file system nobody can look at or change from the prompt: only
  * the shell's own redirection is left.
  */
-import { OsError } from './errno.ts'
+import { OsError, refuse } from './errno.ts'
 import type { Entry, Kind } from './fs.ts'
 import { W, X, modeText } from './fs.ts'
 import type { MountInfo, Program, Sys } from './kernel.ts'
 import { Out, civil, complain, count, human, inputs, options, stamp, two, usage } from './lib.ts'
 import { basename as lastName, dirname as parentOf, join, matches } from './path.ts'
+import { MOUNT_POINTS } from './system.ts'
 import type { Task } from './task.ts'
 import type { FileStat } from './vfs.ts'
 import { O_CREATE, O_READ, O_TRUNC, O_WRITE, STICKY } from './vfs.ts'
@@ -1503,6 +1504,11 @@ const umount: Program = function* (sys, argv) {
   if (o.bad !== null || o.rest.length === 0) return yield* run.misuse(o.bad, 'umount path ...')
   for (const path of o.rest) {
     try {
+      // The system's own file systems stay where task 1 put them. Without one, the programs, the manual or the scratch
+      // space would be out of reach until the page closed, and a file made in its place would be saved with the disk.
+      const where = sys.resolve(path)
+      const mounted = sys.mounts().some((m) => m.path === where)
+      if (mounted && MOUNT_POINTS.includes(where)) refuse('EBUSY', 'the system keeps it mounted')
       sys.umount(path)
     } catch (e) {
       yield* run.fail(path, e)
@@ -2075,7 +2081,8 @@ WHAT IT DOES
     be reached until it is attached again, and nothing at the prompt can
     attach it yet. It is refused while a file on it is open, while a task
     is working in it, or while another file system is attached inside it.
-    The root file system / always stays.
+    The root file system / always stays, and so do the system's own:
+    /bin, /usr, /tmp, /dev, /proc and /sys.
 
 STATUS
     0, or 1 when a path could not be detached.
