@@ -27,9 +27,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   two, and a Rust test reads both), and `main.rs`, `runner.rs` and `model_file.rs` ask only that; Windows, Android and
   iOS are unchanged. The plan puts every layer on the GPU on Apple silicon (Metal: `GPU` in `runner.rs`) and keeps the
   processor alone on Linux and on an Intel Mac. The app needs macOS 11 or later: `bundle.macOS.minimumSystemVersion`
-  is 11.0, and `tools/build/matrix.mjs` gives the build the same `MACOSX_DEPLOYMENT_TARGET`. llama-cpp-sys-2 passes
-  every `CMAKE_*` and `GGML_*` variable to both slices alike and reads none per target, so the Intel slice's settings
-  come from a CMake file that runs inside llama.cpp's ggml project for that architecture alone
+  is 11.0, and `tools/build/matrix.mjs` gives the build the same `MACOSX_DEPLOYMENT_TARGET`, read only when a build
+  asks (`current.yml` loads `matrix.mjs` from a checkout of `tools/` alone, and `currentBuild.test.ts` loads it so).
+  llama-cpp-sys-2 passes every `CMAKE_*` and `GGML_*` variable to both slices alike and reads none per target, so the
+  Intel slice's settings come from a CMake file that runs inside llama.cpp's ggml project for that architecture alone
   (`tools/build/macos-slices.cmake`, through `CMAKE_PROJECT_ggml_INCLUDE`, its hash in `GGML_SLICES_SHA256` so an edit
   rebuilds llama.cpp): Metal off, and SSE4.2, AVX, AVX2, FMA, F16C and BMI2 on, the instruction sets the runner's
   processor check asks for before llama.cpp starts (cross-compiled on the Apple silicon runner, ggml would otherwise
@@ -40,41 +41,40 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   its build cache. That cache's key now also hashes `src-tauri/Cargo.toml`, `native/llm/Cargo.toml` and
   `macos-slices.cmake`, the files that decide how llama.cpp is built, beside both lockfiles: actions/cache saves
   nothing after an exact hit, and this change left the lockfiles as they were, so the key of the entry saved before
-  the runner would have been hit on every run and llama.cpp built again each time; every target's key moves once,
-  each restoring its last entry by the key's prefix (`buildMatrix.test.ts` pins the list). Before any upload it fails
-  unless the new `tools/build/macAudit.mjs` passes six checks: `package`
-  (the `.app`, the `.app` in the `.dmg`, attached read-only with hdiutil, and the `.app` in the zip hold the model at
-  the pinned size with its licence and notice and llama.cpp's texts, nothing holds the tiny test model, and the `.dmg`
-  and the zip are each larger than nine tenths of the model and under GitHub's 2 GiB), `archs` (`lipo -archs` lists
-  arm64 and x86_64), `libraries` (`otool -L`, slice by slice: only `/System/Library/` and `/usr/lib/`, no OpenSSL,
-  curl or OpenMP, no `@rpath` library outside the app), `minos` (`otool -l`: each slice's minos at most 11.0),
-  `symbols` (the Linux check's banned list, against each slice's Apple linker map, `-Wl,-map`, which `build.rs` now
-  writes on macOS, one leading underscore taken off each name; the binary's strings; `nm -u -m` for each slice) and
-  `slices` (llama.cpp's build output for each slice, and Metal's shader strings in the arm64 slice alone).
-  `macAudit.test.ts` (7) runs every command end to end over universal Mach-O binaries it makes with clang, ld64.lld
-  and llvm-lipo and reads with llvm-otool, llvm-lipo and llvm-nm, which print as Apple's tools do, each passing a good
-  one and failing a bad one by name (one slice, macOS 12, a Homebrew OpenSSL, an `@rpath` library outside the app, a
-  kept download symbol, a `connect` import, a planted string, Metal in the Intel slice, a missing model or notice, the
-  tiny model's name). The map is read in both of Apple's forms of an archive member: classic ld64's
-  `lib.rlib(member.o)`, which ld64.lld writes, and ld-prime's `lib.rlib[N](member.o)` (Xcode 15 on, the macOS
-  runner's linker), which the test takes from a fixture and from ld64.lld's maps rewritten to it; no real ld-prime
-  map has been read. `buildMatrix.test.ts` pins the build step's four settings as literals and
-  `macos-slices.cmake`'s condition, FORCE lines and status lines. `native-llm.yml`'s Apple silicon job now also reads
-  a few greedy tokens of the 1.5B model with the macOS plan (`desktop.rs`, whose GPU is `runner.rs`'s own
-  expression), printing the devices llama.cpp found and where the model's weights went, read from llama.cpp's own
-  log of its weight buffers (the GPU only when a buffer not the processor's holds some, so a listed GPU is not taken
-  as proof); it fails when no token comes or no such line is logged, not when Metal is missing. llama.cpp's CMake
-  configuration was run in the container for each slice as Darwin: the x86_64 slice printed Metal off and
-  `-msse4.2;-mf16c;-mfma;-mbmi2;-mavx;-mavx2`, the arm64 slice kept Metal on. `third_party/llama.cpp/NOTICE`,
-  `NOTICE.md`, `docs/ip-audit.md`, the 1.5B model's NOTICE and `siteModel.mjs` name the macOS app, and the model's
-  carriers test holds four. No workflow starts the built app: an answer from it would need a WebDriver for WKWebView,
-  which tauri-driver lacks on macOS, or new product code, so the launch is left out. The first macOS build in CI
-  failed to link the Apple silicon slice: below macOS 15 ggml's Metal code calls `__isPlatformVersionAtLeast`, which
-  clang's runtime (compiler-rt, `libclang_rt.osx.a`) defines and rustc does not link, so `src-tauri/build.rs` now
-  links that archive on macOS where the runner is compiled, found through `xcrun clang -print-resource-dir`, and stops
-  with a sentence when it is missing (`desktopShell.test.ts` pins it). Not verified: the macOS build itself until CI
-  runs it, the app in WKWebView (WebGPU there, the recovery card, the console alone), how fast Metal
-  answers, any run on an Intel Mac, and Gatekeeper with this unsigned app.
+  the runner would have been hit on every run and llama.cpp built again each time; every target's key moves once, each
+  restoring its last entry by the key's prefix (`buildMatrix.test.ts` pins the list). Before any upload it fails
+  unless the new `tools/build/macAudit.mjs` passes six checks: `package` (the `.app`, the `.app` in the `.dmg`,
+  attached read-only with hdiutil, and the `.app` in the zip hold the model at the pinned size with its licence and
+  notice and llama.cpp's texts, nothing holds the tiny test model, and the `.dmg` and the zip are each larger than
+  nine tenths of the model and under GitHub's 2 GiB), `archs` (`lipo -archs` lists arm64 and x86_64), `libraries`
+  (`otool -L`, slice by slice: only `/System/Library/` and `/usr/lib/`, no OpenSSL, curl or OpenMP, no `@rpath`
+  library outside the app), `minos` (`otool -l`: each slice's minos at most 11.0), `symbols` (the Linux check's banned
+  list, against each slice's Apple linker map, `-Wl,-map`, which `build.rs` now writes on macOS, one leading
+  underscore taken off each name; the binary's strings; `nm -u -m` for each slice) and `slices` (llama.cpp's build
+  output for each slice, and Metal's shader strings in the arm64 slice alone). `macAudit.test.ts` (7) runs every
+  command end to end over universal Mach-O binaries it makes with clang, ld64.lld and llvm-lipo and reads with
+  llvm-otool, llvm-lipo and llvm-nm, which print as Apple's tools do, each passing a good one and failing a bad one by
+  name (one slice, macOS 12, a Homebrew OpenSSL, an `@rpath` library outside the app, a kept download symbol, a
+  `connect` import, a planted string, Metal in the Intel slice, a missing model or notice, the tiny model's name). The
+  map is read in both of Apple's forms of an archive member: classic ld64's `lib.rlib(member.o)`, which ld64.lld
+  writes, and ld-prime's `lib.rlib[N](member.o)` (Xcode 15 on, the macOS runner's linker), which the test takes from a
+  fixture and from ld64.lld's maps rewritten to it; no real ld-prime map has been read. `buildMatrix.test.ts` pins the
+  build step's four settings as literals and `macos-slices.cmake`'s condition, FORCE lines and status lines.
+  `native-llm.yml`'s Apple silicon job now also reads a few greedy tokens of the 1.5B model with the macOS plan
+  (`desktop.rs`, whose GPU is `runner.rs`'s own expression), printing the devices llama.cpp found and where the
+  model's weights went, read from llama.cpp's own log of its weight buffers (the GPU only when a buffer not the
+  processor's holds some, so a listed GPU is not taken as proof); it fails when no token comes or no such line is
+  logged, not when Metal is missing. llama.cpp's CMake configuration was run in the container for each slice as
+  Darwin: the x86_64 slice printed Metal off and `-msse4.2;-mf16c;-mfma;-mbmi2;-mavx;-mavx2`, the arm64 slice kept
+  Metal on. `third_party/llama.cpp/NOTICE`, `NOTICE.md`, `docs/ip-audit.md`, the 1.5B model's NOTICE and
+  `siteModel.mjs` name the macOS app, and the model's carriers test holds four. No workflow starts the built app: an
+  answer from it would need a WebDriver for WKWebView, which tauri-driver lacks on macOS, or new product code, so the
+  launch is left out. The first macOS build in CI failed to link the Apple silicon slice: below macOS 15 ggml's Metal
+  code calls `__isPlatformVersionAtLeast`, which clang's runtime (compiler-rt, `libclang_rt.osx.a`) defines and rustc
+  does not link, so `src-tauri/build.rs` now links that archive on macOS where the runner is compiled, found through
+  `xcrun clang -print-resource-dir`, and stops with a sentence when it is missing (`desktopShell.test.ts` pins it).
+  Not verified: the macOS build itself until CI runs it, the app in WKWebView (WebGPU there, the recovery card, the
+  console alone), how fast Metal answers, any run on an Intel Mac, and Gatekeeper with this unsigned app.
 
 - **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which
   brain answers Sloane (a model server on this machine, the gateway to the Claude API, which answers from off this

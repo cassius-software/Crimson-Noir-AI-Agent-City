@@ -21,7 +21,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -977,6 +978,24 @@ test('the command line: pick prints the outputs or nothing, --strict fails a ref
     console.log = log
     console.error = error
     t.done()
+  }
+})
+
+test('current.mjs loads from a checkout of tools/ alone, as every job of current.yml that runs it checks out', () => {
+  // Each job that runs current.mjs checks out this repository's tools/ alone (the built commit's files go to built/);
+  // a file that current.mjs imports and that reads outside tools/ as it loads stops every run (matrix.mjs once read
+  // src-tauri/tauri.conf.json so, and the dry run failed on its first line).
+  const jobs = WORKFLOW.split(/\n {2}(?=[a-z][\w-]*:\n)/).filter((j) => j.includes('node tools/build/current.mjs'))
+  assert.ok(jobs.length >= 2, 'the jobs that run it')
+  for (const j of jobs) assert.match(j, /- uses: actions\/checkout@v4\n {8}with:\n {10}persist-credentials: false\n {10}sparse-checkout: tools\n/, j.slice(0, 40))
+  const dir = mkdtempSync(join(tmpdir(), 'current-tools-'))
+  try {
+    cpSync(join(ROOT, 'tools'), join(dir, 'tools'), { recursive: true })
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', `const c = await import(${JSON.stringify(join(dir, 'tools', 'build', 'current.mjs'))}); console.log(typeof c.pick)`], { cwd: dir, encoding: 'utf8' })
+    assert.equal(run.status, 0, run.stderr)
+    assert.equal(run.stdout.trim(), 'function')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

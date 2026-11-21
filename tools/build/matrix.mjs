@@ -133,8 +133,14 @@ function linuxPlan(version) {
   ]
 }
 
-/** The macOS app's lowest macOS (src-tauri/tauri.conf.json bundle.macOS.minimumSystemVersion): llama.cpp needs 10.15. */
-export const MAC_MINIMUM = JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.macOS.minimumSystemVersion
+/**
+ * The macOS app's lowest macOS (src-tauri/tauri.conf.json bundle.macOS.minimumSystemVersion): llama.cpp needs 10.15.
+ * Read when asked, not when this file loads: current.yml loads it (through current.mjs) from a checkout of tools/
+ * alone, where src-tauri/ is not.
+ */
+export function macMinimum() {
+  return JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.macOS.minimumSystemVersion
+}
 
 /** The CMake file that sets llama.cpp's options for the Intel slice alone (its header says why and how). */
 export const MAC_SLICES = 'tools/build/macos-slices.cmake'
@@ -146,7 +152,7 @@ export const MAC_SLICES = 'tools/build/macos-slices.cmake'
  * - GGML_SLICES_SHA256: that file's hash. llama-cpp-sys-2 rebuilds llama.cpp when a GGML_* variable changes, not a
  *   CMAKE_* one, so an edited MAC_SLICES rebuilds both slices instead of keeping a cached build of the old one (CMake
  *   reports the variable as unused);
- * - MACOSX_DEPLOYMENT_TARGET: MAC_MINIMUM, the value Tauri itself exports from minimumSystemVersion for the build, so
+ * - MACOSX_DEPLOYMENT_TARGET: macMinimum(), the value Tauri itself exports from minimumSystemVersion for the build, so
  *   rustc, cc and CMake (which reads it for CMAKE_OSX_DEPLOYMENT_TARGET) target the same macOS: ggml's
  *   std::filesystem needs 10.15, and the Intel slice's default would be 10.12;
  * - CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: llama.cpp's HTTP library must not find a Homebrew OpenSSL (as on Linux).
@@ -156,7 +162,7 @@ export function macEnv() {
   return {
     CMAKE_PROJECT_ggml_INCLUDE: slices,
     GGML_SLICES_SHA256: createHash('sha256').update(readFileSync(slices)).digest('hex'),
-    MACOSX_DEPLOYMENT_TARGET: MAC_MINIMUM,
+    MACOSX_DEPLOYMENT_TARGET: macMinimum(),
     CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: 'ON',
   }
 }

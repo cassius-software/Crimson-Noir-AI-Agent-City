@@ -63,7 +63,7 @@ test('the settings it checks against are the app\'s own: llama.cpp\'s texts from
   }
   assert.equal(a.MINIMUM, '11.0')
   const m = await import(MATRIX)
-  assert.equal(m.MAC_MINIMUM, a.MINIMUM, 'the build targets the macOS the audit holds it to')
+  assert.equal(m.macMinimum(), a.MINIMUM, 'the build targets the macOS the audit holds it to')
   assert.equal(m.macEnv().MACOSX_DEPLOYMENT_TARGET, a.MINIMUM)
   assert.equal(a.MODEL_DIR, 'Contents/Resources/models/', 'Tauri\'s resource folder in a .app, where model.rs looks')
   assert.deepEqual(a.ARCHS, ['arm64', 'x86_64'])
