@@ -26,7 +26,7 @@
  */
 import { CITY, STYLE, type Box, type Building } from '../city.ts'
 import { TRAFFIC } from '../../02_Define_The_Rules/civic.ts'
-import { TRACKS, VTOL_CELLS, planeCorridors, poseAt, ring, trainLoop, vtolPads, vtolRoutes, type Pad, type Track, type TrackNetwork, type Vec2, type VtolBand, type VtolCells } from '../../06_Make_Decisions/tracks.ts'
+import { TRACKS, VTOL_CELLS, guideway, planeCorridors, poseAt, ring, trainLoop, vtolPads, vtolRoutes, type Pad, type Track, type TrackNetwork, type Vec2, type VtolBand, type VtolCells } from '../../06_Make_Decisions/tracks.ts'
 import { isRect, type Pt, type Rect } from './clip.ts'
 import { DM, ROAD_CLASS, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
 import type { RegionLayout } from './regionWorld.ts'
@@ -259,8 +259,10 @@ export function windowVtolRoutes(g: StreetGrid, boxes: readonly Box[]): Track[] 
  * building (clip.ts isRect: every generated footprint) standing on a lot of the window or of the one ring of lots round
  * it, as [x0, 0, z0, x1, height, z1] in engine metres (its roof may take a VTOL pad, its box bounds every leg); every
  * building anywhere that reaches into the racetrack's envelope (needlesOf: The Spire), by its footprint's box; and the
- * region's own plan (the rooms' boxes, the pier). From the hollowed pack (regionWorld.ts hollowLots), so a building put
- * out of sight (height 0) is no pad. In the pack's order, then the plan's: the same inputs give the same list.
+ * region's own plan (the rooms' boxes, the pier) where it stands on those same lots: the rooms stand all over the map
+ * (placement.ts) and one far from the window is no pad of the window's routes, as a far building is none. From the
+ * hollowed pack (regionWorld.ts hollowLots), so a building put out of sight (height 0) is no pad. In the pack's order,
+ * then the plan's: the same inputs give the same list.
  */
 export function craftBoxesOf(pack: Pick<RegionPack, 'buildings'>, offset: { x: number; z: number }, g: StreetGrid, plan: readonly Box[] = []): Box[] {
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
@@ -278,7 +280,12 @@ export function craftBoxesOf(pack: Pick<RegionPack, 'buildings'>, offset: { x: n
       out.push([Math.min(...xs), 0, Math.min(...zs), Math.max(...xs), h, Math.max(...zs)])
     }
   }
-  for (const b of plan) out.push([b[0], b[1], b[2], b[3], b[4], b[5]])
+  // A plan box by the lot under its middle: on the window or its ring of lots, as a building is.
+  const near = (b: Box): boolean => {
+    const K = Math.floor((b[0] + b[3]) / 2 / P), M = Math.floor((b[2] + b[5]) / 2 / P)
+    return K >= K0 - 1 && K <= K0 + B && M >= M0 - 1 && M <= M0 + B
+  }
+  for (const b of plan) if (near(b)) out.push([b[0], b[1], b[2], b[3], b[4], b[5]])
   return out
 }
 
@@ -500,7 +507,10 @@ const span = (e: Pt, n: Pt, t: Pt, a0: number, a1: number, w0: number, w1: numbe
  * outer sidewalk edge of a street running along the shore within TRANSIT.pier.quayReach (every shore of a generated
  * map has one), or the shore itself. A point is kept when the deck (TRANSIT.pier.length by 2 · halfWidth) and the
  * berth platform at its end lie inside the region, over the water throughout, clear of every building by a metre and of
- * every road but the quay's own (a bridge over the lake would cross the pier). The pier is boxes: the deck and the
+ * every road but the quay's own (a bridge over the lake would cross the pier), and clear, from the shore's line to the
+ * platform's end, of every column of the window's elevated loop by a metre (tracks.ts guideway: where the loop runs
+ * along the quay its columns stand on the lakeside kerb, closer together than a pier is wide, so the pier opens beyond
+ * the loop's side, never with a column in its railings or its mouth). The pier is boxes: the deck and the
  * platform TRANSIT.pier.deck high (a step the avatar takes), railings from the shore wall's line to the platform along
  * both sides, round the platform's three outer sides and back along its two inner edges, so from the opening in the
  * wall (the deck's width) nothing leads onto the water plane. The berth is the platform's outer face; no ferry sails
@@ -516,6 +526,9 @@ export function ferryDock(pack: RegionPack, l: Layout, g: StreetGrid): FerryDock
   const inWater = (x: number, z: number): boolean => inWaterAt(x, z) || inWaterAt(x + 1e-3, z + 1e-3) || inWaterAt(x - 1e-3, z - 1e-3)
   const roads = roadSegments(pack, l)
   const buildings = buildingRects(pack, l)
+  const loop = windowTrainLoop(g)
+  const columns = loop ? guideway(loop, g.furniture).columns : []
+  const columnClear = TRACKS.train.columnRadius + 1
   const [wx, wz] = windowCentre(g)
   const alongBox = (p: Pt, q: Pt) => (Math.abs(p[0] - b.x0) < 0.2 && Math.abs(q[0] - b.x0) < 0.2) || (Math.abs(p[0] - b.x1) < 0.2 && Math.abs(q[0] - b.x1) < 0.2) ||
     (Math.abs(p[1] - b.z0) < 0.2 && Math.abs(q[1] - b.z0) < 0.2) || (Math.abs(p[1] - b.z1) < 0.2 && Math.abs(q[1] - b.z1) < 0.2)
@@ -556,6 +569,8 @@ export function ferryDock(pack: RegionPack, l: Layout, g: StreetGrid): FerryDock
     const over = [...outline(e, n, t, quay + 0.01, quay + length - 0.01, -halfWidth + 0.01, halfWidth - 0.01, 7), ...outline(e, n, t, quay + length + 0.01, end - 0.01, -platform.halfWidth + 0.01, platform.halfWidth - 0.01, 7)]
     if (!over.every(([x, z]) => inWater(x, z))) continue
     if (buildings.some((r) => overlaps(grow(r, 1), deckRect) || overlaps(grow(r, 1), platRect))) continue
+    const mouth = grow(span(e, n, t, 0, quay + length, -halfWidth, halfWidth), columnClear), berthed = grow(platRect, columnClear)
+    if (columns.some(([x, z]) => (x >= mouth.x0 && x <= mouth.x1 && z >= mouth.z0 && z <= mouth.z1) || (x >= berthed.x0 && x <= berthed.x1 && z >= berthed.z0 && z <= berthed.z1))) continue
     if (roads.some((r) => !(alongShore(r) && Math.abs(offset(r)) <= quayReach) && (segmentRect(r.a, r.b, deckRect) < r.half + 1 || segmentRect(r.a, r.b, platRect) < r.half + 1))) continue
     const boxes: Building[] = []
     const box = (a0: number, a1: number, w0: number, w1: number, y0: number, y1: number, style: number) => {

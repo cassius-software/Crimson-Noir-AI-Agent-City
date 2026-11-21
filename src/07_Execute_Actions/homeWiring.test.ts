@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It pins the page-side wiring of the seven homes (01_Initialize_World/properties.ts), which
  * the engine, the world, the HUD and App carry and Node cannot run. The city hollows the homes' lots after the shops',
- * and a generated region picks its home lots after its shops', hollows them with the rest and hands them to the physics
+ * and a generated region takes its home lots from the placement (region/placement.ts: never a workplace's or a shop's
+ * lot), hollows them with the rest and hands them to the physics
  * worker, which takes from them only each home's room frame to check the furniture's solids against (the 'home'
  * command; the city's frames it builds from the seed) and builds no home geometry. The engine keeps the homes with
  * their names, addresses and arrival spots, and opens a home's doorstep card from E (a car in reach keeps E for its
@@ -56,13 +57,15 @@ const importsOf = (src: string): string[] => [...src.matchAll(/^import[^\n]*?fro
 /** The house's words a pinned range may not carry (bootloader.test.ts, netWiring.test.ts, splitWiring.test.ts). */
 const FORBIDDEN = /\btarget\b|\bthe matrix\b|\bmatrix[- ](?:style|like|rain|code|effect)\b|\bdigital rain\b|\bragdoll\b/i
 
-test('the city and the region: the homes hollowed after the shops; the region\'s home lots picked after the shops\', hollowed with them and handed to the worker for the furniture\'s frames', () => {
+test('the city and the region: the homes hollowed after the shops; the region\'s home lots the placement\'s, hollowed with the shops\' and handed to the worker for the furniture\'s frames', () => {
   const city = flat(read('../01_Initialize_World/city.ts'))
   before(city, 'hollowShops(seed, out)', 'hollowProperties(seed, out)', 'the shops first, so the homes pick among the lots left')
   const src = flat(read('./engine.ts'))
-  before(src, 'const shopLots = ', 'const homeLots = ', 'the shops pick before the homes')
+  before(src, 'const shopLots = ', 'const homeLots = ', 'the placement\'s lists read in the order hollowLots takes them')
   before(src, 'const homeLots = ', 'const hollow = ', 'and the homes are hollowed with the rest')
-  assert.ok(src.includes('const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []'), 'never on a workplace\'s or a shop\'s lot')
+  // The placement's homes (region/placement.ts: never on a workplace's or a shop's lot, placement.test.ts).
+  assert.ok(src.includes('const homeLots = placement && streets ? placement.homes : []'), 'the placement\'s homes, and none without a window')
+  assert.ok(!src.includes('regionHomeLots'), 'never the window\'s own picker')
   assert.ok(src.includes('const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null'))
   // The homes' glass reaches the worker as the world's boxes; the region's lots go with the shops' only so the worker
   // can check each home's furniture against that home's room frame (the 'home' command).

@@ -5,7 +5,7 @@
  * Why does this file exist? It pins the page-side wiring of the storefronts (01_Initialize_World/storefronts.ts), which
  * the engine, the HUD and App carry and Node cannot run: the city's buildings are hollowed for the shops after the
  * workplaces, the worker's exit rule knows the shops' glass (the city's, or a generated region's lots), the engine
- * keeps the city's shops or the region's (region/shops.ts, hollowed by regionWorld.ts hollowLots and handed to the worker)
+ * keeps the city's shops or the region's (region/placement.ts, hollowed by regionWorld.ts hollowLots and handed to the worker)
  * and opens a shop's card from E (a car in reach keeps E for its door) or B, the mirror camera circles the body while
  * the card is open and ends when the avatar leaves the shop, the HUD shows the shop's chip and draws the shops on the
  * minimap, and App opens the card from the engine and the chip, suspends the game's input while it is open, wears a
@@ -51,8 +51,10 @@ test('the engine: the city\'s shops kept; E opens a shop\'s card unless a car is
   // A design the look hides (a coat keeps its sleeves down) says so under its name (storeCatalog.ts coverHint).
   assert.ok(card.includes('const hint = coverHint(look, item)'))
   assert.ok(card.includes('{hint && <div className={`text-[11px] leading-snug ${t.muted}`} data-hint>{hint[0].toUpperCase() + hint.slice(1)}</div>}'))
-  // A region's shops: picked after its workplaces, never on one of their lots, hollowed with them, the same lots to the worker.
-  before(src, 'const lots = pack && layout && streets ? regionWorkplaceLots(', 'const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []', 'the workplaces first')
+  // A region's shops: the placement's (region/placement.ts, which keeps them off the workplaces' lots and two lots
+  // from every other place: placement.test.ts), hollowed with the rooms, the same lots to the worker.
+  before(src, 'const lots = placement && streets ? placement.workplaces : []', 'const shopLots = placement && streets ? placement.shops : []', 'the workplaces first')
+  assert.ok(!src.includes('regionShopLots'), 'never the window\'s own picker')
   assert.ok(src.includes('hollowLots(pack, layout, lots, shopLots, homeLots)'))
   assert.ok(src.includes('...(shopLots.length > 0 && { shops: shopLots }),'), 'the worker builds the same glass')
   assert.ok(src.includes('drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius)'), 'the region\'s minimap shows its shops')

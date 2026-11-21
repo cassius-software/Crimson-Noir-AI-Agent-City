@@ -32,11 +32,20 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
     'const places = pack && layout ? new RegionPlaces(pack, layout) : null',
     'const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null',
     'const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null',
-    'const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []',
-    // The region's shops (region/shops.ts, storeWiring.test.ts) are hollowed with the rooms.
+    // The placement (region/placement.ts) shares the places out over the whole map from the pack and the seed alone:
+    // it never reads the start, so the lots are the same whichever region the visitor chose, and the start is read
+    // from it (regionWorld.ts regionStart). A region with no street window (a surveyed one) has no lots.
+    'const placement = pack && layout ? regionPlacement(pack, layout, requested.seed) : null',
+    'const start = pack && layout && places ? regionStart(pack, layout, places, placement) : null',
+    'const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }',
+    'const lots = placement && streets ? placement.workplaces : []',
+    // The region's shops and homes (storeWiring.test.ts, homeWiring.test.ts) are hollowed with the rooms.
     'const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null',
   ]) assert.ok(src.includes(line), line)
-  before(src, 'const streets = pack && layout ? streetGridOf(', 'regionWorkplaceLots(pack, layout, streets, spawn, options.seed)', 'the window first, the lots in it')
+  before(src, 'const placement = pack && layout ? regionPlacement(', 'const start = pack && layout && places ? regionStart(', 'the placement first: the start is one of its')
+  before(src, 'const start = pack && layout && places ? regionStart(', 'const streets = pack && layout ? streetGridOf(', 'the start before the window round it')
+  before(src, 'const streets = pack && layout ? streetGridOf(', 'const lots = placement && streets ? placement.workplaces : []', 'the window first: no window, no lots')
+  assert.ok(!src.includes('regionWorkplaceLots'), 'never the window\'s own picker: the places are the whole map\'s')
   before(src, 'const hollow = pack && layout ? hollowLots(', 'const world = buildWorld(', 'hollowed before the world is built')
   // The page draws the hollowed copy, the rooms' boxes and their paved floors; the worker walls that same copy, takes
   // the world's boxes (the rooms' among them) as colliders, and builds its rooms from the lots.
@@ -53,6 +62,21 @@ test('the engine: the lots from the pack as it came, a hollowed copy drawn and w
   assert.ok(src.includes('return p ? (ctx, x, z, radius, dark) => { p.drawMap(ctx, x, z, radius, dark); drawRooms(ctx, rooms, x, z, dark, radius); drawShops(ctx, shops, x, z, dark, radius); drawHomes(ctx, homes, x, z, dark, this.ownedHomes, radius) } : null'), 'the rooms (and the shops and the homes) over the region\'s map')
   assert.ok(src.includes('...(this.places && this.rooms.length === 0 ? {} : { working: s.working ?? 0 }),'), 'at work indoors wherever there are rooms')
   assert.ok(!src.includes('...(this.places ? {} : { working: s.working ?? 0 }),'))
+})
+
+test('the crowd: in a region only the rooms on the window\'s lots are rooms to it, on the GPU and on the CPU alike', () => {
+  // The rooms stand all over the map (region/placement.ts); the crowd walks one street window. A room off the window
+  // is packed as an empty slot (interiors.ts packRooms) and has an empty route table (region/workplaces.ts packRoutes),
+  // by the one rule (region/streets.ts lotInWindow), so nobody is sent to a room they cannot walk to. The city has no
+  // window and keeps every room.
+  const line = 'this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms, undefined, streets ? (room) => lotInWindow(streets, room.k, room.m) : undefined) : undefined'
+  for (const file of ['../03_Spawn_Agents/crowdSim.ts', '../03_Spawn_Agents/crowdHost.ts']) {
+    const src = flat(read(file))
+    assert.ok(src.includes(line), `${file}: the rooms packed by the window's lots`)
+    assert.ok(src.includes('this.#routes = streets && rooms && rooms.length > 0 ? packRoutes(rooms, streets) : undefined'), `${file}: the routes over the same window`)
+  }
+  const routes = flat(read('../01_Initialize_World/region/workplaces.ts'))
+  assert.ok(routes.includes('if (!lotInWindow(g, room.k, room.m)) return'), 'no table for a room off the window')
 })
 
 test('the world: a region\'s boxes (its rooms\' shell, furniture and what the slabs carry) are drawn as the city\'s, and only when there are some', () => {
