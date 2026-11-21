@@ -365,6 +365,13 @@ test('a first publish makes the tag at the commit, then the release as a pre-rel
     assert.match(rel.notes, new RegExp(`\\*\\*Commit\\*\\* \\[\`${c1.slice(0, 7)}\`\\]\\(https://github\\.com/${REPO}/commit/${c1}\\) on main, published 2026-11-13 02:14 UTC by \\[this run\\]\\(https://run\\)\\.`))
     for (const id of IDS) assert.match(rel.notes, new RegExp(`^\\| ${c.LABELS[id].replace(/[()]/g, '\\$&')} \\| \\[`, 'm'), id)
     assert.match(rel.notes, /\[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\)/)
+    // An iPhone is sent to the web copy, and told plainly that the .ipa installs on no iPhone as it is: a friend
+    // was once handed that file as the iPhone build.
+    assert.match(rel.notes, /^- \*\*On an iPhone or iPad, open the \[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\) in Safari; the `\.ipa` is not for installing\.\*\* The web copy needs iOS 26 or iPadOS 26 or newer/m)
+    assert.match(rel.notes, /No iPhone installs the `\.ipa` as it is: Apple's devices take only signed apps/)
+    assert.match(rel.notes, /Neither has been run on a real iPhone yet\./)
+    assert.match(rel.notes, /^\| iOS \(arm64, unsigned: for a developer to sign, not to install\) \| /m)
+    assert.doesNotMatch(rel.notes, /the iPhone can play the web copy instead/)
     assert.match(rel.notes, /The apps' file names carry the version in `package\.json` at the commit they were built from \(`1\.0\.0-stable-beta` at this one\)/)
     assert.match(rel.notes, /the zipped macOS `\.app`, the UEFI files and images, and the notices beside them carry none/)
     assert.match(rel.notes, /`SHA256SUMS` lists every file here but itself and `current\.json`/)
@@ -430,7 +437,7 @@ test('a target that never built is listed with no files; the iOS build missing i
     const r1 = c.publish({ media: artifacts(join(t.dir, 'm1'), first), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
     assert.deepEqual(r1.plan.missing, ['ios-ipa'])
     assert.deepEqual(r1.plan.failed, [], 'best effort')
-    assert.match(gh.s.release?.notes ?? '', /^\| iOS \(arm64, unsigned\) \| no files yet \| its build failed at .* \(best effort\) \|$/m)
+    assert.match(gh.s.release?.notes ?? '', /^\| iOS \(arm64, unsigned: for a developer to sign, not to install\) \| no files yet \| its build failed at .* \(best effort\) \|$/m)
     assert.ok(!gh.s.release?.assets.has('LICENSE'), 'without --source, no notices are added')
     // Someone deletes the macOS file by hand; macOS then fails at c2: nothing of it is listed or summed.
     gh.s.release?.assets.delete('Crimson.Noir.Agent.City_1.0.0-stable-beta_universal.dmg')
