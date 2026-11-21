@@ -997,7 +997,7 @@ test('a light pull below a twentieth as a controller takes the throttle is held 
   lone.buttons[XR_BUTTON.trigger].value = 0.095
   r.m.driving = true
   r.m.read()
-  for (const value of [0.095, 0.086, 0.07, 0.095, 0.105, 0.08, 0.1]) {
+  for (const value of [0.095, 0.086, 0.07, 0.095, 0.105, 0.08, ...Array.from({ length: 12 }, () => 0.1)]) {
     lone.buttons[XR_BUTTON.trigger].value = value
     r.m.read()
     assert.equal(r.m.analog.throttle, 0, `a tremor to ${value}: still nothing`)
@@ -1022,7 +1022,7 @@ test('a worn trigger resting above the dead zone never creeps and still drives; 
   for (const rest of [0.06, 0.08, 0.15]) {
     const lone = ctl('right', 6, 4)
     lone.buttons[XR_BUTTON.trigger].value = rest
-    const r = rig([lone])
+    const r = rig([lone], 11)
     for (let k = 0; k < 3; k++) r.m.read() // on foot, resting (or a finger lying on it) at `rest`
     r.m.driving = true
     for (let k = 0; k < 90; k++) {
@@ -1128,8 +1128,7 @@ test('the point a trigger counts from is taken afresh at every car and every tak
   lone.buttons[XR_BUTTON.trigger].value = 0.06
   const r = rig([lone], 11)
   r.m.driving = true
-  r.m.read()
-  r.m.read()
+  for (let k = 0; k < 12; k++) r.m.read()
   lone.buttons[XR_BUTTON.trigger].value = 1
   r.m.read()
   assert.ok(close(r.m.analog.throttle, 1), 'the first car drives')
@@ -1241,23 +1240,30 @@ test('a press eased back and pulled again drives from where it came to rest, soo
 })
 
 test('a door press still travelling as the car is taken is followed to the stop: held there it gives nothing', () => {
-  for (const [hz, lag] of [[60, 1], [72, 2], [90, 1], [120, 2]] as const) {
+  // Linear 150 ms presses; one with a reading served twice and one that dips 0.005 on the way; a 400 ms squeeze.
+  const shapes: [string, number, (t: number) => number][] = [
+    ['linear', 150, (t) => Math.min(1, t / 150)],
+    ['a repeated reading', 150, (t) => Math.min(1, (t > 50 && t < 70 ? 50 : t) / 150)],
+    ['a small dip', 150, (t) => Math.min(1, t / 150) - (t > 60 && t < 75 ? 0.005 : 0)],
+    ['a slow squeeze', 400, (t) => { const x = Math.min(1, t / 400); return x * x * (3 - 2 * x) }],
+  ]
+  for (const [name, ms, shape] of shapes) for (const [hz, lag] of [[60, 1], [72, 2], [90, 1], [120, 2]] as const) {
     const lone = ctl('none', 6, 4)
     const r = rig([lone])
     const dt = 1000 / hz
     r.m.nearCar = true
     const b = lone.buttons[XR_BUTTON.trigger]
     let opened = -1
-    const frames = Math.ceil(150 / dt)
+    const frames = Math.ceil(ms / dt)
     for (let k = 1; k <= frames + 30; k++) {
-      b.value = Math.min(1, (k * dt) / 150)
+      b.value = shape(k * dt)
       b.pressed = b.value > 0.5
       r.tick(dt)
       // The engine sees the car taken `lag` frames after the press that opened it.
       if (opened >= 0 && k === opened + lag) r.m.driving = true
       const e = r.m.read()
       if (e === PAD_EDGE.interact && opened < 0) { opened = k; r.m.nearCar = false }
-      if (r.m.driving) assert.equal(r.m.analog.throttle, 0, `${hz} Hz, ${lag} frame(s) late, frame ${k} at ${b.value.toFixed(2)}: nothing`)
+      if (r.m.driving) assert.equal(r.m.analog.throttle, 0, `${name}, ${hz} Hz, ${lag} frame(s) late, frame ${k} at ${b.value.toFixed(3)}: nothing`)
     }
     assert.ok(opened > 0 && r.m.driving)
   }

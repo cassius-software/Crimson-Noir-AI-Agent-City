@@ -989,10 +989,10 @@ not been seen. Where the browser offers no immersive session the whole path is i
     is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
     a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
     still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
-    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop,
-    and from then on it drives only once pulled past a point 0.15 of its travel above the lowest it has eased back to
-    (so a jolt that dips a finger resting on it, even off it for a moment, does not count). Let go for a tenth of a
-    second, it counts from nothing again. From a resting finger or a worn trigger a full pull is still full throttle;
+    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop
+    (a squeeze of up to half a second), and from then on it drives only once pulled past a point 0.15 of its travel
+    above the lowest it has eased back to (so a jolt that dips a finger resting on it, even off it for a moment, does
+    not count). Let go for a tenth of a second, it counts from nothing again. From a resting finger or a worn trigger a full pull is still full throttle;
     from a press eased only a little, a wobble near the stop gives little. That point is taken afresh at each car and
     each takeover. So the car neither lurches on the way in nor creeps on a resting finger or a worn trigger that
     rests a little above nothing.
