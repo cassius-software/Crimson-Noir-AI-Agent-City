@@ -15,6 +15,28 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
+  `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
+  names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
+  chosen limits and features; memory of four kinds (device, images, upload, readback, the host kinds not coherent,
+  so `flush` and `invalidate` are explicit) backs buffers and images bound into it by hand; views, samplers, binding
+  layouts, pools and sets, pipeline layouts with 128 bytes of inline constants, render and compute pipelines; command
+  arenas and lists recorded between `begin` and `end`, with passes begun and ended inside them, barriers with
+  explicit stages, accesses and image layouts, copies, updates and indirect draws and dispatches; queues, fences and
+  semaphores. Shaders are **Lens**, its own binary form (typed SSA with structured control flow), with a builder,
+  a checker that refuses anything ill-formed or ill-typed, an exact encoder and decoder, and a disassembler. With
+  checks on, every submit is simulated first: a missing barrier (`hazard`) or an image in the wrong layout
+  (`layout`) refuses the whole submit before anything runs. A usage-scope rule refuses, as it is recorded, a pass or
+  dispatch that both writes and reads one resource. The first back end is a deterministic CPU reference renderer
+  (`soft.ts`): 1/256-pixel snapping, the top-left rule, clipping, four-sample coverage and resolve, quads with fine
+  derivatives, perspective-correct interpolation, mip-mapped sampling, depth, blending, and a Lens interpreter whose
+  per-submit step budget stops a runaway shader (and loses the device, as a GPU watchdog would). Calls run one at a
+  time, only objects Nightglass made are taken (a copy or a Proxy of one is refused before its code runs), and a
+  caller's list is read once, so nothing a caller's getter does lands between a call's checks and its work. 348 tests
+  in the folder pin it, among them seeded fuzzing of the binary form; an air-gap test keeps the folder free of other
+  interfaces' names. Nothing in the page uses it yet: slice 2 adds the WebGPU back end and a browser check that
+  compares its pictures with the reference renderer's, slice 3 the surfaces and the interface kit every console app
+  is to draw with.
 - **The macOS app carries Sloane's model and runs it in its own process.** The build matrix's `macos-universal` job
   now builds both slices of the universal app with `--features native-runner` and the model overlay, and puts Qwen2.5
   1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0) into the `.app` under
