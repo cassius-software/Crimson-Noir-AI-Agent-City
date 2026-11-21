@@ -44,10 +44,8 @@ import { GRAPHICS_RESET, gpuPaused, noteGpuLoss, recentGpuLosses } from './bootF
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
-import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
-import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
-import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
-import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics, regionStart } from '../01_Initialize_World/region/regionWorld.ts'
+import { regionPlacement } from '../01_Initialize_World/region/placement.ts'
 import { doorDir, doorFront, drawRooms, stationTable, toLocal, toWorld, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, SHOP_ORBIT, type Shop } from '../01_Initialize_World/storefronts.ts'
@@ -75,6 +73,8 @@ import { KERNEL_WORDS, type CrowdKernel } from '../03_Spawn_Agents/crowdSensor.t
 import { heldNone, kernelLostFailure, kernelNoneFailure, KernelWatch, pageKernelStore } from '../03_Spawn_Agents/crowdKernelMemory.ts'
 import { LOSS_GRACE_MS, lossOf, processGone, type DeviceLoss } from '../01_Initialize_World/gpuPipelines.ts'
 import { CrowdCull } from '../03_Spawn_Agents/crowdCull.ts'
+import { ACTIVITY } from '../03_Spawn_Agents/skills.ts'
+import { TalkGaze, withinTalk } from '../03_Spawn_Agents/talkGaze.ts'
 import { AGENTS_RANGE } from '../03_Spawn_Agents/crowdSensor.ts'
 import { PULSE, pulseLevel, type HalOutputs } from '../04_Connect_Hardware/hal.ts'
 import { Input, TriggerFeedback } from '../04_Connect_Hardware/input.ts'
@@ -582,8 +582,18 @@ export class Engine {
    * take it off again (App.tsx), so a link copied from here does not hold another device to this one's kernel.
    */
   readonly kernelKept: boolean
-  /** Where the pedestrians look (crowd.ts CrowdView.gazeTarget): the operator's eye afoot, nobody from a car. */
+  /** Where the people the operator is talking to look (crowd.ts CrowdView.gazeTarget): the eye, as TalkGaze.look keeps it. */
   private readonly crowdGaze: UniformNode<'vec4', Vector4>
+  /** Who the operator is talking to, into the crowd's uniforms (crowd.ts CrowdView.talk): the slots' indices and weights. */
+  private readonly crowdTalk: (who: Float32Array, weight: Float32Array) => void
+  /** The talk slots (talkGaze.ts): who looks the operator in the eye, each eased round and back. */
+  private readonly talk = new TalkGaze()
+  /** The person a conversation names (setTalkingTo), or −1 for nobody: nobody until a caller names them. */
+  private talkingTo = -1
+  /** The recruits standing by at the operator's side in the newest state (standBy): a summons has the operator talking to them. */
+  private readonly standingBy: number[] = []
+  /** This frame's people the operator is talking to (lookAtOperator; reused). */
+  private readonly talkers: number[] = []
   /** The realm's rig stream into the crowd's rig poses (crowd.ts CrowdView.rigs): the fallen wear their rigs. */
   private readonly crowdRigs: (stream: Float32Array | null) => void
   /** The agents whose figure wears a rig slot now (crowd.figure's fourth word, slot + 1), for the release when they are handed back. */
@@ -607,12 +617,12 @@ export class Engine {
   /** The one landmark the city has (the tallest tower: The Spire in the generated metropolis), in the engine's frame, or null in the procedural city. */
   private readonly landmarkAt: Landmark | null
   /**
-   * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots of its street
-   * window (region/workplaces.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
+   * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots all over its
+   * map (region/placement.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
    * work in them; the console's `rooms` lists them; `workplaceTable` and `stationTable` hand them to a swarm.
    */
   private readonly rooms: readonly Workplace[]
-  /** Where player 1 started (the city's centre sidewalk, a region's downtown arterial): the team runner's point for a desk this map has no room for. */
+  /** Where player 1 started (the city's centre sidewalk, the chosen quarter's start in a generated region, a surveyed one's downtown arterial): the team runner's point for a desk this map has no room for. */
   private readonly startAt: { readonly x: number; readonly z: number }
   /** The rooms as the team runner reads them (08_Swarm/team.ts TeamRoom), built on the first read and kept: the rooms never change while the engine lives. */
   private roomDoors: readonly { kind: string; name: string; door: { x: number; z: number } }[] | null = null
@@ -621,7 +631,7 @@ export class Engine {
   private roomStations: Float32Array | null = null
   /**
    * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed, or a generated region's
-   * from its pack (region/shops.ts; none in a surveyed region).
+   * five, one in each of its quarters (region/placement.ts; none in a surveyed region).
    * The page tells which one the avatar stands in (the HUD's chip, E or B opens its catalogue) and circles the body
    * with the mirror camera while the catalogue is open.
    */
@@ -632,7 +642,7 @@ export class Engine {
   private showroom: { shop: number; angle: number } | null = null
   /**
    * The world's homes (01_Initialize_World/properties.ts): the city's seven from its seed, or a generated region's on
-   * lots of its street window (region/homes.ts: up to seven, none in a surveyed region), each with its deed's name, its
+   * lots all over its map (region/placement.ts: up to seven, none in a surveyed region), each with its deed's name, its
    * address and its arrival on the sidewalk. A home is known by its property index (Home.home), the same in every map,
    * never by its place in this list. The page tells which one the avatar stands in (the HUD's chip, E or B opens its
    * doorstep card), and Go home takes the avatar to one.
@@ -930,7 +940,7 @@ export class Engine {
   private constructor(p: {
     canvas: HTMLCanvasElement; gpu: Gpu; world: World; crowd: CrowdCull; sim: SimClient; view: FleetView; craftView: CraftView | null; rigView: RigView; profile: DeviceProfile
     hardware: HardwareClass; hints: DeviceHints; kernelWhy: 'refused' | 'lost' | 'asked' | 'family' | null; kernelKept: boolean
-    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
+    post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; crowdTalk: (who: Float32Array, weight: Float32Array) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     start: { x: number; z: number }
     homes: readonly PageHome[]
@@ -969,6 +979,7 @@ export class Engine {
     this.kernelKept = p.kernelKept
     this.crowdGaze = p.crowdGaze
     this.crowdRigs = p.crowdRigs
+    this.crowdTalk = p.crowdTalk
     this.ghost = p.ghost
     this.netView = p.netView
     p.world.scene.add(this.staffView.group)
@@ -1171,8 +1182,14 @@ export class Engine {
       const layout = pack ? layoutOf(pack) : null
       const places = pack && layout ? new RegionPlaces(pack, layout) : null
       const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
-      // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
-      const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
+      // A generated region's places (region/placement.ts): its sixteen workplaces, five shops and seven homes shared out
+      // over the whole map by quarter, and where a visitor who chose each quarter first stands. Null in the city and in a
+      // surveyed region (no street grid).
+      const placement = pack && layout ? regionPlacement(pack, layout, requested.seed) : null
+      // In a generated region: the sidewalk across from the shop of the quarter the visitor chose (regionWorld.ts
+      // regionStart), facing along the street toward that quarter's heart. In a surveyed one: a sidewalk of the arterial
+      // nearest the region's origin (its downtown), facing along the street.
+      const start = pack && layout && places ? regionStart(pack, layout, places, placement) : null
       const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
       // A generated region's street window (region/streets.ts): the CITY.blocks × CITY.blocks blocks around the start that
       // the crowd walks and the fleet drives, so the lakefront metropolis has people and traffic like the city. A surveyed
@@ -1197,18 +1214,17 @@ export class Engine {
       // The ambient occlusion (governor.ts aoCandidate), built into the chain once here where the chain can run; the tier
       // then only writes its taps, strength and switch (frame), so no tier change compiles it.
       const aoBuilt = options.post && aoCandidate(profile, requested.ao)
-      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
-      // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
-      // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
-      // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
-      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left. The homes'
+      // A generated region's indoor workplaces, storefronts and homes: the placement's lots (region/placement.ts: all
+      // over the map, the same lots whichever quarter the visitor starts in), picked from the pack as it came, then
+      // hollowed out of a copy of it (regionWorld.ts hollowLots), which the page draws with the rooms' boxes and paved
+      // floors and the worker walls; the worker gets the lots themselves and builds the same rooms from them. The homes'
       // glass reaches the worker as the world's boxes (no car fits through a home's planters); it is handed their lots
       // only to check each home's furniture against that home's room frame (properties.ts homeFrames, the 'home'
       // command). In the city the worker builds the frames from the seed itself. A surveyed region has no window and no
       // lots: its copy is the pack.
-      const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
-      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
-      const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []
+      const lots = placement && streets ? placement.workplaces : []
+      const shopLots = placement && streets ? placement.shops : []
+      const homeLots = placement && streets ? placement.homes : []
       const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null
       // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
       // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
@@ -1424,7 +1440,7 @@ export class Engine {
             : kernels.plan.by === 'family' && ran === kernels.plan.from ? 'family' : 'refused'
       const kernelKept = kernels.plan.by === 'address' && remembered
       const engine = new Engine({
-        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options, kernelWhy, kernelKept,
+        canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), crowdTalk: (who, weight) => view0.talk(who, weight), ghost, options, kernelWhy, kernelKept,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets, start: spawn,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
@@ -2419,6 +2435,60 @@ export class Engine {
     return screenPoint(this.world.camera, x, y, z, { rect: this.views[0].rect, width: this.canvas.clientWidth, height: this.canvas.clientHeight })
   }
 
+  /**
+   * Name the person the operator is talking to, by their index (the crowd frame's row that is theirs), or null when the
+   * conversation ends: while it lasts they look the operator in the eye, their head easing round to them and back
+   * again after (talkGaze.ts). Nobody is named until a caller names them (the proximity talk with whoever is nearest
+   * is to call it; nothing calls it yet). Anything that is not a pedestrian's index (the operator's own figure among
+   * them) names nobody. The engine ends a conversation by itself once its person stands out of reach of the operator
+   * or on another floor (talkGaze.ts withinTalk), so a conversation nobody closed cannot leave anyone looking; from a
+   * car nobody looks, and the person looks again if the operator gets out beside them.
+   */
+  setTalkingTo(agent: number | null): void {
+    this.talkingTo = agent !== null && Number.isInteger(agent) && agent > PLAYER_INDEX && agent < this.options.agents ? agent : -1
+  }
+
+  /**
+   * The recruits standing by at the operator's side in state `s`: the crowd kernel reports them `interviewing` (called
+   * over, beside the operator and facing them) and no rally sends them elsewhere. A summons has the operator talking
+   * to them (talkGaze.ts). A step without a crowd frame keeps those still recruited and not sent off.
+   */
+  private standBy(s: StepState): void {
+    const n = this.options.agents, frame = s.crowdFrame, list = this.standingBy
+    if (frame && frame.length >= 3 * 4 * n) {
+      list.length = 0
+      for (const r of s.recruits) if (!r.rally && r.agent > PLAYER_INDEX && r.agent < n && frame[8 * n + 4 * r.agent + 3] === ACTIVITY.interviewing) list.push(r.agent)
+    } else {
+      for (let k = list.length - 1; k >= 0; k--) if (!s.recruits.some((r) => r.agent === list[k] && !r.rally)) list.splice(k, 1)
+    }
+  }
+
+  /**
+   * Who looks the operator in the eye this frame (talkGaze.ts): the recruits standing by and the person a conversation
+   * names (setTalkingTo, first, so it is never the one left waiting for a slot), each within reach of the operator's
+   * eye and on its floor, and nobody while the operator drives; the slots eased `dt` toward them and handed to the
+   * crowd's uniforms with the place their heads look at (TalkGaze.look: the eye, held where it was through a cut, so
+   * getting into a car, riding to another floor or a teleport swings nobody's head after it). A named person out of
+   * reach ends their conversation here.
+   */
+  private lookAtOperator(driving: boolean, dt: number): void {
+    const eye = this.rig.pose, talkers = this.talkers
+    const seen = Number.isFinite(eye.x + eye.y + eye.z)
+    talkers.length = 0
+    if (!driving && seen) {
+      if (this.talkingTo > PLAYER_INDEX) {
+        const near = withinTalk(this.crowdPose, this.talkingTo, eye)
+        if (near === false) this.talkingTo = -1
+        else if (near === true) talkers.push(this.talkingTo)
+      }
+      for (const a of this.standingBy) if (a !== this.talkingTo && withinTalk(this.crowdPose, a, eye) === true) talkers.push(a)
+    }
+    this.talk.look(talkers, eye, driving, dt)
+    const at = this.talk.eye
+    this.crowdGaze.value.set(at[0], at[1], at[2], 1)
+    this.crowdTalk(this.talk.who, this.talk.weight)
+  }
+
   /** A new state from the physics realm: what changed for the player, the distance counters, the haptic edge. */
   private received(s: StepState, prev: StepState): void {
     this.fresh = true
@@ -2438,6 +2508,9 @@ export class Engine {
         this.crowdCopiedAt = now
       }
     }
+    // Who a summons has the operator talking to (the recruits standing by at their side), read before the upload
+    // hands the frame back.
+    this.standBy(s)
     // The promoted pedestrians' rigs: their figures wear the rig's poses (the slot word in crowd.figure, the poses in
     // the crowd's uniform array, their rows in the render copy pinned to the rig's pelvis for the cull), or, on
     // ?rigs=capsules, are hidden in the render copy (before the upload re-applies the mask) with the capsules posed
@@ -2845,8 +2918,9 @@ export class Engine {
     if (this.homeCard !== null && (this.homeHere !== this.homeCard || this.rig.headset)) this.homeCard = null
     // Furnishing ends with its card, and as soon as it is refused (a network room, a headset, the deed gone).
     if (this.furnishHome !== null && (this.homeCard !== this.furnishHome || this.furnishRefusal(this.furnishHome) !== null)) this.endFurnish()
-    // The pedestrians near the operator look them in the eye (crowd.ts gazeTarget); from a car, nobody is looked at.
-    this.crowdGaze.value.set(this.rig.pose.x, this.rig.pose.y, this.rig.pose.z, driving >= 0 ? 0 : 1)
+    // Nobody stares at the operator: only the people the operator is talking to look them in the eye, each head
+    // easing round and back (talkGaze.ts); from a car, nobody.
+    this.lookAtOperator(driving >= 0, dt)
     // The other local players' heads, each on its own camera from its own avatar (or the car it drives) and its seat's
     // yaw and pitch; posed every animation frame like player 1's (their listeners read it; the car carries it).
     for (let k = 1; k < this.views.length; k++) this.poseView(this.views[k], k, st, dt)
@@ -3016,10 +3090,10 @@ export class Engine {
     }
   }
 
-  /** "Region · Street & Cross Street" (the region's name alone where no street is near). */
+  /** "Region · Street & Cross Street" (regionWorld.ts RegionPlaces.label): led by the one of the map's five regions the
+   *  point stands in, the map's own name where it stands in none; the lead alone where no street is near. */
   private regionPlace(x: number, z: number): string {
-    const here = this.places?.place(x, z) ?? ''
-    return here && here !== this.regionName ? `${this.regionName} · ${here}` : (this.regionName ?? '')
+    return this.places?.label(x, z) ?? this.regionName ?? ''
   }
 
   /**

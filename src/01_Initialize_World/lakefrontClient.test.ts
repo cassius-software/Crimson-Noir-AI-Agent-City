@@ -6,15 +6,19 @@
  * plain words, a pack asked for before the build is done still arrives, the pack starts the visitor in the asked zone
  * (that zone's centre is at the origin), the same bytes come from the one-call build, and a disposed builder refuses.
  * A worker that fails as a whole (its error event, which is never a message) rejects the build and every pack asked
- * for, before or after the build, so a returning visitor is never left waiting on the splash.
+ * for, before or after the build, so a returning visitor is never left waiting on the splash. And it runs the worker's
+ * own handler (lakefront.worker.ts, in this process) beside the inline port: each of the five zones asked for is the
+ * zone the pack starts in, on both, byte for byte, and anything that is no zone starts in the metropolis. (The worker
+ * once tested the zone with `in ZONE`, which reads ZONE's keys, so it built the metropolis whatever was chosen, and
+ * only the inline port, the one the other tests use, was right.)
  * What breaks if it is removed? The worker and the page could disagree on the protocol, the spawn drift from the zone,
- * or a dead builder hang the boot again.
+ * the visitor's chosen region be ignored in the browser alone, or a dead builder hang the boot again.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ZONE, generateLakefront } from './lakefront.ts'
+import { ZONE, generateLakefront, type Zone } from './lakefront.ts'
 import { LakefrontBuilder, inlinePort, reportingPort, type BuilderWorker } from './lakefrontClient.ts'
-import { BUILD_STAGES, STAGE_WORDS, WALK_BLOCKS, buildLakefrontPack, zoneCentre, zoneOf } from './lakefrontPack.ts'
+import { BUILD_STAGES, STAGE_WORDS, WALK_BLOCKS, buildLakefrontPack, packOf, startZone, zoneCentre, zoneOf, type FromWorker, type ToWorker } from './lakefrontPack.ts'
 import { MACRO } from './macroCity.ts'
 
 test('the stages arrive in order, each with plain words; a pack asked early arrives after the build', async () => {
@@ -48,6 +52,77 @@ test('zoneOf maps the saved slug to its zone, and nothing else', () => {
   assert.equal(zoneOf('lakefront-metropolis'), ZONE.metropolis)
   assert.equal(zoneOf('toronto'), null)
   assert.equal(zoneOf(null), null)
+})
+
+test('startZone: exactly the five regions\' ids; the metropolis for the lake, a number that is no zone, a name, nothing', () => {
+  for (const zone of [ZONE.metropolis, ZONE.westSprawl, ZONE.eastBluffs, ZONE.northRidge, ZONE.grandRavine]) assert.equal(startZone(zone), zone)
+  for (const junk of [ZONE.lake, 6, -1, 1.5, NaN, '1', 'the-grand-ravine', null, undefined, {}, [3]]) assert.equal(startZone(junk), ZONE.metropolis, `${String(junk)} is no zone`)
+  // ZONE's keys are the regions' names in code, never a zone: what `zone in ZONE` took for one.
+  for (const key of Object.keys(ZONE)) assert.equal(startZone(key), ZONE.metropolis, key)
+})
+
+/**
+ * The builder's real worker (lakefront.worker.ts) run in this process: it takes `self` as its scope the moment it
+ * loads, so a stand-in is `self` for the import and is taken away again. `ask` posts one message and returns what the
+ * worker said back to it (the worker answers before it returns).
+ */
+async function workerInProcess(): Promise<{ ask(m: ToWorker): FromWorker[] }> {
+  const said: FromWorker[] = []
+  const scope: { postMessage(m: FromWorker): void; onmessage: ((e: { data: ToWorker }) => void) | null } = { postMessage: (m) => { said.push(m) }, onmessage: null }
+  const was = Object.getOwnPropertyDescriptor(globalThis, 'self')
+  Object.defineProperty(globalThis, 'self', { configurable: true, value: scope })
+  try {
+    await import('./lakefront.worker.ts')
+  } finally {
+    if (was) Object.defineProperty(globalThis, 'self', was)
+    else delete (globalThis as { self?: unknown }).self
+  }
+  const hear = scope.onmessage
+  assert.ok(hear, 'the worker listens on its scope')
+  return { ask: (m) => { said.length = 0; hear({ data: m }); return said.slice() } }
+}
+
+test('the worker and the inline port start the pack in the asked zone, each of the five, and in the metropolis for anything that is no zone: the same pack from both', async () => {
+  const worker = await workerInProcess()
+  const inline = inlinePort()
+  const heard: FromWorker[] = []
+  inline.onmessage = (e) => { heard.push(e.data) }
+  const ports: [string, (m: ToWorker) => FromWorker[]][] = [
+    ['the worker', worker.ask],
+    ['the inline port', (m) => { heard.length = 0; inline.postMessage(m); return heard.slice() }],
+  ]
+  const kinds = (replies: FromWorker[]) => replies.map((m) => (m.kind === 'stage' ? m.stage : m.kind))
+  let id = 0
+  const packFrom = (ask: (m: ToWorker) => FromWorker[], zone: unknown, what: string) => {
+    const replies = ask({ kind: 'pack', zone: zone as Zone, id: ++id })
+    assert.deepEqual(kinds(replies), ['names', 'ready', 'pack'], what)
+    const last = replies[2]
+    assert.ok(last.kind === 'pack' && last.id === id, `${what}: the answer names its request`)
+    return last.pack
+  }
+  // Before the build there is no map to make a pack of: an error that names the request, from both.
+  for (const [name, ask] of ports) assert.deepEqual(ask({ kind: 'pack', zone: ZONE.westSprawl, id: ++id }), [{ kind: 'error', message: 'no map was built yet', id }], name)
+  for (const [name, ask] of ports) assert.deepEqual(kinds(ask({ kind: 'build', seed: 1337, blocks: WALK_BLOCKS })), [...BUILD_STAGES.slice(0, 5), 'built'], name)
+  const map = generateLakefront(1337, WALK_BLOCKS)
+  const starts: string[] = []
+  for (const zone of [ZONE.metropolis, ZONE.westSprawl, ZONE.eastBluffs, ZONE.northRidge, ZONE.grandRavine]) {
+    const want = packOf(map, zone)
+    const c = zoneCentre(map, zone)
+    for (const [name, ask] of ports) {
+      const pack = packFrom(ask, zone, `${name}, zone ${zone}`)
+      // The asked zone's centre is the pack's origin, and the asked zone is the quarter the visitor chose.
+      assert.deepEqual(pack.bounds, { x0: -c.x, z0: -c.z, x1: WALK_BLOCKS * MACRO.pitch - c.x, z1: WALK_BLOCKS * MACRO.pitch - c.z }, `${name}: zone ${zone} is where the pack starts`)
+      assert.equal(pack.quarters?.home, zone, `${name}: zone ${zone} is the pack's home quarter`)
+      assert.deepEqual(pack, want, `${name}: zone ${zone}, the very pack packOf makes`)
+    }
+    starts.push(`${c.x},${c.z}`)
+  }
+  assert.equal(new Set(starts).size, 5, 'five zones, five starts')
+  // Anything that is no zone starts in the metropolis: the lake, a number past the zones, a name (ZONE's keys among them), nothing.
+  const metropolis = packOf(map, ZONE.metropolis)
+  for (const junk of [ZONE.lake, 7, -1, 1.5, 'westSprawl', '1', null, undefined]) {
+    for (const [name, ask] of ports) assert.deepEqual(packFrom(ask, junk, `${name}, asked for ${String(junk)}`), metropolis, `${name}: ${String(junk)} is no zone`)
+  }
 })
 
 /** A worker that answers nothing and can be made to fail as a whole, as a Worker does (an `error` event). */

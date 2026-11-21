@@ -142,10 +142,12 @@ export interface SimInit {
    */
   streets?: StreetGrid | null
   /**
-   * A generated region's indoor workplaces (01_Initialize_World/region/workplaces.ts regionWorkplaceLots): at most
-   * sixteen lots of the street window, each with its kind and its doorway's street front, which the page picked from its
-   * pack and the worker builds the same rooms from (interiors.ts workplacesAt), so the two never disagree. Their boxes
-   * come in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose rooms are its seed's.
+   * A generated region's indoor workplaces (01_Initialize_World/region/placement.ts regionPlacement): at most sixteen
+   * lots of the region (anywhere on its map, not only in the street window), each with its kind and its doorway's
+   * street front, which the page picked from its pack and the worker builds the same rooms from (interiors.ts
+   * workplacesAt), so the two never disagree. Their boxes come in `boxes`. The crowd commutes only to the rooms whose
+   * lot is in the window (streets.ts lotInWindow). Only with a street window; absent (or null) for none, and for the
+   * city, whose rooms are its seed's.
    */
   workplaces?: WorkplaceLot[] | null
   /**
@@ -158,15 +160,15 @@ export interface SimInit {
    */
   craftBoxes?: Box[] | null
   /**
-   * A generated region's storefronts (01_Initialize_World/region/shops.ts regionShopLots): at most five lots of the
-   * street window, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
+   * A generated region's storefronts (01_Initialize_World/region/placement.ts regionPlacement): at most five lots of
+   * the region, none a workplace's, each with its kind and its doorway's street front, which the worker builds the
    * same glass from (storefronts.ts shopsAt) so a car left in a shop puts its driver down clear of it. Their boxes come
    * in `boxes`. Only with a street window; absent (or null) for none, and for the city, whose shops are its seed's.
    */
   shops?: ShopLot[] | null
   /**
-   * A generated region's homes (01_Initialize_World/region/homes.ts regionHomeLots): at most seven lots of the street
-   * window, none a workplace's or a shop's, each with its property index (0 to 6, once each) and its doorway's street
+   * A generated region's homes (01_Initialize_World/region/placement.ts regionPlacement): at most seven lots of the
+   * region, none a workplace's or a shop's, each with its property index (0 to 6, once each) and its doorway's street
    * front. The worker takes from them only each home's room frame, to check the furniture's solids the 'home' command
    * sends; the glass, the fill block and the planters come in `boxes`. Only with a street window; absent (or null) for
    * none, and for the city, whose homes are its seed's.
