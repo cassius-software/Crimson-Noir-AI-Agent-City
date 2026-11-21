@@ -28,10 +28,10 @@
  * readings of the city as one vector, read while locked, and each pedestrian's own (`person <n>`, `people`:
  * 09_Cognition/personFeatures.ts), read while locked too; `steer`, `clamp`, `release` and `reset` are the operator's.
  * `ring0` is the elite tier above the operator tier: a passphrase (set once, kept by the host as a salted hash) opens
- * NoirScript's writes for the session; its status and lock work while locked, unlock and set need the operator tier.
- * `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a bounded
- * VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach the
- * city only through the elite tier's surface (`ring0`), failing while that tier is locked.
+ * Crimson Noir Script's writes for the session; its status and lock work while locked, unlock and set need the operator
+ * tier. `noir` is the console's second language (noirscript/): statically typed, compiled to bytecode and run on a
+ * bounded VM; it reads the city's columns as copies through the bridge's `soa` surface, and its write intrinsics reach
+ * the city only through the elite tier's surface (`ring0`), failing while that tier is locked.
  * What breaks if it is removed? The terminal cannot interpret a single line.
  */
 import type {
@@ -82,7 +82,7 @@ const SLOW_MS = 500
 /** An R0 line that took this many steps or more gets its count printed after its output. */
 const R0_NOTE_STEPS = 100_000
 const NOIR_NOTE_STEPS = 100_000
-/** What a NoirScript write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
+/** What a Crimson Noir Script write intrinsic fails with while the elite tier is locked (operator.ts's requireElite says the same). */
 const NOIR_LOCKED = "elite tier locked: 'ring0 unlock --elite <passphrase>' opens it"
 /** What an exam intrinsic fails with on a host without the first walk's exam (the console shell). */
 const NOIR_NO_EXAM = 'no first walk in this shell: the exit program runs in the city'
@@ -132,7 +132,7 @@ const CORE = [
   { name: 'map', usage: 'map [city|lakefront|default|status]', summary: 'which map is walked; map city reloads into the procedural city (people and traffic), map lakefront into the metropolis; the choice is kept until map default' },
   { name: 'rooms', usage: 'rooms', summary: 'the indoor workplaces of this map: slot, kind, lot, doorway, stations and name (the city has sixteen; the metropolis the lots its window gave)' },
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
-  { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "NoirScript, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
+  { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "Crimson Noir Script, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
   { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line Crimson Noir Script program that ends it from any stage" },
   { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
 ] as const
@@ -140,7 +140,7 @@ const CORE = [
 /** The operator tier; every one of these that changes anything is refused until `operator unlock`. */
 const OPERATOR = [
   { name: 'operator', usage: 'operator [unlock|lock|status]', summary: 'the operator tier: scripts, tuning keys, harnesses' },
-  { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens NoirScript's writes and raised limits for this session; the laws stay out of reach" },
+  { name: 'ring0', usage: 'ring0 [status|unlock --elite <passphrase>|lock|elite set <passphrase>]', summary: "the Ring-0 elite tier above the operator tier: a passphrase opens Crimson Noir Script's writes and raised limits for this session; the laws stay out of reach" },
   { name: 'run', usage: 'run <skill>[,<skill>...]: <js...>', summary: 'run a script against sim.* while someone tethered has the skill (Shift+Enter adds a line)' },
   { name: 'ask', usage: 'ask [<skill>[,<skill>...]: <prompt...>|provider <name>|connect <provider> [<url>] [<key>]|model <name>|server <url>|key <key>|effort <level>|think on|off|api <format>|vram <GB>|auto|file [forget <name>|load|unload|log]|gpu auto|on|off|stop]', summary: 'ask the model, answering as someone tethered with the skill; the answer streams in' },
   { name: 'swarm', usage: 'swarm [run [--agents <1-5>] <goal...>|plan [--agents <1-5>] <goal...>|status|stop|roles|guardrails|audit [verify]]', summary: 'a goal over up to five roles (architect, coder, tester, auditor, verifier), one gated prompt each, guardrails before and after, a hash-chained audit trail' },
@@ -175,7 +175,7 @@ const RAW: ReadonlySet<string> = new Set(['run', 'ask', 'say', 'r0', 'ring0', 'n
 
 /**
  * The console's languages, kept for the life of the console so definitions outlive a line: the R0 machine (repl.ts)
- * and the NoirScript session (noirscript/index.ts).
+ * and the Crimson Noir Script session (noirscript/index.ts).
  */
 export interface ReplSession { machine: Machine; noir: NoirSession }
 export const replSession = (): ReplSession => ({ machine: new Machine(), noir: new NoirSession() })
@@ -424,7 +424,7 @@ function operatorOf(b: TerminalBridge): OperatorBridge {
   return op
 }
 
-/** The elite tier's write surface for a NoirScript run: null while it (or the operator tier) is locked, and on a bridge without one. */
+/** The elite tier's write surface for a Crimson Noir Script run: null while it (or the operator tier) is locked, and on a bridge without one. */
 function eliteWritesOf(b: TerminalBridge): EliteWrites | null {
   try { return b.operator?.elite.writes() ?? null } catch { return null }
 }
@@ -1668,13 +1668,13 @@ const HANDLERS: Record<Name, Handler> = {
     return { lines }
   },
 
-  // Raw: the rest of the line is NoirScript for the session's VM. The city's columns (the bridge's `soa`) are read
-  // once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
-  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open,
-  // the run has the tier's four writes and its raised limits.
+  // Raw: the rest of the line is Crimson Noir Script for the session's VM. The city's columns (the bridge's `soa`) are
+  // read once, as copies, before the run. The write intrinsics reach the city only through the elite tier's surface
+  // (`ring0 unlock --elite`): locked, the host hands the VM no writes and each fails with the tier's message; open, the
+  // run has the tier's four writes and its raised limits.
   noir(args, b, _history, _line, session) {
     const rest = (args[0] ?? '').trim()
-    if (!rest) return { lines: [out(usage('noir')), sys("NoirScript, the console's typed language: 'noir print(1 + 2);' prints 3; 'noir fn sq(x: i32) -> i32 { x * x }' defines sq for this console session; 'noir print(query cars where speed > 5.0);' counts the cars moving faster than 5 m/s")] }
+    if (!rest) return { lines: [out(usage('noir')), sys("Crimson Noir Script, the console's typed language: 'noir print(1 + 2);' prints 3; 'noir fn sq(x: i32) -> i32 { x * x }' defines sq for this console session; 'noir print(query cars where speed > 5.0);' counts the cars moving faster than 5 m/s")] }
     const n = (session ?? replSession()).noir
     if (rest === 'reset') {
       n.reset()

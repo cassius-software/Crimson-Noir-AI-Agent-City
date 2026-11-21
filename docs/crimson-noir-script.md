@@ -1,4 +1,4 @@
-# NoirScript: the console's typed, compiled language
+# Crimson Noir Script: the console's typed, compiled language
 
 This is the language the console's `noir` command runs (`MANUAL.md` says how to reach it). The implementation is
 `src/07_Execute_Actions/terminal/noirscript/`: `lexer.ts`, `ast.ts`, `parser.ts`, `types.ts`, `compiler.ts`, `vm.ts`,
@@ -8,13 +8,17 @@ Nothing in that directory imports from outside it (the air gap the console keeps
 Where this text said less than the implementation had to decide, the decision is marked **pinned** here and held by
 a test.
 
-NoirScript sits beside R0 (`repl.ts`, the Forth) as the console's second language: statically typed, compiled to
-bytecode, run on a bounded VM over one contiguous memory arena (structure-of-arrays, 64-byte-aligned columns), with
-128-bit and 256-bit lane types and branchless intrinsics, and read-only typed access to the city's SoA columns
-(crowd, cars, kernel, frame) handed in by the host at run time. It is Turing complete (unbounded loops, recursion,
-addressable arrays), deterministic (no clock, no randomness; f32 is true IEEE binary32 via Math.fround; i32/u32 wrap),
-and bounded (steps, output, memory, call depth), and it never throws out of `run`.
-There is no JIT and no dynamic code generation: the console forbids dynamic code; it is a bytecode VM.
+The language was called NoirScript until 14 November 2026. Only the name a person reads changed: the `noir` command,
+the source folder and the type names in it (`NoirSession`, `NoirTables`) keep their spelling, and so does every rule
+below.
+
+Crimson Noir Script sits beside R0 (`repl.ts`, the Forth) as the console's second language: statically typed, compiled
+to bytecode, run on a bounded VM over one contiguous memory arena (structure-of-arrays, 64-byte-aligned columns), with
+128-bit and 256-bit lane types and branchless intrinsics, and read-only typed access to the city's SoA columns (crowd,
+cars, kernel, frame) handed in by the host at run time. It is Turing complete (unbounded loops, recursion, addressable
+arrays), deterministic (no clock, no randomness; f32 is true IEEE binary32 via Math.fround; i32/u32 wrap), and bounded
+(steps, output, memory, call depth), and it never throws out of `run`. There is no JIT and no dynamic code generation:
+the console forbids dynamic code; it is a bytecode VM.
 
 ## Public API (`index.ts`)
 ```ts
@@ -270,7 +274,7 @@ the error; exam intrinsics fail with the noExam message without `host.exam`, cal
 (u32 seal, i32 count, bool), a throw becomes the error, and the exit program runs as three lines on one session
 with `seal` and `swarm` kept as globals.
 Turing witness: Rule 110 (a universal cellular automaton) over a 64-cell array for 32 generations, output pinned
-against a direct JS implementation in the test; a small tape-machine interpreter written in NoirScript.
+against a direct JS implementation in the test; a small tape-machine interpreter written in Crimson Noir Script.
 Branchless witness: for 1000 seeded triples, `select(mask(a < b), a, b) == min(a, b)` and the f32 form.
 Determinism: two sessions fed the same 30 lines print identical output and steps.
 fuzz (seeded, >= 2000 cases): random token soup and random grammar-shaped programs never throw out of

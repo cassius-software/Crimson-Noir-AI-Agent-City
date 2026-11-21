@@ -337,7 +337,7 @@ export interface EliteVault {
 /** What `ring0 unlock --elite` prints: what is open now, and what stays in force and out of reach. */
 export const ELITE_BANNER: readonly string[] = Object.freeze([
   'Ring-0 elite tier unlocked for this console session.',
-  "Open now: NoirScript's writes (tune, intent, cull, steer), each through the operator's own facade, with raised limits.",
+  "Open now: Crimson Noir Script's writes (tune, intent, cull, steer), each through the operator's own facade, with raised limits.",
   'Still in force, out of reach: the three laws and the Bouncer in the physics realm (a car intent is vetted as the',
   "wheel's is), the Sanctuary, the Ring-0 auditor and the 14A screen. No write here can reach or alter any of them.",
   "Type 'ring0 lock' to close this tier; 'operator lock' closes both.",
