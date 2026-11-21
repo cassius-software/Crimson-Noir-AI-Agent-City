@@ -19,7 +19,9 @@
 #   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
 #   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
 #   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
-#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then
+#   does. The ci run that started a run counts by its own record: GitHub's list of runs can leave a run out for a
+#   while after it passed, and by the list alone a green commit was once passed over (tools/build/current.mjs
+#   passedRun). "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then
 #   holds the newest green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
 # - It makes no numbered release. Its only tags are `current`, which it puts at each commit it publishes, and a
 #   stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (tools/build/current.mjs says
@@ -114,6 +116,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           TESTED: ${{ github.event.workflow_run.head_sha }}
+          TESTED_RUN: ${{ github.event.workflow_run.id }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           FORCE: ${{ inputs.force }}
         run: |
@@ -128,7 +131,8 @@ jobs:
               [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it on main: the current build follows main alone"; exit 1; }
               args=(--sha "$GITHUB_SHA" --strict)
               if [ "$FORCE" = true ]; then args+=(--force); fi ;;
-            *) args=(--sha "$TESTED") ;;
+            # The ci run that started this one is read by its own record: GitHub's list of runs can still leave it out.
+            *) args=(--sha "$TESTED" --tested "$TESTED_RUN") ;;
           esac
           node tools/build/current.mjs pick "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 

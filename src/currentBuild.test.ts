@@ -71,6 +71,11 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
   const s = {
     history: [...history],
     green: new Set(green),
+    // The green commits GitHub's list of runs names; null names every one. A test leaves the newest out, as the list
+    // does for a while after a run has passed.
+    listed: null as Set<string> | null,
+    // What a run's own record says, by its id (actions/runs/<id>); a green commit's ci run answers for itself.
+    runs: new Map<string, Record<string, unknown>>(),
     workflows: { ...workflows } as Record<string, string>,
     refs,
     get tag() { return refs.get('current') ?? null },
@@ -117,7 +122,14 @@ function fakeGitHub(history: string[], { green = history, workflows = {} }: { gr
         const run = (sha: string) => ({ head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) })
         // A fork's pull request from its own branch named main is listed too, and must be passed over.
         const fork = { ...run(tip()), event: 'pull_request', head_repository: { full_name: 'someone/fork' }, html_url: 'https://fork' }
-        return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c)).map(run)] })
+        return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c) && (s.listed?.has(c) ?? true)).map(run)] })
+      }
+      k = /^actions\/runs\/(\d+)$/.exec(p)
+      if (k) {
+        const own = s.runs.get(k[1])
+        if (own) return ok(own)
+        const sha = s.history.find((c) => s.green.has(c) && ciUrl(c).endsWith(`/${k?.[1]}`))
+        return sha ? ok({ path: '.github/workflows/ci.yml', head_sha: sha, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) }) : missing
       }
       k = /^releases\/tags\/([a-z-]+)$/.exec(p)
       if (k) {
@@ -932,6 +944,56 @@ test('pick: the newest commit on main that ci passed on, whichever commit starte
     const behind = c.pick({ sha: c1, repo: REPO }, gh.gh)
     assert.match(behind.skip, new RegExp(`already holds ${c3}, which is newer than ${c2}`))
     assert.equal(behind.refused, false)
+  } finally { t.done() }
+})
+
+test('pick: the ci run that started it counts by its own record while GitHub\'s list of runs still leaves it out, so a green commit is never passed over; a run that is not ci passing on main for that commit counts for nothing', () => {
+  const t = scratch()
+  try {
+    const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+    const gh = fakeGitHub([c1, c2], { green: [c1, c2] })
+    const idOf = (sha: string) => ciUrl(sha).split('/').pop() as string
+    c.publish({ media: artifacts(join(t.dir, 'm'), allBuilt('a')), stage: join(t.dir, 's'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    // What happened on 2026-11-21: ci passed on c2, this run started seconds later, and the list still named c1 alone,
+    // which the release already held.
+    gh.s.listed = new Set([c1])
+    assert.match(c.pick({ sha: c2, repo: REPO }, gh.gh).skip, new RegExp(`already holds ${c1} for every required target`), 'by the list alone the green commit is passed over')
+    assert.deepEqual(c.pick({ sha: c2, tested: idOf(c2), repo: REPO }, gh.gh), { sha: c2, ci: ciUrl(c2), note: '' }, 'its own run says it passed')
+    // The record must be ci's, passed, on main, a push or a run by hand, here, and of the commit that started the run.
+    const own = { path: '.github/workflows/ci.yml', head_sha: c2, conclusion: 'success', head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: 'https://own' }
+    const not: Record<string, unknown>[] = [
+      { ...own, conclusion: 'failure' }, { ...own, conclusion: null }, { ...own, path: '.github/workflows/nix.yml' }, { ...own, head_branch: 'feature' },
+      { ...own, event: 'pull_request' }, { ...own, head_repository: { full_name: 'someone/fork' } }, { ...own, head_sha: c1 }, { ...own, head_sha: 'main' },
+    ]
+    for (const record of not) {
+      gh.s.runs.set('900', record)
+      assert.ok(c.pick({ sha: c2, tested: '900', repo: REPO }, gh.gh).skip, `counts for nothing: ${JSON.stringify(record)}`)
+    }
+    gh.s.runs.set('900', own)
+    assert.equal(c.pick({ sha: c2, tested: '900', repo: REPO }, gh.gh).ci, 'https://own')
+    for (const id of ['', '0', '12x', '../releases', '1'.repeat(30)]) assert.ok(c.pick({ sha: c2, tested: id, repo: REPO }, gh.gh).skip, `no run is read for the id ${JSON.stringify(id)}`)
+    assert.ok(c.pick({ sha: c2, tested: '901', repo: REPO }, gh.gh).skip, 'a run GitHub does not know')
+    gh.s.fail = (argv) => (argv[argv.length - 1].endsWith('/actions/runs/900') ? { ok: false, out: '', err: 'gh: Server Error (HTTP 502)' } : null)
+    assert.ok(c.pick({ sha: c2, tested: '900', repo: REPO, wait: 0 }, gh.gh).skip, 'an unanswered read leaves the list to decide')
+    gh.s.fail = null
+    // The list names a newer green commit than the run that started this: the newer one is built, as before.
+    gh.s.history.push(c3)
+    gh.s.green.add(c3)
+    gh.s.listed = new Set([c1, c3])
+    const newer = c.pick({ sha: c2, tested: idOf(c2), repo: REPO }, gh.gh)
+    assert.equal(newer.sha, c3)
+    assert.match(newer.note, new RegExp(`building ${c3}, the newest commit on main that ci passed on \\(this run was started for ${c2}\\)`))
+    // The list names only an older one: the run's own commit is the newest, and built.
+    gh.s.listed = new Set([c1])
+    assert.equal(c.pick({ sha: c3, tested: idOf(c3), repo: REPO }, gh.gh).sha, c3)
+    // GitHub cannot say which of the two is newer: nothing is guessed.
+    gh.s.fail = (argv) => (argv[argv.length - 1].includes(`compare/${c1}...${c3}`) ? { ok: false, out: '', err: 'gh: Server Error (HTTP 502)' } : null)
+    assert.throws(() => c.pick({ sha: c3, tested: idOf(c3), repo: REPO, wait: 0 }, gh.gh), /could not compare/)
+    gh.s.fail = null
+    // The list names nothing at all: the run's own record is enough.
+    gh.s.listed = new Set()
+    assert.equal(c.pick({ sha: c3, tested: idOf(c3), repo: REPO }, gh.gh).sha, c3)
+    assert.match(c.pick({ sha: c3, repo: REPO }, gh.gh).skip, /ci has not passed/)
   } finally { t.done() }
 })
 

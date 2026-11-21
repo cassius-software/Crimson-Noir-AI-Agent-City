@@ -104,9 +104,10 @@ test('two modules serve the network (the authenticated room host and the robot r
   const RELAY = 'src/10_Network/robotRelay.node.ts'
   // The browser smoke test and the screenshot tool serve dist/index.html to their own headless browser for the length
   // of a run, the crowd kernels' compile serves it one blank page (about:blank gets no WebGPU adapter), and the speech
-  // check serves the web copy with its speech pack to its own browser: a test server in a tool's file, held to the
-  // test servers' rule.
-  const HARNESSES = ['tools/browser/smoke.mjs', 'tools/browser/shot.mjs', 'tools/browser/kernels.mjs', 'tools/browser/speech.mjs']
+  // check serves the web copy with its speech pack to its own browser, and the Safari check serves the web copy to the
+  // Safari it drives (on the Mac, or in the iOS Simulator, which shares the Mac's loopback): a test server in a tool's
+  // file, held to the test servers' rule.
+  const HARNESSES = ['tools/browser/smoke.mjs', 'tools/browser/shot.mjs', 'tools/browser/kernels.mjs', 'tools/browser/speech.mjs', 'tools/browser/safari.mjs']
   // The desktop launcher serves the built page to this machine's own browser. Its port is fixed (4180) because the
   // page keeps its settings per address, and a page opened from a file instead loses the shared bridge and the local
   // model servers (MANUAL.md, On NixOS): it may name any port, but only on the loopback literal.
