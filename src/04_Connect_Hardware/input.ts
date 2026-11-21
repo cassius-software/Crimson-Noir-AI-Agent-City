@@ -133,6 +133,8 @@ export class Input {
   shielded = false
   private touchEngaged = false
   private lastSource: 'keyboard+mouse' | 'gamepad' | 'touch' = 'keyboard+mouse'
+  /** How the queued talk was pressed (takeTalk): set as it is queued, back to the keyboard's once taken. */
+  private talkBy: 'keyboard' | 'pad' = 'keyboard'
   private readonly keys = new Set<string>()
   private readonly queued = new Set<Action>()
   private readonly disposers: (() => void)[] = []
@@ -211,7 +213,10 @@ export class Input {
       this.keys.add(e.code)
       this.lastSource = 'keyboard+mouse'
       const action = ACTION_KEYS[e.code]
-      if (action && !e.repeat) this.queued.add(action)
+      if (action && !e.repeat) {
+        this.queued.add(action)
+        if (action === 'talk') this.talkBy = 'keyboard'
+      }
       // Space is the handbrake and the arrows walk: under pointer lock, and over a control a pointer press left focused
       // (pointerFocus), they never click it again or scroll its panel.
       if ((e.code === 'Space' || e.code.startsWith('Arrow')) && (this.locked || (target === this.pointerFocus && !isPage(target)))) e.preventDefault()
@@ -424,6 +429,19 @@ export class Input {
   }
 
   /**
+   * The queued talk, taken once: 'pad' when a pad's (or a headset controller's) talk button queued it, 'keyboard' for
+   * T or a programmatic press, null when none waits. How it was pressed is kept as it is queued, never read from
+   * `device` as it is taken: a pad's stick held while T goes down makes the next poll call the device a pad, and an
+   * open conversation closes on a pad's press where T only puts the cursor in its field.
+   */
+  takeTalk(): 'keyboard' | 'pad' | null {
+    if (!this.queued.delete('talk')) return null
+    const by = this.talkBy
+    this.talkBy = 'keyboard'
+    return by
+  }
+
+  /**
    * Drops every queued action and nothing else: held keys, the sticks, the pads' held bits and the look are untouched.
    * The engine calls it after each poll while a home's card holds the avatar still, so a pad's edge (which queues even
    * under suspend) never reaches a car's door or the clock.
@@ -591,7 +609,7 @@ export class Input {
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
     if (edges & PAD_EDGE.mute) this.queued.add('mute')
-    if (edges & PAD_EDGE.talk) this.queued.add('talk')
+    if (edges & PAD_EDGE.talk) { this.queued.add('talk'); this.talkBy = 'pad' }
     if (this.mapper.active) this.lastSource = 'gamepad'
     this.ui |= this.mapper.ui
 

@@ -9,9 +9,11 @@
  * and 240 characters with no slot left unfilled, says nothing of the weather or the news, and holds to the house's
  * word rules (the FORBIDDEN regex the wiring tests share, the brands and real places compliance.test.ts refuses, and
  * the unarmed regex conduct.test.ts holds the city to), each read from the file that owns it so the two never drift.
- * It also pins that the choice is deterministic and varied, how lines are read for intent, which lines greet the
- * person near (never Sloane's, never plain talk), that a pedestrian's label is the engine's own caption form and their
- * voice is never Sloane's, and the prompt's bounds.
+ * It also pins that the choice is deterministic and varied, how lines are read for intent (a goodbye, which closes the
+ * conversation, only in a line that really says one, and a thanks that asks something answered for its question),
+ * that a slot's value goes in word for word (a roster name such as 'Ca$$h'), which lines greet the person near (never
+ * Sloane's, never plain talk), that a pedestrian's label is the engine's own caption form and their voice is never
+ * Sloane's, and the prompt's bounds.
  * What breaks if it is removed? A script line could trip the screen, recruit someone when it comes back through the
  * speakers, run long, name a real place, or repeat itself, and nothing would say so.
  */
@@ -49,8 +51,13 @@ const [ARMED] = literals('src/02_Define_The_Rules/conduct.test.ts', 'ARMED')
 /** The weather and the news, which no person here knows anything of (by substring, so 'brainstorm' counts too). */
 const WEATHER_NEWS = /rain|snow|storm|weather|news/i
 
-/** Sample roster names: short, long, and the longest one word the roster keeps (24 characters). */
-const NAMES = ['Mira', 'Tobin', 'Wren', 'Annaliese', 'Bartholomewsonhawthornes']
+/**
+ * Names the roster keeps that hold a pair a replacement string reads as a pattern ($$, $', $&, $`), so a slot filled
+ * by String.prototype.replace with a plain string would mangle them or splice the line into them.
+ */
+const DOLLAR_NAMES = ['Ca$$h', "Mo$'", 'Ze$&', 'Bo$`']
+/** Sample roster names: short, long, the longest one word the roster keeps (24 characters), and two with dollar pairs. */
+const NAMES = ['Mira', 'Tobin', 'Wren', 'Annaliese', 'Bartholomewsonhawthornes', DOLLAR_NAMES[0], DOLLAR_NAMES[1]]
 const ROLES: readonly TalkRole[] = ['stranger', 'recruit', 'crew']
 
 /** A hired agent's record, as the roster would hold it. */
@@ -194,6 +201,40 @@ test('the article follows the skill: an Audio hand, a Rust hand', () => {
   assert.equal(fillLine('{a skill2}', person('stranger', 5, 'Accessibility', 'C++')), 'a C++')
 })
 
+test('fillLine puts every value in word for word: a roster name with a dollar pair is never read as a replacement pattern', () => {
+  /** `raw` filled by plain splitting and joining, which reads nothing in the values. */
+  const literal = (raw: string, name: string, skill: string, skill2: string): string => raw
+    .split('{a skill2}').join(`a ${skill2}`).split('{a skill}').join(`a ${skill}`)
+    .split('{skill2}').join(skill2).split('{skill}').join(skill).split('{name}').join(name)
+  const named = [...Object.values(OPENERS.crew).flat(), ...Object.values(LINES.crew).flat()].filter((l) => l.includes('{name}'))
+  assert.ok(named.length >= 10, `${named.length} crew lines name the person`)
+  for (const name of DOLLAR_NAMES) {
+    const who = person('crew', 4242, 'Rust', 'Design', name)
+    assert.equal(who.name, name, 'the roster keeps the name as typed')
+    for (const raw of named) {
+      const filled = fillLine(raw, who)
+      assert.equal(filled, literal(raw, name, 'Rust', 'Design'), `${name} in ${JSON.stringify(raw)}`)
+      assert.equal(filled.split(name).length, raw.split('{name}').length, `${name} said exactly where the line names them`)
+    }
+    // As the person says them: every greet, who and bye line over a conversation, and the openers, none fallen back.
+    for (const intent of ['greet', 'who', 'bye'] as const) {
+      const used = new Set<number>()
+      const said = LINES.crew[intent].map((_, t) => lineFor(who, intent, t, used))
+      assert.deepEqual(new Set(said), new Set(LINES.crew[intent].map((l) => literal(l, name, 'Rust', 'Design'))), `${name} ${intent}`)
+    }
+    for (let h = 0; h < 24; h++) {
+      const opener = openerFor(who, h)
+      assert.ok(Object.values(OPENERS.crew).flat().some((l) => literal(l, name, 'Rust', 'Design') === opener), `${name} at ${h}: ${opener}`)
+    }
+  }
+  // The skills go in word for word too, with their article.
+  const odd = { ...person('stranger', 5, 'Rust', 'Design'), skill: "A$'x", skill2: 'B$`$&' }
+  assert.equal(fillLine('{skill} and {skill2}, {a skill} or {a skill2}.', odd), "A$'x and B$`$&, an A$'x or a B$`$&.")
+  // One pass: a value that looks like a slot is never filled again.
+  const nested = { ...person('crew', 5, 'Rust', 'Design'), name: '{skill}', skill: '{name}', skill2: '{a skill}' }
+  assert.equal(fillLine('{name} / {skill} / {skill2}', nested), '{skill} / {name} / {a skill}')
+})
+
 test('the same person, intent and turn give the same line; ten turns of one intent give three or more lines, never one twice in a row', () => {
   for (const role of ROLES) {
     for (const row of [1, 77, 4242, 32767]) {
@@ -219,7 +260,7 @@ test('the same person, intent and turn give the same line; ten turns of one inte
   assert.equal(lineFor(who, 'greet', 3, new Set()), lineFor(who, 'greet', 3, new Set()))
 })
 
-test('intentOf reads what the player wants, a goodbye winning over thanks and the screen over everything', () => {
+test('intentOf reads what the player wants, a goodbye winning over thanks, thanks over the rest unless it asks, and the screen over everything', () => {
   const cases: [string, Intent][] = [
     ['hi', 'greet'], ['hello there', 'greet'], ['hey, how are you?', 'greet'], ['good evening', 'greet'], ["what's up", 'greet'], ['excuse me', 'greet'],
     ['who are you?', 'who'], ["what's your name", 'who'], ['tell me about yourself', 'who'], ['hi, what is your name?', 'who'], ['where are you from', 'who'],
@@ -241,6 +282,35 @@ test('intentOf reads what the player wants, a goodbye winning over thanks and th
   for (const [text, want] of cases) assert.equal(intentOf(text), want, JSON.stringify(text))
   assert.equal(intentOf(undefined as unknown as string), 'other')
   for (const intent of INTENTS) assert.ok(cases.some(([, w]) => w === intent), `a phrasing for ${intent}`)
+})
+
+test('intentOf hears a goodbye only in a line that closes the conversation, and a thanks that asks something goes on to the question', () => {
+  // A goodbye ends the conversation, so these must close it: a farewell that ends the line, a farewell word at its
+  // head, or 'later' or 'so long' alone.
+  const farewells = [
+    'ok bye then', 'Thanks, take care!', 'I have to go now', 'I really do have to go', 'later', 'ok, later', 'so long', 'good night', 'goodnight everyone',
+    "I'm off", "well, I'm leaving", 'alright, catch you later', "I'll see you around", 'thank you, see you', 'nice talking to you, see you',
+    'see you tomorrow, boss', 'take care of yourself', 'you take care now', 'bye Mira', 'goodbye and good luck', 'bye bye', 'cya', 'talk to you later',
+  ]
+  for (const text of farewells) assert.equal(intentOf(text), 'bye', JSON.stringify(text))
+  // Not one of these is a goodbye: a question, a greeting ('… to see you'), someone else's going, a farewell word in
+  // the middle of a line, or 'later' and 'so long' inside a sentence. Each goes on to its own intent.
+  const notBye: [string, Intent][] = [
+    ['Where do I need to go?', 'help'], ['Where do I have to go to hire someone?', 'help'], ['how far do I need to go', 'other'], ['tell me where I need to go', 'other'],
+    ['Do I have to go far?', 'other'], ['Do you need to go?', 'other'], ['Do you have to go somewhere?', 'other'], ['you need to go', 'other'],
+    ['Nice to see you', 'greet'], ['Hi, good to see you', 'greet'], ['great to see you!', 'greet'], ['good to see you again', 'greet'], ['nice to meet you', 'greet'],
+    ['I can see you', 'other'], ['I see you', 'other'], ['Can you take care of this for me?', 'other'], ['I take care of my code', 'work'],
+    ["I'm leaving town soon, any advice?", 'help'], ["I'm off to work, what about you?", 'who'], ['good night out?', 'other'],
+    ["it's been so long", 'other'], ["I'll do it later", 'other'], ['can we talk about it later?', 'other'], ['bye, what do you do?', 'work'],
+  ]
+  for (const [text, want] of notBye) assert.equal(intentOf(text), want, JSON.stringify(text))
+  // Thanks wins over the rest only when nothing is asked; a line that thanks and asks is answered for what it asks.
+  const thanking: [string, Intent][] = [
+    ['no thanks, what do you do?', 'work'], ['thanks, but who are you?', 'who'], ['thanks! what do you work on?', 'work'], ['thank you, can you help me?', 'help'],
+    ['thanks, how do I get around?', 'help'], ['thanks, where do I need to go?', 'help'],
+    ['thanks for the help', 'thanks'], ['thanks for your work', 'thanks'], ["thanks, that's what I needed", 'thanks'], ['thanks, hi', 'thanks'],
+  ]
+  for (const [text, want] of thanking) assert.equal(intentOf(text), want, JSON.stringify(text))
 })
 
 test('greets: a greeting or a hired agent\'s name at the head of the line, never a line to Sloane and never plain talk', () => {
@@ -366,6 +436,8 @@ test('personPrompt: a framing of at most 520 characters with the rules, whole li
 test('the module is pure: no DOM, no engine, no three, no React, no clock, no randomness', () => {
   const text = source('src/08_Swarm/talkLines.ts')
   assert.doesNotMatch(text, /from '(?:three|react)[^']*'|engine\.ts'|\bdocument\.|\bwindow\.|Date\.now|performance\.now|Math\.random/)
+  // No regular expression looks behind: Safari before 16.4 cannot parse one, and the whole module would fail to load.
+  assert.ok(!text.includes('(?<=') && !text.includes('(?<!'), 'no lookbehind')
   assert.deepEqual(
     [...text.matchAll(/^import (?:type )?\{[^}]*\} from '([^']+)'/gm)].map((m) => m[1]),
     ['../02_Define_The_Rules/conduct.ts', '../03_Spawn_Agents/skills.ts', '../07_Execute_Actions/simProtocol.ts', './roster.ts'],

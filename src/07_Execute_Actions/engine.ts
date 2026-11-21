@@ -43,7 +43,7 @@ import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET, gpuPaused, noteGpuLoss, recentGpuLosses } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
-import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
+import { CITY, CITY_SIZE, districtName, type Box } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
 import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
@@ -125,7 +125,7 @@ import { PersonReadings } from '../09_Cognition/personFeatures.ts'
 import { operatorBridge, type Awareness, type Diary, type Mind, type SimControls, type SkillGate, type SpeechClip, type SpeechOut, type Utterance, type Voice, type EliteVault } from './operator.ts'
 import type { CityKnobs } from '../06_Make_Decisions/actions.ts'
 import { applyQuality, refitPixelRatio, type QualityTargets } from './quality.ts'
-import { SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
+import { CAPTION_REFRESH, SPEECH, Soundscape, sharedAudioContext, wallsBetween, type AudioFrame, type PeerVoice } from './audio.ts'
 import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type HardwareReport, type TerminalBridge } from './terminal/bridge.ts'
@@ -794,6 +794,13 @@ export class Engine {
   private readonly talkEye: TalkEye = { x: 0, z: 0, feetY: 0, yaw: 0, speed: 0 }
   private readonly talkMouth = { x: 0, y: 0, z: 0 }
   private readonly talkVoiceXZ = { x: Number.NaN, z: Number.NaN }
+  /**
+   * What hides a person from the player for talking (talkWalls): the world's boxes, and in a generated region with a
+   * street window its buildings too (transit.ts craftBoxesOf), whose walls otherwise live in the worker alone.
+   */
+  private readonly talkBoxes: readonly Box[]
+  /** The browser voice whose caption is kept alive (talkCaption): its row (−1 for none), label, last refresh (audio clock, s). */
+  private readonly talkCaptioned = { row: -1, label: '', at: 0 }
   /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
   private readonly captions = new CaptionTrack()
   private captionsOn: boolean
@@ -961,6 +968,7 @@ export class Engine {
     post: RenderPipeline; volumetrics: Volumetrics; cinema: CinemaPost | null; vision: VisionUniform; sceneSamples: 0 | 4; ao: AmbientOcclusion | null; crowdFrameSeconds: UniformNode<'float', number>; crowdGaze: UniformNode<'vec4', Vector4>; crowdRigs: (stream: Float32Array | null) => void; ghost: GhostView
     options: EngineConfig; quality: QualityRig; places: RegionPlaces | null; landmark: Landmark | null; streets: StreetGrid | null; rooms: readonly Workplace[]; shops: readonly Shop[]
     start: { x: number; z: number }
+    talkBoxes: readonly Box[]
     homes: readonly PageHome[]
     crowdDissolve: GPUBuffer; crowdLook: GPUBuffer; crowdFigure: GPUBuffer; netView: NetView
   }) {
@@ -982,6 +990,7 @@ export class Engine {
     this.hardware = p.hardware
     this.hints = p.hints
     this.world = p.world
+    this.talkBoxes = p.talkBoxes
     this.crowd = p.crowd
     this.sim = p.sim
     this.view = p.view
@@ -1454,6 +1463,9 @@ export class Engine {
       const engine = new Engine({
         canvas, gpu, world, crowd, sim, view, rigView, profile, hardware, hints, post, volumetrics, cinema, vision, sceneSamples, ao, crowdFrameSeconds: view0.frameSeconds, crowdGaze: view0.gazeTarget, crowdRigs: (stream) => view0.rigs(stream), ghost, options, kernelWhy, kernelKept,
         quality: { governor, targets, applied, mask, live }, places, landmark, streets, start: spawn,
+        // What hides a person for talking: a generated region's window buildings (the craft boxes, the plan among them)
+        // as well as the world's boxes, which in a region are the plan alone; the city's boxes are its buildings.
+        talkBoxes: craftBoxes ?? world.boxes,
         rooms: hollow ? hollow.rooms : workplaces(options.seed),
         // The city's storefronts, hollowed into its boxes by city.ts (storefronts.ts hollowShops), or a generated region's
         // (regionWorld.ts hollowLots; none in a surveyed region), each given the region's own address for its card: the
@@ -2677,10 +2689,11 @@ export class Engine {
 
   /**
    * The conversation's narrow view of the engine (talk.ts TalkHost), built per call and frozen, as recruitHost is. It
-   * reads this page's own copies alone (the crowd's pose copy, the newest state, the head's camera, the world's boxes)
-   * and sends the physics realm nothing: a person talked with keeps walking, and the label and the voice follow them.
-   * Every member is safe on a halted or disposed engine: blocked says so, a scan finds nobody, place is off the screen,
-   * context is null, a caption is dropped and out's play throws (the speaker then falls back as it does for Sloane).
+   * reads this page's own copies alone (the crowd's pose copy, the newest state, the head's camera, the world's boxes
+   * and a region's buildings) and sends the physics realm nothing: a person talked with keeps walking, and the label
+   * and the voice follow them. Every member is safe on a halted or disposed engine: blocked says so, a scan finds
+   * nobody, place is off the screen, context is null, a caption is dropped and out's play throws (the speaker then
+   * falls back as it does for Sloane).
    */
   talkHost(): TalkHost {
     return Object.freeze({
@@ -2796,13 +2809,29 @@ export class Engine {
     return (p.sx * Math.max(1, this.canvas.clientWidth) - r.x) / Math.max(1, r.width)
   }
 
-  /** Walls between the head's camera and the speech point of a person with feet at (x, feet, z), counted up to `limit` (audio.ts wallsBetween). */
+  /**
+   * Where the label over the followed person is anchored on the screen: a point over the tallest head (LABEL_ABOVE),
+   * else, up close where the screen's top edge cuts that point off, their head, else their chest, as talkSx falls back.
+   * talk.ts holds the whole label below the layer's top edge, so it stays on the screen while the head does.
+   */
+  private talkLabelAt(): ScreenPoint {
+    const at = this.talkAt
+    let p = this.screenOf(at.x, at.y + LABEL_ABOVE, at.z)
+    if (!Number.isFinite(p.sx)) p = this.screenOf(at.x, at.y + HEAD_AT, at.z)
+    if (!Number.isFinite(p.sx)) p = this.screenOf(at.x, at.y + CHEST_AT, at.z)
+    return p
+  }
+
+  /**
+   * Walls between the head's camera and the speech point of a person with feet at (x, feet, z), counted up to `limit`
+   * (audio.ts wallsBetween), against talkBoxes: a region's buildings count as the city's do.
+   */
   private talkWalls(x: number, feet: number, z: number, limit: number): number {
     const m = this.talkMouth
     m.x = x
     m.y = feet + SPEECH.height
     m.z = z
-    return wallsBetween(this.world.boxes, this.world.camera.position, m, limit)
+    return wallsBetween(this.talkBoxes, this.world.camera.position, m, limit)
   }
 
   /** The followed row out of a state's crowd frame (received(), before the upload hands it back): x, feet y, z. */
@@ -2858,15 +2887,38 @@ export class Engine {
   /**
    * The wordless caption of a person's browser voice (TalkHost.caption), which Web Audio cannot place: the same speech
    * start and stop the soundscape's own voice makes ('[Pedestrian 1234 (Rust) speaking]', with the arrow and metres
-   * from the head), where the person stands. Only while captions are on and the city runs, as netChat's.
+   * from the head), where the person stands. It is kept alive until its stop (talkCaptionLive), however long the line
+   * runs. Only while captions are on and the city runs, as netChat's.
    */
   private talkCaption(row: number, label: string, on: boolean): void {
+    const c = this.talkCaptioned
+    if (on) {
+      c.row = row
+      c.label = String(label)
+      c.at = this.audio.clock
+    } else if (c.row === row) c.row = -1
+    this.talkCaptionPush(row, String(label), on ? 'start' : 'stop')
+  }
+
+  /**
+   * A live browser voice's caption pushed again every CAPTION_REFRESH s (listen()), where the person stands now, as the
+   * soundscape refreshes its own voice's: a caption ends CAPTIONS.ttl after its last start, and a line can run longer.
+   */
+  private talkCaptionLive(): void {
+    const c = this.talkCaptioned
+    if (c.row < 0 || this.audio.clock - c.at < CAPTION_REFRESH) return
+    c.at = this.audio.clock
+    this.talkCaptionPush(c.row, c.label, 'start')
+  }
+
+  /** One speech caption event for row `row` where it stands (followed: as the newest state has it; else the pose copy). */
+  private talkCaptionPush(row: number, label: string, phase: 'start' | 'stop'): void {
     if (!this.captionsOn || this.halted || this.disposed) return
     const pose = this.crowdPose, o = 4 * row
     const mine = row === this.talkRow, known = row > 0 && o + 2 < pose.length
     const x = mine ? this.talkAt.x : known ? pose[o] : Number.NaN
     const z = mine ? this.talkAt.z : known ? pose[o + 2] : Number.NaN
-    this.captions.push({ kind: 'speech', phase: on ? 'start' : 'stop', source: row, x, z, t: this.audio.clock, label: String(label), agent: row }, this.rig.pose)
+    this.captions.push({ kind: 'speech', phase, source: row, x, z, t: this.audio.clock, label, agent: row }, this.rig.pose)
   }
 
   /** Rumble, the throttle trigger's hold and snap, and the lightbar's colour, in one output call. */
@@ -2978,8 +3030,10 @@ export class Engine {
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (mute) this.onMute?.()
     // T or the pad's talk button opens a conversation with the person near (the host's talk.ts), on foot only. Taken
-    // first, so a press at the wheel is used up there and never opens one on the first frame out of the car.
-    if (input.take('talk') && driving < 0) this.onTalk?.(input.device === 'gamepad' ? 'pad' : 'keyboard')
+    // first, so a press at the wheel is used up there and never opens one on the first frame out of the car. How it was
+    // pressed is the press's own (Input.takeTalk), never the device in use: T with a pad's stick held is still T.
+    const talkBy = input.takeTalk()
+    if (talkBy !== null && driving < 0) this.onTalk?.(talkBy)
     if (padUi !== 0 && !draining && !this.rig.headset) this.onPadUi?.(padUi)
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
@@ -3137,9 +3191,10 @@ export class Engine {
     // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
     this.frustum.setFromProjectionMatrix(this.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(this.frustum.planes, this.planes)
-    // Where the label over a conversation's partner falls (talk.ts): a point over the tallest head, through the head's
-    // own camera. Not under the mirror or the draft camera, and not in a headset, which has no flat screen to label.
-    this.talkSpot = this.talkRow >= 0 && !mirror && !this.rig.headset ? this.screenOf(this.talkAt.x, this.talkAt.y + LABEL_ABOVE, this.talkAt.z) : OFF_SCREEN
+    // Where the label over a conversation's partner falls (talk.ts): a point over the tallest head, else up close their
+    // head or chest (talkLabelAt), through the head's own camera. Not under the mirror or the draft camera, and not in
+    // a headset, which has no flat screen to label.
+    this.talkSpot = this.talkRow >= 0 && !mirror && !this.rig.headset ? this.talkLabelAt() : OFF_SCREEN
 
     if (this.fresh) {
       this.view.sync(st.poses)
@@ -3443,6 +3498,8 @@ export class Engine {
     // from this head between (a region has no page-side rooms: dry there, as every voice is).
     f.peers = this.netVoices.size > 0 ? this.placePeers() : undefined
     this.audio.update(f)
+    // A conversation's browser voice, which the soundscape does not carry: its caption kept alive while it speaks.
+    this.talkCaptionLive()
     // Captions outlive nothing: when the soundscape is not sounding (off, hidden, failed), what it said is gone.
     if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
     // Split: every other player's soundscape from their own head (their room, their cabin, the speaker's walls from

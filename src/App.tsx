@@ -1146,11 +1146,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [talkCtl, setTalkCtl] = useState<TalkController | null>(null)
   const [talking, setTalking] = useState(false)
   // Talking is the street's: never under the veil or with the HUD hidden, nor while the console, the wardrobe, a shop's
-  // card, a home's doorstep card, a city action's card, Sloane's card or a halted city's screen is up (the engine adds
-  // the wheel, a headset and its own cards: talk.ts TalkHost.blocked). An open conversation then closes as 'away'.
+  // card, a home's doorstep card, a city action's card, Sloane's card, the pad's menu (it has player 1's pads while it
+  // is open, as a card does) or a halted city's screen is up (the engine adds the wheel, a headset and its own cards:
+  // talk.ts TalkHost.blocked). An open conversation then closes as 'away'. The on-screen keys are not among them: they
+  // type into the conversation's own field.
   useEffect(() => {
-    talkCtl?.setBlocked(!(veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && act === null && locked === null && error === null && !sloaneOpen))
-  }, [talkCtl, veilDone, hudVisible, termOpen, lookOpen, storeOpen, homeOpen, act, locked, error, sloaneOpen])
+    talkCtl?.setBlocked(!(veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && act === null && locked === null && error === null && !sloaneOpen && !padMenu))
+  }, [talkCtl, veilDone, hudVisible, termOpen, lookOpen, storeOpen, homeOpen, act, locked, error, sloaneOpen, padMenu])
   // The HUD's chip hands back the serial of the proposal it showed, so a stale chip never opens the wrong person.
   const onTalkChip = useCallback((serial: number) => talkCtl?.press('tap', serial), [talkCtl])
   const walkRef = useRef(fw)
@@ -2255,7 +2257,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // Whether a passer-by's reply may ask the model at all (onboarding/voice.ts personChat): a model server on this
         // machine answers people on any device; the model in this page or the app's only once warm (never the answer that
         // loads it), and only on a desktop with a discrete GPU, so a passer-by never holds a phone's or a laptop's tier down;
-        // the operator's cloud key is never spent on them. Otherwise the person's scripted lines answer at once.
+        // the operator's cloud key is never spent on them. Otherwise the person's scripted lines answer at once. This is
+        // the early gate only: the router itself never hands a passer-by's request to the claude provider (personChat
+        // keeps it on this device, router.ts RouterRequest), even when no look has run yet or the server found stops.
         const peopleThink = (): boolean => {
           const s = local.settings()
           if (s.provider === 'scripted' || s.provider === 'claude' || s.found === 'claude' || pageCold()) return false

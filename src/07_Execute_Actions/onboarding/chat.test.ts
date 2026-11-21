@@ -14,16 +14,21 @@
  * answer's stop ends its load, so the 4 s rewording used to kill every load it started). It pins the people of the
  * street in conversation the same way (voice.ts personChat, over the same road as Sloane's, converse): their framing
  * passed through as talk bound to no one, only the turns the model is shown screened, the same `refused`, `held` and
- * `none`, and a reply cut to a word in passing (personWords) with no echoed name and no made-up next turn.
+ * `none`, and a reply cut to a word in passing (personWords) with no echoed name and no made-up next turn. A
+ * passer-by's request is kept on this device (09_Cognition/router.ts RouterRequest `cloud: false`), and over the real
+ * router it never reaches the Claude gateway: not before any look, not once the gateway is found, not after the
+ * server found stops answering. Sloane's request is not kept, so she still reaches it.
  * What breaks if it is removed? Small talk could fall back to the scouts and a flat "not yet", a model's reply could be
  * shown unscreened or act, the rewording could go back to killing the in-page model while it loads, or a passer-by
- * could ramble, speak for the player or answer unscreened.
+ * could ramble, speak for the player, answer unscreened, or be sent to the Claude API on the operator's key.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import type { FetchLike } from '../../09_Cognition/localCompute.ts'
+import { createMindRouter, type RouterRequest } from '../../09_Cognition/router.ts'
 import type { AnswerRequest, Mind, Piece } from '../operator.ts'
 import {
   CHAT_MAX, CHAT_TURNS, PERSON_MAX, PERSON_SENTENCES, PERSON_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, personChat, personWords, phaseLine, sloaneChat, type ChatTurn, type PersonTurn,
@@ -222,6 +227,7 @@ test('sloaneChat asks as a conversation (the short talk prompt) and tells the ca
   assert.equal(asked.length, 1)
   assert.equal(asked[0].talk, true, 'a conversation, so every provider sends the talk prompt')
   assert.deepEqual(asked[0].tethers, [], 'bound to no one')
+  assert.notEqual((asked[0] as RouterRequest).cloud, false, 'Sloane is not kept on this device: the gateway may answer her')
   const phase = asked[0].onPhase
   assert.equal(typeof phase, 'function', 'the phase is the request\'s own, so no other answer\'s progress reaches the card')
   for (const p of ['waiting for the model to finish another answer', null, 'loading the model in this page', 'reading the prompt 25%', 'reading the prompt 25%', 'reading the prompt 50%']) phase!(p)
@@ -278,6 +284,7 @@ test('personChat: the caller\'s prompt goes to the mind as talk bound to no one,
   assert.equal(m.asked[0]!.prompt, prompt, 'the framing is the caller\'s, passed through untouched')
   assert.equal(m.asked[0]!.talk, true, 'a conversation, so every provider sends the talk prompt')
   assert.deepEqual(m.asked[0]!.tethers, [], 'bound to no one')
+  assert.equal((m.asked[0] as RouterRequest).cloud, false, 'kept on this device: the router never hands it to the claude provider')
   assert.ok(parts.length > 1, 'the words arrive as they come')
   assert.ok(parts.every((p) => !/Pedestrian|1234/.test(p)), 'no part of the echoed name is ever shown, even while only its first word has come')
   assert.equal(parts.at(-1), 'Evening. Quiet streets tonight, just how I like', 'whole words only while it streams')
@@ -387,14 +394,80 @@ test('personChat screens only the last PERSON_TURNS turns, and its refused, held
   assert.equal(hang.seen.stopped, true)
 })
 
+/**
+ * A machine of model servers by port for the real router (11434 Ollama, 8089 the Claude gateway; any other port is not
+ * listening), noting every request it gets.
+ */
+function machine(servers: Record<string, readonly string[] | 'down'>) {
+  const calls: string[] = []
+  const enc = new TextEncoder()
+  const stream = (text: string, type: string): Response => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode(text)); c.close() } }), { status: 200, headers: { 'content-type': type } })
+  const f: FetchLike = async (url, init) => {
+    const port = new URL(url).port
+    const s = servers[port] ?? 'down'
+    if (init?.mode === 'no-cors') {
+      if (s === 'down') throw new TypeError('Failed to fetch')
+      return new Response(null, { status: 200 })
+    }
+    calls.push(url)
+    if (s === 'down') throw new TypeError('Failed to fetch')
+    const said = `${port} says hi.`
+    if (url.endsWith('/api/tags')) return new Response(JSON.stringify({ models: s.map((name) => ({ name })) }), { status: 200 })
+    if (url.endsWith('/api/generate')) return stream(`${JSON.stringify({ response: said, done: false })}\n${JSON.stringify({ done: true, done_reason: 'stop', eval_count: 3 })}\n`, 'application/x-ndjson')
+    if (url.endsWith('/v1/models') || url.includes('/v1/models?')) return new Response(JSON.stringify({ data: s.map((id) => ({ id })) }), { status: 200 })
+    if (url.endsWith('/v1/messages')) {
+      const sse = [{ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: said } }, { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } }, { type: 'message_stop' }]
+      return stream(sse.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''), 'text/event-stream')
+    }
+    return new Response('?', { status: 404 })
+  }
+  return { f, calls, servers, gateway: () => calls.filter((u) => new URL(u).port === '8089') }
+}
+
+test('personChat over the real router never reaches the Claude gateway, even when the host said yes; Sloane still does', async () => {
+  // Auto, no look yet, only the gateway up: the host's early gate (App's peopleThink) says yes on a discrete desktop.
+  const m = machine({ 8089: ['claude-opus-5-5'] })
+  const router = createMindRouter({ fetch: m.f, lookMs: 50 })
+  const person = personChat(router, warm)
+  const first = await person.reply('p', NAME, [turn('you', 'hi')], live())
+  assert.equal(first.kind, 'none', 'the script answers')
+  assert.deepEqual(m.gateway(), [], 'nothing was asked of the gateway, not even its list')
+  // Sloane is not kept on this device: her chat finds the gateway and is answered there.
+  assert.deepEqual(await sloaneChat(router).reply([you('hi')], live()), { kind: 'said', text: '8089 says hi.' })
+  assert.equal(router.settings().found, 'claude')
+  // Found now: the next passer-by is still the script's, and the gateway gets nothing more.
+  const asked = m.gateway().length
+  assert.equal((await person.reply('p', NAME, [turn('you', 'how are you?')], live())).kind, 'none')
+  assert.equal(m.gateway().length, asked)
+
+  // Ollama found and answering a passer-by, then closed: the look after it passes the gateway over.
+  const o = machine({ 11434: ['gemma3:1b'], 8089: ['claude-opus-5-5'] })
+  const local = createMindRouter({ fetch: o.f, lookMs: 50 })
+  const stopper = personChat(local, warm)
+  assert.deepEqual(await stopper.reply('p', NAME, [turn('you', 'hi')], live()), { kind: 'said', text: '11434 says hi.' })
+  assert.equal(local.settings().found, 'ollama')
+  o.servers[11434] = 'down'
+  assert.equal((await stopper.reply('p', NAME, [turn('you', 'still there?')], live())).kind, 'none')
+  assert.deepEqual(o.gateway(), [])
+
+  // The gateway chosen at the console: a passer-by is never sent to it either.
+  const c = machine({ 8089: ['claude-opus-5-5'] })
+  const chosen = createMindRouter({ fetch: c.f, lookMs: 50 })
+  chosen.setProvider('claude')
+  assert.equal((await personChat(chosen, warm).reply('p', NAME, [turn('you', 'hi')], live())).kind, 'none')
+  assert.deepEqual(c.calls, [])
+})
+
 test('voice.ts: Sloane and the people of the street share one road (converse), after sloaneChat, as talk bound to no one', () => {
   const voice = read('07_Execute_Actions/onboarding/voice.ts')
   const at = (s: string): number => voice.indexOf(s)
   assert.ok(at('export function sloaneChat(') > 0 && at('export function sloaneChat(') < at('async function converse(') && at('async function converse(') < at('export function personChat('), 'converse after sloaneChat, personChat after converse')
   assert.equal((voice.match(/\.answer\(/g) ?? []).length, 2, 'the rewording\'s ask and the conversation\'s, one each')
-  assert.match(voice, /reply: async \(turns, signal, onText, onPhase\) => converse\(mind, live, chatPrompt\(turns, where\), chatWords, CHAT_MAX, CHAT_TURNS, turns, signal, onText, onPhase\)/)
-  assert.match(voice, /converse\(mind, live, prompt, \(t\) => personWords\(t, name\), PERSON_MAX, PERSON_TURNS, turns, signal, onText, onPhase\)/)
-  assert.match(voice, /await mind\.answer\(\{ tethers: \[\], signal: ctl\.signal, prompt, talk: true, onPhase: /)
+  assert.match(voice, /reply: async \(turns, signal, onText, onPhase\) => converse\(mind, live, chatPrompt\(turns, where\), chatWords, CHAT_MAX, CHAT_TURNS, true, turns, signal, onText, onPhase\)/, 'Sloane: any provider')
+  assert.match(voice, /converse\(mind, live, prompt, \(t\) => personWords\(t, name\), PERSON_MAX, PERSON_TURNS, false, turns, signal, onText, onPhase\)/, 'a passer-by: kept on this device')
+  assert.match(voice, /const ask: RouterRequest = \{ tethers: \[\], signal: ctl\.signal, prompt, talk: true, cloud, onPhase: /)
+  assert.match(voice, /await mind\.answer\(ask, /)
+  assert.match(voice, /^import type \{ RouterRequest \} from '\.\.\/\.\.\/09_Cognition\/router\.ts'$/m, 'only the type: voice.ts builds no router')
   assert.doesNotMatch(voice.slice(at('export function personChat(')), /setTimeout|AbortSignal\.timeout|\bperform\b/, 'no deadline and nothing acted on')
 })
 

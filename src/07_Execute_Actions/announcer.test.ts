@@ -6,9 +6,10 @@
  * snapshot, a seat taken or left, a vehicle beside you with the right word for the controls, a district once held,
  * every new toast once, one line per gap with the rest queued and the oldest dropped past the queue's length, and
  * someone close enough to talk to: told only once the proposal has stood ANNOUNCE.talkHoldMs, at most once every
- * ANNOUNCE.talkGapMs, never while a conversation is open, with the way to start for the controls in use; a snapshot
- * without the person near keeps every older line as it was. It also pins the snapshot's HudTalk to the controller's
- * TalkHud field for field (read as text), so the host hands hud() to the HUD as it is.
+ * ANNOUNCE.talkGapMs, never while a conversation is open, with the way to start for the controls in use (the d-pad's
+ * up for a left hand on a pad); a snapshot without the person near keeps every older line as it was. It also pins the
+ * snapshot's HudTalk to the controller's TalkHud field for field (read as text), so the host hands hud() to the HUD as
+ * it is.
  * What breaks if it is removed? A reader flooded at a district border, told of a car that was always there, or told
  * of every passer-by, or of someone to talk to while already talking.
  */
@@ -125,6 +126,28 @@ test('someone to talk to is told only once the proposal has stood 1.5 s, once, w
     c.next(snap({ glyphs, touch, talk: near(2) }), 100)
     assert.equal(c.next(snap({ glyphs, touch, talk: near(2) }), 100 + ANNOUNCE.talkHoldMs), toldNear('Pedestrian 1234 (Rust)', how), glyphs)
   }
+})
+
+test('a left hand on a pad is told the d-pad\'s up, the button it talks with; the keyboard, touch and the right hand are not changed', () => {
+  assert.equal(talkWord('abxy', false, 'left'), 'press up on the d-pad')
+  assert.equal(talkWord('numbered', false, 'left'), 'press up on the d-pad')
+  assert.equal(talkWord('abxy', false, 'right'), 'press X')
+  assert.equal(talkWord('keyboard', false, 'left'), 'press T')
+  assert.equal(talkWord('abxy', true, 'left'), 'tap Talk at the foot of the screen')
+  // The announcer reads the hand as it makes the line (the page's own, padNav.ts pageHand, unless one is handed in).
+  let hand: 'both' | 'left' | 'right' = 'left'
+  const a = new Announcer(() => hand)
+  a.next(snap({ glyphs: 'abxy' }), 0)
+  a.next(snap({ glyphs: 'abxy', talk: near(3) }), 100)
+  assert.equal(a.next(snap({ glyphs: 'abxy', talk: near(3) }), 100 + ANNOUNCE.talkHoldMs), toldNear('Pedestrian 1234 (Rust)', 'press up on the d-pad'))
+  hand = 'right'
+  a.next(snap({ glyphs: 'abxy', talk: near(4) }), 20000)
+  assert.equal(a.next(snap({ glyphs: 'abxy', talk: near(4) }), 20000 + ANNOUNCE.talkHoldMs), toldNear('Pedestrian 1234 (Rust)', 'press X'))
+  // Node has no page: the default reads both hands.
+  const b = new Announcer()
+  b.next(snap({ glyphs: 'abxy' }), 0)
+  b.next(snap({ glyphs: 'abxy', talk: near(5) }), 100)
+  assert.equal(b.next(snap({ glyphs: 'abxy', talk: near(5) }), 100 + ANNOUNCE.talkHoldMs), toldNear('Pedestrian 1234 (Rust)', 'press X'))
 })
 
 test('at most one line about someone to talk to every 15 s, counted from when it was said; a proposal still standing then is told', () => {

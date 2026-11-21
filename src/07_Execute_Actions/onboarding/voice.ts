@@ -15,13 +15,16 @@
  * (personChat): the person the player stops to talk with answers in their own framing (08_Swarm/talkLines.ts
  * personPrompt) through the same road and the same screen (converse), shorter still (PERSON_MAX, PERSON_SENTENCES), with
  * no echoed name and no next turn made up for the player, never acting, and `none` at once where the host says the
- * model is not warm and cheap enough to spend on a passer-by, so the script answers instead.
+ * model is not warm and cheap enough to spend on a passer-by, so the script answers instead. A passer-by's request is
+ * kept on this device (09_Cognition/router.ts RouterRequest `cloud: false`), so the router never hands it to the claude
+ * provider, whatever it has found.
  * What breaks if it is removed? The concierge has only its script (which is fine), the configured backend is unused
  * until the console asks it something, nobody answers talk on Sloane's card, and the people of the street have only
  * their scripted lines.
  */
 import { admitWords } from '../../02_Define_The_Rules/ring0Gate.ts'
 import { actionCut } from '../../06_Make_Decisions/actions.ts'
+import type { RouterRequest } from '../../09_Cognition/router.ts'
 import type { Mind } from '../operator.ts'
 
 /** Something that says a line: the words to show for it. */
@@ -320,7 +323,7 @@ export function personWords(text: string, name: string): string {
  */
 export function sloaneChat(mind: Mind, live: () => boolean = () => true, where: ChatPlace = 'city'): Chat {
   return {
-    reply: async (turns, signal, onText, onPhase) => converse(mind, live, chatPrompt(turns, where), chatWords, CHAT_MAX, CHAT_TURNS, turns, signal, onText, onPhase),
+    reply: async (turns, signal, onText, onPhase) => converse(mind, live, chatPrompt(turns, where), chatWords, CHAT_MAX, CHAT_TURNS, true, turns, signal, onText, onPhase),
   }
 }
 
@@ -329,10 +332,12 @@ export function sloaneChat(mind: Mind, live: () => boolean = () => true, where: 
  * first, the person's last `keep` turns screened (`refused` asks nothing), `prompt` asked as talk bound to no one, each
  * streamed step made a reply by `cut` in whole words (chatSoFar) and screened (`held` stops the model and shows
  * nothing), the model stopped at an action line or once past `max`, and the whole reply cut and screened once more. No
- * deadline of its own: the router's waits bound it, and the caller's `signal` stops it.
+ * deadline of its own: the router's waits bound it, and the caller's `signal` stops it. `cloud` false keeps the request
+ * on this device (09_Cognition/router.ts RouterRequest): the router never hands it to the claude provider, and with
+ * nothing else to answer it fails 'offline', which is `none`.
  */
 async function converse(
-  mind: Mind, live: () => boolean, prompt: string, cut: (text: string) => string, max: number, keep: number,
+  mind: Mind, live: () => boolean, prompt: string, cut: (text: string) => string, max: number, keep: number, cloud: boolean,
   turns: readonly { readonly who: string; readonly text: string }[], signal: AbortSignal, onText?: (soFar: string) => void, onPhase?: (phase: string | null) => void,
 ): Promise<ChatResult> {
   let asks = false
@@ -362,8 +367,9 @@ async function converse(
       // the card's line, not the reply's
     }
   }
+  const ask: RouterRequest = { tethers: [], signal: ctl.signal, prompt, talk: true, cloud, onPhase: (p) => { if (!text) tell(p) } }
   try {
-    const answer = await mind.answer({ tethers: [], signal: ctl.signal, prompt, talk: true, onPhase: (p) => { if (!text) tell(p) } }, (p) => {
+    const answer = await mind.answer(ask, (p) => {
       if (p.kind !== 'text' || held || full) return
       if (!text) tell(null)
       text += p.text
@@ -411,10 +417,12 @@ async function converse(
  * with their own framing as the prompt, the person's last PERSON_TURNS turns screened first, every step screened,
  * shown through personWords (no echoed name, no made-up next turn, at most PERSON_SENTENCES sentences and PERSON_MAX
  * characters), the model stopped at an action line or past PERSON_MAX, and never acting: nothing here reads an action.
+ * Every request is kept on this device (`cloud: false`), so the router never spends the operator's cloud key on a
+ * passer-by, even when `live` said yes before a look found the gateway or after the model it found stopped answering.
  */
 export function personChat(mind: Mind, live: () => boolean): PersonChat {
   return {
     reply: async (prompt, name, turns, signal, onText, onPhase) =>
-      converse(mind, live, prompt, (t) => personWords(t, name), PERSON_MAX, PERSON_TURNS, turns, signal, onText, onPhase),
+      converse(mind, live, prompt, (t) => personWords(t, name), PERSON_MAX, PERSON_TURNS, false, turns, signal, onText, onPhase),
   }
 }

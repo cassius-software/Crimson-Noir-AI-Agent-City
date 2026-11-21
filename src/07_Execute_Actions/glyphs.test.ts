@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? It proves the control glyphs match the hardware in the player's hands: the
  * exact keyboard keys, the position-true face buttons of each controller layout (on the 'bayx' layout the
- * south button is B and the west one, talk's, is Y), the touch control labels, the device → family choice, and the hint lists the HUD and
+ * south button is B and the west one, talk's, is Y; a left hand's talk is the d-pad's up), the touch control labels, the device → family choice, and the hint lists the HUD and
  * the Concierge render — with no platform names, logos or button symbols: letters, numbers, positions and
  * arrows only.
  * What breaks if it is removed? A hint telling a controller player to press a key, the wrong face button on a
@@ -141,6 +141,24 @@ test('talk: T on the keyboard and the west face button on a pad, its letter draw
   assert.equal(glyph('talk', 'abxy'), glyph('reset', 'bayx'), 'the same letter, at the other layout\'s other position')
   assert.equal(modeGlyph('talk', 'keyboard', true), 'T', 'no override at the wheel (the engine ignores talk there)')
   assert.equal(spokenGlyph(glyph('talk', 'numbered')), 'West')
+})
+
+test('talk follows a one-handed pad: the left hand\'s is the d-pad\'s up, as its controls list names it; the keyboard and touch ignore the hand', () => {
+  // gamepad.ts reads no west button for a left hand (it talks with the d-pad's up), so a hint naming X, Y or West there
+  // names a button that does nothing: the label over the person, the HUD's chip and the panel's Done all read glyph().
+  for (const f of ['abxy', 'bayx', 'numbered', 'generic'] as const) {
+    assert.equal(glyph('talk', f, 'left'), padButtonName(f, 12), `${f}: the d-pad's up as the pad prints it`)
+    assert.equal(glyph('talk', f, 'left'), 'Up')
+    assert.equal(glyphKind('talk', f, 'left'), 'pill', `${f}: a word, not a round face button`)
+    assert.equal(glyph('talk', f, 'right'), glyph('talk', f), `${f}: the right hand keeps west`)
+    assert.equal(glyph('talk', f, 'both'), glyph('talk', f))
+    assert.equal(glyph('talk', f, 'left'), controlHints(f, false, 'all', 'left').find((h) => h.action === 'talk')?.glyph, `${f}: the same as its controls list`)
+  }
+  assert.equal(glyphKind('talk', 'abxy', 'right'), 'button')
+  assert.equal(glyph('talk', 'keyboard', 'left'), 'T')
+  assert.equal(glyph('talk', 'touch', 'left'), '')
+  // Only talk: the other actions keep their buttons whatever the hand (the mic is not hand-aware yet).
+  for (const a of ACTIONS.filter((x) => x !== 'talk')) assert.equal(glyph(a, 'abxy', 'left'), glyph(a, 'abxy'), a)
 })
 
 test('spokenGlyph reads the arrows and symbols as words for screen readers', () => {

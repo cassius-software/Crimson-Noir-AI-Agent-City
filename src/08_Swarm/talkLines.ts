@@ -104,29 +104,79 @@ export type Intent = (typeof INTENTS)[number]
 const SKILL_TALK = [...new Set(Object.values(SKILL_WORDS).flat())].filter((w) => w.length > 2 && normalise(w) === w)
 
 /**
- * How each intent is recognised, in the order they are tried, over the screen's normal form of the line (lower case,
- * letters and digits, single spaces) padded with a space at each end, so ' bye ' is a whole word. A goodbye wins over
- * thanks ('thanks, bye' ends the conversation), a change to the city or a mention of Sloane over the rest, and a
- * greeting only when nothing more specific was asked ('hi, what is your name' asks who they are).
+ * A question: a verb before its subject ('do you', 'can I', 'is it', "don't you") or a question word before a verb
+ * ('what do', 'where is', "who's", 'how far'). A question word with a subject after it is not one ("that's what I
+ * needed", "that's how it goes"). This and every pattern after it read the screen's normal form of the line (lower
+ * case, letters and digits, single spaces) padded with a space at each end, so ' bye ' is a whole word and "I'm" reads
+ * 'i m'. None looks behind, which Safari before 16.4 cannot parse: what comes before a match is read in code.
+ */
+const ASKS = / (?:(?:do|does|did|can|could|will|would|should|shall|may|might|must|is|are|am|was|were|have|has|don t|doesn t|didn t|won t|can t|isn t|aren t) (?:i|you|u|ya|we|they|he|she|it)|(?:where|what|how|who|why|when|which) (?:s|re|do|does|did|is|are|was|were|can|could|will|would|should|have|has|about|else|time|kind|sort|far|long|much|many|to)|whats|wheres|hows|whos|whys) /
+/** Any question word at all ('tell me where I need to go'): a line that holds one is never a goodbye. */
+const QUESTION_WORD = / (?:where|what|how|who|why|when|which|whats|wheres|hows|whos|whys) /
+/** Words that may trail a farewell: 'goodbye for now', 'see you then, boss', 'bye all'. */
+const BYE_TAIL = '(?: (?:now|then|for now|for today|tomorrow|boss|friend|pal|mate|everyone|everybody|all|folks))*'
+/**
+ * A farewell that ends the line: 'ok, bye', 'thanks, take care', 'I have to go now', "I'll see you around". The first
+ * group is a 'see you' farewell, the second a 'have to go' one, whose word before is read in code.
+ */
+const BYE_END = new RegExp(` (?:(see (?:you|ya)(?: later| around| soon| then| tomorrow| next time| again)?)|((?:gotta|got to|have to|need to|must|should|better) (?:go|run|get going|head off|be going|be off))|bye|goodbye|good bye|byebye|bye bye|farewell|cya|laters|take care(?: of yourself)?|good night|goodnight|catch (?:you|ya) later|talk (?:to you )?(?:later|soon)|i m off|i m leaving|i ll be off|i ll be going)${BYE_TAIL} $`)
+/** A line that is only 'later' or 'so long' (with an 'ok' or a 'thanks' before), which mean goodbye only alone. */
+const BYE_ALONE = new RegExp(`^(?: (?:ok|okay|alright|right|well|so|thanks|cheers))* (?:later|so long)${BYE_TAIL} $`)
+/** A farewell word at the head of the line: 'bye, Mira', 'goodbye and good luck'. */
+const BYE_HEAD = /^(?: (?:ok|okay|alright|right|well|so|thanks|thank you|cheers))* (?:bye|goodbye|good bye|byebye|farewell|cya) /
+/** The word before 'see you' that makes it no goodbye: 'nice to see you', 'I see you', 'I can see you', "can't see you". */
+const SEE_NOT_AFTER = new Set(['to', 'i', 'we', 'they', 'he', 'she', 'can', 'could', 'cannot', 't', 'not', 'still', 'never'])
+/** The word before 'have to go' that makes it someone else's going, not the player's: 'you need to go'. */
+const GO_NOT_AFTER = new Set(['you', 'u', 'ya', 'they', 'he', 'she', 'it'])
+
+/**
+ * Whether `t` (a padded normal form) says goodbye: a farewell ends it, or it is only 'later' or 'so long', or a
+ * farewell word heads it, and it asks nothing and holds no question word. So 'where do I need to go?', 'do I have to go
+ * far?', 'nice to see you', 'I can see you' and 'can you take care of this?' go on to their own intents, and only a
+ * line that really closes the conversation does.
+ */
+function farewell(t: string, asks: boolean): boolean {
+  if (asks || QUESTION_WORD.test(t)) return false
+  if (BYE_ALONE.test(t) || BYE_HEAD.test(t)) return true
+  const m = BYE_END.exec(t)
+  if (!m) return false
+  const before = t.slice(0, m.index)
+  const prior = before.slice(before.lastIndexOf(' ') + 1)
+  if (m[1] && SEE_NOT_AFTER.has(prior)) return false
+  return !(m[2] && GO_NOT_AFTER.has(prior))
+}
+
+/** Thanks, which wins over everything but a goodbye unless the line also asks something ('no thanks, what do you do?'). */
+const THANKS = / (?:thanks|thank you|thank u|thx|cheers|much obliged|appreciate it|appreciated|grateful)(?= )/
+
+/**
+ * How the intents after goodbye and thanks are recognised, in the order they are tried: a change to the city or a
+ * mention of Sloane over the rest, and a greeting only when nothing more specific was asked ('hi, what is your name'
+ * asks who they are).
  */
 const INTENT_RES: readonly (readonly [Intent, RegExp])[] = [
-  ['bye', / (?:bye|goodbye|good bye|byebye|farewell|take care|catch you later|talk later|talk to you later|gotta go|got to go|have to go|need to go|must go|i m off|i m leaving|good night|goodnight|cya)(?= )| see (?:you|ya)(?: later| around| soon| then| again)? $| see (?:you|ya) (?:later|around|soon) |^ (?:later|so long) $/],
-  ['thanks', / (?:thanks|thank you|thank u|thx|cheers|much obliged|appreciate it|appreciated|grateful)(?= )/],
   ['city', / sloane? | (?:make|turn|switch|change|set|speed up|slow down|skip|dim|brighten)(?: \S+)* (?:night|day|daytime|morning|noon|evening|dusk|dawn|time|traffic|cars|crowd|crowds|sound|music|volume|quality|graphics|picture|lights|clock|city)(?= )| take me (?:to|home|somewhere) | teleport| controls /],
   ['who', / (?:who are you|who r u|who s this|who is this|what s your name|whats your name|what is your name|your name|introduce yourself|tell me about yourself|about you|where are you from|where you from|who you are)(?= )/],
   ['help', / (?:help|assist|come with|come along|follow me|walk with me|join me|join us|tag along|work for me|work with me|team up|hire|recruit|lost|directions|where should i|what should i|where do i|what do i do|how do i|advice|any tips|a tip|recommend|what can you do|can you do|a hand)(?= )/],
   ['work', new RegExp(` (?:what do you do|what you do|your job|a job|for work|for a living|work on|working on|you work|your work|your skills?|good at|you know about|your trade|line of work|busy|code|coding|program|programming|skills?|craft|${SKILL_TALK.join('|')})(?= )`)],
-  ['greet', / (?:hi|hello|hey|hiya|howdy|good morning|good afternoon|good evening|good day|morning|evening|afternoon|how are you|how s it going|how you doing|how are things|what s up|whats up|sup|excuse me|pardon me|greetings)(?= )/],
+  ['greet', / (?:hi|hello|hey|hiya|howdy|good morning|good afternoon|good evening|good day|morning|evening|afternoon|how are you|how s it going|how you doing|how are things|what s up|whats up|sup|excuse me|pardon me|greetings|(?:nice|good|great|glad|pleased) to (?:see|meet) (?:you|ya))(?= )/],
 ]
 
 /** Characters of a line read for its intent (a heard or typed line is at most 200; the screen still reads it whole). */
 const INTENT_READ = 400
 
-/** What the player seems to want from `text` (Intent); `refused` when the 14A screen does not admit it, `other` when nothing matches. */
+/**
+ * What the player seems to want from `text` (Intent); `refused` when the 14A screen does not admit it, `other` when
+ * nothing matches. A goodbye is tried first ('thanks, bye' ends the conversation), then thanks unless the line also
+ * asks something, then INTENT_RES in its order.
+ */
 export function intentOf(text: string): Intent {
   const raw = typeof text === 'string' ? text : ''
   if (!screen(raw).admissible) return 'refused'
   const t = ` ${normalise(raw.slice(0, INTENT_READ))} `
+  const asks = ASKS.test(t)
+  if (farewell(t, asks)) return 'bye'
+  if (!asks && THANKS.test(t)) return 'thanks'
   for (const [intent, re] of INTENT_RES) if (re.test(t)) return intent
   return 'other'
 }
@@ -377,13 +427,20 @@ export const FALLBACK: Readonly<Record<TalkRole, string>> = Object.freeze({
 /** The article a skill takes when it is said: 'an Audio hand', 'a Rust hand' ('a C++', 'a WGSL': said by letter). */
 const article = (skill: string) => (/^[aeiou]/i.test(skill) ? 'an' : 'a')
 
-/** `line` with its slots filled for `who`: {skill}, {skill2}, {name}, and {a skill} or {a skill2} with its article. */
+/** A slot in a line: {skill}, {skill2}, {a skill}, {a skill2} or {name}. */
+const SLOT = /\{(?:(a )?(skill2?)|name)\}/g
+
+/**
+ * `line` with its slots filled for `who`: {skill}, {skill2}, {name}, and {a skill} or {a skill2} with its article. It
+ * fills every slot in one pass with a function, so a value goes in word for word: a roster name such as 'Ca$$h' or
+ * "Mo$'" is never read as a replacement pattern, and a value is never read again for slots.
+ */
 export function fillLine(line: string, who: TalkWho): string {
-  return line
-    .replace(/\{a (skill2?)\}/g, (_, slot: string) => { const s = slot === 'skill2' ? who.skill2 : who.skill; return `${article(s)} ${s}` })
-    .replace(/\{skill2\}/g, who.skill2)
-    .replace(/\{skill\}/g, who.skill)
-    .replace(/\{name\}/g, who.name)
+  return line.replace(SLOT, (_, a: string | undefined, slot: string | undefined) => {
+    if (!slot) return who.name
+    const s = slot === 'skill2' ? who.skill2 : who.skill
+    return a ? `${article(s)} ${s}` : s
+  })
 }
 
 /** A filled line as it may be said: the role's fixed line instead when the screen refuses it or it reads as a request. */

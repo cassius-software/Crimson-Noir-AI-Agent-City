@@ -157,8 +157,7 @@ export const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,en
  *  22.75 rem is left; in a narrower window the walk's card steps aside while this card is open instead. */
 export const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
 export const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
-// oxlint-disable-next-line react/only-export-components -- the conversation's panel (TalkLayer.tsx) stands where this card does
-export const CARD_AT = {
+const CARD_AT = {
   tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
   tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_calc(var(--touch-top,0.75rem)_/_var(--ui-zoom,1))_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
   short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_-_16rem)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
@@ -217,11 +216,18 @@ export function besideRoomQuery(zoom: number): string {
   return `(min-width: ${Math.round(BESIDE_ROOM_PX * Math.max(1, zoom))}px)`
 }
 const ROOM_STORES = new Map<string, ReturnType<typeof mediaStore>>()
-export function besideRoom(zoom: number): ReturnType<typeof mediaStore> {
-  const query = besideRoomQuery(zoom)
+function roomStore(query: string): ReturnType<typeof mediaStore> {
   let store = ROOM_STORES.get(query)
   if (!store) ROOM_STORES.set(query, (store = mediaStore(query)))
   return store
+}
+export function besideRoom(zoom: number): ReturnType<typeof mediaStore> {
+  return roomStore(besideRoomQuery(zoom))
+}
+/** A window at least `rem` across at a text size's zoom (TalkLayer.tsx: room for its column right of her chip). */
+// oxlint-disable-next-line react/only-export-components -- the conversation's panel (TalkLayer.tsx) asks its room of the same stores
+export function roomAcross(rem: number, zoom: number): ReturnType<typeof mediaStore> {
+  return roomStore(`(min-width: ${Math.round(rem * 16 * Math.max(1, zoom))}px)`)
 }
 
 function isEditable(t: EventTarget | null): boolean {
@@ -829,6 +835,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   if (view === 'chip') {
     const pending = !name && !skipped
     const at = layout === 'wide' ? CHIP_AT.wide : chipTop ? CHIP_AT.compact : CHIP_AT.shortTouch
+    // The pill (data-concierge-pill) is tucked away, still mounted and still taking heard lines, while a conversation's
+    // panel stands where no band is clear of it (TalkLayer.tsx sets data-chip-tucked on <html>; index.css hides it).
     const pill = `pointer-events-auto absolute ${at} flex items-center rounded-full border text-[12px] backdrop-blur-xl backdrop-saturate-150 ${glass} ${enter}`
     // shortTouch's other measures read --chip-top, so the walk's top replaces that, not `top`.
     const style: CSSProperties | undefined = chipTop ? { top: chipTop } : walkTop ? ({ '--chip-top': walkTop } as CSSProperties) : undefined
@@ -867,12 +875,12 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     return (
       <div className="ui-zoom pointer-events-none absolute inset-0 z-30 font-sans antialiased select-none">
         {pending ? (
-          <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip">
+          <button ref={chipRef} type="button" onClick={askForName} className={`${pill} gap-2 py-1 pr-3.5 pl-1`} style={style} data-concierge="chip" data-concierge-pill>
             {ask}
             {bar}
           </button>
         ) : (
-          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`}>
+          <div ref={chipRef} className={pill} style={style} role="group" aria-label={`${SLOANE.name}, your concierge`} data-concierge-pill>
             {buttons}
             {bar}
           </div>

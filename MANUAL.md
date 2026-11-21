@@ -77,7 +77,7 @@ at all, where Sloane still answers through a model on this machine or in the app
 | Handbrake | Space | east face button | Handbrake |
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
-| Talk to the person near you (on foot) | T (Enter sends, Esc in an empty field finishes) | west face button; d-pad up held left-handed | tap the Talk chip |
+| Talk to the person near you (on foot) | T (Enter sends, Esc finishes) | west face button; d-pad up held left-handed | tap the Talk chip |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
 | Ghost view | G | menu button, then Ghost view | Menu: Ghost view |
 | Rain mode | M | menu button, then Rain mode | Menu: Rain mode |
@@ -2553,31 +2553,43 @@ and nowhere else. The design and its numbers are in `docs/progression.md`.
 ## Talking to people
 
 Walk up to someone in the street and you can talk with them: a passer-by, someone you asked over, or one of your
-hired agents (`07_Execute_Actions/talk.ts`, `TalkLayer.tsx`; `08_Swarm/talkLink.ts`, `talkLines.ts`).
+hired agents (`07_Execute_Actions/talk.ts`, `talkField.ts`, `TalkLayer.tsx`; `08_Swarm/talkLink.ts`, `talkLines.ts`).
 
-- **Who.** The nearest person within 4 m, on your floor, on screen and with no wall between you is offered; someone
-  straight ahead wins over someone nearer at the edge of the screen, and the one offered changes only for someone
-  clearly better placed. A small label rises over their head with their name (`Pedestrian 1234 (Rust)`, or a hired
-  agent's own name), their line (`Rust · Design`) and the key to press, and a **Talk to …** chip joins the HUD's chips
-  (its spoken name says how far and which way). Nobody is offered while you run, drive or wear a headset, while a card,
-  the console or Sloane's card is open, or with the HUD hidden. Sloane has no body in the street: her name still
-  reaches her card.
+- **Who.** The nearest person within 4 m, on your floor, on screen and with no wall between you is offered (in a
+  generated region its buildings are walls too); someone straight ahead wins over someone nearer at the edge of the
+  screen, and the one offered changes only for someone clearly better placed. A small label rises over their head
+  with their name (`Pedestrian 1234 (Rust)`, or a hired agent's own name), their line (`Rust · Design`) and the key to
+  press (`Up` for a pad held left-handed), and a **Talk to …** chip joins the HUD's chips (its spoken name says how far
+  and which way). Up close, where their head nears the top of the screen, the label stays wholly inside it. Nobody is
+  offered while you run, drive or wear a headset, while a card, the console, Sloane's card or the pad's menu is open,
+  or with the HUD hidden. Sloane has no body in the street: her name still reaches her card.
 - **Starting.** On purpose only: `T`; the pad's west face button (X on a pad lettered A at the south button, Y on one
   lettered B there; the d-pad's up held left-handed, see Accessibility); a tap or a click on the chip; or a greeting
   said aloud to the person offered ("hi", "hello", "excuse me", "good evening", or a hired agent's own name). Talk in the
-  room that greets nobody starts nothing, and `T` or the pad with nobody near says so. A small panel opens where Sloane's
-  card stands (her chip stays): the transcript, a line saying whether they are thinking or speaking, and an ordinary
-  text field. `T` puts the keyboard in the field, the pad does too unless the microphone is open, and a tap never does,
-  so no on-screen keyboard comes up unasked.
+  room that greets nobody starts nothing, and `T` or the pad with nobody near says so. A small panel opens beside
+  Sloane's chip and never over it: under her chip on an upright phone, in a column beside it on a wide screen. Where no
+  place is clear of her chip (a phone held sideways, a large text size on a small phone, a narrow window) her chip is
+  tucked away while you talk and comes back when the conversation closes; a line to Sloane still reaches her. The panel
+  holds the transcript, a line saying whether they are thinking or speaking, and an ordinary text field; at a large
+  text size the transcript gives way first, so the field and Send stay in view. `T` puts the keyboard in the field, even
+  from a focused button (never from another text field), the pad does too unless the microphone is open, and a tap
+  never does, so no on-screen keyboard comes up unasked. Holding `T` a moment too long types nothing into the field.
 - **Talking.** They open with a short line of their own at once. Then speak through the microphone, or type and press
-  Enter (on a keyboard the field lets go after each line, so W A S D walk again). Each reply is one to three short
-  sentences. People keep walking while they talk: walk along with them.
-- **Ending.** Done; Esc in an empty field (Esc in a field with text clears it); the pad's button again; or goodbye,
-  said or typed. It also ends when you walk on (past 6 m while nothing is in progress, past 12 m at any time), a wall
-  stands between you for a second and a half, they leave, you get in a car, open a card, the console or Sloane's card,
-  hide the HUD, switch away from the tab, or a minute passes with nothing going on. An ending you did not choose is one
-  of the HUD's messages ("Pedestrian 1234 (Rust) walked on."). A line that starts with Sloane's name ("Sloane, make it
-  night") ends the conversation and goes on to her.
+  Enter (on a keyboard the field lets go after each line, so W A S D walk again; `T` puts the keyboard back, even with
+  a pad's stick held). Each reply is one to three short sentences. People keep walking while they talk: walk along with
+  them.
+- **Ending.** Done; Esc (from the field, the Done button or anywhere on the page but another text field; with text in
+  the field the first Esc clears it); the pad's button again; or a goodbye, said or typed: a line that ends with one
+  ("ok, bye", "I have to go now", "see you later"), opens with one ("bye Mira") or is one ("later"), and asks nothing
+  ("where do I need to go?", "nice to see you" and "can you take care of this?" are not goodbyes). It also ends when
+  you walk on (past 6 m while nothing is in progress, past 12 m at any time), a wall stands between you for a second
+  and a half, they leave, you get in a car, open a card, the console, Sloane's card or the pad's menu, hide the HUD,
+  switch away from the tab, or a minute passes with nothing going on. The on-screen keys do not end it: they type into
+  its field. An ending you did not choose is one of the HUD's messages ("Pedestrian 1234 (Rust) walked on."). A line
+  that starts with Sloane's name ("Sloane, make it night") ends the conversation and goes on to her. Done, Esc, the
+  pad's button, a line to Sloane, a car, a card, the console, the pad's menu and a hidden HUD or tab stop the person at
+  once; when you walk on, a wall comes between you or they leave, a line already being heard finishes and a hired
+  agent's line still being prepared is dropped.
 - **What they can do.** Chat. They cannot change the city, follow you or do work for you: that is Sloane's to arrange,
   and asking someone over is the recruiter's. A spoken request for a skill ("anyone here know Rust?") still reaches the
   recruiter first; a typed line never recruits. Nothing said is kept: not in the swarm's memory and not in the diary.
@@ -2585,26 +2597,38 @@ hired agents (`07_Execute_Actions/talk.ts`, `TalkLayer.tsx`; `08_Swarm/talkLink.
   address on this machine, on any device, or the model in this page or the app's own once it is loaded, on a desktop
   with a discrete GPU. On a phone, on the lite profile and on a computer without a discrete GPU a passer-by never makes
   the model load or holds the city's quality down, so an original scripted line for their role answers; so it does when
-  the model has said nothing within 5 s or is busy with Sloane's answer. Your words and theirs pass the 14A screen:
-  words it refuses get a polite deflection, and a reply that would read as a request to recruit is replaced by a
-  scripted line before it is shown or said.
+  the model has said nothing within 5 s or is busy with Sloane's answer. A goodbye or a thanks is answered by the
+  script; a thanks that also asks something ("no thanks, what do you do?") is answered as its question. Your words and
+  theirs pass the 14A screen: words it refuses get a polite deflection, and a reply that would read as a request to
+  recruit is replaced by a scripted line before it is shown or said.
 - **Voices and captions.** With the city's sound on (whatever `sloane off` says), a hired agent you gave a provider
   voice is heard at their head, with the walls and the room, as `say` is; everyone else speaks in an offline browser
   voice of their own (never the one Sloane uses, where the device has another), quieter with distance, and a caption
-  without words says who speaks and where (`[Pedestrian 1234 (Rust) speaking]` with its arrow and metres). The words
-  are in the panel only. A device with no voice shows the text and gives you time to read it. Sloane's own lines are
-  not spoken over a conversation (her text still shows), and her nudges wait. A screen reader hears the opening and
-  each finished reply once, and once someone has been offered for a second and a half, "… is close enough to talk to:
-  press T" (the pad's button on a pad, the chip on a phone), at most every 15 s.
+  without words says who speaks and where (`[Pedestrian 1234 (Rust) speaking]` with its arrow and metres), kept until
+  they stop and following them as they walk. On a wide screen the captions stand above the open panel. The words are
+  in the panel only. A device with no voice shows the text and gives you time to read it, and a voice that never
+  finishes is cut after 10 s plus 0.15 s a character, so the conversation goes on. Sloane's own lines are not spoken
+  over a conversation (her text still shows), and her nudges wait. A screen reader hears the opening and each finished
+  reply once, and once someone has been offered for a second and a half, "… is close enough to talk to: press T" (the
+  pad's button on a pad, up on the d-pad for a pad held left-handed, the chip on a phone), at most every 15 s.
 - **Privacy.** What you say is understood on this device (Words, under Onboarding and the spatial HUD). A conversation
   is never sent to the `claude` provider, even when it answers Sloane: replies come from a model server at an address
-  on this machine, from the model in this page or the app, or from the script. A hired agent's provider voice is said
-  by the speech provider you set up (see Speech); passers-by never use it.
+  on this machine, from the model in this page or the app, or from the script. The cognition router holds to this
+  itself (a passer-by's reply is a request kept on this device, `RouterRequest` `cloud: false`): before any look, once
+  auto has found the gateway, after the server it found stops answering, and with `ask provider claude` chosen, the
+  script answers and nothing is sent to the gateway. A look auto makes for a passer-by passes the gateway over and does
+  not stand as auto's look, so Sloane's next answer looks as before. A hired agent's provider voice is said by the
+  speech provider you set up (see Speech); passers-by never use it.
 - **Not here.** Talking in a headset or as players 2 to 4 of a split screen; shop clerks and home staff; a pad held
   left-handed and read without its d-pad has no talk button (the chip and a greeting still work). Real browser voices,
-  screen readers, phones, Safari and Firefox are unverified. The unit tests cover who is offered, every ending, the
-  replies and their screening; the browser smoke test opens a conversation on a desktop with `T`, sends "hi" and gets a
-  reply, and checks the chip and the panel on foot at fourteen phone and tablet views.
+  screen readers, phones, Safari and Firefox are unverified. On a phone held sideways at 150 % or 200 % text the panel
+  lies over the inner edge of the stick's zone, as Sloane's card does there; at 200 % text a window 640 to 703 px
+  across and at least 500 px tall runs the panel past its sides, as her card's column does. The screen reader's opening
+  line says "Escape to finish" on every device. The unit tests cover who is offered, every ending, the replies and their
+  screening, and the panel's field; the browser smoke test opens a conversation on a desktop with `T` from a focused
+  button, checks that a held `T` types nothing and that the panel stands clear of Sloane's chip, sends "hi" and gets a
+  reply, closes it with Esc and again with Done, and checks the chip and the panel on foot at fourteen phone and tablet
+  views (never over her chip) and at 200 % text at six.
 
 ## Recruitment
 

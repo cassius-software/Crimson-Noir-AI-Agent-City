@@ -185,8 +185,8 @@ test('nearestPeople writes into the caller\'s arrays and nothing else, so one pa
   // And the scan allocates nothing: no new arrays, objects, closures or spreads in its body.
   const body = CODE.slice(CODE.indexOf('export function nearestPeople('), CODE.indexOf('export function talkScore('))
   assert.ok(body.length > 0)
-  // (An empty array literal, not a type such as `number[]`.)
-  assert.doesNotMatch(body, /\bnew\b|=>|\.\.\.|\.(?:map|filter|slice|subarray|concat|push|sort|from)\(|(?<![\w\])])\[\s*\]|\{\s*\}/)
+  // (An empty array literal, not a type such as `number[]`: the character before it is no word or closing bracket.)
+  assert.doesNotMatch(body, /\bnew\b|=>|\.\.\.|\.(?:map|filter|slice|subarray|concat|push|sort|from)\(|(?:^|[^\w\])])\[\s*\]|\{\s*\}/)
 })
 
 test('nearestPeople is safe with nobody, no rows to consider and short arrays', () => {

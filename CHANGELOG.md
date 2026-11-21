@@ -16,37 +16,64 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 ### Added
 
 - **Talk to the person near you.** Walk up to a passer-by, someone you asked over or one of your hired agents, and
-  the nearest within 4 m on your floor, on screen and with no wall between is offered: a label over their head with
-  their name, their line and the key, and a **Talk to …** chip on the HUD. `T`, the pad's west face button (the d-pad's
-  up held left-handed), a tap on the chip or a spoken greeting ("hi", "excuse me") opens a small conversation panel
-  where Sloane's card stands, with the transcript and an ordinary text field; you speak through the microphone or type
-  (`src/08_Swarm/talkLink.ts`, `talkLines.ts`; `src/07_Execute_Actions/talk.ts`, `TalkLayer.tsx`; the engine's side in
-  `engine.ts`). They chat and do no work: a change to the city stays Sloane's, a spoken request for a skill still
-  reaches the recruiter first, and a typed line never recruits. A reply comes from a model only when it is ready and
-  cheap to ask (a model server on this machine, or the model in this page or the app once loaded on a desktop with a
-  discrete GPU), never from the `claude` provider, and otherwise, or after 5 s, from original scripted lines for their
-  role. A hired agent with a provider voice is heard at their head; everyone else speaks in an offline browser voice of
-  their own, quieter with distance, with a caption saying where. The conversation ends on Done, Esc, the pad's button
-  again, a goodbye, a line to Sloane (which goes on to her), walking away, a wall, a car, a card, the console, a hidden
-  HUD or tab, or a minute of nothing. MANUAL.md, Talking to people, has the details.
+  the nearest within 4 m on your floor, on screen and with no wall between (a generated region's buildings count as
+  walls, as the city's do) is offered: a label over their head with their name, their line and the key, and a
+  **Talk to …** chip on the HUD. `T`, the pad's west face button (the d-pad's up held left-handed, which the label and
+  the spoken hint then name), a tap on the chip or a spoken greeting ("hi", "excuse me") opens a small conversation
+  panel beside Sloane's chip, never over it, with the transcript and an ordinary text field; you speak through the
+  microphone or type (`src/08_Swarm/talkLink.ts`, `talkLines.ts`; `src/07_Execute_Actions/talk.ts`, `talkField.ts`,
+  `TalkLayer.tsx`; the engine's side in `engine.ts`). Where no place is clear of her chip (a phone held
+  sideways, a large text size on a small phone, a narrow window) her chip is tucked away while the conversation is
+  open, still mounted, and comes back when it closes. They chat and do no work: a change to the city stays Sloane's, a
+  spoken request for a skill still reaches the recruiter first, and a typed line never recruits. A reply comes from a
+  model only when it is ready and cheap to ask (a model server on this machine, or the model in this page or the app
+  once loaded on a desktop with a discrete GPU), never from the `claude` provider, and otherwise, or after 5 s, from
+  original scripted lines for their role. The cognition router itself keeps a passer-by's reply off the gateway
+  (`router.ts` `RouterRequest` with `cloud: false`, set by `onboarding/voice.ts` `personChat`): before any look, once
+  auto has found the gateway, after the server it found stops answering, and with `claude` chosen, the script answers
+  and no request reaches the gateway. A hired agent with a provider voice is heard at their head; everyone else speaks
+  in an offline browser voice of their own, quieter with distance, with a caption saying where that lasts until they
+  stop and follows them as they walk. A voice that never finishes gives the turn back after 10 s plus 0.15 s a
+  character. The conversation ends on Done, Esc (from the field, the Done button or the page, never from another text
+  field; with text in the field the first Esc clears it), the pad's button again, a goodbye (a line that ends or opens
+  with one and asks nothing: "where do I need to go?" and "nice to see you" are not goodbyes), a line to Sloane (which
+  goes on to her), walking away, a wall, a car, a card, the console, the pad's menu, a hidden HUD or tab, or a minute of
+  nothing. Done, Esc, the pad's button, a line to Sloane, a car, a card, the console, the pad's menu and a hidden HUD
+  or tab cut the person off; walking away, a wall and their leaving let a line already being heard finish, and drop a
+  hired agent's line still being prepared. MANUAL.md, Talking to people, has the details.
   - **What the tests check.** Who is offered and when the offer moves (`talkLink.test.ts`, with a 20,000-step fuzz:
     a conversation never changes person and closes only with a reason); every scripted line for every role, skill and
-    time of day passes the 14A screen, never reads as a recruitment request and keeps to three short sentences
-    (`talkLines.test.ts`); the controller's openings, endings, timers, the model's patience, a request queued behind
-    Sloane's answer given up at once, a reply that reads as a recruitment request replaced, and the label written only
-    when it moves (`talk.test.ts`); the person's voice tiers in Sloane's speaker, the line that names Sloane, the T key,
-    the pad's buttons for both hands and each hand, the glyphs, the screen reader's line and the HUD's snapshot field;
-    and the wiring in `App.tsx` and `engine.ts`, read as source (`talkLayerWiring.test.ts`). The browser smoke test's
-    desktop scenario opens a conversation with a stand-in partner (`window.__SIM__.talk`) by `T`, sends "hi" and waits
-    for the scripted reply, then closes it with Done; its phone scenario checks the chip and the panel on foot at
-    fourteen phone and tablet views, the panel judged by the rules of Sloane's card. Both scenarios passed in a local
-    Chrome on the software adapter; CI's browser jobs run them too.
+    time of day passes the 14A screen, never reads as a recruitment request and keeps to three short sentences, which
+    lines close as a goodbye and which do not, a thanks that asks something answered as its question, and a roster name
+    with a `$` in it said as written (`talkLines.test.ts`); the controller's openings, endings, timers, the model's
+    patience, a request queued behind Sloane's answer given up at once, a reply that reads as a recruitment request
+    replaced, a greeting or a question that only sounds like a farewell answered with the conversation left open, a
+    voice that never ends handing the turn back, a hired agent's line still being prepared dropped at a walk, and the
+    label written only when it moves and kept inside the screen by its width and height (`talk.test.ts`);
+    the field's draft after a sent line, Esc from the page, `T` from a focused button, a held key's repeats and the
+    panel's places beside Sloane's chip (`talkLayer.test.ts`); how a talk press was made, kept as it is queued
+    (`input.test.ts`); a passer-by's reply never sending any request to the Claude gateway (`router.auto.test.ts`,
+    `chat.test.ts`); the person's voice tiers in Sloane's speaker, the line that names Sloane, the T key, the pad's
+    buttons for both hands and each hand, the glyphs and the screen reader's line for each hand, and the HUD's snapshot
+    field; and the wiring in `App.tsx` and `engine.ts`, read as source, with the caption kept alive driven through the
+    real caption track (`talkLayerWiring.test.ts`). The browser smoke test's desktop scenario opens a conversation with
+    a stand-in partner (`window.__SIM__.talk`) by `T` while a button holds the focus, checks that the field takes the
+    keyboard, that `T` held on types nothing into it and that the panel stands clear of Sloane's chip at 960x540, sends
+    "hi" and waits for the scripted reply, checks that the field lets go and that Esc closes the conversation, then
+    opens it again and closes it with Done; its phone scenario checks the chip and the panel on foot at fourteen phone
+    and tablet views, the panel judged by the rules of Sloane's card and never over her chip (clear of it, or her chip
+    tucked away and back once it closes), and at 200 % text at six phone views, upright and sideways, with the field
+    and Send in view. Both scenarios passed in a local Chromium on the software adapter; CI's browser jobs run them too.
   - **Not verified.** Real browser voices and their timing, an iPhone's Safari, Firefox, Android and any phone; the
     voice placed at a hired agent's head by ear; echo and barge-in on laptop speakers; screen readers; soft keyboards
     over the panel; a small model keeping to the person it plays. Heads do not yet turn to the person you talk with:
     that waits for another change. Not in a headset or for players 2 to 4 of a split screen.
-  - **Known.** On most phone and tablet views the panel stands over Sloane's chip (the smoke test records where), so
-    the chip cannot be tapped while you talk; a line to Sloane still reaches her and ends the conversation.
+  - **Known.** On a phone held sideways at 150 % or 200 % text the panel lies over the inner edge of the stick's zone
+    (seen at 874x402 and 667x375 at 200 %, and 640x360 at 150 %), as Sloane's card gives up that edge rather than
+    shrink under 16 rem between the thumbs; the smoke test does not judge the stick at those sizes. At 200 % text a
+    window 640 to 703 px across and at least 500 px tall runs the panel past both of its sides (22 px each at 660x520),
+    as Sloane's card's column already does there. The screen reader's opening line says "Escape to finish" on every
+    device.
 
 - **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which
   brain answers Sloane (a model server on this machine, the gateway to the Claude API, which answers from off this

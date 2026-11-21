@@ -30,10 +30,12 @@
  * - The voice and the label. Each reply is said through Sloane's own speaker (ConciergeSpeaker.person), so one mouth
  *   carries both, and the microphone's echo guard and barge-in cover people too. A hired agent with a provider voice
  *   is heard at their head, and everyone else in a browser voice of their own, quieter with distance, with a wordless
- *   caption saying where. A device with no voice shows the text and holds the turn for a reading time. The label
+ *   caption saying where. A device with no voice shows the text and holds the turn for a reading time, and a voice
+ *   that never ends is cut after a generous time for the line's length, so the turn always comes back. A line still
+ *   being synthesised when the conversation closes is dropped, never said afterwards in another voice. The label
  *   over the head is written straight to its element's transform in tick, outside React, and only when it moves by
- *   more than half a pixel. The panel, the label and the HUD's chip read the frozen snapshots ui() and hud(), which
- *   change only on an edge.
+ *   more than half a pixel, held so the whole label stays on the screen. The panel, the label and the HUD's chip read
+ *   the frozen snapshots ui() and hud(), which change only on an edge.
  * Every timer goes through the injectable clock, so a test can see that none is left after an ending or dispose.
  * What breaks if it is removed? The label, the chip and the conversation panel have nothing behind them: nobody in
  * the street can be talked to.
@@ -61,6 +63,13 @@ export const BEAT_SPAN_MS = 400
 export const READ_MS_PER_CHAR = 55
 export const READ_MIN_MS = 1200
 export const READ_MAX_MS = 5000
+/**
+ * A voiced line holds the person's turn for at most SPEAK_SLACK_MS (a provider's synthesis, a browser voice's start)
+ * plus SPEAK_MS_PER_CHAR a character (slower than the slowest voice speaks), ms. Past that the line is cut and the turn
+ * comes back, so a speech request that never answers or a voice whose end never comes cannot hold it for good.
+ */
+export const SPEAK_MS_PER_CHAR = 150
+export const SPEAK_SLACK_MS = 10000
 /** An open conversation with nothing going on for this long closes ('idle'), ms. */
 export const IDLE_MS = 60000
 /** 'Nobody close enough' is said at most this often, ms. */
@@ -109,9 +118,13 @@ export interface TalkClock {
   cancel(handle: unknown): void
 }
 
-/** The label's element as tick writes it: its transform and visibility, nothing read back. */
+/**
+ * The label's element as tick writes it: its transform and visibility, nothing read back per frame. Its height is read
+ * only when its width is measured (setLabelWidth), once per change of its content.
+ */
 export interface TalkLabelEl {
   readonly style: { transform: string; visibility: string }
+  readonly offsetHeight?: number
 }
 
 /**
@@ -261,8 +274,9 @@ export class TalkController {
   #turnId = 0
   #lineId = 0
   #voiceId = 0
-  /** A person's line is with the speaker and has not ended. */
+  /** A person's line is with the speaker and has not ended, and whether it has reached the air (played or spoken). */
   #voicing = false
+  #aired = false
   /** The row told to the staring setter (null for none), and the row the engine follows. */
   #partnered: number | null = null
   #followed = -1
@@ -281,10 +295,12 @@ export class TalkController {
   #beatT: unknown = null
   #patienceT: unknown = null
   #readT: unknown = null
+  #speakT: unknown = null
   #el: TalkLabelEl | null = null
   #W = 0
   #H = 0
   #lw = 0
+  #lh = 0
   #px = Number.NaN
   #py = Number.NaN
   #shown: boolean | null = null
@@ -438,9 +454,15 @@ export class TalkController {
     this.#px = Number.NaN
   }
 
-  /** The label's width, px, measured once per change of its content. */
-  setLabelWidth(w: number): void {
+  /**
+   * The label's size, px, measured once per change of its content: its width, and its height when given, else read
+   * from its element (laid out already, since its width was just read). The label stands above its anchor, so its
+   * height is what keeps its top edge inside the layer.
+   */
+  setLabelWidth(w: number, h?: number): void {
+    const lh = h ?? this.#el?.offsetHeight ?? 0
     this.#lw = Number.isFinite(w) ? Math.max(0, w) : 0
+    this.#lh = Number.isFinite(lh) ? Math.max(0, lh) : 0
     this.#px = Number.NaN
   }
 
@@ -608,6 +630,7 @@ export class TalkController {
     this.#voiceId++
     this.#beatT = this.#cancel(this.#beatT)
     this.#readT = this.#cancel(this.#readT)
+    this.#speakT = this.#cancel(this.#speakT)
     this.#retire()
     this.#dropLive(conv)
     const id = ++this.#turnId
@@ -739,7 +762,10 @@ export class TalkController {
     } else say()
   }
 
-  /** Shows and says the person's line; the turn is theirs until it ends (or for a reading time when no voice says it). */
+  /**
+   * Shows and says the person's line. The turn is theirs until it ends, for a reading time when no voice says it, and
+   * never longer than SPEAK_SLACK_MS plus SPEAK_MS_PER_CHAR a character while a voice holds it.
+   */
   #say(conv: Conv, text: string, keep: boolean, closing: boolean, lead = ''): void {
     this.#show(conv, text, false)
     if (keep) this.#keep(conv, 'them', text)
@@ -750,10 +776,13 @@ export class TalkController {
     conv.activeAt = this.#clock.now()
     const id = ++this.#voiceId
     const who = conv.who
+    // The line has reached the air: the provider's clip is played, or the browser's voice starts (and its caption).
+    const aired = (): void => { if (id === this.#voiceId) this.#aired = true }
     let out: ConciergeOut | null = null
     if (conv.real && who.voice.provider !== null) {
       try {
-        out = this.#host.out(conv.row, who.label)
+        const sink = this.#host.out(conv.row, who.label)
+        out = { decode: (bytes) => sink.decode(bytes), play: (clip, line) => { aired(); return sink.play(clip, line) } }
       } catch {
         out = null
       }
@@ -762,9 +791,20 @@ export class TalkController {
       ...who.voice,
       out,
       volume: conv.real ? voiceVolume(this.#curD) : 1,
-      caption: conv.real ? (on) => this.#host.caption(conv.row, who.label, on) : undefined,
+      caption: conv.real ? (on) => { if (on) aired(); this.#host.caption(conv.row, who.label, on) } : undefined,
     }
     this.#voicing = true
+    this.#aired = false
+    this.#speakT = this.#cancel(this.#speakT)
+    this.#speakT = this.#clock.after(SPEAK_SLACK_MS + text.length * SPEAK_MS_PER_CHAR, () => {
+      this.#speakT = null
+      if (conv !== this.#conv || id !== this.#voiceId) return
+      // The voice never ended: it is cut and the turn comes back (after a farewell, the conversation closes).
+      this.#o.speaker.stop()
+      this.#voicing = false
+      this.#voiceId++
+      this.#listen(conv)
+    })
     let said: Promise<string>
     try {
       said = this.#o.speaker.person(text, v)
@@ -779,6 +819,7 @@ export class TalkController {
   #spoken(conv: Conv, id: number, tier: string, text: string): void {
     if (conv !== this.#conv || id !== this.#voiceId) return
     this.#voicing = false
+    this.#speakT = this.#cancel(this.#speakT)
     if (tier !== 'silent') {
       this.#listen(conv)
       return
@@ -805,7 +846,9 @@ export class TalkController {
   /**
    * Closes the open conversation for `why`, the link going to `next`: the request given up, every timer cleared, a
    * line still being said cut for the endings the player chose (or a card's), the staring setter let go, the page
-   * told, and an ending the player did not choose said as a toast.
+   * told, and an ending the player did not choose said as a toast. The other endings let a line already heard finish;
+   * one still being synthesised is dropped, since the engine stops following the person and the speaker would say it
+   * in a browser voice after the close.
    */
   #close(why: TalkEnd, next: TalkLink): void {
     const conv = this.#conv
@@ -815,7 +858,7 @@ export class TalkController {
       this.#ask = null
     } else this.#retire()
     this.#clearTimers()
-    if (this.#voicing && CUTS.has(why)) this.#o.speaker.stop()
+    if (this.#voicing && (CUTS.has(why) || !this.#aired)) this.#o.speaker.stop()
     this.#voicing = false
     this.#voiceId++
     this.#conv = null
@@ -836,6 +879,7 @@ export class TalkController {
     this.#beatT = this.#cancel(this.#beatT)
     this.#patienceT = this.#cancel(this.#patienceT)
     this.#readT = this.#cancel(this.#readT)
+    this.#speakT = this.#cancel(this.#speakT)
   }
 
   #cancel(handle: unknown): null {
@@ -899,7 +943,12 @@ export class TalkController {
     }
   }
 
-  /** Moves the label to its anchor (inside the layer by EDGE_PX), writing only a move over MOVE_PX or a visibility change. */
+  /**
+   * Moves the label to its anchor, writing only a move over MOVE_PX or a visibility change. The label stands centred
+   * over the anchor (translate(-50%, -100%)), so the anchor is held EDGE_PX plus half the label's width from the sides
+   * and EDGE_PX plus its height from the top: the whole label stays inside the layer, centred when the layer is too
+   * small for it.
+   */
   #place(): void {
     const el = this.#el
     if (el === null) return
@@ -909,8 +958,9 @@ export class TalkController {
       const p = this.#host.place()
       if (Number.isFinite(p.sx) && Number.isFinite(p.sy)) {
         const lo = EDGE_PX + this.#lw / 2, hi = W - lo
+        const top = EDGE_PX + this.#lh, bottom = H - EDGE_PX
         px = lo > hi ? W / 2 : Math.min(hi, Math.max(lo, p.sx * W))
-        py = Math.min(H - EDGE_PX, Math.max(EDGE_PX, p.sy * H))
+        py = top > bottom ? (H + this.#lh) / 2 : Math.min(bottom, Math.max(top, p.sy * H))
         show = true
       }
     }

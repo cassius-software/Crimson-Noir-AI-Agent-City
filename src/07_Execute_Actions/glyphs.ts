@@ -14,8 +14,10 @@
  * Positions follow the W3C standard gamepad mapping the driver reads (gamepad.ts): interact = south
  * button, handbrake = east, reset = north, talk = west, ping = right shoulder, run = left-stick click, mic = right-stick
  * click, throttle/brake = right/left trigger, clock = d-pad left/right. Labels are position-true, so on the 'bayx'
- * layout the south button reads 'B' and the west one 'Y'. Like the mic, glyph() is not hand-aware: a left hand talks
- * with the d-pad's up (gamepad.ts PadHand), which only the all-controls list (controlHints with its hand) names.
+ * layout the south button reads 'B' and the west one 'Y'. Talk follows the player's hand (access.ts `pad`): a left hand
+ * talks with the d-pad's up (gamepad.ts PadHand), so glyph() given that hand names the d-pad's up as the pad prints it,
+ * and every talk hint (the label over the person, the HUD's Talk chip, the conversation's Done, the screen reader's
+ * line and the all-controls list) names the button that works. The mic is not hand-aware yet.
  */
 import type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 import { PAD, type PadHand } from '../04_Connect_Hardware/gamepad.ts'
@@ -73,8 +75,12 @@ const GLYPHS = {
 
 const FACE: ReadonlySet<ControlAction> = new Set(['interact', 'handbrake', 'reset', 'talk'])
 
-/** The glyph for an action in a family ('' when the family has no such control). */
-export function glyph(action: ControlAction, family: GlyphFamily): string {
+/**
+ * The glyph for an action in a family ('' when the family has no such control). With one hand on a pad, `hand` left,
+ * talk is the d-pad's up (gamepad.ts reads no west button for that hand), named as the pad prints it.
+ */
+export function glyph(action: ControlAction, family: GlyphFamily, hand: PadHand = 'both'): string {
+  if (action === 'talk' && hand === 'left' && isPadFamily(family)) return padButtonName(family, PAD.up)
   return GLYPHS[family]?.[action] ?? ''
 }
 
@@ -90,11 +96,11 @@ export function isPadFamily(family: GlyphFamily): family is PadFamily {
   return family !== 'keyboard' && family !== 'touch'
 }
 
-export function glyphKind(action: ControlAction, family: GlyphFamily): GlyphKind {
+export function glyphKind(action: ControlAction, family: GlyphFamily, hand: PadHand = 'both'): GlyphKind {
   if (family === 'touch') return 'pill'
   if (family === 'keyboard') return 'key'
   if (action === 'move' || action === 'look') return 'stick'
-  if (FACE.has(action) && glyph(action, family).length === 1) return 'button'
+  if (FACE.has(action) && glyph(action, family, hand).length === 1) return 'button'
   return 'pill'
 }
 
@@ -202,8 +208,8 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
       continue
     }
     // A left hand talks with the d-pad's up (gamepad.ts PadHand), so its row names that button as the pad prints it.
-    if (isPadFamily(family) && action === 'talk' && hand === 'left') {
-      out.push({ action, glyph: padButtonName(family, PAD.up), kind: 'pill', label })
+    if (action === 'talk') {
+      out.push({ action, glyph: glyph(action, family, hand), kind: glyphKind(action, family, hand), label })
       continue
     }
     out.push({ action, glyph: g, kind: glyphKind(action, family), label })

@@ -20,8 +20,11 @@
  * A chat-format server refusing a prompt too long for its window costs an ask one more request at most, never a look.
  * Where its looks stand and each change the brain readout shows are read from memory (lookState, onChange), and
  * `ask model auto`, or a look stopped part way, sets aside the look that found Ollama, so the next ask looks again.
+ * A request kept on this device (RouterRequest `cloud: false`, a passer-by's reply) never reaches the gateway: not
+ * from a first look, not from the look after the server found stops answering, not once the gateway is found or chosen.
  * What breaks if it is removed? A fresh machine with a model server running could still get only the script, or an
- * answer from a server the operator never meant to use.
+ * answer from a server the operator never meant to use, or a passer-by's words could be sent to the Claude API on the
+ * operator's key.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -31,7 +34,7 @@ import type { TerminalBridge } from '../07_Execute_Actions/terminal/bridge.ts'
 import { run as shell } from '../07_Execute_Actions/terminal/commands.ts'
 import { CognitionError, DEFAULT_MODEL, DEFAULT_SERVER, type FetchLike } from './localCompute.ts'
 import { createNativeMind, type NativeHost } from './nativeMind.ts'
-import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, KNOWN_SERVERS, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT, VLLM_SERVER } from './router.ts'
+import { AUTO_ORDER, createMindRouter, INPAGE_SERVER, KEPT_ON_DEVICE, KNOWN_SERVERS, LLAMACPP_SERVER, OPENAI_SERVER, PROVIDER_TEXT, VLLM_SERVER, type RouterRequest } from './router.ts'
 import { SCRIPTED, withScriptedFallback } from './scripted.ts'
 
 const enc = new TextEncoder()
@@ -1110,4 +1113,70 @@ test('a look stopped part way sets aside the one before it: no look stands, as t
   await assert.rejects(going)
   assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null }, 'the look that found Ollama no longer stands')
   assert.equal(r.settings().auto, 'nothing found yet: the next ask looks on this machine')
+})
+
+/** A passer-by's request as onboarding/voice.ts personChat sends it: talk bound to no one, kept on this device. */
+const near = (signal = new AbortController().signal): RouterRequest => ({ tethers: [], prompt: 'Person: hi\nPedestrian 1234:', signal, talk: true, cloud: false })
+/** The ports a machine was asked on, in order. */
+const ports = (m: { calls: readonly { url: string }[] }): string[] => m.calls.map((c) => new URL(c.url).port)
+const offline = (e: unknown): boolean => e instanceof CognitionError && e.code === 'offline'
+
+test('a request kept on this device never reaches the gateway: a first look passes it over, and no look stands until one has asked it', async () => {
+  // No look yet and only the gateway up: the look asks the servers on this machine and never the gateway.
+  const m = machine({ 8089: ['claude-opus-5-5'] })
+  const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+  await assert.rejects(r.answer(near(), () => {}), (e: unknown) => offline(e) && !/claude|8089/.test((e as Error).message))
+  assert.ok(!ports(m).includes('8089'), ports(m).join(', '))
+  assert.ok(ports(m).includes('11434'), 'the servers on this machine were looked for')
+  assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null }, 'the gateway it passed over may answer: no look stands')
+  // Sloane's next ask looks as it always did and finds the gateway.
+  m.calls.length = 0
+  assert.equal(await ask(r), '8089 says hi')
+  assert.equal(r.settings().found, 'claude')
+  // With the gateway found, the next passer-by is 'offline' at once: nothing is asked, and the gateway stays found.
+  m.calls.length = 0
+  await assert.rejects(r.answer(near(), () => {}), (e: unknown) => offline(e) && (e as Error).message === KEPT_ON_DEVICE)
+  assert.deepEqual(m.calls, [])
+  assert.equal(r.settings().found, 'claude')
+  assert.equal(await ask(r), '8089 says hi', 'Sloane still has it')
+  // A server on this machine answers it as any request: found, kept, and the look stands.
+  const both = machine({ 8080: ['local.gguf'], 8089: ['claude-opus-5-5'] })
+  const l = createMindRouter({ fetch: both.f, lookMs: 50 })
+  assert.equal((await l.answer(near(), () => {})).text, '8080 says hi')
+  assert.deepEqual(l.lookState(), { looked: true, looking: false, found: 'llamacpp' })
+  assert.ok(!ports(both).includes('8089'))
+})
+
+test('a request kept on this device: when the server found stops answering, the look after it passes the gateway over too', async () => {
+  const m = machine({ 11434: [DEFAULT_MODEL], 8089: ['claude-opus-5-5'] })
+  const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+  assert.equal((await r.answer(near(), () => {})).text, '11434 says hi')
+  assert.equal(r.settings().found, 'ollama')
+  m.servers[11434] = 'down'
+  m.calls.length = 0
+  await assert.rejects(r.answer(near(), () => {}), offline)
+  assert.equal(m.calls[0]?.url, `${DEFAULT_SERVER}/api/generate`, 'Ollama was asked first')
+  assert.ok(m.calls.length > 1, 'then a look')
+  assert.ok(!ports(m).includes('8089'), ports(m).join(', '))
+  assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null })
+  // A request that is not kept on this device still goes on to the gateway, as before.
+  const s = machine({ 11434: [DEFAULT_MODEL], 8089: ['claude-opus-5-5'] })
+  const sloane = createMindRouter({ fetch: s.f, lookMs: 50 })
+  assert.equal(await ask(sloane), '11434 says hi')
+  s.servers[11434] = 'down'
+  assert.equal(await ask(sloane), '8089 says hi')
+  assert.equal(sloane.settings().found, 'claude')
+})
+
+test('a request kept on this device under the chosen claude provider is \'offline\' and asks nothing; other providers answer it as any request', async () => {
+  const m = machine({ 8080: ['local.gguf'], 8089: ['claude-opus-5-5'] })
+  const r = createMindRouter({ fetch: m.f, lookMs: 50 })
+  r.setProvider('claude')
+  await assert.rejects(r.answer(near(), () => {}), (e: unknown) => offline(e) && (e as Error).message === KEPT_ON_DEVICE)
+  assert.deepEqual(m.calls, [])
+  assert.equal(await ask(r), '8089 says hi', 'the operator\'s own asks still go to it')
+  r.setProvider('llamacpp')
+  m.calls.length = 0
+  assert.equal((await r.answer(near(), () => {})).text, '8080 says hi')
+  assert.ok(!ports(m).includes('8089'))
 })

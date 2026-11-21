@@ -445,6 +445,15 @@ html[data-contrast='high'] :is(
   animation: none;
 }
 
+/* Sloane's chip while a conversation's panel stands where no band is clear of it (07_Execute_Actions/TalkLayer.tsx:
+   held sideways with the touch buttons, a band under her chip too short at a large text size, or a wide window with no
+   room for the panel right of her chip): tucked away, never
+   unmounted, so a line said to her still reaches her, and back as the conversation closes. Hidden, not covered: no
+   tap or reader lands on a chip nobody can see. */
+html[data-chip-tucked] [data-concierge-pill] {
+  visibility: hidden;
+}
+
 /* The label over the head of the person near enough to talk to (07_Execute_Actions/TalkLayer.tsx TalkLabel; its look
    is in its classes). talk.ts moves it by its transform alone, every frame, so it is a layer of its own and nothing
    in it lays out the page; it starts hidden until talk.ts gives it a place. In high contrast it is white on black with

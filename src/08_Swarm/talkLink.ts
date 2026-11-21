@@ -57,11 +57,14 @@ export const TALK_SCAN_MS = 250
 export const TALK_JUMP = 4
 /** Faster than this the player is offered nobody, m/s: running past someone is not stopping to talk. */
 export const TALK_RUN = 2.5
-/** A person's head above their feet, m: the point the on-screen test tries first. */
+/** A person's head above their feet, m: the point the on-screen test tries first, and the label's anchor up close. */
 export const HEAD_AT = 1.7
 /** A person's chest above their feet, m: the on-screen test's second try, when the screen's edge cuts the head off. */
 export const CHEST_AT = 1.2
-/** The label over a partner sits this far above their feet, m: over the tallest stature (look.ts, 2.05 m). */
+/**
+ * The label over a partner sits this far above their feet, m: over the tallest stature (look.ts, 2.05 m). Up close,
+ * where the screen's top edge cuts that point off, the head and then the chest anchor it (engine.ts talkLabelAt).
+ */
 export const LABEL_ABOVE = 2.2
 
 /** How much of a person's distance is added at the very edge of the view (none in the middle): see talkScore. */

@@ -14,24 +14,30 @@
  * asks again; a turn while a late request holds the model takes the script; a refused turn gets a deflection and is
  * forgotten by the model; a reply that reads as a recruitment request is never shown or said; every other failure
  * falls back. The endings: a goodbye is said and then closes, 60 s idle closes, a card or a car closes as 'away',
- * the endings the player did not choose are toasted, and no timer is left after an ending or dispose. The label moves
- * only by more than half a pixel. And talk.ts is held at the source: the setter called only from #link and #unlink,
- * no model asked directly, no import of the 14A gate or the console, and the waiting phase equal to the in-page model's.
+ * the endings the player did not choose are toasted, and no timer is left after an ending or dispose. A line already
+ * heard finishes after a walk; one still being synthesised (with Sloane's real speaker) is dropped, never said in a
+ * browser voice after the close; a voice that never ends gives the turn back after a time for its length, so a
+ * goodbye still closes and the idle close still comes. The label moves only by more than half a pixel and stays
+ * wholly inside its layer, its height read with its width. And talk.ts is held at the source: the setter called only
+ * from #link and #unlink, no model asked directly, no import of the 14A gate or the console, and the waiting phase
+ * equal to the in-page model's.
  * What breaks if it is removed? A conversation could open by itself, stay open for good, leave a timer or a request
- * behind, show a model's words after the script answered, turn heads on every tick, or wait behind Sloane, unnoticed.
+ * behind, show a model's words after the script answered, say a line after it closed in another voice, turn heads on
+ * every tick, or wait behind Sloane, unnoticed.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { TALK_AGAIN_MS, TALK_REACH, TALK_SCAN_MS, type TalkEnd, type TalkEye } from '../08_Swarm/talkLink.ts'
 import { fillLine, LINES, openerFor, talkWho, type TalkWho } from '../08_Swarm/talkLines.ts'
-import type { ConciergeOut, PersonVoice, Tier } from './onboarding/speaker.ts'
+import { ConciergeSpeaker, type ConciergeOut, type PersonVoice, type SynthLike, type SynthVoice, type Tier, type UtteranceLike } from './onboarding/speaker.ts'
+import type { Voice } from './operator.ts'
 import type { ChatResult, PersonChat, PersonTurn } from './onboarding/voice.ts'
 import type { ScreenPoint } from './screenPoint.ts'
 import {
-  BEAT_MIN_MS, BEAT_SPAN_MS, IDLE_MS, NOBODY_LINE, NOBODY_TOAST_MS, PATIENCE_MS, READ_MAX_MS, READ_MIN_MS, READ_MS_PER_CHAR, TalkController, TRANSCRIPT_LINES, voiceVolume,
+  BEAT_MIN_MS, BEAT_SPAN_MS, IDLE_MS, NOBODY_LINE, NOBODY_TOAST_MS, PATIENCE_MS, READ_MAX_MS, READ_MIN_MS, READ_MS_PER_CHAR, SPEAK_MS_PER_CHAR, SPEAK_SLACK_MS, TalkController, TRANSCRIPT_LINES, voiceVolume,
   WAITING_PHASE,
-  type TalkClock, type TalkHost, type TalkLabelEl,
+  type TalkClock, type TalkHost, type TalkLabelEl, type TalkOptions,
 } from './talk.ts'
 
 const SOURCE = readFileSync(new URL('./talk.ts', import.meta.url), 'utf8')
@@ -139,7 +145,10 @@ function chatOf() {
   return { chat, calls }
 }
 
-/** A speaker whose lines end at once in `auto`'s tier, or when the test says (auto null); a new line or stop() cuts the last. */
+/**
+ * A speaker whose lines end at once in `auto`'s tier, or when the test says (auto null); a new line or stop() cuts the
+ * last. Each line reaches the air as it is asked for, as a browser voice's does (its caption starts).
+ */
 function speakerOf(auto: Tier | null) {
   const said: { text: string; v: PersonVoice }[] = []
   let pending: ((t: Tier) => void) | null = null
@@ -148,6 +157,7 @@ function speakerOf(auto: Tier | null) {
     person: (text: string, v: PersonVoice): Promise<Tier> => new Promise<Tier>((resolve) => {
       pending?.('browser')
       said.push({ text, v })
+      v.caption?.(true)
       pending = resolve
       if (auto !== null) {
         pending = null
@@ -173,8 +183,11 @@ function speakerOf(auto: Tier | null) {
   }
 }
 
-/** A controller over the fakes, with what it told the page, and `step` to let time pass a frame (50 ms) at a time. */
-function rig(o: { tier?: Tier | null; mic?: boolean } = {}) {
+/**
+ * A controller over the fakes, with what it told the page, and `step` to let time pass a frame (50 ms) at a time.
+ * `speaker` and `who` stand in for the fake speaker and the passer-by when given.
+ */
+function rig(o: { tier?: Tier | null; mic?: boolean; speaker?: TalkOptions['speaker']; who?: (row: number) => TalkWho } = {}) {
   const c = clockOf()
   const h = hostOf()
   const ch = chatOf()
@@ -184,8 +197,8 @@ function rig(o: { tier?: Tier | null; mic?: boolean } = {}) {
   const sloane: string[] = []
   const toasts: [string, string][] = []
   const ctl = new TalkController({
-    host: h.host, chat: ch.chat, speaker: sp.speaker,
-    who: (row) => talkWho(row, null, null, null),
+    host: h.host, chat: ch.chat, speaker: o.speaker ?? sp.speaker,
+    who: o.who ?? ((row) => talkWho(row, null, null, null)),
     partner: (row) => { partner.push(row) },
     onOpen: (on) => { opened.push(on) },
     onSloane: (text) => { sloane.push(text) },
@@ -585,6 +598,40 @@ test('a goodbye takes the script, is said, and then closes; with no voice, after
   assert.equal(quiet.ctl.ui().state, 'off')
 })
 
+test('a greeting or a question that only sounds like a farewell is answered, and the conversation stays open', async () => {
+  // Said aloud to the person offered, a greeting that ends in "see you" opens the conversation as any greeting does.
+  const r = rig()
+  await r.near()
+  assert.equal(r.ctl.hear('Hi, good to see you'), true)
+  assert.equal(r.ctl.ui().state, 'open')
+  assert.equal(r.ch.calls.length, 1, 'a greeting asks the model, never the scripted farewell')
+  r.ch.calls[0].settle({ kind: 'none', why: 'not warm' })
+  await r.step(BEAT + 50)
+  assert.ok(filled(LINES.stranger.greet).includes(r.them().at(-1) ?? ''), 'the script greets back')
+  await r.step(1000)
+  assert.equal(r.ctl.ui().state, 'open', 'and the conversation stays open')
+  // Typed while it is open: each is asked of the model, answered, and leaves the conversation open.
+  for (const line of ['Where do I need to go?', 'Nice to see you', 'Can you take care of this for me?', 'Do I have to go far?', 'no thanks, what do you do?']) {
+    const n: number = r.ch.calls.length
+    r.ctl.send(line)
+    assert.equal(r.ch.calls.length, n + 1, `${line}: asked of the model`)
+    r.ch.calls[n].settle({ kind: 'none', why: 'not warm' })
+    await r.step(BEAT + 1000)
+    assert.equal(r.ctl.ui().state, 'open', `${line}: still open`)
+  }
+  assert.deepEqual(r.partner, [7])
+  assert.deepEqual(r.opened, [true])
+  assert.deepEqual(r.toasts, [])
+  // A real goodbye still takes the script and closes, once its farewell is said.
+  const asked = r.ch.calls.length
+  r.ctl.send('ok, bye')
+  await r.step(BEAT + 1000)
+  assert.equal(r.ch.calls.length, asked, 'a goodbye never asks the model')
+  assert.equal(r.ctl.ui().state, 'off')
+  assert.deepEqual(r.partner, [7, null])
+  assert.deepEqual(r.toasts, [], 'the player chose this ending')
+})
+
 test('60 s with nothing going on closes the conversation; a draft in the field keeps it', async () => {
   const r = rig()
   await r.open()
@@ -665,6 +712,152 @@ test('the endings the player did not choose are toasted: walked on, had to go, b
   assert.deepEqual(busy.toasts, [['Talk', `${who7().label} walked on.`]])
 })
 
+test('a line already heard finishes after a walk or a vanishing (a card or Done cuts it)', async () => {
+  for (const why of ['walked', 'gone'] as const) {
+    const r = rig({ tier: null })
+    await r.open()
+    assert.equal(r.sp.busy, true, 'the opener is being said')
+    const stops = r.sp.stops
+    r.h.people.set(7, why === 'walked' ? { d: 13 } : { d: 2, gone: true })
+    await r.step(TALK_SCAN_MS + 50)
+    assert.equal(r.ctl.ui().state, 'off', why)
+    assert.equal(r.sp.stops, stops, `${why}: the line goes on to its end`)
+    assert.equal(r.sp.busy, true)
+  }
+})
+
+/**
+ * Sloane's real speaker with a hired agent's provider voice whose synthesis the test lets go, a browser voice to fall
+ * back on, and an engine that plays the clip only for the person it still follows (engine.ts talkOut).
+ */
+function providerRig() {
+  const spoken: string[] = []
+  class U implements UtteranceLike {
+    text: string
+    voice: SynthVoice | null = null
+    pitch = 1
+    rate = 1
+    lang = ''
+    volume = 1
+    onend: ((e: unknown) => void) | null = null
+    onerror: ((e: unknown) => void) | null = null
+    constructor(text: string) { this.text = text }
+  }
+  const synth: SynthLike = { getVoices: () => [{ name: 'Ash', lang: 'en-US', localService: true, default: true }, { name: 'Birch', lang: 'en-GB', localService: true }], speak: (u) => { spoken.push(u.text) }, cancel: () => {} }
+  const releases: (() => void)[] = []
+  const voice: Voice = {
+    settings: () => ({ server: 'http://localhost:8880', model: null, voice: 'v1', auto: false }),
+    setServer: (u) => u, setModel: (m) => m, setVoice: (v) => v, setAuto: (a) => a,
+    voices: () => Promise.resolve(['v1']),
+    synthesize: (_text, signal) => new Promise<ArrayBuffer>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      releases.push(() => resolve(new ArrayBuffer(8)))
+    }),
+  }
+  const head: ConciergeOut = { decode: () => Promise.reject(new Error('not at the player\'s head')), play: () => { throw new Error('not at the player\'s head') } }
+  const speaker = new ConciergeSpeaker({ env: { synth, Utterance: U }, sound: () => true, source: () => ({ voice, out: head }), store: null })
+  const r = rig({ speaker, who: (row) => talkWho(row, { name: 'Ada', pronouns: 'she/her', role: 'Designer', voice: 'gravel', look: null, agent: row }, null, 'v1') })
+  const played: string[] = []
+  let cut = 0
+  r.h.host.out = (row, label) => ({
+    decode: () => Promise.resolve({ seconds: 1 }),
+    play: (_clip, text) => {
+      if (row !== r.h.follows.at(-1)) throw new Error(`${label} is not the one talked with`)
+      played.push(text)
+      return { ended: new Promise<void>(() => {}), stop: () => { cut++ } }
+    },
+  })
+  const settle = async (): Promise<void> => {
+    for (const go of releases.splice(0)) go()
+    for (let i = 0; i < 5; i++) await flush()
+  }
+  return { r, spoken, played, settle, get cut() { return cut } }
+}
+
+test('a hired agent\'s line still being synthesised when the conversation closes for a walk or a vanishing is dropped, never said after in a browser voice', async () => {
+  for (const why of ['walked', 'gone'] as const) {
+    const p = providerRig()
+    await p.r.open()
+    assert.equal(p.r.ctl.ui().turn, 'speaking', 'the opener is with the provider')
+    p.r.h.people.set(7, why === 'walked' ? { d: 13 } : { d: 2, gone: true })
+    await p.r.step(TALK_SCAN_MS + 50)
+    assert.equal(p.r.ctl.ui().state, 'off', why)
+    assert.deepEqual(p.r.toasts, [['Talk', `Ada ${why === 'walked' ? 'walked on.' : 'had to go.'}`]])
+    await p.settle()
+    assert.deepEqual(p.played, [], `${why}: the engine follows nobody now`)
+    assert.deepEqual(p.spoken, [], `${why}: and no browser voice says it after the toast`)
+    assert.deepEqual(p.r.h.captions, [], `${why}: nor captions it`)
+  }
+
+  // Once the clip is playing at their head, a walk lets it finish.
+  const p = providerRig()
+  await p.r.open()
+  await p.settle()
+  assert.equal(p.played.length, 1, 'played at their head')
+  p.r.h.people.set(7, { d: 13 })
+  await p.r.step(TALK_SCAN_MS + 50)
+  assert.equal(p.r.ctl.ui().state, 'off')
+  assert.equal(p.cut, 0, 'the line heard goes on to its end')
+  assert.deepEqual(p.spoken, [])
+})
+
+/** A speaker whose lines never end, not even when stopped (a speech request that never answers, an end that never comes). */
+function stuckSpeaker() {
+  const said: string[] = []
+  let stops = 0
+  const speaker: TalkOptions['speaker'] = {
+    person: (text, v) => {
+      said.push(text)
+      v.caption?.(true)
+      return new Promise<Tier>(() => {})
+    },
+    stop: () => { stops++ },
+  }
+  return { speaker, said, get stops() { return stops } }
+}
+
+test('a voice that never ends gives the turn back after a time for the line\'s length: a goodbye still closes, and the idle close still comes', async () => {
+  const s = stuckSpeaker()
+  const r = rig({ speaker: s.speaker })
+  await r.open()
+  const cap = SPEAK_SLACK_MS + (s.said[0]?.length ?? 0) * SPEAK_MS_PER_CHAR
+  assert.ok(cap >= 2 * Math.min(READ_MAX_MS, (s.said[0]?.length ?? 0) * READ_MS_PER_CHAR), 'well over a reading of the line')
+  await r.step(cap - 100)
+  assert.equal(r.ctl.ui().turn, 'speaking', 'held while a voice could still be saying it')
+  const stops = s.stops
+  await r.step(200)
+  assert.equal(r.ctl.ui().turn, 'listening', 'the turn comes back')
+  assert.equal(r.ctl.ui().status, '')
+  assert.equal(s.stops, stops + 1, 'the stuck line is cut')
+
+  r.ctl.send('ok, bye')
+  await r.step(BEAT + 50)
+  const farewell = r.them().at(-1) ?? ''
+  assert.ok(filled(LINES.stranger.bye).includes(farewell), farewell)
+  assert.equal(r.ctl.ui().turn, 'speaking')
+  await r.step(SPEAK_SLACK_MS + farewell.length * SPEAK_MS_PER_CHAR + 100)
+  assert.equal(r.ctl.ui().state, 'off', 'the farewell ends and the conversation closes')
+  assert.deepEqual(r.toasts, [], 'the player chose it')
+  assert.equal(r.c.pending, 0, 'no timer left')
+
+  const idle = stuckSpeaker()
+  const q = rig({ speaker: idle.speaker })
+  await q.open()
+  await q.step(SPEAK_SLACK_MS + (idle.said[0]?.length ?? 0) * SPEAK_MS_PER_CHAR + 100)
+  assert.equal(q.ctl.ui().turn, 'listening')
+  await q.step(IDLE_MS + 100)
+  assert.equal(q.ctl.ui().state, 'off')
+  assert.deepEqual(q.toasts, [['Talk', `${who7().label} went back to their day.`]])
+  assert.equal(q.c.pending, 0)
+
+  // A line that ends in time leaves no cap behind it, and a new line restarts it.
+  const fine = rig({ tier: null })
+  await fine.open()
+  fine.sp.finish()
+  await flush()
+  assert.equal(fine.c.pending, 0, 'the cap is cleared with the line')
+})
+
 test('no timer is left after an ending or after dispose', async () => {
   const asked = rig()
   await asked.open()
@@ -720,7 +913,7 @@ test('dispose closes, follows nobody, and makes every later call do nothing; twi
   assert.deepEqual(r.toasts, [])
 })
 
-test('the label moves only by more than half a pixel, stays inside the layer, and hides off screen and with nobody', async () => {
+test('the label moves only by more than half a pixel, stays wholly inside the layer, and hides off screen and with nobody', async () => {
   const r = rig()
   const writes: string[] = []
   const shown: string[] = []
@@ -734,7 +927,7 @@ test('the label moves only by more than half a pixel, stays inside the layer, an
   }
   r.ctl.attachLabel(el)
   r.ctl.setLayerSize(1000, 500)
-  r.ctl.setLabelWidth(120)
+  r.ctl.setLabelWidth(120, 40)
   await r.step(50)
   assert.deepEqual(shown, ['hidden'])
   assert.deepEqual(writes, [])
@@ -747,13 +940,40 @@ test('the label moves only by more than half a pixel, stays inside the layer, an
   r.h.state.spot = { sx: 0.5008, sy: 0.4 }
   await r.step(50)
   assert.equal(writes.length, 2, 'a 0.8 px move is')
+  // The label stands centred above its anchor (translate(-50%, -100%)): held by half its width from the sides and by
+  // its whole height from the top, so its top edge stays 8 px inside the layer, which clips.
   r.h.state.spot = { sx: 0.995, sy: 0.001 }
   await r.step(50)
-  assert.equal(writes.at(-1), 'translate3d(932.0px, 8.0px, 0) translate(-50%, -100%)', 'held 8 px inside, by half its width')
+  assert.equal(writes.at(-1), 'translate3d(932.0px, 48.0px, 0) translate(-50%, -100%)', 'top edge at 8 px, right edge 8 px in')
+  r.h.state.spot = { sx: 0.005, sy: 0.999 }
+  await r.step(50)
+  assert.equal(writes.at(-1), 'translate3d(68.0px, 492.0px, 0) translate(-50%, -100%)', 'bottom edge 8 px up, left edge 8 px in')
   r.h.state.spot = { sx: Number.NaN, sy: Number.NaN }
   await r.step(50)
   assert.equal(shown.at(-1), 'hidden')
-  assert.equal(writes.length, 3, 'hiding writes no transform')
+  assert.equal(writes.length, 4, 'hiding writes no transform')
+})
+
+test('the label\'s height is read from its element with its width when not given; a layer too small for it centres it', async () => {
+  const r = rig()
+  const writes: string[] = []
+  const el: TalkLabelEl = {
+    offsetHeight: 36,
+    style: {
+      set transform(v: string) { writes.push(v) },
+      get transform() { return writes.at(-1) ?? '' },
+      visibility: '',
+    },
+  }
+  r.ctl.attachLabel(el)
+  r.ctl.setLayerSize(1000, 500)
+  r.ctl.setLabelWidth(120)
+  r.h.state.spot = { sx: 0.5, sy: 0 }
+  await r.near()
+  assert.equal(writes.at(-1), 'translate3d(500.0px, 44.0px, 0) translate(-50%, -100%)', 'its anchor at the very top: the label wholly below it, 8 px in')
+  r.ctl.setLayerSize(1000, 40)
+  await r.step(50)
+  assert.equal(writes.at(-1), 'translate3d(500.0px, 38.0px, 0) translate(-50%, -100%)', 'centred down the layer: (40 + 36) / 2')
 })
 
 test('a press with nobody near says so at most every 5 s; a stale tap says nothing; hud() is the same object while nothing changed', async () => {

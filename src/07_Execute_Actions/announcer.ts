@@ -12,11 +12,13 @@
  * (telemetry.ts HudTalk, state 'near') is announced only once the same proposal has stood ANNOUNCE.talkHoldMs, at most
  * one such line every ANNOUNCE.talkGapMs, and never while a conversation is open: a line still waiting when the
  * proposal goes or the conversation opens is not said. Pure: a snapshot in, a line or null out, with the clock handed
- * in.
+ * in (and the pad hand, read from the page unless a reader of it is handed in).
  * What breaks if it is removed? A reader hears the counters and nothing of where they are or what is beside them.
  */
+import type { PadHand } from '../04_Connect_Hardware/gamepad.ts'
 import type { GlyphFamily, HudTalk } from '../05_Observe_Environment/telemetry.ts'
-import { glyph } from './glyphs.ts'
+import { glyph, isPadFamily } from './glyphs.ts'
+import { pageHand } from './padNav.ts'
 
 export const ANNOUNCE = {
   /** The least time between two lines. */
@@ -48,17 +50,20 @@ export function enterWord(family: GlyphFamily, touch: boolean): string {
 
 /**
  * How to start talking to the person offered, said for the controls in use: the key, the pad's button (glyphs.ts
- * names it: a letter on a lettered pad, else its position), or on touch the HUD's Talk chip, which stands at the foot
- * of the screen there.
+ * names it: a letter on a lettered pad, else its position; with the left hand alone, the d-pad's up), or on touch the
+ * HUD's Talk chip, which stands at the foot of the screen there.
  */
-export function talkWord(family: GlyphFamily, touch: boolean): string {
-  const g = touch ? '' : glyph('talk', family)
+export function talkWord(family: GlyphFamily, touch: boolean, hand: PadHand = 'both'): string {
+  const g = touch ? '' : glyph('talk', family, hand)
   if (!g) return 'tap Talk at the foot of the screen'
+  if (hand === 'left' && isPadFamily(family)) return 'press up on the d-pad'
   if (family === 'keyboard' || g.length === 1) return `press ${g}`
   return `press the ${g} button`
 }
 
 export class Announcer {
+  /** The pad hand the accessibility settings chose (padNav.ts pageHand by default), read as a line is made. */
+  readonly #hand: () => PadHand
   private seen = false
   private mode: 'foot' | 'vehicle' = 'foot'
   private near = false
@@ -76,6 +81,10 @@ export class Announcer {
   /** The line about it while it waits in the queue (null once said, dropped or let go), and when the last was said. */
   private talkLine: string | null = null
   private talkSaidAt = Number.NEGATIVE_INFINITY
+
+  constructor(hand: () => PadHand = pageHand) {
+    this.#hand = hand
+  }
 
   /** The line to tell now, or null; `now` in ms. */
   next(s: Announced, now: number): string | null {
@@ -152,7 +161,7 @@ export class Announcer {
     }
     if (near.serial === this.talkTold || now - this.talkSince < ANNOUNCE.talkHoldMs || now - this.talkSaidAt < ANNOUNCE.talkGapMs) return
     this.talkTold = near.serial
-    this.talkLine = `${near.label} is close enough to talk to: ${talkWord(s.supplier.glyphs, s.supplier.touch)}.`
+    this.talkLine = `${near.label} is close enough to talk to: ${talkWord(s.supplier.glyphs, s.supplier.touch, this.#hand())}.`
     this.push(this.talkLine)
   }
 

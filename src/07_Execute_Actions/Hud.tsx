@@ -37,6 +37,7 @@ import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
 import { nextFootPeak, type FootPeak } from './footPeak.ts'
+import { pageHand } from './padNav.ts'
 import { credits, itemById } from './storeCatalog.ts'
 import { holdWalkSlot } from './walkSlot.ts'
 
@@ -318,12 +319,16 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   // well as in its spoken name, which a reader hears in words: 'Talk to Pedestrian 1234 (Rust), 2 m ahead right').
   // No key on touch: the chip itself is the way (as the shop's chip, the glyph goes with the touch overlay).
   const talk = s.supplier.talk
-  const talkGlyph = touch || family === 'touch' ? '' : glyph('talk', family)
+  /** A conversation is open (its panel stands where the wide layout's captions would be). */
+  const talking = talk !== undefined && talk.state !== 'near'
+  // The pad hand the accessibility settings chose (padNav.ts): a left hand talks with the d-pad's up.
+  const hand = pageHand()
+  const talkGlyph = touch || family === 'touch' ? '' : glyph('talk', family, hand)
   const talkWhere = talk && talk.word !== '' && Number.isFinite(talk.metres)
   const talkChip = talk && talk.state === 'near' && !driving && !terminalOpen && (
     <button type="button" onClick={() => onTalkChip?.(talk.serial)} className={`pointer-events-auto flex max-w-full items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="talk"
       aria-label={`Talk to ${talk.label}${talkWhere ? `, ${talk.metres} m ${talk.word}` : ''}`} aria-keyshortcuts={family === 'keyboard' && !touch ? talkGlyph : undefined}>
-      {talkGlyph && <><GlyphKey glyph={talkGlyph} kind={glyphKind('talk', family)} />{' '}</>}
+      {talkGlyph && <><GlyphKey glyph={talkGlyph} kind={glyphKind('talk', family, hand)} />{' '}</>}
       <span className="min-w-0">Talk to <bdi className="font-semibold">{talk.label}</bdi></span>
       {talkWhere && <span className={`shrink-0 text-[11px] whitespace-nowrap tabular-nums ${muted}`} aria-hidden="true">{talk.arrow} {talk.metres} m</span>}
     </button>
@@ -596,8 +601,10 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
           {(enterPrompt || shopChip || homeChip || talkChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{homeChip}{talkChip}{enterPrompt}</div>}
           {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. A row of
               two or three chips (someone to talk to beside a car, in a shop or a home) lifts them 3 rem a chip, so the
-              strip never lies over a chip it would hide. */}
-          {captionStrip && <div className={`absolute ${wideRow > 2 ? 'bottom-56' : wideRow > 1 ? 'bottom-44' : 'bottom-32'} left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2`}>{captionStrip}</div>}
+              strip never lies over a chip it would hide. While a conversation is open its panel stands over that line
+              (TalkLayer.tsx, its column under the centre of view), so they stand 0.5 rem above the panel's head, which
+              it publishes in window pixels as --talk-top (the centre of view until it has), never off the frame's top. */}
+          {captionStrip && <div className={`absolute ${talking ? 'bottom-[min(calc(calc(calc(100dvh_-_var(--talk-top,50dvh))_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-bottom))_+_0.5rem),calc(100%_-_2.5rem))]' : wideRow > 2 ? 'bottom-56' : wideRow > 1 ? 'bottom-44' : 'bottom-32'} left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2`}>{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
           {captureHint && (
             <div className="absolute bottom-0 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captureChip(roomy)}</div>
