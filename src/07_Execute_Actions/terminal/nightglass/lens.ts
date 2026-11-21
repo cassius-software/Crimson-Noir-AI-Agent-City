@@ -148,7 +148,9 @@ export function placeValue(t: Exclude<DataType, ArrayType | StructType>): Placem
 
 /**
  * Layouts already made in one space, by block object. A caller passes one only while the blocks it lays out cannot
- * change (a decoded module's are frozen data); each block object is then laid out once, however often it is reached.
+ * change: a decoded module's blocks are frozen data, the builder's are its own copies (frozen once declared), and
+ * verify() keeps one per space for one check. Each block object is then laid out once, however often it is reached
+ * and however many paths walk it.
  */
 export type LayoutCache = WeakMap<Block, BlockLayout>
 
@@ -225,9 +227,10 @@ export interface Leaf {
 
 /**
  * Follows a path from the top of a block to a number type. Refuses a path that is too short (ends at a block or an
- * array), too long, or indexes out of a fixed array with a constant.
+ * array), too long, or indexes out of a fixed array with a constant. With a cache (see LayoutCache), the blocks it
+ * passes through are laid out once across every walk that shares it, so a walk costs its steps, not its blocks.
  */
-export function walk(block: Block, space: Space, path: readonly Step[]): Leaf {
+export function walk(block: Block, space: Space, path: readonly Step[], cache?: LayoutCache): Leaf {
   let t: DataType = { struct: block }
   let offset = 0
   const dynamic: { stride: number; len: number }[] = []
@@ -237,10 +240,10 @@ export function walk(block: Block, space: Space, path: readonly Step[]): Leaf {
       if (typeof step !== 'number') fail('lens', 'a block field is picked by a constant index')
       const s: Block = t.struct
       if (!Number.isInteger(step) || step < 0 || step >= s.fields.length) fail('lens', `the block has no field ${step}`)
-      offset += layoutBlock(s, space).offsets[step]
+      offset += layoutBlock(s, space, cache).offsets[step]
       t = s.fields[step].type
     } else {
-      const stride = strideOf(t.array, space)
+      const stride = strideOf(t.array, space, cache)
       if (typeof step === 'number') {
         if (!Number.isInteger(step) || step < 0 || (t.len !== 0 && step >= t.len)) fail('lens', `element ${step} is outside the array`)
         offset += step * stride

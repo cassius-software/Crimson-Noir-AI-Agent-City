@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { decode, encode } from './binary.ts'
 import { LensBuilder, arrayOf, block, lens } from './builder.ts'
-import type { BlockSpec, Val } from './builder.ts'
+import type { BlockSpec, FieldSpec, Val } from './builder.ts'
 import { isFault } from './fault.ts'
 import { BINARY, LENS_LIMITS, TERNARY, UNARY, scalarOf } from './lens.ts'
 import type { BinaryFn, Block, Inst, LensModule, TernaryFn, UnaryFn, ValueType } from './lens.ts'
@@ -742,6 +742,23 @@ test('a block spec or Block shared under many fields is copied within LENS_LIMIT
   assert.deepEqual(r.block, fits)
 })
 
+test('reads by many distinct paths through a large declared block do not lay it out again each', () => {
+  // The shape of the createLens repro, written with the builder: a uniform block of 266,304 fields once copied out
+  // (64 fields, each a 3-deep array of length 1 of a block of 64 such fields of a block of 64 f32x4). Each read once
+  // laid the whole copy out again to find its leaf (about a third of a second a read; 4,096 reads, about 23 minutes);
+  // the builder now lays each block of its own frozen copy out once, as the checker does, and these take moments.
+  const arr = (t: FieldSpec): FieldSpec => arrayOf(arrayOf(arrayOf(t, 1), 1), 1)
+  const T: BlockSpec = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`t${i}`, 'f32x4']))
+  const S: BlockSpec = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`s${i}`, arr(T)]))
+  const TOP: BlockSpec = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`a${i}`, arr(S)]))
+  const b = lens('compute')
+  const u = b.uniform(0, 0, TOP)
+  for (let k = 0; k < 4096; k++) assert.equal(b.read(u, k >> 6, 0, 0, 0, k % 64, 0, 0, 0, (k * 7) % 64).t, 'f32x4')
+  const m = b.finish()
+  assert.equal(m.body.length, 4096)
+  assert.deepEqual(m.body[4095], { op: 'read', id: 4095, t: 'f32x4', res: 0, path: [63, 0, 0, 0, 63, 0, 0, 0, (4095 * 7) % 64] })
+})
+
 test('finish refuses a module whose binary form would pass LENS_LIMITS.words, as createLens would', () => {
   // Sixteen scalars and m4s made of them, 19 words each: within the instruction and id limits, past the word limit.
   const b = lens('compute')
@@ -774,4 +791,21 @@ test('-0 given for a set, binding, slot, path step, lane or column is written as
   for (const x of whole) assert.ok(Object.is(x, 0) || (typeof x === 'number' && x > 0), String(x))
   assert.ok(!whole.some((x) => Object.is(x, -0)))
   assert.deepEqual(decode(encode(m)), m)
+})
+
+test('-0 given for an array\'s length, by arrayOf or by an { array, len } spec, is written as 0, as every other -0 is', () => {
+  // Once arrayOf('f32', -0) kept -0, which the checker refuses ("an array holds 0 to 65536 elements, not -0") when a
+  // resource declares it; it is the runtime-sized array its 0 asks for, and a fixed field after it is refused for
+  // being after it, not for its -0.
+  assert.ok(Object.is(arrayOf('f32', -0).len, 0))
+  assert.ok(Object.is((block({ a: { array: 'f32x4', len: -0 } }).fields[0].type as { len: number }).len, 0))
+  const b = lens('compute')
+  const runtime = b.storage(0, 0, { a: arrayOf('f32', -0) }, { writable: true })
+  const fixed = b.storage(0, 1, block({ fields: [{ name: 'x', type: 'f32' }, { name: 'list', type: { array: 'f32x4', len: -0 } }] }))
+  b.write(runtime, ['a', 1], b.add(b.read(fixed, 'x'), b.lane(b.read(fixed, 'list', 0), 0)))
+  const m = b.finish()
+  const lens0 = m.resources.map((r) => (r.kind === 'storage' ? r.block.fields[r.block.fields.length - 1].type : null))
+  for (const t of lens0) assert.ok(t !== null && typeof t !== 'string' && 'array' in t && Object.is(t.len, 0), String(t))
+  assert.deepEqual(decode(encode(m)), m)
+  refused(() => lens('compute').storage(0, 0, { a: arrayOf('f32', -0), b: 'f32' }), /field a: an array without a length is only the last field of a storage block/)
 })

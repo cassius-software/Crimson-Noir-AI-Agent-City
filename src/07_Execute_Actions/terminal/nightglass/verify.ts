@@ -16,10 +16,12 @@
  * What breaks if it is removed? A malformed or ill-typed shader would reach the back ends: the reference renderer
  * would run something the form never defined, and the GPU back end would hand the browser WGSL that it refuses.
  *
- * Two bounds are the checker's own rather than the form's: the fields of a module's blocks, counted every time they
- * are reached, and the fields the paths of `read` and `write` walk through. Plain data may share one block object
- * under many fields, which could stand for a tree far larger than any memory; the bounds keep a hostile module from
- * making a check run for minutes. No shader a person or the builder writes comes near them.
+ * One bound is the checker's own rather than the form's: the fields of a module's blocks, counted every time they are
+ * reached. Plain data may share one block object under many fields, which could stand for a tree far larger than any
+ * memory; the bound keeps a hostile module from making a check run for minutes. No shader a person or the builder
+ * writes comes near it. Within one check each block object is laid out once in each space (one LayoutCache per
+ * space, shared by the resources and every path of `read` and `write`), so a path costs its steps, not the size of
+ * the blocks it passes through, however many distinct paths a module holds.
  */
 import { fail, isFault } from './fault.ts'
 import { FORMATS, isFormat, sampleKind } from './formats.ts'
@@ -29,8 +31,8 @@ import {
   boolOf, columnOf, componentsOf, isGrid, isScalar, isValueType, isVector, layoutBlock, scalarOf, strideOf, vectorOf, walk, widthOf,
 } from './lens.ts'
 import type {
-  BinaryFn, Block, BlockLayout, DataType, ImageDims, LensModule, Op, Port, Resource, ResourceKind, SampleKind, Space, Stage, Step,
-  TernaryFn, UnaryFn, ValueType, Width,
+  BinaryFn, Block, BlockLayout, DataType, ImageDims, LayoutCache, LensModule, Op, Port, Resource, ResourceKind, SampleKind, Space,
+  Stage, Step, TernaryFn, UnaryFn, ValueType, Width,
 } from './lens.ts'
 
 /** Raises the refusal of one rule. The caller has already said where: the message reads `lens: <place> <op>: <rule>`. */
@@ -91,9 +93,11 @@ export const INST_FIELDS: { readonly [K in Op]: readonly [readonly string[], rea
   return: [['op'], []],
 })
 
-/** The checker's own bounds (see the head of the file). */
+/** The checker's own bound (see the head of the file). */
 const FIELD_BUDGET = LENS_LIMITS.blockFields
-const WALK_BUDGET = 1 << 24
+
+/** The block layouts one check has made, one cache per space (see LayoutCache). */
+export type Layouts = { readonly [S in Space]: LayoutCache }
 
 type Obj = { readonly [key: string]: unknown }
 const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x)
@@ -339,7 +343,7 @@ export function portRule(stage: Stage, side: 'inputs' | 'outputs', p: unknown, n
 }
 
 /** Refuses the structure of one block: 1 to LENS_LIMITS.fields fields, each named once, each of a block type. */
-function blockRule(b: unknown, space: Space, storageTop: boolean, where: string, level: number, budget: { left: number }, no: Refuse): void {
+function blockRule(b: unknown, space: Space, storageTop: boolean, where: string, level: number, budget: { left: number }, cache: LayoutCache, no: Refuse): void {
   const name = where === '' ? 'the block' : `field ${where}`
   if (!isObj(b)) no(`${name} is not a block`)
   shapeRule(b, ['fields'], [], (rule) => no(`${name}: ${rule}`))
@@ -358,7 +362,7 @@ function blockRule(b: unknown, space: Space, storageTop: boolean, where: string,
     if (typeof fname !== 'string' || !FIELD_NAME.test(fname)) no(`field ${at}: ${say(fname)} is not a field name (a letter or _, then up to 31 letters, digits or _)`)
     if (names.has(fname)) no(`field ${at}: the name ${fname} is used twice in its block`)
     names.add(fname)
-    typeRule(f.type, space, storageTop && i === fields.length - 1, where === '' ? fname : `${where}.${fname}`, level, budget, no)
+    typeRule(f.type, space, storageTop && i === fields.length - 1, where === '' ? fname : `${where}.${fname}`, level, budget, cache, no)
   }
 }
 
@@ -367,7 +371,7 @@ function blockRule(b: unknown, space: Space, storageTop: boolean, where: string,
  * one level deeper, and nothing sits deeper than LENS_LIMITS.nesting. Arrays in the uniform space need a stride
  * that is a multiple of 16 at every depth (layoutBlock holds the same rule; this says where the array sits).
  */
-function typeRule(t: unknown, space: Space, runtimeOk: boolean, where: string, level: number, budget: { left: number }, no: Refuse): void {
+function typeRule(t: unknown, space: Space, runtimeOk: boolean, where: string, level: number, budget: { left: number }, cache: LayoutCache, no: Refuse): void {
   if (typeof t === 'string') {
     if (!isValueType(t) || boolish(t)) no(`field ${where}: ${say(t)} is not a number type (a block holds no bools)`)
     return
@@ -376,15 +380,15 @@ function typeRule(t: unknown, space: Space, runtimeOk: boolean, where: string, l
   if (level >= LENS_LIMITS.nesting) no(`field ${where}: blocks and arrays nest at most ${LENS_LIMITS.nesting} deep`)
   if (Object.hasOwn(t, 'struct')) {
     shapeRule(t, ['struct'], [], (rule) => no(`field ${where}: ${rule}`))
-    blockRule(t.struct, space, false, where, level + 1, budget, no)
+    blockRule(t.struct, space, false, where, level + 1, budget, cache, no)
     return
   }
   shapeRule(t, ['array', 'len'], [], (rule) => no(`field ${where}: ${rule}`))
   const len = t.len
   if (typeof len !== 'number' || !Number.isInteger(len) || len < 0 || len > LENS_LIMITS.elements || Object.is(len, -0)) no(`field ${where}: an array holds 0 to ${LENS_LIMITS.elements} elements, not ${say(len)}`)
   if (len === 0 && !runtimeOk) no(`field ${where}: an array without a length is only the last field of a storage block`)
-  typeRule(t.array, space, false, `${where}[]`, level + 1, budget, no)
-  if (space === 'uniform' && laidOut(() => strideOf(t.array as DataType, space), no) % 16 !== 0) no(`field ${where}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
+  typeRule(t.array, space, false, `${where}[]`, level + 1, budget, cache, no)
+  if (space === 'uniform' && laidOut(() => strideOf(t.array as DataType, space, cache), no) % 16 !== 0) no(`field ${where}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
 }
 
 /** Runs a layout function of lens.ts, carrying its refusal under the caller's place. */
@@ -401,9 +405,9 @@ function laidOut<T>(f: () => T, no: Refuse): T {
  * Refuses one resource on its own (the module checks that set and binding pairs are unique and that there is at
  * most one constants block): its fields, its set and binding, its block's structure and layout in its space (uniform
  * for uniform blocks and constants, storage for storage blocks), the size of constants, and its image kind or format.
- * `budget` counts block fields across a module.
+ * `budget` counts block fields across a module, and `layouts` keeps the block layouts made, by space.
  */
-export function resourceRule(r: unknown, no: Refuse, budget: { left: number } = { left: FIELD_BUDGET }): asserts r is Resource {
+export function resourceRule(r: unknown, no: Refuse, budget: { left: number } = { left: FIELD_BUDGET }, layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }): asserts r is Resource {
   if (!isObj(r)) no('a resource is an object')
   const kind = r.kind
   if (!isOneOf(RESOURCE_KINDS, kind)) no(`${say(kind)} is not a kind of resource`)
@@ -414,8 +418,8 @@ export function resourceRule(r: unknown, no: Refuse, budget: { left: number } = 
   }
   if (kind === 'uniform' || kind === 'storage' || kind === 'constants') {
     const space: Space = kind === 'storage' ? 'storage' : 'uniform'
-    blockRule(r.block, space, kind === 'storage', '', 0, budget, no)
-    const layout: BlockLayout = laidOut(() => layoutBlock(r.block as Block, space), no)
+    blockRule(r.block, space, kind === 'storage', '', 0, budget, layouts[space], no)
+    const layout: BlockLayout = laidOut(() => layoutBlock(r.block as Block, space, layouts[space]), no)
     if (kind === 'constants' && layout.size > LENS_LIMITS.constants) no(`the constants block takes ${layout.size} bytes; the limit is ${LENS_LIMITS.constants}`)
   }
   if (kind === 'storage' && typeof r.writable !== 'boolean') no('writable is true or false')
@@ -451,9 +455,8 @@ class Checker {
   private count = 0
   private returned = false
   private readonly budget = { left: FIELD_BUDGET }
-  private walked = 0
+  private readonly layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }
   private readonly leaves = new Map<string, ValueType>()
-  private readonly sizes = new Map<Block, number>()
 
   check(m: unknown): void {
     const no: Refuse = (rule) => fail('lens', `lens: module: ${rule}`)
@@ -493,7 +496,7 @@ class Checker {
       const r: unknown = list[i]
       const kind = isObj(r) && isOneOf(RESOURCE_KINDS, r.kind) ? r.kind : 'resource'
       const no: Refuse = (rule) => fail('lens', `lens: resources[${i}] ${kind}: ${rule}`)
-      resourceRule(r, no, this.budget)
+      resourceRule(r, no, this.budget, this.layouts)
       if (r.kind === 'constants') {
         if (constants) no('a module declares at most one constants resource')
         constants = true
@@ -718,7 +721,10 @@ class Checker {
     if (depth >= LENS_LIMITS.depth) no(`if and loop nest at most ${LENS_LIMITS.depth} deep`)
   }
 
-  /** The type at the end of a path into a block, through walk(), with value-held steps checked and walks bounded. */
+  /**
+   * The type at the end of a path into a block, through walk(), with value-held steps checked. Each distinct path is
+   * walked once, through the check's layouts, so no path lays out a block again.
+   */
   private leaf(res: number, block: Block, space: Space, path: unknown, no: Refuse): ValueType {
     if (!Array.isArray(path)) no('the path is a list of steps')
     if (path.length > LENS_LIMITS.path) no(`a path has at most ${LENS_LIMITS.path} steps, not ${path.length}`)
@@ -740,43 +746,9 @@ class Checker {
     }
     const known = this.leaves.get(key)
     if (known !== undefined) return known
-    this.walked += this.walkCost(block, steps)
-    if (this.walked > WALK_BUDGET) no(`the module's paths walk through more than ${WALK_BUDGET} block fields`)
-    const leaf = laidOut(() => walk(block, space, steps), no).type
+    const leaf = laidOut(() => walk(block, space, steps, this.layouts[space]), no).type
     this.leaves.set(key, leaf)
     return leaf
-  }
-
-  /** The fields walk() lays out along a path: each block it enters, laid out whole. */
-  private walkCost(block: Block, steps: readonly Step[]): number {
-    let t: DataType = { struct: block }
-    let cost = 1
-    for (const step of steps) {
-      if (typeof t === 'string') break
-      if ('array' in t) {
-        t = t.array
-        continue
-      }
-      cost += this.size(t.struct)
-      if (typeof step !== 'number' || step >= t.struct.fields.length) break
-      t = t.struct.fields[step].type
-    }
-    return cost
-  }
-
-  /** The fields of a checked block and everything nested in it, counted once per block object. */
-  private size(b: Block): number {
-    const known = this.sizes.get(b)
-    if (known !== undefined) return known
-    let n = 0
-    for (const f of b.fields) {
-      n++
-      let t = f.type
-      while (typeof t !== 'string' && 'array' in t) t = t.array
-      if (typeof t !== 'string') n += this.size(t.struct)
-    }
-    this.sizes.set(b, n)
-    return n
   }
 }
 

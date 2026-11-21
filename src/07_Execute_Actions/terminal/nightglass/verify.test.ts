@@ -586,8 +586,9 @@ test('junk in any field of a valid module is refused with a lens Fault naming a 
   assert.ok(refusedCount > 500, String(refusedCount))
 })
 
-test('the fields that paths walk through are bounded, and a path walked before costs nothing again', () => {
-  // A block of 266,304 fields held in three shared objects: each new path lays out the whole tree once.
+test('paths walk through the check\'s own layouts: distinct paths into a block of 266,304 fields never lay it out again', () => {
+  // A storage block of 266,304 fields held in three shared objects, read by many distinct paths: once refused at a
+  // walk budget (each new path laid the whole tree out), now each block object is laid out once in the check.
   const leaf = { fields: Array.from({ length: 64 }, (_, i) => ({ name: `t${i}`, type: 'f32' })) }
   const mid = { fields: Array.from({ length: 64 }, (_, i) => ({ name: `s${i}`, type: { struct: leaf } })) }
   const top = { fields: Array.from({ length: 64 }, (_, i) => ({ name: `f${i}`, type: { struct: mid } })) }
@@ -596,8 +597,45 @@ test('the fields that paths walk through are bounded, and a path walked before c
     n,
     [{ kind: 'storage', set: 0, binding: 0, writable: false, block: top }],
   )
-  refused(reads(200, 64), /lens: body\[62\] read: the module's paths walk through more than 16777216 block fields/)
+  verify(reads(200, 64))
   verify(reads(4000, 40))
+  // 4,096 reads, every one by a path of its own.
+  verify(bare(
+    Array.from({ length: 4096 }, (_, k) => ({ op: 'read', id: k, t: 'f32', res: 0, path: [k % 64, k >> 6, (k * 13) % 64] })),
+    4096,
+    [{ kind: 'storage', set: 0, binding: 0, writable: false, block: top }],
+  ))
+})
+
+test('a check lays each block object out once in its space, however many distinct paths read through it', () => {
+  // The confirmed repro: a uniform block TOP of 64 fields, each a 3-deep array of length 1 of block S (64 fields,
+  // each the same array of block T), and T 64 f32x4 fields: 266,304 fields reached. 61 reads, each by its own path
+  // [0, 0, 0, 0, 0, 0, 0, 0, t], once laid the tree out again per path, and the uniform space re-laid out the
+  // element block at every array level of every field (about 4.3 million field layouts a path; createLens on its
+  // words took 38 seconds, verify 9.4). A getter on T's last field, which no path reads, counts how often the check
+  // reads its type: the structure check reads it once each time T is reached, the layouts once in all.
+  let typeReads = 0
+  const tFields: Loose[] = Array.from({ length: 64 }, (_, i) => ({ name: `t${i}`, type: 'f32x4' }))
+  Object.defineProperty(tFields[63], 'type', { enumerable: true, get: () => { typeReads++; return 'f32x4' } })
+  const arr = (t: Loose): Loose => ({ array: { array: { array: t, len: 1 }, len: 1 }, len: 1 })
+  const T = { fields: tFields }
+  const S = { fields: Array.from({ length: 64 }, (_, i) => ({ name: `s${i}`, type: arr({ struct: T }) })) }
+  const TOP = { fields: Array.from({ length: 64 }, (_, i) => ({ name: `a${i}`, type: arr({ struct: S }) })) }
+  const reads = (n: number): Loose => bare(
+    Array.from({ length: n }, (_, t) => ({ op: 'read', id: t, t: 'f32x4', res: 0, path: [0, 0, 0, 0, 0, 0, 0, 0, t] })),
+    n,
+    [{ kind: 'uniform', set: 0, binding: 0, block: TOP }],
+  )
+  const cost = (n: number): number => {
+    typeReads = 0
+    verify(reads(n))
+    return typeReads
+  }
+  const one = cost(1)
+  assert.equal(cost(61), one)
+  assert.equal(cost(63), one)
+  // 4,096 reaches of T by the structure check, each reading the type twice (its shape, then its rule), and one layout.
+  assert.ok(one <= 2 * 64 * 64 + 16, String(one))
 })
 
 test('layoutBlock holds the uniform array rule at every depth, and lens.ts owns the kind lists and the field budget', () => {

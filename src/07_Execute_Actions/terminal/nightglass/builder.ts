@@ -58,7 +58,7 @@ import {
   MAX_INDEX, MAX_OPERANDS, binaryType, bitsRule, builtinType, castRule, columnType, groupRule, laneType, makeRule, pickType,
   portRule, putType, resourceRule, say, ternaryType, texelType, unaryType, verify,
 } from './verify.ts'
-import type { Refuse } from './verify.ts'
+import type { Layouts, Refuse } from './verify.ts'
 
 /** A value the builder made: its id in the module and its type. */
 export interface Val {
@@ -114,6 +114,12 @@ export interface BlockSpec {
 type Obj = { readonly [key: string]: unknown }
 const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x)
 
+/**
+ * A whole number a module holds (a set, binding, slot, path step, lane, column or array length) with -0 made 0, as
+ * verify() asks.
+ */
+const plain = <T>(x: T): T => (typeof x === 'number' ? ((x + 0) as T) : x)
+
 /** The fields a copy may still make: one spec or Block object shared under many fields is copied once for each. */
 interface Budget {
   left: number
@@ -122,7 +128,7 @@ interface Budget {
 /** Converts a field spec to a block type. Anything it does not recognise passes through for resourceRule to refuse. */
 function toType(spec: unknown, depth: number, budget: Budget): unknown {
   if (!isObj(spec) || depth > LENS_LIMITS.nesting) return spec
-  if (Object.hasOwn(spec, 'array') && typeof spec.len === 'number') return { array: toType(spec.array, depth + 1, budget), len: spec.len }
+  if (Object.hasOwn(spec, 'array') && typeof spec.len === 'number') return { array: toType(spec.array, depth + 1, budget), len: plain(spec.len) }
   if (Object.hasOwn(spec, 'struct') && isObj(spec.struct) && Array.isArray(spec.struct.fields)) return { struct: toBlock(spec.struct, depth + 1, budget) }
   return { struct: toBlock(spec, depth + 1, budget) }
 }
@@ -151,9 +157,9 @@ export function block(spec: BlockSpec | Block): Block {
   return toBlock(spec, 0, { left: LENS_LIMITS.blockFields }) as Block
 }
 
-/** An array type for a block spec: `len` elements, or (0, the default) as many as the bound buffer holds. */
+/** An array type for a block spec: `len` elements, or (0, the default; -0 is 0) as many as the bound buffer holds. */
 export function arrayOf(element: FieldSpec, len = 0): ArrayType {
-  return { array: toType(element, 1, { left: LENS_LIMITS.blockFields }) as DataType, len }
+  return { array: toType(element, 1, { left: LENS_LIMITS.blockFields }) as DataType, len: plain(len) }
 }
 
 /** Freezes an object and everything in it. */
@@ -175,8 +181,6 @@ interface Frame {
   ended: string
 }
 
-/** A whole number a module holds (a set, binding, slot, path step, lane or column) with -0 made 0, as verify() asks. */
-const plain = <T>(x: T): T => (typeof x === 'number' ? ((x + 0) as T) : x)
 /** The type a number or boolean takes when nothing else gives one. */
 const guess = (x: unknown): ValueType => (typeof x === 'boolean' ? 'bool' : 'f32')
 /** The type a number takes as an index: u32, or i32 when it is negative. */
@@ -197,6 +201,8 @@ export class LensBuilder {
   private readonly values: (Val | Var)[] = []
   private readonly live: boolean[] = []
   private readonly budget = { left: LENS_LIMITS.blockFields }
+  /** The layouts of the blocks the builder declared (its own copies, frozen once declared), laid out once each. */
+  private readonly layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }
   private count = 0
   private returned = false
   private done = false
@@ -648,7 +654,7 @@ export class LensBuilder {
     const no: Refuse = (rule) => fail('lens', `lens: resources[${index}] ${r.kind}: ${rule}`)
     if (this.done) no('the builder has finished its module')
     if (index >= LENS_LIMITS.resources) no(`a module declares at most ${LENS_LIMITS.resources} resources`)
-    resourceRule(r, no, this.budget)
+    resourceRule(r, no, this.budget, this.layouts)
     if (r.kind === 'constants') {
       if (this.resources.some((x) => x.kind === 'constants')) no('a module declares at most one constants resource')
     } else if (this.resources.some((x) => x.kind !== 'constants' && x.set === r.set && x.binding === r.binding)) {
@@ -695,7 +701,10 @@ export class LensBuilder {
     return this.addResource({ kind: 'storage-image', set: plain(set), binding: plain(binding), format }, (res) => ({ res, kind: 'storage-image', format }))
   }
 
-  /** Resolves a path: field names to indices, values to `{ at }` steps; walk() then finds the leaf. */
+  /**
+   * Resolves a path: field names to indices, values to `{ at }` steps; walk() then finds the leaf, through the
+   * builder's layouts, so a read or write does not lay its block out again.
+   */
   private path(r: BlockRes, path: readonly unknown[], no: Refuse): { readonly steps: Step[]; readonly t: ValueType } {
     if (path.length > LENS_LIMITS.path) no(`a path has at most ${LENS_LIMITS.path} steps, not ${path.length}`)
     let at: DataType | undefined = { struct: r.block }
@@ -717,7 +726,8 @@ export class LensBuilder {
       return step
     })
     try {
-      return { steps, t: walk(r.block, r.kind === 'storage' ? 'storage' : 'uniform', steps).type }
+      const space = r.kind === 'storage' ? 'storage' : 'uniform'
+      return { steps, t: walk(r.block, space, steps, this.layouts[space]).type }
     } catch (e) {
       if (isFault(e)) no(e.message)
       throw e
