@@ -36,6 +36,8 @@ const safari = (await import(SAFARI)) as {
   TRACE: string
   LADDER: string
   withRecorder(html: string, trace?: boolean): string
+  crashDigest(text: string, frames?: number): string[]
+  logLinesOfNote(text: string, most?: number): string[]
 }
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -173,7 +175,7 @@ test('withRecorder: the recorder is the first script of the page, the tracer com
   const page = '<!doctype html><html lang="en"><head data-x="1"><meta charset="utf-8"><script>window.first = 1</script></head><body></body></html>'
   const plain = safari.withRecorder(page)
   assert.equal(plain, page.replace('<head data-x="1">', `<head data-x="1">${safari.RECORDER}`))
-  assert.ok(!plain.includes('__safari_gpu_trace__'), 'no tracer unless asked')
+  assert.ok(!plain.includes('__safariTrace__'), 'no tracer unless asked')
   const traced = safari.withRecorder(page, true)
   assert.equal(traced, page.replace('<head data-x="1">', `<head data-x="1">${safari.RECORDER}${safari.TRACE}`))
   assert.ok(traced.indexOf('__SAFARI__') < traced.indexOf('window.first = 1'), 'ahead of the page\'s own scripts')
@@ -204,12 +206,11 @@ test('the tracer: in a page with a device, it notes the calls, an error caught i
   class GPUQueue { label = ''; submit(_l: unknown[]) {}; writeBuffer(..._a: unknown[]) {} }
   const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
   const window: Record<string, unknown> = { GPUDevice, GPUAdapter, GPURenderPassEncoder, GPUQueue, Worker: class {} }
-  class Channel { onmessage: unknown = null; postMessage() {} }
   // The tracer keeps a timer running to know when its thread was last free: here it gets one that never fires, so
   // the test's process is free to end.
   const timers: number[] = []
-  new Function('window', 'globalThis', 'self', 'BroadcastChannel', 'URL', 'Blob', 'Map', 'setInterval', body)(window, window, window, Channel, { createObjectURL: () => 'blob:x' }, Blob, Map, (_f: () => void, ms: number) => { timers.push(ms); return 0 })
-  assert.deepEqual(timers, [20], 'one timer, the one that marks the thread free')
+  new Function('window', 'globalThis', 'self', 'URL', 'Blob', 'Map', 'setInterval', 'location', body)(window, window, window, { createObjectURL: () => 'blob:x' }, Blob, Map, (_f: () => void, ms: number) => { timers.push(ms); return 0 }, { search: '?debug&onboarding=0' })
+  assert.deepEqual(timers, [20], 'one timer, the one that marks the thread free: no canvas is held unless the address asks')
   const gpu = (window.__SAFARI__ as { gpu: { calls: string[]; key: string[]; lost: string[]; errors: string[]; total: number; frozen: boolean } }).gpu
   const device = await new GPUAdapter().requestDevice({ label: 'page' })
   device.createShaderModule({ label: 'fragment', code: 'x'.repeat(90) })
@@ -237,6 +238,108 @@ test('the tracer: in a page with a device, it notes the calls, an error caught i
   new GPUQueue().submit([{}])
   assert.equal(gpu.calls.length, before, 'the list is frozen at the loss: it ends with what came before')
   assert.equal(gpu.frozen, true)
+})
+
+test('the tracer: a worker started from a Blob runs the tracer first, and its notes come back over its own postMessage, off the listeners of the page', () => {
+  const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
+  class FakeBlob { size = 10; type = 'text/javascript'; parts: unknown[]; constructor(parts: unknown[]) { this.parts = parts } }
+  const listeners: Record<string, Array<(e: unknown) => void>> = {}
+  const started: string[] = []
+  class FakeWorker {
+    constructor(url: string) { started.push(url) }
+    addEventListener(type: string, f: (e: unknown) => void) { (listeners[type] ??= []).push(f) }
+  }
+  const blobs: FakeBlob[] = []
+  const urls = { createObjectURL: (b: FakeBlob) => { blobs.push(b); return `blob:${blobs.length}` } }
+  const window: Record<string, unknown> = { Worker: FakeWorker }
+  new Function('window', 'globalThis', 'self', 'URL', 'Blob', 'Map', 'setInterval', 'location', body)(window, window, window, urls, FakeBlob, Map, () => 0, { search: '' })
+  const gpu = (window.__SAFARI__ as { gpu: { key: string[]; worker: string[]; lost: string[]; errors: string[]; workers: number } }).gpu
+  const Started = window.Worker as new (url: string) => FakeWorker
+  const worker = new Started(urls.createObjectURL(new FakeBlob(['postMessage({ t: "ready" })'])))
+  assert.ok(worker instanceof FakeWorker, 'the page is handed a worker as before')
+  assert.equal(gpu.workers, 1)
+  assert.deepEqual(started, ['blob:2'], 'started from a second Blob: the tracer, then the worker as it was')
+  const [prelude, source] = blobs[1]!.parts as [string, FakeBlob]
+  assert.equal(source, blobs[0], 'the worker as it was, untouched')
+  // The part in front is a script of its own, and in a worker it says it runs and notes that worker's WebGPU calls.
+  assert.doesNotThrow(() => new Function(prelude), 'the part in front parses')
+  const posted: Array<{ __safariTrace__: string; text: string }> = []
+  class GPUQueue { label = ''; submit(_l: unknown[]) {} }
+  const scope = { postMessage: (m: { __safariTrace__: string; text: string }) => { posted.push(m) }, navigator: { gpu: {} }, GPUQueue }
+  new Function('self', 'globalThis', 'setInterval', prelude)(scope, scope, () => 0)
+  new GPUQueue().submit([{}])
+  assert.deepEqual(posted.map((m) => m.__safariTrace__), ['call', 'call'])
+  assert.match(posted[0]!.text, /^\d+ this worker runs \(WebGPU in it: object\)$/)
+  assert.match(posted[1]!.text, /^\d+ Queue\.submit 1$/)
+  // Back on the page: a note is kept and stopped there; anything else of the worker's goes on to the page untouched.
+  let stopped = 0
+  const event = (data: unknown) => ({ data, stopImmediatePropagation: () => { stopped++ } })
+  listeners.message![0]!(event(posted[1]))
+  listeners.message![0]!(event({ t: 'ready' }))
+  listeners.message![0]!(event({ __safariTrace__: 'lost', text: '9 device physics-realm crowd lost: reason unknown, message ""' }))
+  listeners.error![0]!({ message: 'out of memory' })
+  assert.equal(stopped, 2, 'only the notes are taken off')
+  assert.equal(gpu.worker.length, 1)
+  assert.match(gpu.worker[0]!, /^\d+ Queue\.submit 1$/)
+  assert.ok(gpu.key.some((c) => /^worker: \d+ Queue\.submit 1$/.test(c)))
+  assert.ok(gpu.key.some((c) => /^\d+ a worker is started \(10 bytes\)$/.test(c)))
+  assert.deepEqual(gpu.lost, ['worker: 9 device physics-realm crowd lost: reason unknown, message ""'])
+  assert.ok(gpu.errors.some((e) => /^\d+ a worker failed: out of memory$/.test(e)), gpu.errors.join(' | '))
+})
+
+test('the tracer: an address with safarihold=1 keeps one 2D canvas drawn to, and no other address does', () => {
+  const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
+  const run = (search: string) => {
+    const timers: number[] = []
+    const fills: string[] = []
+    const canvas = { width: 0, height: 0, getContext: (kind: string) => ({ kind, fillStyle: '', fillRect: (...a: number[]) => { fills.push(a.join(',')) } }) }
+    const window: Record<string, unknown> = { Worker: class {} }
+    new Function('window', 'globalThis', 'self', 'URL', 'Blob', 'Map', 'setInterval', 'location', 'document', body)(window, window, window, { createObjectURL: () => 'blob:x' }, Blob, Map, (_f: () => void, ms: number) => { timers.push(ms); return 0 }, { search }, { createElement: () => canvas })
+    return { timers, fills, canvas, safari: window.__SAFARI__ as { held?: unknown; gpu: { key: string[] } } }
+  }
+  const held = run('?debug&onboarding=0&audio=0&safarihold=1')
+  assert.deepEqual(held.timers, [20, 250])
+  assert.deepEqual(held.fills, ['0,0,512,512'])
+  assert.equal(held.safari.held, held.canvas)
+  assert.deepEqual([held.canvas.width, held.canvas.height], [512, 512])
+  assert.ok(held.safari.gpu.key.some((c) => /a 2D canvas is held/.test(c)))
+  for (const search of ['?debug&onboarding=0&audio=0', '?safarihold=10', '?safarihold=0', '']) {
+    const plain = run(search)
+    assert.deepEqual(plain.timers, [20], search)
+    assert.equal(plain.safari.held, undefined, search)
+  }
+})
+
+test('crashDigest: a crash report is told in a few lines; the log keeps the lines about the GPU process', () => {
+  const head = { app_name: 'com.apple.WebKit.GPU', app_version: '21625.1.2', bug_type: '309', timestamp: '2026-11-21 23:40:01.00 +0000' }
+  const report = {
+    procName: 'com.apple.WebKit.GPU', captureTime: '2026-11-21 23:40:00.1234 +0000',
+    exception: { type: 'EXC_BREAKPOINT', signal: 'SIGTRAP', codes: '0x0000000000000001, 0x00000001a0b0c0d0' },
+    termination: { namespace: 'SIGNAL', indicator: 'Trace/BPT trap: 5', byProc: 'exc handler' },
+    asi: { 'libsystem_c.dylib': ['abort() called'] },
+    faultingThread: 1,
+    threads: [
+      { frames: [{ imageIndex: 0, symbol: 'mach_msg', symbolLocation: 8, imageOffset: 100 }] },
+      { triggered: true, queue: 'com.apple.main-thread', frames: [{ imageIndex: 1, symbol: 'WebGPU::Queue::commitMTLCommandBuffer', symbolLocation: 512, imageOffset: 7 }, { imageIndex: 1, imageOffset: 4096 }, { imageIndex: 0, symbol: 'start', imageOffset: 9 }] },
+    ],
+    usedImages: [{ name: 'dyld' }, { name: 'WebGPU' }],
+  }
+  const lines = safari.crashDigest(`${JSON.stringify(head)}\n${JSON.stringify(report, null, 2)}`, 2)
+  assert.deepEqual(lines, [
+    'com.apple.WebKit.GPU 21625.1.2 at 2026-11-21 23:40:00.1234 +0000: EXC_BREAKPOINT, SIGTRAP, 0x0000000000000001, 0x00000001a0b0c0d0',
+    'ended: SIGNAL, Trace/BPT trap: 5, by exc handler',
+    'libsystem_c.dylib: abort() called',
+    'the thread that ended it (com.apple.main-thread):',
+    '  WebGPU  WebGPU::Queue::commitMTLCommandBuffer + 512',
+    '  WebGPU  +4096',
+  ])
+  assert.match(safari.crashDigest('not a report at all')[0]!, /^a report that does not parse: not a report at all$/)
+  assert.deepEqual(safari.crashDigest(`${JSON.stringify({ app_name: 'Safari', bug_type: '298' })}\n{}`), ['Safari  at ?: report type 298'])
+  const log = ['2026-11-21 23:40:00.100 Df com.apple.WebKit.GPU[512:1a2b] [com.apple.WebKit:Process] GPUProcess::lowMemoryHandler: critical=0, synchronous=0',
+    '2026-11-21 23:40:00.101 Df com.apple.WebKit.GPU[512:1a2b] [com.apple.CoreAnalytics] an unrelated line',
+    '2026-11-21 23:40:00.102 E  Safari[400:9f] [com.apple.WebKit:Process] 0x1 - GPUProcessProxy::gpuProcessExited: reason=IdleExit'].join('\n')
+  assert.deepEqual(safari.logLinesOfNote(log).map((l) => l.replace(/^.*\] /, '')), ['GPUProcess::lowMemoryHandler: critical=0, synchronous=0', '0x1 - GPUProcessProxy::gpuProcessExited: reason=IdleExit'])
+  assert.equal(safari.logLinesOfNote(Array.from({ length: 300 }, (_, i) => `line ${i} exit`).join('\n'), 5).length, 5)
 })
 
 test('the probe: its drawing ladder parses, runs inside the probe, and tries each kind of work the renderer asks for', () => {

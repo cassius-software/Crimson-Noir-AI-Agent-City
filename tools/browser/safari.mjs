@@ -31,6 +31,8 @@
  * device with no words at all, so the calls just before it are the only account there is.
  * --needs-gpu makes a browser without a working GPU a failure of its own, for a runner known to give one: without it
  * a runner that stopped giving Safari a GPU would quietly turn the check from "the city draws" into "the card shows".
+ * On a Mac, a run with a failed check ends with the system's own account (evidence): the crash reports WebKit's
+ * processes left since the run began, and what Safari's GPU process logged of its exit, a crash or memory pressure.
  * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one.
  *   node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device "iPhone 17 Pro"] [--query "<query>"]...
  *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu] [--trace]
@@ -39,8 +41,9 @@
  * What breaks if it is removed? An iPhone is again something the page is only believed to run on.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -82,7 +85,7 @@ export const RECORDER = `<script>(function () {
  * size), the last few hundred kept, and the list frozen the moment a device is lost. A device also reports its
  * uncaptured errors and its loss. So when Safari takes the device away, which WebKit reports with no words at all,
  * the report names the calls that came just before. `say(kind, text)` is where a note goes: the page's own list, or
- * from a worker a BroadcastChannel the page listens on.
+ * from a worker its own postMessage, which the page takes the notes off.
  */
 const TRACER = `function (say, epoch) {
   var G = typeof globalThis !== 'undefined' ? globalThis : self
@@ -162,13 +165,27 @@ const TRACER = `function (say, epoch) {
   wrap('GPUBuffer', 'destroy')
   wrap('GPUTexture', 'destroy')
   wrap('GPUTexture', 'createView', function (d) { return d === undefined ? '' : brief(d) })
+  // What else of this thread lives in the browser's GPU process: the contexts of its canvases (the first forty).
+  var others = 0
+  ;['HTMLCanvasElement', 'OffscreenCanvas'].forEach(function (ctor) {
+    var proto = G[ctor] && G[ctor].prototype
+    if (!proto || typeof proto.getContext !== 'function') return
+    var was = proto.getContext
+    proto.getContext = function (kind) {
+      var got = was.apply(this, arguments)
+      try { if (others++ < 40) note(ctor + '.getContext', brief({ kind: kind, width: this.width, height: this.height, got: got ? true : false })) } catch (e) { /* the call goes on */ }
+      return got
+    }
+  })
 }`
 
 /**
  * The script --trace adds after the recorder: the tracer in the page, keeping its notes on __SAFARI__.gpu, and the
  * same tracer put in front of each worker the page starts from a Blob (the city's crowd runs its own GPU device in
- * one), whose notes come back over a BroadcastChannel. A page whose worker cannot be given the tracer starts it as
- * it would have: the trace never decides whether the city runs.
+ * one), whose notes come back over the worker's own postMessage, marked, and never reach the page's listeners. A
+ * page whose worker cannot be given the tracer starts it as it would have: the trace never decides whether the city
+ * runs. An address with safarihold=1 also keeps one 2D canvas drawn to, to learn what the browser's GPU process does
+ * with and without a picture to hold.
  */
 export const TRACE = `<script>(function () {
   var S = window.__SAFARI__ = window.__SAFARI__ || { errors: [], lines: [] }
@@ -194,19 +211,39 @@ export const TRACE = `<script>(function () {
   } }
   var tracer = ${TRACER}
   try { tracer(say(''), T0) } catch (e) { T.errors.push('the tracer did not start: ' + e) }
+  // A diagnosis, only where the address says safarihold=1: one 2D canvas kept drawn to, which is a picture the browser
+  // keeps in its GPU process. WebKit lets that process exit under memory pressure when it holds none (and no sound),
+  // whatever WebGPU devices live in it, on a Mac of fewer than four cores (a hosted runner has three).
   try {
-    var channel = new BroadcastChannel('__safari_gpu_trace__')
+    if (/[?&]safarihold=1(?:&|$)/.test(location.search)) {
+      var held = S.held = document.createElement('canvas')
+      held.width = 512; held.height = 512
+      var pen = held.getContext('2d')
+      var paint = function () { pen.fillStyle = 'rgb(' + (Date.now() % 255) + ',0,0)'; pen.fillRect(0, 0, 512, 512) }
+      paint()
+      setInterval(paint, 250)
+      T.key.push((Date.now() - T0) + ' a 2D canvas is held (safarihold=1)')
+    }
+  } catch (e) { T.errors.push('no canvas is held: ' + e) }
+  try {
     var fromWorker = say('worker: ')
-    channel.onmessage = function (e) { if (e.data && typeof e.data.kind === 'string') fromWorker(e.data.kind, String(e.data.text)) }
     var blobs = new Map()
     var make = URL.createObjectURL
     URL.createObjectURL = function (b) { var url = make.apply(URL, arguments); try { if (b instanceof Blob) blobs.set(url, b) } catch (e) { /* as it was */ } return url }
     var Real = window.Worker
-    var prelude = '(' + tracer.toString() + ')((function () { var c = new BroadcastChannel("__safari_gpu_trace__"); return function (kind, text) { try { c.postMessage({ kind: kind, text: text }) } catch (e) {} } })(), ' + T0 + ');\\n'
+    // A worker's notes come back over its own postMessage, marked, and are taken off before the page's listeners run.
+    var prelude = '(function () { var post = self.postMessage.bind(self); var say = function (kind, text) { try { post({ __safariTrace__: String(kind), text: String(text) }) } catch (e) {} }; try { (' + tracer.toString() + ')(say, ' + T0 + '); say("call", (Date.now() - ' + T0 + ') + " this worker runs (WebGPU in it: " + typeof (self.navigator && self.navigator.gpu) + ")") } catch (e) { say("error", "the tracer did not start in a worker: " + e) } })();\\n'
     window.Worker = function (url, options) {
       var blob = blobs.get(String(url))
       if (blob && (!options || options.type !== 'module')) {
-        try { T.workers++; if (T.key.length < 500 && !T.frozen) T.key.push((Date.now() - T0) + ' a worker is started (' + blob.size + ' bytes)'); return new Real(make.call(URL, new Blob([prelude, blob], { type: blob.type || 'text/javascript' })), options) } catch (e) { T.errors.push('a worker started without the tracer: ' + e) }
+        try {
+          var worker = new Real(make.call(URL, new Blob([prelude, blob], { type: blob.type || 'text/javascript' })), options)
+          T.workers++
+          if (T.key.length < 500 && !T.frozen) T.key.push((Date.now() - T0) + ' a worker is started (' + blob.size + ' bytes)')
+          worker.addEventListener('message', function (e) { var d = e.data; if (d && typeof d.__safariTrace__ === 'string') { e.stopImmediatePropagation(); fromWorker(d.__safariTrace__, String(d.text)) } })
+          worker.addEventListener('error', function (e) { if (T.errors.length < 40) T.errors.push((Date.now() - T0) + ' a worker failed: ' + String(e && e.message).slice(0, 300)) })
+          return worker
+        } catch (e) { T.errors.push('a worker started without the tracer: ' + e) }
       }
       return new Real(url, options)
     }
@@ -719,6 +756,70 @@ function run(cmd, args, { ms = 600_000 } = {}) {
   return { ok: r.status === 0, out: r.stdout ?? '', err: (r.stderr ?? '') + (r.error ? r.error.message : '') }
 }
 
+/**
+ * Pure. What one macOS crash report (.ips: a line of JSON, then a JSON body) says, in a few lines: the process, how
+ * it ended, what the system added, and the top of the thread that ended it. A report that does not parse is one line.
+ */
+export function crashDigest(text, frames = 24) {
+  const cut = text.indexOf('\n')
+  let head = null
+  let body = null
+  try { head = JSON.parse(text.slice(0, cut)); body = JSON.parse(text.slice(cut + 1)) } catch { return [`a report that does not parse: ${text.slice(0, 160).replace(/\s+/g, ' ')}`] }
+  const ex = body.exception ?? {}
+  const lines = [`${body.procName ?? head.app_name ?? '?'} ${head.app_version ?? ''} at ${body.captureTime ?? head.timestamp ?? '?'}: ${[ex.type, ex.signal, ex.subtype, ex.codes].filter(Boolean).join(', ') || `report type ${head.bug_type ?? '?'}`}`]
+  const end = body.termination
+  if (end) lines.push(`ended: ${[end.namespace, end.indicator, ...(end.reasons ?? []), end.byProc ? `by ${end.byProc}` : ''].filter(Boolean).join(', ')}`)
+  for (const [image, notes] of Object.entries(body.asi ?? {})) lines.push(`${image}: ${[].concat(notes).join(' | ').slice(0, 600)}`)
+  const threads = body.threads ?? []
+  const thread = threads.find((t) => t?.triggered) ?? threads[body.faultingThread ?? 0]
+  if (thread) {
+    lines.push(`the thread that ended it${thread.name ? `, ${thread.name}` : ''}${thread.queue ? ` (${thread.queue})` : ''}:`)
+    for (const f of (thread.frames ?? []).slice(0, frames)) lines.push(`  ${body.usedImages?.[f.imageIndex]?.name ?? '?'}  ${f.symbol ? `${f.symbol} + ${f.symbolLocation ?? 0}` : `+${f.imageOffset ?? '?'}`}`)
+  }
+  return lines
+}
+
+/** Pure. The lines of the system log worth printing about the browser's GPU process: its exit, a crash, memory pressure, WebGPU. */
+export function logLinesOfNote(text, most = 160) {
+  const of = /GPUProcess|WebGPU|memory ?pressure|lowMemory|jetsam|IOGPU|crash|exit|terminat|unresponsive|\blost\b/i
+  return text.split('\n').filter((l) => of.test(l)).map((l) => l.slice(0, 420)).slice(-most)
+}
+
+/** The Mac's own account of its memory: cores, RAM, and the kernel's memory pressure level (1 normal, 2 warning, 4 critical). */
+function machine() {
+  if (process.platform !== 'darwin') return ''
+  const read = (name) => run('sysctl', ['-n', name], { ms: 10_000 }).out.trim()
+  return `${read('hw.physicalcpu')} cores (${read('hw.logicalcpu')} logical), ${Math.round(Number(read('hw.memsize')) / 2 ** 30)} GB, memory pressure level ${read('kern.memorystatus_vm_pressure_level') || '?'}`
+}
+
+/**
+ * On a Mac, after a start that failed: what the system kept of this run. The crash reports written since `since` (a
+ * WebKit process that crashed leaves one within seconds, so a few are waited for), and what Safari's GPU process and
+ * its keeper logged: WebKit reports a lost device with no words, and this is where the reason is written down.
+ * Evidence only: nothing here changes a verdict.
+ */
+async function evidence(since, name) {
+  if (process.platform !== 'darwin') return
+  const folders = [join(homedir(), 'Library/Logs/DiagnosticReports'), '/Library/Logs/DiagnosticReports']
+  const reports = () => folders.flatMap((folder) => {
+    try { return readdirSync(folder).map((f) => join(folder, f)).filter((f) => /\.(?:ips|crash|diag|hang)$/.test(f) && statSync(f).mtimeMs >= since) } catch { return [] }
+  })
+  for (let i = 0; i < 10 && reports().length === 0; i++) await sleep(2000)
+  const found = reports()
+  console.log(`${name}: crash reports since the run began: ${found.length === 0 ? 'none' : found.map((f) => f.split(sep).pop()).join(', ')}`)
+  for (const file of found.slice(0, 6)) {
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch (e) { text = String(e) }
+    for (const line of crashDigest(text)) console.log(`${name}: crash report ${file.split(sep).pop()}: ${line}`)
+  }
+  const minutes = Math.ceil((Date.now() - since) / 60_000) + 1
+  const log = run('log', ['show', '--last', `${minutes}m`, '--style', 'compact', '--predicate', 'process == "com.apple.WebKit.GPU" OR eventMessage CONTAINS "GPUProcess" OR eventMessage CONTAINS[c] "memory pressure"'], { ms: 240_000 })
+  const lines = logLinesOfNote(log.out)
+  console.log(`${name}: the system log of Safari's GPU process, ${minutes} min: ${lines.length} line(s) of note${log.ok ? '' : ` (log show: ${log.err.trim().slice(0, 200)})`}`)
+  for (const line of lines) console.log(`${name}: log ${line}`)
+  console.log(`${name}: this Mac now: ${machine()}`)
+}
+
 async function main() {
   const argv = process.argv.slice(2)
   const arg = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined }
@@ -737,6 +838,8 @@ async function main() {
   if (!['mac', 'iphone'].includes(target)) { console.error(`safari: no target named ${target} (mac or iphone)`); return 2 }
   if (!existsSync(join(web, 'index.html'))) { console.error(`safari: no index.html in ${web} (npm run build:web makes dist-web/)`); return 2 }
   mkdirSync(out, { recursive: true })
+  const began = Date.now()
+  if (process.platform === 'darwin') console.log(`${target}: this Mac: ${machine()}`)
 
   const report = { target, web, queries, checks: [], pages: [] }
   let failed = 0
@@ -849,8 +952,10 @@ async function main() {
         for (const line of state.gpu.key) console.log(`${name}: WebGPU key call ${line}`)
         for (const line of state.gpu.calls) console.log(`${name}: WebGPU last call ${line}`)
       }
+      if (outcome !== 'running' && process.platform === 'darwin') console.log(`${name}: this Mac at the end of the page: ${machine()}`)
       for (const c of judge(target, probe, page)) check(c.ok, `${name} ${c.what}`, c.detail)
     }
+    if (failed > 0) await evidence(began, target)
   } catch (e) {
     check(false, `${target}: the run`, String(e?.stack ?? e).slice(0, 800))
   } finally {
