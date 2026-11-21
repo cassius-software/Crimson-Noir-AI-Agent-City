@@ -18,16 +18,25 @@
  * and inside a worker, the adapter's name, features and limits, a device, one compute pass read back), then opens the
  * city once per --query (default: a first-time visitor's own address with the onboarding off) and polls the page's own
  * state under ?debug until the city draws frames with its crowd advancing, a recovery card shows, or the time runs out.
- * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 when the city did
- * not run, unless --observe is given (then it only reports: for a runner whose GPU cannot be known in advance).
+ * What the probe found decides what the page owes (expected, judge): a browser with a working GPU, on the page and in
+ * a worker, must run the city with no engine error; a browser that gave no adapter, or has no WebGPU, must show the
+ * card for exactly that, in words that send an iPhone to no other browser. Neither is ever let through as the other:
+ * GitHub's Macs are virtual, WebKit hands a virtual Mac a GPU only under its own switch (WebKitAllowWebGPUOnVMs,
+ * iphone.yml), and it never hands one to the iOS Simulator, so the Simulator proves the page loads, runs its script
+ * and words its card for an iPhone, and Safari on the Mac proves the city draws in WebKit.
+ * The host adds one small script to the page it serves (RECORDER): it keeps what the page logged and every uncaught
+ * error where the tool can read them, since Safari's driver gives no console. Nothing else of the page is touched.
+ * --needs-gpu makes a browser without a working GPU a failure of its own, for a runner known to give one: without it
+ * a runner that stopped giving Safari a GPU would quietly turn the check from "the city draws" into "the card shows".
+ * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one.
  *   node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device "iPhone 17 Pro"] [--query "<query>"]...
- *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--observe]
+ *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu]
  * It needs macOS with Safari's "Allow remote automation" on (`sudo safaridriver --enable` once), and for the iPhone
  * target Xcode with an iOS Simulator runtime. Nothing here reaches any address but this machine.
  * What breaks if it is removed? An iPhone is again something the page is only believed to run on.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,7 +51,33 @@ const TYPES = Object.freeze({
 })
 
 /** The probe's own page: nothing on it, so what it measures is the browser. */
-const PROBE_PAGE = '<!doctype html><meta charset="utf-8"><title>probe</title><body>probe</body>'
+const PROBE_PAGE = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>probe</title><body>probe</body>'
+
+/**
+ * The one script the host adds to the page: Safari's driver hands out no console, so the page keeps its own. Every
+ * uncaught error and unhandled rejection goes to __SAFARI__.errors, every console.error and console.warn to
+ * __SAFARI__.lines (both capped), and the console itself is left as it was.
+ */
+export const RECORDER = `<script>(function () {
+  var S = window.__SAFARI__ = { errors: [], lines: [] }
+  var say = function (v) { try { return String(v && v.stack ? v.stack : v && v.message ? v.message : v).slice(0, 700) } catch (e) { return 'unprintable' } }
+  var keep = function (list, text) { if (list.length < 80) list.push(text) }
+  window.addEventListener('error', function (e) { keep(S.errors, 'error: ' + say(e.error || e.message) + (e.filename ? ' at ' + e.filename + ':' + e.lineno : '')) })
+  window.addEventListener('unhandledrejection', function (e) { keep(S.errors, 'rejection: ' + say(e.reason)) })
+  ;['error', 'warn'].forEach(function (level) {
+    var was = console[level]
+    console[level] = function () {
+      try { keep(S.lines, level + ': ' + Array.prototype.map.call(arguments, say).join(' ').slice(0, 900)) } catch (e) { /* the console goes on */ }
+      return was.apply(console, arguments)
+    }
+  })
+})()</script>`
+
+/** Pure. A page's HTML with the recorder as its first script: straight after <head>, else in front of everything. */
+export function withRecorder(html) {
+  const head = /<head[^>]*>/i.exec(html)
+  return head ? html.slice(0, head.index + head[0].length) + RECORDER + html.slice(head.index + head[0].length) : RECORDER + html
+}
 
 /**
  * Pure. The file a request path names inside `root`, or null for a path that leaves it or names nothing servable
@@ -58,8 +93,11 @@ export function fileFor(root, pathname) {
   return path.endsWith('/') || file === base ? join(file, 'index.html') : file
 }
 
-/** Serves `root` on 127.0.0.1 as a static host does (no isolation headers, nothing cached), and the probe's page. */
-export async function serve(root) {
+/**
+ * Serves `root` on 127.0.0.1 as a static host does (no isolation headers, nothing cached), and the probe's page. With
+ * `record`, every HTML page goes out with the recorder in its head (withRecorder); every other file byte for byte.
+ */
+export async function serve(root, { record = false } = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
     if (url.pathname === '/__probe') { res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store' }).end(PROBE_PAGE); return }
@@ -67,7 +105,15 @@ export async function serve(root) {
     let size = -1
     try { const s = file ? statSync(file) : null; if (s?.isFile()) size = s.size } catch { size = -1 }
     if (size < 0) { res.writeHead(404, { 'Content-Type': TYPES['.txt'] }).end('not found'); return }
-    res.writeHead(200, { 'Content-Type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': size, 'Cache-Control': 'no-store' })
+    const type = TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream'
+    if (record && type === TYPES['.html']) {
+      let body
+      try { body = Buffer.from(withRecorder(readFileSync(file, 'utf8'))) } catch { res.writeHead(404, { 'Content-Type': TYPES['.txt'] }).end('not found'); return }
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'no-store' })
+      res.end(req.method === 'HEAD' ? undefined : body)
+      return
+    }
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': size, 'Cache-Control': 'no-store' })
     if (req.method === 'HEAD') { res.end(); return }
     createReadStream(file).pipe(res)
   })
@@ -196,15 +242,18 @@ export const PROBE = `(async () => {
 })()`
 
 /**
- * A page expression: where the city's start stands. `card` is the recovery card (its kind, headline and words),
- * `running` the engine's own numbers once ?debug has put __SIM__ on the page, `veil` the boot veil's words while it
- * is up. Guarded throughout: the page may be between two documents.
+ * A page expression: where the city's start stands. `card` is the recovery card (its kind, its words, and the two
+ * lines under Details: what was thrown, and the build, adapter and user agent), `running` the engine's own numbers
+ * once ?debug has put __SIM__ on the page, `veil` the boot veil's words while it is up, `bootDone` whether the page's
+ * script ran to its end (main.tsx), `pageErrors` and `lines` what the recorder kept. Guarded throughout: the page may
+ * be between two documents.
  */
 export const STATE = `(() => {
   const text = (el) => (el ? String(el.innerText ?? el.textContent ?? '').replace(/\\s+/g, ' ').trim() : null)
   const card = document.querySelector('[data-failure]')
   const veil = document.querySelector('.boot-veil')
   const S = globalThis.__SIM__
+  const R = globalThis.__SAFARI__
   let running = null
   if (S) {
     try {
@@ -216,10 +265,14 @@ export const STATE = `(() => {
       }
     } catch (e) { running = { threw: String(e).slice(0, 400) } }
   }
+  // Under Details the card keeps what was thrown and its copyable line; closed, they are in the document all the same.
+  const details = card ? [...card.querySelectorAll('details p')].map((p) => String(p.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 1500)) : []
   return {
     ready: document.readyState, href: location.href, isolated: globalThis.crossOriginIsolated === true,
-    card: card ? { kind: card.getAttribute('data-failure'), text: text(card).slice(0, 3000) } : null,
+    card: card ? { kind: card.getAttribute('data-failure'), text: text(card).slice(0, 3000), detail: details[0] ?? null, line: details[1] ?? null } : null,
     veil: veil ? text(veil).slice(0, 400) : null, running,
+    bootDone: globalThis.__bootDone === true,
+    pageErrors: R ? R.errors.slice(0, 20) : [], lines: R ? R.lines.slice(0, 40) : [],
     body: card || running ? null : text(document.body).slice(0, 600),
   }
 })()`
@@ -228,6 +281,60 @@ export const STATE = `(() => {
 export function isRunning(state, crowdFrom = 0) {
   const r = state?.running
   return Boolean(r) && typeof r.fps === 'number' && r.fps > 0 && typeof r.crowdFrames === 'number' && r.crowdFrames > crowdFrom
+}
+
+/**
+ * Pure. What the page owes a browser, by what the probe found in it. A working GPU on the page and inside a worker:
+ * the city runs. WebGPU there and no adapter: the no-adapter card. No WebGPU at all: the no-api card. WebGPU on the
+ * page and none, or no device, inside a worker: the worker card. A probe that threw part way: some card, whichever.
+ */
+export function expected(target, probe) {
+  if (probe?.gpu !== 'object') return { outcome: 'card', kind: 'no-api', why: 'this browser has no WebGPU (navigator.gpu)' }
+  const adapter = probe.adapter
+  if (!adapter) return { outcome: 'card', kind: 'no-adapter', why: 'this browser has WebGPU and gave the page no adapter' }
+  if (adapter.threw || adapter.computed !== true) return { outcome: 'card', kind: null, why: `this browser's WebGPU failed the probe: ${adapter.threw ?? 'the compute pass read back wrong'}` }
+  if (probe.worker?.gpu !== 'object' || probe.worker.device !== true) return { outcome: 'card', kind: 'worker-gpu', why: 'this browser has WebGPU on the page and no device inside a worker' }
+  return { outcome: 'running', kind: null, why: `this browser has a GPU for WebGPU on the page and in a worker (${JSON.stringify(adapter.info)})` }
+}
+
+/** What an iPhone's card must say of WebGPU, and what it must never say: every browser there is Safari's engine. */
+const IPHONE_SAYS = /which an iP(?:hone|ad) has from iP?(?:ad)?OS 26 on\. Chrome and the other browsers on an iP(?:hone|ad) are built on Safari’s engine, so another browser does not add it\./
+const SENDS_ELSEWHERE = /a current Chrome|Edge or Brave|Chrome or Edge|in Chrome\b|Play Store|WebView2/
+
+/**
+ * Pure. The checks one page of the city passes or fails, given what the probe found (expected) and how the page
+ * ended (`page`: its outcome, and STATE at the end). Each is { ok, what, detail }.
+ */
+export function judge(target, probe, page) {
+  const want = expected(target, probe)
+  const end = page?.end ?? {}
+  const name = `?${page?.query ?? ''}`
+  const checks = []
+  const check = (ok, what, detail = '') => { checks.push({ ok: Boolean(ok), what, detail: String(detail).slice(0, 1200) }) }
+  const card = end.card ?? null
+  const r = end.running ?? null
+  const after = `after ${Math.round((page?.ms ?? 0) / 1000)} s`
+  const got = page?.outcome === 'running' ? `the city runs, ${after}`
+    : page?.outcome === 'card' ? `the ${card?.kind} card: ${card?.text ?? ''}${card?.detail ? ` [details: ${card.detail}]` : ''}`
+      : `still starting ${after}: ${JSON.stringify({ veil: end.veil ?? null, body: end.body ?? null, threw: end.threw ?? null })}`
+  if (want.outcome === 'running') {
+    check(page?.outcome === 'running', `${name}: the city runs (${want.why})`, page?.outcome === 'running'
+      ? `${Math.round((r?.fps ?? 0) * 10) / 10} fps, ${r?.pedestrians ?? '?'} people, ${r?.vehicles ?? '?'} cars, ${r?.device ?? '?'} input, GPU ${JSON.stringify(r?.gpu ?? null)}, quality ${JSON.stringify(r?.quality ?? null).slice(0, 300)}, ${after}`
+      : got)
+    if (page?.outcome === 'running') check((r?.errors ?? []).length === 0, `${name}: no engine error`, (r?.errors ?? []).join(' | '))
+  } else {
+    const right = page?.outcome === 'card' && (want.kind === null || card?.kind === want.kind)
+    check(right, `${name}: the ${want.kind ?? 'recovery'} card, since ${want.why}`, got)
+    if (right && target === 'iphone') {
+      check(!SENDS_ELSEWHERE.test(card.text) && (want.kind === 'worker-gpu' || IPHONE_SAYS.test(card.text)), `${name}: the card sends an iPhone to no other browser, and says what brings WebGPU`, card.text)
+    }
+    if (right && target === 'mac' && want.kind === 'no-api') {
+      check(/Safari turns WebGPU on from macOS 26/.test(card.text) && !/turned off in Safari/.test(card.text), `${name}: a Mac with no WebGPU in Safari is told macOS 26 brings it`, card.text)
+    }
+  }
+  check(end.bootDone === true, `${name}: the page’s script ran to its end`, `__bootDone ${end.bootDone}`)
+  check((end.pageErrors ?? []).length === 0, `${name}: no uncaught error on the page`, (end.pageErrors ?? []).join(' | '))
+  return checks
 }
 
 /**
@@ -265,7 +372,7 @@ async function main() {
   const all = (name) => argv.flatMap((a, i) => (a === `--${name}` && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
   const flag = (name) => argv.includes(`--${name}`)
   if (flag('help')) {
-    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--observe]')
+    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu]')
     return 0
   }
   const web = resolve(arg('web') ?? 'dist-web')
@@ -273,7 +380,6 @@ async function main() {
   const out = resolve(arg('out') ?? 'safari-out')
   const bootMs = Number(arg('boot-ms') ?? 600_000)
   const port = Number(arg('port') ?? 4444)
-  const observe = flag('observe')
   const queries = all('query').length ? all('query') : [VISITOR]
   if (!['mac', 'iphone'].includes(target)) { console.error(`safari: no target named ${target} (mac or iphone)`); return 2 }
   if (!existsSync(join(web, 'index.html'))) { console.error(`safari: no index.html in ${web} (npm run build:web makes dist-web/)`); return 2 }
@@ -298,7 +404,7 @@ async function main() {
     if (!phone) {
       check(false, `iphone: an iPhone in the iOS Simulator${arg('device') ? ` named ${arg('device')}` : ''}`, (listed.err || 'none is installed with this Xcode').trim().slice(0, 300))
       save()
-      return observe ? 0 : 1
+      return 1
     }
     report.simulator = phone
     console.log(`iphone: ${phone.name}, iOS ${phone.ios} (${phone.udid})`)
@@ -308,7 +414,7 @@ async function main() {
     Object.assign(capabilities, { platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceUDID': phone.udid })
   }
 
-  const host = await serve(web)
+  const host = await serve(web, { record: true })
   const driverProcess = spawn('safaridriver', ['--port', String(port)], { stdio: ['ignore', 'inherit', 'inherit'] })
   let driverGone = null
   driverProcess.on('exit', (code) => { driverGone = code ?? -1 })
@@ -320,7 +426,7 @@ async function main() {
     for (let i = 0; i < 60 && !listening && driverGone === null; i++) {
       try { await driver.call('GET', '/status'); listening = true } catch { await sleep(500) }
     }
-    if (!check(listening, `${target}: safaridriver listens`, listening ? '' : `it ${driverGone === null ? 'never answered' : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) { save(); return observe ? 0 : 1 }
+    if (!check(listening, `${target}: safaridriver listens`, listening ? '' : `it ${driverGone === null ? 'never answered' : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) { save(); return 1 }
 
     let session = null
     let why = ''
@@ -328,7 +434,7 @@ async function main() {
     for (let i = 0; i < 4 && !session; i++) {
       try { session = await driver.start(capabilities) } catch (e) { why = e.message; await sleep(15_000) }
     }
-    if (!check(Boolean(session), `${target}: a Safari session`, session ? `${session.browserName ?? 'safari'} ${session.browserVersion ?? ''} on ${session.platformName ?? '?'}`.trim() : why.slice(0, 500))) { save(); return observe ? 0 : 1 }
+    if (!check(Boolean(session), `${target}: a Safari session`, session ? `${session.browserName ?? 'safari'} ${session.browserVersion ?? ''} on ${session.platformName ?? '?'}`.trim() : why.slice(0, 500))) { save(); return 1 }
     report.session = session
     await driver.timeouts(120_000)
     if (target === 'mac') await driver.rect(1280, 800).catch(() => {})
@@ -340,11 +446,13 @@ async function main() {
     report.probe = probe
     console.log(`${target}: probe ${JSON.stringify(probe)}`)
     check(probe?.secure === true, `${target}: the page is a secure context`, `isSecureContext ${probe?.secure}`)
-    check(probe?.gpu === 'object', `${target}: WebGPU on the page (navigator.gpu)`, `typeof ${probe?.gpu}`)
+    // What the probe found is reported, not judged: a Mac that gives Safari no GPU is this runner, not the page.
     const adapter = probe?.adapter
-    check(Boolean(adapter) && !adapter.threw, `${target}: an adapter and a device`, adapter?.threw ?? (adapter ? JSON.stringify(adapter.info) : 'no adapter'))
-    check(adapter?.computed === true, `${target}: a compute pass ran and read back right`, adapter?.threw ?? `computed ${adapter?.computed}`)
-    check(probe?.worker?.gpu === 'object' && probe.worker.device === true, `${target}: WebGPU inside a worker, with a device`, JSON.stringify(probe?.worker ?? null).slice(0, 400))
+    const want = expected(target, probe)
+    report.expected = want
+    console.log(`${target}: WebGPU on the page: ${probe?.gpu === 'object' ? 'yes' : 'no'}; adapter: ${adapter ? (adapter.threw ?? JSON.stringify(adapter.info)) : 'none'}; compute pass: ${adapter?.computed === true ? 'read back right' : 'not run'}; in a worker: ${JSON.stringify(probe?.worker ?? null).slice(0, 300)}`)
+    console.log(`${target}: so the page owes ${want.outcome === 'running' ? 'a running city' : `the ${want.kind ?? 'recovery'} card`}: ${want.why}`)
+    if (flag('needs-gpu')) check(want.outcome === 'running', `${target}: this browser has a GPU for WebGPU, as this runner is expected to give it`, want.why)
 
     // The city, once per query.
     for (const query of queries) {
@@ -373,11 +481,9 @@ async function main() {
       page.end = state
       page.outcome = outcome
       await driver.shot(join(out, `${name}.png`)).catch((e) => console.log(`${name}: no screenshot (${e.message.slice(0, 200)})`))
-      const r = state?.running
-      check(outcome === 'running', `${name}: the city runs (?${query})`, outcome === 'running'
-        ? `${Math.round(r.fps * 10) / 10} fps, ${r.pedestrians ?? '?'} people, ${r.vehicles ?? '?'} cars, ${r.device ?? '?'} input, GPU ${JSON.stringify(r.gpu)}, quality ${JSON.stringify(r.quality).slice(0, 300)}, after ${Math.round(page.ms / 1000)} s`
-        : outcome === 'card' ? `the ${state.card.kind} card: ${state.card.text.slice(0, 900)}` : `still starting after ${Math.round(page.ms / 1000)} s: ${JSON.stringify(state).slice(0, 600)}`)
-      if (outcome === 'running') check((r.errors ?? []).length === 0, `${name}: no engine error`, (r.errors ?? []).join(' | ').slice(0, 600))
+      if (state?.card) console.log(`${name}: the card's details: ${state.card.detail ?? 'none'} | ${state.card.line ?? ''}`)
+      for (const line of state?.lines ?? []) console.log(`${name}: console ${line}`)
+      for (const c of judge(target, probe, page)) check(c.ok, `${name} ${c.what}`, c.detail)
     }
   } catch (e) {
     check(false, `${target}: the run`, String(e?.stack ?? e).slice(0, 800))
@@ -388,8 +494,8 @@ async function main() {
     host.server.closeAllConnections?.()
     save()
   }
-  console.log(failed === 0 ? `safari (${target}): every check passed` : `safari (${target}): ${failed} check${failed === 1 ? '' : 's'} failed${observe ? ' (observing only)' : ''}`)
-  return failed === 0 || observe ? 0 : 1
+  console.log(failed === 0 ? `safari (${target}): every check passed` : `safari (${target}): ${failed} check${failed === 1 ? '' : 's'} failed`)
+  return failed === 0 ? 0 : 1
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

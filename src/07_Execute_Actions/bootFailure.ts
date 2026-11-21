@@ -12,7 +12,7 @@
  * (display-mode standalone, or fullscreen on Android, which has no address bar to edit and no other browser to switch to) and the
  * apps (Tauri), whose web view is named for its system (appWebView: WebView2 on Windows, WebKitGTK on Linux, WebKit on
  * macOS and iOS, the Android System WebView on Android). The 'needs WebGPU' line appears only where WebGPU itself is
- * what is missing, and the line saying the console still talks to Sloane only where the app's own runner carries a
+ * what is missing, in the device's own words (webgpuLine: an iPhone is never sent to Chrome, which is Safari's engine there), and the line saying the console still talks to Sloane only where the app's own runner carries a
  * model ready to answer and the kept settings leave it to answer (consoleTalks). It also holds the guard for the one
  * automatic restart after a graphics reset in the background
  * (autoReload), the gate before a first visit's onboarding (firstScreen), and the times the page saw the browser's GPU
@@ -89,8 +89,30 @@ export interface Platform {
   safari: number | null
 }
 
-/** The line under the WebGPU classes: what runs the city (the card's line before this file, word for word). */
-export const WEBGPU_LINE = `${BRAND.name} needs WebGPU: a current Chrome, Edge or Brave on desktop or Android, or Safari 26 on iPhone, iPad and Mac. The crowd simulation runs as WGSL compute and has no WebGL path.`
+/** Why no card offers a way round WebGPU: the end of every WebGPU line. */
+const NO_WEBGL = 'The crowd simulation runs as WGSL compute and has no WebGL path.'
+
+/**
+ * The line under the WebGPU classes on Windows, Linux, ChromeOS and Android: what runs the city. Safari is named by
+ * its system, not its version: a real Safari 27 on macOS 15 has no WebGPU at all (iphone.yml's macOS 15 runner), so
+ * what brings it is iOS 26, iPadOS 26 or macOS 26, whatever Safari's own number says.
+ */
+export const WEBGPU_LINE = `${BRAND.name} needs WebGPU: a current Chrome, Edge or Brave on desktop or Android, or Safari on iOS 26, iPadOS 26, macOS 26 or newer. ${NO_WEBGL}`
+
+/**
+ * Pure. The line under the WebGPU classes, for the device in hand (platformOf). An iPhone or iPad is never pointed at
+ * Chrome: every browser there is built on Safari's engine, so WebGPU comes with iOS 26 and with nothing else, and a
+ * card that opened with "a current Chrome" sent its reader to a browser that changes nothing. A Mac is told its own
+ * two ways. Everything else keeps WEBGPU_LINE.
+ */
+export function webgpuLine(p: Platform): string {
+  if (p.os === 'ios') {
+    const device = p.ipad ? 'iPad' : 'iPhone'
+    return `${BRAND.name} needs WebGPU, which an ${device} has from ${p.ipad ? 'iPadOS' : 'iOS'} 26 on. Chrome and the other browsers on an ${device} are built on Safari’s engine, so another browser does not add it. ${NO_WEBGL}`
+  }
+  if (p.os === 'mac') return `${BRAND.name} needs WebGPU: on a Mac, Safari on macOS 26 or newer, or a current Chrome, Edge or Brave. ${NO_WEBGL}`
+  return WEBGPU_LINE
+}
 
 /**
  * The recovery card's line where the console still talks to Sloane (RecoveryCard.tsx, beside Open the console): the
@@ -517,7 +539,7 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     ? 'Update in Settings > General > Software Update.'
     : `Update in Settings > General > Software Update (${IOS26}).`
   const again = env.native ? 'then restart the app' : env.standalone ? 'then open the app again' : 'then open the page again'
-  const w = (headline: string, steps: string[], webgpu = false) => ({ headline, steps, webgpuLine: webgpu ? WEBGPU_LINE : null })
+  const w = (headline: string, steps: string[], webgpu = false) => ({ headline, steps, webgpuLine: webgpu ? webgpuLine(p) : null })
   // An app's step for its web view (the phone apps' too, ahead of the phone's browser words): Windows keeps each
   // case's own words for WebView2.
   const view = appWebView(p)
@@ -556,13 +578,13 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
         }
         if (p.safari !== null && p.safari >= 26) {
           return w('WebGPU is turned off in Safari', [
-            'Safari 26 has WebGPU on unless something turned it off.',
+            `Safari has WebGPU on from ${p.ipad ? 'iPadOS' : 'iOS'} 26 unless something turned it off.`,
             iosLockdown(env.standalone),
             'Or check Settings > Apps > Safari > Advanced > Feature Flags > WebGPU.',
           ], true)
         }
         return w(`This ${device} needs ${p.ipad ? 'iPadOS 26' : 'iOS 26'}`, [
-          p.safari !== null ? `Safari ${p.safari} doesn’t turn WebGPU on; Safari 26, which comes with iOS 26, does.` : `${BRAND.name} draws with WebGPU, which Safari turns on from iOS 26.`,
+          p.safari !== null ? `Safari ${p.safari} doesn’t turn WebGPU on; the Safari that comes with ${p.ipad ? 'iPadOS' : 'iOS'} 26 does.` : `${BRAND.name} draws with WebGPU, which Safari turns on from ${p.ipad ? 'iPadOS' : 'iOS'} 26.`,
           `${iosUpdate.replace(/\.$/, '')}, ${again}.`,
           ...(p.safari === null ? ['Already on iOS 26? Lockdown Mode turns WebGPU off: Settings > Privacy & Security > Lockdown Mode.'] : []),
         ], true)
@@ -590,20 +612,24 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
         ], true)
       }
       if (p.os === 'mac' && p.browser === 'safari') {
+        // Safari's WebGPU comes with macOS 26, not with Safari's own number: a real Safari 27 on macOS 15 has none
+        // (iphone.yml's macOS 15 runner), and a Mac's user agent says nothing of its macOS (it is frozen at 10_15_7).
+        // So a Safari new enough is told both: the system it may be missing, then what turns WebGPU off on macOS 26.
         return p.safari !== null && p.safari >= 26
-          ? w('WebGPU is turned off in Safari', [
-            'Safari 26 has WebGPU on unless something turned it off.',
-            'Check Safari > Settings > Advanced > Feature Flags > WebGPU, and that Lockdown Mode is off for this site.',
+          ? w('Safari has no WebGPU on this Mac', [
+            'Safari turns WebGPU on from macOS 26; on an older macOS, Safari 26 and newer still come without it.',
+            'Update macOS in System Settings > General > Software Update, or open the page in a current Chrome, Edge or Brave, which have WebGPU on an older macOS too.',
+            'Already on macOS 26? Check Safari > Settings > Advanced > Feature Flags > WebGPU, and that Lockdown Mode is off for this site.',
           ], true)
-          : w('This Mac needs Safari 26', [
-            `Safari${p.safari !== null ? ` ${p.safari}` : ''} doesn’t turn WebGPU on; Safari 26 does.`,
-            'Update in System Settings > General > Software Update, or open the page in Chrome.',
+          : w('This Mac needs macOS 26 for Safari', [
+            `Safari${p.safari !== null ? ` ${p.safari}` : ''} doesn’t turn WebGPU on; the Safari that comes with macOS 26 does.`,
+            'Update macOS in System Settings > General > Software Update, or open the page in a current Chrome, Edge or Brave.',
           ], true)
       }
       return w('This browser has no WebGPU', [
         env.standalone
           ? 'Update the browser this app was installed from, then open the app again.'
-          : 'Open the page in a current Chrome, Edge or Brave (desktop or Android), or in Safari 26 (iPhone, iPad, Mac).',
+          : 'Open the page in a current Chrome, Edge or Brave (desktop or Android), or in Safari on iOS 26, iPadOS 26, macOS 26 or newer.',
       ], true)
     case 'no-adapter':
       if (env.native) {
@@ -613,9 +639,10 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
         ], true)
       }
       if (p.os === 'ios') {
+        const safari = !p.iosOther && !p.inApp
         return w('No graphics adapter for WebGPU', [
-          'Safari has WebGPU but gave this page no GPU, which happens after a graphics reset or when memory is short.',
-          env.standalone ? 'Close the app in the App Switcher and open it again.' : 'Close the tab, or close Safari in the App Switcher, and open the page again.',
+          `${safari ? 'Safari' : 'This browser'} has WebGPU but gave this page no GPU, which happens after a graphics reset or when memory is short.`,
+          env.standalone ? 'Close the app in the App Switcher and open it again.' : `Close the tab, or close ${safari ? 'Safari' : 'the browser'} in the App Switcher, and open the page again.`,
           `If it keeps happening, restart the ${device}.`,
         ], true)
       }
@@ -678,9 +705,14 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
     case 'shader':
       return w('The browser couldn’t build the city’s graphics', [
         'Its WebGPU rejected part of the city’s drawing or the crowd’s shader (the details are below).',
+        // Every browser on an iPhone or iPad is Safari's engine, and it comes with the system: no Chrome or Edge there
+        // builds the city any differently, so the only update that changes anything is the system's.
         env.native ? appStep('Update WebView2 and the graphics driver, then restart the app.')
-          : env.standalone ? 'Update the browser this app was installed from, then open the app again.'
-            : 'Update the browser; a current Chrome or Edge, or Safari 26, runs the city.',
+          : p.os === 'ios' ? `Update the ${device}’s system software in Settings > General > Software Update (Safari’s WebGPU comes with it), ${again}.`
+            : env.standalone ? 'Update the browser this app was installed from, then open the app again.'
+              : p.os === 'mac' && p.browser === 'safari' ? 'Update macOS (Safari’s WebGPU comes with it), or open the page in a current Chrome or Edge.'
+                : 'Update the browser; a current Chrome or Edge runs the city.',
+        ...(p.os === 'ios' && !env.native ? ['Still the same after the update: send the details line below with a bug report; it names what was rejected.'] : []),
       ])
     case 'compiler':
       return w('This device’s graphics driver couldn’t build the crowd', [

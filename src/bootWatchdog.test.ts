@@ -243,7 +243,26 @@ test('what the city will need, where the browser plainly lacks it; nothing of th
   const plain = new Page()
   plain.window.isSecureContext = false
   assert.match(words(plain), /needs a secure address: open the page over https:\/\//)
-  assert.match(words(new Page()), /needs WebGPU: a current Chrome, Edge or Brave, or Safari 26/, 'no navigator.gpu')
+  assert.match(words(new Page()), /needs WebGPU: a current Chrome, Edge or Brave, or Safari on macOS 26 or newer\./, 'no navigator.gpu')
+  // Chrome on an iPhone (Safari's engine, no Version/ token) and an app's built-in browser there: never sent to Chrome.
+  for (const ua of [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0.7390.96 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/22G86 Instagram 400.0.0.29.92',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1',
+  ]) {
+    const phone = new Page()
+    phone.ua = ua
+    const said = words(phone)
+    assert.match(said, /needs WebGPU, which an iPhone has from iOS 26 on \(Settings > General > Software Update\); another browser does not add it\./, ua)
+    assert.doesNotMatch(said, /Chrome|Edge|Brave/, 'an iPhone has no other engine to switch to')
+  }
+  const pad = new Page()
+  pad.ua = 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0.7390.96 Mobile/15E148 Safari/604.1'
+  assert.match(words(pad), /which an iPad has from iPadOS 26 on/)
+  const phoneApp = new Page()
+  phoneApp.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+  phoneApp.window.__TAURI_INTERNALS__ = {}
+  assert.doesNotMatch(words(phoneApp), /WebView2|Windows/, 'the iPhone app is not told to update Windows')
   const home = new Page()
   home.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
   home.nav = { standalone: true }

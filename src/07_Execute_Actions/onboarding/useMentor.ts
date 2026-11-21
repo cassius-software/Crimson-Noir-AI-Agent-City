@@ -121,7 +121,7 @@ export function useMentor({ active, engine, hud, family, name, voice, now = PERF
       else note('input')
     }
     const onMove = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse' ? e.buttons !== 0 || document.pointerLockElement !== null : e.pointerType === 'touch') note('look')
+      if (e.pointerType === 'mouse' ? e.buttons !== 0 || (document.pointerLockElement ?? null) !== null : e.pointerType === 'touch') note('look')
     }
     const onDown = () => note('input')
     window.addEventListener('keydown', onKey, true)
