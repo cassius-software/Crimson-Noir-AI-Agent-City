@@ -35,16 +35,13 @@ import { ROOM, doorFront, toLocal, toWorld, type Side } from '../01_Initialize_W
 import { ZONE, generateLakefront } from '../01_Initialize_World/lakefront.ts'
 import { packOf } from '../01_Initialize_World/lakefrontPack.ts'
 import { PROPERTY_KINDS, checkHomeBoxes, cityHomes, homeAt, homeFrames, homesAt, skyFrames, type Home } from '../01_Initialize_World/properties.ts'
-import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
-import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
-import { streetGridOf } from '../01_Initialize_World/region/streets.ts'
-import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
 import { CELL, DEPTH, GRID, GRID_HALF, HOME_PIECES, INSET, ROOM_COUNT, SKY_HOMES, backEdge, cellCentre, planOf, skyRoom } from '../02_Define_The_Rules/homeGrid.ts'
 import {
   DEFAULT_FINISH, FINISHES, FLOORS, GLASS, HOME_STAGING, OVERLAY, SHAPES, SHAPE_IDS, SKY_STAGING, WALLS, canPlace, finishDefault, floorOverlay, footprint, renderBoxes,
   solidBox, wallPanels, type Piece, type RoomBox,
 } from '../02_Define_The_Rules/homeLayout.ts'
+import { regionPlacement } from '../01_Initialize_World/region/placement.ts'
 import { freshHomes, layoutOf, withHome, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
 import { onRoad } from '../03_Spawn_Agents/skills.ts'
 import { deskAt } from '../06_Make_Decisions/dispatch.ts'
@@ -65,7 +62,7 @@ registerHooks({
   },
 })
 const { HOME_INSTANCES, buildWorld } = await import('../01_Initialize_World/world.ts')
-const { RegionPlaces, SURFACE, SURFACE_PIECE, buildingStyle, hollowLots, layoutOf: regionLayoutOf } = await import('../01_Initialize_World/region/regionWorld.ts')
+const { SURFACE, SURFACE_PIECE, buildingStyle, hollowLots, layoutOf: regionLayoutOf } = await import('../01_Initialize_World/region/regionWorld.ts')
 
 const SEED = 1337
 const EPS = 1e-9
@@ -397,12 +394,8 @@ test('no box of a region\'s plan uses the furnishing styles: they are the homes\
     for (const [zone, z] of Object.entries(ZONE).filter(([name]) => name !== 'lake')) {
       const pack = packOf(map, z)
       const layout = regionLayoutOf(pack)
-      const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
-      const g = streetGridOf(pack, layout.offset, start)!
-      const lots = regionWorkplaceLots(pack, layout, g, start, seed)
-      const shops = regionShopLots(pack, layout, g, start, seed, lots)
-      const homes = regionHomeLots(pack, layout, g, start, seed, [...lots, ...shops])
-      const hollow = hollowLots(pack, layout, lots, shops, homes)
+      const placed = regionPlacement(pack, layout, seed)!
+      const hollow = hollowLots(pack, layout, placed.workplaces, placed.shops, placed.homes)
       for (const { style } of hollow.plan) assert.ok(style !== STYLE.planted && style !== STYLE.lit, `seed ${seed} ${zone}: a plan box in style ${style}`)
       for (let i = 0; i < hollow.pack.buildings.height.length; i++) {
         const s = buildingStyle(hollow.pack, layout, i)

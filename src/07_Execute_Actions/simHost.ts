@@ -80,12 +80,6 @@ function streetsOf(u: unknown): StreetGrid | null | undefined {
 }
 
 /**
- * A region's workplaces, checked against its street window (null for none: the city, or a surveyed region): an empty
- * list when there are none, else the list as plain data, or the reason it is refused. They need a street window; they
- * are a list of at most ROOM.slots; each stands on a lot of the window (whole lot indices, the engine's), its doorway
- * faces one of the lot's four streets, it is one of the sixteen kinds, and no lot holds two.
- */
-/**
  * A region's craft boxes (SimInit.craftBoxes), checked: an empty list when there are none, else the list as plain data
  * (at most MAX_CRAFT_BOXES, each six finite numbers with its low corner first and a height of zero or more), or the
  * reason it is refused. They need a street window, as the routes they are laid by do.
@@ -105,87 +99,96 @@ function craftBoxesOf(u: unknown, streets: StreetGrid | null): Box[] | string {
   return out
 }
 
-function workplacesOf(u: unknown, streets: StreetGrid | null): WorkplaceLot[] | string {
+/** Whether (k, m) is a lot of the region: whole indices, the lot's middle inside the region's bounds. */
+function lotOfRegion(k: unknown, m: unknown, b: RegionGround['bounds']): boolean {
+  if (!Number.isInteger(k) || !Number.isInteger(m)) return false
+  const x = ((k as number) + 0.5) * CITY.pitch, z = ((m as number) + 0.5) * CITY.pitch
+  return x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1
+}
+
+/**
+ * A region's workplaces, checked against the region and its street window (null for none: the city, or a surveyed
+ * region): an empty list when there are none, else the list as plain data, or the reason it is refused. They need a
+ * street window (the region is a generated one); they are a list of at most ROOM.slots; each stands on a lot of the
+ * region (whole lot indices, the engine's, the lot's middle inside the region's bounds: region/placement.ts spreads
+ * them over the whole map, on the window or far off it), its doorway faces one of the lot's four streets, it is one of
+ * the sixteen kinds, and no lot holds two.
+ */
+function workplacesOf(u: unknown, region: RegionGround | null, streets: StreetGrid | null): WorkplaceLot[] | string {
   if (u === undefined || u === null) return []
   if (!Array.isArray(u) || u.length > ROOM.slots) return `init: workplaces are a list of at most ${ROOM.slots}`
   if (u.length === 0) return []
-  if (!streets) return "init: workplaces need a region's street window"
-  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
-  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  if (!region || !streets) return "init: workplaces need a region's street window"
   const out: WorkplaceLot[] = []
   const taken = new Set<string>()
   for (const w of u) {
     if (!isRecord(w)) return 'init: a workplace is a kind, a lot (k, m) and a side'
     const { kind, k, m, side } = w
-    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a workplace stands on a lot of the street window'
+    if (!lotOfRegion(k, m, region.bounds)) return 'init: a workplace stands on a lot of the region'
     if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a workplace's doorway faces one of its lot's four streets (0 to 3)"
     const known = WORKPLACE_KINDS.find((x) => x === kind)
     if (!known) return 'init: a workplace is one of the sixteen kinds'
     if (taken.has(`${k},${m}`)) return 'init: one workplace to a lot'
     taken.add(`${k},${m}`)
-    out.push({ kind: known, k, m, side: side as Side })
+    out.push({ kind: known, k: k as number, m: m as number, side: side as Side })
   }
   return out
 }
 
 /**
- * A region's storefronts, checked against its street window and its workplaces (null window for none: the city, or a
+ * A region's storefronts, checked against the region, its street window and its workplaces (null window for none: the city, or a
  * surveyed region): an empty list when there are none, else the list as plain data, or the reason it is refused. They
- * need a street window; they are a list of at most SHOP_KINDS.length; each stands on a lot of the window, its doorway
+ * need a street window; they are a list of at most SHOP_KINDS.length; each stands on a lot of the region, its doorway
  * faces one of the lot's four streets, it is one of the five kinds, once each, and no lot holds two or a workplace.
  */
-function shopsOf(u: unknown, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[]): ShopLot[] | string {
+function shopsOf(u: unknown, region: RegionGround | null, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[]): ShopLot[] | string {
   if (u === undefined || u === null) return []
   if (!Array.isArray(u) || u.length > SHOP_KINDS.length) return `init: shops are a list of at most ${SHOP_KINDS.length}`
   if (u.length === 0) return []
-  if (!streets) return "init: shops need a region's street window"
-  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
-  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  if (!region || !streets) return "init: shops need a region's street window"
   const out: ShopLot[] = []
   const taken = new Set(workplaces.map(({ k, m }) => `${k},${m}`))
   const kinds = new Set<string>()
   for (const w of u) {
     if (!isRecord(w)) return 'init: a shop is a kind, a lot (k, m) and a side'
     const { kind, k, m, side } = w
-    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a shop stands on a lot of the street window'
+    if (!lotOfRegion(k, m, region.bounds)) return 'init: a shop stands on a lot of the region'
     if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a shop's doorway faces one of its lot's four streets (0 to 3)"
     const known = SHOP_KINDS.find((x) => x === kind)
     if (!known || kinds.has(known)) return 'init: a shop is one of the five kinds, once each'
     if (taken.has(`${k},${m}`)) return 'init: one shop or workplace to a lot'
     taken.add(`${k},${m}`)
     kinds.add(known)
-    out.push({ kind: known, k, m, side: side as Side })
+    out.push({ kind: known, k: k as number, m: m as number, side: side as Side })
   }
   return out
 }
 
 /**
- * A region's homes, checked against its street window, its workplaces and its shops (null window for none: the city,
- * whose homes are its seed's, or a surveyed region): an empty list when there are none, else the list as plain data, or
- * the reason it is refused. They need a street window; they are a list of at most PROPERTY_KINDS.length; each stands on
- * a lot of the window, its doorway faces one of the lot's four streets, it is one of the seven properties by index (0
- * to 6), once each, and no lot holds two or a workplace or a shop.
+ * A region's homes, checked against the region, its street window, its workplaces and its shops (null window for none:
+ * the city, whose homes are its seed's, or a surveyed region): an empty list when there are none, else the list as
+ * plain data, or the reason it is refused. They need a street window; they are a list of at most
+ * PROPERTY_KINDS.length; each stands on a lot of the region, its doorway faces one of the lot's four streets, it is one
+ * of the seven properties by index (0 to 6), once each, and no lot holds two or a workplace or a shop.
  */
-function homesOf(u: unknown, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[], shops: readonly ShopLot[]): HomeLot[] | string {
+function homesOf(u: unknown, region: RegionGround | null, streets: StreetGrid | null, workplaces: readonly WorkplaceLot[], shops: readonly ShopLot[]): HomeLot[] | string {
   if (u === undefined || u === null) return []
   if (!Array.isArray(u) || u.length > PROPERTY_KINDS.length) return `init: homes are a list of at most ${PROPERTY_KINDS.length}`
   if (u.length === 0) return []
-  if (!streets) return "init: homes need a region's street window"
-  const k0 = streets.originX / CITY.pitch, m0 = streets.originZ / CITY.pitch
-  const inWindow = (n: unknown, n0: number): n is number => Number.isInteger(n) && (n as number) >= n0 && (n as number) < n0 + streets.blocks
+  if (!region || !streets) return "init: homes need a region's street window"
   const out: HomeLot[] = []
   const taken = new Set([...workplaces, ...shops].map(({ k, m }) => `${k},${m}`))
   const homes = new Set<number>()
   for (const w of u) {
     if (!isRecord(w)) return 'init: a home is a property index (home), a lot (k, m) and a side'
     const { home, k, m, side } = w
-    if (!inWindow(k, k0) || !inWindow(m, m0)) return 'init: a home stands on a lot of the street window'
+    if (!lotOfRegion(k, m, region.bounds)) return 'init: a home stands on a lot of the region'
     if (!(side === 0 || side === 1 || side === 2 || side === 3)) return "init: a home's doorway faces one of its lot's four streets (0 to 3)"
     if (!(typeof home === 'number' && Number.isInteger(home) && home >= 0 && home < PROPERTY_KINDS.length) || homes.has(home)) return 'init: a home is one of the seven properties (0 to 6), once each'
     if (taken.has(`${k},${m}`)) return 'init: one home, shop or workplace to a lot'
     taken.add(`${k},${m}`)
     homes.add(home)
-    out.push({ home, k, m, side: side as Side })
+    out.push({ home, k: k as number, m: m as number, side: side as Side })
   }
   return out
 }
@@ -262,7 +265,7 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: `init: a street window is ${WINDOW_BLOCKS} blocks on the pitch with segment bits` })
           return
         }
-        const workplaces = workplacesOf(init.workplaces, region ? streets : null)
+        const workplaces = workplacesOf(init.workplaces, region, streets)
         if (typeof workplaces === 'string') {
           post({ t: 'error', message: workplaces })
           return
@@ -272,12 +275,12 @@ export function createSimHost(post: Post, create: (o: SimCoreOptions) => Promise
           post({ t: 'error', message: craftBoxes })
           return
         }
-        const shops = shopsOf(init.shops, region ? streets : null, workplaces)
+        const shops = shopsOf(init.shops, region, streets, workplaces)
         if (typeof shops === 'string') {
           post({ t: 'error', message: shops })
           return
         }
-        const homes = homesOf(init.homes, region ? streets : null, workplaces, shops)
+        const homes = homesOf(init.homes, region, streets, workplaces, shops)
         if (typeof homes === 'string') {
           post({ t: 'error', message: homes })
           return
