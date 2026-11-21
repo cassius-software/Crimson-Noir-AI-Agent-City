@@ -741,12 +741,16 @@ export const ROOMS_FLOATS = ROOM.slots * ROOM_FLOATS
 /**
  * The rooms as the shader reads them (struct Room: a = (cx, cz, side, present), b = (hub u, furniture count, -, -),
  * furniture[] = (x0, z0, x1, z1), stations[] = (u, v, yaw, present)). An empty block (no rooms: a region) is all zero.
+ * Each room keeps its slot (its place in the list), and one that `present` says no to is packed as an empty slot: a
+ * generated region's rooms stand all over its map (region/placement.ts) and the crowd walks one street window of it
+ * (region/streets.ts lotInWindow), so a room off the window has no workers and its lot is as solid as any other.
  */
-export function packRooms(rooms: readonly Workplace[], out = new Float32Array(ROOMS_FLOATS)): Float32Array {
+export function packRooms(rooms: readonly Workplace[], out = new Float32Array(ROOMS_FLOATS), present?: (room: Workplace) => boolean): Float32Array {
   if (rooms.length > ROOM.slots) throw new RangeError(`at most ${ROOM.slots} rooms`)
   out.fill(0)
   rooms.forEach((room, r) => {
     if (room.furniture.length > ROOM.furniture || room.stations.length > ROOM.stations) throw new RangeError(`${room.kind}: too much furniture or too many stations`)
+    if (present && !present(room)) return
     const o = r * ROOM_FLOATS
     out[o] = room.cx; out[o + 1] = room.cz; out[o + 2] = room.side; out[o + 3] = 1
     out[o + 4] = ROOM.hub; out[o + 5] = room.furniture.length

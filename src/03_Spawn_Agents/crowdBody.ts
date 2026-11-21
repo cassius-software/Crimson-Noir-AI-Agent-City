@@ -38,8 +38,9 @@ const LOWER_TABLE = [...TROUSER_SHAPE, ...SKIRT_SHAPE].flatMap((row) => [row.sli
  * posture, head, lower cut), the sliders each 0..1, the lower cut as bodyGarment reads it (the cut, 16 more under a
  * coat); `faceA` = (brow, jaw, chin, cheek) and `faceB` = (nose, eyes, lips, carried), the sliders each −1..1, and
  * `carried` the near body's code for the pieces past the mask (the umbrella | the headphones << 2 | the heel << 4,
- * look.ts LOOK_CODED_PIECE; 0 on the far body) on every vertex; the time; and `gaze` = the operator's eye in the world (x, y, z) with 1 in w when someone is afoot to
- * look at (0: nobody). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
+ * look.ts LOOK_CODED_PIECE; 0 on the far body) on every vertex; the time; and `gaze` = the operator's eye in the world (x, y, z) with, in w, how far
+ * into a conversation with the operator this person is (0..1, bodyTalk: 0 for everyone the operator is not talking to,
+ * who looks the way they go). WGSL reserves `target`, so the eye is `eye` inside. `rigA`/`rigAq` and `rigB`/`rigBq` are the
  * world centre (x, y, z) and rotation (a quaternion) of the rig shapes the vertex's two bones hang from, read when
  * `stance.w` (the rig slot word, slot + 1) is set: a fallen pedestrian's body wears the realm's rig (bodyRig) and
  * skips the walk, the heading and the place.
@@ -272,28 +273,43 @@ fn bodyHeel(heel: u32, fLegs: f32) -> vec2f {
 }
 fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f {
   // Where the head turns (humanoid.ts gazeAt): (the chest's yaw, the head's own yaw, the head's pitch). The way
-  // they go first, the head leading a turn; then the operator's eye when it is in front, within reach and not their
-  // own, the chest taking its share.
+  // they go first, the head leading a turn and let go as the bearing passes behind them; then, only in a conversation
+  // (eye.w, its weight), the operator's eye when it is in front, within reach and not their own, the chest taking its
+  // share. Every edge fades, so nothing snaps a head.
   let speed = length(vel);
   var yaw = 0.0;
   if (speed > 0.0001) {
     let off = atan2(vel.x, vel.y) - heading;
     let wrapped = off - ${f(TAU)} * round(off / ${f(TAU)});
-    yaw = clamp(wrapped, -${f(GAZE.travelYaw)}, ${f(GAZE.travelYaw)}) * min(1.0, speed / ${f(GAZE.travelSpeed)});
+    let ahead = 1.0 - smoothstep(${f(GAZE.travelFade)}, ${f(GAZE.travelBack)}, abs(wrapped));
+    yaw = clamp(wrapped, -${f(GAZE.travelYaw)}, ${f(GAZE.travelYaw)}) * min(1.0, speed / ${f(GAZE.travelSpeed)}) * ahead;
   }
   var pitch = 0.0;
-  if (eye.w > 0.5) {
-    let sh = sin(heading);
-    let ch = cos(heading);
+  if (eye.w > 0.0) {
     let d = eye.xyz - neck;
     let along = length(d.xz);
-    let bearing = atan2(d.x * ch - d.z * sh, d.x * sh + d.z * ch);
-    let hold = select(1.0 - smoothstep(${f(GAZE.near)}, ${f(GAZE.reach)}, along), 0.0, along < ${f(GAZE.own)} || abs(bearing) > ${f(GAZE.cone)});
-    yaw += (clamp(bearing, -(${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}), ${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}) - yaw) * hold;
-    pitch = clamp(atan2(d.y, along), -${f(GAZE.headPitch)}, ${f(GAZE.headPitch)}) * hold;
+    if (along > ${f(GAZE.own)} - ${f(GAZE.ownFade)}) {
+      let sh = sin(heading);
+      let ch = cos(heading);
+      let bearing = atan2(d.x * ch - d.z * sh, d.x * sh + d.z * ch);
+      let inner = smoothstep(${f(GAZE.own)} - ${f(GAZE.ownFade)}, ${f(GAZE.own)}, along);
+      let front = 1.0 - smoothstep(${f(GAZE.cone)} - ${f(GAZE.coneFade)}, ${f(GAZE.cone)}, abs(bearing));
+      let hold = min(eye.w, 1.0) * inner * front * (1.0 - smoothstep(${f(GAZE.near)}, ${f(GAZE.reach)}, along));
+      yaw += (clamp(bearing, -(${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}), ${f(GAZE.headYaw)} + ${f(GAZE.chestYaw)}) - yaw) * hold;
+      pitch = clamp(atan2(d.y, along), -${f(GAZE.headPitch)}, ${f(GAZE.headPitch)}) * hold;
+    }
   }
   let chest = clamp(yaw * ${f(GAZE.chestShare)}, -${f(GAZE.chestYaw)}, ${f(GAZE.chestYaw)});
   return vec3f(chest, clamp(yaw - chest, -${f(GAZE.headYaw)}, ${f(GAZE.headYaw)}), pitch);
+}
+fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, whoC: vec4f, weightA: vec4f, weightB: vec4f, weightC: vec4f) -> f32 {
+  // How far into a conversation with the operator this person is (talkGaze.ts talkWeight): the weight of the slot
+  // that holds their index, 0 when none does (an empty slot holds -1, which no index is).
+  let zero = vec4f(0.0);
+  let one = vec4f(1.0);
+  let mine = vec4f(me);
+  let sum = dot(select(zero, weightA, whoA == mine), one) + dot(select(zero, weightB, whoB == mine), one) + dot(select(zero, weightC, whoC == mine), one);
+  return min(1.0, sum);
 }
 fn bodyRigCentre(bone: u32) -> vec3f {
   // The standing centre of the rig shape each bone hangs from (humanoid.ts RIG_REST), base body's metres.
@@ -434,7 +450,7 @@ fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: v
   let idle = (1.0 - clamp(motion.w * 4.0, 0.0, 1.0)) * sin(t * 1.3 + stance.z * 6.28) * 0.03;
   let fall = pose.z - agent.w;
   let k = vec3f(cos(fall), 0.0, -sin(fall));
-  // The gaze: the operator's eye, or the way they go, from the neck's place in the world.
+  // The gaze: the way they go, or the operator's eye in a conversation, from the neck's place in the world.
   let look = bodyGaze(agent.xyz + vec3f(0.0, pivB.w * stance.x, 0.0), agent.w, motion.xy, gaze);
   let trunk = vec4f(sL * ${f(WALK.twist)} * swing * gait + look.x, -slouch * ${f(WALK.headCounter)} - look.z, slouch, pose.y + idle);
   // The rest point reshaped, then its two bones, blended; the tilt about the feet.
@@ -527,6 +543,8 @@ const fn = (name: string): ReturnType<typeof wgslFn> => {
 
 /** The vertex stage's function, with every function it calls as its includes. */
 export const bodyVertex = fn('bodyVertex')
+/** How far into a conversation with the operator a person is, from their index and the six uniforms of crowd.ts CrowdView.talk. */
+export const bodyTalk = fn('bodyTalk')
 
 /**
  * The crowd's hash: three's TSL `hash` (its nodes/math/Hash.js: PCG on the integer part of the seed, scaled to

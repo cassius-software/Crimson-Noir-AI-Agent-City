@@ -8,7 +8,8 @@
  * real fixtures switch off, light painted past the picture's edge as far as the ground goes. These tests hold the
  * picture to what stands in the window, first on small made-up scenes where every value can be worked out by hand, then
  * on the generated metropolis exactly as the page builds it: every lamp of the street window over a lit pool, every
- * room, shop and home lit inside, and the pools, the spill and the floors each in the channel the materials read
+ * room, shop and home the picture holds lit inside (the places stand all over the map, placement.ts; one beyond the
+ * picture is not painted), and the pools, the spill and the floors each in the channel the materials read
  * (regionWorld.ts paintedGlow).
  * What breaks if it is removed? A change to the bake could leave the phone's streets dark again, or light them where
  * nothing stands, and only a phone at night would show it.
@@ -24,14 +25,12 @@ import { CITY } from '../city.ts'
 import { LAMP, lampHead } from '../cityLights.ts'
 import { FbmSet } from '../fbmTexture.ts'
 import { ROOM } from '../interiors.ts'
-import { ZONE, generateLakefront } from '../lakefront.ts'
+import { ZONE, generateLakefront, type Zone } from '../lakefront.ts'
 import { packOf } from '../lakefrontPack.ts'
 import type { Pt } from './clip.ts'
-import { regionHomeLots } from './homes.ts'
 import { PAINT_MARGIN, PAINT_TEXEL, POOL, SPILL, bakePaintedLight, paintAt, poolAt, type PaintInput } from './paintedLight.ts'
-import { regionShopLots } from './shops.ts'
+import { regionPlacement } from './placement.ts'
 import { SEG, WINDOW_BLOCKS, hSeg, streetGridOf, vSeg, windowFurniture } from './streets.ts'
-import { regionWorkplaceLots } from './workplaces.ts'
 
 // Vite's `?raw` import, for Node: regionWorld.ts imports a module that takes WGSL that way.
 registerHooks({
@@ -41,7 +40,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { PAINT_LIGHT, RegionPlaces, hollowLots, layoutOf, paintBounds, paintTexture, regionFrontages, regionMeshes } = await import('./regionWorld.ts')
+const { PAINT_LIGHT, RegionPlaces, hollowLots, layoutOf, paintBounds, paintTexture, regionFrontages, regionMeshes, regionStart } = await import('./regionWorld.ts')
 const { regionTransit } = await import('./transit.ts')
 
 const P = CITY.pitch
@@ -152,6 +151,31 @@ test('a lit lot paints its floor inside the glass, by whether real fixtures hang
   }
 })
 
+test('a lot the picture\'s edge runs through paints no floor at all, never one lit to a line, and its glass still spills inside', () => {
+  // The ring of blocks round the window: the picture's edge (PAINT_MARGIN past the window) runs through its lots.
+  const h = CITY.lotHalf, x1 = WINDOW.originX + EXTENT + PAINT_MARGIN
+  const straddling = [
+    { cx: x1, cz: 3000 + 3.5 * P, fixtures: false },
+    { cx: x1 - 6, cz: 3000 + 6.5 * P, fixtures: true },
+    { cx: 2000 + 7.5 * P, cz: WINDOW.originZ - PAINT_MARGIN + 4, fixtures: false },
+  ]
+  const held = { cx: x1 - h, cz: 3000 + 9.5 * P, fixtures: false }
+  const p = bakePaintedLight(scene({ interiors: [...straddling, held] }))
+  for (const lot of straddling) {
+    for (let dx = -h; dx <= h; dx += 0.5) {
+      for (let dz = -h; dz <= h; dz += 0.5) {
+        const got = paintAt(p, lot.cx + dx, lot.cz + dz)
+        assert.deepEqual(got.slice(2), [0, 0], `no floor at ${lot.cx + dx},${lot.cz + dz}`)
+      }
+    }
+  }
+  // Its glass on the window's side still lights the pavement before it.
+  near(paintAt(p, x1 - h - 2.5, 3000 + 3.5 * P)[1], strip(2.5), 0.03, 'the straddling shop\'s glass spills on the window\'s side')
+  // A lot the picture holds whole, to its very edge, is lit inside as ever.
+  assert.equal(paintAt(p, held.cx, held.cz)[3], 1, 'a lot held to the edge is lit')
+  assert.equal(paintAt(p, held.cx + h - ROOM.wall - 2, held.cz)[3], 1, 'to its glass')
+})
+
 test('nothing is painted on the picture\'s outermost texels, whatever stands there', () => {
   // A lamp, a frontage and a lot right on the picture's corner.
   const x = WINDOW.originX - PAINT_MARGIN, z = WINDOW.originZ - PAINT_MARGIN
@@ -180,17 +204,16 @@ test('the bake is deterministic and leaves its input alone', () => {
 // ---------------------------------------------------------------------------------------------------
 // The metropolis, as the page builds it (engine.ts Engine.create, world.ts buildWorld)
 
-function metropolis() {
+function metropolis(zone: Zone = ZONE.metropolis) {
   const seed = 1337
-  const pack = packOf(generateLakefront(seed, 64), ZONE.metropolis)
+  const pack = packOf(generateLakefront(seed, 64), zone)
   const layout = layoutOf(pack)
-  const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+  const placement = regionPlacement(pack, layout, seed)
+  assert.ok(placement, 'the map has its places')
+  const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placement)
   const streets = streetGridOf(pack, layout.offset, start)
-  assert.ok(streets, 'the metropolis has a street window')
-  const lots = regionWorkplaceLots(pack, layout, streets, start, seed)
-  const shopLots = regionShopLots(pack, layout, streets, start, seed, lots)
-  const homeLots = regionHomeLots(pack, layout, streets, start, seed, [...lots, ...shopLots])
-  const hollow = hollowLots(pack, layout, lots, shopLots, homeLots)
+  assert.ok(streets, 'the start has a street window')
+  const hollow = hollowLots(pack, layout, placement.workplaces, placement.shops, placement.homes)
   const lamps = windowFurniture(streets, seed).lamps
   const interiors = [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))]
   const frontages = regionFrontages(hollow.pack, layout, paintBounds(streets), SPILL.reach)
@@ -200,7 +223,8 @@ const METROPOLIS = metropolis()
 
 test('the metropolis: every lamp of the street window stands over a lit pool, and the start is among them', () => {
   const { lamps, picture, start, streets } = METROPOLIS
-  assert.ok(lamps.length > 1500, `the window has its lamps (${lamps.length})`)
+  // The metropolis's window stands on the waterfront, by The Spire: a part of it is the lake, where no street runs.
+  assert.ok(lamps.length > 1200, `the window has its lamps (${lamps.length})`)
   let dimmest = 1
   for (const lamp of lamps) {
     const [hx, , hz] = lampHead(lamp)
@@ -228,7 +252,7 @@ test('the metropolis: every lamp of the street window stands over a lit pool, an
       assert.ok(mid > 0.55 && mid < 0.75, `the crossing ${k},${m} reads ${mid}`)
     }
   }
-  assert.ok(crossings > 100, `the window has its crossings (${crossings})`)
+  assert.ok(crossings > 80, `the window has its crossings (${crossings})`)
   // And some pool is within a lamp's spacing of where the visitor starts.
   assert.ok(Math.hypot(lamp[0] - start.x, lamp[1] - start.z) < 20)
   // A street the window does not hold has no lamps and no pools: the middle of every missing east-west segment is dark
@@ -245,16 +269,35 @@ test('the metropolis: every lamp of the street window stands over a lit pool, an
   assert.ok(missing > 0, 'the window has streets missing (superblocks, water): the picture follows the map, not the grid')
 })
 
-test('the metropolis: every room, shop and home is lit inside, and its frontages light the ground before them', () => {
+test('the metropolis: every room, shop and home the picture holds is lit inside, one on its edge or beyond it has no floor painted, and its frontages light the ground before them', () => {
   const { interiors, frontages, picture, hollow, streets } = METROPOLIS
   assert.equal(interiors.length, hollow.rooms.length + hollow.shops.length + hollow.homes.length)
   assert.ok(hollow.rooms.length > 0 && hollow.shops.length > 0 && hollow.homes.length > 0)
+  // The places stand all over the map (placement.ts) and the picture is the street window's: a place on a lot the
+  // picture holds whole is lit inside, and one beyond it reads nothing (dark after sunset until the window is there).
+  const edge = paintBounds(streets)
+  const held = (lot: { cx: number; cz: number }) => lot.cx - CITY.lotHalf >= edge.x0 && lot.cx + CITY.lotHalf <= edge.x1 && lot.cz - CITY.lotHalf >= edge.z0 && lot.cz + CITY.lotHalf <= edge.z1
+  const kinds = new Set<boolean>()
+  let beyond = 0
   for (const lot of interiors) {
-    const [, , fixtured, bare] = paintAt(picture, lot.cx, lot.cz)
-    assert.deepEqual([fixtured, bare], lot.fixtures ? [1, 0] : [0, 1], `the lot at ${lot.cx},${lot.cz}`)
+    const [pool, spill, fixtured, bare] = paintAt(picture, lot.cx, lot.cz)
+    if (held(lot)) {
+      assert.deepEqual([fixtured, bare], lot.fixtures ? [1, 0] : [0, 1], `the lot at ${lot.cx},${lot.cz}`)
+      kinds.add(lot.fixtures)
+    } else if (Math.abs(lot.cx - (edge.x0 + edge.x1) / 2) > (edge.x1 - edge.x0) / 2 + CITY.lotHalf || Math.abs(lot.cz - (edge.z0 + edge.z1) / 2) > (edge.z1 - edge.z0) / 2 + CITY.lotHalf) {
+      assert.deepEqual([pool, spill, fixtured, bare], [0, 0, 0, 0], `the lot at ${lot.cx},${lot.cz}, beyond the picture`)
+      beyond++
+    } else {
+      // On the picture's edge: no floor anywhere on it (paintedLight.ts header).
+      for (let dx = -CITY.lotHalf; dx <= CITY.lotHalf; dx += 1) {
+        for (let dz = -CITY.lotHalf; dz <= CITY.lotHalf; dz += 1) assert.deepEqual(paintAt(picture, lot.cx + dx, lot.cz + dz).slice(2), [0, 0], `the lot at ${lot.cx},${lot.cz}, on the edge`)
+      }
+    }
   }
+  assert.deepEqual([...kinds].sort(), [false, true], 'the window holds a room with fixtures and a shop or home without')
+  assert.ok(beyond >= 15, `${beyond} places stand beyond the picture`)
   // The frontages are the buildings that stand in or beside the picture, and none of a hollowed lot's.
-  assert.ok(frontages.length > 500, `the window has its frontages (${frontages.length})`)
+  assert.ok(frontages.length > 400, `the window has its frontages (${frontages.length})`)
   const b = paintBounds(streets)
   for (const ring of frontages) {
     assert.ok(ring.some(([x, z]) => x >= b.x0 - SPILL.reach && x <= b.x1 + SPILL.reach && z >= b.z0 - SPILL.reach && z <= b.z1 + SPILL.reach))
@@ -268,6 +311,26 @@ test('the metropolis: every room, shop and home is lit inside, and its frontages
   for (let i = 1; i < picture.data.length; i += 4) if (picture.data[i] > 25) lit++
   const share = lit / (picture.size * picture.size)
   assert.ok(share > 0.1 && share < 0.7, `${Math.round(share * 100)}% of the picture is under a frontage's spill`)
+})
+
+test('North Ridge: the lots the picture\'s edge runs through, a real map\'s, have no floor painted, and the lots it holds are lit', () => {
+  // Seed 1337's North Ridge window has places on the ring of blocks round it (the metropolis's has none): the
+  // picture's edge, PAINT_MARGIN past the window, runs through their middles.
+  const { interiors, picture, streets } = metropolis(ZONE.northRidge)
+  const edge = paintBounds(streets), h = CITY.lotHalf
+  const inside = (lot: { cx: number; cz: number }) => lot.cx - h >= edge.x0 && lot.cx + h <= edge.x1 && lot.cz - h >= edge.z0 && lot.cz + h <= edge.z1
+  const touches = (lot: { cx: number; cz: number }) => lot.cx + h > edge.x0 && lot.cx - h < edge.x1 && lot.cz + h > edge.z0 && lot.cz - h < edge.z1
+  const cut = interiors.filter((lot) => touches(lot) && !inside(lot))
+  assert.ok(cut.length >= 2, `${cut.length} places on the picture's edge`)
+  assert.ok(cut.some((l) => l.fixtures) && cut.some((l) => !l.fixtures), 'a workplace and a shop or home among them')
+  for (const lot of cut) {
+    for (let dx = -h; dx <= h; dx += 1) {
+      for (let dz = -h; dz <= h; dz += 1) assert.deepEqual(paintAt(picture, lot.cx + dx, lot.cz + dz).slice(2), [0, 0], `the lot at ${lot.cx},${lot.cz}: no floor at ${dx},${dz}`)
+    }
+  }
+  const held = interiors.filter(inside)
+  assert.ok(held.length >= 1)
+  for (const lot of held) assert.deepEqual(paintAt(picture, lot.cx, lot.cz).slice(2), lot.fixtures ? [1, 0] : [0, 1], `the lot at ${lot.cx},${lot.cz}`)
 })
 
 // ---------------------------------------------------------------------------------------------------

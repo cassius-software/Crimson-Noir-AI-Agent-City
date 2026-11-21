@@ -96,11 +96,10 @@ import embeddedRegion, { regionFirst } from 'virtual:region-pack'
 import { validatePack, type RegionPack } from './01_Initialize_World/region/pack.ts'
 import { ZONE, type Zone } from './01_Initialize_World/lakefront.ts'
 import { LakefrontBuilder } from './01_Initialize_World/lakefrontClient.ts'
-import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { CONCIERGE_NAME, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { CONCIERGE_NAME, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, onboardingPackFor, placeWanted, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -583,7 +582,8 @@ interface MapPlan { choice: MapChoice; pack: RegionPack | null; zone: Zone }
 
 /**
  * The map the engine is handed: the embedded region, the lakefront metropolis (the pack the onboarding built, or one
- * built now in the worker for ?map=lakefront and returning visitors), or null for the procedural city.
+ * built now in the worker for ?map=lakefront, returning visitors and a first visit whose ?place= names another region
+ * than the onboarding's answer: onboardingPackFor), or null for the procedural city.
  */
 async function loadMap(plan: MapPlan): Promise<RegionPack | null> {
   if (plan.choice === 'region') return loadRegion()
@@ -881,13 +881,13 @@ function App() {
   }
   const chosen = outcome?.saved ?? saved
   const choice = mapWanted(new URLSearchParams(window.location.search), chosen, regionFirst, loadMapChoice())
-  const zone = zoneOf(chosen?.place) ?? ZONE.metropolis
+  const zone = placeWanted(new URLSearchParams(window.location.search), chosen) ?? ZONE.metropolis
   const shellOptions = outcome?.options ? { ...options, ...outcome.options } : resumed ? { ...options, startHour: resumed.startHour, audio: resumed.audio } : options
   // Sloane watches the first minutes of a visitor who has just walked in from the onboarding (never the expert path).
   const mentored = outcome !== null && !outcome.saved.skipped
   // The same visitor, after the page's own restart on a lighter crowd kernel.
   const watched = mentored || (outcome === null && resumed?.mentored === true)
-  return <GuiShell options={shellOptions} plan={{ choice, pack: outcome?.pack ?? null, zone }} mentored={watched} restarted={resumed !== null} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
+  return <GuiShell options={shellOptions} plan={{ choice, pack: onboardingPackFor(outcome?.pack, zone), zone }} mentored={watched} restarted={resumed !== null} walk={walk} voice={voice} speaker={speaker} link={link} access={access} prefersMore={prefersMore} onAccess={onAccess} adapterHint={probe?.ok ? probe.info : ''} />
 }
 
 /**

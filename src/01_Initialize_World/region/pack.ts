@@ -28,6 +28,25 @@ export const BUILDING_KIND = Object.freeze({ building: 0, worship: 1, school: 2,
  *  ringStart[r]..ringStart[r+1] are ring r's points in xz (pairs). Every array ends with its total, so i+1 always exists. */
 export interface Polygons { polyStart: number[]; ringStart: number[]; xz: number[] }
 
+/**
+ * The map's named quarters (the lakefront's five regions) and its ground, per block: which quarter a point of the map
+ * is in, by name, and what the ground is there. Plain numbers, like the rest of the pack: it is structured-cloned from
+ * the builder's worker and compared whole in tests. region/quarters.ts reads it.
+ */
+export interface Quarters {
+  /** Blocks per axis and a block's size, m. Block (k, m) covers x in bounds.x0 + k·pitch … + pitch, z likewise. */
+  blocks: number
+  pitch: number
+  /** The quarters' names, in id order. */
+  names: string[]
+  /** Per block, row-major (m · blocks + k): the quarter's id; an id >= names.length is open water. */
+  id: number[]
+  /** Per block, row-major: the ground (lakefront.ts TERRAIN codes: lake 0, shore 1, flat 2, ravine 3, bluff 4, ridge 5). */
+  terrain: number[]
+  /** The quarter the visitor chose to start in (an id < names.length). */
+  home: number
+}
+
 export interface RegionPack {
   format: typeof REGION_FORMAT
   /** The region's fictional name. */
@@ -47,6 +66,16 @@ export interface RegionPack {
    * rectangle per LOT.plaza lot, its built square). Absent in a surveyed pack, which has none.
    */
   plazas?: Polygons
+  /** The map's named quarters (the lakefront's five regions) and its ground, per block. Absent in a surveyed pack. */
+  quarters?: Quarters
+}
+
+/**
+ * Every name a pack carries, for the name gates (assets/cc0.ts screenNames): the region's, its streets' and water
+ * bodies', its attribution lines, and its quarters' names when it has them.
+ */
+export function packNames(pack: Pick<RegionPack, 'name' | 'names' | 'attribution' | 'quarters'>): string[] {
+  return [pack.name, ...pack.names, ...pack.attribution, ...(pack.quarters?.names ?? [])]
 }
 
 /** An empty polygon table. */
@@ -93,7 +122,9 @@ export function regionWanted(asked: string | null, first: boolean): boolean {
 
 /**
  * Checks a parsed pack's shape: the format, every table's lengths and offsets consistent, every coordinate a whole
- * number, every name index in range. Throws a TypeError naming the first problem.
+ * number, every name index in range; and, where the pack has them, the plazas' table and the quarters layer (a whole
+ * number of blocks, a size above zero, names that are not empty, a quarter and a ground code for every block, and a
+ * home that is one of the quarters). Throws a TypeError naming the first problem.
  */
 export function validatePack(u: unknown): RegionPack {
   const fail = (what: string): never => { throw new TypeError(`region pack: ${what}`) }
@@ -131,6 +162,19 @@ export function validatePack(u: unknown): RegionPack {
     ints(t.xz, 'plazas.xz')
     offsets(ints(t.ringStart, 'plazas.ringStart'), t.xz.length / 2, 'plazas.ringStart')
     offsets(ints(t.polyStart, 'plazas.polyStart'), t.ringStart.length - 1, 'plazas.polyStart')
+  }
+  if (p.quarters !== undefined) {
+    const q = p.quarters
+    if (typeof q !== 'object' || q === null) fail('quarters is not a table')
+    if (!Number.isInteger(q.blocks) || q.blocks < 1) fail('quarters.blocks is not a whole number of blocks')
+    if (typeof q.pitch !== 'number' || !Number.isFinite(q.pitch) || q.pitch <= 0) fail('quarters.pitch is not a size above zero')
+    if (!Array.isArray(q.names) || !q.names.length || !q.names.every((n) => typeof n === 'string' && n !== '')) fail('quarters.names is not a list of names')
+    for (const key of ['id', 'terrain'] as const) {
+      const a = ints(q[key], `quarters.${key}`)
+      if (a.length !== q.blocks * q.blocks) fail(`quarters.${key} has the wrong length`)
+      if (a.some((v) => v < 0)) fail(`quarters.${key} holds a negative code`)
+    }
+    if (!Number.isInteger(q.home) || q.home < 0 || q.home >= q.names.length) fail('quarters.home is not one of its quarters')
   }
   return p
 }
